@@ -5,6 +5,8 @@ __pycache__/
 .ruff_cache/
 build/
 dist/
+*.gen.h
+*.gen.lua
 
 # game data never enters the repo
 *.iso

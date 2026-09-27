@@ -31,3 +31,8 @@ repos:
         entry: '\xF0\x9F[\x80-\xAB][\x80-\xBF]|\xE2[\x98-\x9E\xAC-\xAF][\x80-\xBF]|\xEF\xB8\x8F|\b20\d{2}-[01]\d-[0-3]\d\b|\b(?:RETRACTED|SUPERSEDED|[Rr]etracted)\b|\bPhase \d+\b|(?<![\w&#])#\d{1,4}\b'
         types_or: [python, pyi, c, c++, lua, shell, toml, yaml]
         exclude: ^(\.pre-commit-config\.yaml|uv\.lock)$
+      - id: no-raw-address
+        name: game addresses come from mhfu/addresses.toml (end a line with noaddr to exempt it)
+        language: pygrep
+        entry: '^(?!.*\bnoaddr\b).*\b0x0[89AaBb](?:_?[0-9A-Fa-f]){6}[uUlL]{0,3}\b'
+        types_or: [python, pyi, c, c++, lua]

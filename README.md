@@ -15,11 +15,10 @@ release ULES01213), and for porting monsters to it from Monster Hunter Portable 
 
 | Path | Contents |
 |---|---|
-| `packages/` | Python libraries: the debugger client, the file formats, the game, the porter |
+| `packages/` | Python libraries: the debugger client, the file formats, the game (`mhfu`, which also holds the address map every language is generated from), the porter |
 | `framework/` | The PRX plugin and its Lua host |
 | `apps/` | The studio (monster and map editor), the HUD, the Blender extension |
 | `examples/` | Example mods |
-| `data/` | Single-source data, such as the address map the Python, C and Lua constants are generated from |
 | `docs/` | Guides and format references |
 
 ## Development
