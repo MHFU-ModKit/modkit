@@ -1,8 +1,9 @@
 import asyncio
 import threading
+import time
 
 import pytest
-from ppsspp_debug import AsyncClient, Client
+from ppsspp_debug import AsyncClient, Client, Disconnected
 from ppsspp_debug.testing import FakePPSSPP
 
 BASE = 0x1000_0000
@@ -66,6 +67,27 @@ def test_call_from_its_own_loop_raises(served):
 
         with pytest.raises(RuntimeError, match="deadlock"):
             c._loop.run(inside())
+
+
+def test_close_fails_a_call_waiting_in_another_thread(served):
+    c = Client.connect(port=served.fake.port)
+    served.fake.stepping = True  # gpu.stats.get never answers while stopped
+    errors = []
+
+    def wait():
+        try:
+            c.frame_stats()
+        except Exception as e:
+            errors.append(e)
+
+    waiter = threading.Thread(target=wait)
+    waiter.start()
+    time.sleep(0.1)
+    c.close()
+    waiter.join(2)
+    assert [type(e) for e in errors] == [Disconnected]
+    with pytest.raises(Disconnected):
+        c.status()
 
 
 def test_every_async_method_is_mirrored():

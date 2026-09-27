@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import functools
 import threading
 from collections.abc import Callable, Coroutine, Iterator
@@ -25,23 +26,41 @@ class _Loop:
             target=self._loop.run_forever, name="ppsspp-debug", daemon=True
         )
         self._thread.start()
+        self._stopping = False
 
     def run(self, coro: Coroutine[Any, Any, R]) -> R:
         if threading.current_thread() is self._thread:
             coro.close()
             raise RuntimeError("a blocking call on the client's own loop would deadlock")
+        if self._stopping:
+            coro.close()
+            raise Disconnected("the client is closed")
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         try:
             return future.result()
+        except concurrent.futures.CancelledError:
+            if self._stopping:
+                raise Disconnected("the client is closed") from None
+            raise
         except BaseException:
             future.cancel()
             raise
 
     @property
     def stopped(self) -> bool:
-        return self._loop.is_closed()
+        return self._stopping
 
     def stop(self) -> None:
+        """Cancel what still runs, so a call waiting in another thread fails instead of hanging."""
+        self._stopping = True
+
+        async def cancel_all() -> None:
+            tasks = asyncio.all_tasks() - {asyncio.current_task()}
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        asyncio.run_coroutine_threadsafe(cancel_all(), self._loop).result()
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join()
         self._loop.close()
