@@ -1,0 +1,14 @@
+[project]
+name = "modkit-testing"
+version = "0.1.0"
+description = "Pytest fixtures shared by the modkit packages: paths to extracted game data."
+requires-python = ">=3.11"
+dependencies = ["pytest>=8"]
+classifiers = ["Private :: Do Not Upload"]
+
+[project.entry-points.pytest11]
+modkit = "modkit_testing"
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"

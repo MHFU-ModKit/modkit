@@ -1,0 +1,7 @@
+version = 1
+
+# Default for every file without its own SPDX header; GPL-3.0-or-later files carry one.
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "2026 sp00ktober"
+SPDX-License-Identifier = "MIT"
