@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# game data never enters the repo
+*.iso
+*.cso
+*.ppst
+workspace/
+
+.DS_Store
+.idea/
+.vscode/

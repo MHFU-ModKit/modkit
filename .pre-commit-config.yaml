@@ -1,0 +1,33 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=512, --enforce-all]
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.9
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/fsfe/reuse-tool
+    rev: v6.2.0
+    hooks:
+      - id: reuse
+
+  - repo: local
+    hooks:
+      # the pattern is matched against UTF-8 bytes: the first three branches are emoji ranges
+      - id: comment-style
+        name: comments say what and why (no emoji, dates, retractions, Phase N, #NN)
+        language: pygrep
+        entry: '\xF0\x9F[\x80-\xAB][\x80-\xBF]|\xE2[\x98-\x9E\xAC-\xAF][\x80-\xBF]|\xEF\xB8\x8F|\b20\d{2}-[01]\d-[0-3]\d\b|\b(?:RETRACTED|SUPERSEDED|[Rr]etracted)\b|\bPhase \d+\b|(?<![\w&#])#\d{1,4}\b'
+        types_or: [python, pyi, c, c++, lua, shell, toml, yaml]
+        exclude: ^(\.pre-commit-config\.yaml|uv\.lock)$
