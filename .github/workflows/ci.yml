@@ -36,3 +36,24 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - run: uv run pytest
+
+  # advisory until the first release: breaking changes show up as annotations on the PR
+  api:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: griffe check against the base branch
+        continue-on-error: true
+        run: |
+          base=origin/${{ github.base_ref }}
+          status=0
+          for init in packages/*/src/*/__init__.py; do
+            git cat-file -e "$base:$init" 2>/dev/null || continue  # new package
+            module=${init%/__init__.py}
+            uvx griffe@2.3.0 check "${module##*/}" -s "${module%/*}" -a "$base" -f github || status=1
+          done
+          exit $status

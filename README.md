@@ -32,8 +32,9 @@ uv run pytest
 ```
 
 Tests that read game files take them from `MHFU_DATA` and `MHP3RD_DATA`, each a directory of
-extracted `DATA.BIN` files, and skip when the variable is unset. Nothing from the games is
-committed here: no ISO, no extracted files, no memory dumps.
+extracted `DATA.BIN` files, and skip when the variable is unset; tests against a running PPSSPP
+take `PPSSPP_BINARY` and `PPSSPP_GAME` the same way. Nothing from the games is committed here:
+no ISO, no extracted files, no memory dumps.
 
 ## Licence
 
