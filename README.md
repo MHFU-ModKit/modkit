@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="misc/banner.svg" width="720" alt="MHFU-MODKIT">
+</p>
+
 # MHFU ModKit
 
 Libraries, a runtime mod framework and tools for modding Monster Hunter Freedom Unite (PSP, EU
