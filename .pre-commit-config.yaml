@@ -24,6 +24,13 @@ repos:
 
   - repo: local
     hooks:
+      # the workspace's own mypy, so it sees every package's dependencies
+      - id: mypy
+        name: mypy --strict
+        language: system
+        entry: uv run --frozen mypy
+        types_or: [python, pyi]
+        pass_filenames: false
       # the pattern is matched against UTF-8 bytes: the first three branches are emoji ranges
       - id: comment-style
         name: comments say what and why (no emoji, dates, retractions, Phase N, #NN)

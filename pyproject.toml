@@ -4,7 +4,14 @@
 members = ["packages/*", "apps/*"]
 
 [dependency-groups]
-dev = ["pytest>=8", "pre-commit>=4", "lupa>=2"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=1",
+    "pre-commit>=4",
+    "mypy>=1.18",
+    "types-psutil",
+    "lupa>=2",
+]
 
 [tool.ruff]
 line-length = 100
@@ -16,3 +23,10 @@ select = ["E", "W", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["packages", "apps"]
 addopts = ["-ra", "--strict-markers", "--import-mode=importlib", "-p", "pytester"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+files = ["packages/ppsspp-debug/src"]

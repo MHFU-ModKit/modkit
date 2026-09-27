@@ -9,7 +9,7 @@ def run(pytester, monkeypatch):
         if value is not None:
             monkeypatch.setenv(fixture.upper(), str(value))
         pytester.makepyfile(f"def test_it({fixture}):\n    assert {fixture}.is_dir()\n")
-        return pytester.runpytest()
+        return pytester.runpytest("-p", "no:asyncio")
 
     return run
 
