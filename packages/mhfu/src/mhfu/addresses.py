@@ -1,0 +1,267 @@
+"""Game addresses and struct offsets for MHFU EU, read from addresses.toml.
+
+    from mhfu import addresses
+    addresses.SCREEN_STATE        # an int that also has .name, .type and .doc
+    addresses.ENTITY.HP           # the offset of a struct field, the same kind of int
+
+The C header and the Lua table are generated from the same file:
+
+    python -m mhfu.addresses c -o addresses.gen.h
+    python -m mhfu.addresses lua -o addresses.gen.lua
+"""
+
+from __future__ import annotations
+
+import argparse
+import functools
+import re
+import sys
+import tomllib
+from dataclasses import dataclass
+from importlib.resources import files
+from pathlib import Path
+from typing import Any
+
+GAME_ID = "ULES01213"
+REGION = "eu"
+RAM = range(0x0800_0000, 0x0C00_0000)  # noaddr: user RAM and the extra-RAM window
+
+_NAME = re.compile(r"[A-Z][A-Z0-9_]*\Z")
+_TYPE = re.compile(r"(u8|u16|u32|s8|s16|s32|f32|vec3|ptr|vtable|fn|code|bytes)(\[[1-9][0-9]*\])?\Z")
+
+
+class _Named(int):
+    name: str
+    type: str
+    doc: str
+
+    def __new__(cls, value: int, name: str, type: str, doc: str) -> _Named:
+        self = super().__new__(cls, value)
+        self.name, self.type, self.doc = name, type, doc
+        return self
+
+    __str__ = int.__repr__
+
+
+class Address(_Named):
+    """An absolute game address."""
+
+    def __repr__(self) -> str:
+        return f"<{self.name} 0x{int(self):08X} {self.type}>"
+
+
+class Field(_Named):
+    """A field's offset from the base of its struct."""
+
+    def __repr__(self) -> str:
+        return f"<{self.name} +0x{int(self):X} {self.type}>"
+
+
+@dataclass(frozen=True)
+class Struct:
+    """A struct layout; its fields are attributes."""
+
+    name: str
+    doc: str
+    fields: dict[str, Field]
+    size: int | None = None
+
+    def __getattr__(self, name: str) -> Field:
+        fields = self.__dict__.get("fields", {})
+        if name in fields:
+            return fields[name]
+        raise AttributeError(f"struct {self.__dict__.get('name')} has no field {name}")
+
+    def __dir__(self) -> list[str]:
+        return [*super().__dir__(), *self.fields]
+
+
+@dataclass(frozen=True)
+class Table:
+    addresses: dict[str, Address]
+    structs: dict[str, Struct]
+
+
+def load(path: Path | None = None) -> Table:
+    """Read and check a table; the packaged addresses.toml by default."""
+    source = Path(path) if path else files(__package__).joinpath("addresses.toml")
+    return parse(tomllib.loads(source.read_text(encoding="utf-8")))
+
+
+@functools.cache
+def table() -> Table:
+    """The packaged table, read once."""
+    return load()
+
+
+def parse(data: dict[str, Any]) -> Table:
+    """Build a table from parsed TOML; raises ValueError listing every problem."""
+    problems: list[str] = []
+    unknown = set(data) - {"address", "struct"}
+    if unknown:
+        problems.append(f"unknown top-level tables: {sorted(unknown)}")
+
+    addresses: dict[str, Address] = {}
+    by_value: dict[int, str] = {}
+    for name, entry in data.get("address", {}).items():
+        where = f"address.{name}"
+        if _entry_ok(where, name, entry, "eu", problems):
+            value = entry["eu"]
+            if value not in RAM:
+                problems.append(f"{where}: 0x{value:X} is outside 0x{RAM.start:X}-0x{RAM.stop:X}")
+            elif value in by_value:
+                problems.append(f"{where}: 0x{value:08X} is already {by_value[value]}")
+            by_value.setdefault(value, name)
+            addresses[name] = Address(value, name, entry["type"], entry["doc"])
+
+    structs: dict[str, Struct] = {}
+    for name, entry in data.get("struct", {}).items():
+        where = f"struct.{name}"
+        if not _NAME.match(name):
+            problems.append(f"{where}: names are UPPER_SNAKE_CASE")
+        if not isinstance(entry, dict) or set(entry) - {"doc", "size", "fields"}:
+            problems.append(f"{where}: expects doc, fields and an optional size")
+            continue
+        size = entry.get("size")
+        if size is not None and (not isinstance(size, int) or size <= 0):
+            problems.append(f"{where}: size must be a positive integer")
+            size = None
+        _doc_ok(where, entry.get("doc"), problems)
+        fields: dict[str, Field] = {}
+        by_offset: dict[int, str] = {}
+        for fname, fentry in entry.get("fields", {}).items():
+            fwhere = f"{where}.{fname}"
+            if not _entry_ok(fwhere, fname, fentry, "offset", problems):
+                continue
+            offset = fentry["offset"]
+            if offset < 0 or (size is not None and offset >= size):
+                problems.append(f"{fwhere}: offset 0x{offset:X} is outside the struct")
+            elif offset in by_offset:
+                problems.append(f"{fwhere}: +0x{offset:X} is already {by_offset[offset]}")
+            by_offset.setdefault(offset, fname)
+            fields[fname] = Field(offset, fname, fentry["type"], fentry["doc"])
+        if not fields:
+            problems.append(f"{where}: has no fields")
+        structs[name] = Struct(name, entry.get("doc", ""), fields, size)
+
+    # every generated name (Python and Lua namespace, C macro) must be unique
+    for name in addresses.keys() & structs.keys():
+        problems.append(f"{name}: is both an address and a struct")
+    macros: dict[str, str] = {name: f"address.{name}" for name in addresses}
+    for s in structs.values():
+        for member in [*s.fields, *(["SIZE"] if s.size else [])]:
+            macro = f"{s.name}_{member}"
+            if macro in macros:
+                problems.append(
+                    f"struct.{s.name}.{member}: MHFU_{macro} clashes with {macros[macro]}"
+                )
+            macros[macro] = f"struct.{s.name}.{member}"
+
+    if problems:
+        raise ValueError("addresses.toml:\n  " + "\n  ".join(problems))
+    return Table(addresses, structs)
+
+
+def _entry_ok(where: str, name: str, entry: Any, key: str, problems: list[str]) -> bool:
+    if not _NAME.match(name):
+        problems.append(f"{where}: names are UPPER_SNAKE_CASE")
+    if not isinstance(entry, dict) or set(entry) != {key, "type", "doc"}:
+        problems.append(f"{where}: expects exactly {key}, type and doc")
+        return False
+    if not isinstance(entry[key], int):
+        problems.append(f"{where}: {key} must be an integer")
+        return False
+    if not isinstance(entry["type"], str) or not _TYPE.match(entry["type"]):
+        problems.append(f"{where}: unknown type {entry['type']!r}")
+    return _doc_ok(where, entry["doc"], problems)
+
+
+def _doc_ok(where: str, doc: Any, problems: list[str]) -> bool:
+    if not isinstance(doc, str) or not doc.strip():
+        problems.append(f"{where}: doc is missing")
+        return False
+    if "\n" in doc or "*/" in doc:
+        problems.append(f"{where}: doc must be one line without */")
+        return False
+    return True
+
+
+def render_c(t: Table) -> str:
+    """The table as a C header of MHFU_ macros."""
+    out = [
+        f"/* MHFU {GAME_ID} addresses, generated from mhfu/addresses.toml by",
+        " * `python -m mhfu.addresses c`. Do not edit. */",
+        "#ifndef MHFU_ADDRESSES_GEN_H",
+        "#define MHFU_ADDRESSES_GEN_H",
+        "",
+    ]
+    for a in t.addresses.values():
+        out += [f"/* {a.type}: {a.doc} */", f"#define MHFU_{a.name} 0x{int(a):08X}u"]
+    for s in t.structs.values():
+        out += ["", f"/* struct {s.name}: {s.doc} */"]
+        if s.size:
+            out.append(f"#define MHFU_{s.name}_SIZE 0x{s.size:X}u")
+        for f in s.fields.values():
+            out += [f"/* {f.type}: {f.doc} */", f"#define MHFU_{s.name}_{f.name} 0x{int(f):X}u"]
+    out += ["", "#endif", ""]
+    return "\n".join(out)
+
+
+def render_lua(t: Table) -> str:
+    """The table as a Lua module returning mhfu.addr, annotated for LuaLS."""
+    out = [
+        f"-- MHFU {GAME_ID} addresses, generated from mhfu/addresses.toml by",
+        "-- `python -m mhfu.addresses lua`. Do not edit.",
+        "",
+        "---@class mhfu.addr",
+        "local addr = {",
+    ]
+    for a in t.addresses.values():
+        out += [f"    ---{a.type}: {a.doc}", f"    {a.name} = 0x{int(a):08X},"]
+    for s in t.structs.values():
+        out += [f"    ---struct: {s.doc}", f"    {s.name} = {{"]
+        if s.size:
+            out += ["        ---the struct's size in bytes", f"        SIZE = 0x{s.size:X},"]
+        for f in s.fields.values():
+            out += [f"        ---{f.type}: {f.doc}", f"        {f.name} = 0x{int(f):X},"]
+        out.append("    },")
+    out += ["}", "", "return addr", ""]
+    return "\n".join(out)
+
+
+RENDER = {"c": render_c, "lua": render_lua}
+
+
+def __getattr__(name: str) -> Any:
+    t = table()
+    if name in t.addresses:
+        return t.addresses[name]
+    if name in t.structs:
+        return t.structs[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    t = table()
+    return sorted({*globals(), *t.addresses, *t.structs})
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="python -m mhfu.addresses",
+        description="Print the address table as a C header or a Lua module.",
+    )
+    ap.add_argument("lang", choices=sorted(RENDER))
+    ap.add_argument("-o", "--output", type=Path, help="write here instead of stdout")
+    ap.add_argument("--table", type=Path, help="read this TOML instead of the packaged one")
+    args = ap.parse_args(argv)
+    text = RENDER[args.lang](load(args.table) if args.table else table())
+    if args.output:
+        args.output.write_text(text, encoding="utf-8")
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
