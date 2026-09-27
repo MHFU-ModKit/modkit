@@ -1,8 +1,4 @@
-from pathlib import Path
-
 import pytest
-
-CONFTEST = (Path(__file__).parents[1] / "conftest.py").read_text()
 
 
 @pytest.fixture
@@ -12,7 +8,6 @@ def run(pytester, monkeypatch):
         monkeypatch.delenv("MHP3RD_DATA", raising=False)
         if value is not None:
             monkeypatch.setenv(fixture.upper(), str(value))
-        pytester.makeconftest(CONFTEST)
         pytester.makepyfile(f"def test_it({fixture}):\n    assert {fixture}.is_dir()\n")
         return pytester.runpytest()
 

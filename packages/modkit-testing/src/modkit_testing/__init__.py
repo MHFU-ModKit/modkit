@@ -1,11 +1,9 @@
-"""Fixtures shared by every package's tests."""
+"""Pytest plugin with the fixtures every modkit package's tests share."""
 
 import os
 from pathlib import Path
 
 import pytest
-
-pytest_plugins = ["pytester"]
 
 
 def _game_data(var: str) -> Path:
