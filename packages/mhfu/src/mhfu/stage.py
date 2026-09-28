@@ -9,22 +9,17 @@ from __future__ import annotations
 
 import math
 import struct
-from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TypeVar
 
-import rabbitizer
-from rabbitizer import InstrId
-
 from . import addresses as a
-from . import files, mips
+from . import files
 from .files import Extracted
 from .memory import Image, Memory, Unmapped
+from .mips import Code, Gpr
 from .overlay import Overlay
 from .views import View, f32, ptr, ptrs, u8, u16, u16s, u32, vec3
 
-V0 = rabbitizer.RegGprO32.v0
-WORD = 0xFFFF_FFFF
 R = TypeVar("R", bound=View)
 
 MAP_ROWS = 32
@@ -91,21 +86,6 @@ class Sphere(View):
     tail = u32(a.STAGE_SPHERE.TAIL)
 
 
-def constant_getters(mem: Memory, text: range) -> Iterator[int]:
-    """What every `lui v0, hi / jr ra / addiu v0, v0, lo` function in `text` returns."""
-    ins = list(mips.instructions(mem, text.start, text.stop))
-    for hi, ret, lo in zip(ins, ins[1:], ins[2:], strict=False):
-        if (
-            hi.uniqueId == InstrId.cpu_lui
-            and hi.rt == V0
-            and ret.isJrRa()
-            and lo.uniqueId == InstrId.cpu_addiu
-            and lo.rs == V0
-            and lo.rt == V0
-        ):
-            yield ((hi.getProcessedImmediate() << 16) + lo.getProcessedImmediate()) & WORD
-
-
 def _params_score(mem: Image, va: int) -> int | None:
     """How many NO_SLOT pads the object at `va` has, or None if it is no parameter object."""
     p = StageParams(mem, va)
@@ -130,9 +110,10 @@ class StageOverlay:
     def parse(cls, ovl: Overlay) -> StageOverlay:
         """The parameter object is what a constant getter returns: of those, the object that
         pads the most slot ids with NO_SLOT."""
-        mem = ovl
+        mem, code = ovl, Code(ovl, ovl.text)
+        returned = (code.constant(i.vram, Gpr.v0) for i in code if i.isReturn())
         best: tuple[int, int] | None = None
-        for va in constant_getters(ovl, ovl.text):
+        for va in dict.fromkeys(v for v in returned if v is not None):
             score = _params_score(mem, va)
             if score is not None and (best is None or score > best[0]):
                 best = (score, va)

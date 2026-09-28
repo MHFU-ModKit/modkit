@@ -8,7 +8,6 @@ import argparse
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .. import addresses as a
 from .. import files, inject
 from .. import hitbox as hb
 from .. import hitzone as hz
@@ -170,7 +169,7 @@ def _verify_hitboxes(game: files.Extracted) -> int:
     bad = 0
     for em in files.EM_SPECIES:
         ovl = game.em(em)
-        calls = list(hb.calls_to(ovl, ovl.text, a.ATTACK_TABLE_SETTER))
+        calls = hb.setter_calls(ovl)
         ts = hb.tables(ovl)
         sets = [v for t in ts for v in t.volumes]
         rebuilt = all(_roundtrip(x) for v in sets for x in v.volumes)
