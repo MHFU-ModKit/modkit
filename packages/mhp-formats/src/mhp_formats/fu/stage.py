@@ -330,7 +330,7 @@ class Stage:
 
     @staticmethod
     def sniff(data: bytes) -> bool:
-        if _placeholder(data) is not None:
+        if _placeholder(data):
             return True
         count = int.from_bytes(data[:4], "little")
         if not _ROLES <= count <= 256 or len(data) < 4 + 8 * count:
@@ -341,7 +341,7 @@ class Stage:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> Self:
-        pac = _placeholder(data) or Pac.from_bytes(data)
+        pac = Pac.from_bytes(data)
         e = pac.entries
         if len(e) < _ROLES:
             raise FormatError(f"a stage has at least {_ROLES} entries, not {len(e)}")
@@ -373,13 +373,11 @@ class Stage:
         return self.collision.verify() if self.collision else PlaneCheck(0, 0)
 
 
-def _placeholder(data: bytes) -> Pac | None:
-    # Pac refuses a table with no entry at all; a placeholder stage is exactly that.
+def _placeholder(data: bytes) -> bool:
+    """A stage with no entries at all: 20 of the 282 ship so."""
     count = int.from_bytes(data[:4], "little")
     head = 4 + 8 * count
-    if not _ROLES <= count <= 256 or len(data) < head or any(data[4:head]):
-        return None
-    return Pac([b""] * count, 4, data[head:])
+    return _ROLES <= count <= 256 and len(data) >= head and not any(data[4:head])
 
 
 def _f32(x: float) -> float:

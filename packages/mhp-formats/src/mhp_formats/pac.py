@@ -30,7 +30,9 @@ class Pac:
 
     @staticmethod
     def sniff(data: bytes) -> bool:
-        return _layout(data) is not None
+        """A table of only empty entries parses but does not sniff: too many files start so."""
+        table = _layout(data)
+        return table is not None and any(size for _, size in table)
 
     @classmethod
     def from_bytes(cls, data: bytes) -> Self:
@@ -77,4 +79,4 @@ def _layout(data: bytes) -> list[tuple[int, int]] | None:
         if off < cursor or off + size > len(data) or len(pad) >= _ALIGNS[0] or any(pad):
             return None
         cursor = off + size
-    return table if cursor > head else None
+    return table

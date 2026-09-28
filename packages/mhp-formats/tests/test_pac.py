@@ -24,11 +24,17 @@ def test_nested_alignment():
     assert Pac.from_bytes(data) == pac
 
 
-@pytest.mark.parametrize("data", [b"", b"\xff" * 16, (1).to_bytes(4, "little") + bytes(8)])
+@pytest.mark.parametrize("data", [b"", b"\xff" * 16])
 def test_rejects(data):
     assert not Pac.sniff(data)
     with pytest.raises(FormatError):
         Pac.from_bytes(data)
+
+
+def test_only_empty_entries():
+    data = (6).to_bytes(4, "little") + bytes(48) + b"slack"
+    assert not Pac.sniff(data)
+    assert Pac.from_bytes(data) == Pac([b""] * 6, 4, b"slack")
 
 
 def _round_trip(data_dir: Path) -> int:
