@@ -64,6 +64,15 @@ class Struct:
     doc: str
     fields: dict[str, Field]
     size: int | None = None
+    stride: int | None = None
+
+    @property
+    def step(self) -> int:
+        """Bytes from one of these to the next in a table: `stride`, else `size`."""
+        step = self.stride or self.size
+        if step is None:
+            raise TypeError(f"struct {self.name} has no size or stride in addresses.toml")
+        return step
 
     def __getattr__(self, name: str) -> Field:
         fields: dict[str, Field] = self.__dict__.get("fields", {})
@@ -118,13 +127,16 @@ def parse(data: dict[str, Any]) -> Table:
         where = f"struct.{name}"
         if not _NAME.match(name):
             problems.append(f"{where}: names are UPPER_SNAKE_CASE")
-        if not isinstance(entry, dict) or set(entry) - {"doc", "size", "fields"}:
-            problems.append(f"{where}: expects doc, fields and an optional size")
+        if not isinstance(entry, dict) or set(entry) - {"doc", "size", "stride", "fields"}:
+            problems.append(f"{where}: expects doc, fields and an optional size or stride")
             continue
-        size = entry.get("size")
+        size, stride = entry.get("size"), entry.get("stride")
         if size is not None and (not isinstance(size, int) or size <= 0):
             problems.append(f"{where}: size must be a positive integer")
             size = None
+        if stride is not None and (not isinstance(stride, int) or stride <= 0):
+            problems.append(f"{where}: stride must be a positive integer")
+            stride = None
         _doc_ok(where, entry.get("doc"), problems)
         fields: dict[str, Field] = {}
         by_offset: dict[int, str] = {}
@@ -141,14 +153,14 @@ def parse(data: dict[str, Any]) -> Table:
             fields[fname] = Field(offset, fname, fentry["type"], fentry["doc"])
         if not fields:
             problems.append(f"{where}: has no fields")
-        structs[name] = Struct(name, entry.get("doc", ""), fields, size)
+        structs[name] = Struct(name, entry.get("doc", ""), fields, size, stride)
 
     # every generated name (Python and Lua namespace, C macro) must be unique
     for name in addresses.keys() & structs.keys():
         problems.append(f"{name}: is both an address and a struct")
     macros: dict[str, str] = {name: f"address.{name}" for name in addresses}
     for s in structs.values():
-        for member in [*s.fields, *(["SIZE"] if s.size else [])]:
+        for member in [*s.fields, *(["SIZE"] if s.size else []), *(["STRIDE"] if s.stride else [])]:
             macro = f"{s.name}_{member}"
             if macro in macros:
                 problems.append(
@@ -200,6 +212,8 @@ def render_c(t: Table) -> str:
         out += ["", f"/* struct {s.name}: {s.doc} */"]
         if s.size:
             out.append(f"#define MHFU_{s.name}_SIZE 0x{s.size:X}u")
+        if s.stride:
+            out.append(f"#define MHFU_{s.name}_STRIDE 0x{s.stride:X}u")
         for f in s.fields.values():
             out += [f"/* {f.type}: {f.doc} */", f"#define MHFU_{s.name}_{f.name} 0x{int(f):X}u"]
     out += ["", "#endif", ""]
@@ -221,6 +235,11 @@ def render_lua(t: Table) -> str:
         out += [f"    ---struct: {s.doc}", f"    {s.name} = {{"]
         if s.size:
             out += ["        ---the struct's size in bytes", f"        SIZE = 0x{s.size:X},"]
+        if s.stride:
+            out += [
+                "        ---bytes from one row to the next",
+                f"        STRIDE = 0x{s.stride:X},",
+            ]
         for f in s.fields.values():
             out += [f"        ---{f.type}: {f.doc}", f"        {f.name} = 0x{int(f):X},"]
         out.append("    },")

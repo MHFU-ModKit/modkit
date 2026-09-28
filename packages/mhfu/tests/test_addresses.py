@@ -18,6 +18,8 @@ def constants(t: addresses.Table) -> dict[str, int]:
         out |= {f"{s.name}_{f}": int(v) for f, v in s.fields.items()}
         if s.size:
             out[f"{s.name}_SIZE"] = s.size
+        if s.stride:
+            out[f"{s.name}_STRIDE"] = s.stride
     return out
 
 
@@ -95,6 +97,10 @@ def entry(value=BASE, type="u32", doc="A doc."):
     return {"eu": value, "type": type, "doc": doc}
 
 
+def entry_field(offset=0):
+    return {"offset": offset, "type": "u8", "doc": "d"}
+
+
 @pytest.mark.parametrize(
     ("data", "problem"),
     [
@@ -107,6 +113,10 @@ def entry(value=BASE, type="u32", doc="A doc."):
         ({"address": {"A": {"eu": BASE, "type": "u8"}}}, "expects exactly"),
         ({"address": {"A": entry() | {"na": BASE}}}, "expects exactly"),
         ({"struct": {"S": {"doc": "d", "fields": {}}}}, "has no fields"),
+        (
+            {"struct": {"S": {"doc": "d", "stride": 0, "fields": {"F": entry_field()}}}},
+            "stride must be",
+        ),
         (
             {
                 "struct": {
