@@ -107,7 +107,7 @@ def test_vptr_stores_and_slots():
     c = Code(code, code.text)
     assert abi._vptr_stores(c, c.text) == [(EBOOT + 0x20, TASK + 12)]
     (call,) = [x for x in c.calls if x.site == TASK + 36]
-    assert call.slot is None and abi._slot(c, call) == 0x88
+    assert call.slot == 0x88
 
 
 def test_game(game):

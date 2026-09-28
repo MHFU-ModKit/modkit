@@ -18,7 +18,7 @@ from .. import addresses as a
 from ..eboot import Eboot
 from ..files import EM_SPECIES, GAME_SUB, GAME_TASK, Extracted
 from ..memory import Unmapped
-from ..mips import Call, Code, is_prologue
+from ..mips import Code, is_prologue
 from ..overlay import Overlay
 
 ENTITY_SLOTS = 61
@@ -209,18 +209,7 @@ class Engine:
     def dispatches(self, slot: int) -> list[int]:
         """game_task's virtual calls through `slot`. Other classes share the offset, so a site
         need not call a monster."""
-        return [c.site for c in self.task_code.calls if _slot(self.task_code, c) == offset(slot)]
-
-
-def _slot(code: Code, call: Call) -> int | None:
-    """`call.slot`, or the offset of the `lw` the target comes from when the vptr it reads was
-    loaded on another path (at a label, where `Call.slot` gives up)."""
-    if call.slot is not None or call.target is not None:
-        return call.slot
-    load = code.source(call.site, code.at(call.site).rs)
-    if load is None or load.uniqueId != InstrId.cpu_lw or code.source(load.vram, load.rs):
-        return None
-    return int(load.getProcessedImmediate())
+        return [c.site for c in self.task_code.calls if c.slot == offset(slot)]
 
 
 def _vptr_stores(code: Code, where: range) -> list[tuple[int, int]]:
