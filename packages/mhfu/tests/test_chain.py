@@ -10,8 +10,7 @@ def test_simplify():
 
 
 def test_edge():
-    e = Edge(0, "enter", 0, None, 0, (), (), (), ())
-    assert e.computed
+    assert Edge(0, "enter", 0, None, 0, (), (), (), (), computed=True).computed
 
 
 def test_game(game):

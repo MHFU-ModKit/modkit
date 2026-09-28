@@ -57,15 +57,13 @@ class Edge:
     via: tuple[int, ...]
     """Helpers the call sits in, outermost first."""
     to: tuple[Pair, ...]
-    """The pairs it lands in; empty when main or id is not a literal."""
+    """The pairs it lands in; empty when it is computed or its id enters nothing."""
     guards: tuple[str, ...]
     """The plainest guard set that reaches the call."""
     alts: tuple[tuple[str, ...], ...]
     """The other guard sets that reach it."""
-
-    @property
-    def computed(self) -> bool:
-        return not self.to
+    computed: bool = False
+    """Where it lands is not a literal: main or id, or a pair the translator sets."""
 
 
 @dataclass(frozen=True)
@@ -81,8 +79,9 @@ class Enter:
     """The species' enter-action and the translators it switches into."""
 
     def __init__(self, ms: Moveset, cells: Mapping[int, int]) -> None:
-        self.ms, self.code, self.cells = ms, ms.code, dict(cells)
-        """Byte cells every walk takes as given, the species byte."""
+        self.ms, self.code = ms, ms.code
+        self.cells = dict(cells)
+        """Byte cells every walk takes as given: the species byte."""
 
     @cached_property
     def translators(self) -> frozenset[int]:
@@ -135,18 +134,20 @@ class Enter:
 
     def resolve(
         self, main: int, id: int, mode: int | None = None, facts: Facts | None = None
-    ) -> tuple[Pair, ...]:
-        """The pairs enter(main, id, mode) can set; empty if one is not a literal."""
+    ) -> tuple[Pair, ...] | None:
+        """The pairs enter(main, id, mode) can set, none for an id that enters nothing;
+        None when one is not a literal."""
         pairs = set()
         for s in self.landings(main, id, mode, facts):
-            if s.args[0] is None or s.args[1] is None:
-                return ()
-            pairs.add((s.args[0], s.args[1]))
+            m, sub = s.args[0], s.args[1]
+            if m is None or sub is None:
+                return None
+            pairs.add((m, sub))
         return tuple(sorted(pairs))
 
-    def table(self) -> dict[int, dict[int, tuple[Pair, ...]]]:
+    def table(self) -> dict[int, dict[int, tuple[Pair, ...] | None]]:
         """{main: {id: pairs}} for the mains whose translator switches on the id."""
-        out: dict[int, dict[int, tuple[Pair, ...]]] = {}
+        out: dict[int, dict[int, tuple[Pair, ...] | None]] = {}
         if self.switch is None:
             return out
         for i, label in enumerate(self.switch.targets):
@@ -173,13 +174,24 @@ class Chain:
 
     @cached_property
     def wrappers(self) -> frozenset[int]:
-        """Functions that make an enter or act_set call themselves, tail calls included."""
+        """Functions that make an enter or act_set call, or tail-call a function that does."""
         code = self.code
-        return frozenset(
+        found = {
             code.function(c.site).start
             for c in code.calls
             if c.target in ACT_SETS or c.target == a.ENTER_ACTION or self._enter_slot(c)
-        )
+        }
+        tails = [
+            (code.function(c.site).start, code.function(c.target).start)
+            for c in code.calls
+            if not c.link and c.target is not None and c.target in code.text
+        ]
+        grew = True
+        while grew:
+            before = len(found)
+            found |= {fn for fn, target in tails if target in found}
+            grew = len(found) > before
+        return frozenset(found)
 
     def _enter_slot(self, call: Call) -> bool:
         """A call through ENTER_SLOT of some vtable; `Call.slot` misses one whose vtable load
@@ -212,15 +224,16 @@ class Chain:
             names=names,
         )
 
-    def hands_off(self, fn: int, depth: int = 2) -> bool:
-        """Whether `fn`, or a wrapper it calls within `depth`, makes an enter call."""
-        if fn in self.wrappers:
-            return True
-        where = self.code.function(fn)
-        return depth > 0 and any(
-            self.hands_off(c.target, depth - 1)
-            for c in self.code.calls
-            if c.site in where and c.target in self.helpers
+    def hands_off(self, fn: int) -> bool:
+        """Whether `fn` makes an enter call itself or calls a helper that does."""
+        code = self.code
+        where = code.function(fn)
+        return where.start in self.wrappers or any(
+            c.target is not None
+            and c.target in code.text
+            and code.function(c.target).start in self.helpers
+            for c in code.calls
+            if c.site in where
         )
 
     @cached_property
@@ -241,9 +254,11 @@ class Chain:
         """Enter calls in functions that are neither handlers, translators nor enter-action."""
         handlers = {p.handler for p in self.ms.pairs.values()}
         skip = handlers | self.enter.translators | self.enter.functions
-        return {fn: self.edges(self.walker.run(fn)) for fn in sorted(self.wrappers - skip)}
+        found = {fn: self.edges(self.walker.run(fn)) for fn in sorted(self.wrappers - skip)}
+        return {fn: edges for fn, edges in found.items() if edges}
 
     def predecessors(self) -> dict[Pair, list[Pair]]:
+        """{pair: the pairs whose handlers can land in it}."""
         out: dict[Pair, list[Pair]] = {}
         for key, link in self.pairs.items():
             for e in link.next:
@@ -254,16 +269,15 @@ class Chain:
 
     def edges(self, sites: Iterable[Site]) -> tuple[Edge, ...]:
         """One edge per (site, landing pairs); the shortest guard set leads, the rest are alts."""
-        found: dict[tuple[int, tuple[Pair, ...]], tuple[Site, list[tuple[str, ...]]]] = {}
+        found: dict[tuple[int, tuple[Pair, ...] | None], tuple[Site, list[tuple[str, ...]]]] = {}
         for s in sites:
             main, id, mode = s.args
-            if s.kind == "enter":
-                known_ = dict(s.facts)
-                to = (
-                    () if main is None or id is None else self.enter.resolve(main, id, mode, known_)
-                )
-            else:
-                to = () if main is None or id is None else ((main, id),)
+            to: tuple[Pair, ...] | None = None
+            if main is not None and id is not None:
+                if s.kind == "enter":
+                    to = self.enter.resolve(main, id, mode, dict(s.facts))
+                else:
+                    to = ((main, id),)
             guards = simplify(s.guards)
             _, sets = found.setdefault((s.site, to), (s, []))
             if guards not in sets:
@@ -272,7 +286,9 @@ class Chain:
         for (site, to), (s, sets) in found.items():
             sets.sort(key=len)
             main, id, mode = s.args
-            out.append(Edge(site, s.kind, main, id, mode, s.via, to, sets[0], tuple(sets[1:])))
+            alts = tuple(sets[1:])
+            edge = Edge(site, s.kind, main, id, mode, s.via, to or (), sets[0], alts, to is None)
+            out.append(edge)
         return tuple(out)
 
 

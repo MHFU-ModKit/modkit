@@ -4,7 +4,7 @@ from mhfu import addresses as a
 from mhfu import files
 from mhfu.em.moveset import Moveset, Walker, known
 from mhfu.memory import Image
-from mhfu.mips import Code
+from mhfu.mips import Code, Gpr
 
 BASE = 0x0010_0000
 R = {n: i for i, n in enumerate("zero at v0 v1 a0 a1 a2 a3 t0 t1".split())} | {"t9": 25, "ra": 31}
@@ -36,6 +36,10 @@ def bne(rs, rt, to, at):
 
 def jal(target):
     return 3 << 26 | target >> 2 & 0x03FF_FFFF
+
+
+def j(target):
+    return 2 << 26 | target >> 2 & 0x03FF_FFFF
 
 
 def jr(rs):
@@ -119,6 +123,23 @@ def test_facts():
     stored = code(sb("zero", 0x280), *(twice.at(va(i)).getRaw() for i in range(12)))
     w = Walker(stored, {a.ACTION_EXECUTOR: "anim"}, guards=False)
     assert [s.args[0] for s in w.run(BASE)] == [2]
+
+
+def test_tail_call_and_probe():
+    thunk = code(
+        j(va(4)),  # a tail call: the walk goes on at the same depth
+        li("a1", 7),
+        jal(va(4)),  # never runs; makes va(4) a function
+        NOP,
+        sb("a1", 0x280),  # 4
+        jal(a.ACTION_EXECUTOR),
+        NOP,
+        jr("ra"),
+        NOP,
+    )
+    w = Walker(thunk, {a.ACTION_EXECUTOR: "anim"}, depth=0, probes={va(4): Gpr.a1})
+    found = {(s.kind, s.args[0], s.via) for s in w.run(BASE)}
+    assert found == {("probe", 7, (va(4),)), ("anim", 7, (va(4),))}
 
 
 def test_game(game):

@@ -97,7 +97,7 @@ def phases_(args: argparse.Namespace) -> int:
 
 
 def _edge(e: Edge) -> str:
-    to = " ".join(f"({m},{s})" for m, s in e.to) or "(computed)"
+    to = "(computed)" if e.computed else " ".join(f"({m},{s})" for m, s in e.to) or "nothing"
     call = f"{e.kind}({e.main},{e.id},{e.mode})"
     via = " via " + ",".join(f"0x{v:08X}" for v in e.via) if e.via else ""
     guards = f"  [{' & '.join(e.guards)}]" if e.guards else ""
@@ -112,7 +112,8 @@ def chain(args: argparse.Namespace) -> int:
     if args.enter:
         for main, rows in sorted(ch.enter.table().items()):
             for n, to in sorted(rows.items()):
-                print(f"  enter({main},{n:3d}) -> {' '.join(map(str, to)) or '(computed)'}")
+                shown = "(computed)" if to is None else " ".join(map(str, to)) or "nothing"
+                print(f"  enter({main},{n:3d}) -> {shown}")
         return 0
     if args.brain:
         for fn, edges in ch.brain.items():

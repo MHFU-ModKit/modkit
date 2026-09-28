@@ -239,8 +239,8 @@ class Site:
 
     site: int
     kind: str
-    args: tuple[int | None, int | None, int | None]
-    """a1, a2, a3 when literal on that path."""
+    args: tuple[int | None, ...]
+    """The walker's `args` registers (a1, a2, a3 by default) when literal on that path."""
     guards: tuple[str, ...] = ()
     via: tuple[int, ...] = ()
     """The functions the walk descended into to reach it, outermost first."""
@@ -304,13 +304,17 @@ class Walker:
     """A bounded path walk of one function that interprets what it can.
 
     It knows literals, the entity pointer (a0 on entry), its vtable and methods, loads from the
-    entity and what calls return. A path learns entity cells from the stores and branches on
-    it and keeps them across calls: a callee is taken not to change a cell its caller tested.
-    A branch or switch on a value it cannot evaluate forks; with `guards`, a fork on a named
-    subject records a guard on each side. It descends into calls to `follow` (default: any
-    overlay function) up to `depth`, and records every call to a `watch` target or a `methods`
-    vtable slot, tail calls included. A pc runs at most once per path; `max_paths` path ends
-    and `max_steps` per path bound a walk, and `truncated` names the functions that hit one.
+    entity and what calls return. A path learns entity cells from its stores and branches and
+    keeps them across calls: a callee is taken not to change a cell its caller tested. A
+    branch or switch on a value it cannot evaluate forks; with `guards`, a fork on a named
+    subject records a guard on each side.
+
+    It descends into calls to `follow` (default: any overlay function; a function's start
+    stands for all of it) up to `depth` nested calls, a tail call not counting as one. It
+    records every call to a `watch` target or a `methods` vtable slot, tail calls included,
+    with the values of `args` there, and the value of a `probes` instruction's register as it
+    runs (a Site of kind "probe"). A pc runs at most once per path; `max_paths` path ends and
+    `max_steps` per path bound a walk, and `truncated` names the functions that hit one.
     """
 
     def __init__(
@@ -323,6 +327,8 @@ class Walker:
         depth: int = 1,
         facts: Facts | None = None,
         names: Mapping[int, str] | None = None,
+        args: tuple[Register, ...] = (Gpr.a1, Gpr.a2, Gpr.a3),
+        probes: Mapping[int, Register] | None = None,
         guards: bool = True,
         max_paths: int = 4000,
         max_steps: int = 700,
@@ -331,6 +337,8 @@ class Walker:
         self.methods = dict(methods or {})
         self.follow = follow
         self.depth, self.facts, self.names = depth, dict(facts or {}), dict(names or {})
+        self.args, self.probes = args, dict(probes or {})
+        self._found: list[tuple[dict[Site, None], tuple[int, ...]]] = []
         self.guards, self.max_paths, self.max_steps = guards, max_paths, max_steps
         self.truncated: set[int] = set()
         self._memo: dict[tuple[object, ...], tuple[Site, ...]] = {}
@@ -358,6 +366,7 @@ class Walker:
     def _walk(self, start: _Path, depth: int, via: tuple[int, ...]) -> tuple[Site, ...]:
         code, fn = self.code, start.pc
         out: dict[Site, None] = {}
+        self._found.append((out, via))
         states: set[tuple[object, ...]] = set()
         work, ends = [start], 0
         while work:
@@ -400,21 +409,25 @@ class Walker:
                         continue
                     ends += 1
                     break
-                if ins.uniqueId == InstrId.cpu_j and ins.getInstrIndexAsVram() in code.function(
-                    p.pc
+                jump = ins.getInstrIndexAsVram() if ins.isJumpWithAddress() else None
+                if (
+                    jump is not None
+                    and ins.uniqueId == InstrId.cpu_j
+                    and jump in code.function(p.pc)
                 ):
                     self._exec(slot, p)
-                    p.pc = ins.getInstrIndexAsVram()
+                    p.pc = jump
                     continue
-                target = ins.getInstrIndexAsVram() if ins.isJumpWithAddress() else p.env.get(ins.rs)
+                target: Value | None = p.env.get(ins.rs) if jump is None else jump
                 self._exec(slot, p)
-                for s in self._call(target, p, depth, via):
+                for s in self._call(target, p, depth, via, ins.doesLink()):
                     out.setdefault(s)
                 if not ins.doesLink():
                     ends += 1
                     break
                 self._after_call(target, p)
                 p.pc += 8
+        self._found.pop()
         return tuple(out)
 
     def _branch(
@@ -473,7 +486,10 @@ class Walker:
             work.append(case)
         return False
 
-    def _call(self, target: Value | None, p: _Path, depth: int, via: tuple[int, ...]) -> list[Site]:
+    def _call(
+        self, target: Value | None, p: _Path, depth: int, via: tuple[int, ...], link: bool
+    ) -> list[Site]:
+        """The watched calls a call reaches; a tail call continues at the same depth."""
         kind = None
         if isinstance(target, int):
             kind = self.watch.get(target)
@@ -481,16 +497,17 @@ class Walker:
             kind = self.methods.get(target.n)
         site = p.pc
         if kind is not None:
-            a1, a2, a3 = (p.env.get(r) for r in (Gpr.a1, Gpr.a2, Gpr.a3))
-            args = tuple(v if isinstance(v, int) else None for v in (a1, a2, a3))
-            facts = frozenset(p.facts.items())
-            return [Site(site, kind, (args[0], args[1], args[2]), p.guards, via, facts)]
-        if not isinstance(target, int) or depth >= self.depth or target not in self.code.text:
+            args = tuple(v if isinstance(v := p.env.get(r), int) else None for r in self.args)
+            return [Site(site, kind, args, p.guards, via, frozenset(p.facts.items()))]
+        deeper = depth + link
+        if not isinstance(target, int) or deeper > self.depth or target not in self.code.text:
             return []
-        if self.follow is not None and target not in self.follow:
+        if target in via or (
+            self.follow is not None and self.code.function(target).start not in self.follow
+        ):
             return []
         seed: _Env = {r: p.env[r] for r in _PASSED if r in p.env}
-        found = self._run(target, seed, dict(p.facts), depth + 1, (*via, target))
+        found = self._run(target, seed, dict(p.facts), deeper, (*via, target))
         return [Site(s.site, s.kind, s.args, p.guards + s.guards, s.via, s.facts) for s in found]
 
     def _after_call(self, target: Value | None, p: _Path) -> None:
@@ -559,6 +576,12 @@ class Walker:
         """Interpret one non-control instruction into the path."""
         if ins is None or ins.isNop():
             return
+        if ins.vram in self.probes:
+            v = _value(p.env, self.probes[ins.vram])
+            out, via = self._found[-1]
+            out.setdefault(
+                Site(ins.vram, "probe", (v if isinstance(v, int) else None,), p.guards, via)
+            )
         u = ins.uniqueId
         if ins.doesStore():
             self._store(ins, u, p)
