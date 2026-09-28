@@ -26,9 +26,19 @@ EM_FIRST = 6094
 MONSTER_PAC = 6110
 """A species' model PAC is MONSTER_PAC + species (Tigrex 75: 6185)."""
 
-STAGE_PAC = 5807
-STAGE_OVERLAY = 5541
 STAGES = range(0, 267)
+"""Stage numbers, which are area_index values; each has an overlay, all but stage 0 a PAC."""
+STAGE_OVERLAY = 5541
+"""stage<NNN>.ovl is STAGE_OVERLAY + NNN."""
+STAGE_PAC = 5807
+"""st<NNN>.pac is STAGE_PAC + NNN; there is no st000.pac."""
+STAGE_VARIANT = 46
+STAGE_VARIANT_PAC = 6074
+STAGE_VARIANTS = range(16)
+"""The st046_<n><x>.pac the lobby loads in place of st046.pac (addresses.STAGE_VARIANT_FILE),
+variant (n - 1) + 4 * (x - 'a'), file STAGE_VARIANT_PAC + variant."""
+STAGE_PACS = range(STAGE_PAC + 1, STAGE_VARIANT_PAC + len(STAGE_VARIANTS))
+"""Every stage PAC, the variants included."""
 
 
 def engine_id(file_id: int) -> int:
@@ -44,10 +54,20 @@ def monster_pac(species: int) -> int:
 
 
 def stage_pac(stage: int) -> int:
+    if stage not in STAGES or not stage:
+        raise ValueError(f"no st{stage:03d}.pac")
     return STAGE_PAC + stage
 
 
+def stage_variant_pac(variant: int) -> int:
+    if variant not in STAGE_VARIANTS:
+        raise ValueError(f"no st{STAGE_VARIANT:03d} variant {variant}")
+    return STAGE_VARIANT_PAC + variant
+
+
 def stage_overlay(stage: int) -> int:
+    if stage not in STAGES:
+        raise ValueError(f"no stage{stage:03d}.ovl")
     return STAGE_OVERLAY + stage
 
 
