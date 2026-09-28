@@ -110,7 +110,6 @@ OVERLAY_SEGMENT_LOAD = { eu = 0x0884EA1C, type = "fn", doc = "per-segment overla
 BASE_SPECIES = { eu = 0x089AA1C8, type = "bytes", doc = "s8 per species id: its base species (subspecies collapse onto the parent), used by effect spawns" }
 SPECIES_TABLE = { eu = 0x09BB87C0, type = "bytes", doc = "per-species data rows (struct SPECIES) indexed by ENTITY.SPECIES, stride 0x1D0" }
 ACTION_LIST_REMAP = { eu = 0x09BD38F0, type = "bytes", doc = "alternate action-descriptor list (type 0x3A) used while ENTITY.FLAGS bit 0 is set" }
-EM_OVERLAY_BASE = { eu = 0x09D15100, type = "bytes", doc = "fixed big-monster overlay (em*.ovl) footprint incl. lower BSS; the file image sits 0x5080 above" }
 
 # --- model and resources ---
 SCRIPT_RESOURCE_REGISTER = { eu = 0x08890144, type = "fn", doc = "registerScriptResource(ctx, res_id, slot): queues a big monster's AI script resource" }
