@@ -139,6 +139,11 @@ USER_RAM_END = { eu = 0x0A000000, type = "bytes", doc = "first address past the 
 # --- big-monster behaviour: moves, phases, chains ---
 
 # --- big-monster intel: effects, attacks, engine interface ---
+EFFECT_SPAWN_AT = { eu = 0x09ACB610, type = "fn", doc = "effect spawn at a bone (entity, id, bone base, bone offset); wraps EFFECT_SPAWN" }
+EFFECT_SPAWN_FRAMED = { eu = 0x09ACB9C8, type = "fn", doc = "effect spawn once the clip cursor is in a frame window (entity, frame lo, frame hi, id, bone, mode, slot)" }
+EM_FACTORY = { eu = 0x09AB15D8, type = "fn", doc = "big-monster entity factory f(ctx, emId): a switch on emId whose cases install a species vtable" }
+ATTACK_SPAWNERS = { eu = 0x09B63000, type = "code", doc = "start of game_task's attack-node constructors, one per species (TIGREX_ATTACK_SPAWN among them), (?, entity, attack id)" }
+ATTACK_SPAWNERS_END = { eu = 0x09B66B00, type = "code", doc = "end of the ATTACK_SPAWNERS run" }
 
 # --- automation: screens, menus, dialogue ---
 
