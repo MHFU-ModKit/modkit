@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
+# SPDX-FileCopyrightText: 2013 Seth VanHeulen
 """PMO, the model format of both games. This module reads MHFU's version `1.0`; MHP3rd's `102`
 differs only where `mhp_formats.p3rd.pmo` says.
 

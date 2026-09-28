@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
+# SPDX-FileCopyrightText: 2013 Seth VanHeulen
 """The GE's texture swizzle: rows cut into blocks of 16 bytes by 8 rows, stored block after block,
 left to right and top to bottom. Bytes, not pixels, so it serves every bit depth."""
 
