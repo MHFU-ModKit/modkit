@@ -137,6 +137,13 @@ MAP_TABLE = { eu = 0x09CE4708, type = "bytes", doc = "32 MAP_ROW rows in game_su
 USER_RAM_END = { eu = 0x0A000000, type = "bytes", doc = "first address past the user partition" }
 
 # --- big-monster behaviour: moves, phases, chains ---
+CLIP_CURSOR_CROSSES = { eu = 0x08864348, type = "fn", doc = "(clip block, slot, frame in $f12): 1 on the tick the slot's clip cursor steps over frame" }
+CLIP_CURSOR_REACHED = { eu = 0x08864408, type = "fn", doc = "(clip block, slot, frame in $f12): 1 once the slot's clip cursor is at or past frame" }
+ACT_SET = { eu = 0x09AC8690, type = "fn", doc = "act_set(entity, main, sub, mode): enters a behaviour pair through SET_AI_STATE; species translators end here" }
+SET_AI_STATE_ALERT = { eu = 0x09AC87E8, type = "fn", doc = "SET_AI_STATE after clearing entity+0x769, then sets entity+0x4B7 = 1" }
+SET_AI_STATE = { eu = 0x09AC8818, type = "fn", doc = "(entity, main, sub): writes ENTITY.MAIN_STATE and SUB_STATE and zeroes the three PHASE bytes" }
+BUDGET_STEP = { eu = 0x09AD9A10, type = "fn", doc = "counts the float at entity+0x76C down by this frame's step; 1 once it is spent" }
+EM75_COLLIDED = { eu = 0x09D262C0, type = "fn", doc = "em75 overlay only: 1 when entity+0x278 & 0xC0000003 and entity+0x27E are both set, 0 for species 81" }
 
 # --- big-monster intel: effects, attacks, engine interface ---
 EFFECT_SPAWN_AT = { eu = 0x09ACB610, type = "fn", doc = "effect spawn at a bone (entity, id, bone base, bone offset); wraps EFFECT_SPAWN" }
