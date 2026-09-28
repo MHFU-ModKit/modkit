@@ -13,15 +13,14 @@ position, which is how a projectile carries a hitbox.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from rabbitizer import InstrId
 
 from . import addresses as a
-from . import mips
 from .hitzone import SENTINEL_BONE, STRIDE, HitVolume, VolumeSet
 from .memory import Memory, Unmapped
+from .mips import Code, Gpr
 from .overlay import Overlay
 from .views import View, u8, u16, u32
 
@@ -33,10 +32,6 @@ MAX_OFFSET = 4000.0
 MAX_BONE, MAX_SHAPE, MAX_ROW, MAX_PART = 0x7F, 1, 6, 7
 MIN_TABLE = 4
 """The structural volume-table search wants at least this many set pointers."""
-A3 = 7
-"""The register the handle travels in."""
-SETUP_BEFORE = 10
-"""Instructions before a call that its argument setup may start at."""
 STORE_AFTER = 16
 """Instructions after the setter call within which the volume set is stored."""
 
@@ -103,34 +98,6 @@ def primary_table(tables: list[AttackTable]) -> AttackTable | None:
     """The overlay's moveset: the table with the most records (em75's first holds 107 against
     1, 5, 1 and 4; em54's extras are movesets too, so "the first" would be wrong)."""
     return max(tables, key=lambda t: (len(t.attacks), -t.records), default=None)
-
-
-# --- instruction patterns, local until mips.py has them ---
-
-
-def calls_to(mem: Memory, text: range, target: int) -> Iterator[int]:
-    """Addresses of every `jal target` in `text`."""
-    for ins in mips.instructions(mem, text.start, text.stop):
-        if ins.uniqueId == InstrId.cpu_jal and ins.getInstrIndexAsVram() == target:
-            yield ins.vram
-
-
-def constant(mem: Memory, text: range, at: int, reg: int, back: int) -> int | None:
-    """The `lui reg / addiu reg, reg` constant set up from `back` instructions before `at`
-    through the one after it (a delay slot)."""
-    start = max(at - 4 * back, text.start)
-    hi = lo = None
-    for ins in mips.instructions(mem, start, min(at + 8, text.stop)):
-        if ins.uniqueId == InstrId.cpu_lui and ins.rt.value == reg:
-            hi, lo = ins.getProcessedImmediate(), None
-        elif (
-            ins.uniqueId == InstrId.cpu_addiu
-            and ins.rs.value == reg
-            and ins.rt.value == reg
-            and hi is not None
-        ):
-            lo = ins.getProcessedImmediate()
-    return None if hi is None or lo is None else ((hi << 16) + lo) & 0xFFFF_FFFF
 
 
 # --- the tables ---
@@ -204,17 +171,22 @@ def find_volume_table(ovl: Overlay) -> int | None:
     return best[0] if best and best[1] >= MIN_TABLE else None
 
 
-def _volume_table_va(ovl: Overlay, call: int) -> int | None:
+def setter_calls(ovl: Overlay, code: Code | None = None) -> list[int]:
+    """The overlay's calls to ATTACK_TABLE_SETTER."""
+    code = code or Code(ovl, ovl.text)
+    return [c.site for c in code.calls if c.target == a.ATTACK_TABLE_SETTER and c.link]
+
+
+def _volume_table_va(ovl: Overlay, code: Code, call: int) -> int | None:
     """The table whose entry the overlay stores at ATTACK_NODE.VOLUME_SET after `call`."""
-    node_field = a.ATTACK_NODE.VOLUME_SET
-    for i, ins in enumerate(mips.instructions(ovl, call + 4, call + 4 * STORE_AFTER), 1):
-        if ins.vram not in ovl.text:
-            break
-        if ins.uniqueId == InstrId.cpu_sw and ins.getProcessedImmediate() == node_field:
-            for reg in range(1, 32):
-                t = constant(ovl, ovl.text, ins.vram, reg, back=i)
-                if t is not None and t in ovl.initialised:
-                    return t
+    for ins in code.span(range(call + 4, call + 4 * STORE_AFTER)):
+        if (
+            ins.uniqueId == InstrId.cpu_sw
+            and ins.getProcessedImmediate() == a.ATTACK_NODE.VOLUME_SET
+        ):
+            load = code.source(ins.vram, ins.rt)
+            table = code.table(load.vram) if load is not None and load.doesLoad() else None
+            return table if table in ovl.initialised else None
     return None
 
 
@@ -247,11 +219,12 @@ def tables(ovl: Overlay) -> list[AttackTable]:
     """Every attack table the overlay passes to ATTACK_TABLE_SETTER, in call order; em1 and
     em33 never call it."""
     data = ovl.initialised
+    code = Code(ovl, ovl.text)
     handles: dict[int, int | None] = {}
-    for call in calls_to(ovl, ovl.text, a.ATTACK_TABLE_SETTER):
-        h = constant(ovl, ovl.text, call, A3, SETUP_BEFORE)
+    for call in setter_calls(ovl, code):
+        h = code.constant(call, Gpr.a3)
         if h is not None and h in data and h not in handles:
-            handles[h] = _volume_table_va(ovl, call)
+            handles[h] = _volume_table_va(ovl, code, call)
     starts = sorted({ovl.u32(h) for h in handles if ovl.u32(h) in data})
     fallback: list[int | None] = []
     out = []

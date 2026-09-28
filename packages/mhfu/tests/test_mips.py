@@ -3,7 +3,7 @@ import struct
 import pytest
 from mhfu import files
 from mhfu.memory import Image, Unmapped
-from mhfu.mips import Code, Fpr, Gpr, decode, is_prologue, writes
+from mhfu.mips import Code, Fpr, Gpr, decode, is_prologue, move_source, writes
 
 BASE = 0x0010_0000
 REGS = "zero at v0 v1 a0 a1 a2 a3 t0 t1 t2 t3 t4 t5 t6 t7 s0 s1 s2 s3 s4 s5 s6 s7 t8 t9".split()
@@ -96,6 +96,8 @@ def test_decode_fields():
     assert not is_prologue(decode(addiu("sp", "sp", 0x10), BASE))
     assert writes(decode(jal(BASE), BASE), Gpr.ra)
     assert writes(decode(mtc1("at", 12), BASE), Fpr.fa0)
+    assert move_source(decode(reg(0x25, "a0", "s0"), BASE)) == Gpr.s0  # or: the move pseudo
+    assert move_source(decode(addu("a0", "zero", "s1"), BASE)) == Gpr.s1
 
 
 def test_functions():
@@ -118,6 +120,22 @@ def test_functions():
     assert code.function(va(9)) == range(va(8), va(12))
     with pytest.raises(Unmapped):
         code.at(va(12))
+
+
+def test_tail_called_function():
+    code = build(
+        PROLOGUE,
+        addiu("v0", "zero", 1),
+        addiu("v1", "zero", 2),  # 2
+        j(va(2)),  # into the middle of a run: not a call
+        NOP,
+        j(va(8)),  # a tail call to the next function
+        addiu("sp", "sp", 0x10),
+        NOP,  # padding
+        RET,  # 8 reached only by the j
+        NOP,
+    )
+    assert code.entries == (va(0), va(8))
 
 
 def test_second_frame_is_not_a_function():
@@ -186,6 +204,7 @@ def test_switch(bias):
     assert s.operand is not None and s.operand.getProcessedImmediate() == 0x298
     assert va(13) in code.labels
     assert all(c.site != va(11) for c in code.calls)
+    assert code.table(va(10)) == va(16)  # lw v1, 0(table + index)
 
 
 def test_constant_arguments():
@@ -232,6 +251,22 @@ def test_constant_stops_at_a_label():
     )
     assert code.constant(va(5), Gpr.a1) is None
     assert code.constant(va(4), Gpr.a1) == 1  # past the branch, on its fall-through
+
+
+def test_virtual_call_after_a_label():
+    code = build(
+        PROLOGUE,
+        imm(0x14, "zero", "a1", 2),  # beql a1, zero, 4: the vptr loads on both paths
+        lw("t9", 0, "a0"),
+        lw("t9", 0, "a0"),
+        lw("t9", 0x28, "t9"),  # 4
+        jalr("t9"),
+        NOP,
+        RET,
+        NOP,
+    )
+    (call,) = code.calls
+    assert (call.site, call.slot) == (va(5), 0x28)
 
 
 def test_calls():

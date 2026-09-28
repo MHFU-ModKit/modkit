@@ -2,7 +2,7 @@ import struct
 
 import pytest
 from mhfu import addresses as a
-from mhfu import files, hitbox, mips
+from mhfu import files, mips
 from mhfu import stage as S
 from mhfu.memory import Image
 from mhfu.overlay import TEXT, Overlay
@@ -68,10 +68,12 @@ def test_loaded_zeroes_bss_not_slack():
     assert mem.read(ovl.bss.start, len(ovl.bss)) == bytes(len(ovl.bss))
 
 
-def test_constant_getter_sign_extends():
+def test_returned_constants_sign_extend():
     text = words(0, lui(2, 0x11), JR_RA, addiu(2, 2, 0x8010), lui(2, 0x11), JR_RA, addiu(3, 2, 1))
     ovl = overlay(text, b"")
-    assert list(S.constant_getters(ovl, ovl.text)) == [0x10_8010]
+    code = mips.Code(ovl, ovl.text)
+    returned = [code.constant(i.vram, mips.Gpr.v0) for i in code if i.isReturn()]
+    assert returned == [0x10_8010, 0x11_0000]
 
 
 def test_stage_overlay():
@@ -197,7 +199,7 @@ def test_map_table_game(game):
 def test_lobby_loads_the_variants(game):
     """The last 16 stage PACs are st046's: the lobby asks the variant picker for the file."""
     lobby = game.overlay(files.LOBBY_TASK)
-    assert list(hitbox.calls_to(lobby, lobby.text, a.STAGE_VARIANT_FILE))
+    assert mips.Code(lobby, lobby.text).callers(a.STAGE_VARIANT_FILE)
     eboot = game.eboot()
     picker = mips.instructions(eboot, a.STAGE_VARIANT_FILE, a.STAGE_VARIANT_FILE + 0x100)
     first = files.engine_id(files.stage_variant_pac(0))

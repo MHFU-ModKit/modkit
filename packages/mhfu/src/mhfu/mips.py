@@ -1,6 +1,8 @@
 """MIPS as the PSP's Allegrex CPU runs it, decoded by rabbitizer, and the analyses the tools that
 read the game's code share. Registers are rabbitizer enums (`Gpr.a1`, `Fpr.fa0`); read an
 instruction through its fields (`uniqueId`, `rs`, `getProcessedImmediate()`), never its text.
+`uniqueId` names pseudo-instructions (`cpu_b`, `cpu_beqz`, `cpu_nop`, `cpu_move`, `cpu_negu`),
+so test a kind with `isBranch()`, `isUnconditionalBranch()` or `move_source()` where one exists.
 
     code = Code(eboot, eboot.text)          # any Memory and the range holding its code
     code.at(va)                             # the instruction at va
@@ -10,6 +12,7 @@ instruction through its fields (`uniqueId`, `rs`, `getProcessedImmediate()`), ne
     [p for p in code.pairs if p.value == address]   # lui/lo pairs that form address
     code.switch(jr)                         # the jump table a `jr` dispatches through
     code.constant(call, Gpr.a1)             # the literal a1 the call passes, or None
+    code.table(load)                        # the table `lw v0, 0(table + index)` reads
 """
 
 from __future__ import annotations
@@ -73,6 +76,15 @@ def writes(ins: Instruction, reg: Register) -> bool:
     )
 
 
+def move_source(ins: Instruction) -> Register | None:
+    """The register a move copies: `move`, or `addu`/`or` with $zero; else None."""
+    if ins.uniqueId == InstrId.cpu_move:
+        return ins.rs
+    if ins.uniqueId in (InstrId.cpu_addu, InstrId.cpu_or) and Gpr.zero in (ins.rs, ins.rt):
+        return ins.rt if ins.rs == Gpr.zero else ins.rs
+    return None
+
+
 def _ends_flow(ins: Instruction) -> bool:
     """Control never falls through past this instruction's delay slot."""
     return ins.isUnconditionalBranch() or (ins.isJump() and not ins.doesLink())
@@ -124,6 +136,7 @@ class Code:
         self.mem = mem
         self.text = text
         self._ins = list(instructions(mem, text.start, text.stop))
+        self._busy: set[tuple[int, int]] = set()
 
     def __iter__(self) -> Iterator[Instruction]:
         return iter(self._ins)
@@ -144,19 +157,14 @@ class Code:
     # --- functions ---
 
     @cached_property
-    def _jumps(self) -> frozenset[int]:
-        """Targets of branches and jumps inside the code."""
-        out = set()
-        for ins in self._ins:
-            if ins.isBranch() or ins.isJumpWithAddress():
-                target = ins.getBranchVramGeneric()
-                if target in self.text:
-                    out.add(target)
-        return frozenset(out)
+    def _branch_targets(self) -> frozenset[int]:
+        return frozenset(i.getBranchVramGeneric() for i in self._ins if i.isBranch())
 
     @cached_property
     def entries(self) -> tuple[int, ...]:
-        """Function starts: jal targets, and the run of code each stack-frame prologue opens.
+        """Function starts: jal targets, the run of code each stack-frame prologue opens, and
+        tail-call targets: a `j` to a run no branch reaches, in another function or right after
+        the `j` and any padding (a jump there calls the function the linker placed next).
 
         A prologue scheduled after a few instructions starts its function where that straight
         run begins; one reached by a branch is a second frame inside a function, not a start.
@@ -170,19 +178,31 @@ class Code:
                 start = self._run_start(ins.vram)
                 if start is not None:
                     starts.add(start)
+        known = sorted(starts)
+        for ins in self._ins:
+            if ins.uniqueId != InstrId.cpu_j:
+                continue
+            t = ins.getInstrIndexAsVram()
+            if t not in self.text or t in starts or self._run_start(t) != t:
+                continue
+            i = bisect.bisect_right(known, ins.vram)
+            elsewhere = not known[i - 1] <= t < (known[i] if i < len(known) else self.text.stop)
+            if elsewhere or all(x.isNop() for x in self.span(range(ins.vram + 8, t))):
+                starts.add(t)
         return tuple(sorted(starts))
 
     def _run_start(self, va: int) -> int | None:
+        """Where the straight run of code holding `va` starts, or None if a branch enters it."""
         a = va
         while a - 4 >= self.text.start and not (
             a - 8 >= self.text.start and _ends_flow(self.at(a - 8))
         ):
-            if a in self._jumps:
+            if a in self._branch_targets:
                 return None
             a -= 4
         while a < va and self.at(a).isNop():
             a += 4
-        return None if a in self._jumps else a
+        return None if a in self._branch_targets else a
 
     def function(self, va: int) -> range:
         """From the entry at or before `va` to the next entry."""
@@ -250,36 +270,47 @@ class Code:
         if check is None:
             return None, 0, None
         first, reg = 0, check.rs
-        operand = self._source(check.vram, reg, self._jumps)
+        operand = self._unique(check.vram, reg, self._into_branches)
         while operand is not None:
             u = operand.uniqueId
             if u in (InstrId.cpu_addiu, InstrId.cpu_andi) and operand.rs != Gpr.zero:
                 reg = operand.rs
                 if u == InstrId.cpu_addiu:
                     first -= operand.getProcessedImmediate()
-            elif u in (InstrId.cpu_addu, InstrId.cpu_or) and Gpr.zero in (operand.rs, operand.rt):
-                reg = operand.rt if operand.rs == Gpr.zero else operand.rs
+            elif (moved := move_source(operand)) is not None:
+                reg = moved
             else:
                 break
-            operand = self._source(operand.vram, reg, self._jumps)
+            operand = self._unique(operand.vram, reg, self._into_branches)
         return check.getProcessedImmediate(), first, operand
 
     def _shift(self, jr: int) -> Instruction | None:
         """The `sll t, index, 2` of the dispatch `lw t, 0(table + t); jr t`."""
-        load = self._source(jr, self.at(jr).rs, self._jumps)
+        into = self._into_branches
+        load = self._unique(jr, self.at(jr).rs, into)
         if load is None or not load.doesLoad():
             return None
-        add = self._source(load.vram, load.rs, self._jumps)
+        add = self._unique(load.vram, load.rs, into)
         if add is None or add.uniqueId != InstrId.cpu_addu:
             return None
         for reg in (add.rs, add.rt):
-            shift = self._source(add.vram, reg, self._jumps)
+            shift = self._unique(add.vram, reg, into)
             if shift is not None and shift.uniqueId == InstrId.cpu_sll and shift.sa == 2:
                 return shift
         return None
 
+    def _search(
+        self, site: int, reg: Register | None, match: Callable[[Instruction], bool]
+    ) -> Instruction | None:
+        """The first instruction satisfying `match` on some path back from `site`, on which
+        nothing writes `reg` in between."""
+        found, _ = self._back(site, reg, match, self._into_branches)
+        return next((i for i in found if match(i)), None)
+
+    # --- data flow backwards from a site ---
+
     @cached_property
-    def _into(self) -> dict[int, list[int]]:
+    def _into_branches(self) -> dict[int, list[int]]:
         """Branch and jump sites by target."""
         out: dict[int, list[int]] = {}
         for ins in self._ins:
@@ -287,96 +318,109 @@ class Code:
                 out.setdefault(ins.getBranchVramGeneric(), []).append(ins.vram)
         return out
 
-    def _search(
-        self, site: int, reg: Register | None, match: Callable[[Instruction], bool]
-    ) -> Instruction | None:
-        """The first instruction satisfying `match` on some path back from `site` inside its
-        function, on which nothing writes `reg` in between."""
-        fn = self.function(site)
-        todo, seen = [site], {site}
-        while todo:
-            a = todo.pop()
-            paths: list[tuple[list[int], int]] = [([b + 4, b], b) for b in self._into.get(a, ())]
-            owner = a - 8 if a - 8 >= fn.start and self.at(a - 8).hasDelaySlot() else None
-            if owner is None and a - 4 >= fn.start:
-                paths.append(([a - 4], a - 4))
-            elif owner is not None and not _ends_flow(self.at(owner)):
-                ran = [owner] if self.at(owner).isBranchLikely() else [a - 4, owner]
-                paths.append((ran, owner))
-            for ran, back in paths:
-                if back not in fn or back in seen:
-                    continue
-                for ins in map(self.at, ran):
-                    if match(ins):
-                        return ins
-                    if reg is not None and (
-                        writes(ins, reg) or (ins.doesLink() and reg in _CALL_CLOBBERS)
-                    ):
-                        break
-                else:
-                    seen.add(back)
-                    todo.append(back)
-        return None
-
-    # --- data flow backwards from a site ---
+    @cached_property
+    def _into(self) -> dict[int, list[int]]:
+        """Branch, jump and jump-table sites by target."""
+        out = {t: list(sites) for t, sites in self._into_branches.items()}
+        for s in self.switches.values():
+            for t in dict.fromkeys(s.targets):
+                out.setdefault(t, []).append(s.jr)
+        return out
 
     @cached_property
     def labels(self) -> frozenset[int]:
         """Where control arrives other than by falling through: branch, jump and case targets
         and function entries."""
-        cases = {t for s in self.switches.values() for t in s.targets}
-        return self._jumps | set(self.entries) | cases
+        return frozenset(self._into) & frozenset(self.text) | frozenset(self.entries)
 
-    def source(self, site: int, reg: Register) -> Instruction | None:
-        """The instruction whose write to `reg` reaches `site`, or None where the value comes
-        from another path (a label) or from the caller. For a jump or call, as its target sees
-        `reg`: after the delay slot. Past a call, the call itself sets what it may clobber."""
-        return self._source(site, reg, self.labels)
-
-    def _source(
+    def _back(
         self,
         site: int,
         reg: Register | None,
-        labels: frozenset[int],
-        match: Callable[[Instruction], bool] | None = None,
-    ) -> Instruction | None:
-        """The nearest instruction back from `site` that writes `reg` or satisfies `match`."""
+        match: Callable[[Instruction], bool] | None,
+        into: dict[int, list[int]],
+    ) -> tuple[list[Instruction], bool]:
+        """Every path back from `site` inside its function, to the first instruction on each
+        that writes `reg` or satisfies `match`: those, and whether some path got to the
+        function's entry without one. Past a call, the call sets what it may clobber."""
 
         def hit(ins: Instruction) -> bool:
             return (reg is not None and writes(ins, reg)) or (match is not None and match(ins))
 
-        if self.at(site).isJump() and site + 4 in self.text and hit(self.at(site + 4)):
-            return self.at(site + 4)
-        a = site
-        while a not in labels and a - 4 >= self.text.start:
-            prev = self.at(a - 4)
-            owner = self.at(a - 8) if a - 8 >= self.text.start else None
+        fn = self.function(site)
+        if self.at(site).isJump() and site + 4 in fn and hit(self.at(site + 4)):
+            return [self.at(site + 4)], False
+        found: dict[int, Instruction] = {}
+        open_ = False
+        todo, seen = [site], {site}
+        while todo:
+            a = todo.pop()
+            open_ |= a == fn.start
+            paths = [([b + 4, b], b) for b in into.get(a, ()) if b in fn]
+            owner = self.at(a - 8) if a - 8 >= fn.start else None
             if owner is None or not owner.hasDelaySlot():
-                if hit(prev):
-                    return prev
-                a -= 4
-                continue
-            if _ends_flow(owner):
+                if a - 4 >= fn.start:
+                    paths.append(([a - 4], a - 4))
+            elif owner.doesLink() and reg in _CALL_CLOBBERS:
+                found[owner.vram] = owner
+            elif not _ends_flow(owner):
+                paths.append(([a - 8] if owner.isBranchLikely() else [a - 4, a - 8], a - 8))
+            for ran, back in paths:
+                for ins in map(self.at, ran):
+                    if hit(ins):
+                        found[ins.vram] = ins
+                        break
+                else:
+                    if back not in seen:
+                        seen.add(back)
+                        todo.append(back)
+        return list(found.values()), open_
+
+    def _unique(self, site: int, reg: Register, into: dict[int, list[int]]) -> Instruction | None:
+        found, open_ = self._back(site, reg, None, into)
+        return found[0] if len(found) == 1 and not open_ else None
+
+    def source(self, site: int, reg: Register) -> Instruction | None:
+        """The instruction whose write to `reg` reaches `site` on every path inside its
+        function; None where paths disagree or one starts at the function's entry. For a jump
+        or call, as its target sees `reg`: after the delay slot. Past a call, the call itself
+        sets what it may clobber."""
+        return self._unique(site, reg, self._into)
+
+    def table(self, site: int) -> int | None:
+        """The literal address the load or store at `site` reads from, or for `off(table +
+        index)` the table's: what `lw v0, 0(v0)` after `addu v0, table, index` indexes."""
+        ins = self.at(site)
+        offset = ins.getProcessedImmediate()
+        base = self.constant(site, ins.rs)
+        if base is None:
+            add = self.source(site, ins.rs)
+            if add is None or add.uniqueId != InstrId.cpu_addu:
                 return None
-            if owner.doesLink() and reg in _CALL_CLOBBERS:
-                return owner
-            if not owner.isBranchLikely() and hit(prev):
-                return prev
-            if match is not None and match(owner):
-                return owner
-            a -= 8
-        return None
+            base = self.constant(add.vram, add.rs)
+            if base is None:
+                base = self.constant(add.vram, add.rt)
+        return None if base is None else (base + offset) & _MASK
 
     def constant(self, site: int, reg: Register) -> int | None:
-        """The literal `reg` holds at `site` (as `source` sees it), unsigned 32-bit, or None.
+        """The literal `reg` holds at `site` on every path (the writes `source` would see),
+        unsigned 32-bit, or None.
 
         Follows `lui`, `addiu`, `ori`, register moves and `mtc1`; an FPU register's value is
         its bits."""
         if reg == Gpr.zero:
             return 0
-        ins = self.source(site, reg)
-        if ins is None:
-            return None
+        if (site, reg.value) in self._busy:
+            return None  # a loop feeding the register back into itself
+        self._busy.add((site, reg.value))
+        try:
+            found, open_ = self._back(site, reg, None, self._into)
+            values = {self._value(ins) for ins in found}
+        finally:
+            self._busy.discard((site, reg.value))
+        return values.pop() if len(values) == 1 and not open_ else None
+
+    def _value(self, ins: Instruction) -> int | None:
         u, at = ins.uniqueId, ins.vram
         if u == InstrId.cpu_lui:
             return (ins.getProcessedImmediate() << 16) & _MASK
@@ -386,8 +430,8 @@ class Code:
                 return None
             imm = ins.getProcessedImmediate()
             return (base | imm) if u == InstrId.cpu_ori else (base + imm) & _MASK
-        if u in (InstrId.cpu_addu, InstrId.cpu_or) and Gpr.zero in (ins.rs, ins.rt):
-            return self.constant(at, ins.rt if ins.rs == Gpr.zero else ins.rs)
+        if (moved := move_source(ins)) is not None:
+            return self.constant(at, moved)
         if u == InstrId.cpu_mtc1:
             return self.constant(at, ins.rt)
         return None
@@ -415,13 +459,22 @@ class Code:
         return tuple(out)
 
     def _slot(self, site: int, reg: Register) -> int | None:
-        load = self.source(site, reg)
-        if load is None or load.uniqueId != InstrId.cpu_lw:
+        """`lw reg, slot(vptr)` with vptr from `lw vptr, 0(object)`, on every path."""
+        loads, open_ = self._back(site, reg, None, self._into)
+        if open_ or not loads or any(i.uniqueId != InstrId.cpu_lw for i in loads):
             return None
-        vptr = self.source(load.vram, load.rs)
-        if vptr is None or vptr.uniqueId != InstrId.cpu_lw or vptr.getProcessedImmediate():
+        slots = {i.getProcessedImmediate() for i in loads}
+        if len(slots) != 1:
             return None
-        return int(load.getProcessedImmediate())
+        for load in loads:
+            vptrs, open_ = self._back(load.vram, load.rs, None, self._into)
+            if (
+                open_
+                or not vptrs
+                or any(v.uniqueId != InstrId.cpu_lw or v.getProcessedImmediate() for v in vptrs)
+            ):
+                return None
+        return int(slots.pop())
 
     @cached_property
     def _callers(self) -> dict[int, list[int]]:
