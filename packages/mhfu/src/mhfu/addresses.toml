@@ -108,7 +108,7 @@ TIGREX_ATTACK_SPAWN = { eu = 0x09B661E8, type = "fn", doc = "em75-family attack-
 OVERLAY_LOAD_CALL = { eu = 0x0884E9F8, type = "code", doc = "jal into OVERLAY_SEGMENT_LOAD; hooked to learn when the AI overlay has landed" }
 OVERLAY_SEGMENT_LOAD = { eu = 0x0884EA1C, type = "fn", doc = "per-segment overlay loader that copies overlay code into place" }
 BASE_SPECIES = { eu = 0x089AA1C8, type = "bytes", doc = "s8 per species id: its base species (subspecies collapse onto the parent), used by effect spawns" }
-SPECIES_TABLE = { eu = 0x09BB87C0, type = "bytes", doc = "per-species data rows (struct SPECIES) indexed by ENTITY.SPECIES, stride 0x1D0" }
+SPECIES_TABLE = { eu = 0x09BB87C0, type = "bytes", doc = "per-species data rows (struct SPECIES) indexed by ENTITY.SPECIES" }
 ACTION_LIST_REMAP = { eu = 0x09BD38F0, type = "bytes", doc = "alternate action-descriptor list (type 0x3A) used while ENTITY.FLAGS bit 0 is set" }
 
 # --- model and resources ---
@@ -308,7 +308,8 @@ FILE_ID = { offset = 0x02, type = "u16", doc = "engine file id (extracted id + 1
 DATA = { offset = 0x04, type = "ptr", doc = "the file's raw buffer; a big-monster PAC lands here before the overlay restructures it" }
 
 [struct.SPECIES]
-doc = "one SPECIES_TABLE row at species*0x1D0; fields past 0x1D0 are parallel tables at the same stride; map-wide, read only"
+doc = "one SPECIES_TABLE row; fields past the stride are parallel tables at the same stride; map-wide, read only"
+stride = 0x1D0
 [struct.SPECIES.fields]
 COOLDOWNS = { offset = 0x00, type = "ptr", doc = "cooldown and max-duration timer table" }
 WEIGHTS = { offset = 0x04, type = "ptr", doc = "action selection weight table" }
