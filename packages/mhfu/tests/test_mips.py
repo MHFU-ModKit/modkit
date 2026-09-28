@@ -122,6 +122,22 @@ def test_functions():
         code.at(va(12))
 
 
+def test_tail_called_function():
+    code = build(
+        PROLOGUE,
+        addiu("v0", "zero", 1),
+        addiu("v1", "zero", 2),  # 2
+        j(va(2)),  # into the middle of a run: not a call
+        NOP,
+        j(va(8)),  # a tail call to the next function
+        addiu("sp", "sp", 0x10),
+        NOP,  # padding
+        RET,  # 8 reached only by the j
+        NOP,
+    )
+    assert code.entries == (va(0), va(8))
+
+
 def test_second_frame_is_not_a_function():
     code = build(
         PROLOGUE,
@@ -235,6 +251,22 @@ def test_constant_stops_at_a_label():
     )
     assert code.constant(va(5), Gpr.a1) is None
     assert code.constant(va(4), Gpr.a1) == 1  # past the branch, on its fall-through
+
+
+def test_virtual_call_after_a_label():
+    code = build(
+        PROLOGUE,
+        imm(0x14, "zero", "a1", 2),  # beql a1, zero, 4: the vptr loads on both paths
+        lw("t9", 0, "a0"),
+        lw("t9", 0, "a0"),
+        lw("t9", 0x28, "t9"),  # 4
+        jalr("t9"),
+        NOP,
+        RET,
+        NOP,
+    )
+    (call,) = code.calls
+    assert (call.site, call.slot) == (va(5), 0x28)
 
 
 def test_calls():
