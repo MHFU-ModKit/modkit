@@ -3,7 +3,7 @@ import struct
 import pytest
 from mhfu import files
 from mhfu.memory import Image, Unmapped
-from mhfu.mips import Code, Fpr, Gpr, decode, is_prologue, writes
+from mhfu.mips import Code, Fpr, Gpr, decode, is_prologue, move_source, writes
 
 BASE = 0x0010_0000
 REGS = "zero at v0 v1 a0 a1 a2 a3 t0 t1 t2 t3 t4 t5 t6 t7 s0 s1 s2 s3 s4 s5 s6 s7 t8 t9".split()
@@ -96,6 +96,8 @@ def test_decode_fields():
     assert not is_prologue(decode(addiu("sp", "sp", 0x10), BASE))
     assert writes(decode(jal(BASE), BASE), Gpr.ra)
     assert writes(decode(mtc1("at", 12), BASE), Fpr.fa0)
+    assert move_source(decode(reg(0x25, "a0", "s0"), BASE)) == Gpr.s0  # or: the move pseudo
+    assert move_source(decode(addu("a0", "zero", "s1"), BASE)) == Gpr.s1
 
 
 def test_functions():

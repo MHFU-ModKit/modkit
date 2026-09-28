@@ -1,6 +1,8 @@
 """MIPS as the PSP's Allegrex CPU runs it, decoded by rabbitizer, and the analyses the tools that
 read the game's code share. Registers are rabbitizer enums (`Gpr.a1`, `Fpr.fa0`); read an
 instruction through its fields (`uniqueId`, `rs`, `getProcessedImmediate()`), never its text.
+`uniqueId` names pseudo-instructions (`cpu_b`, `cpu_beqz`, `cpu_nop`, `cpu_move`, `cpu_negu`),
+so test a kind with `isBranch()`, `isUnconditionalBranch()` or `move_source()` where one exists.
 
     code = Code(eboot, eboot.text)          # any Memory and the range holding its code
     code.at(va)                             # the instruction at va
@@ -72,6 +74,15 @@ def writes(ins: Instruction, reg: Register) -> bool:
         or (ins.modifiesFt() and ins.ft == reg)
         or (ins.modifiesFs() and ins.fs == reg)
     )
+
+
+def move_source(ins: Instruction) -> Register | None:
+    """The register a move copies: `move`, or `addu`/`or` with $zero; else None."""
+    if ins.uniqueId == InstrId.cpu_move:
+        return ins.rs
+    if ins.uniqueId in (InstrId.cpu_addu, InstrId.cpu_or) and Gpr.zero in (ins.rs, ins.rt):
+        return ins.rt if ins.rs == Gpr.zero else ins.rs
+    return None
 
 
 def _ends_flow(ins: Instruction) -> bool:
@@ -258,8 +269,8 @@ class Code:
                 reg = operand.rs
                 if u == InstrId.cpu_addiu:
                     first -= operand.getProcessedImmediate()
-            elif u in (InstrId.cpu_addu, InstrId.cpu_or) and Gpr.zero in (operand.rs, operand.rt):
-                reg = operand.rt if operand.rs == Gpr.zero else operand.rs
+            elif (moved := move_source(operand)) is not None:
+                reg = moved
             else:
                 break
             operand = self._source(operand.vram, reg, self._jumps)
@@ -402,8 +413,8 @@ class Code:
                 return None
             imm = ins.getProcessedImmediate()
             return (base | imm) if u == InstrId.cpu_ori else (base + imm) & _MASK
-        if u in (InstrId.cpu_addu, InstrId.cpu_or) and Gpr.zero in (ins.rs, ins.rt):
-            return self.constant(at, ins.rt if ins.rs == Gpr.zero else ins.rs)
+        if (moved := move_source(ins)) is not None:
+            return self.constant(at, moved)
         if u == InstrId.cpu_mtc1:
             return self.constant(at, ins.rt)
         return None
