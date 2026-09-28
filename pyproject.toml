@@ -11,7 +11,11 @@ dev = [
     "mypy>=1.18",
     "types-psutil",
     "lupa>=2",
+    "mhp-formats[iso]",
 ]
+
+[tool.uv.sources]
+mhp-formats = { workspace = true }
 
 [tool.ruff]
 line-length = 100
@@ -29,4 +33,8 @@ asyncio_default_fixture_loop_scope = "function"
 [tool.mypy]
 strict = true
 python_version = "3.11"
-files = ["packages/ppsspp-debug/src"]
+files = ["packages/ppsspp-debug/src", "packages/mhp-formats/src"]
+
+[[tool.mypy.overrides]]
+module = ["mhef.*", "pycdlib.*"]
+ignore_missing_imports = true
