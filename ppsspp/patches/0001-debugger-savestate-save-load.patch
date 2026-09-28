@@ -1,0 +1,97 @@
+Debugger: savestate.save and savestate.load, answering once the save or load is done.
+
+diff --git a/Core/Debugger/WebSocket/GameSubscriber.cpp b/Core/Debugger/WebSocket/GameSubscriber.cpp
+index b738bd1..54af537 100644
+--- a/Core/Debugger/WebSocket/GameSubscriber.cpp
++++ b/Core/Debugger/WebSocket/GameSubscriber.cpp
+@@ -15,17 +15,25 @@
+ // Official git repository and contact information can be found at
+ // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
+ 
++#include <chrono>
++#include <future>
++#include <memory>
++
++#include "Common/File/Path.h"
+ #include "Common/System/System.h"
+ #include "Core/Config.h"
+ #include "Core/Debugger/WebSocket/GameSubscriber.h"
+ #include "Core/Debugger/WebSocket/WebSocketUtils.h"
+ #include "Core/ELF/ParamSFO.h"
++#include "Core/SaveState.h"
+ #include "Core/System.h"
+ 
+ DebuggerSubscriber *WebSocketGameInit(DebuggerEventHandlerMap &map) {
+ 	map["game.reset"] = &WebSocketGameReset;
+ 	map["game.status"] = &WebSocketGameStatus;
+ 	map["version"] = &WebSocketVersion;
++	map["savestate.save"] = &WebSocketSaveStateSave;
++	map["savestate.load"] = &WebSocketSaveStateLoad;
+ 
+ 	return nullptr;
+ }
+@@ -105,3 +113,54 @@ void WebSocketVersion(DebuggerRequest &req) {
+ 	json.writeString("name", "PPSSPP");
+ 	json.writeString("version", PPSSPP_GIT_VERSION);
+ }
++
++// SaveState only queues the work for the emulator thread, so wait for its callback: the reply then
++// means the file is written or the state is in place. The wait is short because this handler holds
++// the lifecycle lock, which a load that reinitializes memory also needs.
++static void RunSaveState(DebuggerRequest &req, bool save) {
++	if (PSP_GetBootState() != BootState::Complete)
++		return req.Fail("Game not running");
++	std::string path;
++	if (!req.ParamString("path", &path))
++		return;
++
++	auto done = std::make_shared<std::promise<std::string>>();
++	std::future<std::string> result = done->get_future();
++	auto callback = [done](SaveState::Status status, std::string_view message) {
++		if (status != SaveState::Status::FAILURE)
++			done->set_value("");
++		else
++			done->set_value(message.empty() ? "Savestate failed" : std::string(message));
++	};
++	if (save)
++		SaveState::Save(Path(path), -1, callback);
++	else
++		SaveState::Load(Path(path), -1, callback);
++
++	if (result.wait_for(std::chrono::seconds(10)) != std::future_status::ready)
++		return req.Fail("Timed out waiting for the savestate");
++	const std::string error = result.get();
++	if (!error.empty())
++		return req.Fail(error);
++	req.Respond();
++}
++
++// Write a savestate (savestate.save)
++//
++// Parameters:
++//  - path: string, the file to write, as the emulator sees it.
++//
++// Response (same event name) with no extra data once the file is written, or error.
++void WebSocketSaveStateSave(DebuggerRequest &req) {
++	RunSaveState(req, true);
++}
++
++// Load a savestate (savestate.load)
++//
++// Parameters:
++//  - path: string, the file to load, as the emulator sees it.
++//
++// Response (same event name) with no extra data once the state is loaded, or error.
++void WebSocketSaveStateLoad(DebuggerRequest &req) {
++	RunSaveState(req, false);
++}
+diff --git a/Core/Debugger/WebSocket/GameSubscriber.h b/Core/Debugger/WebSocket/GameSubscriber.h
+index af43c69..39134e5 100644
+--- a/Core/Debugger/WebSocket/GameSubscriber.h
++++ b/Core/Debugger/WebSocket/GameSubscriber.h
+@@ -24,3 +24,5 @@ DebuggerSubscriber *WebSocketGameInit(DebuggerEventHandlerMap &map);
+ void WebSocketGameReset(DebuggerRequest &req);
+ void WebSocketGameStatus(DebuggerRequest &req);
+ void WebSocketVersion(DebuggerRequest &req);
++void WebSocketSaveStateSave(DebuggerRequest &req);
++void WebSocketSaveStateLoad(DebuggerRequest &req);

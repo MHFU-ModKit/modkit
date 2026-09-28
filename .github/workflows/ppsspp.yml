@@ -1,0 +1,19 @@
+name: PPSSPP
+
+on:
+  pull_request:
+    paths: [ppsspp/**, .github/workflows/ppsspp.yml]
+  push:
+    branches: [main]
+    paths: [ppsspp/**, .github/workflows/ppsspp.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  # the patches apply to the pinned commit, it builds, and the runtime image has its libraries
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -f ppsspp/docker/Dockerfile ppsspp

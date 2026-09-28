@@ -264,9 +264,10 @@ class Client:
     game = _blocking(AsyncClient.game)
     wait_for_game = _blocking(AsyncClient.wait_for_game)
     reset = _blocking(AsyncClient.reset)
+    speed = _blocking(AsyncClient.speed)
+    set_speed = _blocking(AsyncClient.set_speed)
     frame_stats = _blocking(AsyncClient.frame_stats)
     screenshot = _blocking(AsyncClient.screenshot)
 
     save_state = _blocking(AsyncClient.save_state)
     load_state = _blocking(AsyncClient.load_state)
-    speed = _blocking(AsyncClient.speed)

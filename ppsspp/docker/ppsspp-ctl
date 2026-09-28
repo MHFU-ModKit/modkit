@@ -1,0 +1,171 @@
+#!/bin/bash
+# Start and stop PPSSPP inside the container.
+#   ppsspp-ctl start [--iso PATH] [--state PATH] [--backend vulkan|opengl|software]
+#   ppsspp-ctl stop | restart | status | log [-f] | config
+#   ppsspp-ctl screenshot > shot.png
+# `start` returns once this PPSSPP owns the debugger port. A --state launch skips the cold boot,
+# so PRX plugins do not load.
+set -uo pipefail
+
+BIN="${PPSSPP_BIN:-/opt/ppsspp/PPSSPPSDL}"
+PIDFILE=/run/ppsspp/ppsspp.pid
+LOG=/run/ppsspp/ppsspp.log
+INI="$XDG_CONFIG_HOME/ppsspp/PSP/SYSTEM/ppsspp.ini"
+PORT=12345
+BACKEND="${GPU_BACKEND:-software}"
+ISO=""
+STATE=""
+
+# PPSSPP rewrites ppsspp.ini on exit, so these are set again before every launch
+ini_set() {
+    local section="$1" key="$2" val="$3"
+    mkdir -p "$(dirname "$INI")"
+    touch "$INI"
+    awk -v s="[$section]" -v k="$key" -v v="$val" '
+        /^\[/ {
+            if (insec && !done) { print k " = " v; done = 1 }
+            insec = ($0 == s)
+            if (insec) seen = 1
+        }
+        insec && $0 ~ "^" k "[ \t]*=" { print k " = " v; done = 1; next }
+        { print }
+        END {
+            if (insec && !done) print k " = " v
+            else if (!seen) { print s; print k " = " v }
+        }
+    ' "$INI" > "$INI.tmp" && mv "$INI.tmp" "$INI"
+}
+
+apply_config() {
+    ini_set General RemoteDebuggerOnStartup True
+    ini_set General RemoteDebuggerLocal False  # the published port reaches it from outside
+    ini_set General RemoteISOPort "$PORT"
+    ini_set General CheckForNewVersion False
+    ini_set General EnableAutoLoad 0
+    ini_set General IgnoreBadMemAccess True
+    ini_set Sound Enable False
+    # dropped or doubled frames break timing that automation measures in frames
+    ini_set Graphics FrameSkip 0
+    ini_set Graphics AutoFrameSkip False
+    ini_set Graphics VSync False
+    ini_set Graphics InternalResolution 1
+    # a start that dies or is killed marks its backend failed, and PPSSPP never tries it again
+    rm -f "$(dirname "$INI")/FailedGraphicsBackends.txt"
+}
+
+# inodes of the sockets listening on PORT (state 0A)
+port_inodes() {
+    local hex; hex=$(printf '%04X' "$PORT")
+    awk -v p="$hex" '$4 == "0A" { split($2, a, ":"); if (a[2] == p) print $10 }' \
+        /proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+
+# Whether pid $1 owns the listening socket. A bare connect test is not enough: with the port
+# still held, PPSSPP silently listens on a random one instead, and the connect reaches the old
+# instance.
+owns_port() {
+    local want target ino
+    want=" $(port_inodes | tr '\n' ' ') "
+    [ "$want" = "  " ] && return 1
+    for fd in /proc/"$1"/fd/*; do
+        target=$(readlink "$fd" 2>/dev/null) || continue
+        case "$target" in
+            socket:\[*\]) ino=${target#socket:[}; ino=${ino%]}
+                case "$want" in *" $ino "*) return 0 ;; esac ;;
+        esac
+    done
+    return 1
+}
+
+port_free() {
+    for _ in $(seq "${1:-100}"); do
+        [ -z "$(port_inodes)" ] && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+running_pid() {
+    local p
+    p=$(cat "$PIDFILE" 2>/dev/null) && [ -n "$p" ] && kill -0 "$p" 2>/dev/null && echo "$p"
+}
+
+cmd_start() {
+    if pid=$(running_pid); then echo "already running (pid $pid)"; return 0; fi
+    if [ -z "$ISO" ]; then
+        for f in /iso/*.[iI][sS][oO] /iso/*.[cC][sS][oO]; do [ -f "$f" ] && { ISO="$f"; break; }; done
+    fi
+    [ -f "$ISO" ] || { echo "no game image in /iso; pass --iso" >&2; return 1; }
+    [ -x "$BIN" ] || { echo "no PPSSPP at $BIN" >&2; return 1; }
+    apply_config
+    if ! port_free 50; then
+        pkill -f PPSSPPSDL
+        port_free 100 || { echo "port $PORT stays taken" >&2; return 1; }
+    fi
+
+    local args=(--fullscreen "--graphics=$BACKEND")
+    [ -n "$STATE" ] && args+=("--state=$STATE")
+    echo "$BIN ${args[*]} $ISO"
+    "$BIN" "${args[@]}" "$ISO" >"$LOG" 2>&1 &
+    echo $! > "$PIDFILE"
+
+    # a cold boot takes a few seconds, a savestate launch longer
+    for _ in $(seq 900); do
+        pid=$(running_pid) || { echo "PPSSPP exited while starting:" >&2; tail -30 "$LOG" >&2; return 1; }
+        owns_port "$pid" && { echo "debugger on port $PORT (pid $pid)"; return 0; }
+        sleep 0.1
+    done
+    echo "pid $(cat "$PIDFILE") never took port $PORT" >&2
+    tail -30 "$LOG" >&2
+    return 1
+}
+
+cmd_stop() {
+    if ! pid=$(running_pid); then
+        pkill -f PPSSPPSDL
+        rm -f "$PIDFILE"
+        echo "not running"
+        return 0
+    fi
+    kill -TERM "$pid"
+    for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+    kill -KILL "$pid" 2>/dev/null
+    rm -f "$PIDFILE"
+    # the socket outlives the process for a moment; a restart racing it gets a random port
+    port_free 100 || echo "port $PORT still held after stop" >&2
+    echo "stopped"
+}
+
+cmd_status() {
+    if ! pid=$(running_pid); then echo "stopped"; return 0; fi
+    if owns_port "$pid"; then
+        echo "running (pid $pid), debugger on port $PORT"
+    else
+        echo "running (pid $pid), debugger port $PORT not its own"
+    fi
+}
+
+action="${1:-status}"; shift || true
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --state) STATE="$2"; shift 2 ;;
+        --state=*) STATE="${1#*=}"; shift ;;
+        --iso) ISO="$2"; shift 2 ;;
+        --iso=*) ISO="${1#*=}"; shift ;;
+        --backend) BACKEND="$2"; shift 2 ;;
+        --backend=*) BACKEND="${1#*=}"; shift ;;
+        -f) FOLLOW=1; shift ;;
+        *) echo "unknown option $1" >&2; exit 2 ;;
+    esac
+done
+
+case "$action" in
+    start) cmd_start ;;
+    stop) cmd_stop ;;
+    restart) cmd_stop; cmd_start ;;
+    status) cmd_status ;;
+    log) if [ "${FOLLOW:-0}" = 1 ]; then tail -f "$LOG"; else tail -100 "$LOG"; fi ;;
+    config) apply_config; echo "wrote $INI" ;;
+    screenshot) xwd -root -silent | xwdtopnm 2>/dev/null | pnmtopng ;;
+    *) sed -n '2,6p' "$0" >&2; exit 2 ;;
+esac

@@ -36,8 +36,9 @@ PPSSPP opens the debugger at startup only with `RemoteDebuggerOnStartup = True` 
 | PPSSPP (1.20.4) | The client |
 |---|---|
 | Sends its log only to the newest debugger connection, and stops it for all when any connection closes | Log streams get a connection of their own, opened when the stream starts |
-| Does not say why the CPU stopped | Matches a breakpoint stop by its pc; counts as a watchpoint hit any stop this client did not ask for |
-| Answers `cpu.stepping` and `cpu.resume` with a broadcast, not a reply; pausing a paused CPU answers nothing | `pause()` and `resume()` wait for the broadcast, and are fine to call twice |
+| Does not say why the CPU stopped | Matches a breakpoint stop by its pc, and counts as a watchpoint hit any stop this client did not ask for; uses the reason where PPSSPP gives one |
+| Reports a hit of a breakpoint that does not stop only as a log line | Parses it; takes `cpu.breakpoint.hit` events instead from a PPSSPP that sends them |
+| Answers `cpu.stepping` and `cpu.resume` with a broadcast, not a reply; pausing a paused CPU answers nothing | `pause()` and `resume()` wait for the broadcast, and are fine to call twice; `resume()` also takes a new stop as its answer |
 | Stops and restarts the CPU for every memory request while the game runs (about 10 ms each) | `paused()` makes each request about 0.3 ms; one `read()` of a whole struct costs one stop |
 | Keeps breakpoints armed after the script that set them has died | `breakpoint()` and `watchpoint()` remove theirs when the block ends, however it ends, and let the game run if a hit arrived that nobody took |
 | Reports errors as events, and an unknown event as an error | Raises `DebuggerError`, or `Unsupported` for an event this PPSSPP does not have |
@@ -58,14 +59,16 @@ with LocalEmulator("/path/to/PPSSPPSDL", "/path/to/game.iso") as emu:
         ppsspp.wait_for_game()
 ```
 
-`DockerEmulator(container)` drives PPSSPP in the modkit's headless container through its
-`ppsspp-ctl`, and relaunches it when it dies right after reporting ready. A `state=` launch
-skips the cold boot, so PRX plugins do not load.
+`DockerEmulator()` drives PPSSPP in the modkit's headless container
+([`ppsspp/`](../../ppsspp)) through its `ppsspp-ctl`, relaunches it when it dies right after
+reporting ready, and captures its display with `screenshot()`. A `state=` launch skips the cold
+boot, so PRX plugins do not load.
 
 ## Patched PPSSPP
 
-`save_state()`, `load_state()` and `speed()` need the PPSSPP patches that ship with the modkit;
-stock PPSSPP raises `Unsupported`.
+The modkit's PPSSPP build ([`ppsspp/`](../../ppsspp)) fixes the first two rows of the table.
+`save_state()` and `load_state()` need it; `speed()` and `set_speed()` need it or a PPSSPP newer
+than 1.20.4. Stock 1.20.4 raises `Unsupported` for them.
 
 `screenshot()` depends on the GPU backend: PPSSPP 1.20.4 with Vulkan answers "Could not
 download output" whether the game runs or is stopped.
@@ -75,9 +78,15 @@ download output" whether the game runs or is stopped.
 `ppsspp_debug.testing.FakePPSSPP` is a debugger server with PPSSPP's quirks, for testing code
 that uses this client without an emulator.
 
+`FakePPSSPP(patched=True)` behaves like the modkit's build, `FakePPSSPP(hit_events=True)` like a
+PPSSPP that sends `cpu.breakpoint.hit`.
+
 The live tests run against a real PPSSPP when `PPSSPP_BINARY` and `PPSSPP_GAME` are set, and
 print what they measure with `-s`:
 
 ```bash
 PPSSPP_BINARY=/path/to/PPSSPPSDL PPSSPP_GAME=/path/to/game.iso uv run pytest packages/ppsspp-debug -s
 ```
+
+`PPSSPP_CONTAINER=ppsspp` in place of `PPSSPP_BINARY` runs them in the modkit's container, with
+`PPSSPP_GAME` a path inside it.

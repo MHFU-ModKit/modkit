@@ -1,0 +1,162 @@
+Debugger: send the log to every connection, backported from upstream 9799085c3a and 4e24c195ac.
+
+1.20.4 keeps one global log callback, so only the newest debugger connection gets the log, and
+closing any connection stops it for all. The ring buffer also fell out of step after 1024 lines.
+
+diff --git a/Common/Log/LogManager.cpp b/Common/Log/LogManager.cpp
+index 3c1a4b3..12ef436 100644
+--- a/Common/Log/LogManager.cpp
++++ b/Common/Log/LogManager.cpp
+@@ -347,12 +347,44 @@ void LogManager::LogLine(LogLevel level, Log type, const char *file, int line, c
+ #endif
+ 
+ 	if (outputs_ & LogOutput::ExternalCallback) {
+-		if (externalCallback_) {
+-			externalCallback_(message, externalUserData_);
++		// Held across the dispatch on purpose: RemoveExternalLogCallback() takes the same lock, so a
++		// listener can't be torn down (and its userdata freed) while we're in the middle of calling it.
++		std::lock_guard<std::mutex> guard(externalLock_);
++		for (const ExternalCallbackEntry &entry : externalCallbacks_) {
++			entry.callback(message, entry.userdata);
+ 		}
+ 	}
+ }
+ 
++int LogManager::AddExternalLogCallback(LogCallback callback, void *userdata) {
++	if (!callback) {
++		return -1;
++	}
++	std::lock_guard<std::mutex> guard(externalLock_);
++	const int handle = nextExternalHandle_++;
++	externalCallbacks_.push_back(ExternalCallbackEntry{ handle, callback, userdata });
++	EnableOutput(LogOutput::ExternalCallback);
++	return handle;
++}
++
++void LogManager::RemoveExternalLogCallback(int handle) {
++	if (handle < 0) {
++		return;
++	}
++	std::lock_guard<std::mutex> guard(externalLock_);
++	for (size_t i = 0; i < externalCallbacks_.size(); i++) {
++		if (externalCallbacks_[i].handle == handle) {
++			externalCallbacks_.erase(externalCallbacks_.begin() + i);
++			break;
++		}
++	}
++	// Only when the last one goes away - otherwise removing one connection's callback would stop
++	// delivery to the ones still attached, which is the bug this list exists to avoid.
++	if (externalCallbacks_.empty()) {
++		DisableOutput(LogOutput::ExternalCallback);
++	}
++}
++
+ void RingbufferLog::Log(const LogMessage &message) {
+ 	messages_[curMessage_] = message;
+ 	curMessage_++;
+diff --git a/Common/Log/LogManager.h b/Common/Log/LogManager.h
+index 59bb1b5..026eb8c 100644
+--- a/Common/Log/LogManager.h
++++ b/Common/Log/LogManager.h
+@@ -150,10 +150,15 @@ class LogManager {
+ 	void Init(bool *enabledSetting, bool headless = false);
+ 	void Shutdown();
+ 
+-	void SetExternalLogCallback(LogCallback callback, void *userdata) {
+-		externalCallback_ = callback;
+-		externalUserData_ = userdata;
+-	}
++	// A list rather than a single slot, because the WebSocket debugger registers one callback per
++	// *connection* (LogBroadcaster is a local in the per-connection handler) and more than one
++	// client can be attached at once - the bundled JS debugger in a browser alongside Tools/wsdbg,
++	// say. With a single slot the second connection silently took the log stream away from the
++	// first, and then the first one to disconnect cleared the slot and stopped delivery to the
++	// other as well.
++	// Returns a handle to hand back to RemoveExternalLogCallback(), or -1 if it wasn't added.
++	int AddExternalLogCallback(LogCallback callback, void *userdata);
++	void RemoveExternalLogCallback(int handle);
+ 
+ 	void SetFileLogPath(const Path &filename);
+ 	const Path &GetLogFilePath() const { return logFilename_; }
+@@ -201,9 +206,15 @@ class LogManager {
+ 	// Ring buffer
+ 	RingbufferLog ringLog_;
+ 
+-	// Callback
+-	LogCallback externalCallback_ = nullptr;
+-	void *externalUserData_ = nullptr;
++	// Callbacks
++	struct ExternalCallbackEntry {
++		int handle;
++		LogCallback callback;
++		void *userdata;
++	};
++	std::mutex externalLock_;
++	std::vector<ExternalCallbackEntry> externalCallbacks_;
++	int nextExternalHandle_ = 1;
+ };
+ 
+ extern LogManager g_logManager;
+diff --git a/Core/Debugger/WebSocket/LogBroadcaster.cpp b/Core/Debugger/WebSocket/LogBroadcaster.cpp
+index 7b60a0b..61e7dce 100644
+--- a/Core/Debugger/WebSocket/LogBroadcaster.cpp
++++ b/Core/Debugger/WebSocket/LogBroadcaster.cpp
+@@ -41,7 +41,15 @@ class DebuggerLogListener {
+ 			splitPoint = nextMessage_;
+ 			readCount = Count();
+ 		} else {
+-			splitPoint = read_;
++			// read_ counts messages ever read, so it has to be wrapped to index the ring - the
++			// overflow branch above starts from nextMessage_, which already is an index. Without
++			// the modulo this went wrong the moment a session logged BUFFER_SIZE messages: with
++			// splitPoint >= BUFFER_SIZE the first copy loop below is empty, so the second one
++			// handed back messages_[0..readCount-1] - the oldest entries in the buffer, not the
++			// new ones - and every later poll stayed that far out of step. High-volume sources
++			// (a log-only breakpoint in a hot loop) hit it within seconds, and the result looked
++			// like the tail of the log going missing rather than being wrong.
++			splitPoint = read_ % BUFFER_SIZE;
+ 			readCount = count_ - read_;
+ 		}
+ 
+@@ -80,13 +88,14 @@ static void BroadcastCallback(const LogMessage &message, void *userdata) {
+ 
+ LogBroadcaster::LogBroadcaster() {
+ 	listener_ = new DebuggerLogListener();
+-	g_logManager.SetExternalLogCallback(&BroadcastCallback, (void *)listener_);
+-	g_logManager.EnableOutput(LogOutput::ExternalCallback);
++	// One of these exists per open connection, so it registers alongside any other client's
++	// rather than replacing it - see AddExternalLogCallback().
++	callbackHandle_ = g_logManager.AddExternalLogCallback(&BroadcastCallback, (void *)listener_);
+ }
+ 
+ LogBroadcaster::~LogBroadcaster() {
+-	g_logManager.DisableOutput(LogOutput::ExternalCallback);
+-	g_logManager.SetExternalLogCallback(nullptr, nullptr);
++	// Returns only once no log call is inside our callback, so the listener is safe to delete.
++	g_logManager.RemoveExternalLogCallback(callbackHandle_);
+ 	delete listener_;
+ }
+ 
+diff --git a/Core/Debugger/WebSocket/LogBroadcaster.h b/Core/Debugger/WebSocket/LogBroadcaster.h
+index 13f26d4..543b168 100644
+--- a/Core/Debugger/WebSocket/LogBroadcaster.h
++++ b/Core/Debugger/WebSocket/LogBroadcaster.h
+@@ -32,4 +32,5 @@ struct LogBroadcaster {
+ 
+ private:
+ 	DebuggerLogListener *listener_;
++	int callbackHandle_ = -1;
+ };
+diff --git a/libretro/libretro.cpp b/libretro/libretro.cpp
+index 3b2f103..6ee4d32 100644
+--- a/libretro/libretro.cpp
++++ b/libretro/libretro.cpp
+@@ -1198,7 +1198,7 @@ void retro_init(void)
+       log_cb = log.log;
+       g_logManager.Init(&g_Config.bEnableLogging);
+       g_logManager.SetOutputsEnabled(LogOutput::ExternalCallback);
+-      g_logManager.SetExternalLogCallback(&RetroLogCallback, (void *)log_cb);
++      g_logManager.AddExternalLogCallback(&RetroLogCallback, (void *)log_cb);
+    }
+ 
+    VsyncSwapIntervalReset();

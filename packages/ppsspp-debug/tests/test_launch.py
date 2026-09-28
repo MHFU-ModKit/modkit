@@ -45,6 +45,7 @@ case "$4" in
     echo started ;;
   stop) rm -f "$FAKE_DIR/alive"; echo stopped ;;
   log) echo "Could not find a graphics and a present queue" ;;
+  screenshot) printf '\\211PNG' ;;
 esac
 """
 
@@ -81,3 +82,7 @@ def test_docker_gives_up(docker):
     emu = DockerEmulator("rig", docker=str(docker), tries=1, settle=0)
     with pytest.raises(RuntimeError, match="present queue"):
         emu.start()
+
+
+def test_docker_screenshot(docker):
+    assert DockerEmulator(docker=str(docker)).screenshot() == b"\x89PNG"

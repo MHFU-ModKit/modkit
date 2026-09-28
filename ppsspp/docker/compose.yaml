@@ -1,0 +1,34 @@
+# The container is a long-lived display; PPSSPP starts and stops inside it through ppsspp-ctl,
+# because automation restarts the emulator between runs. setup.sh writes the .env it reads.
+name: ppsspp
+
+services:
+  ppsspp:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: modkit-ppsspp
+    container_name: ppsspp
+    # the owner of the mounts, so savestates and logs stay editable from the host
+    user: "${PPSSPP_UID:-1000}:${PPSSPP_GID:-1000}"
+    ports:
+      # noVNC: watch and play from a browser; WEB_BIND=0.0.0.0 opens it to the network
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-6080}:6080"
+      # the debugger reads and writes emulator memory unauthenticated, so it stays local
+      - "127.0.0.1:${DEBUG_PORT:-12345}:12345"
+    volumes:
+      - "${ISO_DIR:?run setup.sh first}:/iso:ro"
+      # ppsspp.ini, the memory stick, and savestates in ppsspp/PSP/PPSSPP_STATE
+      - "${PPSSPP_HOME:?run setup.sh first}:/config"
+    # PPSSPP announces itself to report.ppsspp.org before its debugger accepts connections,
+    # which stalls the first handshake for seconds and publishes this host's address; pointing
+    # the name at loopback for both families makes the announcement fail at once
+    extra_hosts:
+      - "report.ppsspp.org:127.0.0.1"
+      - "report.ppsspp.org:::1"
+    environment:
+      GPU_BACKEND: "${GPU_BACKEND:-software}"
+    # X11 shared memory and PPSSPP's own buffers outgrow the 64 MB default
+    shm_size: 512m
+    restart: unless-stopped
+    stop_grace_period: 10s

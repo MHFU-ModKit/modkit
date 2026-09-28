@@ -6,10 +6,10 @@
 
 Quirks it keeps: cpu.stepping and cpu.resume answer with a broadcast instead of a reply, errors
 come back with the request's ticket, an unknown event is an error, cpu.stepping on a stopped CPU
-does nothing, a breakpoint stop comes without its reason, the log goes only to the newest
-connection and stops for all when any connection closes, log lines held while the log was
-switched off arrive when it is switched on, gpu.stats.get never answers while stopped, and
-input.buttons.press answers only once the button is released.
+does nothing, log lines held while the log was switched off arrive when it is switched on,
+gpu.stats.get never answers while stopped, and input.buttons.press answers only once the button
+is released. Like stock PPSSPP 1.20.4, a breakpoint stop comes without its reason, and the log
+goes only to the newest connection and stops for all when any closes.
 """
 
 from __future__ import annotations
@@ -36,9 +36,11 @@ _PNG = base64.b64decode(
 class FakePPSSPP:
     """A PPSSPP debugger server on a free local port, with `size` bytes of memory at `base`.
 
-    `patched` adds the modkit build's savestate and game.speed commands. `handshake_delay`
-    stalls each WebSocket upgrade, as PPSSPP's startup phone-home does. `reasons` adds why the
-    CPU stopped to cpu.stepping, which PPSSPP 1.20.4 leaves out for breakpoints.
+    `patched` makes it the modkit's PPSSPP build instead of stock 1.20.4: stops say why, the
+    log goes to every connection, and it has game.speed.get/set and the savestate commands.
+    `hit_events` makes it a newer PPSSPP instead: the same without savestates, plus a
+    cpu.breakpoint.hit for every hit and the hit on each stop. `handshake_delay` stalls each
+    WebSocket upgrade, as PPSSPP's startup phone-home does.
     """
 
     def __init__(
@@ -47,11 +49,12 @@ class FakePPSSPP:
         base: int = 0x1000_0000,
         size: int = 0x1_0000,
         patched: bool = False,
+        hit_events: bool = False,
         handshake_delay: float = 0.0,
-        reasons: bool = False,
     ) -> None:
         self.base = base
-        self.reasons = reasons
+        self.hit_events = hit_events
+        self._fixed = patched or hit_events
         self.memory = bytearray(size)
         self.patched = patched
         self.handshake_delay = handshake_delay
@@ -63,6 +66,9 @@ class FakePPSSPP:
         self.breakpoints: dict[int, dict[str, Any]] = {}
         self.watchpoints: dict[tuple[int, int], dict[str, Any]] = {}
         self.speed = 60
+        """The frame rate frame_stats reports."""
+        self.percent: int | None = None
+        self.fast_forward = False
         self.states: dict[str, bytes] = {}
         self.received: list[dict[str, Any]] = []
         self.port = 0
@@ -70,7 +76,8 @@ class FakePPSSPP:
         self._config: dict[ServerConnection, dict[str, bool]] = {}
         self._log_owner: ServerConnection | None = None
         self._server: Server | None = None
-        self._held: list[dict[str, Any]] = []
+        self._held: dict[ServerConnection, list[dict[str, Any]]] = {}
+        self._hits = 0
         self._table = self._handlers()
 
     async def __aenter__(self) -> FakePPSSPP:
@@ -100,8 +107,11 @@ class FakePPSSPP:
 
     async def _serve(self, ws: ServerConnection) -> None:
         self.connections.append(ws)
-        self._config[ws] = {"logger": False, "game": False, "input": False, "stepping": False}
-        self._log_owner, self._held = ws, []
+        kinds = ["logger", "game", "input", "stepping"] + ["breakpoint"] * self.hit_events
+        self._config[ws] = dict.fromkeys(kinds, False)
+        self._held[ws] = []
+        if not self._fixed:
+            self._log_owner = ws
         try:
             async for raw in ws:
                 msg = json.loads(raw)
@@ -115,7 +125,7 @@ class FakePPSSPP:
             pass
         finally:
             self.connections.remove(ws)
-            del self._config[ws]
+            del self._config[ws], self._held[ws]
             self._log_owner = None
 
     # what tests drive
@@ -123,19 +133,19 @@ class FakePPSSPP:
     async def broadcast(self, msg: dict[str, Any]) -> None:
         """Send an event to every client that has not switched its kind off."""
         name = msg["event"]
-        switch = (
-            "logger"
-            if name == "log"
-            else "stepping"
-            if name in ("cpu.stepping", "cpu.resume")
-            else name.partition(".")[0]
-        )
+        switch = {
+            "log": "logger",
+            "cpu.stepping": "stepping",
+            "cpu.resume": "stepping",
+            "cpu.breakpoint.hit": "breakpoint",
+        }.get(name, name.partition(".")[0])
         if switch == "logger":
-            owner = self._log_owner
-            if owner is not None and self._config[owner]["logger"]:
-                self._held = [*self._held, msg][-1024:]
-            elif owner is not None:
-                await owner.send(json.dumps(msg))
+            owners = self.connections if self._fixed else [self._log_owner]
+            for ws in [w for w in owners if w is not None]:
+                if self._config[ws]["logger"]:
+                    self._held[ws] = [*self._held[ws], msg][-1024:]
+                else:
+                    await ws.send(json.dumps(msg))
             return
         for ws in list(self.connections):
             if not self._config[ws].get(switch, False):
@@ -153,14 +163,28 @@ class FakePPSSPP:
             }
         )
 
-    async def stop(self, reason: str | None = None, related: int = 0) -> None:
+    async def stop(
+        self, reason: str | None = None, related: int = 0, hit: dict[str, Any] | None = None
+    ) -> None:
         """Enter stepping, as a breakpoint or a pause does."""
         self.stepping = True
         self.pc = related if reason == "cpu.breakpoint" else self.pc
         msg: dict[str, Any] = {"event": "cpu.stepping", "pc": self.pc, "ticks": self.ticks}
         if reason is not None:
             msg |= {"reason": reason, "relatedAddress": related}
+        if hit is not None:
+            msg["hit"] = hit
         await self.broadcast(msg)
+
+    async def _stop_at(self, reason: str, related: int, hit: dict[str, Any]) -> None:
+        """A breakpoint stop, with as much as this PPSSPP says about it."""
+        if not self._fixed:
+            return await self.stop()
+        await self.stop(reason, related, hit if self.hit_events else None)
+
+    async def _hit(self, hit: dict[str, Any]) -> None:
+        self._hits += 1
+        await self.broadcast({"event": "cpu.breakpoint.hit", "sequence": self._hits, "hit": hit})
 
     async def execute(self, pc: int) -> None:
         """Run the instruction at `pc`, tripping a breakpoint there."""
@@ -168,11 +192,21 @@ class FakePPSSPP:
         bp = self.breakpoints.get(pc)
         if bp is None or self.stepping:
             return
+        hit = {
+            "kind": "exec",
+            "pc": pc,
+            "address": pc,
+            "logged": bp["log"],
+            "paused": bp["enabled"],
+            "breakpoint": {"start": pc, "end": pc},
+        }
+        if self.hit_events:
+            await self._hit(hit)
         if bp["log"]:
             text = f": {bp['logFormat']}" if bp.get("logFormat") else " (z_un_test)"
             await self.log(f"BKP PC={pc:08x}{text}", "JIT")
         if bp["enabled"]:
-            await self.stop("cpu.breakpoint" if self.reasons else None, pc)
+            await self._stop_at("cpu.breakpoint", pc, hit)
 
     async def access(self, address: int, size: int = 4, *, write: bool = True, pc: int = 0) -> None:
         """A memory access by the game at `pc`, tripping a watchpoint that covers it."""
@@ -180,6 +214,19 @@ class FakePPSSPP:
         for (start, length), wp in self.watchpoints.items():
             if not (start <= address < start + length) or not wp["write" if write else "read"]:
                 continue
+            hit = {
+                "kind": "memory",
+                "pc": self.pc,
+                "address": address,
+                "logged": wp["log"],
+                "paused": wp["enabled"],
+                "size": size,
+                "access": "write" if write else "read",
+                "source": "CPU",
+                "breakpoint": {"start": start, "end": start + length},
+            }
+            if self.hit_events and not self.stepping:
+                await self._hit(hit)
             if wp["log"]:
                 kind = f"{'Write' if write else 'Read'}{size * 8}(CPU) at {address:08x}"
                 text = (
@@ -189,7 +236,7 @@ class FakePPSSPP:
                 )
                 await self.log(f"CHK {kind}{text}")
             if wp["enabled"] and not self.stepping:
-                await self.stop("memory.breakpoint" if self.reasons else None, start)
+                await self._stop_at("memory.breakpoint", start, hit)
 
     # protocol
 
@@ -247,25 +294,28 @@ class FakePPSSPP:
         for width in (8, 16, 32):
             handlers[f"memory.read_u{width}"] = self._read_int
             handlers[f"memory.write_u{width}"] = self._write_int
+        if self._fixed:
+            handlers |= {"game.speed.get": self._speed, "game.speed.set": self._speed}
         if self.patched:
-            handlers |= {
-                "savestate.save": self._save_state,
-                "savestate.load": self._load_state,
-                "game.speed": self._speed,
-            }
+            handlers |= {"savestate.save": self._save_state, "savestate.load": self._load_state}
         return handlers
 
     async def _ok(self, ws: ServerConnection, msg: dict[str, Any]) -> None:
         await self._reply(ws, msg)
 
     async def _version(self, ws: ServerConnection, msg: dict[str, Any]) -> None:
-        await self._reply(ws, msg, name="PPSSPP", version="v1.20.4-fake")
+        version = "newer-fake" if self.hit_events else "v1.20.4-fake"
+        await self._reply(ws, msg, name="PPSSPP", version=version)
 
     async def _broadcast_config(self, ws: ServerConnection, msg: dict[str, Any]) -> None:
-        self._config[ws] |= msg.get("disallowed", {})
+        disallowed = msg.get("disallowed", {})
+        for key in disallowed:
+            if key not in self._config[ws]:
+                return await self._fail(ws, msg, f"Unsupported 'disallowed' object key '{key}'")
+        self._config[ws] |= disallowed
         await self._reply(ws, msg, disallowed=self._config[ws])
-        if ws is self._log_owner and not self._config[ws]["logger"]:
-            held, self._held = self._held, []
+        if not self._config[ws]["logger"]:
+            held, self._held[ws] = self._held[ws], []
             for line in held:
                 await ws.send(json.dumps(line))
 
@@ -434,6 +484,10 @@ class FakePPSSPP:
         await self._reply(ws, msg)
 
     async def _speed(self, ws: ServerConnection, msg: dict[str, Any]) -> None:
-        if "limit" in msg:
-            self.speed = msg["limit"]
-        await self._reply(ws, msg, limit=self.speed)
+        if msg["event"] == "game.speed.set":
+            self.fast_forward = msg.get("fastForward", self.fast_forward)
+            self.percent = msg.get("percent", self.percent)
+            self.speed = 60 * (self.percent or 100) // 100
+        limit = 0 if self.fast_forward else self.speed
+        state = {"fastForward": self.fast_forward, "percent": self.percent, "limitFps": limit}
+        await self._reply(ws, msg, **state)

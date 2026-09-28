@@ -18,6 +18,7 @@ release ULES01213), and for porting monsters to it from Monster Hunter Portable 
 | `packages/` | Python libraries: the debugger client, the file formats, the game (`mhfu`, which also holds the address map every language is generated from), the porter |
 | `framework/` | The PRX plugin and its Lua host |
 | `apps/` | The studio (monster and map editor), the HUD, the Blender extension |
+| `ppsspp/` | PPSSPP patched for automation, its build, and a headless container to run it in |
 | `examples/` | Example mods |
 | `docs/` | Guides and format references |
 
@@ -33,13 +34,14 @@ uv run pytest
 
 Tests that read game files take them from `MHFU_DATA` and `MHP3RD_DATA`, each a directory of
 extracted `DATA.BIN` files, and skip when the variable is unset; tests against a running PPSSPP
-take `PPSSPP_BINARY` and `PPSSPP_GAME` the same way. Nothing from the games is committed here:
-no ISO, no extracted files, no memory dumps.
+take `PPSSPP_BINARY` and `PPSSPP_GAME` the same way (`ppsspp/build.sh` builds the patched one).
+Nothing from the games is committed here: no ISO, no extracted files, no memory dumps.
 
 ## Licence
 
 MIT, except the file-format library and everything that bundles it, which are GPL-3.0-or-later
-because they contain code derived from [mhff](https://github.com/svanheulen/mhff). Every file's
-licence is machine-readable ([REUSE](https://reuse.software/); check with `reuse lint`).
+because they contain code derived from [mhff](https://github.com/svanheulen/mhff), and the
+PPSSPP patches, which are GPL-2.0-or-later like PPSSPP. Every file's licence is machine-readable
+([REUSE](https://reuse.software/); check with `reuse lint`).
 
 Not affiliated with or endorsed by Capcom. Monster Hunter is a trademark of Capcom Co., Ltd.
