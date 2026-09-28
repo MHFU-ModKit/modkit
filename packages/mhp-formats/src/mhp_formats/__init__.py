@@ -4,5 +4,6 @@
 `from_bytes` and writes back with `to_bytes`, byte for byte."""
 
 from ._base import Format, FormatError
+from .pac import Pac
 
-__all__ = ["Format", "FormatError"]
+__all__ = ["Format", "FormatError", "Pac"]
