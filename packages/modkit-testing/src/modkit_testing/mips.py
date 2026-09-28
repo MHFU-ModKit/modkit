@@ -73,6 +73,10 @@ def lbu(rt: Reg, offset: int, base: Reg) -> int:
     return _i(0x24, base, rt, offset)
 
 
+def lhu(rt: Reg, offset: int, base: Reg) -> int:
+    return _i(0x25, base, rt, offset)
+
+
 def sw(rt: Reg, offset: int, base: Reg) -> int:
     return _i(0x2B, base, rt, offset)
 

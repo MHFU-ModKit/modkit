@@ -6,6 +6,7 @@ from mhfu import files, reloc
 from mhfu.cli import main
 from mhfu.mips import Code
 from mhfu.overlay import TEXT, Overlay
+from modkit_testing import mips as asm
 
 LOAD = 0x0012_0180
 CODE = LOAD + TEXT + 0x40
@@ -15,16 +16,15 @@ DATA = CODE + 4 * 8
 
 def extracted(tmp_path):
     """A game directory holding one synthetic em75 overlay."""
-    lo = DATA & 0xFFFF
     words = [
-        0x3C04_0000 | DATA >> 16,  # lui a0
-        0x0C00_0000 | CALLEE >> 2,  # jal CALLEE
-        0x2484_0000 | lo,  # addiu a0, a0, lo
-        0x03E0_0008,  # jr ra
-        0,
-        0,
-        0x03E0_0008,  # CALLEE: jr ra
-        0,
+        asm.lui("a0", asm.hi(DATA)),
+        asm.jal(CALLEE),
+        asm.addiu("a0", "a0", asm.lo(DATA)),
+        asm.RET,
+        asm.NOP,
+        asm.NOP,
+        asm.RET,  # CALLEE
+        asm.NOP,
     ]
     text = bytes(0x40) + struct.pack(f"<{len(words)}I", *words)
     data = struct.pack("<2I", CALLEE, 7)

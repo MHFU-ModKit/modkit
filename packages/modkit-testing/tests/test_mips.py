@@ -24,6 +24,7 @@ def decode(word, op, va=VA, **regs):
         (asm.sltiu("at", "v0", 3), Id.cpu_sltiu, {"rs": Gpr.v0, "rt": Gpr.at}, 3),
         (asm.lw("t9", 0x88, "a0"), Id.cpu_lw, {"rs": Gpr.a0, "rt": Gpr.t9}, 0x88),
         (asm.lbu("v0", 0x298, "a0"), Id.cpu_lbu, {"rs": Gpr.a0, "rt": Gpr.v0}, 0x298),
+        (asm.lhu("v0", 0xBC, "a0"), Id.cpu_lhu, {"rs": Gpr.a0, "rt": Gpr.v0}, 0xBC),
         (asm.sw("v0", -4, "sp"), Id.cpu_sw, {"rs": Gpr.sp, "rt": Gpr.v0}, -4),
         (asm.sb("a1", 0x280, "s0"), Id.cpu_sb, {"rs": Gpr.s0, "rt": Gpr.a1}, 0x280),
     ],
