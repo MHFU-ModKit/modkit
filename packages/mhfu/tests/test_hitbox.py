@@ -5,12 +5,13 @@ from mhfu import files
 from mhfu import hitbox as hb
 from mhfu import hitzone as hz
 from mhfu.cli import main
+from mhfu.mips import Code, Gpr
 from mhfu.overlay import TEXT, Overlay
 
 LOAD = 0x0010_0000
-TEXT_SIZE = 0x20
+TEXT_SIZE = 0x28
 DATA = LOAD + TEXT + TEXT_SIZE
-A3, T0, V0, S0 = 7, 8, 2, 16
+A3, T0, T1, V0, S0 = 7, 8, 9, 2, 16
 
 
 def lui(reg: int, hi: int) -> int:
@@ -29,13 +30,22 @@ def sw(rt: int, offset: int, base: int) -> int:
     return 0xAC00_0000 | base << 21 | rt << 16 | offset
 
 
+def lw(rt: int, offset: int, base: int) -> int:
+    return 0x8C00_0000 | base << 21 | rt << 16 | offset
+
+
+def addu(rd: int, rs: int, rt: int) -> int:
+    return rs << 21 | rt << 16 | rd << 11 | 0x21
+
+
 def em(store: bool, pointers: list[int]) -> Overlay:
-    """One setter call passing the handle at DATA; with `store`, the volume table is stored at
-    the node's VOLUME_SET right after it."""
+    """One setter call passing the handle at DATA; with `store`, an entry of the volume table
+    is stored at the node's VOLUME_SET right after it."""
     vt = DATA + 0x80
     code = [lui(A3, DATA >> 16), jal(a.ATTACK_TABLE_SETTER), addiu(A3, DATA & 0xFFFF)]
-    code += [lui(T0, vt >> 16), addiu(T0, vt & 0xFFFF)] if store else [0, 0]
-    code += [sw(V0, a.ATTACK_NODE.VOLUME_SET, S0) if store else 0, 0x03E0_0008, 0]
+    table_entry = [lui(T0, vt >> 16), addiu(T0, vt & 0xFFFF), addu(T0, T0, T1), lw(V0, 0, T0)]
+    code += [*table_entry, sw(V0, a.ATTACK_NODE.VOLUME_SET, S0)] if store else [0] * 5
+    code += [0x03E0_0008, 0]
     data = bytearray(0x200)
     struct.pack_into("<I", data, 0, DATA + 0x10)
     data[0x28 + a.ATTACK_RECORD.POWER] = 50
@@ -48,7 +58,9 @@ def em(store: bool, pointers: list[int]) -> Overlay:
     for at in (0x150, 0x1A8):
         struct.pack_into("<H", data, at, hz.SENTINEL_BONE)
     header = struct.pack("<4sIIIIIII", b"MWo3", 1, LOAD, TEXT_SIZE, len(data), 0, 0, 0)
-    return Overlay((header + b"em75.ovl").ljust(TEXT, b"\0") + struct.pack("<8I", *code) + data)
+    return Overlay(
+        (header + b"em75.ovl").ljust(TEXT, b"\0") + struct.pack(f"<{len(code)}I", *code) + data
+    )
 
 
 SETS = [DATA + 0x100, DATA + 0x180]
@@ -56,8 +68,8 @@ SETS = [DATA + 0x100, DATA + 0x180]
 
 def test_tables_from_the_setter_call():
     ovl = em(True, SETS)
-    (call,) = hb.calls_to(ovl, ovl.text, a.ATTACK_TABLE_SETTER)
-    assert hb.constant(ovl, ovl.text, call, A3, 10) == DATA
+    (call,) = hb.setter_calls(ovl)
+    assert Code(ovl, ovl.text).constant(call, Gpr.a3) == DATA
     (t,) = hb.tables(ovl)
     assert (t.handle, t.records, t.volume_table) == (DATA, DATA + 0x10, DATA + 0x80)
     assert [x.power for x in t.attacks] == [0, 50, 70]
