@@ -478,7 +478,7 @@ class _Header(DataclassMixin):
 
 
 @dataclass
-class MeshCounts(DataclassMixin):
+class _MeshCounts(DataclassMixin):
     """The tail of a mesh record, derived from the tables."""
 
     material_count: int = csfield(Int8ul)
@@ -493,7 +493,7 @@ class _MeshRecord(DataclassMixin):
     uv_scale: list[float] = csfield(Array(2, Float32l))
     lighting: int = csfield(Int32ul)
     blend: int = csfield(Int32ul)
-    counts: MeshCounts = csfield(DataclassStruct(MeshCounts))
+    counts: _MeshCounts = csfield(DataclassStruct(_MeshCounts))
 
 
 @dataclass
@@ -643,10 +643,8 @@ class Pmo:
         region = bytearray(original[head.geometry : head.size])
         for block in blocks:
             places = placed[id(block)]
-            words = [c.word for c in _resolve(block, places)]
-            region[places.list : places.list + 4 * len(words)] = struct.pack(
-                f"<{len(words)}I", *words
-            )
+            words = DisplayList(_resolve(block, places)).to_bytes()
+            region[places.list : places.list + len(words)] = words
             vertices = block.vertices.to_bytes()
             region[places.vertices : places.vertices + len(vertices)] = vertices
             indices = _index_bytes(block)
@@ -709,18 +707,18 @@ class Pmo:
         return pmo
 
     @classmethod
-    def _meshes(cls, data: bytes, head: _Header) -> list[tuple[Mesh, MeshCounts]]:
+    def _meshes(cls, data: bytes, head: _Header) -> list[tuple[Mesh, _MeshCounts]]:
         return [cls._mesh(r) for r in Array(head.mesh_count, cls._MESH).parse(data[head.meshes :])]
 
     @classmethod
-    def _mesh(cls, record: DataclassMixin) -> tuple[Mesh, MeshCounts]:
+    def _mesh(cls, record: DataclassMixin) -> tuple[Mesh, _MeshCounts]:
         rec = cast(_MeshRecord, record)
         mesh = Mesh(
             uv_scale=(rec.uv_scale[0], rec.uv_scale[1]), lighting=rec.lighting, blend=rec.blend
         )
         return mesh, rec.counts
 
-    def _mesh_record(self, mesh: Mesh, counts: MeshCounts) -> DataclassMixin:
+    def _mesh_record(self, mesh: Mesh, counts: _MeshCounts) -> DataclassMixin:
         return _MeshRecord(list(mesh.uv_scale), mesh.lighting, mesh.blend, counts)
 
     def _store(self, remap_table: bool, geometry_tail: bytes | None) -> None:
@@ -752,7 +750,7 @@ class Pmo:
             remap: list[int] = []
             at_group = 0
             for mesh in self.meshes:
-                counts = MeshCounts(len(mesh.materials), len(remap), len(mesh.groups), at_group)
+                counts = _MeshCounts(len(mesh.materials), len(remap), len(mesh.groups), at_group)
                 records.append(self._mesh_record(mesh, counts))
                 remap += mesh.materials
                 at_group += len(mesh.groups)
@@ -922,9 +920,8 @@ def _index_bytes(block: Block) -> bytes:
 
 def _emit(block: Block, places: _Places, start: int = 0, with_vertices: bool = True) -> bytes:
     """The block laid out at `places`, from address `start` (zeros before its list)."""
-    words = [c.word for c in _resolve(block, places)]
     out = bytearray(places.list - start)
-    out += struct.pack(f"<{len(words)}I", *words)
+    out += DisplayList(_resolve(block, places)).to_bytes()
     out += bytes(places.vertices - start - len(out))
     if with_vertices:
         out += block.vertices.to_bytes()

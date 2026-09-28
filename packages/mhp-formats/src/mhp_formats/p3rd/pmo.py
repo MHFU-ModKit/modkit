@@ -13,7 +13,7 @@ from construct_typed import DataclassMixin, DataclassStruct, csfield
 
 from .. import pmo
 from .._base import FormatError
-from ..pmo import MeshCounts, Vec3
+from ..pmo import Vec3, _MeshCounts
 
 
 @dataclass
@@ -23,7 +23,7 @@ class _MeshRecord(DataclassMixin):
     uv_offset: list[float] = csfield(Array(2, Float32l))
     lighting: int = csfield(Int32ul)
     blend: int = csfield(Int32ul)
-    counts: MeshCounts = csfield(DataclassStruct(MeshCounts))
+    counts: _MeshCounts = csfield(DataclassStruct(_MeshCounts))
 
 
 @dataclass
@@ -87,7 +87,7 @@ class Pmo(pmo.Pmo):
         return mesh.scale if isinstance(mesh, Mesh) else self.scale
 
     @classmethod
-    def _mesh(cls, record: DataclassMixin) -> tuple[pmo.Mesh, MeshCounts]:
+    def _mesh(cls, record: DataclassMixin) -> tuple[pmo.Mesh, _MeshCounts]:
         rec = cast(_MeshRecord, record)
         mesh = Mesh(
             uv_scale=(rec.uv_scale[0], rec.uv_scale[1]),
@@ -99,7 +99,7 @@ class Pmo(pmo.Pmo):
         )
         return mesh, rec.counts
 
-    def _mesh_record(self, mesh: pmo.Mesh, counts: MeshCounts) -> DataclassMixin:
+    def _mesh_record(self, mesh: pmo.Mesh, counts: _MeshCounts) -> DataclassMixin:
         if not isinstance(mesh, Mesh):
             raise ValueError("an MHP3rd PMO takes p3rd.pmo.Mesh meshes")
         return _MeshRecord(
