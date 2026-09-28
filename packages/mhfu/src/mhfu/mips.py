@@ -1,16 +1,43 @@
-"""MIPS as the PSP's Allegrex CPU runs it, decoded by rabbitizer."""
+"""MIPS as the PSP's Allegrex CPU runs it, decoded by rabbitizer, and the analyses the tools that
+read the game's code share. Registers are rabbitizer enums (`Gpr.a1`, `Fpr.fa0`); read an
+instruction through its fields (`uniqueId`, `rs`, `getProcessedImmediate()`), never its text.
+
+    code = Code(eboot, eboot.text)          # any Memory and the range holding its code
+    code.at(va)                             # the instruction at va
+    code.function(va)                       # the range of the function holding va
+    code.callers(target)                    # sites that jal or tail-jump to target
+    [c for c in code.calls if c.slot == 0x88]       # virtual calls through vtable + 0x88
+    [p for p in code.pairs if p.value == address]   # lui/lo pairs that form address
+    code.switch(jr)                         # the jump table a `jr` dispatches through
+    code.constant(call, Gpr.a1)             # the literal a1 the call passes, or None
+"""
 
 from __future__ import annotations
 
+import bisect
 import struct
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from functools import cached_property
 
 import rabbitizer
-from rabbitizer import Instruction
+from rabbitizer import InstrId, Instruction, OperandType, RegistersTracker
 
-from .memory import Memory
+from .memory import Memory, Unmapped
 
 ALLEGREX = rabbitizer.InstrCategory.R4000ALLEGREX
+Gpr = rabbitizer.RegGprO32
+Fpr = rabbitizer.RegCop1O32
+Register = rabbitizer.Enum
+"""A GPR (`Gpr.a1`) or an FPU register (`Fpr.fa0`, which is $f12)."""
+
+_MASK = 0xFFFFFFFF
+_CALL_CLOBBERS = frozenset(
+    [Gpr.at, Gpr.v0, Gpr.v1, Gpr.a0, Gpr.a1, Gpr.a2, Gpr.a3, Gpr.t8, Gpr.t9, Gpr.ra]
+    + [getattr(Gpr, f"t{n}") for n in range(8)]
+    + [r for r in vars(Fpr).values() if isinstance(r, Register) and r.value < 20]
+)
+"""What a call may change: the caller-saved GPRs and $f0-$f19."""
 
 
 def decode(word: int, va: int) -> Instruction:
@@ -21,3 +48,520 @@ def instructions(mem: Memory, start: int, stop: int) -> Iterator[Instruction]:
     """The instructions from `start` up to `stop`, one per word."""
     for i, (word,) in enumerate(struct.iter_unpack("<I", mem.read(start, stop - start))):
         yield decode(word, start + 4 * i)
+
+
+def is_prologue(ins: Instruction) -> bool:
+    """`addiu sp, sp, -N`: a stack frame opens."""
+    return (
+        ins.uniqueId == InstrId.cpu_addiu
+        and ins.rt == Gpr.sp
+        and ins.rs == Gpr.sp
+        and ins.getProcessedImmediate() < 0
+    )
+
+
+def writes(ins: Instruction, reg: Register) -> bool:
+    """Whether `ins` itself sets `reg` (a call's effect on the callee's registers aside)."""
+    if reg == Gpr.ra and ins.doesLink():
+        return True
+    if ins.getDestinationGpr() == reg:
+        return True
+    return (
+        (ins.modifiesFd() and ins.fd == reg)
+        or (ins.modifiesFt() and ins.ft == reg)
+        or (ins.modifiesFs() and ins.fs == reg)
+    )
+
+
+def _ends_flow(ins: Instruction) -> bool:
+    """Control never falls through past this instruction's delay slot."""
+    return ins.isUnconditionalBranch() or (ins.isJump() and not ins.doesLink())
+
+
+def _bound_check(ins: Instruction, index: Register | None) -> bool:
+    """`sltiu at, index, N`, the guard in front of a jump table."""
+    return ins.uniqueId == InstrId.cpu_sltiu and (index is None or ins.rs == index)
+
+
+@dataclass(frozen=True)
+class Call:
+    """A jal, jalr, or a tail call (j out of the function, or a jr that is not a switch)."""
+
+    site: int
+    target: int | None
+    """The callee when known: the jump target, or a register holding a literal address."""
+    slot: int | None = None
+    """For a virtual call, `lw R, slot(vptr)` with vptr loaded from +0: the byte offset."""
+    link: bool = True
+
+
+@dataclass(frozen=True)
+class Pair:
+    """A `lui` and an instruction taking the low half from its register."""
+
+    hi: int
+    lo: int
+    value: int
+
+
+@dataclass(frozen=True)
+class Switch:
+    """A jump table and the `jr` that dispatches through it."""
+
+    jr: int
+    table: int
+    targets: tuple[int, ...]
+    first: int
+    """The case value of `targets[0]` (the bias the code subtracts before the bound check)."""
+    operand: Instruction | None
+    """What computed the switched value, before the bias and any mask: often a load."""
+
+
+class Code:
+    """The instructions in `text` of `mem`, decoded once, with the analyses over them."""
+
+    def __init__(self, mem: Memory, text: range) -> None:
+        self.mem = mem
+        self.text = text
+        self._ins = list(instructions(mem, text.start, text.stop))
+
+    def __iter__(self) -> Iterator[Instruction]:
+        return iter(self._ins)
+
+    def at(self, va: int) -> Instruction:
+        if va not in self.text or va % 4:
+            raise Unmapped(f"0x{va:08X} is not an instruction in {self!r}")
+        return self._ins[(va - self.text.start) // 4]
+
+    def span(self, where: range) -> list[Instruction]:
+        """The instructions in `where` (clipped to the code)."""
+        start = max(where.start, self.text.start) - self.text.start
+        return self._ins[start // 4 : (min(where.stop, self.text.stop) - self.text.start) // 4]
+
+    def __repr__(self) -> str:
+        return f"<Code 0x{self.text.start:08X}-0x{self.text.stop:08X}>"
+
+    # --- functions ---
+
+    @cached_property
+    def _jumps(self) -> frozenset[int]:
+        """Targets of branches and jumps inside the code."""
+        out = set()
+        for ins in self._ins:
+            if ins.isBranch() or ins.isJumpWithAddress():
+                target = ins.getBranchVramGeneric()
+                if target in self.text:
+                    out.add(target)
+        return frozenset(out)
+
+    @cached_property
+    def entries(self) -> tuple[int, ...]:
+        """Function starts: jal targets, and the run of code each stack-frame prologue opens.
+
+        A prologue scheduled after a few instructions starts its function where that straight
+        run begins; one reached by a branch is a second frame inside a function, not a start.
+        """
+        starts = {self.text.start}
+        for ins in self._ins:
+            if ins.uniqueId == InstrId.cpu_jal and ins.getInstrIndexAsVram() in self.text:
+                starts.add(ins.getInstrIndexAsVram())
+        for ins in self._ins:
+            if is_prologue(ins):
+                start = self._run_start(ins.vram)
+                if start is not None:
+                    starts.add(start)
+        return tuple(sorted(starts))
+
+    def _run_start(self, va: int) -> int | None:
+        a = va
+        while a - 4 >= self.text.start and not (
+            a - 8 >= self.text.start and _ends_flow(self.at(a - 8))
+        ):
+            if a in self._jumps:
+                return None
+            a -= 4
+        while a < va and self.at(a).isNop():
+            a += 4
+        return None if a in self._jumps else a
+
+    def function(self, va: int) -> range:
+        """From the entry at or before `va` to the next entry."""
+        self.at(va)
+        i = bisect.bisect_right(self.entries, va)
+        stop = self.entries[i] if i < len(self.entries) else self.text.stop
+        return range(self.entries[i - 1], stop)
+
+    @cached_property
+    def functions(self) -> tuple[range, ...]:
+        e = self.entries
+        return tuple(range(a, b) for a, b in zip(e, (*e[1:], self.text.stop), strict=True))
+
+    # --- lui/lo pairs and jump tables, as spimdisasm finds them ---
+
+    @cached_property
+    def _tracked(self) -> tuple[tuple[Pair, ...], dict[int, int]]:
+        pairs: dict[tuple[int, int], int] = {}
+        tables: dict[int, int] = {}
+        for fn in self.functions:
+            _Walk(self, fn, pairs, tables).run()
+        found = (Pair(hi, lo, value) for (hi, lo), value in pairs.items())
+        return tuple(sorted(found, key=lambda p: (p.lo, p.hi))), tables
+
+    @property
+    def pairs(self) -> tuple[Pair, ...]:
+        """Every lui/lo pair, by rabbitizer's RegistersTracker; `ori` forms a constant."""
+        return self._tracked[0]
+
+    @cached_property
+    def switches(self) -> dict[int, Switch]:
+        """Every jump-table dispatch, by its `jr`."""
+        out = {}
+        for jr, table in self._tracked[1].items():
+            out[jr] = self._switch(jr, table)
+        return out
+
+    def switch(self, jr: int) -> Switch | None:
+        return self.switches.get(jr)
+
+    def _switch(self, jr: int, table: int) -> Switch:
+        """Without a bound check, the table runs while its entries stay in the function."""
+        count, first, operand = self._bound(jr)
+        fn, targets = self.function(jr), list[int]()
+        while count is None or len(targets) < count:
+            try:
+                target = self.mem.u32(table + 4 * len(targets))
+            except Unmapped:
+                break
+            if count is None and target not in fn:
+                break
+            targets.append(target)
+        return Switch(jr, table, tuple(targets), first, operand)
+
+    def _bound(self, jr: int) -> tuple[int | None, int, Instruction | None]:
+        """(case count, first case, operand) from the `sltiu` that guards the table index:
+        the one on the index that the dispatch shifts, else the nearest before the `jr`."""
+        shift = self._shift(jr)
+        check = None
+        if shift is not None:
+            index = shift.rt
+            check = self._search(shift.vram, index, lambda i: _bound_check(i, index))
+        if check is None:
+            check = self._search(jr, None, lambda i: _bound_check(i, None))
+        if check is None:
+            return None, 0, None
+        first, reg = 0, check.rs
+        operand = self._source(check.vram, reg, self._jumps)
+        while operand is not None:
+            u = operand.uniqueId
+            if u in (InstrId.cpu_addiu, InstrId.cpu_andi) and operand.rs != Gpr.zero:
+                reg = operand.rs
+                if u == InstrId.cpu_addiu:
+                    first -= operand.getProcessedImmediate()
+            elif u in (InstrId.cpu_addu, InstrId.cpu_or) and Gpr.zero in (operand.rs, operand.rt):
+                reg = operand.rt if operand.rs == Gpr.zero else operand.rs
+            else:
+                break
+            operand = self._source(operand.vram, reg, self._jumps)
+        return check.getProcessedImmediate(), first, operand
+
+    def _shift(self, jr: int) -> Instruction | None:
+        """The `sll t, index, 2` of the dispatch `lw t, 0(table + t); jr t`."""
+        load = self._source(jr, self.at(jr).rs, self._jumps)
+        if load is None or not load.doesLoad():
+            return None
+        add = self._source(load.vram, load.rs, self._jumps)
+        if add is None or add.uniqueId != InstrId.cpu_addu:
+            return None
+        for reg in (add.rs, add.rt):
+            shift = self._source(add.vram, reg, self._jumps)
+            if shift is not None and shift.uniqueId == InstrId.cpu_sll and shift.sa == 2:
+                return shift
+        return None
+
+    @cached_property
+    def _into(self) -> dict[int, list[int]]:
+        """Branch and jump sites by target."""
+        out: dict[int, list[int]] = {}
+        for ins in self._ins:
+            if (ins.isBranch() or ins.isJumpWithAddress()) and not ins.doesLink():
+                out.setdefault(ins.getBranchVramGeneric(), []).append(ins.vram)
+        return out
+
+    def _search(
+        self, site: int, reg: Register | None, match: Callable[[Instruction], bool]
+    ) -> Instruction | None:
+        """The first instruction satisfying `match` on some path back from `site` inside its
+        function, on which nothing writes `reg` in between."""
+        fn = self.function(site)
+        todo, seen = [site], {site}
+        while todo:
+            a = todo.pop()
+            paths: list[tuple[list[int], int]] = [([b + 4, b], b) for b in self._into.get(a, ())]
+            owner = a - 8 if a - 8 >= fn.start and self.at(a - 8).hasDelaySlot() else None
+            if owner is None and a - 4 >= fn.start:
+                paths.append(([a - 4], a - 4))
+            elif owner is not None and not _ends_flow(self.at(owner)):
+                ran = [owner] if self.at(owner).isBranchLikely() else [a - 4, owner]
+                paths.append((ran, owner))
+            for ran, back in paths:
+                if back not in fn or back in seen:
+                    continue
+                for ins in map(self.at, ran):
+                    if match(ins):
+                        return ins
+                    if reg is not None and (
+                        writes(ins, reg) or (ins.doesLink() and reg in _CALL_CLOBBERS)
+                    ):
+                        break
+                else:
+                    seen.add(back)
+                    todo.append(back)
+        return None
+
+    # --- data flow backwards from a site ---
+
+    @cached_property
+    def labels(self) -> frozenset[int]:
+        """Where control arrives other than by falling through: branch, jump and case targets
+        and function entries."""
+        cases = {t for s in self.switches.values() for t in s.targets}
+        return self._jumps | set(self.entries) | cases
+
+    def source(self, site: int, reg: Register) -> Instruction | None:
+        """The instruction whose write to `reg` reaches `site`, or None where the value comes
+        from another path (a label) or from the caller. For a jump or call, as its target sees
+        `reg`: after the delay slot. Past a call, the call itself sets what it may clobber."""
+        return self._source(site, reg, self.labels)
+
+    def _source(
+        self,
+        site: int,
+        reg: Register | None,
+        labels: frozenset[int],
+        match: Callable[[Instruction], bool] | None = None,
+    ) -> Instruction | None:
+        """The nearest instruction back from `site` that writes `reg` or satisfies `match`."""
+
+        def hit(ins: Instruction) -> bool:
+            return (reg is not None and writes(ins, reg)) or (match is not None and match(ins))
+
+        if self.at(site).isJump() and site + 4 in self.text and hit(self.at(site + 4)):
+            return self.at(site + 4)
+        a = site
+        while a not in labels and a - 4 >= self.text.start:
+            prev = self.at(a - 4)
+            owner = self.at(a - 8) if a - 8 >= self.text.start else None
+            if owner is None or not owner.hasDelaySlot():
+                if hit(prev):
+                    return prev
+                a -= 4
+                continue
+            if _ends_flow(owner):
+                return None
+            if owner.doesLink() and reg in _CALL_CLOBBERS:
+                return owner
+            if not owner.isBranchLikely() and hit(prev):
+                return prev
+            if match is not None and match(owner):
+                return owner
+            a -= 8
+        return None
+
+    def constant(self, site: int, reg: Register) -> int | None:
+        """The literal `reg` holds at `site` (as `source` sees it), unsigned 32-bit, or None.
+
+        Follows `lui`, `addiu`, `ori`, register moves and `mtc1`; an FPU register's value is
+        its bits."""
+        if reg == Gpr.zero:
+            return 0
+        ins = self.source(site, reg)
+        if ins is None:
+            return None
+        u, at = ins.uniqueId, ins.vram
+        if u == InstrId.cpu_lui:
+            return (ins.getProcessedImmediate() << 16) & _MASK
+        if u in (InstrId.cpu_addiu, InstrId.cpu_ori):
+            base = self.constant(at, ins.rs)
+            if base is None:
+                return None
+            imm = ins.getProcessedImmediate()
+            return (base | imm) if u == InstrId.cpu_ori else (base + imm) & _MASK
+        if u in (InstrId.cpu_addu, InstrId.cpu_or) and Gpr.zero in (ins.rs, ins.rt):
+            return self.constant(at, ins.rt if ins.rs == Gpr.zero else ins.rs)
+        if u == InstrId.cpu_mtc1:
+            return self.constant(at, ins.rt)
+        return None
+
+    # --- calls ---
+
+    @cached_property
+    def calls(self) -> tuple[Call, ...]:
+        out = []
+        for ins in self._ins:
+            u, site = ins.uniqueId, ins.vram
+            if u == InstrId.cpu_jal:
+                out.append(Call(site, ins.getInstrIndexAsVram()))
+            elif u == InstrId.cpu_j:
+                target = ins.getInstrIndexAsVram()
+                if target not in self.function(site):
+                    out.append(Call(site, target, link=False))
+            elif u == InstrId.cpu_jalr or (u == InstrId.cpu_jr and not ins.isReturn()):
+                if site in self.switches:
+                    continue
+                reg = ins.rs
+                out.append(
+                    Call(site, self.constant(site, reg), self._slot(site, reg), u != InstrId.cpu_jr)
+                )
+        return tuple(out)
+
+    def _slot(self, site: int, reg: Register) -> int | None:
+        load = self.source(site, reg)
+        if load is None or load.uniqueId != InstrId.cpu_lw:
+            return None
+        vptr = self.source(load.vram, load.rs)
+        if vptr is None or vptr.uniqueId != InstrId.cpu_lw or vptr.getProcessedImmediate():
+            return None
+        return int(load.getProcessedImmediate())
+
+    @cached_property
+    def _callers(self) -> dict[int, list[int]]:
+        out: dict[int, list[int]] = {}
+        for c in self.calls:
+            if c.target is not None:
+                out.setdefault(c.target, []).append(c.site)
+        return out
+
+    def callers(self, target: int) -> list[int]:
+        """Sites that call or tail-jump to `target`, directly or through a literal register."""
+        return list(self._callers.get(target, ()))
+
+
+@dataclass
+class _Frame:
+    tracker: RegistersTracker
+    at: int
+    likely: bool
+    resumed: bool = False
+
+
+class _Walk:
+    """spimdisasm's per-function RegistersTracker walk: the straight line plus a look-ahead
+    into every branch target, each with the registers as they were at the branch."""
+
+    def __init__(
+        self, code: Code, fn: range, pairs: dict[tuple[int, int], int], tables: dict[int, int]
+    ) -> None:
+        self.code, self.fn, self.pairs, self.tables = code, fn, pairs, tables
+        self.luis: dict[int, Instruction] = {}
+        self.taken: set[tuple[int, bool]] = set()
+
+    def run(self) -> None:
+        tracker = RegistersTracker()
+        prev: Instruction | None = None
+        for ins in self.code.span(self.fn):
+            if prev is None or not (prev.isBranchLikely() or prev.isUnconditionalBranch()):
+                self.process(tracker, ins, prev)
+            if prev is not None:
+                self.look_ahead(ins, prev, tracker, prev.isBranchLikely())
+                if (
+                    prev.isJumpWithAddress()
+                    and not prev.doesLink()
+                    and prev.getBranchVramGeneric() not in self.fn
+                ):
+                    tracker = RegistersTracker()
+                tracker.unsetRegistersAfterFuncCall(ins, prev)
+                if _ends_flow(prev) or prev.isReturn():
+                    tracker = RegistersTracker()
+            prev = ins
+
+    def look_ahead(
+        self, ins: Instruction, prev: Instruction, outer: RegistersTracker, likely: bool
+    ) -> None:
+        """Depth first, in spimdisasm's order; a stack instead of recursion, which runs past
+        Python's limit in BOOT.BIN."""
+        stack: list[_Frame] = []
+        self.enter(stack, ins, prev, outer, likely)
+        while stack:
+            f = stack[-1]
+            if f.resumed:
+                came, landed = self.code.at(f.at - 4), self.code.at(f.at)
+                if came.isUnconditionalBranch() or (came.isJump() and not came.doesLink()):
+                    stack.pop()
+                    continue
+                f.tracker.unsetRegistersAfterFuncCall(landed, came)
+                f.at += 4
+                f.resumed = False
+            if f.at >= self.fn.stop:
+                stack.pop()
+                continue
+            first = f.at - 4 < self.code.text.start
+            before, target = None if first else self.code.at(f.at - 4), self.code.at(f.at)
+            self.process(f.tracker, target, before)
+            if before is None:
+                f.at += 4
+                continue
+            f.resumed = True
+            self.enter(stack, target, before, f.tracker, f.likely or before.isBranchLikely())
+
+    def enter(
+        self,
+        stack: list[_Frame],
+        ins: Instruction,
+        prev: Instruction,
+        outer: RegistersTracker,
+        likely: bool,
+    ) -> None:
+        if not (prev.isBranch() or prev.isUnconditionalBranch()):
+            return
+        target = prev.getBranchVramGeneric()
+        if target < self.fn.start:
+            return
+        tracker = RegistersTracker(outer)
+        self.process(tracker, ins, None)
+        if (ins.vram, likely) in self.taken:
+            return
+        self.taken.add((ins.vram, likely))
+        stack.append(_Frame(tracker, target, likely))
+
+    def process(
+        self, tracker: RegistersTracker, ins: Instruction, prev: Instruction | None
+    ) -> None:
+        va = ins.vram
+        if ins.isBranch() or ins.isUnconditionalBranch():
+            tracker.processBranch(ins, va)
+        elif ins.isJumpWithAddress():
+            pass
+        elif ins.hasOperandAlias(OperandType.cpu_immediate):
+            self.symbol(tracker, ins, prev, va)
+        elif ins.isJumptableJump():
+            jr = tracker.getJrRegData(ins)
+            if jr.hasInfo() and not jr.checkedForBranching():
+                self.tables.setdefault(va, jr.address())
+        tracker.overwriteRegisters(ins, va)
+
+    def symbol(
+        self, tracker: RegistersTracker, ins: Instruction, prev: Instruction | None, va: int
+    ) -> None:
+        if ins.canBeHi():
+            if prev is None:
+                tracker.processLui(ins, va)
+            else:
+                tracker.processLui(ins, va, prev)
+            self.luis[va] = ins
+            return
+        if not ins.canBeLo():
+            return
+        if ins.isUnsigned():
+            hi = tracker.getLuiOffsetForConstant(ins)
+            if hi is None or hi not in self.luis:
+                return
+            value = (self.luis[hi].getProcessedImmediate() << 16) | ins.getProcessedImmediate()
+            self.pairs[(hi, va)] = value
+            tracker.processConstant(ins, value, va)
+            return
+        info = tracker.preprocessLoAndGetInfo(ins, va)
+        if not info.shouldProcess or info.isGpRel or info.isGpGot:
+            return
+        value = (info.value + ins.getProcessedImmediate()) & _MASK
+        self.pairs[(info.instrOffset, va)] = value
+        tracker.processLo(ins, value, va)
