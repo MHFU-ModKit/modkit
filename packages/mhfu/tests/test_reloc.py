@@ -4,67 +4,33 @@ import pytest
 from mhfu import files, reloc
 from mhfu.mips import Code
 from mhfu.overlay import TEXT, Overlay
+from modkit_testing import mips as asm
 
 LOAD = 0x0012_0180
 CODE = LOAD + TEXT + 0x40
 OUTSIDE = 0x0011_0000
-R = {"zero": 0, "v0": 2, "v1": 3, "a0": 4, "a1": 5, "sp": 29, "ra": 31}
-
-
-def imm(op, rt, rs, value):
-    return op << 26 | R[rs] << 21 | R[rt] << 16 | value & 0xFFFF
-
-
-def lui(rt, value):
-    return imm(0x0F, rt, "zero", value >> 16)
-
-
-def addiu(rt, rs, value):
-    return imm(0x09, rt, rs, value)
-
-
-def lw(rt, value, rs):
-    return imm(0x23, rt, rs, value)
-
-
-def beql(rs, rt, to, at):
-    return imm(0x14, rt, rs, (to - at - 4) >> 2)
-
-
-def jal(target):
-    return 3 << 26 | (target >> 2) & 0x03FF_FFFF
-
-
-RET = 0x03E0_0008
-
-
-def half(value):
-    """%hi, %lo of value, the low half sign-extended."""
-    lo = (value & 0xFFFF) - (0x10000 if value & 0x8000 else 0)
-    return value - lo, lo
 
 
 def overlay():
     data_at = CODE + 4 * 16
-    ptr_hi, ptr_lo = half(data_at + 8)
-    ext_hi, ext_lo = half(OUTSIDE + 0x760)
+    ptr, ext = data_at + 8, OUTSIDE + 0x760
     words = [
-        lui("a0", ptr_hi),
-        jal(CODE + 4 * 14),  # 1 into the image
-        addiu("a0", "a0", ptr_lo),
-        lui("v0", ext_hi),
-        jal(OUTSIDE),  # 4 out of it
-        lw("a1", ext_lo, "v0"),  # below load: another overlay's bss
-        beql("a0", "zero", CODE + 4 * 10, CODE + 4 * 6),
-        lui("v1", ptr_hi),  # 7 only on the taken path
-        RET,
-        0,
-        lw("a1", ptr_lo, "v1"),  # 10 pairs with the lui in the branch-likely slot
-        RET,
-        0,
-        0,
-        RET,  # 14
-        0,
+        asm.lui("a0", asm.hi(ptr)),
+        asm.jal(CODE + 4 * 14),  # 1 into the image
+        asm.addiu("a0", "a0", asm.lo(ptr)),
+        asm.lui("v0", asm.hi(ext)),
+        asm.jal(OUTSIDE),  # 4 out of it
+        asm.lw("a1", asm.lo(ext), "v0"),  # below load: another overlay's bss
+        asm.beq("a0", "zero", CODE + 4 * 10, CODE + 4 * 6, likely=True),
+        asm.lui("v1", asm.hi(ptr)),  # 7 only on the taken path
+        asm.RET,
+        asm.NOP,
+        asm.lw("a1", asm.lo(ptr), "v1"),  # 10 pairs with the lui in the branch-likely slot
+        asm.RET,
+        asm.NOP,
+        asm.NOP,
+        asm.RET,  # 14
+        asm.NOP,
     ]
     text = bytes(0x40) + struct.pack(f"<{len(words)}I", *words)
     data = struct.pack("<4I", data_at + 12, OUTSIDE, 7, CODE)  # the last word: a ctor list

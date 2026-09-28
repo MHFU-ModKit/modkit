@@ -6,17 +6,9 @@ from mhfu import files, mips
 from mhfu import stage as S
 from mhfu.memory import Image
 from mhfu.overlay import TEXT, Overlay
+from modkit_testing import mips as asm
 
 LOAD = 0x0010_0000
-JR_RA = 0x03E0_0008
-
-
-def lui(reg: int, hi: int) -> int:
-    return 0x3C00_0000 | reg << 16 | hi
-
-
-def addiu(rt: int, rs: int, imm: int) -> int:
-    return 0x2400_0000 | rs << 21 | rt << 16 | imm & 0xFFFF
 
 
 def words(*ws: int) -> bytes:
@@ -33,8 +25,7 @@ def stage_overlay(p_off: int = 0x40) -> tuple[Overlay, int]:
     text_size = 0x20
     data_start = LOAD + TEXT + text_size
     p = data_start + p_off
-    hi, lo = (p >> 16) + (1 if p & 0x8000 else 0), p & 0xFFFF
-    text = words(lui(2, hi), JR_RA, addiu(2, 2, lo), 0, 0, 0, 0, 0)
+    text = words(asm.lui("v0", asm.hi(p)), asm.RET, asm.addiu("v0", "v0", asm.lo(p)), *[0] * 5)
     data = bytearray(0x200)
     exits, spheres, table = 0x100, 0x180, 0x1E0
     fields = a.STAGE_PARAMS
@@ -69,7 +60,15 @@ def test_loaded_zeroes_bss_not_slack():
 
 
 def test_returned_constants_sign_extend():
-    text = words(0, lui(2, 0x11), JR_RA, addiu(2, 2, 0x8010), lui(2, 0x11), JR_RA, addiu(3, 2, 1))
+    text = words(
+        asm.NOP,
+        asm.lui("v0", 0x11),
+        asm.RET,
+        asm.addiu("v0", "v0", 0x8010),
+        asm.lui("v0", 0x11),
+        asm.RET,
+        asm.addiu("v1", "v0", 1),
+    )
     ovl = overlay(text, b"")
     code = mips.Code(ovl, ovl.text)
     returned = [code.constant(i.vram, mips.Gpr.v0) for i in code if i.isReturn()]
@@ -97,7 +96,7 @@ def test_stage_overlay():
 
 
 def test_no_parameter_object():
-    so = S.StageOverlay.parse(overlay(words(JR_RA, 0), bytes(16)))
+    so = S.StageOverlay.parse(overlay(words(asm.RET, asm.NOP), bytes(16)))
     assert so.params is None and so.exits() == [] and so.surface_table() is None
 
 

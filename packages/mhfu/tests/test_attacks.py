@@ -5,31 +5,16 @@ from mhfu import files, hitbox
 from mhfu.em import attacks
 from mhfu.memory import Image
 from mhfu.mips import Code
+from modkit_testing import mips as asm
 
 BASE = 0x0010_0000
-R = {"zero": 0, "a2": 6, "s0": 16, "sp": 29, "ra": 31}
 MOVESET = a.ATTACK_SPAWNERS + 0x100
 SHARED = a.ATTACK_SPAWNERS + 0x200
-
-
-def addiu(rt, rs, v):
-    return 0x09 << 26 | R[rs] << 21 | R[rt] << 16 | v & 0xFFFF
-
-
-def jal(target):
-    return 3 << 26 | (target >> 2) & 0x03FF_FFFF
-
-
-def j(target):
-    return 2 << 26 | (target >> 2) & 0x03FF_FFFF
-
-
-NOP, RET = 0, R["ra"] << 21 | 0x08
-PROLOGUE = addiu("sp", "sp", -0x10)
+PROLOGUE = asm.addiu("sp", "sp", -0x10)
 
 
 def call(target, attack_id):
-    return [jal(target), addiu("a2", "zero", attack_id)]
+    return [asm.jal(target), asm.li("a2", attack_id)]
 
 
 def build(*words):
@@ -43,15 +28,15 @@ def test_spawner():
         *call(MOVESET, 1),
         *call(MOVESET, 2),
         *call(SHARED, 34),
-        RET,
-        NOP,
+        asm.RET,
+        asm.NOP,
         PROLOGUE,  # 9
         *call(MOVESET, 2),
         *call(MOVESET, 5),
-        jal(MOVESET),  # 14 a computed id
-        addiu("a2", "s0", 4),
-        j(SHARED),  # 16 a tail call
-        addiu("a2", "zero", 34),
+        asm.jal(MOVESET),  # 14 a computed id
+        asm.addiu("a2", "s0", 4),
+        asm.j(SHARED),  # 16 a tail call
+        asm.li("a2", 34),
     )
     family = attacks.family(code)
     assert list(family) == [MOVESET, SHARED]
