@@ -31,11 +31,11 @@ from construct import (
 )
 
 from ._base import FormatError
+from .psp.color import Color, Rgba, from_rgba, to_rgba
 from .psp.swizzle import BLOCK_ROWS, swizzle, unswizzle
 
 MAGIC = b".TMH0.14"
 
-Rgba = tuple[int, int, int, int]
 
 # GE texture formats: 0-3 direct 5650/5551/4444/8888, 4-7 CLUT indices, 8-10 DXT1/DXT3/DXT5.
 # A CLUT is stored in one of the four direct formats.
@@ -99,7 +99,7 @@ class Clut:
         return _entries(self.mode, self.data)
 
     def colours(self) -> list[Rgba]:
-        c = _rgba(self.mode, self.data)
+        c = to_rgba(self.data, Color(self.mode))
         return [(c[i], c[i + 1], c[i + 2], c[i + 3]) for i in range(0, len(c), 4)]
 
 
@@ -133,7 +133,7 @@ class TmhImage:
             return self._dxt(need)
         stream = self._unswizzled()[:need] if self.swizzled else self.pixels[:need]
         if self.mode < 4:
-            return _rgba(self.mode, stream)
+            return to_rgba(stream, Color(self.mode))
         indices = _indices(self.mode, stream)[: self.width * self.height]
         return _lookup(indices, self._palette(palette))
 
@@ -151,7 +151,7 @@ class TmhImage:
             raise ValueError("DXT is not encoded")
         clut = self.clut
         if self.mode < 4:
-            stream = _pack(self.mode, rgba)
+            stream = from_rgba(rgba, Color(self.mode))
         else:
             n = len(self._palette(palette)) // 4
             assert clut is not None  # _palette raised otherwise
@@ -159,7 +159,7 @@ class TmhImage:
             stream = _pack_indices(self.mode, indices)
             size = _BPP[clut.mode] // 8
             start, end = palette * n * size, (palette + 1) * n * size
-            packed = _pack(clut.mode, bytes(v for c in pal for v in c))
+            packed = from_rgba(bytes(v for c in pal for v in c), Color(clut.mode))
             clut = Clut(clut.mode, clut.data[:start] + packed + clut.data[end:])
         if self.swizzled:
             # bytes a short last band stores past the image stay as they were
@@ -175,7 +175,9 @@ class TmhImage:
         n = 1 << _BPP[self.mode] if self.mode in (4, 5) else self.clut.entries
         if palette < 0 or palette * n >= self.clut.entries:
             raise ValueError(f"the image has no palette {palette}")
-        return _rgba(self.clut.mode, self.clut.data)[palette * n * 4 : (palette + 1) * n * 4]
+        return to_rgba(self.clut.data, Color(self.clut.mode))[
+            palette * n * 4 : (palette + 1) * n * 4
+        ]
 
     def _stored_size(self) -> int:
         """Bytes of `pixels` the image needs; a swizzled image may stop inside its last band."""
@@ -346,46 +348,8 @@ def _le(typecode: str, data: bytes | list[int]) -> array[int]:
     return a
 
 
-_5TO8 = bytes(v << 3 | v >> 2 for v in range(32))
-_6TO8 = bytes(v << 2 | v >> 4 for v in range(64))
 _LOW = bytes(v & 15 for v in range(256))
 _HIGH = bytes(v >> 4 for v in range(256))
-
-
-def _rgba(mode: int, data: bytes) -> bytes:
-    """Direct colours (formats 0-3) -> RGBA8, widened by bit replication as the GE does."""
-    if mode == 3:
-        return bytes(data)
-    out = bytearray()
-    for v in _le("H", data):
-        if mode == 0:
-            out += bytes((_5TO8[v & 31], _6TO8[v >> 5 & 63], _5TO8[v >> 11], 255))
-        elif mode == 1:
-            out += bytes((_5TO8[v & 31], _5TO8[v >> 5 & 31], _5TO8[v >> 10 & 31], v >> 15 and 255))
-        else:
-            out += bytes((v >> s & 15) * 17 for s in (0, 4, 8, 12))
-    return bytes(out)
-
-
-def _q(v: int, bits: int) -> int:
-    """8-bit channel -> `bits`, the exact inverse of the widening in `_rgba`."""
-    return round(v * ((1 << bits) - 1) / 255)
-
-
-def _pack(mode: int, rgba: bytes) -> bytes:
-    """RGBA8 -> direct colours (formats 0-3); the 16-bit formats round."""
-    if mode == 3:
-        return bytes(rgba)
-    out = []
-    for i in range(0, len(rgba), 4):
-        r, g, b, a = rgba[i : i + 4]
-        if mode == 0:
-            out.append(_q(r, 5) | _q(g, 6) << 5 | _q(b, 5) << 11)
-        elif mode == 1:
-            out.append(_q(r, 5) | _q(g, 5) << 5 | _q(b, 5) << 10 | (a >= 128) << 15)
-        else:
-            out.append(_q(r, 4) | _q(g, 4) << 4 | _q(b, 4) << 8 | _q(a, 4) << 12)
-    return _le("H", out).tobytes()
 
 
 def _indices(mode: int, stream: bytes) -> bytes | array[int]:

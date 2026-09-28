@@ -14,6 +14,7 @@ from itertools import chain
 from typing import Self
 
 from .._base import FormatError
+from .color import Color, Rgba, unpack
 
 NONE, BITS8, BITS16, FLOAT = 0, 1, 2, 3
 """Component format of weights, texture, normal and position (8/16-bit are fixed point)."""
@@ -252,9 +253,8 @@ class Vertices:
         """Blend weights, 1.0 at the fixed-point unit (the GE allows up to 2.0)."""
         return _scaled(self.weight, self.vtype.layout.weight)
 
-    def colors(self) -> list[tuple[int, int, int, int]]:
-        """RGBA, 0..255 each."""
-        return [unpack_color(c, self.vtype.color) for c in self.color]
+    def colors(self) -> list[Rgba]:
+        return [unpack(c, Color(self.vtype.color - COLOR_5650)) for c in self.color]
 
 
 @dataclass(frozen=True)
@@ -297,33 +297,3 @@ def _scaled(rows: list[Row], fld: Field | None) -> list[Row]:
         return []
     unit = _UNIT[fld.codes[0]]
     return [tuple(c / unit for c in row) for row in rows]
-
-
-def unpack_color(value: int, fmt: int) -> tuple[int, int, int, int]:
-    """A packed colour of VTYPE colour format `fmt` as RGBA, 0..255 (red in the low bits)."""
-    if fmt == COLOR_8888:
-        return value & 0xFF, value >> 8 & 0xFF, value >> 16 & 0xFF, value >> 24 & 0xFF
-    if fmt == COLOR_5650:
-        r, g, b = value & 0x1F, value >> 5 & 0x3F, value >> 11 & 0x1F
-        return r << 3 | r >> 2, g << 2 | g >> 4, b << 3 | b >> 2, 0xFF
-    if fmt == COLOR_5551:
-        r, g, b = value & 0x1F, value >> 5 & 0x1F, value >> 10 & 0x1F
-        return r << 3 | r >> 2, g << 3 | g >> 2, b << 3 | b >> 2, 0xFF * (value >> 15 & 1)
-    if fmt == COLOR_4444:
-        r, g, b, a = value & 0xF, value >> 4 & 0xF, value >> 8 & 0xF, value >> 12 & 0xF
-        return r * 0x11, g * 0x11, b * 0x11, a * 0x11
-    raise ValueError(f"no colour format {fmt}")
-
-
-def pack_color(rgba: tuple[int, int, int, int], fmt: int) -> int:
-    """RGBA, 0..255 each, as VTYPE colour format `fmt`: truncates, so it inverts `unpack_color`."""
-    r, g, b, a = rgba
-    if fmt == COLOR_8888:
-        return r | g << 8 | b << 16 | a << 24
-    if fmt == COLOR_5650:
-        return r >> 3 | g >> 2 << 5 | b >> 3 << 11
-    if fmt == COLOR_5551:
-        return r >> 3 | g >> 3 << 5 | b >> 3 << 10 | a >> 7 << 15
-    if fmt == COLOR_4444:
-        return r >> 4 | g >> 4 << 4 | b >> 4 << 8 | a >> 4 << 12
-    raise ValueError(f"no colour format {fmt}")

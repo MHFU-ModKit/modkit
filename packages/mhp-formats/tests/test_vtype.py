@@ -10,15 +10,12 @@ from mhp_formats.psp.vtype import (
     BITS8,
     BITS16,
     COLOR_4444,
-    COLOR_5551,
     COLOR_5650,
     COLOR_8888,
     FLOAT,
     NONE,
     VertexType,
     Vertices,
-    pack_color,
-    unpack_color,
 )
 
 VT = VertexType
@@ -240,34 +237,6 @@ def test_through_views():
     assert tf.positions() == [(1.5, 2.0, 0.0), (0, 0, 65535.0)]
 
 
-@pytest.mark.parametrize(
-    ("fmt", "value", "rgba"),
-    [
-        (COLOR_5650, 0xFFFF, (255, 255, 255, 255)),
-        (COLOR_5650, 0x001F, (255, 0, 0, 255)),
-        (COLOR_5650, 0x07E0, (0, 255, 0, 255)),
-        (COLOR_5650, 0x0821, (8, 4, 8, 255)),
-        (COLOR_5551, 0x8000, (0, 0, 0, 255)),
-        (COLOR_5551, 0x7C00, (0, 0, 255, 0)),
-        (COLOR_4444, 0x1234, (0x44, 0x33, 0x22, 0x11)),
-        (COLOR_8888, 0x11223344, (0x44, 0x33, 0x22, 0x11)),
-    ],
-)
-def test_color(fmt, value, rgba):
-    assert unpack_color(value, fmt) == rgba
-    assert pack_color(rgba, fmt) == value
-
-
-@pytest.mark.parametrize("fmt", [COLOR_5650, COLOR_5551, COLOR_4444])
-def test_color_round_trip(fmt):
-    for value in range(1 << 16):
-        assert pack_color(unpack_color(value, fmt), fmt) == value
-
-
 def test_colors_view():
     v = Vertices(VT(color=COLOR_4444, position=BITS8), color=[0xF00F], position=[(0, 0, 0)])
     assert v.colors() == [(255, 0, 0, 255)]
-    with pytest.raises(ValueError):
-        unpack_color(0, 3)
-    with pytest.raises(ValueError):
-        pack_color((0, 0, 0, 0), 1)

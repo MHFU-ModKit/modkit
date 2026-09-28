@@ -7,6 +7,7 @@ from ._base import Format, FormatError
 from .anim import AnimPack, Channel, Clip, Keyframe, Track, dequantize, quantize
 from .pac import Pac
 from .skeleton import Bone, Skeleton
+from .tmh import Tmh, TmhImage
 
 __all__ = [
     "AnimPack",
@@ -18,6 +19,8 @@ __all__ = [
     "Keyframe",
     "Pac",
     "Skeleton",
+    "Tmh",
+    "TmhImage",
     "Track",
     "dequantize",
     "quantize",
