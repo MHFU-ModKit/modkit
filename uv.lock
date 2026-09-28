@@ -13,7 +13,6 @@ members = [
     "modkit-testing",
     "ppsspp-debug",
 ]
-overrides = [{ name = "pycrypto", marker = "sys_platform == 'never'" }]
 
 [manifest.dependency-groups]
 dev = [
@@ -358,9 +357,9 @@ wheels = [
 [[package]]
 name = "mhef"
 version = "1.4.1"
-source = { git = "https://github.com/svanheulen/mhef?rev=8a5132fb7024103ba6271371b81060a55a437651#8a5132fb7024103ba6271371b81060a55a437651" }
+source = { git = "https://github.com/MHFU-ModKit/mhef?rev=0d0ba4802d4dfcf4f4960a8ebb7c69a8bf48780f#0d0ba4802d4dfcf4f4960a8ebb7c69a8bf48780f" }
 dependencies = [
-    { name = "pycrypto", marker = "sys_platform == 'never'" },
+    { name = "pycryptodome" },
 ]
 
 [[package]]
@@ -381,16 +380,14 @@ dependencies = [
 iso = [
     { name = "mhef" },
     { name = "pycdlib" },
-    { name = "pycryptodome" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "construct", specifier = ">=2.10.70" },
     { name = "construct-typing", specifier = ">=0.8" },
-    { name = "mhef", marker = "extra == 'iso'", git = "https://github.com/svanheulen/mhef?rev=8a5132fb7024103ba6271371b81060a55a437651" },
+    { name = "mhef", marker = "extra == 'iso'", git = "https://github.com/MHFU-ModKit/mhef?rev=0d0ba4802d4dfcf4f4960a8ebb7c69a8bf48780f" },
     { name = "pycdlib", marker = "extra == 'iso'", specifier = ">=1.14" },
-    { name = "pycryptodome", marker = "extra == 'iso'", specifier = ">=3.20" },
 ]
 provides-extras = ["iso"]
 
@@ -586,12 +583,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/34/35/5bf537a4d81f53f9f
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d9/1d/04c8489b2ffc95c213b42314bc05186436a5f44872f1a97a946ab3ba913e/pycdlib-1.21.0-py3-none-any.whl", hash = "sha256:1a82cd735542921d0dd7bc40381e7b7b9cbc70bd4c03e4f67a0531d59d2f518e", size = 237343, upload-time = "2026-09-25T14:15:14.48Z" },
 ]
-
-[[package]]
-name = "pycrypto"
-version = "2.6.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/60/db/645aa9af249f059cc3a368b118de33889219e0362141e75d4eaf6f80f163/pycrypto-2.6.1.tar.gz", hash = "sha256:f2ce1e989b272cfcb677616763e0a2e7ec659effa67a88aa92b3a65528f60a3c", size = 446240, upload-time = "2014-06-20T08:10:20.813Z" }
 
 [[package]]
 name = "pycryptodome"

@@ -4,9 +4,7 @@
 padded to a 2048-byte block. The disc stores it encrypted; `decrypt` and `encrypt` need the `iso`
 extra (mhef)."""
 
-import array
 import importlib
-import types
 from dataclasses import dataclass, field
 from enum import Enum
 from itertools import accumulate, pairwise
@@ -116,14 +114,8 @@ def _crypt(data: bytes, game: Game, encrypting: bool) -> bytes:
     return bytes(out)
 
 
-class _Words(array.array):  # type: ignore[type-arg]
-    tostring = array.array.tobytes  # mhef calls the name Python 3.9 removed
-
-
 def _cipher(game: Game) -> Any:
     psp = _iso_extra("mhef.psp")
-    if not hasattr(psp.array.array, "tostring"):
-        psp.array = types.SimpleNamespace(array=_Words)
     return psp.DataCipher({Game.MHFU: psp.MHP2G_EU, Game.MHP3RD: psp.MHP3_JP}[game])
 
 

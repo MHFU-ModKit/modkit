@@ -17,10 +17,6 @@ dev = [
 [tool.uv.sources]
 mhp-formats = { workspace = true }
 
-[tool.uv]
-# mhef declares pycrypto, which no longer builds; pycryptodome provides the same `Crypto` package
-override-dependencies = ["pycrypto; sys_platform == 'never'"]
-
 [tool.ruff]
 line-length = 100
 target-version = "py311"
