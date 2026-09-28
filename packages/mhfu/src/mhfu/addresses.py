@@ -66,6 +66,14 @@ class Struct:
     size: int | None = None
     stride: int | None = None
 
+    @property
+    def step(self) -> int:
+        """Bytes from one of these to the next in a table: `stride`, else `size`."""
+        step = self.stride or self.size
+        if step is None:
+            raise TypeError(f"struct {self.name} has no size or stride in addresses.toml")
+        return step
+
     def __getattr__(self, name: str) -> Field:
         fields: dict[str, Field] = self.__dict__.get("fields", {})
         if name in fields:

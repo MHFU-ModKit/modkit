@@ -48,20 +48,6 @@ def variant_name(variant: int) -> str:
     return f"st{files.STAGE_VARIANT:03d}_{variant % 4 + 1}{'abcd'[variant // 4]}"
 
 
-def loaded(ovl: Overlay) -> Image:
-    """The overlay as the game holds it: text and data from the file, then zeroed bss; the
-    file's tail past the data is disc slack, not bss."""
-    image = ovl.data[: ovl.initialised.stop - ovl.base]
-    return Image(bytes(image).ljust(ovl.bss.stop - ovl.base, b"\0"), ovl.base, ovl.name)
-
-
-def size(s: a.Struct) -> int:
-    """A struct's size; the table must give it."""
-    if not s.size:
-        raise ValueError(f"struct {s.name} has no size in addresses.toml")
-    return s.size
-
-
 def _mapped(mem: Memory, address: int, n: int) -> bool:
     try:
         mem.read(address, n)
@@ -144,7 +130,7 @@ class StageOverlay:
     def parse(cls, ovl: Overlay) -> StageOverlay:
         """The parameter object is what a constant getter returns: of those, the object that
         pads the most slot ids with NO_SLOT."""
-        mem = loaded(ovl)
+        mem = ovl
         best: tuple[int, int] | None = None
         for va in constant_getters(ovl, ovl.text):
             score = _params_score(mem, va)
@@ -190,7 +176,7 @@ class StageOverlay:
 def _records(kind: type[R], mem: Image, base: int, count: int) -> list[R]:
     """`count` records from `base`, cut short where the overlay ends."""
     assert kind.struct
-    stride = size(kind.struct)
+    stride = kind.struct.step
     out = []
     for k in range(count if base else 0):
         if not _mapped(mem, base + k * stride, stride):
@@ -212,7 +198,7 @@ def map_table(mem: Memory) -> list[tuple[int, ...]]:
     """The stages of each map row, entry area first; `mem` covers game_sub.ovl."""
     out = []
     for i in range(MAP_ROWS):
-        row = MapRow(mem, a.MAP_TABLE + i * size(a.MAP_ROW))
+        row = MapRow(mem, a.MAP_TABLE + i * a.MAP_ROW.step)
         n = row.count
         try:
             out.append(mem.unpack(struct.Struct(f"<{n}H"), row.stages) if n else ())
@@ -243,7 +229,7 @@ def resident_files(mem: Memory) -> dict[int, ResourceSlot]:
         return {}
     out = {}
     for k in range(RESOURCE_SLOTS):
-        slot = ResourceSlot(mem, base + k * size(a.RESOURCE_SLOT))
+        slot = ResourceSlot(mem, base + k * a.RESOURCE_SLOT.step)
         if slot.file_id != FREE_FILE and slot.data:
             out[slot.file_id - files.ENGINE_SKEW] = slot
     return out
@@ -327,7 +313,7 @@ def find_spots(image: Image) -> list[GatherSpot]:
 
     Anchored on the id sequence 0, 1, 2, 3, end, 4, ...: the table has no static pointer.
     """
-    stride = size(a.GATHER_SPOT)
+    stride = a.GATHER_SPOT.step
     end_x = struct.pack("<f", SPOT_END_X)
     at = image.data.find(end_x)
     while at >= 0:
@@ -394,7 +380,7 @@ def find_spawns(image: Image) -> list[SmallSpawn]:
 
     The table is rebuilt per area, and records of areas left behind linger with `here` false.
     """
-    stride, at_kind = size(a.SMALL_SPAWN), a.SMALL_SPAWN.KIND
+    stride, at_kind = a.SMALL_SPAWN.step, a.SMALL_SPAWN.KIND
     marker = struct.pack("<HH", SPAWN_KIND, SPAWN_MARK)
     out = []
     at = image.data.find(marker)

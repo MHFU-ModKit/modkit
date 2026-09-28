@@ -31,7 +31,7 @@ VOLUMES = b"".join(record(b, at=(0, 0, 0)) for b in (4, 9, 12)) + SENTINEL
 
 def game_task(set_va: int, grids: int = 2) -> Image:
     """A species row pointing at `set_va` and at `grids` hitzone grids, then the grid table."""
-    row = a.SPECIES_TABLE + SPECIES * hz.SPECIES_STRIDE
+    row = a.SPECIES_TABLE + SPECIES * a.SPECIES.stride
     data = bytearray(0x600)
     grid0 = row + 0x400
     table = grid0 + grids * (a.HITZONE_GRID.size or 0)

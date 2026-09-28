@@ -19,6 +19,8 @@ GAME_TASK = 70
 """game_task.ovl: the in-quest engine, species table and hit volumes included."""
 GAME_SUB = 75
 """game_sub.ovl: the map table, among others."""
+LOBBY_TASK = 69
+"""lobby_task.ovl: the hub, which picks a st046 variant."""
 
 EM_SPECIES = (1, 2, 7, 14, 15, 17, 20, 21, 33, 40, 54, 55, 58, 59, 75, 82, 83)
 """Species with a big-monster overlay, in file order from EM_FIRST."""

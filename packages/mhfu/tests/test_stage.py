@@ -9,7 +9,6 @@ from mhfu.overlay import TEXT, Overlay
 
 LOAD = 0x0010_0000
 JR_RA = 0x03E0_0008
-LOBBY_TASK = 69
 
 
 def lui(reg: int, hi: int) -> int:
@@ -64,7 +63,7 @@ def test_stage_files():
 
 def test_loaded_zeroes_bss_not_slack():
     ovl, _ = stage_overlay()
-    mem = S.loaded(ovl)
+    mem = ovl
     assert mem.end == ovl.bss.stop
     assert mem.read(ovl.bss.start, len(ovl.bss)) == bytes(len(ovl.bss))
 
@@ -197,7 +196,7 @@ def test_map_table_game(game):
 
 def test_lobby_loads_the_variants(game):
     """The last 16 stage PACs are st046's: the lobby asks the variant picker for the file."""
-    lobby = game.overlay(LOBBY_TASK)
+    lobby = game.overlay(files.LOBBY_TASK)
     assert list(hitbox.calls_to(lobby, lobby.text, a.STAGE_VARIANT_FILE))
     eboot = game.eboot()
     picker = mips.instructions(eboot, a.STAGE_VARIANT_FILE, a.STAGE_VARIANT_FILE + 0x100)

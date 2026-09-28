@@ -20,12 +20,12 @@ from rabbitizer import InstrId
 
 from . import addresses as a
 from . import mips
-from .hitzone import SENTINEL_BONE, STRIDE, HitVolume, VolumeSet, size
+from .hitzone import SENTINEL_BONE, STRIDE, HitVolume, VolumeSet
 from .memory import Memory, Unmapped
 from .overlay import Overlay
 from .views import View, u8, u16, u32
 
-RECORD = size(a.ATTACK_RECORD)
+RECORD: int = a.ATTACK_RECORD.step
 MAX_SET = 64
 """A longer walk ran off its set."""
 MAX_RADIUS = 4000.0
@@ -136,10 +136,6 @@ def constant(mem: Memory, text: range, at: int, reg: int, back: int) -> int | No
 # --- the tables ---
 
 
-def _data(ovl: Overlay) -> range:
-    return range(ovl.initialised.start, min(ovl.initialised.stop, ovl.end))
-
-
 def _mapped(v: HitVolume) -> bool:
     try:
         return len(v.raw) == STRIDE
@@ -160,7 +156,7 @@ def _attack_volume(v: HitVolume) -> bool:
 def walk_set(ovl: Overlay, va: int) -> VolumeSet | None:
     """The set at `va`, read as the engine walks it; None where that is not a set, which makes
     this a test of a candidate pointer."""
-    if va not in _data(ovl):
+    if va not in ovl.initialised:
         return None
     volumes: list[HitVolume] = []
     for k in range(MAX_SET + 1):
@@ -178,7 +174,7 @@ def walk_set(ovl: Overlay, va: int) -> VolumeSet | None:
 def volume_table(ovl: Overlay, va: int) -> list[VolumeSet]:
     """The set pointers from `va` on, up to the first that is not one."""
     out = []
-    data = _data(ovl)
+    data = ovl.initialised
     while va in data and va + 3 in data:
         s = walk_set(ovl, ovl.u32(va))
         if s is None:
@@ -191,7 +187,7 @@ def volume_table(ovl: Overlay, va: int) -> list[VolumeSet]:
 def find_volume_table(ovl: Overlay) -> int | None:
     """The longest run of set pointers in the data section: the fallback where the code
     does not give the table."""
-    data = _data(ovl)
+    data = ovl.initialised
     best: tuple[int, int] | None = None
     start, n = None, 0
     for va in range(data.start, data.stop - 4, 4):
@@ -217,7 +213,7 @@ def _volume_table_va(ovl: Overlay, call: int) -> int | None:
         if ins.uniqueId == InstrId.cpu_sw and ins.getProcessedImmediate() == node_field:
             for reg in range(1, 32):
                 t = constant(ovl, ovl.text, ins.vram, reg, back=i)
-                if t is not None and t in _data(ovl):
+                if t is not None and t in ovl.initialised:
                     return t
     return None
 
@@ -236,7 +232,7 @@ def read_attacks(
 ) -> list[Attack]:
     """The records from `records`, up to the first that is not one, or `stop`."""
     out = []
-    data = _data(ovl)
+    data = ovl.initialised
     for i in range(len(data)):
         va = records + i * RECORD
         if (stop is not None and va >= stop) or va not in data:
@@ -250,7 +246,7 @@ def read_attacks(
 def tables(ovl: Overlay) -> list[AttackTable]:
     """Every attack table the overlay passes to ATTACK_TABLE_SETTER, in call order; em1 and
     em33 never call it."""
-    data = _data(ovl)
+    data = ovl.initialised
     handles: dict[int, int | None] = {}
     for call in calls_to(ovl, ovl.text, a.ATTACK_TABLE_SETTER):
         h = constant(ovl, ovl.text, call, A3, SETUP_BEFORE)

@@ -18,18 +18,9 @@ from . import files
 from .files import Extracted
 from .memory import Memory, Space, Unmapped
 from .overlay import Overlay
-from .views import View, f32, ptr, u8s, u16, u32, vec3
+from .structs import Species
+from .views import View, f32, u8s, u16, u32, vec3
 
-
-def size(s: a.Struct) -> int:
-    """A struct's size; the table must give it."""
-    if not s.size:
-        raise ValueError(f"struct {s.name} has no size in addresses.toml")
-    return s.size
-
-
-SPECIES_STRIDE = 0x1D0
-"""Bytes per SPECIES_TABLE row."""
 SPECIES_IDS = range(0x100)
 
 SENTINEL_BONE = 0xFFFF
@@ -94,10 +85,10 @@ class HitVolume(View):
 
     @property
     def raw(self) -> bytes:
-        return self.mem.read(self.base, size(a.HIT_VOLUME))
+        return self.mem.read(self.base, a.HIT_VOLUME.step)
 
 
-STRIDE = size(a.HIT_VOLUME)
+STRIDE: int = a.HIT_VOLUME.step
 
 
 @dataclass
@@ -214,18 +205,6 @@ def walk_set(mem: Memory, va: int, limit: int = MAX_WALK) -> VolumeSet | None:
 # --- through the species row ---
 
 
-class Species(View):
-    """A SPECIES_TABLE row; `species(mem, n)` finds it."""
-
-    struct = a.SPECIES
-    hurtbox_set = ptr(a.SPECIES.HURTBOX_SET)
-    hitzone_states = ptr(a.SPECIES.HITZONE_STATES)
-
-
-def species(mem: Memory, n: int) -> Species:
-    return Species(mem, a.SPECIES_TABLE + n * SPECIES_STRIDE)
-
-
 def space(game: Extracted, em: int) -> Space:
     """game_task.ovl and the overlay of species `em`, as the game has them in one quest."""
     return Space([game.overlay(files.GAME_TASK), game.em(em)])
@@ -239,7 +218,7 @@ def own_set(mem: Memory, ovl: Overlay, n: int) -> VolumeSet | None:
     """The set species `n` walks, from its row's pointer; None unless it points into `ovl`'s
     data. Its record count is the capacity for an in-place replacement."""
     try:
-        va = species(mem, n).hurtbox_set
+        va = Species.at(mem, n).hurtbox_set
     except Unmapped:
         return None
     return walk_set(mem, va) if va in _data(ovl) else None
@@ -251,7 +230,7 @@ def species_sets(mem: Memory, ovl: Overlay) -> dict[int, int]:
     out: dict[int, int] = {}
     for n in SPECIES_IDS:
         try:
-            va = species(mem, n).hurtbox_set
+            va = Species.at(mem, n).hurtbox_set
         except Unmapped:
             continue
         if va in _data(ovl):
@@ -283,10 +262,10 @@ class Hitzones:
 def species_hitzones(mem: Memory, n: int) -> Hitzones | None:
     """Species `n`'s grids, or None without them. The state count is not stored: the pointer
     table follows the last grid, so the grids are the contiguous run before it."""
-    row = species(mem, n)
-    grid = size(a.HITZONE_GRID)
+    row = Species.at(mem, n)
+    grid = a.HITZONE_GRID.step
     try:
-        mem.read(row.base, SPECIES_STRIDE)
+        mem.read(row.base, a.SPECIES.stride)
         table = row.hitzone_states
         mem.read(table, 4)
     except Unmapped:
