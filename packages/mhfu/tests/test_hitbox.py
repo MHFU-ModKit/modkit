@@ -7,45 +7,30 @@ from mhfu import hitzone as hz
 from mhfu.cli import main
 from mhfu.mips import Code, Gpr
 from mhfu.overlay import TEXT, Overlay
+from modkit_testing import mips as asm
 
 LOAD = 0x0010_0000
 TEXT_SIZE = 0x28
 DATA = LOAD + TEXT + TEXT_SIZE
-A3, T0, T1, V0, S0 = 7, 8, 9, 2, 16
-
-
-def lui(reg: int, hi: int) -> int:
-    return 0x3C00_0000 | reg << 16 | hi
-
-
-def addiu(reg: int, lo: int) -> int:
-    return 0x2400_0000 | reg << 21 | reg << 16 | lo
-
-
-def jal(target: int) -> int:
-    return 0x0C00_0000 | target >> 2 & 0x03FF_FFFF
-
-
-def sw(rt: int, offset: int, base: int) -> int:
-    return 0xAC00_0000 | base << 21 | rt << 16 | offset
-
-
-def lw(rt: int, offset: int, base: int) -> int:
-    return 0x8C00_0000 | base << 21 | rt << 16 | offset
-
-
-def addu(rd: int, rs: int, rt: int) -> int:
-    return rs << 21 | rt << 16 | rd << 11 | 0x21
 
 
 def em(store: bool, pointers: list[int]) -> Overlay:
     """One setter call passing the handle at DATA; with `store`, an entry of the volume table
     is stored at the node's VOLUME_SET right after it."""
     vt = DATA + 0x80
-    code = [lui(A3, DATA >> 16), jal(a.ATTACK_TABLE_SETTER), addiu(A3, DATA & 0xFFFF)]
-    table_entry = [lui(T0, vt >> 16), addiu(T0, vt & 0xFFFF), addu(T0, T0, T1), lw(V0, 0, T0)]
-    code += [*table_entry, sw(V0, a.ATTACK_NODE.VOLUME_SET, S0)] if store else [0] * 5
-    code += [0x03E0_0008, 0]
+    code = [
+        asm.lui("a3", asm.hi(DATA)),
+        asm.jal(a.ATTACK_TABLE_SETTER),
+        asm.addiu("a3", "a3", asm.lo(DATA)),
+    ]
+    table_entry = [
+        asm.lui("t0", asm.hi(vt)),
+        asm.addiu("t0", "t0", asm.lo(vt)),
+        asm.addu("t0", "t0", "t1"),
+        asm.lw("v0", 0, "t0"),
+    ]
+    code += [*table_entry, asm.sw("v0", a.ATTACK_NODE.VOLUME_SET, "s0")] if store else [0] * 5
+    code += [asm.RET, asm.NOP]
     data = bytearray(0x200)
     struct.pack_into("<I", data, 0, DATA + 0x10)
     data[0x28 + a.ATTACK_RECORD.POWER] = 50

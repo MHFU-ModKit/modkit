@@ -8,25 +8,10 @@ from mhfu.em import census as cs
 from mhfu.em import intel
 from mhfu.memory import Image
 from mhfu.mips import Code
+from modkit_testing import mips as asm
 
 BASE = 0x0010_0000
-R = {"zero": 0, "a1": 5, "a2": 6, "t0": 8, "sp": 29, "ra": 31}
-
-
-def addiu(rt, rs, v):
-    return 0x09 << 26 | R[rs] << 21 | R[rt] << 16 | v & 0xFFFF
-
-
-def jal(target):
-    return 3 << 26 | (target >> 2) & 0x03FF_FFFF
-
-
-def j(target):
-    return 2 << 26 | (target >> 2) & 0x03FF_FFFF
-
-
-NOP, RET = 0, R["ra"] << 21 | 0x08
-PROLOGUE = addiu("sp", "sp", -0x10)
+PROLOGUE = asm.addiu("sp", "sp", -0x10)
 
 
 def va(i):
@@ -34,17 +19,19 @@ def va(i):
 
 
 def fn(*body):
-    return [PROLOGUE, *body, RET, NOP]
+    return [PROLOGUE, *body, asm.RET, asm.NOP]
 
 
 SPAWN = a.ATTACK_SPAWNERS
 CODE = [
-    *fn(jal(va(5)), NOP),  # 0 A calls B
-    *fn(j(va(10)), NOP),  # 5 B tail-calls C
-    *fn(jal(a.EFFECT_SPAWN), addiu("a1", "zero", 40), jal(va(17)), NOP),  # 10 C calls D
-    *fn(jal(a.EFFECT_SPAWN), addiu("a1", "zero", 41)),  # 17 D, three calls from A
+    *fn(asm.jal(va(5)), asm.NOP),  # 0 A calls B
+    *fn(asm.j(va(10)), asm.NOP),  # 5 B tail-calls C
+    *fn(asm.jal(a.EFFECT_SPAWN), asm.li("a1", 40), asm.jal(va(17)), asm.NOP),  # 10 C calls D
+    *fn(asm.jal(a.EFFECT_SPAWN), asm.li("a1", 41)),  # 17 D, three calls from A
     # 22 E, which no one calls; its jal makes C a function start, as a j alone does not
-    *fn(jal(va(10)), NOP, *(w for i in (1, 2, 3) for w in (jal(SPAWN), addiu("a2", "zero", i)))),
+    *fn(
+        asm.jal(va(10)), asm.NOP, *(w for i in (1, 2, 3) for w in (asm.jal(SPAWN), asm.li("a2", i)))
+    ),
 ]
 
 

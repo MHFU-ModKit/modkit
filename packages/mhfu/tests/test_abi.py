@@ -4,38 +4,10 @@ from mhfu import files
 from mhfu.em import abi
 from mhfu.memory import Image
 from mhfu.mips import Code
+from modkit_testing import mips as asm
 
-R = {"zero": 0, "v0": 2, "a0": 4, "t9": 25, "sp": 29, "ra": 31}
 EM, TASK, SUB, EBOOT = 0x0020_0000, 0x0030_0000, 0x0038_0000, 0x0040_0000
-
-
-def imm(op, rt, rs, value):
-    return op << 26 | R[rs] << 21 | R[rt] << 16 | value & 0xFFFF
-
-
-def addiu(rt, rs, v):
-    return imm(0x09, rt, rs, v)
-
-
-def lui(rt, v):
-    return imm(0x0F, rt, "zero", v)
-
-
-def lw(rt, off, rs):
-    return imm(0x23, rt, rs, off)
-
-
-def sw(rt, off, rs):
-    return imm(0x2B, rt, rs, off)
-
-
-def bnel(rs, rt, to, at):
-    return imm(0x15, rt, rs, (to - at - 4) >> 2)
-
-
-NOP, RET = 0, R["ra"] << 21 | 0x08
-JALR = R["t9"] << 21 | R["ra"] << 11 | 0x09
-PROLOGUE = addiu("sp", "sp", -0x10)
+PROLOGUE = asm.addiu("sp", "sp", -0x10)
 
 
 class Binary(Image):
@@ -49,26 +21,26 @@ class Binary(Image):
 
 def em(starts):
     """16 words of overlay text with a function at each of `starts` (word indices)."""
-    words = [NOP] * 16
+    words = [asm.NOP] * 16
     for i in starts:
         words[i] = PROLOGUE
         if i:
-            words[i - 2] = RET
+            words[i - 2] = asm.RET
     return Binary(words, EM)
 
 
 def engine():
-    task = Binary([NOP] * 16, TASK)
+    task = Binary([asm.NOP] * 16, TASK)
     base = [TASK + 4 * (k % 16) for k in range(abi.ENTITY_SLOTS)]
     one = list(base)
     one[3], one[5] = EM, EM + 16  # overrides slots 3 and 5 into em(0, 4)
     two = list(base)
     two[3], two[7] = EM + 32, EM + 44  # slot 3 and 7 into em(8, 11)
-    words = [NOP] * 8 + [0, 0, *one, 0, 0, *two, 0]
+    words = [asm.NOP] * 8 + [0, 0, *one, 0, 0, *two, 0]
     end = EBOOT + 4 * len(words)
     eboot = Binary(words, EBOOT, range(EBOOT, EBOOT + 32), range(EBOOT + 32, end))
     ems = {1: em([0, 4]), 2: em([8, 11])}
-    return abi.Engine(eboot, task, Binary([NOP], SUB), ems)
+    return abi.Engine(eboot, task, Binary([asm.NOP], SUB), ems)
 
 
 def test_vtables():
@@ -89,18 +61,18 @@ def test_vptr_stores_and_slots():
     code = Binary(
         [
             PROLOGUE,
-            lui("v0", EBOOT >> 16),
-            addiu("v0", "v0", 0x20),
-            sw("v0", 0, "a0"),  # 3 installs a vtable
-            sw("v0", 4, "a0"),  # not at +0
-            lw("t9", 0, "a0"),
-            bnel("a0", "zero", 8 * 4 + TASK, 6 * 4 + TASK),  # 6 likely: loads the vptr
-            lw("t9", 0, "a0"),
-            lw("t9", 0x88, "t9"),  # 8 reached from two paths
-            JALR,
-            NOP,
-            RET,
-            NOP,
+            asm.lui("v0", EBOOT >> 16),
+            asm.addiu("v0", "v0", 0x20),
+            asm.sw("v0", 0, "a0"),  # 3 installs a vtable
+            asm.sw("v0", 4, "a0"),  # not at +0
+            asm.lw("t9", 0, "a0"),
+            asm.bne("a0", "zero", 8 * 4 + TASK, 6 * 4 + TASK, likely=True),  # 6 loads the vptr
+            asm.lw("t9", 0, "a0"),
+            asm.lw("t9", 0x88, "t9"),  # 8 reached from two paths
+            asm.jalr("t9"),
+            asm.NOP,
+            asm.RET,
+            asm.NOP,
         ],
         TASK,
     )
