@@ -93,9 +93,9 @@ def test_relocate():
 
 def test_round_trip():
     ov = overlay()
-    assert reloc.relocate(ov, 0) == bytes(ov.data)
+    assert reloc.relocate(ov, 0) == ov.file
     there = Overlay(reloc.relocate(ov, -0x30000))
-    assert reloc.relocate(there, 0x30000) == bytes(ov.data)
+    assert reloc.relocate(there, 0x30000) == ov.file
     with pytest.raises(ValueError):
         reloc.relocate(ov, 0x8000)
 
@@ -117,4 +117,4 @@ def test_em_overlays(game, species):
     ov = game.em(species)
     moved = Overlay(reloc.relocate(ov, 0x100000))
     moves_by(ov, moved, 0x100000)
-    assert reloc.relocate(moved, -0x100000) == bytes(ov.data)
+    assert reloc.relocate(moved, -0x100000) == ov.file

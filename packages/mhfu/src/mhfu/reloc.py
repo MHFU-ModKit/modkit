@@ -56,11 +56,11 @@ def sites(ov: Overlay, code: Code | None = None) -> Sites:
 
 
 def relocate(ov: Overlay, delta: int, where: Sites | None = None) -> bytes:
-    """The overlay file moved by `delta` bytes."""
+    """The overlay file moved by `delta` bytes, its disc padding kept."""
     if delta % ALIGN:
         raise ValueError(f"delta 0x{delta:X} is not a multiple of 0x{ALIGN:X}")
     where = where or sites(ov)
-    out = bytearray(ov.data)
+    out = bytearray(ov.file)
 
     def put(va: int, word: int) -> None:
         struct.pack_into("<I", out, va - ov.base, word & 0xFFFF_FFFF)

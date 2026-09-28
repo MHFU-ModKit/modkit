@@ -186,6 +186,7 @@ def test_switch(bias):
     assert s.operand is not None and s.operand.getProcessedImmediate() == 0x298
     assert va(13) in code.labels
     assert all(c.site != va(11) for c in code.calls)
+    assert code.table(va(10)) == va(16)  # lw v1, 0(table + index)
 
 
 def test_constant_arguments():

@@ -10,6 +10,7 @@ instruction through its fields (`uniqueId`, `rs`, `getProcessedImmediate()`), ne
     [p for p in code.pairs if p.value == address]   # lui/lo pairs that form address
     code.switch(jr)                         # the jump table a `jr` dispatches through
     code.constant(call, Gpr.a1)             # the literal a1 the call passes, or None
+    code.table(load)                        # the table `lw v0, 0(table + index)` reads
 """
 
 from __future__ import annotations
@@ -366,6 +367,21 @@ class Code:
                 return owner
             a -= 8
         return None
+
+    def table(self, site: int) -> int | None:
+        """The literal address the load or store at `site` reads from, or for `off(table +
+        index)` the table's: what `lw v0, 0(v0)` after `addu v0, table, index` indexes."""
+        ins = self.at(site)
+        offset = ins.getProcessedImmediate()
+        base = self.constant(site, ins.rs)
+        if base is None:
+            add = self.source(site, ins.rs)
+            if add is None or add.uniqueId != InstrId.cpu_addu:
+                return None
+            base = self.constant(add.vram, add.rs)
+            if base is None:
+                base = self.constant(add.vram, add.rt)
+        return None if base is None else (base + offset) & _MASK
 
     def constant(self, site: int, reg: Register) -> int | None:
         """The literal `reg` holds at `site` (as `source` sees it), unsigned 32-bit, or None.
