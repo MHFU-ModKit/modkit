@@ -12,21 +12,28 @@ handler reaches (em75's species-byte switch) are listed once, as `unattributed_e
 
 from __future__ import annotations
 
-from collections import defaultdict
+import hashlib
+import time
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from typing import Any
 
 from .. import addresses as a
+from .. import files
 from .. import hitbox as hb
 from .. import hitzone as hz
+from ..files import Extracted
 from ..memory import Space
 from ..mips import Code
 from ..overlay import Overlay
 from . import attacks as atk
 from . import census as cs
+from . import chain as ch
 from . import effects as fx
+from . import moveset as mv
+from . import phases
 
 SCHEMA = "mhfu.species_intel/1"
 EFFECT_CALL_DEPTH = 2
@@ -353,3 +360,257 @@ def census(measured: Measured | None, reason: str) -> Doc:
         "observed_pairs": len(c.dwell),
         "attributed_by": "--census-species (the log does not record which species it watched)",
     }
+
+
+# --- the behaviour pairs ---
+
+
+def _main(m: mv.Main) -> Doc:
+    out: Doc = {"main": m.main, "dispatcher": hex32(m.dispatcher)}
+    if m.switch is None:
+        return out | {
+            "sub_states": None,
+            "enumerated": False,
+            "note": "no sub_state jump table — this main state's actions are not enumerable "
+            "offline",
+        }
+    return out | {
+        "sub_states": len(m.switch.targets),
+        "enumerated": True,
+        "first_sub": m.switch.first,
+        "note": "",
+    }
+
+
+def handled(ms: mv.Moveset, pair: mv.Pair, h: int, credit: Credit) -> Doc:
+    """What the code says about a pair whose case calls handler `h`."""
+    anim = ms.animations(pair)
+    g = phases.gates(ms.code, h)
+    ends = g.ends_on
+    seeds = list(phases.budget_seeds(ms.code, h)) if ends == "budget" else []
+    ids, sites, computed = credit.attacks_of(h)
+    return {
+        "main": pair.main,
+        "sub": pair.sub,
+        "handler": hex32(h),
+        "a1": list(anim.ids),
+        "a1_computed": anim.computed,
+        "ends_on": ends,
+        "event_frames": list(g.reached),
+        "windows": len(g.crosses),
+        "window_frames": list(g.crosses),
+        "clip_done_reads": g.clip_done,
+        "budget_reads": g.budget,
+        "budget": {
+            "gated": ends == "budget",
+            "phase0_seeds": seeds,
+            "post_hook_owns": (not seeds) if ends == "budget" else None,
+        },
+        "effects": credit.effects_of(h),
+        "attack_ids": ids,
+        "attack_sites": sites,
+        "attack_sites_computed": computed,
+    }
+
+
+def edge(e: ch.Edge) -> Doc:
+    return {
+        "site": hex32(e.site),
+        "kind": e.kind,
+        "main": e.main,
+        "id": e.id,
+        "mode": e.mode,
+        "via": [hex32(v) for v in e.via],
+        "guards": list(e.guards),
+        "to": [list(p) for p in e.to],
+        "computed": e.computed,
+        "alts": [list(x) for x in e.alts],
+    }
+
+
+def hubs(chain: ch.Chain, least: int = 8) -> list[list[int]]:
+    """The pairs at least `least` handlers can hand off to, most first: where the brain thinks
+    again. Counted per handler, since one handler can serve many subs."""
+    targets: dict[int, set[ch.Pair]] = defaultdict(set)
+    for link in chain.pairs.values():
+        for e in link.next:
+            targets[link.handler].update(e.to)
+    count: Counter[ch.Pair] = Counter()
+    for found in targets.values():
+        count.update(found)
+    return [list(k) for k, n in sorted(count.items(), key=lambda kv: (-kv[1], kv[0])) if n >= least]
+
+
+def _chain(chain: ch.Chain) -> Doc:
+    return {
+        "source": "mhfu.em.chain",
+        "enter_action": hex32(chain.enter.function),
+        "species_byte": chain.species,
+        "note": "a handler ends an action by calling enter-action (vt+0x88) with a literal "
+        "(main, id); the per-main translator turns the id into the pair AND provisions the "
+        "handler (the charge's run budget +0x76C is set there, not by act_set). `next` is "
+        "that call, read statically, with the guards on the path; `prev` is its inverse. "
+        "Pairs with no `next` never end themselves.",
+        "hubs": hubs(chain),
+        "brain": {hex32(fn): [edge(e) for e in es] for fn, es in chain.brain.items()},
+        "translators": {
+            str(m): {str(i): None if to is None else [list(p) for p in to] for i, to in ids.items()}
+            for m, ids in chain.enter.table().items()
+        },
+    }
+
+
+# --- the document ---
+
+
+@dataclass
+class Game:
+    """What every species' document reads besides its own overlay."""
+
+    game: Extracted
+
+    @cached_property
+    def task(self) -> Overlay:
+        return self.game.overlay(files.GAME_TASK)
+
+    @cached_property
+    def bias(self) -> dict[int, int]:
+        return fx.bias(Code(self.task, self.task.text))
+
+
+def build(game: Game, species: int, measured: Measured | None = None, reason: str = "") -> Doc:
+    """The species' document; `measured` must come from a log of this species."""
+    ovl = game.game.em(species)
+    ms = mv.Moveset(ovl)
+    code = ms.code
+    credit = Credit.of(code)
+    chain = ch.Chain(ms)
+    prev = chain.predecessors()
+
+    static = {
+        k: handled(ms, p, p.handler, credit)
+        for k, p in sorted(ms.pairs.items())
+        if p.handler is not None
+    }
+    keys = set(ms.pairs) | (set(measured.census.dwell) if measured else set())
+    pairs = []
+    for key in sorted(keys):
+        main, sub = key
+        rec: Doc
+        prov: dict[str, str] = {}
+        if key in static:
+            rec = dict(static[key])
+            prov = dict.fromkeys(
+                ("handler", "a1", "ends_on", "event_frames", "window_frames", "effects", "budget"),
+                STATIC,
+            )
+            rec["next"] = [edge(e) for e in chain.pairs[key].next]
+            rec["prev"] = [list(p) for p in prev.get(key, [])]
+            prov |= {"next": STATIC, "prev": STATIC}
+        elif key in ms.pairs:
+            rec = {"main": main, "sub": sub, "handler": None}
+            rec["note"] = (
+                "the dispatcher's case for this pair runs inline and calls no handler — "
+                "nothing offline can say what it does"
+            )
+            prov["handler"] = STATIC
+        else:
+            rec = {"main": main, "sub": sub, "handler": None}
+            rec["note"] = (
+                "not in the overlay's (main,sub) jump tables — the engine reached it by a "
+                "path this extractor cannot see"
+            )
+        fields = ("entered", "dwell_ticks", "move_per_tick")
+        if measured is None:
+            rec["measured"] = None
+            prov |= dict.fromkeys(fields, ABSENT)
+        else:
+            rec["measured"] = cs.measured(measured.census, key)
+            prov |= dict.fromkeys(fields, MEASURED)
+            if rec["measured"]["a1"]:
+                prov["measured_a1"] = MEASURED
+        rec["provenance"] = prov
+        pairs.append(rec)
+
+    return {
+        "schema": SCHEMA,
+        "host_species": species,
+        "generated_by": "mhfu intel",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "overlay": {
+            "name": ovl.name,
+            "file": game.game.path(files.em_overlay(species)).name,
+            "sha1": hashlib.sha1(ovl.file).hexdigest(),
+            "load": hex32(ovl.load),
+            "text": [hex32(ovl.text.start), hex32(ovl.text.stop)],
+            "region": f"MHFU {a.REGION.upper()} ({a.GAME_ID})",
+            "effect_id_bias": game.bias.get(species, 0),
+        },
+        "action_tick": hex32(ms.tick_entry),
+        "main_states": [_main(m) for _, m in sorted(ms.mains.items())],
+        "static": {
+            "present": True,
+            "source": "overlay disassembly",
+            "tools": ["mhfu.em.moveset", "mhfu.em.phases", "mhfu.em.effects"],
+            "note": "a property of the ISO: the same for every run and every player. Never a "
+            "measurement.",
+            "effect_call_depth": EFFECT_CALL_DEPTH,
+            "effect_sites": len(credit.effects),
+            "effect_sites_computed": sum(s.id is None for s in credit.effects),
+        },
+        "census": census(measured, reason),
+        "pairs": pairs,
+        "chain": _chain(chain),
+        "unattributed_effects": credit.unattributed(),
+        "parts": parts(game.task, ovl, species, game.game.path(files.GAME_TASK).name),
+        "attacks": attacks(ovl, code, species, credit),
+    }
+
+
+def summarise(doc: Doc) -> str:
+    pairs = doc["pairs"]
+    handled = [p for p in pairs if p.get("handler")]
+    budget = [p for p in handled if p["budget"]["gated"]]
+    owned = [p for p in budget if p["budget"]["post_hook_owns"]]
+    ends = Counter(p["ends_on"] for p in handled)
+    chained = [p for p in handled if p["next"]]
+    resolved = [p for p in chained if any(e["to"] for e in p["next"])]
+    unattributed = doc["unattributed_effects"]
+    hub_list = " ".join(f"({m},{s})" for m, s in doc["chain"]["hubs"]) or "-"
+    out = [
+        f"{doc['overlay']['name']}  species {doc['host_species']}  {len(pairs)} pair(s), "
+        f"{len(handled)} with a handler",
+        "  ends on: " + ", ".join(f"{k}={n}" for k, n in sorted(ends.items())),
+        f"  hands off: {len(chained)} pair(s), {len(resolved)} to a resolved pair; hubs {hub_list}",
+        f"  {sum(bool(p['effects']) for p in handled)} pair(s) carry effects "
+        f"({sum(len(u['sites']) for u in unattributed)} site(s) unattributed in "
+        f"{len(unattributed)} function(s))",
+        f"  {len(budget)} budget-gated, {len(owned)} of them ownable by a slot-32 post-hook",
+    ]
+    pt = doc["parts"]
+    hurt = [s for s in pt["sets"] if s["kind"] == hz.HURTBOX]
+    grid = pt["grid"]
+    states = f"{len(grid['states'])} state(s)" if grid["present"] else f"ABSENT ({grid['reason']})"
+    out.append(
+        f"  parts: {len(hurt)} hurtbox set(s), {sum(s['count'] for s in hurt)} sphere(s); "
+        f"grid {states}"
+    )
+    at = doc["attacks"]
+    if at["present"]:
+        prim = next((t for t in at["tables"] if t["primary"]), None)
+        out.append(
+            f"  attacks: {len(at['tables'])} table(s); moveset "
+            f"{'-' if prim is None else prim['n_records']} records / "
+            f"{'-' if prim is None else prim['n_sets']} set(s); spawner {at['spawner'] or '-'} "
+            f"({at['join']}), {sum(bool(p.get('attack_ids')) for p in pairs)} pair(s) name "
+            "an attack"
+        )
+    else:
+        out.append(f"  attacks: ABSENT ({at['reason']})")
+    c = doc["census"]
+    out.append(
+        f"  census: {c['transitions']} transitions, {c['observed_pairs']} pair(s) observed"
+        if c["present"]
+        else f"  census: ABSENT ({c['reason']})"
+    )
+    return "\n".join(out)

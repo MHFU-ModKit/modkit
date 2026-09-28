@@ -1,7 +1,9 @@
+import json
 import struct
 
 from mhfu import addresses as a
 from mhfu import files
+from mhfu.cli import main
 from mhfu.em import census as cs
 from mhfu.em import intel
 from mhfu.memory import Image
@@ -98,3 +100,38 @@ def test_game(game):
     em01 = game.em(1)
     none = intel.attacks(em01, Code(em01, em01.text), 1, intel.Credit.of(Code(em01, em01.text)))
     assert not none["present"] and none["spawner"] is None
+
+
+def test_build(game, tmp_path):
+    doc = intel.build(intel.Game(game), 33)
+    assert doc["schema"] == intel.SCHEMA and doc["host_species"] == 33
+    assert not doc["census"]["present"] and doc["census"]["reason"]
+    handled = [p for p in doc["pairs"] if p["handler"]]
+    assert handled and all(p["measured"] is None for p in doc["pairs"])
+    assert all(p["provenance"]["entered"] == intel.ABSENT for p in doc["pairs"])
+    assert {p["ends_on"] for p in handled} <= {"clip", "clip+cursor", "budget", "cursor", "unknown"}
+    assert intel.summarise(doc).startswith("em33.ovl")
+
+    log = tmp_path / "framework.log"
+    states = [(0, 0, 1), (99, 0, 3), (0, 0, 9)]
+    log.write_text("".join(f"[state] main={m} sub={s} (a1=1) t={t} d=0\n" for m, s, t in states))
+    c, _ = cs.load(log)
+    assert c is not None
+    doc = intel.build(intel.Game(game), 33, intel.Measured(c, log))
+    pairs = {(p["main"], p["sub"]): p for p in doc["pairs"]}
+    assert (
+        pairs[0, 0]["measured"]["entered"] == 1
+        and pairs[0, 0]["provenance"]["entered"] == "measured"
+    )
+    assert pairs[0, 1]["measured"]["entered"] == 0  # looked, and never saw it
+    assert "not in the overlay's" in pairs[99, 0]["note"]  # only the census knows it
+
+
+def test_cli(game, tmp_path, capsys):
+    data = ["--data", str(game.root)]
+    assert main(["intel", "33", "--out", str(tmp_path), "-q", *data]) == 0
+    doc = json.loads((tmp_path / "em33.json").read_text())
+    assert doc["census"]["reason"] == "no census log given (--log)"
+    assert main(["effects", "33", "--census", *data]) == 0
+    assert main(["attacks", "1", "33", "--census", *data]) == 0
+    assert "no_spawner" in capsys.readouterr().out
