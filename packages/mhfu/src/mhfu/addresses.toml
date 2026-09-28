@@ -125,8 +125,6 @@ SCRIPT_RESOURCE_CTX = { eu = 0x08A631A0, type = "ptr", doc = "streaming context 
 RESOURCE_TABLE = { eu = 0x09A4F0D0, type = "ptr", doc = "pointer to the resident-file table (RESOURCE_SLOT rows); also the ctx for RESOURCE_REQUEST" }
 MODEL_SETUP = { eu = 0x09AC4D30, type = "fn", doc = "per-entity model setup that consumes the raw model buffer every frame; overlay code" }
 
-# --- code analysis: EBOOT and overlay functions ---
-
 # --- stages and hit volumes ---
 USER_RAM = { eu = 0x08800000, type = "bytes", doc = "start of the 24 MB user partition: the game image, overlays and heap; the heap tables are found by scanning it" }
 STAGE_VARIANT_FILE = { eu = 0x088C6AF8, type = "fn", doc = "engine file id of the st046 variant (6075 + variant) that lobby_task.ovl loads instead of st046.pac, picked from save bytes" }
@@ -151,12 +149,6 @@ EFFECT_SPAWN_FRAMED = { eu = 0x09ACB9C8, type = "fn", doc = "effect spawn once t
 EM_FACTORY = { eu = 0x09AB15D8, type = "fn", doc = "big-monster entity factory f(ctx, emId): a switch on emId whose cases install a species vtable" }
 ATTACK_SPAWNERS = { eu = 0x09B63000, type = "code", doc = "start of game_task's attack-node constructors, one per species (TIGREX_ATTACK_SPAWN among them), (?, entity, attack id)" }
 ATTACK_SPAWNERS_END = { eu = 0x09B66B00, type = "code", doc = "end of the ATTACK_SPAWNERS run" }
-
-# --- automation: screens, menus, dialogue ---
-
-# --- automation: village, hall, home, quests ---
-
-# --- debug shell ---
 
 # --- framework regions ---
 AI_PUBLISH = { eu = 0x08AE2000, type = "bytes", doc = "framework-owned scratch the ai_publish mod writes and the HUD reads: 0x18 header + 21 x 0x14" }
@@ -382,7 +374,6 @@ ACK = { offset = 0x18, type = "u32", doc = "SEQ the game has applied" }
 STATUS = { offset = 0x1C, type = "u32", doc = "action id currently held" }
 PROBE = { offset = 0x20, type = "u32", doc = "CLI scratch word used to test that the block is mapped" }
 
-# --- structs: stages and hit volumes ---
 [struct.MAP_ROW]
 doc = "one row of MAP_TABLE: the stages of one map"
 size = 0x08
@@ -471,5 +462,3 @@ OWNER = { offset = 0x10, type = "ptr", doc = "the attacking entity" }
 RECORD = { offset = 0x1C, type = "bytes", doc = "verbatim copy of the ATTACK_RECORD" }
 VOLUME_SET = { offset = 0x34, type = "ptr", doc = "the HIT_VOLUME set the record's VOLUME_SET selects; the overlay stores it right after the setter call" }
 POSITION = { offset = 0x40, type = "vec3", doc = "the node's own position; bones 126 and 127 test against it" }
-
-# --- structs: automation ---
