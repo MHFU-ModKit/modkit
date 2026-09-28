@@ -1,0 +1,9 @@
+# Vulkan on the host's GPU; setup.sh adds this file to COMPOSE_FILE when it finds a render node.
+services:
+  ppsspp:
+    group_add:
+      - "${RENDER_GID}"
+    devices:
+      - "${RENDER_NODE}:${RENDER_NODE}"
+    environment:
+      GPU_BACKEND: vulkan

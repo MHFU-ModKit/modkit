@@ -105,6 +105,15 @@ class FrameStats:
 
 
 @dataclass(frozen=True, slots=True)
+class Speed:
+    """The emulation speed; `limit_fps` is the frame rate PPSSPP aims for, 0 for unlimited."""
+
+    fast_forward: bool
+    percent: int | None
+    limit_fps: int
+
+
+@dataclass(frozen=True, slots=True)
 class Screenshot:
     """The current output frame as a PNG."""
 
@@ -117,12 +126,14 @@ class Screenshot:
 class Hit:
     """One trip of a breakpoint or watchpoint.
 
-    From a stop: `pc` and `address` (the watchpoint's start) are known, the CPU is stepping.
-    From a log line: `access`, `size` and `message` too; `pc` is None when a watchpoint has a
-    custom log format.
+    `address` is the instruction, or the byte a watchpoint saw accessed; `start` is where the
+    breakpoint or watchpoint itself begins. A PPSSPP without cpu.breakpoint.hit, such as 1.20.4,
+    reports less: a stop gives only `pc`, with the watchpoint's start as `address`, and a log
+    line has no `start`, and no `pc` under a custom log format. `message` is the formatted log
+    line, only from the log. An access in a branch delay slot stops the CPU on the branch.
     """
 
-    kind: Literal["exec", "memory"]
+    kind: Literal["exec", "memory", "register"]
     address: int
     pc: int | None
     stopped: bool
@@ -130,6 +141,7 @@ class Hit:
     size: int | None = None
     source: str | None = None
     message: str | None = None
+    start: int | None = None
 
 
 # Broadcasts
@@ -140,7 +152,8 @@ class Stepping:
     """The CPU stopped (cpu.stepping).
 
     `requested` is whether this client asked for it, with a pause or a step. `reason` and
-    `related_address` say why when PPSSPP tells; 1.20.4 leaves them out for breakpoints.
+    `related_address` say why, except on stock 1.20.4; `hit` says which breakpoint, on builds
+    with cpu.breakpoint.hit.
     """
 
     pc: int
@@ -148,6 +161,7 @@ class Stepping:
     reason: str | None
     related_address: int | None
     requested: bool = False
+    hit: Hit | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,7 +201,7 @@ class RawEvent:
     data: dict[str, Any]
 
 
-Event = Stepping | Resumed | LogLine | GameEvent | RawEvent
+Event = Stepping | Resumed | Hit | LogLine | GameEvent | RawEvent
 
 
 def parse_event(msg: dict[str, Any]) -> Event:
@@ -197,6 +211,8 @@ def parse_event(msg: dict[str, Any]) -> Event:
         return stepping(msg)
     if name == "cpu.resume":
         return Resumed()
+    if name == "cpu.breakpoint.hit":
+        return hit(msg["hit"])
     if name == "log":
         return LogLine(
             msg["timestamp"],
@@ -248,6 +264,20 @@ def stepping(msg: dict[str, Any]) -> Stepping:
         msg.get("reason"),
         msg.get("relatedAddress"),
         msg.get("_requested", False),
+        hit(msg["hit"]) if "hit" in msg else None,
+    )
+
+
+def hit(h: dict[str, Any]) -> Hit:
+    return Hit(
+        h["kind"],
+        h["address"],
+        h["pc"],
+        h["paused"],
+        access=h.get("access"),
+        size=h.get("size"),
+        source=h.get("source"),
+        start=h["breakpoint"]["start"] if "breakpoint" in h else None,
     )
 
 
@@ -294,6 +324,10 @@ def instruction(line: dict[str, Any]) -> Instruction:
 def frame_stats(msg: dict[str, Any]) -> FrameStats:
     fps, vblanks = msg["fps"], msg["vblanksPerSecond"]
     return FrameStats(fps["actual"], fps["target"], vblanks["actual"], vblanks["target"])
+
+
+def speed(msg: dict[str, Any]) -> Speed:
+    return Speed(msg["fastForward"], msg["percent"], msg["limitFps"])
 
 
 def screenshot(msg: dict[str, Any]) -> Screenshot:

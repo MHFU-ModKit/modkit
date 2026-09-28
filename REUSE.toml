@@ -5,3 +5,9 @@ version = 1
 path = "**"
 SPDX-FileCopyrightText = "2026 sp00ktober"
 SPDX-License-Identifier = "MIT"
+
+# patches to PPSSPP carry its licence; the last matching annotation wins
+[[annotations]]
+path = "ppsspp/patches/**"
+SPDX-FileCopyrightText = ["2026 sp00ktober", "PPSSPP Project"]
+SPDX-License-Identifier = "GPL-2.0-or-later"

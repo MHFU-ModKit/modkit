@@ -1,0 +1,221 @@
+Debugger: game.speed.get and game.speed.set, backported from upstream 44b832f755.
+
+Stock 1.20.4 only fast-forwards from a host key binding, which a script-driven session cannot press.
+The handlers set the core parameters directly, as 1.20.4 debugger handlers do.
+
+diff --git a/Core/CoreParameter.h b/Core/CoreParameter.h
+index dcc8e30..45aa5b3 100644
+--- a/Core/CoreParameter.h
++++ b/Core/CoreParameter.h
+@@ -35,6 +35,10 @@ enum class FPSLimit {
+ 	CUSTOM1 = 1,
+ 	CUSTOM2 = 2,
+ 	ANALOG = 3,
++	// Set over the WebSocket debugger (game.speed.set). Deliberately its own mode instead of
++	// reusing CUSTOM1/2: those read their rate from g_Config, which is persisted per game, so a
++	// debugger session would permanently overwrite the user's configured alternative speed.
++	DEBUGGER = 4,
+ };
+ 
+ class FileLoader;
+@@ -76,6 +80,10 @@ struct CoreParameter {
+ 	bool fastForward = false;
+ 	FPSLimit fpsLimit = FPSLimit::NORMAL;
+ 	int analogFpsLimit = 0;
++	// Target FPS for FPSLimit::DEBUGGER. Lives here rather than in g_Config on purpose - see the
++	// enum. Resets with the rest of this struct on every boot, so a debugger can't leave a game
++	// permanently slowed down.
++	int debuggerFpsLimit = 0;
+ 
+ 	bool updateRecent = true;
+ 
+diff --git a/Core/Debugger/WebSocket/GameSubscriber.cpp b/Core/Debugger/WebSocket/GameSubscriber.cpp
+index 54af537..361a2d3 100644
+--- a/Core/Debugger/WebSocket/GameSubscriber.cpp
++++ b/Core/Debugger/WebSocket/GameSubscriber.cpp
+@@ -25,12 +25,21 @@
+ #include "Core/Debugger/WebSocket/GameSubscriber.h"
+ #include "Core/Debugger/WebSocket/WebSocketUtils.h"
+ #include "Core/ELF/ParamSFO.h"
++#include "Core/HLE/sceDisplay.h"
++#include "Core/RetroAchievements.h"
+ #include "Core/SaveState.h"
+ #include "Core/System.h"
+ 
++// Declared rather than included from Core/HLE/sceNet.h, which reaches winsock and so windows.h
++// through proAdhoc.h - and that redefines the OPTIONAL macro that collides with
++// DebuggerParamType::OPTIONAL.
++bool NetworkAllowSpeedControl();
++
+ DebuggerSubscriber *WebSocketGameInit(DebuggerEventHandlerMap &map) {
+ 	map["game.reset"] = &WebSocketGameReset;
+ 	map["game.status"] = &WebSocketGameStatus;
++	map["game.speed.get"] = &WebSocketGameSpeedGet;
++	map["game.speed.set"] = &WebSocketGameSpeedSet;
+ 	map["version"] = &WebSocketVersion;
+ 	map["savestate.save"] = &WebSocketSaveStateSave;
+ 	map["savestate.load"] = &WebSocketSaveStateLoad;
+@@ -88,6 +97,115 @@ void WebSocketGameStatus(DebuggerRequest &req) {
+ 	json.writeBool("paused", GetUIState() == UISTATE_PAUSEMENU);
+ }
+ 
++// Percentages are relative to 60 FPS, matching how the in-app settings present the alternative
++// speeds (see GameSettingsScreen.cpp) - so a client and the UI agree on what "200%" means.
++static int PercentToFps(int percent) {
++	return (percent * 60) / 100;
++}
++
++static int FpsToPercent(int fps) {
++	return (fps * 100) / 60;
++}
++
++// Fails the request if something else owns the speed right now, rather than accepting it and
++// having FrameTimingLimit() quietly ignore it - silently doing nothing is the worst outcome for
++// an automation client.
++static bool CheckSpeedControlAllowed(DebuggerRequest &req) {
++	if (Achievements::HardcoreModeActive()) {
++		req.Fail("Speed control is not allowed in RetroAchievements hardcore mode");
++		return false;
++	}
++	if (!NetworkAllowSpeedControl()) {
++		req.Fail("Speed control is not allowed while connected to a network game");
++		return false;
++	}
++	return true;
++}
++
++static void WriteSpeedState(JsonWriter &json) {
++	json.writeBool("fastForward", PSP_CoreParameter().fastForward);
++	if (PSP_CoreParameter().fpsLimit == FPSLimit::DEBUGGER)
++		json.writeInt("percent", FpsToPercent(PSP_CoreParameter().debuggerFpsLimit));
++	else
++		json.writeNull("percent");
++	json.writeInt("limitFps", __DisplayGetFrameTimingLimit());
++}
++
++// Request the current emulation speed (game.speed.get)
++//
++// No parameters.
++//
++// Response (same event name):
++//  - fastForward: boolean, whether unlimited fast-forward is on.
++//  - percent: null, or the debugger's speed override as a percentage of 60 FPS.
++//  - limitFps: the frame rate throttling is actually aiming for, after fastForward, percent, the
++//    user's own alternative-speed hotkeys and any restrictions have all been applied. 0 means
++//    unlimited. This is the ground truth - prefer it over inferring from the other two.
++void WebSocketGameSpeedGet(DebuggerRequest &req) {
++	JsonWriter &json = req.Respond();
++	WriteSpeedState(json);
++}
++
++// Change the emulation speed (game.speed.set)
++//
++// Parameters (at least one required):
++//  - fastForward: optional boolean, run unlimited. Wins over 'percent' while on, same as the
++//    in-app fast-forward key.
++//  - percent: optional integer percentage of 60 FPS (100 = normal, 200 = double speed, 50 = half),
++//    or null to drop the override and go back to the game's normal rate. Must be at least 1 -
++//    use fastForward for unlimited rather than 0, so there's one way to say it.
++//
++// Response (same event name): the same fields as game.speed.get, after applying the change.
++//
++// Fails if RetroAchievements hardcore mode is active, or if connected to a network game without
++// "allow speed control while connected" - in either case the setting would be ignored.
++//
++// Note this is a separate channel from the user's own alternative speeds (the CUSTOM1/CUSTOM2
++// hotkeys and their settings): it deliberately doesn't touch g_Config, which is persisted per
++// game, so a debugger session can't permanently change what the user configured.
++void WebSocketGameSpeedSet(DebuggerRequest &req) {
++	const bool hasFastForward = req.HasParam("fastForward");
++	const bool hasPercent = req.HasParam("percent");
++	if (!hasFastForward && !hasPercent)
++		return req.Fail("Need at least one of 'fastForward' or 'percent'");
++
++	bool fastForward = false;
++	if (hasFastForward && !req.ParamBool("fastForward", &fastForward))
++		return;
++
++	// An explicit null clears the override; the parameter being absent leaves it alone.
++	const bool clearPercent = hasPercent && !req.HasParam("percent", true);
++	uint32_t percent = 0;
++	if (hasPercent && !clearPercent) {
++		if (!req.ParamU32("percent", &percent))
++			return;
++		if (percent < 1 || percent > 10000)
++			return req.Fail("Parameter 'percent' must be between 1 and 10000");
++		if (PercentToFps((int)percent) < 1)
++			return req.Fail("Parameter 'percent' is too small to produce a frame rate");
++	}
++
++	if (!CheckSpeedControlAllowed(req))
++		return;
++
++	if (hasFastForward)
++		PSP_CoreParameter().fastForward = fastForward;
++
++	if (clearPercent) {
++		// Only stand down from a limit we set ourselves - the user may have an alternative
++		// speed of their own active, and that isn't ours to cancel.
++		if (PSP_CoreParameter().fpsLimit == FPSLimit::DEBUGGER)
++			PSP_CoreParameter().fpsLimit = FPSLimit::NORMAL;
++		PSP_CoreParameter().debuggerFpsLimit = 0;
++	} else if (hasPercent) {
++		PSP_CoreParameter().debuggerFpsLimit = PercentToFps((int)percent);
++		PSP_CoreParameter().fpsLimit = FPSLimit::DEBUGGER;
++	}
++
++	JsonWriter &json = req.Respond();
++	WriteSpeedState(json);
++}
++
+ // Notify debugger version info (version)
+ //
+ // Parameters:
+diff --git a/Core/Debugger/WebSocket/GameSubscriber.h b/Core/Debugger/WebSocket/GameSubscriber.h
+index 39134e5..7688811 100644
+--- a/Core/Debugger/WebSocket/GameSubscriber.h
++++ b/Core/Debugger/WebSocket/GameSubscriber.h
+@@ -23,6 +23,8 @@ DebuggerSubscriber *WebSocketGameInit(DebuggerEventHandlerMap &map);
+ 
+ void WebSocketGameReset(DebuggerRequest &req);
+ void WebSocketGameStatus(DebuggerRequest &req);
++void WebSocketGameSpeedGet(DebuggerRequest &req);
++void WebSocketGameSpeedSet(DebuggerRequest &req);
+ void WebSocketVersion(DebuggerRequest &req);
+ void WebSocketSaveStateSave(DebuggerRequest &req);
+ void WebSocketSaveStateLoad(DebuggerRequest &req);
+diff --git a/Core/HLE/sceDisplay.cpp b/Core/HLE/sceDisplay.cpp
+index 9cc9bc7..d622fcf 100644
+--- a/Core/HLE/sceDisplay.cpp
++++ b/Core/HLE/sceDisplay.cpp
+@@ -383,9 +383,15 @@ static int FrameTimingLimit() {
+ 		return fixRate(g_Config.iFpsLimit2);
+ 	if (PSP_CoreParameter().fpsLimit == FPSLimit::ANALOG)
+ 		return fixRate(PSP_CoreParameter().analogFpsLimit);
++	if (PSP_CoreParameter().fpsLimit == FPSLimit::DEBUGGER)
++		return fixRate(PSP_CoreParameter().debuggerFpsLimit);
+ 	return framerate;
+ }
+ 
++int __DisplayGetFrameTimingLimit() {
++	return FrameTimingLimit();
++}
++
+ static bool FrameTimingThrottled() {
+ 	return FrameTimingLimit() != 0;
+ }
+diff --git a/Core/HLE/sceDisplay.h b/Core/HLE/sceDisplay.h
+index 2f8d05a..b23204b 100644
+--- a/Core/HLE/sceDisplay.h
++++ b/Core/HLE/sceDisplay.h
+@@ -32,6 +32,10 @@ void __DisplaySetFramebuf(u32 topaddr, int linesize, int pixelformat, int sync);
+ // Call this when resuming to avoid a small speedup burst
+ void __DisplaySetWasPaused();
+ 
++// The frame rate throttling is actually aiming for right now, after fast-forward, the alternative
++// speeds, and the netplay/achievement restrictions have all had their say. 0 means unlimited.
++int __DisplayGetFrameTimingLimit();
++
+ void Register_sceDisplay_driver();
+ void __DisplayWaitForVblanks(const char* reason, int vblanks, bool callbacks = false);
+ 

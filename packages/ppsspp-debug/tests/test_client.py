@@ -8,6 +8,7 @@ from ppsspp_debug import (
     Disconnected,
     Hit,
     LogLine,
+    Speed,
     Stepping,
     Unsupported,
     Watchpoint,
@@ -16,6 +17,9 @@ from ppsspp_debug import (
 from ppsspp_debug.testing import FakePPSSPP
 
 BASE = 0x1000_0000
+
+patched_only = pytest.mark.parametrize("fake", ["patched"], indirect=True)
+hit_events_only = pytest.mark.parametrize("fake", ["hit_events"], indirect=True)
 
 
 async def test_memory_round_trip(client):
@@ -37,11 +41,14 @@ async def test_error_reply_raises(client):
 async def test_unknown_event_is_unsupported():
     async with FakePPSSPP() as stock, AsyncClient.connect(port=stock.port) as c:
         with pytest.raises(Unsupported):
-            await c.speed(240)
+            await c.speed()
 
 
+@patched_only
 async def test_patched_commands(client):
-    assert await client.speed(240) == 240
+    assert await client.set_speed(200) == Speed(False, 200, 120)
+    assert (await client.set_speed(fast_forward=True)).limit_fps == 0
+    assert await client.set_speed() == await client.speed() == Speed(False, None, 60)
     await client.write_u8(BASE, 7)
     await client.save_state("/states/a.ppst")
     await client.write_u8(BASE, 0)
@@ -88,7 +95,7 @@ async def test_breakpoint_stops_and_is_removed(client, fake):
     async with client.breakpoint(BASE + 0x10) as hits:
         assert BASE + 0x10 in fake.breakpoints
         await fake.execute(BASE + 0x10)
-        assert await hits.next(1) == Hit("exec", BASE + 0x10, BASE + 0x10, True)
+        assert await hits.next(1) == Hit("exec", BASE + 0x10, BASE + 0x10, True, start=BASE + 0x10)
         assert (await client.status()).stepping
         await client.resume()
     assert not fake.breakpoints
@@ -97,7 +104,10 @@ async def test_breakpoint_stops_and_is_removed(client, fake):
 async def test_watchpoint_stop(client, fake):
     async with client.watchpoint(BASE, 8) as hits:
         await fake.access(BASE + 4, 2, pc=BASE + 0x40)
-        assert await hits.next(1) == Hit("memory", BASE, BASE + 0x40, True)
+        exact = Hit("memory", BASE + 4, BASE + 0x40, True, "write", 2, "CPU", start=BASE)
+        assert await hits.next(1) == (
+            exact if fake.hit_events else Hit("memory", BASE, BASE + 0x40, True, start=BASE)
+        )
         assert fake.stepping
         await client.resume()
 
@@ -117,11 +127,13 @@ async def test_breakpoint_stop_is_not_a_watchpoint_hit(client, fake):
             await writes.next(0.05)
 
 
-async def test_stops_with_reasons():
-    async with FakePPSSPP(reasons=True) as server, AsyncClient.connect(port=server.port) as c:
-        async with c.breakpoint(BASE) as hits:
-            await server.execute(BASE)
-            assert (await hits.next(1)).pc == BASE
+async def test_resume_answered_by_a_new_stop(client, fake):
+    async def trip_again(ws, msg):
+        await fake.stop()
+
+    fake._table["cpu.resume"] = trip_again
+    await client.pause()
+    await client.resume()
 
 
 async def test_held_log_lines_are_not_hits(client, fake):
@@ -167,8 +179,23 @@ async def test_log_only_breakpoint(client, fake):
     async with client.breakpoint(BASE, stop=False) as hits:
         await fake.execute(BASE)
         hit = await hits.next(1)
-    assert (hit.pc, hit.stopped, hit.message) == (BASE, False, "z_un_test")
+    assert (hit.pc, hit.stopped, hit.message) == (
+        BASE,
+        False,
+        None if fake.hit_events else "z_un_test",
+    )
     assert not fake.stepping
+
+
+@hit_events_only
+async def test_hit_events_need_no_log(client, fake):
+    async with client.watchpoint(BASE, 8, stop=False) as hits:
+        assert len(fake.connections) == 1 and not fake.disallowed["breakpoint"]
+        await fake.access(BASE + 4, pc=BASE + 0x40)
+        assert await hits.next(1) == Hit(
+            "memory", BASE + 4, BASE + 0x40, False, "write", 4, "CPU", start=BASE
+        )
+    assert fake.disallowed["breakpoint"]
 
 
 async def test_lists(client):
@@ -181,7 +208,8 @@ async def test_lists(client):
 
 
 async def test_broadcasts_off_unless_streamed(client, fake):
-    assert fake.disallowed == {"logger": True, "game": True, "input": True, "stepping": False}
+    off = {"logger": True, "game": True, "input": True, "stepping": False}
+    assert fake.disallowed == off | ({"breakpoint": True} if fake.hit_events else {})
     async with client.events("game.start") as events:
         assert not fake.disallowed["game"]
         await fake.broadcast({"event": "game.start", "game": None})

@@ -4,7 +4,14 @@ import statistics
 import time
 
 import pytest
-from ppsspp_debug import AsyncClient, Client, DebuggerError, Unsupported, find_debuggers
+from ppsspp_debug import (
+    AsyncClient,
+    Client,
+    DebuggerError,
+    DockerEmulator,
+    Unsupported,
+    find_debuggers,
+)
 from websockets.sync.client import connect as raw_connect
 
 USER_RAM = 0x0880_0000  # noaddr: the PSP's user memory, the same for every game
@@ -50,7 +57,19 @@ def hot(ppsspp):
     return periodic[0]
 
 
+@pytest.fixture(scope="module")
+def fixed(ppsspp):
+    """Whether this PPSSPP has the fixes the modkit patches into 1.20.4, told by game.speed.get."""
+    try:
+        ppsspp.speed()
+    except Unsupported:
+        return False
+    return True
+
+
 def test_finds_its_port(ppsspp, emulator):
+    if isinstance(emulator, DockerEmulator):
+        pytest.skip("the process runs in a container")
     assert emulator.port() in find_debuggers()
 
 
@@ -128,10 +147,34 @@ def test_breakpoint_stops_and_resumes(ppsspp, hot):
 def test_watchpoint_stops_and_resumes(ppsspp, hot):
     with ppsspp.watchpoint(hot[1], 4) as hits:
         hit = hits.next(10)
-        regs = ppsspp.registers()
+        pc = ppsspp.registers()["pc"]
+        stopped_at = ppsspp.disasm(pc)[0]
         ppsspp.resume()
-    assert hit.stopped and regs["pc"] == hit.pc
-    assert not ppsspp.watchpoints()
+    assert hit.stopped and not ppsspp.watchpoints()
+    if pc != hit.pc:  # an access in a delay slot stops the CPU on its branch
+        report(f"stopped at {pc:08x} {stopped_at}, the access at {hit.pc:08x}")
+        assert hit.pc == pc + 4 and stopped_at.name[0] in "bj"
+
+
+def test_stop_says_why(ppsspp, hot, fixed):
+    with ppsspp.events("cpu.stepping") as stops, ppsspp.watchpoint(hot[1], 4) as hits:
+        hits.next(10)
+        stop = stops.next(1)
+        ppsspp.resume()
+    why = ("memory.breakpoint", hot[1]) if fixed else (None, None)
+    assert (stop.reason, stop.related_address) == why
+
+
+def test_log_reaches_every_connection(ppsspp, hot, fixed):
+    with ppsspp.breakpoint(hot[0], stop=False) as calls:
+        calls.next(10)
+        with raw_connect(f"ws://127.0.0.1:{ppsspp.port}/debugger", open_timeout=5):
+            pass
+        if fixed:
+            calls.next(5)
+        else:  # stock: the closing connection took the log with it
+            with pytest.raises(TimeoutError):
+                calls.next(2)
 
 
 def test_log_only_hits_keep_the_game_running(ppsspp, hot):
@@ -184,13 +227,34 @@ def test_screenshot_while_stopped(ppsspp):
     report(f"screenshot while stopped: {shot.width}x{shot.height}, {len(shot.png)} bytes")
 
 
-def test_patched_commands(ppsspp):
+def test_speed(ppsspp):
     try:
-        limit = ppsspp.speed()
+        doubled = ppsspp.set_speed(200)
     except Unsupported:
-        report("stock PPSSPP: game.speed and savestate.* raise Unsupported")
+        report("PPSSPP without game.speed.*: speed() raises Unsupported")
         return
-    assert limit >= 0
+    assert doubled.limit_fps == 120
+    assert ppsspp.set_speed() == ppsspp.speed() and ppsspp.speed().limit_fps == 60
+
+
+def test_savestate_round_trip(ppsspp, emulator, tmp_path):
+    # a path as the emulator sees it
+    state = "/tmp/live.ppst" if isinstance(emulator, DockerEmulator) else tmp_path / "live.ppst"
+    with ppsspp.paused():
+        before = ppsspp.read(USER_RAM, 4)
+        start = time.perf_counter()
+        try:
+            ppsspp.save_state(state)
+        except Unsupported:
+            report("stock PPSSPP: savestate.* raise Unsupported")
+            return
+        saved = time.perf_counter() - start
+        ppsspp.write(USER_RAM, bytes(b ^ 0xFF for b in before))
+        start = time.perf_counter()
+        ppsspp.load_state(state)
+        loaded = time.perf_counter() - start
+        assert ppsspp.read(USER_RAM, 4) == before
+    report(f"savestate written in {ms(saved)}, loaded in {ms(loaded)}")
 
 
 async def test_async_client_alongside(ppsspp, hot):

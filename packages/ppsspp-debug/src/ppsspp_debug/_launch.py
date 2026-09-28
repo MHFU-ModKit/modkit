@@ -133,7 +133,7 @@ def _signal(proc: subprocess.Popen[bytes], sig: int) -> None:
 
 
 class DockerEmulator:
-    """PPSSPP in a long-lived container, driven through the headless rig's `ppsspp-ctl`.
+    """PPSSPP in the modkit's container (ppsspp/docker), driven through its `ppsspp-ctl`.
 
     `game` and `state` are paths inside the container. `ppsspp-ctl` pins the debugger port and
     reports ready only once the new process owns it.
@@ -141,7 +141,7 @@ class DockerEmulator:
 
     def __init__(
         self,
-        container: str,
+        container: str = "ppsspp",
         *,
         game: str | None = None,
         state: str | None = None,
@@ -212,6 +212,11 @@ class DockerEmulator:
     def log(self) -> str:
         """The emulator's recent output."""
         return self._ctl("log").stdout
+
+    def screenshot(self) -> bytes:
+        """The container's display as a PNG; works where the debugger's screenshot does not."""
+        command = [self._docker, "exec", self.container, "ppsspp-ctl", "screenshot"]
+        return subprocess.run(command, capture_output=True, check=True).stdout
 
     def __enter__(self) -> DockerEmulator:
         self.start()

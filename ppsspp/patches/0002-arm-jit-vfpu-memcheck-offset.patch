@@ -1,0 +1,31 @@
+ARM JITs: a memcheck on a VFPU load or store with a negative offset watched the wrong address.
+
+Masking after sign extension cleared the upper half, so lv.q/sv.q with offset -16 checked base + 0xFFF0.
+The x86 and IR backends already mask before extending.
+
+diff --git a/Core/MIPS/ARM/ArmJit.cpp b/Core/MIPS/ARM/ArmJit.cpp
+index 2940957..0fb5a5c 100644
+--- a/Core/MIPS/ARM/ArmJit.cpp
++++ b/Core/MIPS/ARM/ArmJit.cpp
+@@ -93,7 +93,7 @@ static u32 JitMemCheck(u32 pc) {
+ 	const auto op = Memory::Read_Instruction(pc, true);
+ 	s32 offset = SignExtend16ToS32(op & 0xFFFF);
+ 	if (MIPSGetInfo(op) & IS_VFPU)
+-		offset &= 0xFFFC;
++		offset = SignExtend16ToS32(op & 0xFFFC);
+ 	u32 addr = currentMIPS->r[MIPS_GET_RS(op)] + offset;
+ 
+ 	g_breakpoints.ExecOpMemCheck(addr, pc);
+diff --git a/Core/MIPS/ARM64/Arm64Jit.cpp b/Core/MIPS/ARM64/Arm64Jit.cpp
+index 4b152d2..3c7e393 100644
+--- a/Core/MIPS/ARM64/Arm64Jit.cpp
++++ b/Core/MIPS/ARM64/Arm64Jit.cpp
+@@ -84,7 +84,7 @@ static u32 JitMemCheck(u32 pc) {
+ 	const auto op = Memory::Read_Instruction(pc, true);
+ 	s32 offset = SignExtend16ToS32(op & 0xFFFF);
+ 	if (MIPSGetInfo(op) & IS_VFPU)
+-		offset &= 0xFFFC;
++		offset = SignExtend16ToS32(op & 0xFFFC);
+ 	u32 addr = currentMIPS->r[MIPS_GET_RS(op)] + offset;
+ 
+ 	g_breakpoints.ExecOpMemCheck(addr, pc);

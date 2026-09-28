@@ -31,7 +31,7 @@ _VERSION = version("ppsspp-debug")
 
 # broadcast.config switches a stream can turn on; "stepping" stays on because pause, resume and
 # stops rely on it, and "logger" stays off because the log comes over a connection of its own
-_SWITCHES = ("game", "input")
+_SWITCHES = ("game", "input", "breakpoint")
 
 T = TypeVar("T")
 
@@ -39,6 +39,8 @@ T = TypeVar("T")
 def _switch(event: str) -> str | None:
     if event.startswith(("game.", "input.")):
         return event.partition(".")[0]
+    if event == "cpu.breakpoint.hit":
+        return "breakpoint"
     return None
 
 
@@ -124,7 +126,8 @@ class _LogFeed:
     """A connection of its own for PPSSPP's log.
 
     PPSSPP 1.20.4 sends the log only to its newest debugger connection, and closing any
-    connection stops the log for all of them; a fresh connection owns it again.
+    connection stops the log for all of them; a fresh connection owns it again. Newer builds
+    send the log to every connection, where one of its own does no harm.
     """
 
     def __init__(self, ws: ClientConnection, dispatch: Callable[[dict[str, Any]], None]) -> None:
@@ -136,7 +139,7 @@ class _LogFeed:
         cls, uri: str, timeout: float, dispatch: Callable[[dict[str, Any]], None]
     ) -> _LogFeed:
         ws = await _ws_open(uri, timeout)
-        off = {"logger": False, "game": True, "input": True, "stepping": True}
+        off = {"logger": False, "game": True, "input": True, "stepping": True}  # 1.20.4's kinds
         await ws.send(json.dumps({"event": "broadcast.config.set", "disallowed": off}))
         return cls(ws, dispatch)
 
@@ -206,6 +209,7 @@ class AsyncClient:
         self._subs: set[_Subscription] = set()
         self._disallowed: dict[str, bool] | None = None
         self._configurable = True
+        self._hit_events = False
         self._log: _LogFeed | None = None
         self._log_users = 0
         self._log_lock = asyncio.Lock()
@@ -257,6 +261,7 @@ class AsyncClient:
         try:
             reply = await client.request("version", name="ppsspp-debug", version=_VERSION)
             client.server = f"{reply['name']} {reply['version']}"
+            client._hit_events = await client._probe_hit_events()
             await client._sync_broadcasts()
         except BaseException:
             await client.close()
@@ -364,15 +369,20 @@ class AsyncClient:
         return self._check(event, msg)
 
     async def _command(
-        self, event: str, ack: str, sub: _Subscription | None = None, **params: Any
+        self,
+        event: str,
+        ack: str | tuple[str, ...],
+        sub: _Subscription | None = None,
+        **params: Any,
     ) -> dict[str, Any]:
         """Send an event PPSSPP answers with an `ack` broadcast rather than a reply.
 
         The ticket still matters: PPSSPP sends errors back ticketed.
         """
+        acks = {ack} if isinstance(ack, str) else set(ack)
         async with AsyncExitStack() as stack:
             if sub is None:
-                sub = await stack.enter_async_context(self._subscribed({ack}))
+                sub = await stack.enter_async_context(self._subscribed(acks))
             ticket, reply = self._ticket()
             broadcast = asyncio.ensure_future(sub.get())
             stops = ack == "cpu.stepping"
@@ -386,7 +396,8 @@ class AsyncClient:
                             self._check(event, reply.result())
                         return await broadcast
                 except TimeoutError:
-                    raise TimeoutError(f"{event}: no {ack} within {self.timeout:g}s") from None
+                    expected = " or ".join(sorted(acks))
+                    raise TimeoutError(f"{event}: no {expected} within {self.timeout:g}s") from None
             except BaseException:
                 if stops and not broadcast.done():
                     self._requested_stops = max(0, self._requested_stops - 1)
@@ -431,13 +442,22 @@ class AsyncClient:
                 await self._log.close()
                 self._log = None
 
+    async def _probe_hit_events(self) -> bool:
+        """Whether PPSSPP sends cpu.breakpoint.hit; if so, it stays off until a stream wants it."""
+        try:
+            await self._call("broadcast.config.set", {"disallowed": {"breakpoint": True}})
+        except DebuggerError:  # 1.20.4 rejects a kind it does not have
+            return False
+        return True
+
     async def _sync_broadcasts(self) -> bool:
         """Ask PPSSPP to send only the broadcast kinds an open stream wants.
 
         Returns whether a kind was switched on.
         """
+        switches = _SWITCHES if self._hit_events else _SWITCHES[:-1]
         wanted = set().union(*(s.switches for s in self._subs))
-        disallowed = {"logger": True} | {s: s not in wanted for s in _SWITCHES}
+        disallowed = {"logger": True} | {s: s not in wanted for s in switches}
         before = self._disallowed
         if not self._configurable or disallowed == before:
             return False
@@ -447,7 +467,7 @@ class AsyncClient:
         except Unsupported:
             self._configurable = False
             return False
-        return before is not None and any(before[s] and not disallowed[s] for s in _SWITCHES)
+        return before is not None and any(before[s] and not disallowed[s] for s in switches)
 
     async def request(self, event: str, /, **params: Any) -> dict[str, Any]:
         """Send any debugger event and return its reply, for events without a method here."""
@@ -539,7 +559,8 @@ class AsyncClient:
     async def resume(self) -> None:
         """Let the CPU run; a running CPU is fine."""
         try:
-            await self._command("cpu.resume", "cpu.resume")
+            # a breakpoint that trips again at once gets PPSSPP to report the new stop instead
+            await self._command("cpu.resume", ("cpu.resume", "cpu.stepping"))
         except DebuggerError as e:
             if e.message != "CPU not stepping":
                 raise
@@ -655,22 +676,28 @@ class AsyncClient:
     ) -> AsyncIterator[Stream[t.Hit]]:
         """An execution breakpoint for the block; yields its hits and removes it on exit.
 
-        With `stop`, each hit leaves the CPU stopped until `resume()`. Without, hits come from
-        the log and the game keeps running.
+        With `stop`, each hit leaves the CPU stopped until `resume()`. Without, the game keeps
+        running; a `log_format` message comes from the log.
         """
 
         def match(event: t.Event) -> t.Hit | None:
             if isinstance(event, t.Stepping):
-                # PPSSPP 1.20.4 sends no reason with a breakpoint stop; the pc tells it apart
-                if not event.requested and event.pc == address:
-                    return t.Hit("exec", address, event.pc, True)
+                if event.hit is not None:
+                    return event.hit if _trips(event.hit, "exec", address) else None
+                if self._hit_events or event.requested or event.pc != address:
+                    return None
+                # stock PPSSPP 1.20.4 gives no reason; the pc tells
+                if event.reason in (None, "cpu.breakpoint"):
+                    return t.Hit("exec", address, event.pc, True, start=address)
+            elif isinstance(event, t.Hit):
+                return event if _trips(event, "exec", address) else None
             elif isinstance(event, t.LogLine):
                 hit = event.hit
                 if hit is not None and hit.kind == "exec" and hit.pc == address:
                     return hit
             return None
 
-        async with self._subscribed({"cpu.stepping"} if stop else {"log"}) as sub:
+        async with self._subscribed(self._hit_source(stop, log_format)) as sub:
             await self.add_breakpoint(
                 address, stop=stop, log=not stop, condition=condition, log_format=log_format
             )
@@ -697,30 +724,33 @@ class AsyncClient:
     ) -> AsyncIterator[Stream[t.Hit]]:
         """A memory breakpoint for the block; yields its hits and removes it on exit.
 
-        With `stop`, each hit leaves the CPU stopped until `resume()`; its `address` is the
-        watchpoint's start and `pc` the accessing instruction. Without, hits come from the log,
-        name the exact access and the game keeps running.
+        With `stop`, each hit leaves the CPU stopped until `resume()`. Without, the game keeps
+        running; a `log_format` message comes from the log.
 
-        PPSSPP 1.20.4 does not say why the CPU stopped, so a stop this client did not ask for
-        and that is not at one of its breakpoints counts as a hit, a pause from PPSSPP's own
-        UI included.
+        Stock PPSSPP 1.20.4 does not say why the CPU stopped, so there a stop this client did
+        not ask for and that is not at one of its breakpoints counts as a hit, a pause from
+        PPSSPP's own UI included.
         """
 
         def match(event: t.Event) -> t.Hit | None:
             if isinstance(event, t.Stepping):
-                if event.requested:
+                if event.hit is not None:
+                    return event.hit if _trips(event.hit, "memory", address) else None
+                if self._hit_events or event.requested:
                     return None
                 if event.reason == "memory.breakpoint" and event.related_address == address:
-                    return t.Hit("memory", address, event.pc, True)
+                    return t.Hit("memory", address, event.pc, True, start=address)
                 if event.reason is None and event.pc not in self._stopping_breakpoints:
-                    return t.Hit("memory", address, event.pc, True)
+                    return t.Hit("memory", address, event.pc, True, start=address)
+            elif isinstance(event, t.Hit):
+                return event if _trips(event, "memory", address) else None
             elif isinstance(event, t.LogLine):
                 hit = event.hit
                 if hit is not None and hit.kind == "memory" and 0 <= hit.address - address < size:
                     return hit
             return None
 
-        async with self._subscribed({"cpu.stepping"} if stop else {"log"}) as sub:
+        async with self._subscribed(self._hit_source(stop, log_format)) as sub:
             await self.add_watchpoint(
                 address,
                 size,
@@ -739,6 +769,12 @@ class AsyncClient:
                 with suppress(Disconnected):
                     await self.remove_watchpoint(address, size)
                     await self._release_untaken(hits, stop)
+
+    def _hit_source(self, stop: bool, log_format: str | None) -> set[str]:
+        """The broadcasts a breakpoint's hits arrive as."""
+        if stop:
+            return {"cpu.stepping"}
+        return {"cpu.breakpoint.hit"} if self._hit_events and log_format is None else {"log"}
 
     async def _release_untaken(self, hits: Stream[t.Hit], stop: bool) -> None:
         """Resume a CPU left stopped by a hit that arrived after its caller stopped reading."""
@@ -785,6 +821,15 @@ class AsyncClient:
         """Restart the game; with `stop`, the CPU waits at the first instruction."""
         await self._call("game.reset", {"break": stop})
 
+    async def speed(self) -> t.Speed:
+        """The emulation speed; stock PPSSPP 1.20 and older raise Unsupported."""
+        return t.speed(await self._call("game.speed.get", {}))
+
+    async def set_speed(self, percent: int | None = None, *, fast_forward: bool = False) -> t.Speed:
+        """Run at `percent` of real time, at the game's own rate with None, or unlimited."""
+        params = {"percent": percent, "fastForward": fast_forward}
+        return t.speed(await self._call("game.speed.set", params))
+
     async def frame_stats(self) -> t.FrameStats:
         """Rates after the next frame; times out while the CPU is stopped."""
         return t.frame_stats(await self._call("gpu.stats.get", {}))
@@ -793,19 +838,19 @@ class AsyncClient:
         """The current output frame; some GPU backends answer only while stepping."""
         return t.screenshot(await self._call("gpu.buffer.screenshot", {"type": "uri"}))
 
-    # patched PPSSPP only: Unsupported on stock builds
+    # the modkit's patched PPSSPP only: Unsupported on stock builds
 
-    async def save_state(self, path: str | os.PathLike[str]) -> None:
-        """Queue a savestate to `path`, as the emulator sees it; returns once accepted."""
-        await self._call("savestate.save", {"path": os.fspath(path)})
+    async def save_state(self, path: str | os.PathLike[str], timeout: float = 30.0) -> None:
+        """Write a savestate to `path`, as the emulator sees it; returns once it is written."""
+        await self._call("savestate.save", {"path": os.fspath(path)}, timeout)
 
-    async def load_state(self, path: str | os.PathLike[str]) -> None:
-        """Queue loading the savestate at `path`, as the emulator sees it; returns once accepted."""
-        await self._call("savestate.load", {"path": os.fspath(path)})
+    async def load_state(self, path: str | os.PathLike[str], timeout: float = 30.0) -> None:
+        """Load the savestate at `path`, as the emulator sees it; returns once it is loaded."""
+        await self._call("savestate.load", {"path": os.fspath(path)}, timeout)
 
-    async def speed(self, limit: int | None = None) -> int:
-        """Set the frame-rate limit (60 real time, 240 four times, 0 unlimited); returns it."""
-        return int((await self._call("game.speed", _given(limit=limit)))["limit"])
+
+def _trips(hit: t.Hit, kind: str, start: int) -> bool:
+    return hit.kind == kind and hit.start == start
 
 
 def _uri(host: str, port: int) -> str:
