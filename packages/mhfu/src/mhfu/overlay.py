@@ -10,12 +10,13 @@ from .memory import Image
 
 _HEADER = struct.Struct("<4sIIIIIII")
 MAGIC = b"MWo3"
-TEXT = 0x80
-"""Code starts at file offset 0x80: a 64-byte header, then 64 bytes of padding."""
+TEXT = 0x40
+"""The text section follows the 64-byte header; its first 64 bytes are zero, so the first
+instruction is at 0x80. Data and the ctor list follow text directly."""
 
 
 class Overlay(Image):
-    """An overlay file; its header sits at `load` and its code at `load + TEXT`."""
+    """An overlay file; its header sits at `load` and its text section at `load + TEXT`."""
 
     def __init__(self, data: bytes, name: str = "") -> None:
         if not self.sniff(data):

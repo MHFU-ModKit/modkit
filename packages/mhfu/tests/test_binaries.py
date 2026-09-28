@@ -11,13 +11,13 @@ def overlay(load: int = 0x100000, text: bytes = b"") -> bytes:
 
 
 def test_overlay_maps_at_its_load_address():
-    jr_ra = struct.pack("<I", 0x03E00008)
-    ovl = Overlay(overlay(text=jr_ra))
+    text = bytes(64) + struct.pack("<I", 0x03E00008)
+    ovl = Overlay(overlay(text=text))
     assert ovl.name == "em75.ovl" and ovl.species == 75
-    assert ovl.text == range(0x100000 + TEXT, 0x100000 + TEXT + 4)
-    assert ovl.u32(ovl.text.start) == 0x03E00008
-    (ins,) = mips.instructions(ovl, ovl.text.start, ovl.text.stop)
-    assert ins.isReturn() and ins.vram == ovl.text.start
+    assert ovl.text == range(0x100000 + TEXT, 0x100000 + TEXT + len(text))
+    assert ovl.u32(ovl.text.stop - 4) == 0x03E00008
+    (ins,) = mips.instructions(ovl, ovl.text.stop - 4, ovl.text.stop)
+    assert ins.isReturn() and ins.vram == ovl.text.stop - 4
 
 
 def test_not_an_overlay():
@@ -34,8 +34,11 @@ def test_file_ids():
 def test_extracted_game(game):
     task = game.overlay(files.GAME_TASK)
     assert task.name == "game_task.ovl"
-    for species in files.EM_SPECIES:
-        assert game.em(species).species == species
+    for species in files.EM_SPECIES:  # the ctor list follows text and data directly
+        em = game.em(species)
+        assert em.ctors.start == em.initialised.stop
+        assert em.read(em.text.start, 64) == bytes(64)
+        assert em.species == species
     eboot = game.eboot()
     assert eboot.entry in eboot.text
     first = next(mips.instructions(eboot, eboot.text.start, eboot.text.start + 4))
