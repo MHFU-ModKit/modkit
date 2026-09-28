@@ -12,7 +12,6 @@ The C header and the Lua table are generated from the same file:
 
 from __future__ import annotations
 
-import argparse
 import functools
 import re
 import sys
@@ -67,7 +66,7 @@ class Struct:
     size: int | None = None
 
     def __getattr__(self, name: str) -> Field:
-        fields = self.__dict__.get("fields", {})
+        fields: dict[str, Field] = self.__dict__.get("fields", {})
         if name in fields:
             return fields[name]
         raise AttributeError(f"struct {self.__dict__.get('name')} has no field {name}")
@@ -247,20 +246,10 @@ def __dir__() -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(
-        prog="python -m mhfu.addresses",
-        description="Print the address table as a C header or a Lua module.",
-    )
-    ap.add_argument("lang", choices=sorted(RENDER))
-    ap.add_argument("-o", "--output", type=Path, help="write here instead of stdout")
-    ap.add_argument("--table", type=Path, help="read this TOML instead of the packaged one")
-    args = ap.parse_args(argv)
-    text = RENDER[args.lang](load(args.table) if args.table else table())
-    if args.output:
-        args.output.write_text(text, encoding="utf-8")
-    else:
-        sys.stdout.write(text)
-    return 0
+    """`python -m mhfu.addresses c|lua`, the same as `mhfu addresses c|lua`."""
+    from .cli import main as cli
+
+    return cli(["addresses", *(sys.argv[1:] if argv is None else argv)])
 
 
 if __name__ == "__main__":

@@ -126,6 +126,20 @@ SCRIPT_RESOURCE_CTX = { eu = 0x08A631A0, type = "ptr", doc = "streaming context 
 RESOURCE_TABLE = { eu = 0x09A4F0D0, type = "ptr", doc = "pointer to the resident-file table (RESOURCE_SLOT rows); also the ctx for RESOURCE_REQUEST" }
 MODEL_SETUP = { eu = 0x09AC4D30, type = "fn", doc = "per-entity model setup that consumes the raw model buffer every frame; overlay code" }
 
+# --- code analysis: EBOOT and overlay functions ---
+
+# --- stages and hit volumes ---
+
+# --- big-monster behaviour: moves, phases, chains ---
+
+# --- big-monster intel: effects, attacks, engine interface ---
+
+# --- automation: screens, menus, dialogue ---
+
+# --- automation: village, hall, home, quests ---
+
+# --- debug shell ---
+
 # --- framework regions ---
 AI_PUBLISH = { eu = 0x08AE2000, type = "bytes", doc = "framework-owned scratch the ai_publish mod writes and the HUD reads: 0x18 header + 21 x 0x14" }
 CLI_BRIDGE_BLOCK = { eu = 0x0A7F0000, type = "bytes", doc = "framework-owned command block (struct CLI_BRIDGE) the debug CLI writes; needs memory=64" }
@@ -340,3 +354,7 @@ ARG2 = { offset = 0x14, type = "u32", doc = "spare argument; cli_bridge.lua igno
 ACK = { offset = 0x18, type = "u32", doc = "SEQ the game has applied" }
 STATUS = { offset = 0x1C, type = "u32", doc = "action id currently held" }
 PROBE = { offset = 0x20, type = "u32", doc = "CLI scratch word used to test that the block is mapped" }
+
+# --- structs: stages and hit volumes ---
+
+# --- structs: automation ---
