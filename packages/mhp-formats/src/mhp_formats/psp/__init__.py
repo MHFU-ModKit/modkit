@@ -5,7 +5,7 @@
 from .color import Color
 from .ge import Command, DisplayList, Draw, Op, Prim, triangles
 from .strip import Stripper
-from .vtype import VertexType, Vertices
+from .vtype import VertexType, Vertices, quantize_vertices
 
 __all__ = [
     "Color",
@@ -17,5 +17,6 @@ __all__ = [
     "Stripper",
     "VertexType",
     "Vertices",
+    "quantize_vertices",
     "triangles",
 ]

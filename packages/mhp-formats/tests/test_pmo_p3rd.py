@@ -8,9 +8,9 @@ from mhp_formats import FormatError
 from mhp_formats import pmo as fu
 from mhp_formats.p3rd.pmo import Mesh, Pmo
 from mhp_formats.pac import Pac
-from mhp_formats.pmo import Block, BoneSlot, Group, Material, quantize_vertices
+from mhp_formats.pmo import Block, BoneSlot, Group, Material
 from mhp_formats.psp.ge import Command, Op, Prim
-from mhp_formats.psp.vtype import BITS8, BITS16, VertexType, Vertices
+from mhp_formats.psp.vtype import BITS8, BITS16, VertexType, Vertices, quantize_vertices
 
 VT = VertexType(texture=BITS16, normal=BITS8, position=BITS16, weight=BITS8, weight_count=3)
 QUAD = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (1.0, 0.0, 1.0)]

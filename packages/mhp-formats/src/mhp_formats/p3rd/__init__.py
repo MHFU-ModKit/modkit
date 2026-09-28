@@ -3,5 +3,6 @@
 """Where MHP3rd diverges from MHFU."""
 
 from .anim import Anim
+from .pmo import Mesh, Pmo
 
-__all__ = ["Anim"]
+__all__ = ["Anim", "Mesh", "Pmo"]

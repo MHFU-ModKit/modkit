@@ -12,6 +12,11 @@ class FormatError(ValueError):
 class Format(Protocol):
     """A file format: `from_bytes(data).to_bytes() == data` for every file the games ship."""
 
+    @staticmethod
+    def sniff(data: bytes) -> bool:
+        """A cheap look at the magic: True does not promise `from_bytes` succeeds."""
+        ...
+
     @classmethod
     def from_bytes(cls, data: bytes) -> Self: ...
 

@@ -7,9 +7,17 @@ import pytest
 from mhp_formats import FormatError
 from mhp_formats.fu.stage import Stage
 from mhp_formats.pac import Pac
-from mhp_formats.pmo import Block, BoneSlot, Group, Material, Mesh, Pmo, quantize_vertices
+from mhp_formats.pmo import Block, BoneSlot, Group, Material, Mesh, Pmo
 from mhp_formats.psp.ge import Command, Op, Prim
-from mhp_formats.psp.vtype import BITS8, BITS16, COLOR_5650, FLOAT, VertexType, Vertices
+from mhp_formats.psp.vtype import (
+    BITS8,
+    BITS16,
+    COLOR_5650,
+    FLOAT,
+    VertexType,
+    Vertices,
+    quantize_vertices,
+)
 
 SKINNED = VertexType(texture=BITS16, normal=BITS8, position=BITS16, weight=BITS8, weight_count=2)
 STAGE = VertexType(texture=BITS16, color=COLOR_5650, position=BITS16)

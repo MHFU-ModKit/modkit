@@ -4,24 +4,31 @@
 `from_bytes` and writes back with `to_bytes`, byte for byte."""
 
 from ._base import Format, FormatError
-from .anim import AnimPack, Channel, Clip, Keyframe, Track, dequantize, quantize
+from .anim import AnimPack, Channel, Clip, Keyframe, Track
+from .detect import detect
 from .pac import Pac
+from .pmo import Block, BoneSlot, Group, Material, Mesh, Pmo
 from .skeleton import Bone, Skeleton
 from .tmh import Tmh, TmhImage
 
 __all__ = [
     "AnimPack",
+    "Block",
     "Bone",
+    "BoneSlot",
     "Channel",
     "Clip",
     "Format",
     "FormatError",
+    "Group",
     "Keyframe",
+    "Material",
+    "Mesh",
     "Pac",
+    "Pmo",
     "Skeleton",
     "Tmh",
     "TmhImage",
     "Track",
-    "dequantize",
-    "quantize",
+    "detect",
 ]

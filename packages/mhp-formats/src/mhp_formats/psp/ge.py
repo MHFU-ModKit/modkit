@@ -127,11 +127,13 @@ class DisplayList:
 
         Indices are read from `mem`; vertices are not. Jumps, calls and patches are refused.
         """
-        offset_addr = base_reg = face_order = 0
+        face_order = 0
         vaddr: int | None = None
         iaddr: int | None = None
         vtype: VertexType | None = None
-        for i, (op, arg) in enumerate(self.commands):
+        regs = _registers(self.commands)
+        for i, ((op, arg), reg) in enumerate(zip(self.commands, regs, strict=True)):
+            offset_addr = reg.offset_addr + (base if reg.relative else 0)
             if op == Op.PRIM:
                 if vtype is None or vaddr is None:
                     raise FormatError(f"PRIM at command {i} before VTYPE and VADDR")
@@ -146,21 +148,46 @@ class DisplayList:
                     yield Draw(i, prim, count, vtype, vaddr, None, tuple(range(count)), face_order)
                     vaddr += count * vtype.stride
             elif op == Op.VADDR:
-                vaddr = _address(offset_addr, base_reg, arg)
+                vaddr = _address(offset_addr, reg.base_reg, arg)
             elif op == Op.IADDR:
-                iaddr = _address(offset_addr, base_reg, arg)
+                iaddr = _address(offset_addr, reg.base_reg, arg)
             elif op == Op.VTYPE:
                 vtype = _vtype(arg)
             elif op == Op.FFACE:
                 face_order = arg & 1
-            elif op == Op.BASE:
-                base_reg = arg
-            elif op == Op.OFFSETADDR:
-                offset_addr = arg << 8
-            elif op == Op.ORIGIN:
-                offset_addr = base + 4 * i
             elif op in _UNFOLLOWED:
                 raise FormatError(f"command {i} is {Op(op).name}, which the walker does not follow")
+
+
+def origins(commands: Sequence[Command]) -> list[int | None]:
+    """Per command, the list offset a VADDR or IADDR there counts from (the last ORIGIN's), or None
+    where OFFSETADDR or a BASE with address bits makes it absolute."""
+    return [reg.origin for reg in _registers(commands)]
+
+
+class _Registers(NamedTuple):
+    offset_addr: int
+    relative: bool
+    """`offset_addr` counts from the list's start (ORIGIN set it)."""
+    base_reg: int
+    origin: int | None
+
+
+def _registers(commands: Sequence[Command]) -> Iterator[_Registers]:
+    """The address registers in force at each command, that command applied."""
+    offset_addr = base_reg = 0
+    relative = False
+    origin: int | None = None
+    for i, (op, arg) in enumerate(commands):
+        if op == Op.ORIGIN:
+            offset_addr, relative, origin = 4 * i, True, 4 * i
+        elif op == Op.OFFSETADDR:
+            offset_addr, relative, origin = arg << 8, False, None
+        elif op == Op.BASE:
+            base_reg = arg
+            if arg & 0x0F0000:
+                origin = None
+        yield _Registers(offset_addr, relative, base_reg, origin)
 
 
 @lru_cache(maxsize=256)

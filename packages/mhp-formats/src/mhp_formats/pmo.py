@@ -26,9 +26,10 @@ from construct_typed import (
 )
 
 from ._base import FormatError
-from .psp.ge import Command, DisplayList, Op, Prim
+from .psp.color import Color, pack
+from .psp.ge import Command, DisplayList, Op, Prim, origins
 from .psp.strip import Stripper
-from .psp.vtype import _UNIT, Field, VertexType, Vertices, pack_color
+from .psp.vtype import COLOR_5650, VertexType, Vertices, quantize
 
 Vec3 = tuple[float, float, float]
 Triangle = tuple[int, int, int]
@@ -39,7 +40,6 @@ MAGIC = b"pmo\0"
 _HEADER_SIZE = 0x40
 _TABLE_ALIGN = 16
 _INDEX = {1: "B", 2: "H", 3: "I"}
-_FIXED = {"b": (-128, 127), "B": (0, 255), "h": (-32768, 32767), "H": (0, 65535)}
 
 
 def _up(n: int, align: int) -> int:
@@ -257,17 +257,17 @@ class _Writer:
         color: tuple[int, int, int, int] | None,
     ) -> None:
         lay = vt.layout
-        self.positions = _quantized(positions, scale, lay.position)
+        self.positions = quantize(positions, scale, lay.position)
         self.uvs: list[tuple[float, ...]] | None = None
         self.color: int | None = None
         if uvs is not None:
             if lay.texture is None:
                 raise ValueError("the vertex type has no texture coordinates")
-            self.uvs = _quantized(uvs, (1.0, 1.0), lay.texture)
+            self.uvs = quantize(uvs, (1.0, 1.0), lay.texture)
         if color is not None:
             if lay.color is None:
                 raise ValueError("the vertex type has no colour")
-            self.color = pack_color(color, vt.color)
+            self.color = pack(color, Color(vt.color - COLOR_5650))
         self.writes: dict[int, int] = {}
 
     def commit(self, vertices: Vertices) -> None:
@@ -367,57 +367,6 @@ class _Pack:
             ran_out=ran_out,
         )
         return _Result(packed, last)
-
-
-def quantize_vertices(
-    vtype: VertexType,
-    positions: Sequence[Vec3],
-    scale: Vec3 = (1.0, 1.0, 1.0),
-    *,
-    normals: Sequence[Vec3] | None = None,
-    uvs: Sequence[tuple[float, float]] | None = None,
-    weights: Sequence[Sequence[float]] | None = None,
-    colors: Sequence[tuple[int, int, int, int]] | None = None,
-) -> Vertices:
-    """Vertices of `vtype` from floats, the inverse of `Vertices.positions` and its kin: fixed
-    point rounds and clamps. Give exactly the attributes the type has."""
-    if vtype.through or vtype.morph_count != 1:
-        raise ValueError("only transformed vertices without morphing quantise")
-    lay = vtype.layout
-    given = {"weight": weights, "texture": uvs, "color": colors, "normal": normals}
-    for name, rows in given.items():
-        if (getattr(lay, name) is None) != (rows is None):
-            raise ValueError(f"the vertex type {'lacks' if rows else 'needs'} {name}s")
-        if rows is not None and len(rows) != len(positions):
-            raise ValueError(f"{len(rows)} {name}s for {len(positions)} vertices")
-    one = (1.0,) * 8
-    out = Vertices(vtype, position=_quantized(positions, scale, lay.position))
-    if weights is not None and lay.weight is not None:
-        if any(len(w) != vtype.weight_count for w in weights):
-            raise ValueError(f"every vertex takes {vtype.weight_count} weights")
-        out.weight = _quantized(weights, one, lay.weight)
-    if uvs is not None and lay.texture is not None:
-        out.texture = _quantized(uvs, one, lay.texture)
-    if normals is not None and lay.normal is not None:
-        out.normal = _quantized(normals, one, lay.normal)
-    if colors is not None:
-        out.color = [pack_color(c, vtype.color) for c in colors]
-    return out
-
-
-def _quantized(
-    rows: Sequence[Sequence[float]], scale: Sequence[float], fld: Field
-) -> list[tuple[float, ...]]:
-    """Floats to the raw components `Vertices` keeps for `fld`."""
-    code = fld.codes[0]
-    if code == "f":
-        return [tuple(v / s for v, s in zip(row, scale, strict=False)) for row in rows]
-    lo, hi = _FIXED[code]
-    unit = _UNIT[code]
-    return [
-        tuple(min(max(round(v / s * unit), lo), hi) for v, s in zip(row, scale, strict=False))
-        for row in rows
-    ]
 
 
 def _chosen(prims: Iterable[int] | None, count: int) -> set[int]:
@@ -818,20 +767,6 @@ def _unique_blocks(groups: list[Group]) -> list[Block]:
     return list(seen.values())
 
 
-def _origins(commands: Sequence[Command]) -> list[int | None]:
-    """Per command, the list offset VADDR and IADDR count from: the last ORIGIN's, or None
-    once an OFFSETADDR or a BASE with address bits replaces it."""
-    origin: int | None = None
-    out: list[int | None] = []
-    for i, (op, arg) in enumerate(commands):
-        if op == Op.ORIGIN:
-            origin = 4 * i
-        elif op == Op.OFFSETADDR or (op == Op.BASE and arg & 0x0F0000):
-            origin = None
-        out.append(origin)
-    return out
-
-
 def _read_block(mem: bytes, base: int, rec: _GroupRecord) -> Block:
     at = base + rec.list_offset
     dl = DisplayList.from_bytes(mem, at)
@@ -850,7 +785,7 @@ def _read_block(mem: bytes, base: int, rec: _GroupRecord) -> Block:
         count = max(count, first + (draw.count if draw.index_addr is None else draw.vertex_count))
         indices += draw.indices if draw.index_addr is not None else ()
     commands = []
-    for (op, arg), origin in zip(dl.commands, _origins(dl.commands), strict=True):
+    for (op, arg), origin in zip(dl.commands, origins(dl.commands), strict=True):
         if op in (Op.VADDR, Op.IADDR):
             if origin is None:
                 raise FormatError(f"the list at {rec.list_offset:#x} addresses without ORIGIN")
@@ -892,7 +827,7 @@ def _resolve(block: Block, places: _Places) -> list[Command]:
     """The block's commands with the arguments the layout writes."""
     vt = block.vertices.vtype
     out = []
-    for (op, arg), origin in zip(block.commands, _origins(block.commands), strict=True):
+    for (op, arg), origin in zip(block.commands, origins(block.commands), strict=True):
         if op == Op.VTYPE:
             arg = vt.to_word()
         elif op in (Op.VADDR, Op.IADDR):

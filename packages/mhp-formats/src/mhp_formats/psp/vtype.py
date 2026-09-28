@@ -8,13 +8,14 @@ to its largest alignment, and `morph_count` such vertices back to back per verte
 """
 
 import struct
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from functools import cached_property, lru_cache
 from itertools import chain
 from typing import Self
 
 from .._base import FormatError
-from .color import Color, Rgba, unpack
+from .color import Color, Rgba, pack, unpack
 
 NONE, BITS8, BITS16, FLOAT = 0, 1, 2, 3
 """Component format of weights, texture, normal and position (8/16-bit are fixed point)."""
@@ -31,6 +32,7 @@ _THROUGH = {NONE: "BBB", BITS8: "bbB", BITS16: "hhH", FLOAT: "fff"}
 _WEIGHT = {BITS8: "B", BITS16: "H", FLOAT: "f"}
 _INDEX = {BITS8: "B", BITS16: "H", FLOAT: "I"}
 _UNIT = {"b": 128.0, "B": 128.0, "h": 32768.0, "H": 32768.0, "f": 1.0}
+_FIXED = {"b": (-128, 127), "B": (0, 255), "h": (-32768, 32767), "H": (0, 65535)}
 _ATTRIBUTES = ("weight", "texture", "color", "normal", "position")
 
 Row = tuple[float, ...]
@@ -297,3 +299,54 @@ def _scaled(rows: list[Row], fld: Field | None) -> list[Row]:
         return []
     unit = _UNIT[fld.codes[0]]
     return [tuple(c / unit for c in row) for row in rows]
+
+
+def quantize_vertices(
+    vtype: VertexType,
+    positions: Sequence[Sequence[float]],
+    scale: Sequence[float] = (1.0, 1.0, 1.0),
+    *,
+    normals: Sequence[Sequence[float]] | None = None,
+    uvs: Sequence[Sequence[float]] | None = None,
+    weights: Sequence[Sequence[float]] | None = None,
+    colors: Sequence[Rgba] | None = None,
+) -> Vertices:
+    """Vertices of `vtype` from floats, the inverse of `Vertices.positions` and its kin: fixed
+    point rounds and clamps. Give exactly the attributes the type has."""
+    if vtype.through or vtype.morph_count != 1:
+        raise ValueError("only transformed vertices without morphing quantise")
+    lay = vtype.layout
+    given = {"weight": weights, "texture": uvs, "color": colors, "normal": normals}
+    for name, rows in given.items():
+        if (getattr(lay, name) is None) != (rows is None):
+            raise ValueError(f"the vertex type {'lacks' if rows else 'needs'} {name}s")
+        if rows is not None and len(rows) != len(positions):
+            raise ValueError(f"{len(rows)} {name}s for {len(positions)} vertices")
+    one = (1.0,) * 8
+    out = Vertices(vtype, position=quantize(positions, scale, lay.position))
+    if weights is not None and lay.weight is not None:
+        if any(len(w) != vtype.weight_count for w in weights):
+            raise ValueError(f"every vertex takes {vtype.weight_count} weights")
+        out.weight = quantize(weights, one, lay.weight)
+    if uvs is not None and lay.texture is not None:
+        out.texture = quantize(uvs, one, lay.texture)
+    if normals is not None and lay.normal is not None:
+        out.normal = quantize(normals, one, lay.normal)
+    if colors is not None:
+        out.color = [pack(c, Color(vtype.color - COLOR_5650)) for c in colors]
+    return out
+
+
+def quantize(
+    rows: Sequence[Sequence[float]], scale: Sequence[float], fld: Field
+) -> list[tuple[float, ...]]:
+    """Floats to the raw components `Vertices` keeps for `fld`."""
+    code = fld.codes[0]
+    if code == "f":
+        return [tuple(v / s for v, s in zip(row, scale, strict=False)) for row in rows]
+    lo, hi = _FIXED[code]
+    unit = _UNIT[code]
+    return [
+        tuple(min(max(round(v / s * unit), lo), hi) for v, s in zip(row, scale, strict=False))
+        for row in rows
+    ]
