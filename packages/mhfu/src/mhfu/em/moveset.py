@@ -23,7 +23,7 @@ import rabbitizer
 from rabbitizer import InstrId, Instruction
 
 from .. import addresses as a
-from ..mips import _CALL_CLOBBERS, Call, Code, Fpr, Gpr, Register, Switch
+from ..mips import CALL_CLOBBERS, Call, Code, Fpr, Gpr, Register, Switch
 from ..overlay import Overlay
 
 CASE_SETUP = 4
@@ -515,7 +515,7 @@ class Walker:
         if target in _FRAMED:
             bits = p.env.get(Fpr.fa0)
             frame = round(_bits(bits), 2) if isinstance(bits, int) else None
-        for r in _CALL_CLOBBERS:
+        for r in CALL_CLOBBERS:
             p.env.pop(r, None)
         p.env[Gpr.v0] = Tag("result", target if isinstance(target, int) else None, frame)
 

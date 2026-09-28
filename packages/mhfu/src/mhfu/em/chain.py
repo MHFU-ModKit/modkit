@@ -23,10 +23,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import cached_property
 
-from rabbitizer import InstrId
-
 from .. import addresses as a
-from ..mips import Call, Gpr, Switch
+from ..mips import Gpr, Switch
 from .moveset import Facts, Moveset, Site, Walker, known, pair_facts, seed_of
 
 ENTER_SLOT = 0x88
@@ -179,7 +177,7 @@ class Chain:
         found = {
             code.function(c.site).start
             for c in code.calls
-            if c.target in ACT_SETS or c.target == a.ENTER_ACTION or self._enter_slot(c)
+            if c.target in ACT_SETS or c.target == a.ENTER_ACTION or c.slot == ENTER_SLOT
         }
         tails = [
             (code.function(c.site).start, code.function(c.target).start)
@@ -192,18 +190,6 @@ class Chain:
             found |= {fn for fn, target in tails if target in found}
             grew = len(found) > before
         return frozenset(found)
-
-    def _enter_slot(self, call: Call) -> bool:
-        """A call through ENTER_SLOT of some vtable; `Call.slot` misses one whose vtable load
-        sits in branch-likely delay slots."""
-        if call.slot is not None or call.target is not None:
-            return call.slot == ENTER_SLOT
-        load = self.code.source(call.site, self.code.at(call.site).rs)
-        return (
-            load is not None
-            and load.uniqueId == InstrId.cpu_lw
-            and (load.getProcessedImmediate() == ENTER_SLOT)
-        )
 
     @cached_property
     def helpers(self) -> frozenset[int]:

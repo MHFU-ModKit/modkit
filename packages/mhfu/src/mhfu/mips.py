@@ -35,7 +35,7 @@ Register = rabbitizer.Enum
 """A GPR (`Gpr.a1`) or an FPU register (`Fpr.fa0`, which is $f12)."""
 
 _MASK = 0xFFFFFFFF
-_CALL_CLOBBERS = frozenset(
+CALL_CLOBBERS = frozenset(
     [Gpr.at, Gpr.v0, Gpr.v1, Gpr.a0, Gpr.a1, Gpr.a2, Gpr.a3, Gpr.t8, Gpr.t9, Gpr.ra]
     + [getattr(Gpr, f"t{n}") for n in range(8)]
     + [r for r in vars(Fpr).values() if isinstance(r, Register) and r.value < 20]
@@ -361,7 +361,7 @@ class Code:
             if owner is None or not owner.hasDelaySlot():
                 if a - 4 >= fn.start:
                     paths.append(([a - 4], a - 4))
-            elif owner.doesLink() and reg in _CALL_CLOBBERS:
+            elif owner.doesLink() and reg in CALL_CLOBBERS:
                 found[owner.vram] = owner
             elif not _ends_flow(owner):
                 paths.append(([a - 8] if owner.isBranchLikely() else [a - 4, a - 8], a - 8))

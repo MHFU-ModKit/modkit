@@ -13,7 +13,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from ppsspp_debug import Client
+from ppsspp_debug import Client, DebuggerError
 
 _U8, _U16, _U32 = struct.Struct("<B"), struct.Struct("<H"), struct.Struct("<I")
 _S8, _S16, _S32 = struct.Struct("<b"), struct.Struct("<h"), struct.Struct("<i")
@@ -148,13 +148,16 @@ class Space(Memory):
 
 
 class Live(Memory):
-    """The running game's memory, through the debugger."""
+    """The running game's memory, through the debugger; a read it refuses is `Unmapped`."""
 
     def __init__(self, client: Client) -> None:
         self.client = client
 
     def read(self, address: int, size: int) -> bytes:
-        return self.client.read(address, size)
+        try:
+            return self.client.read(address, size)
+        except DebuggerError as e:
+            raise Unmapped(f"0x{address:08X}+{size}: {e}") from e
 
     def write(self, address: int, data: bytes) -> None:
         self.client.write(address, data)
