@@ -4,12 +4,16 @@ from its code, and how the engine enters it."""
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import sys
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .. import hitbox
-from ..em import abi, attacks, effects
+from ..em import abi, attacks, effects, intel
 from ..em import census as cs
 from ..files import EM_SPECIES, Extracted
 from ..mips import Code
@@ -65,6 +69,20 @@ def register(sub: Subparsers) -> None:
     p.add_argument("--top", type=int, default=20)
     p.add_argument("--state", action="append", default=[], help="also show MAIN,SUB")
     p.set_defaults(run=run_census)
+
+    p = sub.add_parser("intel", parents=[many], help="one JSON per species: the join of it all")
+    p.add_argument("--all", action="store_true", help="every em overlay (also the default)")
+    p.add_argument("--out", type=Path, default=Path("species"), help="default: ./species")
+    p.add_argument("--stdout", action="store_true", help="print the JSON instead")
+    p.add_argument("--log", type=Path, help="framework.log to attach a census from")
+    p.add_argument("--since", type=int, default=0, help="byte offset into the log")
+    p.add_argument(
+        "--census-species",
+        type=species,
+        help="the species the log watched; needed with more than one overlay",
+    )
+    p.add_argument("-q", "--quiet", action="store_true", help="no per-species summary")
+    p.set_defaults(run=run_intel)
 
 
 def _overlays(args: argparse.Namespace) -> list[tuple[int, Overlay, Code]]:
@@ -259,3 +277,47 @@ def _census_row(c: cs.Census, pair: cs.Pair) -> str:
         f"{str(pair):8s} {dwell:>6s} {m['entered']:4d} {move:>6s}  "
         f"{cs.verdict(c, pair)}  a1 {m['a1']}"
     )
+
+
+def run_intel(args: argparse.Namespace) -> int:
+    todo = list(EM_SPECIES) if args.all or not args.species else args.species
+    measured, reason = None, "no census log given (--log)"
+    if args.log is not None:
+        c, reason = cs.load(args.log, args.since)
+        measured = None if c is None else intel.Measured(c, args.log, args.since)
+    target = args.census_species
+    if measured is not None and target is None:
+        if len(todo) == 1:
+            target = todo[0]
+        else:
+            reason = (
+                f"a census was found in {args.log} but not attached: --census-species was not given"
+            )
+            measured = None
+            print(f"mhfu intel: {reason}", file=sys.stderr)
+    game = intel.Game(Extracted.find(args.data))
+    mine = [measured if s == target else None for s in todo]
+    why = [
+        f"the census in {args.log} was taken from species {target}, not {s}"
+        if measured is not None and m is None
+        else reason
+        for s, m in zip(todo, mine, strict=True)
+    ]
+    _ = game.bias  # read once, before each worker gets a copy of the game
+    if len(todo) == 1:
+        docs = [intel.build(game, todo[0], mine[0], why[0])]
+    else:
+        with ProcessPoolExecutor(min(len(todo), os.cpu_count() or 1)) as pool:
+            docs = list(pool.map(intel.build, [game] * len(todo), todo, mine, why))
+    for s, doc in zip(todo, docs, strict=True):
+        text = json.dumps(doc, indent=1)
+        if args.stdout:
+            print(text)
+            continue
+        args.out.mkdir(parents=True, exist_ok=True)
+        dest = args.out / f"em{s:02d}.json"
+        dest.write_text(text + "\n", encoding="utf-8")
+        if not args.quiet:
+            print(intel.summarise(doc))
+            print(f"  -> {dest} ({len(text) / 1024:.1f} KB)")
+    return 0
