@@ -16,8 +16,8 @@ LOG = """\
 
 def test_parse():
     c = cs.parse(LOG.splitlines())
-    assert c.transitions == 5
-    assert c.dwell == {(0, 1): [20], (2, 2): [1], (4, 15): [1]}  # 31 -> 200 is a gap
+    assert (c.transitions, c.forced) == (4, 1)
+    assert c.dwell == {(0, 1): [20], (2, 2): [1]}  # 31 -> 200 is a gap; 200 was forced
     assert c.anims[0, 1] == {5}
     assert c.moved == {(0, 1): [10]}  # t=12 is cross-section
 
@@ -31,7 +31,7 @@ def test_measured():
     assert short["move_per_tick"] is None and "unmeasured" in short["note"]
     assert cs.verdict(c, (2, 2)).startswith("short")
     never = cs.measured(c, (9, 9))
-    assert never["entered"] == 0 and never["a1"] == [] and "0 of 5" in never["note"]
+    assert never["entered"] == 0 and never["a1"] == [] and "0 of 4" in never["note"]
     assert cs.verdict(c, (9, 9)) == "never entered"
 
 
@@ -43,5 +43,19 @@ def test_load(tmp_path):
     c, why = cs.load(empty)
     assert c is None and "0 [state] line(s)" in why
     empty.write_text(LOG)
-    c, why = cs.load(empty, since=LOG.index("[state] main=4"))
-    assert c is not None and why == "" and c.dwell == {(4, 15): [1]}
+    c, why = cs.load(empty, since=LOG.index("[state] main=2"))
+    assert c is not None and why == "" and c.dwell == {(2, 2): [1]}
+
+
+def test_forced_visits_are_skipped():
+    log = [
+        "[state] main=1 sub=1 (a1=3) t=10 d=1",
+        "[state] main=4 sub=15 (a1=9) t=12 d=2 FORCED",
+        "[brute] t=12 sec=1/1 SAME out=1 in=0 bc0=1 eng=1.0 node=0x0 hp=1 d=500",
+        "[brute] t=13 sec=1/1 SAME out=1 in=0 bc0=1 eng=1.0 node=0x0 hp=1 d=900",
+        "[state] main=1 sub=1 (a1=3) t=14 d=3",
+        "[state] main=2 sub=2 (a1=4) t=20 d=4",
+    ]
+    c = cs.parse(log)
+    assert c.dwell == {(1, 1): [6]}  # the visit the force cut short is not the monster's
+    assert c.moved == {} and (c.transitions, c.forced) == (3, 1)

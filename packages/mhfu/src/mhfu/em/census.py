@@ -3,7 +3,9 @@ moves there: measured from the framework log's `[state]` and `[brute] t=` lines,
 observe-only probe (brute_dmg.lua) writes at 2 Hz.
 
 A pair the engine never enters bounces straight back out when forced, however good its handler
-looks offline. Nothing here estimates: a pair without samples has none.
+looks offline. Nothing here estimates: a pair without samples has none. Transitions a script
+forced (`FORCED`) are not the monster's choice, so neither the forced visit nor the visit it cut
+short is counted.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from typing import Any
 
 Pair = tuple[int, int]
 
-STATE = re.compile(r"\[state\] main=(\d+) sub=(\d+) \(a1=(\d+)\) t=(\d+)")
+STATE = re.compile(r"\[state\] main=(\d+) sub=(\d+) \(a1=(\d+)\) t=(\d+)(.*)")
 TICK = re.compile(r"\[brute\] t=(\d+) sec=(\d+)/(\d+)( SAME)? out=(\d+) in=(\d+) .* d=(\d+)")
 
 MAX_DWELL = 60
@@ -39,23 +41,27 @@ class Census:
     moved: dict[Pair, list[int]] = field(default_factory=lambda: defaultdict(list))
     """Change in distance to the player between consecutive co-located ticks in the pair."""
     transitions: int = 0
-    """`[state]` lines read."""
+    """`[state]` lines read, forced ones not counted."""
+    forced: int = 0
+    """`[state]` lines a script forced, skipped."""
 
 
 def parse(lines: Iterable[str]) -> Census:
     c = Census()
-    states: list[tuple[int, int, int, int]] = []
+    states: list[tuple[int, int, int, int, bool]] = []
     ticks: list[tuple[int, bool, int, int, int]] = []
     main = sub = -1
+    forced = False
     for line in lines:
         if m := STATE.search(line):
-            main, sub = int(m[1]), int(m[2])
-            states.append((int(m[4]), main, sub, int(m[3])))
-        elif m := TICK.search(line):
+            main, sub, forced = int(m[1]), int(m[2]), "FORCED" in m[5]
+            states.append((int(m[4]), main, sub, int(m[3]), forced))
+        elif (m := TICK.search(line)) and not forced:
             ticks.append((int(m[1]), bool(m[4]), int(m[7]), main, sub))
-    c.transitions = len(states)
-    for (t, ma, su, a1), (t2, *_) in zip(states, states[1:], strict=False):
-        if 0 <= t2 - t <= MAX_DWELL:
+    c.forced = sum(s[4] for s in states)
+    c.transitions = len(states) - c.forced
+    for (t, ma, su, a1, force), (t2, *_, cut) in zip(states, states[1:], strict=False):
+        if not (force or cut) and 0 <= t2 - t <= MAX_DWELL:
             c.dwell[ma, su].append(t2 - t)
             c.anims[ma, su].add(a1)
     for prev, row in zip(ticks, ticks[1:], strict=False):

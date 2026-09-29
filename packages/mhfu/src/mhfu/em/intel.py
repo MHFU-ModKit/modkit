@@ -357,6 +357,7 @@ def census(measured: Measured | None, reason: str) -> Doc:
         "log_bytes": stat.st_size,
         "log_mtime": int(stat.st_mtime),
         "transitions": c.transitions,
+        "forced_skipped": c.forced,
         "observed_pairs": len(c.dwell),
         "attributed_by": "--census-species (the log does not record which species it watched)",
     }
@@ -609,7 +610,8 @@ def summarise(doc: Doc) -> str:
         out.append(f"  attacks: ABSENT ({at['reason']})")
     c = doc["census"]
     out.append(
-        f"  census: {c['transitions']} transitions, {c['observed_pairs']} pair(s) observed"
+        f"  census: {c['transitions']} transitions ({c['forced_skipped']} forced, skipped), "
+        f"{c['observed_pairs']} pair(s) observed"
         if c["present"]
         else f"  census: ABSENT ({c['reason']})"
     )
