@@ -1,5 +1,3 @@
 # Mods linked into mhfu_framework.prx, one directory under mods/ per line; # leaves one out (it still compiles).
 lua_host
-brute_overlay_hook
-em_vhook
 # monster_nameplates

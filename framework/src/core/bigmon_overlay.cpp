@@ -34,19 +34,19 @@ int mhfu_ovl_load_relocated(const char *path, mhfu_ovl_region_t *out)
 
     SceOff sz = sceIoLseek(fd, 0, PSP_SEEK_END);
     sceIoLseek(fd, 0, PSP_SEEK_SET);
-    uint32_t img_size = (uint32_t)sz;
-    if (img_size < 0x40) { sceIoClose(fd); mhfu_log("[bigmon_ovl] too small"); return -3; }
+    if (sz < (SceOff)sizeof(mhfu_ovl_header_t)) {
+        sceIoClose(fd); mhfu_log("[bigmon_ovl] too small"); return -3;
+    }
 
-    /* the 64-byte header sizes the footprint */
+    /* the header sizes the footprint [load, bss end); the file's tail past data is disc padding */
     mhfu_ovl_header_t hdr;
     if (sceIoRead(fd, &hdr, sizeof(hdr)) != (int)sizeof(hdr) ||
         memcmp(hdr.magic, "MWo3", 4) != 0) {
         sceIoClose(fd); mhfu_log("[bigmon_ovl] bad MWo3 header"); return -4;
     }
-    uint32_t slot_base = MHFU_EM_OVERLAY_SLOT;
-    uint32_t foot_hi   = hdr.load_address + img_size + hdr.bss_size;   /* old VA end */
-    uint32_t foot_size = foot_hi - slot_base;                          /* incl. lower and upper bss */
-    uint32_t img_off   = hdr.load_address - slot_base;                 /* file image offset in the footprint */
+    uint32_t img_size  = (uint32_t)sizeof(hdr) + hdr.text_size + hdr.data_size;
+    uint32_t foot_size = img_size + hdr.bss_size;
+    if ((SceOff)img_size > sz) { sceIoClose(fd); mhfu_log("[bigmon_ovl] truncated"); return -3; }
 
     /* footprint plus 64 KB alignment slack */
     uint32_t need = foot_size + 0x10000;
@@ -63,7 +63,7 @@ int mhfu_ovl_load_relocated(const char *path, mhfu_ovl_region_t *out)
     int placement;                       /* -1 native, 0 partition 2, 1 extra RAM, 2 volatile */
     int uid = -1;
     if (*(volatile uint32_t *)hdr.load_address == 0) {        /* em slot is empty */
-        blk = slot_base; placement = -1;
+        blk = hdr.load_address; placement = -1;
         mhfu_log("[bigmon_ovl] em slot FREE -> NATIVE placement @0x%08X (delta=0, no rebind)",
                  (unsigned)hdr.load_address);
     } else {
@@ -100,29 +100,24 @@ int mhfu_ovl_load_relocated(const char *path, mhfu_ovl_region_t *out)
         }
     }
     }
-    /* region_base >= blk with (region_base - slot_base) 64 KB-aligned */
-    uint32_t lo16 = slot_base & 0xFFFF;
-    uint32_t region_base = ((blk - lo16 + 0xFFFF) & ~0xFFFFu) + lo16;
-    if (region_base < blk) region_base += 0x10000;
-    int32_t  delta = (int32_t)(region_base - slot_base);              /* multiple of 0x10000 */
-    uint32_t image_dst = region_base + img_off;                       /* == hdr.load_address + delta */
+    /* new_load >= blk with (new_load - load) 64 KB-aligned */
+    uint32_t lo16 = hdr.load_address & 0xFFFF;
+    uint32_t new_load = ((blk - lo16 + 0xFFFF) & ~0xFFFFu) + lo16;
+    if (new_load < blk) new_load += 0x10000;
+    int32_t  delta = (int32_t)(new_load - hdr.load_address);          /* multiple of 0x10000 */
 
-    /* zero the whole footprint (lower bss, gaps, upper bss) */
-    memset((void *)region_base, 0, foot_size);
-
-    /* read the file image to its placed VA */
-    int rd = sceIoRead(fd, (void *)(image_dst + sizeof(hdr)), img_size - sizeof(hdr));
+    /* zero the footprint (bss), then read header, text and data to their placed VA */
+    memset((void *)new_load, 0, foot_size);
+    int rd = sceIoRead(fd, (void *)(new_load + sizeof(hdr)), img_size - sizeof(hdr));
     sceIoClose(fd);
     if (rd != (int)(img_size - sizeof(hdr))) {
         if (placement == 2) sceKernelVolatileMemUnlock(0); else if (placement == 0) sceKernelFreePartitionMemory(uid);
         mhfu_log("[bigmon_ovl] read FAILED rc=0x%08X", rd);
         return -6;
     }
-    memcpy((void *)image_dst, &hdr, sizeof(hdr));   /* header (incl pre-reloc fields) */
+    memcpy((void *)new_load, &hdr, sizeof(hdr));
 
-    /* relocate in place */
-    mhfu_ovl_reloc_stats_t st =
-        mhfu_ovl_relocate((void *)image_dst, img_size, slot_base, delta);
+    mhfu_ovl_reloc_stats_t st = mhfu_ovl_relocate((void *)new_load, img_size, delta);
     if (!st.ok) {
         if (placement == 2) sceKernelVolatileMemUnlock(0); else if (placement == 0) sceKernelFreePartitionMemory(uid);
         mhfu_log("[bigmon_ovl] relocate FAILED (delta=0x%08X)", (unsigned)delta);
@@ -133,19 +128,19 @@ int mhfu_ovl_load_relocated(const char *path, mhfu_ovl_region_t *out)
     sceKernelDcacheWritebackAll();
     sceKernelIcacheInvalidateAll();
 
-    out->uid         = (placement == 0) ? uid : -1; /* -1: nothing to free */
-    out->region_base = region_base;
-    out->delta       = delta;
-    out->new_load    = st.new_base;
-    out->img_size    = img_size;
-    out->foot_size   = foot_size;
-    out->si_start    = hdr.static_init_start + (uint32_t)delta;
-    out->si_end      = hdr.static_init_end   + (uint32_t)delta;
+    const mhfu_ovl_header_t *moved = (const mhfu_ovl_header_t *)new_load;
+    out->uid       = (placement == 0) ? uid : -1; /* -1: nothing to free */
+    out->delta     = delta;
+    out->new_load  = st.new_base;
+    out->img_size  = img_size;
+    out->foot_size = foot_size;
+    out->si_start  = moved->static_init_start;
+    out->si_end    = moved->static_init_end;
 
-    mhfu_log("[bigmon_ovl] '%s' placed @region=0x%08X load=0x%08X delta=0x%08X "
-             "(jump=%u hilo=%u data=%u) si=[0x%08X,0x%08X)",
-             hdr.name, (unsigned)region_base, (unsigned)st.new_base, (unsigned)delta,
-             (unsigned)st.n_jump, (unsigned)st.n_hilo, (unsigned)st.n_data,
+    mhfu_log("[bigmon_ovl] '%s' placed load=0x%08X delta=0x%08X "
+             "(jump=%u hi=%u data=%u) si=[0x%08X,0x%08X)",
+             hdr.name, (unsigned)st.new_base, (unsigned)delta,
+             (unsigned)st.n_jump, (unsigned)st.n_hi, (unsigned)st.n_data,
              (unsigned)out->si_start, (unsigned)out->si_end);
     g_region = *out; g_placed = 1;
     return 0;
@@ -158,7 +153,7 @@ extern "C" void mhfu_ovl_run_static_inits(const mhfu_ovl_region_t *r)
     uint32_t n = 0;
     for (uint32_t p = r->si_start; p < r->si_end; p += 4) {
         uint32_t fn = *(volatile uint32_t *)p;
-        if (fn >= r->region_base && fn < r->region_base + r->foot_size) {
+        if (fn >= r->new_load && fn < r->new_load + r->foot_size) {
             ((ctor_fn)fn)();
             n++;
         }

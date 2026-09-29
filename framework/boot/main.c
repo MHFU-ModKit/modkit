@@ -75,8 +75,7 @@ static int boot_thread(SceSize args, void *argp)
     sceKernelDelayThread(BOOT_SETTLE_US);
     log_path("[boot] framework=", g_path);
 
-    int i;
-    for (i = 0; i < 600; i++) {   /* up to ~10 min, 1 s poll */
+    for (int i = 0;; i++) {   /* 1 s poll; the fallback load ends the wait */
         unsigned char scr = *(volatile unsigned char *)MHFU_SCREEN_STATE;
         int quiet = (scr == MHFU_WORLD_SCREEN_MENU || scr == MHFU_WORLD_SCREEN_TITLE);
         if (quiet || i >= LOAD_FALLBACK_S) {
@@ -100,8 +99,6 @@ static int boot_thread(SceSize args, void *argp)
         if ((i % 5) == 0) log_kv("[boot] waiting for menu, screen_state=", scr);
         sceKernelDelayThread(1000 * 1000);
     }
-    log_msg("[boot] GAVE UP — never reached in-area (screen_state never == 17)");
-    return 0;
 }
 
 int module_start(SceSize args, void *argp)
@@ -112,4 +109,5 @@ int module_start(SceSize args, void *argp)
 }
 
 int module_stop(SceSize args, void *argp) { (void)args; (void)argp; return 0; }
-void _exit(int status) { (void)status; }
+/* declared noreturn; this plugin never exits */
+void _exit(int status) { (void)status; for (;;) sceKernelDelayThread(1000000); }

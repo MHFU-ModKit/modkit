@@ -24,6 +24,8 @@ static volatile uint32_t g_vol_head, g_vol_tail;   /* game thread pushes, poll d
 static uint32_t          g_vol_seq;
 static int               g_vol_installed;
 
+static const char k_owner[] = "mhfu_vol";
+
 static void vol_push(uint8_t kind, uint32_t a0, uint32_t ptr, uint32_t size, int rc)
 {
     uint32_t h = g_vol_head;
@@ -68,7 +70,7 @@ static uint32_t proxy_stage(uint32_t lock_base, uint32_t lock_size)
     uint32_t reserve = 0;                          /* grown sizes, 16 KB-aligned */
     for (int i = 0; i < MHFU_INJECT_MAX; i++) {
         inject_entry_t *e = &mhfu_inject_tab[i];
-        if (!e->used || !e->relocate || e->buf) continue;
+        if (!e->used || !e->relocate || e->ready) continue;
         SceUID fd = sceIoOpen(e->path, PSP_O_RDONLY, 0);
         if (fd < 0) continue;
         uint32_t fsz = (uint32_t)sceIoLseek(fd, 0, PSP_SEEK_END);
@@ -88,12 +90,11 @@ static uint32_t proxy_stage(uint32_t lock_base, uint32_t lock_size)
                   (unsigned)lock_base, (unsigned)bump);
     for (int i = 0; i < MHFU_INJECT_MAX; i++) {
         inject_entry_t *e = &mhfu_inject_tab[i];
-        if (!e->used || !e->relocate || e->buf) continue;
+        if (!e->used || !e->relocate || e->ready) continue;
         uint32_t cap = (lock_base + lock_size) - bump;
         uint32_t fsz = proxy_read_pac(e->path, bump, cap);
         if (!fsz) continue;
-        e->buf = bump; e->buf_cap = (fsz + 0x3FFFu) & ~0x3FFFu;
-        e->file_size = fsz; e->staged = 1;
+        mhfu_inject_relocate_ready(e, bump, (fsz + 0x3FFFu) & ~0x3FFFu, fsz);
         mhfu_xram_log("[proxy] staged file=%u grown=%uB @0x%08X (volatile top)",
                       (unsigned)e->file_id, (unsigned)fsz, (unsigned)bump);
         bump += e->buf_cap;
@@ -137,10 +138,10 @@ extern "C" void mhfu_vol_install(void)
     if (g_vol_installed) return;
     if (!mhfu_xram_mode) mhfu_xram_init();
     if (mhfu_xram_mode != XRAM_VOLATILE) return;
-    mhfu_hook_word(MHFU_VOLATILE_LOCK   + 4, MIPS_NOP, "vobs");
-    mhfu_hook_word(MHFU_VOLATILE_LOCK,       mips_j((uint32_t)(uintptr_t)&mhfu_vol_lock),   "vobs");
-    mhfu_hook_word(MHFU_VOLATILE_UNLOCK + 4, MIPS_NOP, "vobs");
-    mhfu_hook_word(MHFU_VOLATILE_UNLOCK,     mips_j((uint32_t)(uintptr_t)&mhfu_vol_unlock), "vobs");
+    mhfu_hook_word(MHFU_VOLATILE_LOCK   + 4, MIPS_NOP, k_owner);
+    mhfu_hook_word(MHFU_VOLATILE_LOCK,       mips_j((uint32_t)(uintptr_t)&mhfu_vol_lock),   k_owner);
+    mhfu_hook_word(MHFU_VOLATILE_UNLOCK + 4, MIPS_NOP, k_owner);
+    mhfu_hook_word(MHFU_VOLATILE_UNLOCK,     mips_j((uint32_t)(uintptr_t)&mhfu_vol_unlock), k_owner);
     g_vol_installed = 1;
     mhfu_xram_log("[vobs] installed: Lock stub 0x%08X -> 0x%08X, Unlock stub 0x%08X -> 0x%08X",
                   (unsigned)MHFU_VOLATILE_LOCK,   (unsigned)(uintptr_t)&mhfu_vol_lock,

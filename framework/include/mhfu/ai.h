@@ -9,7 +9,7 @@
 #define MHFU_AI_H
 
 #include <stdint.h>
-#include "hooks.h"
+#include "events.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -117,36 +117,44 @@ typedef void (*mhfu_bigmonster_spawn_cb_t)(const mhfu_bigmonster_spawn_ctx_t *ct
 typedef void (*mhfu_bigmonster_death_cb_t)(const mhfu_bigmonster_death_ctx_t *ctx);
 typedef void (*mhfu_bigmonster_damaged_cb_t)(const mhfu_bigmonster_damaged_ctx_t *ctx);
 
-/* --- registration: higher priority runs first, ties in registration order -------------- */
+/* --- registration (events.h): higher priority runs first, ties in registration order --- */
 
-mhfu_hook_rc_t mhfu_on_ai_overlay_loaded(mhfu_ai_overlay_loaded_cb_t cb, int priority);
-mhfu_hook_rc_t mhfu_off_ai_overlay_loaded(mhfu_ai_overlay_loaded_cb_t cb);
-
-mhfu_hook_rc_t mhfu_on_bigmonster_slot_picked(
-    mhfu_bigmonster_slot_picked_cb_t cb, int priority);
-mhfu_hook_rc_t mhfu_on_bigmonster_action_input(
-    mhfu_bigmonster_action_input_cb_t cb, int priority);
-mhfu_hook_rc_t mhfu_on_bigmonster_action_decided(
-    mhfu_bigmonster_action_decided_cb_t cb, int priority);
-mhfu_hook_rc_t mhfu_on_bigmonster_ai_step(
-    mhfu_bigmonster_ai_step_cb_t cb, int priority);
-mhfu_hook_rc_t mhfu_on_bigmonster_action(
-    mhfu_bigmonster_action_cb_t cb, int priority);
-mhfu_hook_rc_t mhfu_on_bigmonster_spawn(
-    mhfu_bigmonster_spawn_cb_t cb, int priority);
-mhfu_hook_rc_t mhfu_on_bigmonster_death(
-    mhfu_bigmonster_death_cb_t cb, int priority);
-mhfu_hook_rc_t mhfu_on_bigmonster_damaged(
-    mhfu_bigmonster_damaged_cb_t cb, int priority);
-
-mhfu_hook_rc_t mhfu_off_bigmonster_slot_picked   (mhfu_bigmonster_slot_picked_cb_t cb);
-mhfu_hook_rc_t mhfu_off_bigmonster_action_input  (mhfu_bigmonster_action_input_cb_t cb);
-mhfu_hook_rc_t mhfu_off_bigmonster_action_decided(mhfu_bigmonster_action_decided_cb_t cb);
-mhfu_hook_rc_t mhfu_off_bigmonster_ai_step       (mhfu_bigmonster_ai_step_cb_t cb);
-mhfu_hook_rc_t mhfu_off_bigmonster_action        (mhfu_bigmonster_action_cb_t cb);
-mhfu_hook_rc_t mhfu_off_bigmonster_spawn         (mhfu_bigmonster_spawn_cb_t cb);
-mhfu_hook_rc_t mhfu_off_bigmonster_death         (mhfu_bigmonster_death_cb_t cb);
-mhfu_hook_rc_t mhfu_off_bigmonster_damaged       (mhfu_bigmonster_damaged_cb_t cb);
+static inline mhfu_hook_rc_t mhfu_on_ai_overlay_loaded(
+    mhfu_ai_overlay_loaded_cb_t cb, int priority, const char *owner) {
+    return mhfu_event_on(MHFU_EVENT_AI_OVERLAY_LOADED, (mhfu_event_fn_t)cb, priority, owner);
+}
+static inline mhfu_hook_rc_t mhfu_on_bigmonster_slot_picked(
+    mhfu_bigmonster_slot_picked_cb_t cb, int priority, const char *owner) {
+    return mhfu_event_on(MHFU_EVENT_BIGMONSTER_SLOT_PICKED, (mhfu_event_fn_t)cb, priority, owner);
+}
+static inline mhfu_hook_rc_t mhfu_on_bigmonster_action_input(
+    mhfu_bigmonster_action_input_cb_t cb, int priority, const char *owner) {
+    return mhfu_event_on(MHFU_EVENT_BIGMONSTER_ACTION_INPUT, (mhfu_event_fn_t)cb, priority, owner);
+}
+static inline mhfu_hook_rc_t mhfu_on_bigmonster_action_decided(
+    mhfu_bigmonster_action_decided_cb_t cb, int priority, const char *owner) {
+    return mhfu_event_on(MHFU_EVENT_BIGMONSTER_ACTION_DECIDED, (mhfu_event_fn_t)cb, priority, owner);
+}
+static inline mhfu_hook_rc_t mhfu_on_bigmonster_ai_step(
+    mhfu_bigmonster_ai_step_cb_t cb, int priority, const char *owner) {
+    return mhfu_event_on(MHFU_EVENT_BIGMONSTER_AI_STEP, (mhfu_event_fn_t)cb, priority, owner);
+}
+static inline mhfu_hook_rc_t mhfu_on_bigmonster_action(
+    mhfu_bigmonster_action_cb_t cb, int priority, const char *owner) {
+    return mhfu_event_on(MHFU_EVENT_BIGMONSTER_ACTION, (mhfu_event_fn_t)cb, priority, owner);
+}
+static inline mhfu_hook_rc_t mhfu_on_bigmonster_spawn(
+    mhfu_bigmonster_spawn_cb_t cb, int priority, const char *owner) {
+    return mhfu_event_on(MHFU_EVENT_BIGMONSTER_SPAWN, (mhfu_event_fn_t)cb, priority, owner);
+}
+static inline mhfu_hook_rc_t mhfu_on_bigmonster_death(
+    mhfu_bigmonster_death_cb_t cb, int priority, const char *owner) {
+    return mhfu_event_on(MHFU_EVENT_BIGMONSTER_DEATH, (mhfu_event_fn_t)cb, priority, owner);
+}
+static inline mhfu_hook_rc_t mhfu_on_bigmonster_damaged(
+    mhfu_bigmonster_damaged_cb_t cb, int priority, const char *owner) {
+    return mhfu_event_on(MHFU_EVENT_BIGMONSTER_DAMAGED, (mhfu_event_fn_t)cb, priority, owner);
+}
 
 /* What the picker last returned for vt8_input on this monster type (a pointer for Tigrex;
  * every pick is cached, 96 per type), or 0 before the engine has picked it once. */

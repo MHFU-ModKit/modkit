@@ -1,8 +1,9 @@
 /* Static mod table: MHFU_MOD descriptors from the mhfu_mods section, initialised in dependency
- * order and shut down in reverse with their hooks restored. */
+ * order and shut down in reverse, each mod's events and patches dropped with it. */
 #include <string.h>
 
 #include "mhfu/mod.h"
+#include "mhfu/events.h"
 #include "mhfu/hooks.h"
 #include "mhfu/log.h"
 #include "internal.h"
@@ -82,6 +83,12 @@ static int needs_ready(const mhfu_mod_t *m)
     return all;
 }
 
+static void release(const char *id)
+{
+    mhfu_event_release(id);
+    mhfu_hook_release(id);
+}
+
 extern "C" void mhfu_mod_init_all(void)
 {
     g_n_mods = 0;
@@ -122,6 +129,7 @@ extern "C" void mhfu_mod_init_all(void)
                          m->version ? m->version : "?");
             } else {
                 g_state[i] = MS_REFUSED;
+                release(m->id);   /* what it registered before failing */
                 mhfu_log("[mods] '%s' init failed rc=%d", m->id, rc);
             }
             progress = 1;
@@ -138,7 +146,7 @@ extern "C" void mhfu_mod_shutdown_all(void)
     for (int i = g_n_init - 1; i >= 0; i--) {
         const mhfu_mod_t *m = g_init_order[i];
         if (m->shutdown) m->shutdown();
-        mhfu_hook_release(m->id);
+        release(m->id);
     }
     g_n_init = 0;
 }

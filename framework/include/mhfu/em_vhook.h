@@ -1,4 +1,4 @@
-/* The em_vhook mod's surface: it wraps two slots of the spawned big monster's species vtable,
+/* em_vhook: the core wraps two slots of the spawned big monster's species vtable,
  * MONSTER_VTABLE.ENTER_ACTION (provisions a behaviour pair) and .AI_STEP (every frame).
  *
  *   substitution  the engine's (main, id) is rewritten before enter-action runs, so our

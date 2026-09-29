@@ -1,7 +1,7 @@
 /* Combat for clones and scripted movesets: the engine's attack resolver, its
  * effect spawn, the per-frame clone driver and the clone combat-node swap. */
 #include "mhfu/mhfu.h"
-#include "internal.h"
+#include "wrap.h"
 #include "lua_host.h"
 
 /* mhfu.resolve_attack(entity): the engine's own per-monster attack resolution
@@ -104,7 +104,8 @@ static void clone_combat_step(const mhfu_bigmonster_ai_step_ctx_t *ctx)
     int log_now = ((dbg++ % 180) == 0);   /* ~ every 3 s @60fps */
     if (log_now)
         mhfu_log("[clonecmb] fire nat=0x%08X resolve=%d count=%d c0=0x%08X",
-                 ctx->entity_ptr, g_clone_resolve, n, n > 0 ? g_clones[0] : 0);
+                 (unsigned)ctx->entity_ptr, g_clone_resolve, n,
+                 n > 0 ? (unsigned)g_clones[0] : 0u);
     for (int i = 0; i < n; i++) {
         uint32_t c = g_clones[i];
         if (c >= MHFU_USER_RAM_END && c < MHFU_EXTRA_RAM_END) {
@@ -115,7 +116,7 @@ static void clone_combat_step(const mhfu_bigmonster_ai_step_ctx_t *ctx)
             ((mhfu_attack_resolver_fn)MHFU_ATTACK_RESOLVER)(c); /* resolve active attack -> damage */
             if (log_now && i == 0)
                 mhfu_log("[clonecmb]  c0=0x%08X AISTATE %d->%d 0x33C=%d eng=%d",
-                         c, ai0, mhfu_mem_read_u8(c + MHFU_ENTITY_ANIM_SPEED),
+                         (unsigned)c, ai0, mhfu_mem_read_u8(c + MHFU_ENTITY_ANIM_SPEED),
                          mhfu_mem_read_u8(c + MHFU_ENTITY_ATTACK_GATE),
                          (int)mhfu_mem_read_u32(c + MHFU_ENTITY_ENGAGE));
         }
@@ -129,8 +130,10 @@ static int lb_clone_combat(lua_State *L)
 {
     int en = lua_toboolean(L, 1);
     g_clone_resolve = en;
-    static int s_installed = 0;
-    if (en && !s_installed) { mhfu_on_bigmonster_ai_step(clone_combat_step, 50); s_installed = 1; }
+    if (!en) return 0;
+    /* again is a no-op once it took; a failure is retried on the next enable */
+    mhfu_hook_rc_t rc = mhfu_on_bigmonster_ai_step(clone_combat_step, 50, MHFU_LUA_HOST_ID);
+    if (rc != MHFU_HOOK_OK) mhfu_log("[clonecmb] ai_step not subscribed (rc=%d)", (int)rc);
     return 0;
 }
 /* mhfu.clones_set({ptr,ptr,...}) — set the live clone pointers the driver ticks. */
@@ -158,8 +161,8 @@ static int lb_clones_set(lua_State *L)
  *
  * The per-frame drive calls the per-monster processor through a function-pointer
  * field of the monster manager. Swapping that field is a data write, so it takes
- * without a JIT-cold window: it points at a cave stub that calls the processor,
- * then builds and populates the clones' nodes in the same frame. */
+ * without a JIT-cold window: it points at a wrapper that calls the processor, then
+ * builds and populates the clones' nodes in the same frame. */
 typedef void (*mhfu_combat_build_fn)(uint32_t g, uint32_t entity, uint32_t idx);
 #define COMBAT_IDX 0x0Eu            /* the idx the native's own call passes */
 static volatile int g_combat_nodes = 0;
@@ -194,9 +197,10 @@ static uint32_t find_native_node(uint32_t g)
     }
     return 0;
 }
-/* Called by the stub after the processor, on the game thread. */
-extern "C" void mhfu_lua_combat_node_dispatch_c(void)
+/* The wrapper's post, after the processor, on the game thread. */
+static void combat_node_post(mhfu_regs_t *regs)
 {
+    (void)regs;
     if (!g_combat_nodes) return;
     static uint32_t last_frame = 0xFFFFFFFFu;
     uint32_t frame = mhfu_mem_read_u32(MGR_FRAME_CTR);
@@ -210,7 +214,8 @@ extern "C" void mhfu_lua_combat_node_dispatch_c(void)
     static int dbg = 0;
     if ((dbg++ % 120) == 0)
         mhfu_log("[combatnode] dispatch frame=%u clones=%d count=%u natnode=0x%08X",
-                 (unsigned)frame, n, (unsigned)mhfu_mem_read_u32(g + MHFU_COLLISION_WORLD_NODE_COUNT), natn);
+                 (unsigned)frame, n, (unsigned)mhfu_mem_read_u32(g + MHFU_COLLISION_WORLD_NODE_COUNT),
+                 (unsigned)natn);
     for (int i = 0; i < n; i++) {
         uint32_t c = g_clones[i];
         if (c < MHFU_USER_RAM_END || c >= MHFU_EXTRA_RAM_END) continue;
@@ -233,7 +238,7 @@ extern "C" void mhfu_lua_combat_node_dispatch_c(void)
     }
 }
 
-/* mhfu.combat_swap(): builds the stub once and re-points the field whenever it
+/* mhfu.combat_swap(): builds the wrapper once and re-points the field whenever it
  * holds the original (a quest reload reverts it). Call each tick while
  * combat_nodes(true). */
 static int lb_combat_swap(lua_State *L)
@@ -241,31 +246,17 @@ static int lb_combat_swap(lua_State *L)
     (void)L;
     if (!g_combat_nodes) return 0;
     if (!g_combat_stub) {
-        uint32_t *w = mhfu_cave_alloc(12);
-        if (!w) { mhfu_log("[combatnode] cave exhausted"); return 0; }
-        int i = 0;
-        w[i++] = mips_addiu(MIPS_REG_SP, MIPS_REG_SP, -0x10);
-        w[i++] = mips_sw(MIPS_REG_RA, 0x0C, MIPS_REG_SP);
-        w[i++] = mips_jal(MGR_PROC_ORIG);                 /* native processor (a0-a3 intact) */
-        w[i++] = MIPS_NOP;
-        w[i++] = mips_sw(MIPS_REG_V0, 0x08, MIPS_REG_SP); /* preserve its return */
-        w[i++] = mips_jal((uint32_t)(uintptr_t)&mhfu_lua_combat_node_dispatch_c);
-        w[i++] = MIPS_NOP;
-        w[i++] = mips_lw(MIPS_REG_V0, 0x08, MIPS_REG_SP);
-        w[i++] = mips_lw(MIPS_REG_RA, 0x0C, MIPS_REG_SP);
-        w[i++] = mips_addiu(MIPS_REG_SP, MIPS_REG_SP, 0x10);
-        w[i++] = mips_jr(MIPS_REG_RA);
-        w[i++] = MIPS_NOP;
-        mhfu_hook_flush_caches();
-        g_combat_stub = (uint32_t)(uintptr_t)w;
+        mhfu_wrap_t w = {};
+        w.call = MGR_PROC_ORIG;
+        w.post = combat_node_post;
+        w.pc   = MGR_PROC_ORIG;
+        g_combat_stub = mhfu_wrap_build(&w);
+        if (!g_combat_stub) { mhfu_log("[combatnode] cave exhausted"); return 0; }
     }
-    volatile uint32_t *slot = (volatile uint32_t *)MGR_PROC_SLOT;
-    if (*slot == MGR_PROC_ORIG) {
-        *slot = g_combat_stub;
-        mhfu_hook_flush_caches();
-        mhfu_log("[combatnode] field swap @0x%08X -> stub 0x%08X (orig 0x%08X)",
-                 MGR_PROC_SLOT, g_combat_stub, MGR_PROC_ORIG);
-    }
+    if (mhfu_mem_read_u32(MGR_PROC_SLOT) != MGR_PROC_ORIG) return 0;
+    mhfu_hook_rc_t rc = mhfu_hook_vtable(MGR_PROC_SLOT, g_combat_stub, MHFU_LUA_HOST_ID);
+    mhfu_log("[combatnode] field swap @0x%08X -> 0x%08X: rc=%d",
+             (unsigned)MGR_PROC_SLOT, (unsigned)g_combat_stub, (int)rc);
     return 0;
 }
 

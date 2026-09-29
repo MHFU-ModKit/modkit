@@ -3,6 +3,7 @@
     from mhfu import addresses
     addresses.SCREEN_STATE        # an int that also has .name, .type and .doc
     addresses.ENTITY.HP           # the offset of a struct field, the same kind of int
+    addresses.ENTITY_REGISTRY.count   # 21: the n of a `type[n]` entry, else None
 
 The C header and the Lua table are generated from the same file:
 
@@ -26,7 +27,9 @@ REGION = "eu"
 RAM = range(0x0800_0000, 0x0C00_0000)  # noaddr: user RAM and the extra-RAM window
 
 _NAME = re.compile(r"[A-Z][A-Z0-9_]*\Z")
-_TYPE = re.compile(r"(u8|u16|u32|s8|s16|s32|f32|vec3|ptr|vtable|fn|code|bytes)(\[[1-9][0-9]*\])?\Z")
+_BASE_TYPES = frozenset("u8 u16 u32 s8 s16 s32 f32 vec3 ptr vtable fn code bytes".split())
+# a base type or a struct name, optionally [n] of them
+_TYPE = re.compile(r"(\w+)(?:\[([1-9][0-9]*)\])?\Z")
 
 
 class _Named(int):
@@ -40,6 +43,12 @@ class _Named(int):
         return self
 
     __str__ = int.__repr__
+
+    @property
+    def count(self) -> int | None:
+        """The n of a `type[n]` entry; None for a single value."""
+        m = _TYPE.match(self.type)
+        return int(m[2]) if m and m[2] else None
 
 
 class Address(_Named):
@@ -155,18 +164,27 @@ def parse(data: dict[str, Any]) -> Table:
             problems.append(f"{where}: has no fields")
         structs[name] = Struct(name, entry.get("doc", ""), fields, size, stride)
 
+    typed: list[tuple[str, _Named]] = [(f"address.{n}", a) for n, a in addresses.items()]
+    typed += [(f"struct.{s.name}.{n}", f) for s in structs.values() for n, f in s.fields.items()]
+    for where, named in typed:
+        m = _TYPE.match(named.type)
+        if m and m[1] not in _BASE_TYPES and m[1] not in structs:
+            problems.append(f"{where}: unknown type {named.type!r}")
+
     # every generated name (Python and Lua namespace, C macro) must be unique
     for name in addresses.keys() & structs.keys():
         problems.append(f"{name}: is both an address and a struct")
-    macros: dict[str, str] = {name: f"address.{name}" for name in addresses}
+    macros: dict[str, str] = {}
+    members = [(f"address.{n}", n) for n in addresses]
+    members += [(f"address.{n}_COUNT", f"{n}_COUNT") for n, a in addresses.items() if a.count]
     for s in structs.values():
-        for member in [*s.fields, *(["SIZE"] if s.size else []), *(["STRIDE"] if s.stride else [])]:
-            macro = f"{s.name}_{member}"
-            if macro in macros:
-                problems.append(
-                    f"struct.{s.name}.{member}: MHFU_{macro} clashes with {macros[macro]}"
-                )
-            macros[macro] = f"struct.{s.name}.{member}"
+        names = [*s.fields, *(["SIZE"] if s.size else []), *(["STRIDE"] if s.stride else [])]
+        names += [f"{f}_COUNT" for f, v in s.fields.items() if v.count]
+        members += [(f"struct.{s.name}.{m}", f"{s.name}_{m}") for m in names]
+    for where, macro in members:
+        if macro in macros:
+            problems.append(f"{where}: MHFU_{macro} clashes with {macros[macro]}")
+        macros.setdefault(macro, where)
 
     if problems:
         raise ValueError("addresses.toml:\n  " + "\n  ".join(problems))
@@ -182,8 +200,14 @@ def _entry_ok(where: str, name: str, entry: Any, key: str, problems: list[str]) 
     if not isinstance(entry[key], int):
         problems.append(f"{where}: {key} must be an integer")
         return False
-    if not isinstance(entry["type"], str) or not _TYPE.match(entry["type"]):
-        problems.append(f"{where}: unknown type {entry['type']!r}")
+    t = entry["type"]
+    if (
+        not isinstance(t, str)
+        or not (m := _TYPE.match(t))
+        or not (m[1] in _BASE_TYPES or _NAME.match(m[1]))
+    ):
+        problems.append(f"{where}: unknown type {t!r}")
+        return False
     return _doc_ok(where, entry["doc"], problems)
 
 
@@ -208,6 +232,8 @@ def render_c(t: Table) -> str:
     ]
     for a in t.addresses.values():
         out += [f"/* {a.type}: {a.doc} */", f"#define MHFU_{a.name} 0x{int(a):08X}u"]
+        if a.count:
+            out.append(f"#define MHFU_{a.name}_COUNT {a.count}")  # an int, for int loop indices
     for s in t.structs.values():
         out += ["", f"/* struct {s.name}: {s.doc} */"]
         if s.size:
@@ -216,6 +242,8 @@ def render_c(t: Table) -> str:
             out.append(f"#define MHFU_{s.name}_STRIDE 0x{s.stride:X}u")
         for f in s.fields.values():
             out += [f"/* {f.type}: {f.doc} */", f"#define MHFU_{s.name}_{f.name} 0x{int(f):X}u"]
+            if f.count:
+                out.append(f"#define MHFU_{s.name}_{f.name}_COUNT {f.count}")
     out += ["", "#endif", ""]
     return "\n".join(out)
 
@@ -231,6 +259,8 @@ def render_lua(t: Table) -> str:
     ]
     for a in t.addresses.values():
         out += [f"    ---{a.type}: {a.doc}", f"    {a.name} = 0x{int(a):08X},"]
+        if a.count:
+            out += [f"    ---elements in {a.name}", f"    {a.name}_COUNT = {a.count},"]
     for s in t.structs.values():
         out += [f"    ---struct: {s.doc}", f"    {s.name} = {{"]
         if s.size:
@@ -242,6 +272,8 @@ def render_lua(t: Table) -> str:
             ]
         for f in s.fields.values():
             out += [f"        ---{f.type}: {f.doc}", f"        {f.name} = 0x{int(f):X},"]
+            if f.count:
+                out += [f"        ---elements in {f.name}", f"        {f.name}_COUNT = {f.count},"]
         out.append("    },")
     out += ["}", "", "return addr", ""]
     return "\n".join(out)

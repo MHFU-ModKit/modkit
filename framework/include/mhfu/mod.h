@@ -1,12 +1,14 @@
 /* Mod descriptor. A mod declares itself with MHFU_MOD(); the framework resolves `needs` and
  * `conflicts`, then calls each init() in dependency order and shutdown() in reverse.
  *
- *   static int  mymod_init(void)     { ... return 0; }
- *   static void mymod_shutdown(void) { ... }
- *   MHFU_MOD(.id = "my_mod", .version = "1.0", .conflicts = "other_mod",
- *            .init = mymod_init, .shutdown = mymod_shutdown);
+ *   #define MOD_ID "my_mod"
+ *   static void on_spawn(const mhfu_monster_spawn_ctx_t *ctx) { ... }
+ *   static int  mymod_init(void) { return mhfu_on_monster_spawned(on_spawn, 0, MOD_ID); }
+ *   MHFU_MOD(.id = MOD_ID, .version = "1.0", .conflicts = "other_mod", .init = mymod_init);
  *
- * init() must not assume another mod has run; declare the order with `needs`. */
+ * Hooks and event callbacks take the mod id as their owner, and the framework releases them
+ * after shutdown(), which is only for the mod's own state. init() must not assume another
+ * mod has run; declare the order with `needs`. */
 #ifndef MHFU_MOD_H
 #define MHFU_MOD_H
 

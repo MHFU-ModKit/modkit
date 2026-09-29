@@ -34,7 +34,9 @@ PSP/PLUGINS/mhfu_framework/
     framework.log       written at run time
 ```
 
-`plugin.ini` for PPSSPP (it ignores a file without both sections; the addresses are EU only):
+`plugin.ini` for PPSSPP (it ignores a file without both sections; the addresses are EU only).
+`memory = 64` gives the emulated PSP the extra RAM that model injection, entity clones, relocated
+overlays and the debug shell's bridge live in:
 
 ```ini
 [games]
@@ -44,6 +46,7 @@ type = prx
 filename = mhfu_framework.prx
 name = MHFU Framework
 version = 1
+memory = 64
 ```
 
 On a real PSP under PRO CFW, `seplugins/game.txt` names `mhfu_boot.prx` instead:

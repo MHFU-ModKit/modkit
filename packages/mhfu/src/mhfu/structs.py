@@ -11,7 +11,8 @@ from .addresses import Struct
 from .memory import Memory
 from .views import View, f32, f32s, ptr, ptrs, s8, u8, u16, u16s, u32, vec3
 
-TARGET_GROUPS = 2  # QUEST.TARGETS entries, the engine's cap
+assert a.QUEST.TARGETS.count  # an array
+TARGET_GROUPS = a.QUEST.TARGETS.count  # the engine's cap
 
 
 class Screen(IntEnum):

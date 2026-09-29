@@ -22,6 +22,7 @@ local last_seq   = -1
 local g_force    = nil                 -- forced action id, or nil
 local g_freeze   = false
 local g_slot     = 1                   -- target registry slot
+local g_frozen   = nil                 -- slot whose AI tick we halted, or nil
 
 -- Priority-chain action override: while a force is active, every big-monster
 -- action decision returns OUR id, so the engine fans it coherently to all body
@@ -31,10 +32,25 @@ mhfu.on_bigmonster_action(function(ctx)
   return ctx.action_id
 end, 90)
 
-local function target_entity()
-  local e = mhfu.entity_at(g_slot)
+local function entity(slot)
+  local e = mhfu.entity_at(slot)
   if e and e ~= 0 then return e end
   return nil
+end
+
+-- clear the AI-halting bits once: the engine sets them too while an action is forced
+local function unfreeze(slot)
+  local ent = slot and entity(slot)
+  if not ent then return end
+  local f = mhfu.read_u32(ent + OFF_GATE)
+  if (f & FREEZE) ~= 0 then mhfu.write_u32(ent + OFF_GATE, f & ~FREEZE) end
+end
+
+-- the monster moves again: nothing held, nothing halted
+local function release(slot)
+  unfreeze(slot)
+  if g_frozen ~= slot then unfreeze(g_frozen) end
+  g_frozen = nil
 end
 
 -- global (not local) so the chained wrapper resolves the FRESH definition after a
@@ -53,25 +69,28 @@ function cli_bridge_tick()
         g_force = a1
       elseif cmd == CMD_FREEZE then
         g_freeze = (a1 ~= 0)
+        if not g_freeze then release(a0) end
       elseif cmd == CMD_CLEAR then
         g_force = nil
         g_freeze = false
+        release(a0)
+        mhfu.write_u32(BR + CB.STATUS, 0)   -- nothing held
       end
       mhfu.write_u32(BR + CB.ACK, seq)
       mhfu.log(string.format("[cli_bridge] cmd=%d slot=%d a1=%d (seq=%d)", cmd, a0, a1, seq))
     end
   end
 
-  local ent = target_entity()
+  local ent = entity(g_slot)
   if not ent then return end
 
   if g_force ~= nil then
-    -- keep the AI tick alive so the forced action keeps (re)playing = a loop
-    local f = mhfu.read_u32(ent + OFF_GATE)
-    if (f & FREEZE) ~= 0 then mhfu.write_u32(ent + OFF_GATE, f & ~FREEZE) end
+    unfreeze(g_slot)   -- keep the AI tick alive so the forced action keeps (re)playing
     mhfu.write_u32(BR + CB.STATUS, g_force)   -- the action being held
   elseif g_freeze then
     -- halt the AI tick -> the monster holds its current pose
+    if g_frozen ~= g_slot then unfreeze(g_frozen) end
+    g_frozen = g_slot
     local f = mhfu.read_u32(ent + OFF_GATE)
     if (f & FREEZE) ~= FREEZE then mhfu.write_u32(ent + OFF_GATE, f | FREEZE) end
   end

@@ -12,6 +12,7 @@ dev = [
     "types-psutil",
     "lupa>=2",
     "mhp-formats[iso]",
+    "unicorn>=2.1.4",
 ]
 
 [tool.uv.sources]
