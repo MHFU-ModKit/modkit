@@ -19,15 +19,15 @@
 [address]
 # --- screens and areas ---
 SCENE_OBJECT = { eu = 0x08A8C6E0, type = "ptr", doc = "scene-object pointer; tells sub-screens apart where SCREEN_STATE is shared (the real screen oracle)" }
-SCREEN_STATE = { eu = 0x08A8CA48, type = "u8", doc = "screen-state id: 1 menu or zone load, 4 title, 6 cutscene, 17 in-area; 1 and 4 are the JIT-cold window" }
+SCREEN_STATE = { eu = 0x08A8CA48, type = "u8", doc = "screen-state id: 1 menu or zone load, 4 title, 6 cutscene, 17 in-area, 113 village with a quest under contract; 1 and 4 are the JIT-cold window" }
 MAP_SUBSECTION = { eu = 0x08A8DE4C, type = "u8", doc = "sub-area byte; collides across sections and is scratch in the hall, so use AREA_INDEX" }
 SCREEN_STATE_MIRROR = { eu = 0x08ACCA48, type = "u8", doc = "mirror of SCREEN_STATE (+0x40000), lags it by 50-100 ms" }
 MAP_SUBSECTION_MIRROR = { eu = 0x08ACDE4C, type = "u8", doc = "mirror of MAP_SUBSECTION (+0x40000)" }
 AREA_INDEX = { eu = 0x08B0C7DC, type = "u16", doc = "visible map-section index, equal to the stage number; ENTITY.SECTION uses the same encoding" }
 
 # --- menus and dialogue ---
-MAIN_MENU_HIGHLIGHT = { eu = 0x08A8CADE, type = "u16", doc = "main-menu highlight bar Y (68 + 32*row); draw-pool memory, valid only on the main menu" }
-BOX_MENU_HIGHLIGHT = { eu = 0x08A8CC76, type = "u16", doc = "house item-box menu highlight Y (32 + 16*row); draw-pool memory, re-check for any other menu" }
+MAIN_MENU_HIGHLIGHT = { eu = 0x08A8CADE, type = "u16", doc = "main-menu highlight bar Y in the German UI (68 + 32*row); draw memory that moves with the language (English: 100 + 32*row elsewhere)" }
+BOX_MENU_HIGHLIGHT = { eu = 0x08A8CC76, type = "u16", doc = "house item-box menu highlight Y in the German UI (32 + 16*row); draw memory that moves with the language and the menu" }
 LANGUAGE_CURSOR = { eu = 0x08B0C7EC, type = "u8", doc = "boot language-menu cursor, 0 = English, wraps" }
 QUEST_CARD_NAME_MIRROR = { eu = 0x0999A088, type = "bytes", doc = "copy of the browsed quest card's name text" }
 QUEST_BROWSE_HISTORY = { eu = 0x09A01B62, type = "bytes", doc = "ring buffer of recently browsed quest names (stride 0x88); not the accepted quest" }
@@ -68,7 +68,8 @@ COLLISION_WORLD_PTR = { eu = 0x09C18FD0, type = "ptr", doc = "pointer to the col
 
 # --- entity vtables ---
 PLAYER_STRUCT_VTABLE = { eu = 0x089BAB08, type = "vtable", doc = "vtable of PLAYER_STRUCT and its six same-class character slots" }
-PLAYER_ENTITY_VTABLE = { eu = 0x089BAF3C, type = "vtable", doc = "vtable of the player combat entity PLAYER_ENTITY" }
+PLAYER_ENTITY_VTABLE = { eu = 0x089BAF3C, type = "vtable", doc = "vtable of the player combat entity PLAYER_ENTITY in the village" }
+PLAYER_QUEST_VTABLE = { eu = 0x089BB2AC, type = "vtable", doc = "vtable of PLAYER_ENTITY during a quest" }
 NPC_VTABLE = { eu = 0x089BB034, type = "vtable", doc = "village NPC vtable; there is no NPC registry, so scan the heap for it" }
 TIGREX_VTABLE = { eu = 0x089BB69C, type = "vtable", doc = "em75 (Tigrex) entity vtable; writable, slots point into the em75 overlay, valid only while loaded" }
 ANTEKA_VTABLE = { eu = 0x089BC074, type = "vtable", doc = "Anteka entity vtable" }
@@ -150,6 +151,51 @@ EM_FACTORY = { eu = 0x09AB15D8, type = "fn", doc = "big-monster entity factory f
 ATTACK_SPAWNERS = { eu = 0x09B63000, type = "code", doc = "start of game_task's attack-node constructors, one per species (TIGREX_ATTACK_SPAWN among them), (?, entity, attack id)" }
 ATTACK_SPAWNERS_END = { eu = 0x09B66B00, type = "code", doc = "end of the ATTACK_SPAWNERS run" }
 
+# --- scenes ---
+# Scene objects: the values SCENE_OBJECT holds. Menus and prompts sit in a pool, so a prompt
+# zone's value moves between visits and the menu values move with the UI language (these are the
+# German UI's); free-roam, elder and quest-board values are the same in English.
+SCENE_ROAM = { eu = 0x08A8C518, type = "bytes", doc = "scene: free roam, village or quest; alternates with the area's own free-roam scene" }
+SCENE_VILLAGE = { eu = 0x08A8C940, type = "bytes", doc = "scene: village free roam" }
+SCENE_VILLAGE_CONTRACT = { eu = 0x08A8C9AC, type = "bytes", doc = "scene: village free roam with a quest under contract" }
+SCENE_QUEST = { eu = 0x08A8DA4C, type = "bytes", doc = "scene: free roam inside a quest area" }
+SCENE_QUEST_ALT = { eu = 0x08A8DA58, type = "bytes", doc = "scene: free roam inside a quest area, alternating with SCENE_QUEST" }
+SCENE_PROMPT = { eu = 0x08A8CADC, type = "bytes", doc = "scene: some square-button prompt zone (village exit, hall table, item box); still free roam" }
+SCENE_PROMPT_ALT = { eu = 0x08A8CA70, type = "bytes", doc = "scene: the other half of SCENE_PROMPT's alternating pair" }
+SCENE_LANGUAGE_MENU = { eu = 0x08A8C858, type = "bytes", doc = "scene: boot language menu; waits for input forever, SCREEN_STATE reads 0 as for the logos" }
+SCENE_MAIN_MENU = { eu = 0x08A8CB78, type = "bytes", doc = "scene: main menu" }
+SCENE_CHAR_SELECT = { eu = 0x08A8DC74, type = "bytes", doc = "scene: character-slot list" }
+SCENE_DIALOG = { eu = 0x08A8CBD8, type = "bytes", doc = "scene: NPC speech box" }
+SCENE_MESSAGE_BOX = { eu = 0x08A8CFB0, type = "bytes", doc = "scene: acknowledgement box closed with cross" }
+SCENE_YES_NO = { eu = 0x08A8DD14, type = "bytes", doc = "scene: yes/no confirmation" }
+SCENE_SAVE_CONFIRM = { eu = 0x08A8CCFC, type = "bytes", doc = "scene: save confirmation defaulting to yes; cross overwrites the save, circle aborts" }
+SCENE_PAUSE_MENU = { eu = 0x08A8D328, type = "bytes", doc = "scene: START menu" }
+SCENE_NPC_MENU = { eu = 0x08A8CAC0, type = "bytes", doc = "scene: felyne recruiter's option list; each NPC's list has its own scene" }
+SCENE_SHOP_MENU = { eu = 0x08A8CBC8, type = "bytes", doc = "scene: item shop's and smith's option list" }
+SCENE_FELYNE_MENU = { eu = 0x08A8CAF0, type = "bytes", doc = "scene: smith's felyne option list" }
+SCENE_SHOP_SELL = { eu = 0x08A8D700, type = "bytes", doc = "scene: item shop's sell list" }
+SCENE_FARM_UPGRADES = { eu = 0x08A8D7A8, type = "bytes", doc = "scene: Pokke farm upgrade list, its own widget outside NPC_MENU_STATE" }
+SCENE_QUEST_RANK = { eu = 0x08A8CC0C, type = "bytes", doc = "scene: quest-rank menu of the elder and the hall counters" }
+SCENE_QUEST_LIST = { eu = 0x08A8D640, type = "bytes", doc = "scene: quest browser, alternating with SCENE_QUEST_LIST_ALT" }
+SCENE_QUEST_LIST_ALT = { eu = 0x08A8D5D4, type = "bytes", doc = "scene: quest browser, alternating with SCENE_QUEST_LIST" }
+SCENE_TRAVEL_MENU = { eu = 0x08A8CE88, type = "bytes", doc = "scene: fast-travel destination list" }
+SCENE_ITEM_BOX_MENU = { eu = 0x08A8CEAC, type = "bytes", doc = "scene: item-box options in the player's house" }
+SCENE_ITEM_BOX_MENU_HALL = { eu = 0x08A8CD84, type = "bytes", doc = "scene: the same item-box options in the gathering hall" }
+
+# --- village and hall ---
+# NPC objects are per-area slots: an area reuses a slot for someone else, so check the room first.
+CAM_VIEW_EYE = { eu = 0x09998D50, type = "vec3", doc = "camera eye in village and quest; the stick walks along atan2(CAM_LOOK_AT - eye) in x/z" }
+SCENE_SUPPLY_BOX = { eu = 0x08A8E2B4, type = "bytes", doc = "scene: base-camp supply box item grid" }
+NPC_HEAP = { eu = 0x09000000, type = "bytes", doc = "start of the 2 MB span holding every NPC object (struct ENTITY); scan it for NPC_VTABLE" }
+NPC_ELDER = { eu = 0x090BDBA0, type = "bytes", doc = "NPC slot: the village elder at her fire; the hall's receptionist in the hall" }
+NPC_HALL_COUNTER_LOW = { eu = 0x090C1470, type = "bytes", doc = "NPC slot: the hall's low-rank quest counter" }
+NPC_HALL_COUNTER_HIGH = { eu = 0x090C4D40, type = "bytes", doc = "NPC slot: the hall's high-rank quest counter" }
+NPC_HALL_COUNTER_G = { eu = 0x090C8610, type = "bytes", doc = "NPC slot: the hall's G-rank quest counter" }
+NPC_HALL_TRESHI = { eu = 0x090CBEE0, type = "bytes", doc = "NPC slot: Treshi, the hall's treasure-hunt quests" }
+NPC_HALL_SHOP = { eu = 0x090CFC90, type = "bytes", doc = "NPC slot: the hall's item shop" }
+NPC_HALL_HUNTER = { eu = 0x090D3560, type = "bytes", doc = "NPC slot: the hunter by the hall's fire pit" }
+NPC_HALL_FELYNE = { eu = 0x090D6E30, type = "bytes", doc = "NPC slot: the felyne waiting in the hall" }
+
 # --- framework regions ---
 AI_PUBLISH = { eu = 0x08AE2000, type = "bytes", doc = "framework-owned scratch the ai_publish mod writes and the HUD reads: 0x18 header + 21 x 0x14" }
 CLI_BRIDGE_BLOCK = { eu = 0x0A7F0000, type = "bytes", doc = "framework-owned command block (struct CLI_BRIDGE) the debug CLI writes; needs memory=64" }
@@ -162,11 +208,13 @@ DRAW_NODE = { offset = 0x008, type = "ptr", doc = "engine output: shared draw no
 ROTATION = { offset = 0x010, type = "f32[12]", doc = "3x4 orientation rows, rebuilt every frame from YAW: read only" }
 SIZE_SCALE = { offset = 0x024, type = "f32", doc = "size multiplier; re-derived every frame, so resize through RENDER_SCALE and SIZE_RADIUS" }
 TRANSLATION = { offset = 0x040, type = "vec3", doc = "transform translation row (w = 1.0 at +0x4C), copied from POSITION each frame" }
+TRANSLATION_W = { offset = 0x04C, type = "f32", doc = "w of the translation row, 1.0 on a live transform" }
 FRAME_COUNTER = { offset = 0x092, type = "u8", doc = "per-entity frame counter; stops while the AI tick is frozen" }
 CLIP = { offset = 0x0B8, type = "ptr", doc = "slot-0 clip node of the playing animation (clip blocks at +0x80, 0x40 per slot)" }
 CLIP_FLAGS = { offset = 0x0BC, type = "u16", doc = "slot-0 clip flags: bit 0 playing (cleared when the clip ends), bit 1 loop" }
 JOINTS = { offset = 0x190, type = "ptr", doc = "live joint array the engine poses from (struct JOINT, stride 0x250)" }
 SLOT_COUNT = { offset = 0x1A2, type = "u16", doc = "AI slot count on the small-monster path; big monsters ignore it" }
+ACTION_TABLE = { offset = 0x1AC, type = "ptr", doc = "per-species table the vt[8] resolver maps an animation input through: probabilities for small monsters, clip pointers for big ones" }
 SLOT_INPUTS = { offset = 0x1B8, type = "u16[3]", doc = "per-slot input cursors fed to the vt[8] resolver; zeroed by act_set" }
 NEXT_OBJ = { offset = 0x1C4, type = "ptr", doc = "next entity on the engine's update list; splice clones in here" }
 PREV_OBJ = { offset = 0x1C8, type = "ptr", doc = "previous entity on the engine's update list (not a pursue target)" }
@@ -188,6 +236,7 @@ TALKABLE = { offset = 0x2FE, type = "u8", doc = "village NPCs: 1 while this NPC 
 STIMULUS_TAG = { offset = 0x322, type = "u16", doc = "stimulus type written by the damage handler; picks alert or flee responses" }
 ANIM_INPUT = { offset = 0x324, type = "u16[3]", doc = "per-body-part animation input = executor action id + 0x3E8 + slot*0xC8" }
 ANIM_MODE = { offset = 0x32C, type = "u16[3]", doc = "per-body-part animation mode" }
+ANIM_SPEED = { offset = 0x334, type = "u16[3]", doc = "per-body-part playback speed each action installs with its clip; it tracks the action but is not an AI state" }
 COMBAT_ENGAGED = { offset = 0x33D, type = "u8", doc = "set to 1 by the combat registrar together with COMBAT_NODE" }
 COMBATANT_IDS = { offset = 0x33E, type = "u16[16]", doc = "player only: combatant ids registered against the player" }
 COMBATANT_COUNT = { offset = 0x398, type = "u8", doc = "player only: number of ids in COMBATANT_IDS (at most 16)" }
@@ -207,6 +256,7 @@ AI_TIMER_A = { offset = 0x624, type = "u16", doc = "AI countdown timer read by t
 AI_TIMER_B = { offset = 0x626, type = "u16", doc = "second AI countdown timer read by the stress-response ladder" }
 STRESS = { offset = 0x62E, type = "u16", doc = "stress counter clamped to 75..450" }
 FLAGS = { offset = 0x638, type = "u32", doc = "flags: 0x8000 visibility gate B, 0x20 enraged, bit 0 swaps in ACTION_LIST_REMAP" }
+ACTION_LIST = { offset = 0x640, type = "ptr", doc = "action-descriptor list the dispatcher walks; a big monster's is its overlay's table of 8-byte rows, byte 0 the action id" }
 FLEE = { offset = 0x6D8, type = "u8", doc = "small monsters: 1 while fleeing; engine output, read only" }
 HERD_RALLY = { offset = 0x1214, type = "vec3", doc = "small monsters: herd rally position set when the player attacks the herd" }
 HERD_MEMBERS = { offset = 0x1220, type = "ptr[20]", doc = "small monsters: other entities in the same herd" }
