@@ -7,6 +7,7 @@ def test_names():
     assert inject.file_id_from_name("any/dir/file_06185.bin") == 6185
     assert inject.inject_filename(6185) == "file_06185.bin"
     assert inject.relocate_filename(6185) == "file_06185_grown.bin"
+    assert inject.orig_filename(6185) == "file_06185.bin.orig"
     for bad in ("tigrex.bin", "file_12.bin"):
         with pytest.raises(ValueError):
             inject.file_id_from_name(bad)
@@ -25,6 +26,12 @@ def test_write_relocate_bytes(tmp_path):
     path = inject.write_relocate_bytes(b"grown", 6185, str(d))
     assert path == str(d / "file_06185_grown.bin")
     assert [p.name for p in d.iterdir()] == ["file_06185_grown.bin"]
+
+
+def test_named(tmp_path):
+    path = inject.write_relocate_bytes(b"grown", 6185, tmp_path, orig=b"o", name="zinogre.bin")
+    assert path == str(tmp_path / "zinogre.bin")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["file_06185.bin.orig", "zinogre.bin"]
 
 
 def test_default_inject_dir(tmp_path, monkeypatch):

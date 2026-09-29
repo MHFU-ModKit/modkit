@@ -17,6 +17,7 @@ dev = [
 [tool.uv.sources]
 mhp-formats = { workspace = true }
 mhfu = { workspace = true }
+mhfu-port = { workspace = true }
 ppsspp-debug = { workspace = true }
 
 [tool.ruff]
@@ -35,7 +36,12 @@ asyncio_default_fixture_loop_scope = "function"
 [tool.mypy]
 strict = true
 python_version = "3.11"
-files = ["packages/ppsspp-debug/src", "packages/mhp-formats/src", "packages/mhfu/src"]
+files = [
+    "packages/ppsspp-debug/src",
+    "packages/mhp-formats/src",
+    "packages/mhfu/src",
+    "packages/mhfu-port/src",
+]
 
 [[tool.mypy.overrides]]
 module = ["mhef.*", "pycdlib.*", "elftools.*"]

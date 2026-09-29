@@ -12,8 +12,9 @@ path = "ppsspp/patches/**"
 SPDX-FileCopyrightText = ["2026 sp00ktober", "PPSSPP Project"]
 SPDX-License-Identifier = "GPL-2.0-or-later"
 
-# the file-format library contains code derived from mhff; its sources also carry SPDX headers
+# the file-format library contains code derived from mhff, and the porter is built on it; their
+# sources also carry SPDX headers
 [[annotations]]
-path = "packages/mhp-formats/**"
+path = ["packages/mhp-formats/**", "packages/mhfu-port/**"]
 SPDX-FileCopyrightText = "2026 sp00ktober"
 SPDX-License-Identifier = "GPL-3.0-or-later"
