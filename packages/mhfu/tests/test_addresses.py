@@ -106,6 +106,7 @@ def entry_field(offset=0):
     [
         ({"address": {"lower": entry()}}, "UPPER_SNAKE_CASE"),
         ({"address": {"A": entry(0x10)}}, "outside"),
+        ({"address": {"A": entry(addresses.RAM.stop + 1)}}, "outside"),
         ({"address": {"A": entry(), "B": entry()}}, "is already A"),
         ({"address": {"A": entry(type="int")}}, "unknown type"),
         ({"address": {"A": entry(doc="two\nlines")}}, "one line"),
@@ -158,3 +159,7 @@ def entry_field(offset=0):
 def test_parse_rejects(data, problem):
     with pytest.raises(ValueError, match=problem):
         addresses.parse(data)
+
+
+def test_parse_end_bound():
+    assert addresses.parse({"address": {"END": entry(addresses.RAM.stop)}}).addresses["END"]

@@ -115,7 +115,7 @@ def parse(data: dict[str, Any]) -> Table:
         where = f"address.{name}"
         if _entry_ok(where, name, entry, "eu", problems):
             value = entry["eu"]
-            if value not in RAM:
+            if value not in RAM and value != RAM.stop:  # the window's end bound may be named
                 problems.append(f"{where}: 0x{value:X} is outside 0x{RAM.start:X}-0x{RAM.stop:X}")
             elif value in by_value:
                 problems.append(f"{where}: 0x{value:08X} is already {by_value[value]}")
