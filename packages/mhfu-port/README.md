@@ -39,8 +39,16 @@ port.pac, port.summary.text()
 
 ## Checking a build
 
-`mhfu-port diff OLD NEW` compares two builds group by group and clip by clip. `constraints`
-holds the engine's rules on a monster PAC; `build` refuses a port that breaks one.
+| Command | What it prints |
+|---|---|
+| `mhfu-port diff OLD NEW` | Two builds compared group by group and clip by clip |
+| `mhfu-port verify PAC --manifest M` | A structural audit against the donor: stream partition, driven palette joints, tears across the body's fork, every vertex's weights |
+| `mhfu-port validate PAC` | The engine's rules (`constraints`) on any monster PAC; `build` refuses a port that breaks one |
+| `mhfu-port pose PAC --manifest M` | The port's clips against the donor's, joint by joint |
+| `mhfu-port stretch PAC [--fork]` | How far each clip pulls the mesh apart, and the tear across the fork |
+| `mhfu-port floor PAC... --host 75` | Where the idle pose puts the feet by the animation alone, against the host (not yet where the game puts a port) |
+| `mhfu-port fidelity M` | The port's skin weights against the donor's own |
+| `mhfu-port slots`, `labels` | Which host move plays which ported clip; hand labels checked against a build |
 
 ## Licence
 
