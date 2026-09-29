@@ -65,6 +65,33 @@ and constants; the commands below are built on it. They read an extracted game f
 | `mhfu stage ids\|maps\|exits\|surfaces` | Stage files, the map table, area exits |
 | `mhfu inject FILE_ID FILE` | Places a finished file for the framework's live injection |
 
+## The running game
+
+`mhfu.live` drives the game in PPSSPP through its debugger (`ppsspp-debug`): boot, walk, talk,
+take a quest. Every step waits on what memory says, never on a count of button presses, since
+the game's menus drop presses.
+
+```python
+from mhfu.live import boot, quests
+from mhfu.live.session import Session
+
+with Session.launch(cold=True) as s:  # PPSSPP here, or in the modkit container
+    boot.to_village(s, "english")
+    quests.take(s, 1, "Giadrome")  # rank 2, the first quest naming the Giadrome
+    s.game.player.hp
+```
+
+| Command | What it does |
+|---|---|
+| `mhfu go-on-quest --rank R --quest NAME` | Cold boot to standing in the quest |
+| `mhfu start`, `mhfu stop` | The game with its debugger open, or stopped |
+| `mhfu shell` | A debug shell on the running game: player, monsters, animations, hit volumes |
+
+PPSSPP must open its debugger at startup (`RemoteDebuggerOnStartup = True` in `ppsspp.ini`).
+`MHFU_ISO` names the game image, `MHFU_PPSSPP` a PPSSPP binary other than the usual install,
+and `MHFU_LAUNCHER=docker` (with `MHFU_CONTAINER`) uses the container from `ppsspp/`. The
+automation boots the first save slot; it is tested in German and English, not yet in the other three.
+
 ## Licence
 
 MIT.
