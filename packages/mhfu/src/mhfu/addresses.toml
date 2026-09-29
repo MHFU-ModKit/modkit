@@ -108,9 +108,8 @@ TIGREX_ATTACK_SPAWN = { eu = 0x09B661E8, type = "fn", doc = "em75-family attack-
 OVERLAY_LOAD_CALL = { eu = 0x0884E9F8, type = "code", doc = "jal into OVERLAY_SEGMENT_LOAD; hooked to learn when the AI overlay has landed" }
 OVERLAY_SEGMENT_LOAD = { eu = 0x0884EA1C, type = "fn", doc = "per-segment overlay loader that copies overlay code into place" }
 BASE_SPECIES = { eu = 0x089AA1C8, type = "bytes", doc = "s8 per species id: its base species (subspecies collapse onto the parent), used by effect spawns" }
-SPECIES_TABLE = { eu = 0x09BB87C0, type = "bytes", doc = "per-species data rows (struct SPECIES) indexed by ENTITY.SPECIES, stride 0x1D0" }
+SPECIES_TABLE = { eu = 0x09BB87C0, type = "bytes", doc = "per-species data rows (struct SPECIES) indexed by ENTITY.SPECIES" }
 ACTION_LIST_REMAP = { eu = 0x09BD38F0, type = "bytes", doc = "alternate action-descriptor list (type 0x3A) used while ENTITY.FLAGS bit 0 is set" }
-EM_OVERLAY_BASE = { eu = 0x09D15100, type = "bytes", doc = "fixed big-monster overlay (em*.ovl) footprint incl. lower BSS; the file image sits 0x5080 above" }
 
 # --- model and resources ---
 SCRIPT_RESOURCE_REGISTER = { eu = 0x08890144, type = "fn", doc = "registerScriptResource(ctx, res_id, slot): queues a big monster's AI script resource" }
@@ -125,6 +124,31 @@ VOLATILE_UNLOCK = { eu = 0x0890E0B8, type = "fn", doc = "import stub for sceKern
 SCRIPT_RESOURCE_CTX = { eu = 0x08A631A0, type = "ptr", doc = "streaming context big-monster setup passes to SCRIPT_RESOURCE_REGISTER" }
 RESOURCE_TABLE = { eu = 0x09A4F0D0, type = "ptr", doc = "pointer to the resident-file table (RESOURCE_SLOT rows); also the ctx for RESOURCE_REQUEST" }
 MODEL_SETUP = { eu = 0x09AC4D30, type = "fn", doc = "per-entity model setup that consumes the raw model buffer every frame; overlay code" }
+
+# --- stages and hit volumes ---
+USER_RAM = { eu = 0x08800000, type = "bytes", doc = "start of the 24 MB user partition: the game image, overlays and heap; the heap tables are found by scanning it" }
+STAGE_VARIANT_FILE = { eu = 0x088C6AF8, type = "fn", doc = "engine file id of the st046 variant (6075 + variant) that lobby_task.ovl loads instead of st046.pac, picked from save bytes" }
+GATHER_SPOT_CURRENT = { eu = 0x090BEE60, type = "ptr", doc = "the GATHER_SPOT the hunter stands by, set by proximity; a union, so trust it only inside the spot table" }
+MAP_MANAGER_PTR = { eu = 0x09A4F060, type = "ptr", doc = "pointer to the map manager (struct MAP_MANAGER): the session's map row and the stage on screen" }
+ATTACK_TABLE_SETTER = { eu = 0x09B674C0, type = "fn", doc = "(node, entity, attack id, table handle): copies ATTACK_RECORD[id] into the ATTACK_NODE; every species overlay calls it" }
+MAP_TABLE = { eu = 0x09CE4708, type = "bytes", doc = "32 MAP_ROW rows in game_sub.ovl, one per map; the stage loader resolves areas through it" }
+USER_RAM_END = { eu = 0x0A000000, type = "bytes", doc = "first address past the user partition" }
+
+# --- big-monster behaviour: moves, phases, chains ---
+CLIP_CURSOR_CROSSES = { eu = 0x08864348, type = "fn", doc = "(clip block, slot, frame in $f12): 1 on the tick the slot's clip cursor steps over frame" }
+CLIP_CURSOR_REACHED = { eu = 0x08864408, type = "fn", doc = "(clip block, slot, frame in $f12): 1 once the slot's clip cursor is at or past frame" }
+ACT_SET = { eu = 0x09AC8690, type = "fn", doc = "act_set(entity, main, sub, mode): enters a behaviour pair through SET_AI_STATE; species translators end here" }
+SET_AI_STATE_ALERT = { eu = 0x09AC87E8, type = "fn", doc = "SET_AI_STATE after clearing entity+0x769, then sets entity+0x4B7 = 1" }
+SET_AI_STATE = { eu = 0x09AC8818, type = "fn", doc = "(entity, main, sub): writes ENTITY.MAIN_STATE and SUB_STATE and zeroes the three PHASE bytes" }
+BUDGET_STEP = { eu = 0x09AD9A10, type = "fn", doc = "counts the float at entity+0x76C down by this frame's step; 1 once it is spent" }
+EM75_COLLIDED = { eu = 0x09D262C0, type = "fn", doc = "em75 overlay only: 1 when entity+0x278 & 0xC0000003 and entity+0x27E are both set, 0 for species 81" }
+
+# --- big-monster intel: effects, attacks, engine interface ---
+EFFECT_SPAWN_AT = { eu = 0x09ACB610, type = "fn", doc = "effect spawn at a bone (entity, id, bone base, bone offset); wraps EFFECT_SPAWN" }
+EFFECT_SPAWN_FRAMED = { eu = 0x09ACB9C8, type = "fn", doc = "effect spawn once the clip cursor is in a frame window (entity, frame lo, frame hi, id, bone, mode, slot)" }
+EM_FACTORY = { eu = 0x09AB15D8, type = "fn", doc = "big-monster entity factory f(ctx, emId): a switch on emId whose cases install a species vtable" }
+ATTACK_SPAWNERS = { eu = 0x09B63000, type = "code", doc = "start of game_task's attack-node constructors, one per species (TIGREX_ATTACK_SPAWN among them), (?, entity, attack id)" }
+ATTACK_SPAWNERS_END = { eu = 0x09B66B00, type = "code", doc = "end of the ATTACK_SPAWNERS run" }
 
 # --- framework regions ---
 AI_PUBLISH = { eu = 0x08AE2000, type = "bytes", doc = "framework-owned scratch the ai_publish mod writes and the HUD reads: 0x18 header + 21 x 0x14" }
@@ -295,7 +319,8 @@ FILE_ID = { offset = 0x02, type = "u16", doc = "engine file id (extracted id + 1
 DATA = { offset = 0x04, type = "ptr", doc = "the file's raw buffer; a big-monster PAC lands here before the overlay restructures it" }
 
 [struct.SPECIES]
-doc = "one SPECIES_TABLE row at species*0x1D0; fields past 0x1D0 are parallel tables at the same stride; map-wide, read only"
+doc = "one SPECIES_TABLE row; fields past the stride are parallel tables at the same stride; map-wide, read only"
+stride = 0x1D0
 [struct.SPECIES.fields]
 COOLDOWNS = { offset = 0x00, type = "ptr", doc = "cooldown and max-duration timer table" }
 WEIGHTS = { offset = 0x04, type = "ptr", doc = "action selection weight table" }
@@ -324,9 +349,17 @@ OFFSET_B = { offset = 0x1C, type = "vec3", doc = "capsule far end" }
 doc = "one attack record in a species overlay's attack table"
 size = 0x18
 [struct.ATTACK_RECORD.fields]
-POWER = { offset = 0x02, type = "u8", doc = "attack power" }
-ELEMENT = { offset = 0x09, type = "u8", doc = "element gate bits" }
-VOLUME_SET = { offset = 0x0A, type = "u8", doc = "index into the overlay's HIT_VOLUME set pointer table" }
+LEAD = { offset = 0x00, type = "u8", doc = "0 in every record; a nonzero value ends the table" }
+UNKNOWN_01 = { offset = 0x01, type = "u8", doc = "measured not to change the damage; meaning unknown" }
+POWER = { offset = 0x02, type = "u8", doc = "attack power; measured, the damage follows it" }
+KIND = { offset = 0x03, type = "u8", doc = "small enum (1, 2, 3, 0x1D); a label from its shape only" }
+FAMILY = { offset = 0x05, type = "u8", doc = "0x00 or 0x10, splits the records in two; a label from its shape only" }
+ANGLE = { offset = 0x06, type = "u8", doc = "0..255; an angle, inferred from its range" }
+TAG = { offset = 0x08, type = "u8", doc = "0x0A, 0x0F, 0x27, 0x28 or 0x32; a label from its shape only" }
+ELEMENT = { offset = 0x09, type = "u8", doc = "element gate bits the player-damage resolver picks a resistance by; measured" }
+VOLUME_SET = { offset = 0x0A, type = "u8", doc = "index into the overlay's HIT_VOLUME set pointer table; measured" }
+HALF_0C = { offset = 0x0C, type = "u16", doc = "the only 16-bit field (the copy uses lhu); meaning unknown" }
+VALUE_14 = { offset = 0x14, type = "u32", doc = "2, 10, 20, 25 or 30; a label from its shape only" }
 
 [struct.CLI_BRIDGE]
 doc = "framework-owned command block at CLI_BRIDGE_BLOCK: the debug CLI writes it, cli_bridge.lua polls it"
@@ -340,3 +373,92 @@ ARG2 = { offset = 0x14, type = "u32", doc = "spare argument; cli_bridge.lua igno
 ACK = { offset = 0x18, type = "u32", doc = "SEQ the game has applied" }
 STATUS = { offset = 0x1C, type = "u32", doc = "action id currently held" }
 PROBE = { offset = 0x20, type = "u32", doc = "CLI scratch word used to test that the block is mapped" }
+
+[struct.MAP_ROW]
+doc = "one row of MAP_TABLE: the stages of one map"
+size = 0x08
+[struct.MAP_ROW.fields]
+COUNT = { offset = 0x00, type = "u32", doc = "number of stages; 0 for an unused row" }
+STAGES = { offset = 0x04, type = "ptr", doc = "u16 stage numbers, the entry area (base camp) first" }
+
+[struct.MAP_MANAGER]
+doc = "map manager MAP_MANAGER_PTR points at"
+[struct.MAP_MANAGER.fields]
+ROW = { offset = 0x284, type = "u32", doc = "the session's map row, a MAP_TABLE index" }
+STAGE = { offset = 0x288, type = "u16", doc = "the stage on screen; also names the village, where AREA_INDEX reads 0" }
+
+[struct.STAGE_PARAMS]
+doc = "parameter object of a stage overlay, returned by a constant getter in its code"
+[struct.STAGE_PARAMS.fields]
+SURFACES = { offset = 0x0C, type = "ptr", doc = "u32 surface-property masks, indexed by a collision triangle's surface id (0..7)" }
+SPHERES = { offset = 0x10, type = "ptr", doc = "STAGE_SPHERE records, SPHERE_COUNT of them" }
+SLOTS = { offset = 0x14, type = "u16[10]", doc = "small slot ids below 0x40, padded with 0xFFFF" }
+EXITS = { offset = 0x30, type = "ptr", doc = "STAGE_EXIT records, EXIT_COUNT of them" }
+OBJECTS_A = { offset = 0x34, type = "ptr", doc = "32-byte placed-object records, OBJECT_A_COUNT of them; not decoded" }
+OBJECTS_B = { offset = 0x38, type = "ptr", doc = "32-byte placed-object records, OBJECT_B_COUNT of them; not decoded" }
+ENV = { offset = 0x3C, type = "u8", doc = "per-map enum (0 on most maps, 3 or 4 on the snowy bank); what it selects is not pinned" }
+EXIT_COUNT = { offset = 0x3D, type = "u8", doc = "number of EXITS records" }
+SPHERE_COUNT = { offset = 0x3E, type = "u8", doc = "number of SPHERES records" }
+OBJECT_A_COUNT = { offset = 0x3F, type = "u8", doc = "number of OBJECTS_A records" }
+OBJECT_B_COUNT = { offset = 0x40, type = "u8", doc = "number of OBJECTS_B records" }
+
+[struct.STAGE_EXIT]
+doc = "one area transition of a stage: a trigger cylinder here and a landing point in the target stage"
+size = 0x34
+[struct.STAGE_EXIT.fields]
+TARGET = { offset = 0x00, type = "u16", doc = "the stage it leads to" }
+FLAG = { offset = 0x02, type = "u16", doc = "1 on a few exits, else 0; meaning unknown" }
+TRIGGER = { offset = 0x04, type = "vec3", doc = "base of the trigger cylinder the hunter walks into" }
+RADIUS = { offset = 0x10, type = "f32", doc = "trigger radius" }
+HEIGHT = { offset = 0x14, type = "f32", doc = "trigger height" }
+DEST = { offset = 0x24, type = "vec3", doc = "where the hunter lands in the target stage" }
+YAW = { offset = 0x30, type = "u16", doc = "facing on landing, 0x10000 = one turn" }
+
+[struct.STAGE_SPHERE]
+doc = "one sphere of a stage overlay's sphere list; what it marks is not decoded"
+size = 0x18
+[struct.STAGE_SPHERE.fields]
+ID = { offset = 0x02, type = "u16", doc = "sphere id" }
+POSITION = { offset = 0x04, type = "vec3", doc = "centre, world space" }
+RADIUS = { offset = 0x10, type = "f32", doc = "radius" }
+TAIL = { offset = 0x14, type = "u32", doc = "trailing word; meaning unknown" }
+
+[struct.GATHER_SPOT]
+doc = "one per-quest heap record of the gathering-spot table: groups of four spots, each group ended by a record with x = -1.0"
+size = 0x18
+[struct.GATHER_SPOT.fields]
+POSITION = { offset = 0x00, type = "vec3", doc = "world position; all zero in an unused slot" }
+RADIUS = { offset = 0x0C, type = "f32", doc = "radius; not the interaction range, which is wider" }
+ID = { offset = 0x10, type = "u16", doc = "spot id; id / 4 indexes the map row's areas without the base camp" }
+USES = { offset = 0x12, type = "u16", doc = "gathers left, 4..10 at quest start; only the hunter's gathers count down" }
+TOOL = { offset = 0x14, type = "u16", doc = "required tool: 0 none, 3 pickaxe, 4 bug net" }
+USES_M = { offset = 0x16, type = "u16", doc = "second counter, 1..8 at quest start; 0 with USES when the spot is exhausted" }
+
+[struct.SMALL_SPAWN]
+doc = "one per-quest heap record of the small-monster spawn table, rebuilt per area as the hunter enters it"
+size = 0x3C
+[struct.SMALL_SPAWN.fields]
+SEED = { offset = 0x00, type = "u32", doc = "nonzero per-record value; meaning unknown" }
+POSITION = { offset = 0x04, type = "vec3", doc = "the fixed spawn point, not where the monster is now" }
+INDEX = { offset = 0x10, type = "u16", doc = "running counter across the quest" }
+KIND = { offset = 0x12, type = "u16", doc = "always 2" }
+MARK = { offset = 0x14, type = "u16", doc = "always 100" }
+HP = { offset = 0x16, type = "u16", doc = "the live monster's HP; 0xFFFF outside the hunter's area" }
+ENTITY = { offset = 0x18, type = "u16", doc = "ENTITY_REGISTRY slot of the live monster minus one; 0xFF outside the hunter's area" }
+
+[struct.HITZONE_GRID]
+doc = "one hitzone grid a SPECIES.HITZONE_STATES entry points at: damage percentages by hitzone row and damage type"
+size = 0x48
+[struct.HITZONE_GRID.fields]
+PERCENT = { offset = 0x00, type = "u8[70]", doc = "7 rows (HIT_VOLUME.HITZONE_ROW) of 10 damage-type columns" }
+PAD = { offset = 0x46, type = "u8[2]", doc = "zero in every grid" }
+
+[struct.ATTACK_NODE]
+doc = "live attack node the spawner allocates; ATTACK_TABLE_SETTER fills it from the attack table"
+size = 0xE0
+[struct.ATTACK_NODE.fields]
+ATTACK_ID = { offset = 0x0D, type = "u8", doc = "attack id, offset per entity species where one table serves several" }
+OWNER = { offset = 0x10, type = "ptr", doc = "the attacking entity" }
+RECORD = { offset = 0x1C, type = "bytes", doc = "verbatim copy of the ATTACK_RECORD" }
+VOLUME_SET = { offset = 0x34, type = "ptr", doc = "the HIT_VOLUME set the record's VOLUME_SET selects; the overlay stores it right after the setter call" }
+POSITION = { offset = 0x40, type = "vec3", doc = "the node's own position; bones 126 and 127 test against it" }

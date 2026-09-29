@@ -1,11 +1,15 @@
 [project]
 name = "mhfu"
 version = "0.1.0"
-description = "Monster Hunter Freedom Unite (PSP) runtime knowledge: addresses and struct layouts."
+description = "Monster Hunter Freedom Unite (PSP) at runtime: addresses, live structs, automation, overlay analysis."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-dependencies = []
+dependencies = ["ppsspp-debug", "rabbitizer>=1.16", "pyelftools>=0.31", "psutil>=6"]
+classifiers = ["Typing :: Typed"]
+
+[project.scripts]
+mhfu = "mhfu.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.11,<0.12"]
