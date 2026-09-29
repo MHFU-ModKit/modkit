@@ -1,0 +1,70 @@
+# The PSP side of the build, run in the pspdev image by ./Makefile. Builds build/mhfu_framework.prx,
+# then itself again with PRX=boot for build/mhfu_boot.prx (build_prx.mak takes one target per run).
+
+PSPSDK = $(shell psp-config --pspsdk-path)
+GEN    = build/gen
+OBJDIR = build/obj
+
+ifeq ($(PRX),boot)
+
+TARGET = build/mhfu_boot
+OBJS   = $(OBJDIR)/boot/main.o
+INCDIR = include $(GEN)
+CFLAGS = -Os -G0 -Wall
+# the kernel ModuleMgr: the user one rejects a kernel-thread caller with 0x80020149
+LIBS   = $(PSPSDK)/lib/prxexports.o -lpspkernel -lpspsdk
+GP0    =
+
+else
+
+TARGET = build/mhfu_framework
+
+# Every mod directory compiles, so a disabled one cannot rot; only the manifest's mods link.
+MODS      := $(shell grep -vE '^[[:space:]]*(#|$$)' mods.manifest)
+objs_in    = $(patsubst %,$(OBJDIR)/%.o,$(basename $(sort $(wildcard $(addsuffix /*.cpp,$(1)) $(addsuffix /*.S,$(1))))))
+CORE_OBJS := $(call objs_in,src/core)
+MOD_OBJS  := $(foreach m,$(MODS),$(call objs_in,mods/$(m)))
+ALL_MODS  := $(call objs_in,$(wildcard mods/*))
+OBJS       = $(CORE_OBJS) $(MOD_OBJS)
+
+INCDIR   = include src/core $(GEN)
+CFLAGS   = -Os -G0 -Wall -fno-strict-aliasing
+# no exceptions, RTTI or static guards: the objects need no libstdc++ runtime
+CXXFLAGS = -std=gnu++17 -fno-exceptions -fno-rtti -fno-threadsafe-statics
+# .incbin in a mod's .S finds the Lua sources and the generated address table
+ASFLAGS  = -Wa,-Ilua,-I$(GEN)
+
+# prxexports.o: real firmware rejects a PRX without the syslib export (0x800200D9); lua needs libm, libc
+LIBS = $(PSPSDK)/lib/prxexports.o -lpspsdk -lpspuser -lpspusb -lpspnet -lpspnet_apctl -llua -lm -lc
+# the prebuilt liblua.a uses small data; without GP threshold 0 the link overflows R_MIPS_GPREL16
+GP0  = -Wl,-G,0
+
+.PHONY: boot
+all: boot $(filter-out $(OBJS),$(ALL_MODS))
+boot:
+	$(MAKE) -f Makefile.psp PRX=boot
+
+endif
+
+include $(PSPSDK)/lib/build_prx.mak
+
+# replaces build_prx.mak's flags, whose own -T linkfile.prx would clash with prx.lds;
+# prx.lds is linkfile.prx that also drops .MIPS.abiflags and .reginfo, which old loaders reject
+override LDFLAGS := $(addprefix -L,$(LIBDIR)) -Wl,-q,-T$(CURDIR)/prx.lds -nostartfiles -Wl,-zmax-page-size=128 $(GP0)
+
+DEPFLAGS = -MMD -MP
+$(OBJDIR)/%.o: %.cpp
+	@mkdir -p $(@D)
+	$(COMPILE.cc) $(DEPFLAGS) -o $@ $<
+$(OBJDIR)/%.o: %.c
+	@mkdir -p $(@D)
+	$(COMPILE.c) $(DEPFLAGS) -o $@ $<
+# -pipe keeps the assembler's --MD output to the .incbin files
+$(OBJDIR)/%.o: %.S
+	@mkdir -p $(@D)
+	$(COMPILE.S) -pipe $(DEPFLAGS) -Wa,--MD,$(@:.o=.inc.d) -o $@ $<
+
+# a deleted .incbin source rebuilds the object instead of stopping make
+%.lua: ;
+
+-include $(shell find $(OBJDIR) -name '*.d' 2>/dev/null)

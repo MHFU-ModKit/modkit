@@ -54,17 +54,30 @@ PLAYER_STRUCT = { eu = 0x090BB4C0, type = "bytes", doc = "player character struc
 
 # --- camera ---
 CAM_VIEW_DIR = { eu = 0x08815D84, type = "fn", doc = "camera view-direction builder; reads the look target, runs in village and quest (freecam hook)" }
+CAM_VIEW_DIR_RESUME = { eu = 0x08815D8C, type = "code", doc = "CAM_VIEW_DIR past its two displaced prologue words; the freecam detour resumes here" }
+CAM_ORBIT_UPDATE = { eu = 0x08886B68, type = "fn", doc = "quest orbit-camera builder (struct CAM_ORBIT): eye = pivot + rotation * offset; does not run in the village" }
 CAM_ORBIT_INPUTS = { eu = 0x088878BC, type = "code", doc = "quest orbit-camera builder after pivot and angles are set, before use (freecam hook)" }
+CAM_ORBIT_INPUTS_RESUME = { eu = 0x088878C4, type = "code", doc = "CAM_ORBIT_INPUTS past its two displaced words; the freecam detour resumes here" }
 CAM_EYE_Y_STORE = { eu = 0x088879A0, type = "code", doc = "quest orbit camera's store of the computed eye y (freecam hook)" }
+CAM_EYE_Y_STORE_RESUME = { eu = 0x088879A8, type = "code", doc = "CAM_EYE_Y_STORE past its two displaced words; the freecam detour resumes here" }
 CAM_LOOK_AT = { eu = 0x09998D60, type = "vec3", doc = "camera look-at: x/z equal the player's world x/z, y about 170 above the player" }
 CAM_OFFSET = { eu = 0x09998E10, type = "vec3", doc = "camera view vector (look-at minus eye); all zero in the village, a quest-vs-village check" }
 CAM_EYE = { eu = 0x09998EC0, type = "vec3", doc = "quest orbit-camera eye (orbit struct +0x40); the village never writes it" }
 CAM_PIVOT = { eu = 0x09998ED0, type = "vec3", doc = "quest orbit-camera pivot; eye = pivot + rotation * offset" }
+CAM_VIEW_MATRIX = { eu = 0x099998B0, type = "f32[16]", doc = "camera view matrix the HUD projects world points with (column-major)" }
+CAM_PROJ_MATRIX = { eu = 0x09999930, type = "f32[16]", doc = "camera projection matrix, paired with CAM_VIEW_MATRIX" }
+
+# --- HUD ---
+HUD_DRAW_CALL = { eu = 0x0888FDD4, type = "code", doc = "jal HUD_DRAW, once per HUD frame; the nameplate hook site" }
+HUD_DRAW = { eu = 0x08891B14, type = "fn", doc = "HUD master draw" }
+HUD_TEXT_DRAW = { eu = 0x0889377C, type = "fn", doc = "banner text draw f(ctx, text descriptor) of UTF-16LE text" }
 
 # --- entities and monsters ---
 MONSTER_MANAGER_SINGLETON = { eu = 0x08B0C7C0, type = "bytes", doc = "big-monster manager singleton (struct MONSTER_MANAGER) that drives per-frame monster processing" }
 ENTITY_REGISTRY = { eu = 0x09C1213C, type = "ptr[21]", doc = "entity pointers: slot 0 is never the player, slots 1..20 hold monsters, 0 = empty" }
 COLLISION_WORLD_PTR = { eu = 0x09C18FD0, type = "ptr", doc = "pointer to the collision world (struct COLLISION_WORLD) holding the per-frame hit-test list" }
+COLLISION_TEST = { eu = 0x09C41E58, type = "fn", doc = "per-frame hit test: walks COLLISION_WORLD.LIST_HEAD; an entity without a listed node deals no damage" }
+COMBAT_REGISTER = { eu = 0x09C42F00, type = "fn", doc = "(node, monster, attacker): links node and entity (COMBAT_NODE, COMBAT_LINK, COMBAT_ENGAGED, COMBAT_REGISTERED) on a hit" }
 
 # --- entity vtables ---
 PLAYER_STRUCT_VTABLE = { eu = 0x089BAB08, type = "vtable", doc = "vtable of PLAYER_STRUCT and its six same-class character slots" }
@@ -78,12 +91,15 @@ POPO_VTABLE = { eu = 0x089BC560, type = "vtable", doc = "Popo entity vtable" }
 GIAPREY_VTABLE = { eu = 0x089BC65C, type = "vtable", doc = "Giaprey entity vtable" }
 VESPOID_VTABLE = { eu = 0x089BC854, type = "vtable", doc = "Vespoid entity vtable" }
 GIADROME_VTABLE = { eu = 0x089BC950, type = "vtable", doc = "Giadrome entity vtable" }
+VTABLE_BAND = { eu = 0x089BB000, type = "bytes", doc = "start of the EBOOT band holding every species entity vtable; a sanity bound for a vtable pointer" }
+VTABLE_BAND_END = { eu = 0x089BF800, type = "bytes", doc = "first address past VTABLE_BAND" }
 
 # --- quest ---
 AREA_INDEX_STORE = { eu = 0x0884CDFC, type = "code", doc = "per-frame store to AREA_INDEX; anchor for the quest-entered and section-change events" }
 QUEST_TIMER_INIT = { eu = 0x088655E4, type = "code", doc = "stores 90000 into QUEST.TIMER when a quest is committed; quest-beginning event anchor" }
 BUILD_TARGETS_CALL = { eu = 0x08869EEC, type = "code", doc = "call site of BUILD_TARGETS; where the framework edits the quest monster list" }
 BUILD_TARGETS = { eu = 0x0886D4D8, type = "fn", doc = "buildTargets(quest, 2): fills QUEST.TARGETS from the parsed big-monster list" }
+QUEST_DATA_BUFFER = { eu = 0x08A5C440, type = "bytes", doc = "the parsed quest data (struct QUEST_DATA) QUEST.RECORDS points at" }
 QUEST_PTR = { eu = 0x08A62C7C, type = "ptr", doc = "Quest::objectPtr, points at QUEST_SINGLETON" }
 QUEST_TIMER_MIRROR = { eu = 0x09A050F8, type = "u32", doc = "second quest-timer cell, off by one from QUEST.TIMER; write both to hold the clock" }
 QUEST_SINGLETON = { eu = 0x09A05DC0, type = "bytes", doc = "Quest singleton (struct QUEST), at a fixed address in EU" }
@@ -93,14 +109,23 @@ CARVE_COUNT = { eu = 0x09A44C86, type = "u8", doc = "carves left on the last-kil
 ACTION_PICKER = { eu = 0x08865254, type = "fn", doc = "vt[8] action picker the known species vtables share at +0x20; swap that slot to override" }
 AI_TICK = { eu = 0x08865648, type = "fn", doc = "per-entity AI tick: movement and action pick" }
 SLOT_LOOP = { eu = 0x088656B0, type = "code", doc = "top of the per-slot loop inside AI_TICK (small-monster path)" }
+SLOT_LOOP_RESUME = { eu = 0x088656B8, type = "code", doc = "SLOT_LOOP past its two displaced words; the slot-loop wrapper resumes here" }
 ATTACK_RESOLVER = { eu = 0x08865934, type = "fn", doc = "engine attack resolver for one entity; call only game-thread-synced, from an override callback" }
-EFFECT_OWNER = { eu = 0x08866284, type = "fn", doc = "an entity's effect owner tag, from its class byte (+0x1E9) and ID" }
+IN_SECTION = { eu = 0x08865BAC, type = "fn", doc = "(entity): 1 when ENTITY.SECTION is the current section; EFFECT_SPAWN and the attack spawners do nothing otherwise" }
+EFFECT_OWNER = { eu = 0x08866284, type = "fn", doc = "an entity's effect owner tag, from ENTITY.CLASS and ENTITY.ID" }
+FK_WALKER = { eu = 0x08863198, type = "fn", doc = "per-frame forward-kinematics walker over an entity's joints and animation channels" }
+APPLY_HP_DELTA = { eu = 0x088D6594, type = "fn", doc = "(entity, signed delta): applies HP damage or healing, clamped to HP_CAP and MAX_HP" }
 MONSTER_PROCESSOR = { eu = 0x09A60198, type = "fn", doc = "per-monster processor MONSTER_MANAGER.PROCESSOR normally points at (game_task overlay)" }
 RAISE_EVENT = { eu = 0x09A677F8, type = "fn", doc = "generic AI event raise(entity, 0, event_id, 0) (game_task overlay)" }
 STRESS_RESPONSE = { eu = 0x09A679D8, type = "fn", doc = "stress-response ladder over the AI condition cells; writes an animation-input literal" }
 TIMER_SCALE = { eu = 0x09AACCF8, type = "fn", doc = "scales an AI timer refill by entity stats (x1.5, x1 or x0.667)" }
+AI_OVERLAY = { eu = 0x09ABF200, type = "bytes", doc = "the 1 MB game_task segment OVERLAY_LOAD_CALL copies in (ACTION_EXECUTOR, MODEL_SETUP); JIT-cold right after the copy" }
+VISIBILITY_GATE = { eu = 0x09AC4960, type = "fn", doc = "per-frame big-monster draw gate: clears the ENTITY.RENDER_FLAGS skip bit only if ENTITY.SECTION is AREA_INDEX and ENTITY.FLAGS has 0x8000" }
 ACTION_EXECUTOR = { eu = 0x09AC5228, type = "fn", doc = "big-monster executor f(entity, a1 = action id): picks the clip for all body slots, not the move" }
+ACTION_EXECUTOR_RESUME = { eu = 0x09AC5230, type = "code", doc = "ACTION_EXECUTOR past its two displaced prologue words; the entry detour resumes here" }
 BIGMON_SLOT_LOOP = { eu = 0x09AC52DC, type = "code", doc = "top of the big-monster per-slot loop inside ACTION_EXECUTOR; overlay code" }
+BIGMON_SLOT_LOOP_RESUME = { eu = 0x09AC52E4, type = "code", doc = "BIGMON_SLOT_LOOP past its two displaced words; the slot-loop wrapper resumes here" }
+ACTION_RESTORE = { eu = 0x09AC7258, type = "fn", doc = "replays an entity's two-entry action history through enter-action (snapshot restore, not a decision)" }
 ENTER_ACTION = { eu = 0x09AC89F0, type = "fn", doc = "enter_action(entity, main, id, mode) via vt+0x88: enters and provisions a behaviour pair" }
 EFFECT_SPAWN = { eu = 0x09ACB3E0, type = "fn", doc = "species-biased effect spawn; silently dropped when the entity is not in the current section" }
 TIGREX_ATTACK_SPAWN = { eu = 0x09B661E8, type = "fn", doc = "em75-family attack-volume spawner (collision world, entity, attack id); other species have their own" }
@@ -111,20 +136,28 @@ OVERLAY_SEGMENT_LOAD = { eu = 0x0884EA1C, type = "fn", doc = "per-segment overla
 BASE_SPECIES = { eu = 0x089AA1C8, type = "bytes", doc = "s8 per species id: its base species (subspecies collapse onto the parent), used by effect spawns" }
 SPECIES_TABLE = { eu = 0x09BB87C0, type = "bytes", doc = "per-species data rows (struct SPECIES) indexed by ENTITY.SPECIES" }
 ACTION_LIST_REMAP = { eu = 0x09BD38F0, type = "bytes", doc = "alternate action-descriptor list (type 0x3A) used while ENTITY.FLAGS bit 0 is set" }
+EM_OVERLAY_SLOT = { eu = 0x09D15100, type = "bytes", doc = "footprint base of the slot every em*.ovl loads to, below its MWo3 load address (the overlay's lower BSS starts here)" }
+EM75_ENTER_ACTION = { eu = 0x09D3D608, type = "fn", doc = "em75 overlay's MONSTER_VTABLE.ENTER_ACTION implementation" }
+EM75_SPAWN_EFFECT = { eu = 0x09D36B58, type = "fn", doc = "em75 overlay's spawn_effect(entity, id, bone): bone position, EFFECT_OWNER and BASE_SPECIES, then EFFECT_SPAWN" }
+EM75_SCRIPT_STRUCT = { eu = 0x09D56448, type = "bytes", doc = "em75 overlay's AI-script struct; its first word turns nonzero once the script resources have streamed" }
 
 # --- model and resources ---
 SCRIPT_RESOURCE_REGISTER = { eu = 0x08890144, type = "fn", doc = "registerScriptResource(ctx, res_id, slot): queues a big monster's AI script resource" }
 STREAM_POLL = { eu = 0x088901E0, type = "fn", doc = "streaming-completion poll (ctx vt[0x38]) that every load barrier spins on" }
-GET_SUBRESOURCE = { eu = 0x088B89B0, type = "fn", doc = "get_subresource(pkg, type): a sub-file of a loaded package, after the overlay restructures it" }
+GET_SUBRESOURCE = { eu = 0x088B89B0, type = "fn", doc = "get_subresource(pkg, type): a sub-file of a package; the big-monster model load calls it on the raw PAC before the overlay restructures it" }
+BIGMON_SETUP = { eu = 0x088B996C, type = "fn", doc = "big-monster setup state machine (vt+0x10): registers the AI-script resources, then spins on STREAM_POLL" }
 JOINT_BUILDER = { eu = 0x088DC40C, type = "fn", doc = "builds an entity's joint array (entity, bone array, skeleton blob)" }
 JOINT_BUILDER_HOOK = { eu = 0x088DC444, type = "code", doc = "JOINT_BUILDER after its prologue (move s2, a2); the joint-fix patch site" }
+JOINT_BUILDER_RESUME = { eu = 0x088DC44C, type = "code", doc = "JOINT_BUILDER_HOOK past the displaced word and its delay slot; the joint fix resumes here" }
 RESOURCE_REQUEST = { eu = 0x088DDBD8, type = "fn", doc = "request(ctx, slot, file_id, size): queues a file load into a RESOURCE_TABLE slot" }
 RESOURCE_LOADED = { eu = 0x088DDF10, type = "fn", doc = "(ctx, slot): polls whether a RESOURCE_REQUEST slot has loaded" }
 VOLATILE_LOCK = { eu = 0x0890E0B0, type = "fn", doc = "import stub for sceKernelVolatileMemLock; the game locks at quest depart and never unlocks" }
 VOLATILE_UNLOCK = { eu = 0x0890E0B8, type = "fn", doc = "import stub for sceKernelVolatileMemUnlock" }
+STREAM_CTX_PTR = { eu = 0x089CC434, type = "ptr", doc = "the streaming context STREAM_POLL loads first and dispatches through (its vt[0x38])" }
 SCRIPT_RESOURCE_CTX = { eu = 0x08A631A0, type = "ptr", doc = "streaming context big-monster setup passes to SCRIPT_RESOURCE_REGISTER" }
 RESOURCE_TABLE = { eu = 0x09A4F0D0, type = "ptr", doc = "pointer to the resident-file table (RESOURCE_SLOT rows); also the ctx for RESOURCE_REQUEST" }
 MODEL_SETUP = { eu = 0x09AC4D30, type = "fn", doc = "per-entity model setup that consumes the raw model buffer every frame; overlay code" }
+MODEL_SETUP_RESUME = { eu = 0x09AC4D38, type = "code", doc = "MODEL_SETUP past its two displaced prologue words; the inject detour resumes here" }
 
 # --- stages and hit volumes ---
 USER_RAM = { eu = 0x08800000, type = "bytes", doc = "start of the 24 MB user partition: the game image, overlays and heap; the heap tables are found by scanning it" }
@@ -133,7 +166,7 @@ GATHER_SPOT_CURRENT = { eu = 0x090BEE60, type = "ptr", doc = "the GATHER_SPOT th
 MAP_MANAGER_PTR = { eu = 0x09A4F060, type = "ptr", doc = "pointer to the map manager (struct MAP_MANAGER): the session's map row and the stage on screen" }
 ATTACK_TABLE_SETTER = { eu = 0x09B674C0, type = "fn", doc = "(node, entity, attack id, table handle): copies ATTACK_RECORD[id] into the ATTACK_NODE; every species overlay calls it" }
 MAP_TABLE = { eu = 0x09CE4708, type = "bytes", doc = "32 MAP_ROW rows in game_sub.ovl, one per map; the stage loader resolves areas through it" }
-USER_RAM_END = { eu = 0x0A000000, type = "bytes", doc = "first address past the user partition" }
+USER_RAM_END = { eu = 0x0A000000, type = "bytes", doc = "first address past the user partition, and the start of the emulator's extra-RAM window" }
 
 # --- big-monster behaviour: moves, phases, chains ---
 CLIP_CURSOR_CROSSES = { eu = 0x08864348, type = "fn", doc = "(clip block, slot, frame in $f12): 1 on the tick the slot's clip cursor steps over frame" }
@@ -197,13 +230,20 @@ NPC_HALL_HUNTER = { eu = 0x090D3560, type = "bytes", doc = "NPC slot: the hunter
 NPC_HALL_FELYNE = { eu = 0x090D6E30, type = "bytes", doc = "NPC slot: the felyne waiting in the hall" }
 
 # --- framework regions ---
+MAIN_RAM = { eu = 0x08000000, type = "bytes", doc = "start of main RAM (kernel partition below USER_RAM); the lower bound of the framework's pointer checks" }
 AI_PUBLISH = { eu = 0x08AE2000, type = "bytes", doc = "framework-owned scratch the ai_publish mod writes and the HUD reads: 0x18 header + 21 x 0x14" }
+BOOT_SENTINEL = { eu = 0x08AEFFE0, type = "u32[5]", doc = "framework-owned boot cells a debugger reads when logging is down: stage, install rc, cave address, anchor readback, worker state" }
+PRX_STACK_GUARD = { eu = 0x09D88000, type = "bytes", doc = "framework-owned 16 KB block reserved when the PRX image cannot be: where the engine's construction-thread stack meets the PRX" }
 CLI_BRIDGE_BLOCK = { eu = 0x0A7F0000, type = "bytes", doc = "framework-owned command block (struct CLI_BRIDGE) the debug CLI writes; needs memory=64" }
+CLONE_POOL = { eu = 0x0A800000, type = "bytes", doc = "framework-owned entity-clone pool in the extra-RAM window, up to EXTRA_RAM_END" }
+INJECT_XRAM = { eu = 0x0B000000, type = "bytes", doc = "framework-owned model-inject scratch in the extra-RAM window (emulator only); a relocated PAC lands at its start" }
+EXTRA_RAM_END = { eu = 0x0C000000, type = "bytes", doc = "first address past the extra-RAM window (PPSSPP memory=64)" }
 
 [struct.ENTITY]
 doc = "common entity layout of monsters, the player combat entity and village NPCs; field docs name a narrower user"
 [struct.ENTITY.fields]
 VTABLE = { offset = 0x000, type = "ptr", doc = "class vtable; identifies the species more reliably than SPECIES" }
+RENDER_FLAGS = { offset = 0x004, type = "u32", doc = "engine output: bit 0x4 skips the draw (VISIBILITY_GATE sets it for a big monster out of section)" }
 DRAW_NODE = { offset = 0x008, type = "ptr", doc = "engine output: shared draw node while in the view frustum this frame, else 0" }
 ROTATION = { offset = 0x010, type = "f32[12]", doc = "3x4 orientation rows, rebuilt every frame from YAW: read only" }
 SIZE_SCALE = { offset = 0x024, type = "f32", doc = "size multiplier; re-derived every frame, so resize through RENDER_SCALE and SIZE_RADIUS" }
@@ -220,6 +260,7 @@ NEXT_OBJ = { offset = 0x1C4, type = "ptr", doc = "next entity on the engine's up
 PREV_OBJ = { offset = 0x1C8, type = "ptr", doc = "previous entity on the engine's update list (not a pursue target)" }
 PHASE = { offset = 0x1D5, type = "u8", doc = "per-action phase cursor (+0x1D5..+0x1D7), zeroed on each new (main, sub); handlers step it" }
 ID = { offset = 0x1E4, type = "u8", doc = "entity id" }
+CLASS = { offset = 0x1E9, type = "u8", doc = "class byte EFFECT_OWNER combines with ID" }
 SPECIES = { offset = 0x1E8, type = "u8", doc = "species id (emId), indexes SPECIES_TABLE; 0x46 Popo, 0x45 Anteka, 0x4B Tigrex" }
 YAW = { offset = 0x1F4, type = "u16", doc = "packed yaw, 0..0xFFFF = 0..2pi, atan2(dx, dz); the rotation control, write this not ROTATION" }
 POSITION = { offset = 0x200, type = "vec3", doc = "world position the engine draws from; writing it moves the entity" }
@@ -237,8 +278,10 @@ STIMULUS_TAG = { offset = 0x322, type = "u16", doc = "stimulus type written by t
 ANIM_INPUT = { offset = 0x324, type = "u16[3]", doc = "per-body-part animation input = executor action id + 0x3E8 + slot*0xC8" }
 ANIM_MODE = { offset = 0x32C, type = "u16[3]", doc = "per-body-part animation mode" }
 ANIM_SPEED = { offset = 0x334, type = "u16[3]", doc = "per-body-part playback speed each action installs with its clip; it tracks the action but is not an AI state" }
+ATTACK_GATE = { offset = 0x33C, type = "u8", doc = "ATTACK_RESOLVER runs the full attack resolution only while this is 0" }
 COMBAT_ENGAGED = { offset = 0x33D, type = "u8", doc = "set to 1 by the combat registrar together with COMBAT_NODE" }
 COMBATANT_IDS = { offset = 0x33E, type = "u16[16]", doc = "player only: combatant ids registered against the player" }
+COMBAT_LINK = { offset = 0x364, type = "u32", doc = "COMBAT_REGISTER stores COMBAT_NODE + 0x1C here" }
 COMBATANT_COUNT = { offset = 0x398, type = "u8", doc = "player only: number of ids in COMBATANT_IDS (at most 16)" }
 PENDING_DAMAGE = { offset = 0x3B8, type = "s16[8]", doc = "per-part pending damage the resolver totals into HP each frame" }
 COMBAT_REGISTERED = { offset = 0x3F8, type = "u8", doc = "set to 1 by the combat registrar together with COMBAT_NODE" }
@@ -257,9 +300,18 @@ AI_TIMER_B = { offset = 0x626, type = "u16", doc = "second AI countdown timer re
 STRESS = { offset = 0x62E, type = "u16", doc = "stress counter clamped to 75..450" }
 FLAGS = { offset = 0x638, type = "u32", doc = "flags: 0x8000 visibility gate B, 0x20 enraged, bit 0 swaps in ACTION_LIST_REMAP" }
 ACTION_LIST = { offset = 0x640, type = "ptr", doc = "action-descriptor list the dispatcher walks; a big monster's is its overlay's table of 8-byte rows, byte 0 the action id" }
+DETECT_RANGES = { offset = 0x64C, type = "f32[3]", doc = "detection ranges (1000, 2700, 5000 on a native); read on evaluate, never written, so zero sticks" }
+DETECT_RANGES_B = { offset = 0x67C, type = "f32[3]", doc = "second detection-range triple with the same values and use as DETECT_RANGES" }
 FLEE = { offset = 0x6D8, type = "u8", doc = "small monsters: 1 while fleeing; engine output, read only" }
 HERD_RALLY = { offset = 0x1214, type = "vec3", doc = "small monsters: herd rally position set when the player attacks the herd" }
 HERD_MEMBERS = { offset = 0x1220, type = "ptr[20]", doc = "small monsters: other entities in the same herd" }
+
+[struct.MONSTER_VTABLE]
+doc = "a species entity vtable (ENTITY.VTABLE): slot k at +8 + 4k, after the offset-to-top and typeinfo pair"
+[struct.MONSTER_VTABLE.fields]
+PICK_ACTION = { offset = 0x20, type = "ptr", doc = "vt[8] action picker, ACTION_PICKER on the small-monster-shaped species; a data word, so swapping it is JIT-safe" }
+AI_STEP = { offset = 0x7C, type = "ptr", doc = "per-frame AI step (slot 29), about 30 dispatches a second" }
+ENTER_ACTION = { offset = 0x88, type = "ptr", doc = "enter_action(entity, main, id, mode) (slot 32): provisions a behaviour pair and ends in ACT_SET" }
 
 [struct.PLAYER]
 doc = "player character struct at PLAYER_STRUCT, one of seven same-class slots; holds no stats"
@@ -280,11 +332,14 @@ POSITION = { offset = 0x100, type = "vec3", doc = "world position of this bone" 
 doc = "collision world COLLISION_WORLD_PTR points at"
 [struct.COLLISION_WORLD.fields]
 LIST_HEAD = { offset = 0x502C, type = "ptr", doc = "head of the per-frame hit-test node list, linked through COLLISION_NODE.NEXT" }
+NODE_COUNT = { offset = 0x5034, type = "u32", doc = "a count the clone driver logs as the node count; not verified" }
 
 [struct.COLLISION_NODE]
 doc = "node in the per-frame hit-test list; the engine rebuilds and reuses nodes every frame"
+size = 0x110
 [struct.COLLISION_NODE.fields]
 NEXT = { offset = 0x04, type = "ptr", doc = "next node in the list" }
+PREV = { offset = 0x08, type = "ptr", doc = "second list link; a node copy keeps it together with NEXT" }
 STATE = { offset = 0x0E, type = "u8", doc = "must not be 0xFF for the node to register" }
 ENTITY = { offset = 0x10, type = "ptr", doc = "owning entity" }
 ID = { offset = 0x18, type = "u16", doc = "combatant id the hit-test matches; the engine may use it as a table index" }
@@ -313,6 +368,7 @@ size = 0x2C
 [struct.QUEST_TARGET.fields]
 RECORD = { offset = 0x00, type = "ptr", doc = "the group's first monster record (struct QUEST_RECORD)" }
 EM_ID = { offset = 0x14, type = "u32", doc = "emId of that record" }
+MEMBER_FLAGS = { offset = 0x19, type = "u8[5]", doc = "one byte per member; meaning unknown, the framework writes 1 when it fills a group" }
 COUNT = { offset = 0x1E, type = "u16", doc = "monsters in this group" }
 
 [struct.QUEST_DATA]
@@ -326,8 +382,17 @@ SCRATCH_HEADER = { offset = 0x1C40, type = "bytes", doc = "framework-owned: 0x10
 doc = "one row of the big-monster list in QUEST_DATA"
 size = 0x10
 [struct.QUEST_LIST_NODE.fields]
+FLAG = { offset = 0x00, type = "u32", doc = "1 in a live node" }
+RESERVED = { offset = 0x04, type = "u32", doc = "0 in a live node" }
 HEADER = { offset = 0x08, type = "u32", doc = "monster-header offset from QUEST_DATA; 0 ends the list" }
 RECORD = { offset = 0x0C, type = "u32", doc = "monster-record offset from QUEST_DATA" }
+
+[struct.QUEST_MONSTER_HEADER]
+doc = "monster header in QUEST_DATA a QUEST_LIST_NODE.HEADER points at"
+size = 0x10
+[struct.QUEST_MONSTER_HEADER.fields]
+EM_ID = { offset = 0x00, type = "u16", doc = "emId, the same as the record's; the u16 after it is 0" }
+FILL = { offset = 0x04, type = "u8[12]", doc = "0xFF in every byte" }
 
 [struct.QUEST_RECORD]
 doc = "one monster record in QUEST_DATA; only EM_ID and the spawn position are species-neutral"
@@ -512,3 +577,14 @@ OWNER = { offset = 0x10, type = "ptr", doc = "the attacking entity" }
 RECORD = { offset = 0x1C, type = "bytes", doc = "verbatim copy of the ATTACK_RECORD" }
 VOLUME_SET = { offset = 0x34, type = "ptr", doc = "the HIT_VOLUME set the record's VOLUME_SET selects; the overlay stores it right after the setter call" }
 POSITION = { offset = 0x40, type = "vec3", doc = "the node's own position; bones 126 and 127 test against it" }
+
+[struct.CAM_ORBIT]
+doc = "the quest orbit camera CAM_ORBIT_UPDATE works on; CAM_EYE and CAM_PIVOT are its EYE and PIVOT"
+[struct.CAM_ORBIT.fields]
+EYE = { offset = 0x40, type = "vec3", doc = "eye; CAM_EYE_Y_STORE writes its y" }
+PIVOT = { offset = 0x50, type = "vec3", doc = "pivot the eye orbits, copied from the followed object each frame" }
+
+[struct.CAM_ORBIT_FRAME]
+doc = "CAM_ORBIT_UPDATE's stack frame at CAM_ORBIT_INPUTS"
+[struct.CAM_ORBIT_FRAME.fields]
+ANGLES = { offset = 0x17C, type = "f32[3]", doc = "orbit euler angles in radians, derived before the rotation is built" }
