@@ -80,12 +80,13 @@ class Extracted:
     root: Path
 
     @classmethod
-    def find(cls, path: str | Path | None = None) -> Extracted:
-        """From that directory or its `data_files`; by default from the MHFU_DATA variable."""
+    def find(cls, path: str | Path | None = None, env: str = "MHFU_DATA") -> Extracted:
+        """From that directory or its `data_files`; by default from the variable `env`, which
+        can name another game's extraction for `path` and `read`."""
         if path is None:
-            path = os.environ.get("MHFU_DATA")
+            path = os.environ.get(env)
             if not path:
-                raise FileNotFoundError("no extracted game: pass its directory or set MHFU_DATA")
+                raise FileNotFoundError(f"no extracted game: pass its directory or set {env}")
         root = Path(path).expanduser()
         if root.name == "data_files":
             root = root.parent

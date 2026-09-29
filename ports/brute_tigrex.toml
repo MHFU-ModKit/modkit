@@ -1,0 +1,27 @@
+schema = 1
+
+[port]
+name = "brute_tigrex"
+host_species = 75
+pac = "brute_tigrex.bin"
+replace = [
+    77,
+]
+
+[source]
+model = 5248
+
+[build]
+source_skeleton = true
+skin = "source"
+
+[clips.charge]
+slot = 61
+frames = 382
+loop = false
+label = "'crazy forward charge' per docs/brute_tigrex_anim_ids.txt (label 62 = a1 61 on v67_hostslots) — NOT re-derived on this build"
+
+[moves.charge]
+main = 2
+sub = 8
+clip = "charge"

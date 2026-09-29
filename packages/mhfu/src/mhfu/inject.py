@@ -48,6 +48,11 @@ def inject_filename(file_id: int) -> str:
     return f"file_{file_id:05d}.bin"
 
 
+def orig_filename(file_id: int) -> str:
+    """The pristine copy the PRX matches a loaded buffer against."""
+    return inject_filename(file_id) + ORIG
+
+
 def relocate_filename(file_id: int) -> str:
     """The grown file the relocate path loads into extra RAM."""
     return f"file_{file_id:05d}_grown.bin"
@@ -73,7 +78,7 @@ def _place(
     d = Path(inject_dir if inject_dir is not None else default_inject_dir())
     d.mkdir(parents=True, exist_ok=True)
     if orig is not None:
-        _atomic_write(d / (inject_filename(file_id) + ORIG), orig)
+        _atomic_write(d / orig_filename(file_id), orig)
     dst = d / name
     _atomic_write(dst, data)
     return str(dst)
@@ -84,10 +89,12 @@ def write_inject_bytes(
     file_id: int,
     inject_dir: str | os.PathLike[str] | None = None,
     orig: bytes | None = None,
+    name: str | None = None,
 ) -> str:
     """Place `data` as file `file_id`'s replacement and return its path. `orig`, the pristine
-    file the engine loads, goes first as the `.orig` sibling the PRX matches the buffer on."""
-    return _place(inject_filename(file_id), data, file_id, inject_dir, orig)
+    file the engine loads, goes first as the `.orig` sibling the PRX matches the buffer on;
+    `name` replaces the file name, for a Lua mod that names its file itself."""
+    return _place(name or inject_filename(file_id), data, file_id, inject_dir, orig)
 
 
 def write_relocate_bytes(
@@ -95,7 +102,8 @@ def write_relocate_bytes(
     file_id: int,
     inject_dir: str | os.PathLike[str] | None = None,
     orig: bytes | None = None,
+    name: str | None = None,
 ) -> str:
     """Place a file larger than the one the engine loaded, for the relocate path, and return
-    its path; `orig` as for `write_inject_bytes`."""
-    return _place(relocate_filename(file_id), grown, file_id, inject_dir, orig)
+    its path; `orig` and `name` as for `write_inject_bytes`."""
+    return _place(name or relocate_filename(file_id), grown, file_id, inject_dir, orig)

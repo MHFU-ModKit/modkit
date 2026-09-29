@@ -18,6 +18,7 @@ release ULES01213), and for porting monsters to it from Monster Hunter Portable 
 | `packages/` | Python libraries: the debugger client, the file formats, the game (`mhfu`, which also holds the address map every language is generated from), the porter |
 | `framework/` | The PRX plugin and its Lua host |
 | `apps/` | The studio (monster and map editor), the HUD, the Blender extension |
+| `ports/` | Manifests of the monsters ported from MHP3rd: the Brute Tigrex and the Zinogre |
 | `ppsspp/` | PPSSPP patched for automation, its build, and a headless container to run it in |
 | `examples/` | Example mods |
 | `docs/` | Guides and format references |
