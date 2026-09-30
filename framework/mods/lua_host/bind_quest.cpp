@@ -1,4 +1,4 @@
-/* mhfu.quest_* bindings. */
+/* mhfu.quest_* bindings; declared in lua/meta/mhfu.d.lua. */
 #include "mhfu/mhfu.h"
 #include "lua_host.h"
 
@@ -19,8 +19,6 @@ int lb_quest_replace_monster(lua_State *L)
 }
 int lb_quest_add_monster(lua_State *L)
 {
-    /* quest_add_monster(quest, id [, x, z]) — ADD a 2nd big monster.
-     * MUST be called from on_quest_targets_building. x/z 0 = clone source. */
     float x = (float)luaL_optnumber(L, 3, 0.0);
     float z = (float)luaL_optnumber(L, 4, 0.0);
     mhfu_hook_rc_t rc = mhfu_quest_add_monster(

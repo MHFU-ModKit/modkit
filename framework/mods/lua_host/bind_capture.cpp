@@ -1,11 +1,8 @@
-/* mhfu.capture bindings over the core's framebuffer capture. */
+/* mhfu.capture bindings over the core's framebuffer capture; declared in lua/meta/mhfu.d.lua. */
 #include "mhfu/mhfu.h"
 #include "internal.h"
 #include "lua_host.h"
 
-/* mhfu.capture(on [, scale [, interval_ms [, path]]]) -> running:bool
- * Streams the framebuffer to host0:/cap/stream.bin (psplink usbhostfs) on its own
- * thread; scale 1 full, 2 half (default); interval_ms 66 is about 15 fps. */
 int lb_capture(lua_State *L)
 {
     int on = lua_toboolean(L, 1);
@@ -19,7 +16,6 @@ int lb_capture(lua_State *L)
     return 1;
 }
 
-/* mhfu.capture_status() -> active:bool, frames:int, kb:int, last_err:int */
 int lb_capture_status(lua_State *L)
 {
     int f = 0, kb = 0, err = 0;

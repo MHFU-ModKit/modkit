@@ -1,23 +1,5 @@
-/* mhfu.em_* bindings over em_vhook, the big-monster vtable seams (src/core/em_vhook.cpp).
- *
- *   mhfu.em_installed()                         -> bool
- *   mhfu.em_request(main, sub [, mode])         -> bool   enter the pair on the
- *        next AI frame through the engine's own dispatcher, so it is provisioned
- *        (a charge gets its run budget, which a cell write does not give it)
- *   mhfu.em_substitute(slot, from_mask, from_sub, to_main, to_sub, count)
- *        the engine's own choice of (main, id) with main in the mask and id ==
- *        from_sub (mhfu.EM_ANY = any) is entered as (to_main, to_sub) instead;
- *        count = mhfu.EM_UNLIMITED for a standing entry, 0 clears
- *   mhfu.em_rule(slot, { from_mask=, from_sub=, to_main=, to_sub=, mode=,
- *        min_frames=, dist_lo=, dist_hi=, receding=, closing=, cooldown=,
- *        count= })   or  mhfu.em_rule(slot, nil)   a native 30 Hz brain rule
- *   mhfu.em_clear()
- *   mhfu.em_status() -> { installed, ai_ticks, act_enters, last_main, last_sub,
- *        frames, dist, sub_hits, sub_landed, sub_last_main, sub_last_sub,
- *        sub_last_mode, brain_fires, req_pending, req_done, req_main, req_sub,
- *        ring = { {main, sub, mode, subst}, ... oldest first },
- *        rule_fired = {..}, rule_left = {..}, sub_left = {..} }
- */
+/* mhfu.em_* bindings over em_vhook, the big-monster vtable seams (src/core/em_vhook.cpp);
+ * declared in lua/meta/mhfu.d.lua. */
 #include "mhfu/mhfu.h"
 #include "lua_host.h"
 

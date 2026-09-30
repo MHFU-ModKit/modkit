@@ -1,5 +1,5 @@
-/* The event bridge: mhfu.on_<event>(fn [, priority]) stores fn and subscribes a C trampoline
- * (owner lua_host); game-thread events run their Lua on the exec thread (marshal.h). */
+/* The event bridge: each mhfu.on_<event> (lua/meta/mhfu.d.lua) stores fn and subscribes a C
+ * trampoline (owner lua_host); game-thread events run their Lua on the exec thread (marshal.h). */
 #include "mhfu/mhfu.h"
 #include "lua_host.h"
 
@@ -29,7 +29,7 @@ static const char *err_text(lua_State *L)
     return lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "(not a string)";
 }
 
-/* Push the action ctx table { entity, type, slot, input }. */
+/* Push the picker ctx table (mhfu.PickCtx). */
 static void push_action_ctx(lua_State *L, uint32_t ent, uint8_t type,
                             uint8_t slot, uint16_t input)
 {
@@ -56,21 +56,20 @@ static int run_request(lua_State *L)
 {
     mhfu_lua_req_t *q = (mhfu_lua_req_t *)lua_touserdata(L, 1);
     switch (q->kind) {
-    case REQ_INPUT:     /* function(ctx) -> new vt8_input */
+    case REQ_INPUT:
         lua_rawgeti(L, LUA_REGISTRYINDEX, r_input);
         push_action_ctx(L, q->entity, q->mtype, q->slot, (uint16_t)q->in);
         lua_call(L, 1, 1);
         if (lua_isnumber(L, -1)) q->out = (uint16_t)lua_tointeger(L, -1);
         break;
-    case REQ_DECIDED:   /* function(ctx, engine_value) -> value */
+    case REQ_DECIDED:
         lua_rawgeti(L, LUA_REGISTRYINDEX, r_decided);
         push_action_ctx(L, q->entity, q->mtype, q->slot, q->aux);
         lua_pushinteger(L, (lua_Integer)q->in);
         lua_call(L, 2, 1);
         if (lua_isnumber(L, -1)) q->out = (uint32_t)lua_tointeger(L, -1);
         break;
-    case REQ_ACTIONSEL: /* function({ entity, type, action_id }) -> new action id, which
-                         * the executor fans out to every body slot itself */
+    case REQ_ACTIONSEL:
         lua_rawgeti(L, LUA_REGISTRYINDEX, r_action);
         lua_createtable(L, 0, 3);
         lua_pushinteger(L, (lua_Integer)q->entity); lua_setfield(L, -2, "entity");
@@ -79,7 +78,7 @@ static int run_request(lua_State *L)
         lua_call(L, 1, 1);
         if (lua_isnumber(L, -1)) q->out = (uint32_t)lua_tointeger(L, -1);
         break;
-    case REQ_SLOT:      /* function({ entity, type, slot, count }, cur) -> slot */
+    case REQ_SLOT:
         lua_rawgeti(L, LUA_REGISTRYINDEX, r_slot);
         lua_createtable(L, 0, 4);
         lua_pushinteger(L, (lua_Integer)q->entity); lua_setfield(L, -2, "entity");
@@ -97,7 +96,7 @@ static int run_request(lua_State *L)
         lua_rawgeti(L, LUA_REGISTRYINDEX, r_overlay);
         lua_call(L, 0, 0);
         break;
-    case REQ_QUEST:     /* function(quest_ptr) */
+    case REQ_QUEST:
         lua_rawgeti(L, LUA_REGISTRYINDEX, r_quest);
         lua_pushinteger(L, (lua_Integer)q->entity);
         lua_call(L, 1, 0);
@@ -204,7 +203,7 @@ static void tramp_death(const mhfu_bigmonster_death_ctx_t *ctx)
     mhfu_lua_leave();
 }
 
-/* poll thread; Lua: function(entity_ptr, monster_type, amount, hp, slot) */
+/* poll thread */
 static void tramp_damaged(const mhfu_bigmonster_damaged_ctx_t *ctx)
 {
     if (r_damaged == LUA_NOREF || !mhfu_lua_enter()) return;
@@ -229,7 +228,7 @@ static void tramp_quest(const mhfu_quest_ctx_t *ctx)
     marshal(REQ_QUEST, (uint32_t)ctx->quest, 0, 0, 0, 0);
 }
 
-/* ---- mhfu.on_<event>(fn [, priority]): a second call rebinds fn; the first priority stays ---- */
+/* ---- the registrars ---- */
 
 static int prio(lua_State *L) { return (int)luaL_optinteger(L, 2, 0); }
 

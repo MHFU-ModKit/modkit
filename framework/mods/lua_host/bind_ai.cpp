@@ -1,4 +1,4 @@
-/* mhfu.action_ptr_for binding. */
+/* mhfu.action_ptr_for binding; declared in lua/meta/mhfu.d.lua. */
 #include "mhfu/mhfu.h"
 #include "lua_host.h"
 

@@ -1,4 +1,4 @@
-/* mhfu.* log, raw memory and world-state bindings. */
+/* mhfu.* log, raw memory and world-state bindings; declared in lua/meta/mhfu.d.lua. */
 #include "mhfu/mhfu.h"
 #include "lua_host.h"
 
