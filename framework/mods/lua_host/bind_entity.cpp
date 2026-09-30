@@ -1,4 +1,4 @@
-/* mhfu.* entity, entity-clone and collision-node bindings. */
+/* mhfu.* entity, entity-clone and collision-node bindings; declared in lua/meta/mhfu.d.lua. */
 #include "mhfu/mhfu.h"
 #include "lua_host.h"
 
@@ -45,7 +45,6 @@ int lb_entity_force_aggro(lua_State *L)
     return 0;
 }
 
-/* mhfu.entities_of_type(type) -> { ptr, ptr, ... } */
 int lb_entities_of_type(lua_State *L)
 {
     int type = (int)luaL_checkinteger(L, 1);
@@ -58,15 +57,11 @@ int lb_entities_of_type(lua_State *L)
     }
     return 1;
 }
-/* mhfu.entity_clone(src_ptr) -> clone_ptr (0 on failure): a same-species copy,
- * spliced into the update chain and the registry. */
 int lb_entity_clone(lua_State *L)
 {
     lua_pushinteger(L, (lua_Integer)mhfu_entity_clone((uint32_t)luaL_checkinteger(L,1)));
     return 1;
 }
-/* mhfu.node_clone(template_node, clone_ent, uid) -> node_ptr (0 on failure); the
- * collision node is what lets a clone damage the player */
 int lb_node_clone(lua_State *L)
 {
     lua_pushinteger(L, (lua_Integer)mhfu_entity_node_clone(
@@ -74,31 +69,26 @@ int lb_node_clone(lua_State *L)
         (uint16_t)luaL_checkinteger(L,3)));
     return 1;
 }
-/* mhfu.node_of(ent) -> node_ptr (ENTITY.COMBAT_NODE), 0 if none */
 int lb_node_of(lua_State *L)
 {
     lua_pushinteger(L, (lua_Integer)mhfu_entity_node((uint32_t)luaL_checkinteger(L,1)));
     return 1;
 }
-/* mhfu.node_linked(node) -> bool */
 int lb_node_linked(lua_State *L)
 {
     lua_pushboolean(L, mhfu_entity_node_linked((uint32_t)luaL_checkinteger(L,1)));
     return 1;
 }
-/* mhfu.node_relink(node) -> bool (re-linked?) */
 int lb_node_relink(lua_State *L)
 {
     lua_pushboolean(L, mhfu_entity_node_relink((uint32_t)luaL_checkinteger(L,1)));
     return 1;
 }
-/* mhfu.node_sync(node, ent) */
 int lb_node_sync(lua_State *L)
 {
     mhfu_entity_node_sync((uint32_t)luaL_checkinteger(L,1), (uint32_t)luaL_checkinteger(L,2));
     return 0;
 }
-/* mhfu.node_detach(node) */
 int lb_node_detach(lua_State *L)
 {
     mhfu_entity_node_detach((uint32_t)luaL_checkinteger(L,1));
