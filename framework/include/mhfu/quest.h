@@ -24,8 +24,8 @@ mhfu_hook_rc_t mhfu_quest_replace_monster(mhfu_quest_t q, mhfu_monster_type_t fr
                                           mhfu_monster_type_t to);
 
 /* Add `id` as another big monster in its own target group, which is what makes it deal
- * damage. The engine holds about two damaging big monsters. x/z are the spawn point, 0 keeps
- * the source record's. Only Tigrex's record layout is known. */
+ * damage. The quest keeps its first target group, so NOSPACE once the others are taken.
+ * x/z are the spawn point, 0 keeps the source record's. Only Tigrex's record layout is known. */
 mhfu_hook_rc_t mhfu_quest_add_monster(mhfu_quest_t q, mhfu_monster_type_t id,
                                       float x, float z);
 

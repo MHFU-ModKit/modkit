@@ -11,7 +11,7 @@ PRXS  = build/mhfu_framework.prx build/mhfu_boot.prx
 # psp-prxgen copies EF_MIPS_ABI_EABI32 into the PRX, which old firmware rejects (0x800200D9)
 all: $(GEN)/addresses.gen.h $(GEN)/addresses.lua
 	docker run --rm --platform linux/amd64 --user "$$(id -u):$$(id -g)" -v "$(CURDIR)":/work -w /work \
-	    $(IMAGE) make -f Makefile.psp
+	    $(IMAGE) make -f Makefile.psp $(if $(findstring k,$(firstword -$(MAKEFLAGS))),-k)
 	uv run python tools/patch_prx_eflags.py $(PRXS)
 
 $(GEN)/addresses.gen.h: $(ADDR).toml $(ADDR).py

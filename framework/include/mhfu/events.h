@@ -1,26 +1,51 @@
-/* Fan-out events: the framework installs the anchors and poll threads, and every callback
- * registered for an event runs, higher priority first (mhfu_hook_event in hooks.h). */
+/* Events: one registry for every event the framework raises. A callback belongs to an owner,
+ * the mod id, and the framework drops an owner's callbacks when that mod shuts down. Higher
+ * priority runs first, ties in registration order. An event's hook is installed for its
+ * first subscriber; a code patch then lands at the next title or menu screen. */
 #ifndef MHFU_EVENTS_H
 #define MHFU_EVENTS_H
 
 #include <stdint.h>
 #include "types.h"
+#include "hooks.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef enum {
-    MHFU_EVENT_QUEST_BEGINNING       = 0, /* the player commits to a quest */
-    MHFU_EVENT_QUEST_ENTERED         = 1, /* area index becomes 98, the snowy-mountains camp */
-    MHFU_EVENT_MAP_SECTION_ENTERED   = 2, /* the area index changed */
-    MHFU_EVENT_MONSTER_SPAWNED       = 3, /* a new entity in registry slot 1 or above */
-    MHFU_EVENT_QUEST_TARGETS_BUILDING = 4, /* edit the quest's monster list here (quest.h) */
+    MHFU_EVENT_QUEST_BEGINNING,          /* the player commits to a quest */
+    MHFU_EVENT_QUEST_ENTERED,            /* the first area after QUEST_BEGINNING */
+    MHFU_EVENT_MAP_SECTION_ENTERED,      /* the area index changed */
+    MHFU_EVENT_MONSTER_SPAWNED,          /* a new entity in registry slot 1 or above */
+    MHFU_EVENT_QUEST_TARGETS_BUILDING,   /* edit the quest's monster list here (quest.h) */
+    /* big monsters, ai.h */
+    MHFU_EVENT_AI_OVERLAY_LOADED,
+    MHFU_EVENT_BIGMONSTER_SLOT_PICKED,
+    MHFU_EVENT_BIGMONSTER_ACTION_INPUT,
+    MHFU_EVENT_BIGMONSTER_ACTION_DECIDED,
+    MHFU_EVENT_BIGMONSTER_AI_STEP,
+    MHFU_EVENT_BIGMONSTER_ACTION,
+    MHFU_EVENT_BIGMONSTER_SPAWN,
+    MHFU_EVENT_BIGMONSTER_DEATH,
+    MHFU_EVENT_BIGMONSTER_DAMAGED,
 
     MHFU_EVENT_COUNT_
 } mhfu_event_id_t;
 
-/* Quest events: the registers at the anchor instruction. */
+/* A callback of any event, stored untyped; the event calls it through its own type. */
+typedef void (*mhfu_event_fn_t)(void);
+
+/* BADARG on a bad id, callback or owner; NOSPACE when the event is full; CONFLICT when its
+ * hook cannot be installed. The same owner and callback again is OK and adds nothing. The
+ * owner string is kept, not copied: a mod id or another literal. */
+mhfu_hook_rc_t mhfu_event_on(mhfu_event_id_t id, mhfu_event_fn_t cb, int priority,
+                             const char *owner);
+
+/* Drop every callback owner registered; the framework calls it on mod shutdown. */
+void mhfu_event_release(const char *owner);
+
+/* QUEST_BEGINNING and QUEST_ENTERED: the registers at the anchor instruction. */
 typedef struct {
     mhfu_event_id_t event_id;
     uint32_t        cell_value;
@@ -42,7 +67,7 @@ typedef struct {
 
 typedef struct {
     mhfu_event_id_t event_id;
-    int      slot;                /* registry slot, 1..20 */
+    int      slot;                /* registry slot, 1..MHFU_ENTITY_REGISTRY_COUNT-1 */
     uint32_t entity_ptr;
     uint8_t  monster_type;        /* ENTITY.SPECIES */
     uint8_t  entity_id;           /* ENTITY.ID */
@@ -50,37 +75,36 @@ typedef struct {
     float    size_scale;          /* ENTITY.SIZE_SCALE */
 } mhfu_monster_spawn_ctx_t;
 
-/* Context of MHFU_EVENT_QUEST_TARGETS_BUILDING. */
 typedef struct {
     mhfu_event_id_t event_id;
     mhfu_quest_t    quest;
 } mhfu_quest_ctx_t;
 
-/* The registry stores this; the typed aliases below check signatures at the caller. */
-typedef void (*mhfu_event_cb_t)(const void *ctx);
+typedef void (*mhfu_quest_cb_t)          (const mhfu_event_ctx_t *ctx);
+typedef void (*mhfu_map_section_cb_t)    (const mhfu_map_section_ctx_t *ctx);
+typedef void (*mhfu_monster_spawn_cb_t)  (const mhfu_monster_spawn_ctx_t *ctx);
+typedef void (*mhfu_quest_targets_cb_t)  (const mhfu_quest_ctx_t *ctx);
 
-typedef void (*mhfu_quest_cb_t)        (const mhfu_event_ctx_t *ctx);
-typedef void (*mhfu_map_section_cb_t)  (const mhfu_map_section_ctx_t *ctx);
-typedef void (*mhfu_monster_spawn_cb_t)(const mhfu_monster_spawn_ctx_t *ctx);
-
-/* Priority 0. Returns 0, or negative on a bad id or a full event. */
-int mhfu_event_register(mhfu_event_id_t event_id, mhfu_event_cb_t cb);
-
-static inline int mhfu_on_quest_beginning(mhfu_quest_cb_t cb) {
-    return mhfu_event_register(MHFU_EVENT_QUEST_BEGINNING,
-                               (mhfu_event_cb_t)(void *)cb);
+static inline mhfu_hook_rc_t mhfu_on_quest_beginning(mhfu_quest_cb_t cb, int priority,
+                                                     const char *owner) {
+    return mhfu_event_on(MHFU_EVENT_QUEST_BEGINNING, (mhfu_event_fn_t)cb, priority, owner);
 }
-static inline int mhfu_on_quest_entered(mhfu_quest_cb_t cb) {
-    return mhfu_event_register(MHFU_EVENT_QUEST_ENTERED,
-                               (mhfu_event_cb_t)(void *)cb);
+static inline mhfu_hook_rc_t mhfu_on_quest_entered(mhfu_quest_cb_t cb, int priority,
+                                                   const char *owner) {
+    return mhfu_event_on(MHFU_EVENT_QUEST_ENTERED, (mhfu_event_fn_t)cb, priority, owner);
 }
-static inline int mhfu_on_map_section_entered(mhfu_map_section_cb_t cb) {
-    return mhfu_event_register(MHFU_EVENT_MAP_SECTION_ENTERED,
-                               (mhfu_event_cb_t)(void *)cb);
+static inline mhfu_hook_rc_t mhfu_on_map_section_entered(mhfu_map_section_cb_t cb,
+                                                         int priority, const char *owner) {
+    return mhfu_event_on(MHFU_EVENT_MAP_SECTION_ENTERED, (mhfu_event_fn_t)cb, priority, owner);
 }
-static inline int mhfu_on_monster_spawned(mhfu_monster_spawn_cb_t cb) {
-    return mhfu_event_register(MHFU_EVENT_MONSTER_SPAWNED,
-                               (mhfu_event_cb_t)(void *)cb);
+static inline mhfu_hook_rc_t mhfu_on_monster_spawned(mhfu_monster_spawn_cb_t cb, int priority,
+                                                     const char *owner) {
+    return mhfu_event_on(MHFU_EVENT_MONSTER_SPAWNED, (mhfu_event_fn_t)cb, priority, owner);
+}
+static inline mhfu_hook_rc_t mhfu_on_quest_targets_building(mhfu_quest_targets_cb_t cb,
+                                                            int priority, const char *owner) {
+    return mhfu_event_on(MHFU_EVENT_QUEST_TARGETS_BUILDING, (mhfu_event_fn_t)cb, priority,
+                         owner);
 }
 
 #ifdef __cplusplus

@@ -48,13 +48,14 @@
  * the dwell counter and the distance.
  */
 #include "mhfu/mhfu.h"
-#include "stubs.h"
+#include "internal.h"
+#include "em_vhook_stubs.h"
 #include <pspsysmem.h>
 #include <stddef.h>
 
-#define MOD_ID "em_vhook"
+#define OWNER "mhfu_em"
 
-/* The config block, field for field the layout stubs.h indexes by offset. */
+/* The config block, field for field the layout em_vhook_stubs.h indexes by offset. */
 typedef struct {
     uint8_t  from_mask, from_sub, to_main, to_sub;
     uint32_t left;
@@ -137,13 +138,13 @@ static int alloc_block(void)
                                             BLOCK_BYTES, 0);
     if (g_block < 0) {
         mhfu_log("[%s] partition alloc FAILED (%d) - refusing to install",
-                 MOD_ID, (int)g_block);
+                 OWNER, (int)g_block);
         return -1;
     }
     uint8_t *base = (uint8_t *)sceKernelGetBlockHeadAddr(g_block);
     if ((uintptr_t)base >= MHFU_USER_RAM_END) {
         mhfu_log("[%s] block at 0x%08X is in the extra-RAM window - refusing",
-                 MOD_ID, (unsigned)(uintptr_t)base);
+                 OWNER, (unsigned)(uintptr_t)base);
         sceKernelFreePartitionMemory(g_block);
         g_block = -1;
         return -1;
@@ -157,7 +158,7 @@ static int alloc_block(void)
         ((uint32_t *)g_cfgp)[k] = 0;
     cfg_reset_live();
     mhfu_log("[%s] block @0x%08X (outside the PRX image), cfg @0x%08X",
-             MOD_ID, (unsigned)(uintptr_t)base, (unsigned)(uintptr_t)g_cfgp);
+             OWNER, (unsigned)(uintptr_t)base, (unsigned)(uintptr_t)g_cfgp);
     return 0;
 }
 
@@ -194,14 +195,14 @@ static void build_ai_stub(uint32_t original)
     int n = emv_build_ai_stub(g_stub_ai, STUB_AI_INSNS, cfg, original, ret, &overflow);
     if (overflow) {
         mhfu_log("[%s] ai stub is %d insns > STUB_AI_INSNS %d - installing a plain "
-                 "trampoline instead", MOD_ID, n, STUB_AI_INSNS);
+                 "trampoline instead", OWNER, n, STUB_AI_INSNS);
         g_stub_ai[0] = mips_j(original);
         g_stub_ai[1] = MIPS_NOP;
         return;
     }
     for (int k = n; k < STUB_AI_INSNS; k++) g_stub_ai[k] = MIPS_NOP;
     mhfu_log("[%s] ai stub: request + %d rules + one-shot budget, %d insns, frame-free",
-             MOD_ID, MHFU_EM_RULES, n);
+             OWNER, MHFU_EM_RULES, n);
 }
 
 /* --- slot 32: substitution pre part, the original, the budget post part. ---
@@ -231,14 +232,14 @@ static void build_act_stub(uint32_t original)
     int n = emv_build_act_stub(g_stub_act, STUB_ACT_INSNS, cfg, original, &overflow);
     if (overflow) {
         mhfu_log("[%s] act stub is %d insns > STUB_ACT_INSNS %d - installing a plain "
-                 "trampoline instead", MOD_ID, n, STUB_ACT_INSNS);
+                 "trampoline instead", OWNER, n, STUB_ACT_INSNS);
         g_stub_act[0] = mips_j(original);
         g_stub_act[1] = MIPS_NOP;
         return;
     }
     for (int k = n; k < STUB_ACT_INSNS; k++) g_stub_act[k] = MIPS_NOP;
     mhfu_log("[%s] act stub: %d-entry substitution PRE, original, budget POST; "
-             "%d insns, frame 0x%X", MOD_ID, MHFU_EM_SUBS, n, ACT_FRAME);
+             "%d insns, frame 0x%X", OWNER, MHFU_EM_SUBS, n, ACT_FRAME);
 }
 
 /* ------------------------------------------------------------ public API */
@@ -262,11 +263,11 @@ extern "C" void mhfu_em_substitute(int slot, uint8_t from_mask, uint8_t from_sub
     s->left      = count;
     if (count)
         mhfu_log("[%s] substitute[%d]: main mask 0x%02X sub %s -> (%u,%u) x%s",
-                 MOD_ID, slot, from_mask,
+                 OWNER, slot, from_mask,
                  from_sub == MHFU_EM_SUB_ANY ? "any" : "exact", to_main, to_sub,
                  count == MHFU_EM_UNLIMITED ? "standing" : "n");
     else
-        mhfu_log("[%s] substitute[%d]: cleared", MOD_ID, slot);
+        mhfu_log("[%s] substitute[%d]: cleared", OWNER, slot);
 }
 
 /* A pair to enter on the next AI frame, through the engine's dispatcher. */
@@ -292,7 +293,7 @@ extern "C" void mhfu_em_rule(int slot, const mhfu_em_rule_t *r)
     c->left = 0;                                    /* off while we write */
     if (!r || r->count == 0 || r->from_mask == 0) {
         c->from_mask = 0;
-        mhfu_log("[%s] rule[%d]: cleared", MOD_ID, slot);
+        mhfu_log("[%s] rule[%d]: cleared", OWNER, slot);
         return;
     }
     float lo = r->dist_lo < 0 ? 0 : r->dist_lo;
@@ -312,7 +313,7 @@ extern "C" void mhfu_em_rule(int slot, const mhfu_em_rule_t *r)
     c->left       = r->count;
     mhfu_log("[%s] rule[%d]: main mask 0x%02X sub %s, >=%u frames, d in [%d,%d)%s%s "
              "-> enter (%u,%u,m%u), cooldown %u, x%s",
-             MOD_ID, slot, r->from_mask,
+             OWNER, slot, r->from_mask,
              r->from_sub == MHFU_EM_SUB_ANY ? "any" : "exact",
              (unsigned)r->min_frames, (int)lo, (int)hi,
              (r->flags & MHFU_EM_RULE_RECEDING) ? ", receding" : "",
@@ -373,7 +374,7 @@ static void install_for(uint32_t entity)
      * makes us write elsewhere */
     if (vt < MHFU_VTABLE_BAND || vt >= MHFU_VTABLE_BAND_END) {
         mhfu_log("[%s] entity 0x%08X vtable 0x%08X outside the species band "
-                 "- not a big monster, skipping", MOD_ID,
+                 "- not a big monster, skipping", OWNER,
                  (unsigned)entity, (unsigned)vt);
         return;
     }
@@ -389,12 +390,21 @@ static void install_for(uint32_t entity)
     mhfu_hook_flush_caches();
 
     /* data writes, not code patches: they take outside the JIT-cold window */
-    mhfu_mem_write_u32(vt + MHFU_MONSTER_VTABLE_AI_STEP,      (uint32_t)(uintptr_t)g_stub_ai);
-    mhfu_mem_write_u32(vt + MHFU_MONSTER_VTABLE_ENTER_ACTION, (uint32_t)(uintptr_t)g_stub_act);
+    mhfu_hook_rc_t rc = mhfu_hook_vtable(vt + MHFU_MONSTER_VTABLE_AI_STEP,
+                                         (uint32_t)(uintptr_t)g_stub_ai, OWNER);
+    if (rc == MHFU_HOOK_OK)
+        rc = mhfu_hook_vtable(vt + MHFU_MONSTER_VTABLE_ENTER_ACTION,
+                              (uint32_t)(uintptr_t)g_stub_act, OWNER);
+    if (rc != MHFU_HOOK_OK) {
+        mhfu_hook_release(OWNER);
+        mhfu_log("[%s] vtable 0x%08X: slot claim failed (rc=%d), not installed",
+                 OWNER, (unsigned)vt, (int)rc);
+        return;
+    }
     g_installed = 1;
 
     mhfu_log("[%s] vtable 0x%08X: slot29 0x%08X -> 0x%08X, slot32 0x%08X -> 0x%08X",
-             MOD_ID, (unsigned)vt, (unsigned)g_orig_ai,
+             OWNER, (unsigned)vt, (unsigned)g_orig_ai,
              (unsigned)(uintptr_t)g_stub_ai, (unsigned)g_orig_act,
              (unsigned)(uintptr_t)g_stub_act);
 }
@@ -402,12 +412,11 @@ static void install_for(uint32_t entity)
 static void uninstall(void)
 {
     if (!g_installed) return;
-    mhfu_mem_write_u32(g_vtable + MHFU_MONSTER_VTABLE_AI_STEP,      g_orig_ai);
-    mhfu_mem_write_u32(g_vtable + MHFU_MONSTER_VTABLE_ENTER_ACTION, g_orig_act);
+    mhfu_hook_release(OWNER);
     g_installed = 0;
     mhfu_em_clear();
     mhfu_log("[%s] restored vtable 0x%08X (ai_ticks=%u act_enters=%u sub %u/%u "
-             "req %u brain %u)", MOD_ID, (unsigned)g_vtable,
+             "req %u brain %u)", OWNER, (unsigned)g_vtable,
              (unsigned)g_cfgp->ai_ticks, (unsigned)g_cfgp->act_enters,
              (unsigned)g_cfgp->sub_hits, (unsigned)g_cfgp->sub_landed,
              (unsigned)g_cfgp->req_done, (unsigned)g_cfgp->brain_fires);
@@ -431,7 +440,7 @@ static void on_quest(const mhfu_event_ctx_t *ctx)
     g_cfgp->req_done = 0;
 }
 
-static int em_vhook_init(void)
+extern "C" int mhfu_em_init(void)
 {
     if (alloc_block() < 0) return -1;
     g_cfgp->patch_off = MHFU_ENTITY_ACTION_BUDGET;
@@ -439,16 +448,14 @@ static int em_vhook_init(void)
     g_cfgp->want_main = 0xFF;      /* matches nothing: nothing arms the budget override */
     g_cfgp->want_sub  = 0xFF;
     g_cfgp->canary    = CFG_CANARY_VAL;
-    mhfu_on_monster_spawned(on_spawn);
-    mhfu_on_quest_beginning(on_quest);
-    mhfu_log("[%s] v3.0 ready; cfg @0x%08X, stubs @0x%08X / 0x%08X", MOD_ID,
+    if (mhfu_on_monster_spawned(on_spawn, 0, OWNER) != MHFU_HOOK_OK ||
+        mhfu_on_quest_beginning(on_quest, 0, OWNER) != MHFU_HOOK_OK) {
+        mhfu_event_release(OWNER);
+        mhfu_log("[%s] event registration failed", OWNER);
+        return -1;
+    }
+    mhfu_log("[%s] ready; cfg @0x%08X, stubs @0x%08X / 0x%08X", OWNER,
              (unsigned)(uintptr_t)g_cfgp,
              (unsigned)(uintptr_t)g_stub_ai, (unsigned)(uintptr_t)g_stub_act);
     return 0;
 }
-
-static void em_vhook_shutdown(void) { uninstall(); }
-
-MHFU_MOD(.id = MOD_ID, .version = "3.0",
-         .needs = 0, .conflicts = 0,
-         .init = em_vhook_init, .shutdown = em_vhook_shutdown);

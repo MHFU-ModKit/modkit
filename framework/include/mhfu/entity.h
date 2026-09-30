@@ -1,5 +1,5 @@
-/* Entity access: the registry (MHFU_ENTITY_REGISTRY; slot 0 is never the player, 0 = empty)
- * and typed fields. Field offsets are the generated MHFU_ENTITY_* macros. */
+/* Entity access: the registry (MHFU_ENTITY_REGISTRY, MHFU_ENTITY_REGISTRY_COUNT slots; slot 0 is
+ * never the player, 0 = empty) and typed fields, whose offsets are the MHFU_ENTITY_* macros. */
 #ifndef MHFU_ENTITY_H
 #define MHFU_ENTITY_H
 
@@ -10,8 +10,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#define MHFU_REGISTRY_SLOTS 21
 
 uint32_t mhfu_entity_at(int slot);             /* the pointer in slot, or 0 */
 int      mhfu_entity_slot_of(uint32_t ent);    /* ent's slot, or -1 */

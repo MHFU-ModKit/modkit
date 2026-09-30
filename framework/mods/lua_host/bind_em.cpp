@@ -1,6 +1,4 @@
-/* mhfu.em_* bindings over the big-monster vtable seams (mods/em_vhook).
- * Bound weak so the PRX links with em_vhook off the manifest; each binding then
- * returns nil or false and the Lua runtime falls back to writing act_set's cells.
+/* mhfu.em_* bindings over em_vhook, the big-monster vtable seams (src/core/em_vhook.cpp).
  *
  *   mhfu.em_installed()                         -> bool
  *   mhfu.em_request(main, sub [, mode])         -> bool   enter the pair on the
@@ -23,21 +21,13 @@
 #include "mhfu/mhfu.h"
 #include "lua_host.h"
 
-extern "C" int  mhfu_em_installed(void) __attribute__((weak));
-extern "C" int  mhfu_em_request(uint8_t, uint8_t, uint8_t) __attribute__((weak));
-extern "C" void mhfu_em_substitute(int, uint8_t, uint8_t, uint8_t, uint8_t, uint32_t) __attribute__((weak));
-extern "C" void mhfu_em_rule(int, const mhfu_em_rule_t *) __attribute__((weak));
-extern "C" void mhfu_em_clear(void) __attribute__((weak));
-extern "C" void mhfu_em_status(mhfu_em_status_t *) __attribute__((weak));
-
 static int lb_em_installed(lua_State *L)
 {
-    lua_pushboolean(L, mhfu_em_installed ? mhfu_em_installed() : 0);
+    lua_pushboolean(L, mhfu_em_installed());
     return 1;
 }
 static int lb_em_request(lua_State *L)
 {
-    if (!mhfu_em_request) { lua_pushboolean(L, 0); return 1; }
     int ok = mhfu_em_request((uint8_t)luaL_checkinteger(L, 1),
                               (uint8_t)luaL_checkinteger(L, 2),
                               (uint8_t)luaL_optinteger(L, 3, 0));
@@ -46,7 +36,6 @@ static int lb_em_request(lua_State *L)
 }
 static int lb_em_substitute(lua_State *L)
 {
-    if (!mhfu_em_substitute) { lua_pushboolean(L, 0); return 1; }
     mhfu_em_substitute((int)luaL_checkinteger(L, 1),
                         (uint8_t)luaL_checkinteger(L, 2),
                         (uint8_t)luaL_checkinteger(L, 3),
@@ -79,7 +68,6 @@ static int tbl_bool(lua_State *L, int idx, const char *k)
 }
 static int lb_em_rule(lua_State *L)
 {
-    if (!mhfu_em_rule) { lua_pushboolean(L, 0); return 1; }
     int slot = (int)luaL_checkinteger(L, 1);
     if (lua_isnoneornil(L, 2)) { mhfu_em_rule(slot, 0); lua_pushboolean(L, 1); return 1; }
     luaL_checktype(L, 2, LUA_TTABLE);
@@ -102,13 +90,12 @@ static int lb_em_rule(lua_State *L)
 }
 static int lb_em_clear(lua_State *L)
 {
-    if (mhfu_em_clear) mhfu_em_clear();
-    lua_pushboolean(L, mhfu_em_clear != 0);
+    mhfu_em_clear();
+    lua_pushboolean(L, 1);
     return 1;
 }
 static int lb_em_status(lua_State *L)
 {
-    if (!mhfu_em_status) { lua_pushnil(L); return 1; }
     mhfu_em_status_t st;
     mhfu_em_status(&st);
     lua_newtable(L);

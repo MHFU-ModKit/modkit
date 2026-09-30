@@ -10,6 +10,11 @@ extern "C" {
 #include "lauxlib.h"
 }
 
+#include "marshal.h"
+
+/* The mod id, and the owner of every event lua_host registers. */
+#define MHFU_LUA_HOST_ID "lua_host"
+
 /* --- the VM (vm.cpp) --- */
 extern lua_State   *mhfu_lua_vm;
 extern volatile int mhfu_lua_have_tick;   /* a global mhfu_tick is defined */
@@ -24,10 +29,9 @@ unsigned mhfu_lua_slab_live(void);
 int      mhfu_lua_enter(void);
 void     mhfu_lua_leave(void);
 
-/* --- the event bridge (events.cpp) --- */
-int  mhfu_lua_exec_start(void);           /* the exec thread; -1 on failure */
-void mhfu_lua_exec_stop(void);            /* game-thread events pass through from now */
-void mhfu_lua_exec_free(void);
+/* --- the event bridge (events.cpp); the exec thread in marshal.h --- */
+/* Runs one marshalled request's Lua; the exec thread's server. */
+void mhfu_lua_serve(mhfu_lua_req_t *q);
 
 /* --- memory-stick scripts (scripts.cpp) --- */
 void mhfu_lua_scripts_init(void);         /* the read buffer */

@@ -17,13 +17,13 @@ extern "C" {
 
 uint32_t mhfu_entity_at(int slot)
 {
-    if (slot < 0 || slot >= MHFU_REGISTRY_SLOTS) return 0;
+    if (slot < 0 || slot >= MHFU_ENTITY_REGISTRY_COUNT) return 0;
     return *(volatile uint32_t *)(MHFU_ENTITY_REGISTRY + slot * 4);
 }
 
 int mhfu_entity_slot_of(uint32_t ent)
 {
-    for (int s = 1; s < MHFU_REGISTRY_SLOTS; s++)
+    for (int s = 1; s < MHFU_ENTITY_REGISTRY_COUNT; s++)
         if (mhfu_entity_at(s) == ent) return s;
     return -1;
 }
@@ -79,7 +79,7 @@ void mhfu_entity_set_pos(uint32_t ent, mhfu_vec3_t p)
 int mhfu_entity_list(mhfu_monster_type_t type, uint32_t *out, int max)
 {
     int n = 0;
-    for (int s = 1; s < MHFU_REGISTRY_SLOTS && n < max; s++) {
+    for (int s = 1; s < MHFU_ENTITY_REGISTRY_COUNT && n < max; s++) {
         uint32_t p = mhfu_entity_at(s);
         if (p && mhfu_entity_monster_type(p) == (uint8_t)type) out[n++] = p;
     }
@@ -171,7 +171,6 @@ static uint32_t clone_stride(uint8_t type)
 /* Clone scratch, bump-allocated from one pool taken on the first clone. */
 #define CLONE_POOL_SLOTS   16u
 #define CLONE_SLOT_BYTES   0x8000u   /* >= the largest entity size, 256-aligned */
-static int      g_clone_uid  = -1;
 static uint32_t g_clone_bump = 0;
 static uint32_t g_clone_end  = 0;
 
@@ -184,7 +183,6 @@ static uint32_t clone_alloc(uint32_t bytes)
         SceUID uid = sceKernelAllocPartitionMemory(2, "mhfu_clones", PSP_SMEM_High, need, 0);
         if (uid < 0) uid = sceKernelAllocPartitionMemory(2, "mhfu_clones", PSP_SMEM_Low, need, 0);
         if (uid >= 0) {
-            g_clone_uid  = uid;
             g_clone_bump = (uint32_t)sceKernelGetBlockHeadAddr(uid);
             g_clone_end  = g_clone_bump + need;
             mhfu_log("[clone] pool (partmem) @0x%08X..0x%08X",
@@ -250,7 +248,7 @@ uint32_t mhfu_entity_clone(uint32_t src)
     mhfu_mem_write_u32(dst  + MHFU_ENTITY_PREV_OBJ, tail);
 
     /* 5. publish in the first free registry slot */
-    for (int s = 1; s < MHFU_REGISTRY_SLOTS; s++) {
+    for (int s = 1; s < MHFU_ENTITY_REGISTRY_COUNT; s++) {
         if (mhfu_entity_at(s) == 0) {
             *(volatile uint32_t *)(MHFU_ENTITY_REGISTRY + s * 4) = dst;
             break;

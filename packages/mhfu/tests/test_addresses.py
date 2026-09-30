@@ -14,8 +14,10 @@ BASE = addresses.RAM.start
 def constants(t: addresses.Table) -> dict[str, int]:
     """Every generated constant by its C name without the MHFU_ prefix."""
     out = {name: int(a) for name, a in t.addresses.items()}
+    out |= {f"{name}_COUNT": a.count for name, a in t.addresses.items() if a.count}
     for s in t.structs.values():
         out |= {f"{s.name}_{f}": int(v) for f, v in s.fields.items()}
+        out |= {f"{s.name}_{f}_COUNT": v.count for f, v in s.fields.items() if v.count}
         if s.size:
             out[f"{s.name}_SIZE"] = s.size
         if s.stride:
@@ -42,6 +44,7 @@ def in_c(t: addresses.Table, tmp_path) -> dict[str, int]:
 def in_lua(t: addresses.Table) -> dict[str, int]:
     addr = LuaRuntime().execute(addresses.render_lua(t))
     out = {name: addr[name] for name in t.addresses}
+    out |= {f"{name}_COUNT": addr[f"{name}_COUNT"] for name, a in t.addresses.items() if a.count}
     for s in t.structs.values():
         out |= {f"{s.name}_{f}": v for f, v in addr[s.name].items()}
     return out
@@ -86,6 +89,22 @@ def test_cli_writes_the_rendering(lang, tmp_path):
     assert out.read_text() == addresses.RENDER[lang](addresses.table())
 
 
+def test_an_array_carries_its_count(tmp_path):
+    data = {
+        "address": {"ROWS": entry(type="ROW[3]"), "WORDS": entry(BASE + 4, type="u32[5]")},
+        "struct": {
+            "ROW": {"doc": "d", "size": 8, "fields": {"F": entry_field()}},
+            "HOLDER": {"doc": "d", "fields": {"ROWS": entry_field() | {"type": "ROW[2]"}}},
+        },
+    }
+    t = addresses.parse(data)
+    assert (t.addresses["ROWS"].count, t.addresses["WORDS"].count) == (3, 5)
+    assert t.structs["ROW"].F.count is None
+    for found in (in_c(t, tmp_path), in_lua(t)):
+        assert (found["ROWS_COUNT"], found["WORDS_COUNT"], found["HOLDER_ROWS_COUNT"]) == (3, 5, 2)
+        assert "ROW_F_COUNT" not in found
+
+
 def test_unknown_names_raise():
     with pytest.raises(AttributeError):
         addresses.NOT_AN_ADDRESS  # noqa: B018
@@ -109,6 +128,9 @@ def entry_field(offset=0):
         ({"address": {"A": entry(addresses.RAM.stop + 1)}}, "outside"),
         ({"address": {"A": entry(), "B": entry()}}, "is already A"),
         ({"address": {"A": entry(type="int")}}, "unknown type"),
+        ({"address": {"A": entry(type="NO_SUCH_STRUCT[2]")}}, "unknown type"),
+        ({"address": {"A": entry(type="u8[0]")}}, "unknown type"),
+        ({"address": {"A": entry(type="u8[2]"), "A_COUNT": entry(BASE + 4)}}, "clashes"),
         ({"address": {"A": entry(doc="two\nlines")}}, "one line"),
         ({"address": {"A": entry(doc="ends */ early")}}, "one line"),
         ({"address": {"A": {"eu": BASE, "type": "u8"}}}, "expects exactly"),

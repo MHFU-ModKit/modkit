@@ -52,7 +52,7 @@ uint32_t mhfu_world_quest_timer(void)
 }
 uint32_t mhfu_world_player_hp(void)
 {
-    return *(volatile uint32_t *)(MHFU_PLAYER_ENTITY + MHFU_ENTITY_HP);
+    return *(volatile uint16_t *)(MHFU_PLAYER_ENTITY + MHFU_ENTITY_HP);
 }
 
 } /* extern "C" */

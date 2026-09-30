@@ -192,6 +192,7 @@ done:
     g_active = 0;
     g_thread = -1;
     g_run    = 0;
+    sceKernelExitDeleteThread(0);   /* frees the UID; a plain return leaves it dormant */
     return 0;
 }
 

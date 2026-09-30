@@ -9,7 +9,7 @@
  *   - the slot-32 stub's only stack use is its 16-byte frame (see build_act_stub);
  *   - each fits its slot (STUB_AI_INSNS / STUB_ACT_INSNS).
  *
- * The stubs index the config block by byte offset; mod.cpp's em_vhook_cfg_t
+ * The stubs index the config block by byte offset; em_vhook.cpp's em_vhook_cfg_t
  * mirrors it field for field (static_asserts).
  */
 #ifndef EM_VHOOK_STUBS_H

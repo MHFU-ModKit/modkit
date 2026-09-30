@@ -139,7 +139,7 @@ static int lua_host_init(void)
      * installed framework hooks. */
     mhfu_lua_ready = 1;
 
-    if (mhfu_lua_exec_start() != 0) return -1;
+    if (mhfu_lua_exec_start(mhfu_lua_serve) != 0) return -1;
 
     SceUID th = sceKernelCreateThread("mhfu_lua_host",
                                       (SceKernelThreadEntry)worker,
@@ -158,6 +158,6 @@ static void lua_host_shutdown(void)
     mhfu_lua_exec_free();
 }
 
-MHFU_MOD(.id = "lua_host", .version = "0.4",
+MHFU_MOD(.id = MHFU_LUA_HOST_ID, .version = "0.4",
          .needs = 0, .conflicts = 0,
          .init = lua_host_init, .shutdown = lua_host_shutdown);

@@ -25,20 +25,21 @@ typedef struct {
     int            used;
     uint32_t       file_id;
     char           path[160];
-    int            primed;
+    int            primed;        /* st_size and st_mtime hold the file read last */
     SceOff         st_size;
     ScePspDateTime st_mtime;
-    uint32_t       buf;           /* xram copy of the edited PAC, 0 = none */
+    /* xram blocks: kept for the entry's next read, since a bump allocator cannot free them */
+    uint32_t       buf;           /* the edited PAC, or a relocate entry's grown one */
     uint32_t       buf_cap;
-    uint32_t       obuf;          /* xram copy of the original PAC, the species match */
+    uint32_t       obuf;          /* the original PAC, the species match */
     uint32_t       obuf_cap;
     uint32_t       file_size;
     int            nsubs;
     sub_ent_t      subs[MHFU_MAX_SUBS];
     uint32_t       hits;          /* in-game overwrites */
-    uint32_t       applied_addr;  /* last buffer overwritten */
-    /* First word where edit != orig. The 256-byte header is the same in both, and the
-     * engine reloads a buffer at the same address, so this word tells pristine from done. */
+    /* First word where edit != orig; set only once both are read at the same size. The
+     * 256-byte header is the same in both, and the engine reloads a buffer at the same
+     * address, so this word tells pristine from done. */
     int            has_diff;
     uint32_t       diff_off;
     uint32_t       diff_orig;
@@ -48,17 +49,20 @@ typedef struct {
     int            relocate;
     uint32_t       orig_size;
     uint32_t       redirects;
-    /* Relocate entries keep only the original's header in user RAM; the grown PAC
-     * is staged into xram on first use, so the real PSP's volatile stays free until then. */
-    char           orig_path[160];
+    /* Relocate entries keep only the original's header in user RAM; the grown PAC is staged
+     * into xram on first use, so the real PSP's volatile stays free until then. */
     uint8_t        orig_hdr[256];
-    int            staged;        /* staging attempted (buf valid once it succeeded) */
+    int            ready;         /* buf holds the grown PAC */
+    int            tried;         /* a staging attempt failed; not retried until released */
 } inject_entry_t;
 
 extern inject_entry_t mhfu_inject_tab[MHFU_INJECT_MAX];
 
-/* Stages a relocate entry's grown PAC into xram; 1 once buf is set. inject.cpp. */
-int mhfu_inject_stage_relocate(inject_entry_t *e);
+/* A relocate entry's grown PAC now sits in [buf, buf + cap): the one place that marks it
+ * ready and hands its skeleton to the joint fix. inject.cpp. */
+void mhfu_inject_relocate_ready(inject_entry_t *e, uint32_t buf, uint32_t cap, uint32_t size);
+/* The block under a relocate entry is gone (volatile unlocked): forget it. inject.cpp. */
+void mhfu_inject_relocate_drop(inject_entry_t *e);
 
 /* Where xram is, picked once by mhfu_xram_init. */
 enum { XRAM_UNDECIDED = 0, XRAM_RAW, XRAM_VOLATILE };

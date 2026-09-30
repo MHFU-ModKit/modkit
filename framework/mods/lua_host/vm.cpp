@@ -131,6 +131,7 @@ volatile int         mhfu_lua_have_tick;
 static volatile int  g_paniced;     /* set by panic handler          */
 volatile int         mhfu_lua_ready;
 static SceUID        g_lua_sema = -1;
+static volatile int  g_holder = -1;   /* the thread inside the VM */
 
 /* The VM is not reentrant: the exec, poll and worker threads all take this lock. */
 int mhfu_lua_enter(void)
@@ -138,18 +139,27 @@ int mhfu_lua_enter(void)
     if (!mhfu_lua_vm || g_paniced || !mhfu_lua_ready) return 0;
     sceKernelWaitSema(g_lua_sema, 1, 0);
     if (g_paniced) { sceKernelSignalSema(g_lua_sema, 1); return 0; }
+    g_holder = sceKernelGetThreadId();
     return 1;
 }
-void mhfu_lua_leave(void) { sceKernelSignalSema(g_lua_sema, 1); }
+void mhfu_lua_leave(void)
+{
+    g_holder = -1;
+    sceKernelSignalSema(g_lua_sema, 1);
+}
 
-/* Lua's default panic aborts, which exits the game: release the lock so no
- * waiter hangs, then park this thread. */
+int mhfu_lua_vm_held(void) { return g_holder >= 0 && g_holder == sceKernelGetThreadId(); }
+
+/* Lua's default panic aborts, which exits the game: release the lock and answer a blocked
+ * game thread so no waiter hangs, then park this thread. */
 static int lua_host_panic(lua_State *L)
 {
-    const char *msg = lua_tostring(L, -1);
+    const char *msg = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : 0;
     mhfu_log("[lua_host] PANIC (VM disabled, game kept alive): %s",
              msg ? msg : "?");
     g_paniced = 1;
+    g_holder = -1;
+    mhfu_lua_exec_panic();
     if (g_lua_sema >= 0) sceKernelSignalSema(g_lua_sema, 1);
     for (;;) sceKernelDelayThread(1000 * 1000);
     return 0; /* unreachable */

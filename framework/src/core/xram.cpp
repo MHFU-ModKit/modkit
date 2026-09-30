@@ -4,7 +4,7 @@
  */
 #include "xram.h"
 #include "mhfu/log.h"
-#include "mhfu/world.h"        /* mhfu_world_ms0_io_safe, mhfu_world_area_index */
+#include "mhfu/world.h"        /* mhfu_world_ms0_io_safe */
 #include "internal.h"
 #include "addresses.gen.h"
 
@@ -41,7 +41,6 @@ void mhfu_xram_log(const char *fmt, ...)
 int             mhfu_xram_mode;
 static uint32_t g_vol_base, g_vol_size, g_vol_bump;   /* our volatile lock */
 static int      g_vol_locked;                         /* 0 never tried, 1 held, -1 last try failed */
-static int      g_prelock_armed;                      /* nothing sets it: prelock is inert */
 
 /* Write-probe a word. Faults on a real PSP, so call only behind the maxfree gate. */
 static int xram_raw_probe(uint32_t addr)
@@ -124,140 +123,18 @@ extern "C" uint32_t mhfu_xram_alloc(uint32_t n)
     return a;
 }
 
-/* Poll thread, 10 Hz: once armed, stage every relocate entry; 0 = volatile busy, retry. */
-extern "C" int mhfu_xram_prelock(void)
-{
-    if (!g_prelock_armed) return 1;
-    if (!mhfu_xram_mode) mhfu_xram_init();
-    if (mhfu_xram_mode != XRAM_VOLATILE) return 1;
-    static uint32_t s_throttle = 0;                 /* retry at 1 Hz, not every tick */
-    if ((s_throttle++ % 10) != 0) return 0;
-    int all = 1;
-    for (int i = 0; i < MHFU_INJECT_MAX; i++) {
-        inject_entry_t *e = &mhfu_inject_tab[i];
-        if (!e->used || !e->relocate || e->buf) continue;
-        e->staged = 0;                              /* allow a retry */
-        if (!mhfu_inject_stage_relocate(e)) all = 0;
-    }
-    return all;
-}
-
 /* Quest exit: unlock our volatile so the reward save does not freeze. The entries
  * staged in it are dropped and staged again next quest. */
 extern "C" void mhfu_xram_release(void)
 {
-    g_prelock_armed = 0;
     if (mhfu_xram_mode != XRAM_VOLATILE || g_vol_locked <= 0) return;
     for (int i = 0; i < MHFU_INJECT_MAX; i++) {
         inject_entry_t *e = &mhfu_inject_tab[i];
-        if (e->used && e->relocate) {
-            e->buf = 0; e->buf_cap = 0; e->staged = 0; e->redirects = 0;
-        }
+        if (e->used && e->relocate) mhfu_inject_relocate_drop(e);
     }
     g_vol_base = g_vol_size = g_vol_bump = 0;
     sceKernelVolatileMemUnlock(0);
     g_vol_locked = 0;
     mhfu_xram_log("[xram] VOLATILE released (quest exit) -> save-safe; re-stage next quest");
     mhfu_log("[inject] volatile released on quest exit (save-safe)");
-}
-
-/* Recon probe (compiled off): does the game need volatile during an in-quest section
- * load? Lock at quest depart, hold across the load, release on quest exit, menu or a
- * 15 s timeout; the log says whether the section loaded while held. Holding would
- * deadlock the game's blocking Lock, which is why it stays off. */
-static int      g_recon_enabled = 0;
-static int      g_recon_held;
-static uint32_t g_recon_base, g_recon_size;
-static int      g_recon_arm_log;           /* 0 none, 1 acquired, 2 busy; the poll logs it */
-static uint32_t g_recon_arm_rc;
-
-/* Quest-commit thread: non-blocking TryLock only, no ms0 I/O here. */
-extern "C" void mhfu_xram_recon_arm(void)
-{
-    if (!g_recon_enabled || g_recon_held) return;
-    if (!mhfu_xram_mode) mhfu_xram_init();
-    if (mhfu_xram_mode != XRAM_VOLATILE) return;
-    void *ptr = 0; int size = 0;
-    int rc = sceKernelVolatileMemTryLock(0, &ptr, &size);
-    if (rc >= 0 && ptr && size > 0) {
-        g_recon_held = 1;
-        g_recon_base = (uint32_t)(uintptr_t)ptr;
-        g_recon_size = (uint32_t)size;
-        g_recon_arm_log = 1;
-    } else {
-        g_recon_arm_log = 2;
-        g_recon_arm_rc  = (uint32_t)rc;
-    }
-}
-
-/* Poll thread, 10 Hz: log the acquire, release when due, probe the village, heartbeat. */
-extern "C" void mhfu_xram_recon_tick(uint8_t scr)
-{
-    if (!g_recon_enabled) return;
-    if (!mhfu_xram_mode) mhfu_xram_init();
-    if (mhfu_xram_mode != XRAM_VOLATILE) return;
-
-    static uint8_t  s_prev     = 0xFF;
-    static uint32_t s_beat     = 0;
-    static uint32_t s_vprobe   = 0;
-    static int      s_in_quest = 0;     /* reached scr 17 while holding */
-    static uint32_t s_hold_tk  = 0;
-    static int      s_rel_log  = 0;     /* pending release reason: 1 exit, 2 menu, 3 timeout */
-
-    /* the acquire happens during the depart load, where ms0 is off: log it once safe */
-    if (g_recon_arm_log && mhfu_world_ms0_io_safe()) {
-        if (g_recon_arm_log == 1)
-            mhfu_xram_log("[recon] ACQUIRED volatile at quest-depart base=0x%08X size=%uKB -> HELD into load",
-                          (unsigned)g_recon_base, (unsigned)(g_recon_size / 1024));
-        else
-            mhfu_xram_log("[recon] quest-depart TryLock BUSY rc=0x%08X (already held at depart = Scenario 2?)",
-                          (unsigned)g_recon_arm_rc);
-        g_recon_arm_log = 0;
-    }
-
-    /* Release on quest exit (only after reaching the quest: the load screen is not 17),
-     * at title or menu, or after 15 s without reaching the quest. */
-    if (g_recon_held) {
-        s_hold_tk++;
-        if (scr == 17 && !s_in_quest) {
-            s_in_quest = 1;
-            mhfu_xram_log("[recon] HELD volatile across load INTO quest (scr=17) area=%u "
-                          "-> Scenario 1 (game did NOT need volatile to load the section)",
-                          (unsigned)mhfu_world_area_index());
-        }
-        int leaving = (s_in_quest && s_prev == 17 && scr != 17);
-        int at_menu = (scr == 0x01 || scr == 0x04);
-        int timeout = (!s_in_quest && s_hold_tk > 150);
-        if (leaving || at_menu || timeout) {
-            sceKernelVolatileMemUnlock(0);
-            g_recon_held = 0;
-            s_rel_log = leaving ? 1 : (at_menu ? 2 : 3);
-            s_in_quest = 0; s_hold_tk = 0;
-            g_recon_base = g_recon_size = 0;
-        }
-    }
-    if (s_rel_log && mhfu_world_ms0_io_safe()) {
-        mhfu_xram_log("[recon] RELEASED volatile (%s) -> save-safe",
-                      s_rel_log == 1 ? "quest-exit" : (s_rel_log == 2 ? "menu" : "abort-timeout"));
-        s_rel_log = 0;
-    }
-
-    /* village: is volatile free at idle? TryLock and give it straight back */
-    if (!g_recon_held && scr == 22 && (s_vprobe++ % 20) == 0) {
-        void *ptr = 0; int size = 0;
-        int rc = sceKernelVolatileMemTryLock(0, &ptr, &size);
-        if (rc >= 0 && ptr && size > 0) {
-            sceKernelVolatileMemUnlock(0);
-            mhfu_xram_log("[recon] village(22): volatile FREE base=0x%08X size=%uKB",
-                          (unsigned)(uintptr_t)ptr, (unsigned)(size / 1024));
-        } else {
-            mhfu_xram_log("[recon] village(22): volatile BUSY rc=0x%08X", (unsigned)rc);
-        }
-    }
-
-    if (g_recon_held && (s_beat++ % 10) == 0)
-        mhfu_xram_log("[recon] HOLDING volatile scr=%u area=%u base=0x%08X (load survived)",
-                      (unsigned)scr, (unsigned)mhfu_world_area_index(), (unsigned)g_recon_base);
-
-    s_prev = scr;
 }

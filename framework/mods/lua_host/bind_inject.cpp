@@ -12,7 +12,7 @@ static int lb_load_relocated_overlay(lua_State *L)
     int rc = mhfu_ovl_load_relocated(path, &reg);
     if (rc != 0) { lua_pushnil(L); lua_pushinteger(L, rc); return 2; }
     if (run_inits) mhfu_ovl_run_static_inits(&reg);
-    lua_pushinteger(L, (lua_Integer)reg.region_base);
+    lua_pushinteger(L, (lua_Integer)reg.new_load);   /* region_base: the footprint's start */
     lua_pushinteger(L, (lua_Integer)reg.new_load);
     lua_pushinteger(L, (lua_Integer)reg.delta);
     return 3;
@@ -40,13 +40,13 @@ static int lb_inject_relocate(lua_State *L)
     lua_pushboolean(L, mhfu_inject_register_relocate(id, grown, orig) == 0);
     return 1;
 }
-/* mhfu.inject_now(file_id) -> dst_addr (0 = not located): re-read and apply now. */
+/* mhfu.inject_now(file_id) -> overwrites so far (0 = unknown id): re-read and apply now. */
 static int lb_inject_now(lua_State *L)
 {
     lua_pushinteger(L, (lua_Integer)mhfu_inject_now((uint32_t)luaL_checkinteger(L, 1)));
     return 1;
 }
-/* mhfu.inject_locate(file_id) -> live buffer addr (0 = not found). */
+/* mhfu.inject_locate(file_id) -> overwrites so far (0 = unknown id). */
 static int lb_inject_locate(lua_State *L)
 {
     lua_pushinteger(L, (lua_Integer)mhfu_inject_locate((uint32_t)luaL_checkinteger(L, 1)));

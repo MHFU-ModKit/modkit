@@ -3,47 +3,59 @@
 #define MHFU_CORE_INTERNAL_H
 
 #include <stdint.h>
+#ifndef MHFU_HOST
 #include <pspkerneltypes.h>
+#else
+typedef unsigned int SceSize;   /* host tests compile the core's pure parts */
+#endif
 #include "mhfu/events.h"
+#include "wrap.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Register snapshot a trampoline wrapper spills on its stack; the first 9 words match its frame. */
-typedef struct mhfu_anchor_regs {
-    uint32_t a0, a1, a2, a3;
-    uint32_t v0, v1;
-    uint32_t ra, sp, pc;
-} mhfu_anchor_regs_t;
-
-/* --- registry (registry.cpp) --- */
-int  mhfu_event_register_pri(mhfu_event_id_t id, mhfu_event_cb_t cb, int priority);
+/* --- events (events.cpp; the world events in world_events.cpp) --- */
+typedef struct {
+    mhfu_event_fn_t fn;
+    int             priority;
+    const char     *owner;
+} mhfu_handler_t;
+/* Copies id's callbacks, highest priority first, into out (MHFU_EVENT_MAX_HANDLERS of them);
+ * returns how many. A copy, so a release on another thread never tears a running dispatch. */
+#define MHFU_EVENT_MAX_HANDLERS 16
+int  mhfu_event_handlers(mhfu_event_id_t id, mhfu_handler_t *out);
 int  mhfu_event_count(mhfu_event_id_t id);
+/* Calls every callback of a notify event with ctx. */
 void mhfu_event_fire(mhfu_event_id_t id, const void *ctx);
-/* trampoline dispatchers; the cave wrappers call them with a0 = the spilled registers */
-void mhfu_event_dispatch_quest_beginning(const mhfu_anchor_regs_t *regs);
-void mhfu_event_dispatch_quest_entered  (const mhfu_anchor_regs_t *regs);
+/* The quest-event anchors' helpers, installed by the event install thread. */
+void mhfu_event_dispatch_quest_beginning(mhfu_regs_t *regs);
+void mhfu_event_dispatch_quest_entered(mhfu_regs_t *regs);
 int  mhfu_event_spawn_poll_thread(SceSize args, void *argp);
 
 /* --- code cave (cave.cpp) --- */
 uint32_t *mhfu_cave_alloc(int n_insns);   /* bump allocator; 0 if exhausted */
 
-/* --- self-modifying code (trampoline.cpp; mhfu_hook_flush_caches is in hooks.h) --- */
-void mhfu_smc_patch_word(uint32_t addr, uint32_t word); /* ranged invalidate */
-
-/* --- quiet-screen patch queue (install.cpp) --- */
-int  mhfu_hook_deferred_thread(SceSize args, void *argp);
-
-/* --- event trampolines (trampoline.cpp) --- */
-int  mhfu_event_install_trampolines(void);
-void mhfu_event_uninstall_trampolines(void);
-int  mhfu_event_install_thread(SceSize args, void *argp);
-/* Prefix trampoline on any anchor PC; install while the JIT is cold. Idempotent per address. */
-int  mhfu_hook_trampoline(uint32_t anchor_pc, uint32_t dispatcher);
-
-/* --- hook arbitration (hooks.cpp) --- */
+/* --- hook arbitration (hooks.cpp, install.cpp, anchors.cpp) --- */
 void mhfu_hook_init(void);
+/* mhfu_hook_detour patched now, for overlay code that has just loaded and is still JIT-cold.
+ * One wrapper per addr, reused by every re-patch; OK when addr already holds our J, BADARG
+ * (logged once per addr) when it holds neither that nor the expected words. */
+mhfu_hook_rc_t mhfu_hook_detour_now(uint32_t addr, uint32_t expect0, uint32_t expect1,
+                                    mhfu_wrap_fn pre, const char *owner);
+/* Every owner's patches, on module stop. */
+void mhfu_hook_release_all(void);
+/* Lands the queued patches whose words match; call only on a JIT-cold screen. */
+void mhfu_hook_land_queued(void);
+/* Ranged invalidate of one word: the write PPSSPP notices in a translated block. */
+void mhfu_smc_patch_word(uint32_t addr, uint32_t word);
+int  mhfu_hook_deferred_thread(SceSize args, void *argp);
+/* Installs the quest-event anchors, then re-installs one whenever it loses our J. */
+int  mhfu_event_install_thread(SceSize args, void *argp);
+#ifdef MHFU_HOST
+/* host tests: the game word at addr, in memory the test owns */
+volatile uint32_t *mhfu_host_word(uint32_t addr);
+#endif
 
 /* --- mod table (modtable.cpp) --- */
 void mhfu_mod_init_all(void);
@@ -52,22 +64,37 @@ void mhfu_mod_shutdown_all(void);
 /* --- AI events (ai.cpp) --- */
 void mhfu_ai_on_monster_spawn(int slot, uint32_t entity, uint8_t type, uint16_t hp);
 void mhfu_ai_poll_death(void);
+/* The hooks the registry installs for an event's first subscriber; <0 on failure. */
+int  mhfu_ai_install_overlay_loaded(void);
+int  mhfu_ai_install_slot_picked(void);
+int  mhfu_ai_install_picker(void);       /* ACTION_INPUT and ACTION_DECIDED */
+int  mhfu_ai_install_ai_step(void);
+int  mhfu_ai_install_action(void);
 
-/* --- quest domain (quest.cpp) --- */
-/* Installs the buildTargets wrapper if a mod subscribed; call after mhfu_mod_init_all(). */
-void mhfu_quest_init(void);
+/* --- quest (quest.cpp) --- */
+/* The buildTargets wrapper, queued for the first QUEST_TARGETS_BUILDING subscriber. */
+int  mhfu_quest_install_targets(void);
+
+/* --- em_vhook (em_vhook.cpp) --- */
+int  mhfu_em_init(void);
+
+/* --- joint fix (joint_fix.cpp) --- */
+void mhfu_joint_fix_init(void);
+/* The skeleton the joint builder gets when the engine passes it a bad one: the relocated
+ * PAC's skeleton sub, or 0 for none. */
+void mhfu_joint_fix_skeleton(uint32_t skel);
+/* The stub's words into out (cap words), loading the skeleton from skel_word; the word
+ * count, or 0 when it does not fit. Pure, for the host test. */
+int  mhfu_joint_fix_emit(uint32_t *out, int cap, uint32_t skel_word);
 
 /* --- extra RAM (xram.cpp) --- */
+/* First word of a PAC's skeleton sub; the joint builder reads a bone count after it. */
+#define MHFU_SKELETON_MAGIC 0xC0000000u
 /* Picks the injection scratch region once: the emulator's raw extra RAM or the real PSP's
  * volatile partition. */
 void mhfu_xram_init(void);
-/* Stages relocate entries into our volatile lock once armed; 1 when done. */
-int  mhfu_xram_prelock(void);
 /* Quest exit: unlocks our volatile lock and drops the entries staged in it. */
 void mhfu_xram_release(void);
-/* Volatile lock-hold probe, compiled off: arm at quest depart, tick from the poll. */
-void mhfu_xram_recon_arm(void);
-void mhfu_xram_recon_tick(uint8_t scr);
 
 /* --- real-PSP volatile interposer (volatile_interposer.cpp) --- */
 /* Repoints the game's volatile Lock/Unlock import stubs to our wrappers; real PSP only,
@@ -82,10 +109,6 @@ int  mhfu_capture_set(int on);                             /* 1 start, 0 stop; r
 int  mhfu_capture_status(int *frames, int *kb, int *err);  /* returns active (0/1) */
 /* ignored while active */
 void mhfu_capture_configure(int scale, int interval_ms, const char *path);
-
-/* --- bootstrap (bootstrap.cpp) --- */
-/* Debug sentinel cells (MHFU_BOOT_SENTINEL) for a host debugger when the log is unavailable. */
-void mhfu_sentinel_set(uint32_t offset, uint32_t value);
 
 #ifdef __cplusplus
 } /* extern "C" */

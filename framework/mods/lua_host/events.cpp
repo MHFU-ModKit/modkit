@@ -1,19 +1,7 @@
-/* The event bridge: mhfu.on_<event>(fn [, priority]) stores fn and installs a C
- * trampoline once; game-thread events run their Lua on the exec thread. */
-#include <pspthreadman.h>
-
+/* The event bridge: mhfu.on_<event>(fn [, priority]) stores fn and subscribes a C trampoline
+ * (owner lua_host); game-thread events run their Lua on the exec thread (marshal.h). */
 #include "mhfu/mhfu.h"
 #include "lua_host.h"
-
-static int g_inst_quest   = 0;          /* C trampoline installed?         */
-static int g_inst_spawn   = 0;
-static int g_inst_death   = 0;
-static int g_inst_damaged = 0;
-static int g_inst_overlay = 0;
-static int g_inst_slot    = 0;
-static int g_inst_input   = 0;
-static int g_inst_decided = 0;
-static int g_inst_action  = 0;
 
 static int r_quest   = LUA_NOREF;       /* registry ref to the Lua handler */
 static int r_spawn   = LUA_NOREF;
@@ -35,6 +23,12 @@ static void store_ref(lua_State *L, int *slot)
     *slot = luaL_ref(L, LUA_REGISTRYINDEX);
 }
 
+/* An error's text without converting it: a conversion allocates, which may fail. */
+static const char *err_text(lua_State *L)
+{
+    return lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "(not a string)";
+}
+
 /* Push the action ctx table { entity, type, slot, input }. */
 static void push_action_ctx(lua_State *L, uint32_t ent, uint8_t type,
                             uint8_t slot, uint16_t input)
@@ -46,193 +40,102 @@ static void push_action_ctx(lua_State *L, uint32_t ent, uint8_t type,
     lua_pushinteger(L, input);              lua_setfield(L, -2, "input");
 }
 
-/* ------------------------------------------------------------ marshal
- * Lua heap allocation on the engine's game thread (the AI tick that runs the
- * override callbacks) is corrupted: a fresh table's keys all read back as the
- * last value. The same code is fine on our own threads, so game-thread callbacks
- * hand their request to the exec thread and block for the result. The poll
- * thread (spawn, death, damage) and the worker (mhfu_tick) enter the VM directly. */
+/* ---- requests: game-thread events marshal, poll-thread events enter directly ---- */
 enum { REQ_NONE = 0, REQ_INPUT, REQ_DECIDED, REQ_SLOT, REQ_OVERLAY, REQ_QUEST,
        REQ_ACTIONSEL };
 
-typedef struct {
-    int      kind;
-    uint32_t entity;     /* entity_ptr, or quest ptr for REQ_QUEST            */
-    uint8_t  mtype;
-    uint8_t  slot;
-    uint16_t aux;        /* action_count (slot) / vt8_input (decided ctx)     */
-    uint32_t in;         /* engine_value / cur                                */
-    uint32_t out;        /* result, defaults to `in` (passthrough)            */
-} lua_req_t;
+static const char *const k_req_name[] = {
+    "?", "action_input", "action_decided", "slot_picked", "overlay_loaded",
+    "quest_targets_building", "action",
+};
 
-static volatile lua_req_t g_req;
-static SceUID g_req_sema  = -1;   /* exec thread blocks here for work          */
-static SceUID g_resp_sema = -1;   /* the game-thread caller blocks here        */
-static volatile int g_exec_ready;
+/* ---- one request's Lua, run by lua_pcall so an allocation failure is an error, not a
+ * panic that would park the exec thread with the game thread still waiting ---- */
 
-/* ---- handlers, run on the exec thread ---- */
-
-/* on_bigmonster_action_input: function(ctx) -> new vt8_input. */
-static uint32_t dispatch_input(lua_State *L, const volatile lua_req_t *q)
+static int run_request(lua_State *L)
 {
-    uint32_t ret = q->in;
-    lua_rawgeti(L, LUA_REGISTRYINDEX, r_input);
-    push_action_ctx(L, q->entity, q->mtype, q->slot, (uint16_t)q->in);
-    if (lua_pcall(L, 1, 1, 0) == LUA_OK) {
-        if (lua_isnumber(L, -1)) ret = (uint16_t)lua_tointeger(L, -1);
-    } else {
-        mhfu_log("[lua_host] action_input err: %s", lua_tostring(L, -1));
-    }
-    lua_pop(L, 1);
-    return ret;
-}
-
-static uint32_t dispatch_decided(lua_State *L, const volatile lua_req_t *q)
-{
-    uint32_t ret = q->in;
-    lua_rawgeti(L, LUA_REGISTRYINDEX, r_decided);
-    push_action_ctx(L, q->entity, q->mtype, q->slot, q->aux);
-    lua_pushinteger(L, (lua_Integer)q->in);
-    if (lua_pcall(L, 2, 1, 0) == LUA_OK) {
-        if (lua_isnumber(L, -1)) ret = (uint32_t)lua_tointeger(L, -1);
-    } else {
-        mhfu_log("[lua_host] action_decided err: %s", lua_tostring(L, -1));
-    }
-    lua_pop(L, 1);
-    return ret;
-}
-
-/* on_bigmonster_action: function({ entity, type, action_id }) -> new action id,
- * which the executor fans out to every body slot itself. */
-static uint32_t dispatch_actionsel(lua_State *L, const volatile lua_req_t *q)
-{
-    uint32_t ret = q->in;
-    lua_rawgeti(L, LUA_REGISTRYINDEX, r_action);
-    lua_createtable(L, 0, 3);
-    lua_pushinteger(L, (lua_Integer)q->entity); lua_setfield(L, -2, "entity");
-    lua_pushinteger(L, q->mtype);               lua_setfield(L, -2, "type");
-    lua_pushinteger(L, (lua_Integer)q->in);     lua_setfield(L, -2, "action_id");
-    if (lua_pcall(L, 1, 1, 0) == LUA_OK) {
-        if (lua_isnumber(L, -1)) ret = (uint32_t)lua_tointeger(L, -1);
-    } else {
-        mhfu_log("[lua_host] action(sel) err: %s", lua_tostring(L, -1));
-    }
-    lua_pop(L, 1);
-    return ret;
-}
-
-static uint32_t dispatch_slot(lua_State *L, const volatile lua_req_t *q)
-{
-    uint32_t ret = q->in;
-    lua_rawgeti(L, LUA_REGISTRYINDEX, r_slot);
-    lua_createtable(L, 0, 4);
-    lua_pushinteger(L, (lua_Integer)q->entity); lua_setfield(L, -2, "entity");
-    lua_pushinteger(L, q->mtype);               lua_setfield(L, -2, "type");
-    lua_pushinteger(L, q->slot);                lua_setfield(L, -2, "slot");
-    lua_pushinteger(L, q->aux);                 lua_setfield(L, -2, "count");
-    lua_pushinteger(L, (lua_Integer)q->in);
-    if (lua_pcall(L, 2, 1, 0) == LUA_OK) {
+    mhfu_lua_req_t *q = (mhfu_lua_req_t *)lua_touserdata(L, 1);
+    switch (q->kind) {
+    case REQ_INPUT:     /* function(ctx) -> new vt8_input */
+        lua_rawgeti(L, LUA_REGISTRYINDEX, r_input);
+        push_action_ctx(L, q->entity, q->mtype, q->slot, (uint16_t)q->in);
+        lua_call(L, 1, 1);
+        if (lua_isnumber(L, -1)) q->out = (uint16_t)lua_tointeger(L, -1);
+        break;
+    case REQ_DECIDED:   /* function(ctx, engine_value) -> value */
+        lua_rawgeti(L, LUA_REGISTRYINDEX, r_decided);
+        push_action_ctx(L, q->entity, q->mtype, q->slot, q->aux);
+        lua_pushinteger(L, (lua_Integer)q->in);
+        lua_call(L, 2, 1);
+        if (lua_isnumber(L, -1)) q->out = (uint32_t)lua_tointeger(L, -1);
+        break;
+    case REQ_ACTIONSEL: /* function({ entity, type, action_id }) -> new action id, which
+                         * the executor fans out to every body slot itself */
+        lua_rawgeti(L, LUA_REGISTRYINDEX, r_action);
+        lua_createtable(L, 0, 3);
+        lua_pushinteger(L, (lua_Integer)q->entity); lua_setfield(L, -2, "entity");
+        lua_pushinteger(L, q->mtype);               lua_setfield(L, -2, "type");
+        lua_pushinteger(L, (lua_Integer)q->in);     lua_setfield(L, -2, "action_id");
+        lua_call(L, 1, 1);
+        if (lua_isnumber(L, -1)) q->out = (uint32_t)lua_tointeger(L, -1);
+        break;
+    case REQ_SLOT:      /* function({ entity, type, slot, count }, cur) -> slot */
+        lua_rawgeti(L, LUA_REGISTRYINDEX, r_slot);
+        lua_createtable(L, 0, 4);
+        lua_pushinteger(L, (lua_Integer)q->entity); lua_setfield(L, -2, "entity");
+        lua_pushinteger(L, q->mtype);               lua_setfield(L, -2, "type");
+        lua_pushinteger(L, q->slot);                lua_setfield(L, -2, "slot");
+        lua_pushinteger(L, q->aux);                 lua_setfield(L, -2, "count");
+        lua_pushinteger(L, (lua_Integer)q->in);
+        lua_call(L, 2, 1);
         if (lua_isnumber(L, -1)) {
-            int s = (int)lua_tointeger(L, -1);
-            /* an out-of-range slot crashes the engine */
-            if (s >= 0 && s < (int)q->aux) ret = (uint8_t)s;
+            lua_Integer s = lua_tointeger(L, -1);
+            if (s >= 0 && s < (lua_Integer)q->aux) q->out = (uint8_t)s;   /* else a crash */
         }
-    } else {
-        mhfu_log("[lua_host] slot_picked err: %s", lua_tostring(L, -1));
-    }
-    lua_pop(L, 1);
-    return ret;
-}
-
-static void dispatch_overlay(lua_State *L)
-{
-    lua_rawgeti(L, LUA_REGISTRYINDEX, r_overlay);
-    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-        mhfu_log("[lua_host] overlay_loaded err: %s", lua_tostring(L, -1));
-        lua_pop(L, 1);
-    }
-}
-
-static void dispatch_quest(lua_State *L, const volatile lua_req_t *q)
-{
-    lua_rawgeti(L, LUA_REGISTRYINDEX, r_quest);
-    lua_pushinteger(L, (lua_Integer)q->entity);   /* quest ptr stored in entity */
-    if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-        mhfu_log("[lua_host] quest_targets_building err: %s", lua_tostring(L, -1));
-        lua_pop(L, 1);
-    }
-}
-
-/* Serves one request per loop, and always answers so the game thread never hangs. */
-static int exec_thread(SceSize args, void *argp)
-{
-    (void)args; (void)argp;
-    for (;;) {
-        sceKernelWaitSema(g_req_sema, 1, 0);
-        uint32_t out = g_req.in;          /* default = passthrough */
-        if (mhfu_lua_enter()) {
-            lua_State *L = mhfu_lua_vm;
-            switch (g_req.kind) {
-            case REQ_INPUT:   out = dispatch_input(L, &g_req);   break;
-            case REQ_DECIDED: out = dispatch_decided(L, &g_req); break;
-            case REQ_SLOT:    out = dispatch_slot(L, &g_req);    break;
-            case REQ_OVERLAY: dispatch_overlay(L);               break;
-            case REQ_QUEST:   dispatch_quest(L, &g_req);         break;
-            case REQ_ACTIONSEL: out = dispatch_actionsel(L, &g_req); break;
-            default: break;
-            }
-            mhfu_lua_leave();
-        }
-        g_req.out = out;
-        sceKernelSignalSema(g_resp_sema, 1);
+        break;
+    case REQ_OVERLAY:
+        lua_rawgeti(L, LUA_REGISTRYINDEX, r_overlay);
+        lua_call(L, 0, 0);
+        break;
+    case REQ_QUEST:     /* function(quest_ptr) */
+        lua_rawgeti(L, LUA_REGISTRYINDEX, r_quest);
+        lua_pushinteger(L, (lua_Integer)q->entity);
+        lua_call(L, 1, 0);
+        break;
+    default:
+        break;
     }
     return 0;
 }
 
-/* Single producer (the game thread is blocked between signal and wait), so the
- * request needs no lock. */
+void mhfu_lua_serve(mhfu_lua_req_t *q)
+{
+    if (!mhfu_lua_enter()) return;
+    lua_State *L = mhfu_lua_vm;
+    lua_pushcfunction(L, run_request);
+    lua_pushlightuserdata(L, q);
+    if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        mhfu_log("[lua_host] %s err: %s", k_req_name[q->kind], err_text(L));
+        lua_pop(L, 1);
+        q->out = q->in;
+    }
+    mhfu_lua_leave();
+}
+
 static uint32_t marshal(int kind, uint32_t entity, uint8_t mtype,
                         uint8_t slot, uint16_t aux, uint32_t in)
 {
-    if (!g_exec_ready) return in;
-    g_req.kind   = kind;
-    g_req.entity = entity;
-    g_req.mtype  = mtype;
-    g_req.slot   = slot;
-    g_req.aux    = aux;
-    g_req.in     = in;
-    g_req.out    = in;
-    sceKernelSignalSema(g_req_sema, 1);
-    sceKernelWaitSema(g_resp_sema, 1, 0);
-    return g_req.out;
+    mhfu_lua_req_t q;
+    q.kind   = kind;
+    q.entity = entity;
+    q.mtype  = mtype;
+    q.slot   = slot;
+    q.aux    = aux;
+    q.in     = in;
+    return mhfu_lua_marshal(&q);
 }
 
-/* Priority above the worker's, so it answers the blocked game thread first. */
-int mhfu_lua_exec_start(void)
-{
-    g_req_sema  = sceKernelCreateSema("mhfu_lua_req",  0, 0, 1, 0);
-    g_resp_sema = sceKernelCreateSema("mhfu_lua_resp", 0, 0, 1, 0);
-    if (g_req_sema < 0 || g_resp_sema < 0) {
-        mhfu_log("[lua_host] marshal sema create FAILED"); return -1;
-    }
-    SceUID ex = sceKernelCreateThread("mhfu_lua_exec",
-                                      (SceKernelThreadEntry)exec_thread,
-                                      0x11, 0x10000, 0, 0);
-    if (ex < 0) { mhfu_log("[lua_host] exec CreateThread FAILED"); return -1; }
-    sceKernelStartThread(ex, 0, 0);
-    g_exec_ready = 1;
-    return 0;
-}
-
-void mhfu_lua_exec_stop(void) { g_exec_ready = 0; }
-
-void mhfu_lua_exec_free(void)
-{
-    if (g_req_sema >= 0) { sceKernelDeleteSema(g_req_sema); g_req_sema = -1; }
-    if (g_resp_sema >= 0) { sceKernelDeleteSema(g_resp_sema); g_resp_sema = -1; }
-}
-
-/* ---- trampolines: game-thread events marshal, poll-thread events enter directly ---- */
+/* ---- trampolines ---- */
 
 static uint32_t tramp_decided(const mhfu_bigmonster_action_decided_ctx_t *ctx,
                               uint32_t engine_value)
@@ -280,7 +183,7 @@ static void tramp_spawn(const mhfu_bigmonster_spawn_ctx_t *ctx)
     lua_pushinteger(L, ctx->slot);
     lua_pushinteger(L, ctx->initial_hp);
     if (lua_pcall(L, 4, 0, 0) != LUA_OK) {
-        mhfu_log("[lua_host] spawn err: %s", lua_tostring(L, -1));
+        mhfu_log("[lua_host] spawn err: %s", err_text(L));
         lua_pop(L, 1);
     }
     mhfu_lua_leave();
@@ -295,7 +198,7 @@ static void tramp_death(const mhfu_bigmonster_death_ctx_t *ctx)
     lua_pushinteger(L, ctx->monster_type);
     lua_pushinteger(L, ctx->slot);
     if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
-        mhfu_log("[lua_host] death err: %s", lua_tostring(L, -1));
+        mhfu_log("[lua_host] death err: %s", err_text(L));
         lua_pop(L, 1);
     }
     mhfu_lua_leave();
@@ -313,87 +216,87 @@ static void tramp_damaged(const mhfu_bigmonster_damaged_ctx_t *ctx)
     lua_pushinteger(L, ctx->hp);
     lua_pushinteger(L, ctx->slot);
     if (lua_pcall(L, 5, 0, 0) != LUA_OK) {
-        mhfu_log("[lua_host] damaged err: %s", lua_tostring(L, -1));
+        mhfu_log("[lua_host] damaged err: %s", err_text(L));
         lua_pop(L, 1);
     }
     mhfu_lua_leave();
 }
 
 /* the quest-load thread is a game thread, so this one marshals too */
-static void tramp_quest(const void *vctx)
+static void tramp_quest(const mhfu_quest_ctx_t *ctx)
 {
-    const mhfu_quest_ctx_t *ctx = (const mhfu_quest_ctx_t *)vctx;
     if (r_quest == LUA_NOREF) return;
     marshal(REQ_QUEST, (uint32_t)ctx->quest, 0, 0, 0, 0);
 }
 
-/* ---- mhfu.on_<event>(fn [, priority]) ---- */
+/* ---- mhfu.on_<event>(fn [, priority]): a second call rebinds fn; the first priority stays ---- */
+
+static int prio(lua_State *L) { return (int)luaL_optinteger(L, 2, 0); }
+
+static void check(const char *api, mhfu_hook_rc_t rc)
+{
+    if (rc != MHFU_HOOK_OK) mhfu_log("[lua_host] mhfu.%s: not subscribed (rc=%d)", api, (int)rc);
+}
 
 static int lb_on_quest(lua_State *L)
 {
     store_ref(L, &r_quest);
-    int prio = (int)luaL_optinteger(L, 2, 0);
-    if (!g_inst_quest) {
-        mhfu_hook_event(MHFU_EVENT_QUEST_TARGETS_BUILDING,
-                        (mhfu_event_cb_t)tramp_quest, prio);
-        g_inst_quest = 1;
-    }
+    check("on_quest_targets_building",
+          mhfu_on_quest_targets_building(tramp_quest, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
 static int lb_on_spawn(lua_State *L)
 {
     store_ref(L, &r_spawn);
-    int prio = (int)luaL_optinteger(L, 2, 0);
-    if (!g_inst_spawn) { mhfu_on_bigmonster_spawn(tramp_spawn, prio); g_inst_spawn = 1; }
+    check("on_bigmonster_spawn", mhfu_on_bigmonster_spawn(tramp_spawn, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
 static int lb_on_death(lua_State *L)
 {
     store_ref(L, &r_death);
-    int prio = (int)luaL_optinteger(L, 2, 0);
-    if (!g_inst_death) { mhfu_on_bigmonster_death(tramp_death, prio); g_inst_death = 1; }
+    check("on_bigmonster_death", mhfu_on_bigmonster_death(tramp_death, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
 static int lb_on_damaged(lua_State *L)
 {
     store_ref(L, &r_damaged);
-    int prio = (int)luaL_optinteger(L, 2, 0);
-    if (!g_inst_damaged) { mhfu_on_bigmonster_damaged(tramp_damaged, prio); g_inst_damaged = 1; }
+    check("on_bigmonster_damaged",
+          mhfu_on_bigmonster_damaged(tramp_damaged, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
 static int lb_on_overlay(lua_State *L)
 {
     store_ref(L, &r_overlay);
-    int prio = (int)luaL_optinteger(L, 2, 0);
-    if (!g_inst_overlay) { mhfu_on_ai_overlay_loaded(tramp_overlay, prio); g_inst_overlay = 1; }
+    check("on_ai_overlay_loaded",
+          mhfu_on_ai_overlay_loaded(tramp_overlay, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
 static int lb_on_slot(lua_State *L)
 {
     store_ref(L, &r_slot);
-    int prio = (int)luaL_optinteger(L, 2, 0);
-    if (!g_inst_slot) { mhfu_on_bigmonster_slot_picked(tramp_slot, prio); g_inst_slot = 1; }
+    check("on_bigmonster_slot_picked",
+          mhfu_on_bigmonster_slot_picked(tramp_slot, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
 static int lb_on_input(lua_State *L)
 {
     store_ref(L, &r_input);
-    int prio = (int)luaL_optinteger(L, 2, 0);
-    if (!g_inst_input) { mhfu_on_bigmonster_action_input(tramp_input, prio); g_inst_input = 1; }
+    check("on_bigmonster_action_input",
+          mhfu_on_bigmonster_action_input(tramp_input, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
 static int lb_on_decided(lua_State *L)
 {
     store_ref(L, &r_decided);
-    int prio = (int)luaL_optinteger(L, 2, 0);
-    if (!g_inst_decided) { mhfu_on_bigmonster_action_decided(tramp_decided, prio); g_inst_decided = 1; }
+    check("on_bigmonster_action_decided",
+          mhfu_on_bigmonster_action_decided(tramp_decided, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
 static int lb_on_action(lua_State *L)
 {
     store_ref(L, &r_action);
-    int prio = (int)luaL_optinteger(L, 2, 0);
-    if (!g_inst_action) { mhfu_on_bigmonster_action(tramp_action, prio); g_inst_action = 1; }
+    check("on_bigmonster_action",
+          mhfu_on_bigmonster_action(tramp_action, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
 
