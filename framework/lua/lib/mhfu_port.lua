@@ -417,6 +417,8 @@ function Port:_arm_native()
   for _, n in ipairs(names) do
     local mv = self.moves[n]
     local mask, sub = claim_of(mv)
+    ---@cast mask integer
+    ---@cast sub integer
     if slot < MAX_SUBS then
       mhfu.em_substitute(slot, mask, sub, mv.main, mv.sub, EM_UNLIMITED)
       log("[port:%s] claim: host enter-actions with main in 0x%02X%s -> '%s' (%d,%d), standing",
