@@ -16,7 +16,9 @@ struct Sema {
     int                     count = 0, max = 1;
 };
 
-Sema             g_semas[8];
+/* Never destroyed: the exec thread is detached and still waits on one at exit, and glibc's
+ * condition-variable destructor blocks until its waiters wake, so pytest would never exit. */
+Sema *const      g_semas = new Sema[8];
 std::atomic<int> g_n_semas{0};
 std::atomic<int> g_next_tid{100};
 thread_local int t_tid = 0;
