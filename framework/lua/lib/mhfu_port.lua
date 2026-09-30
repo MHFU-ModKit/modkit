@@ -85,18 +85,18 @@ local atan2 = math.atan2 or math.atan
 
 -- ------------------------------------------------------------- logging
 -- mhfu.log takes one string (extra args vanish). Lines queue here and only the tick writes them:
--- lines logged at load or from an event callback go missing from framework.log.
-local PEND, PEND_N = {}, 0
+-- lines logged at load or from an event callback go missing from framework.log. The queue lives
+-- on P, so handlers registered before a library reload still reach it.
+P._pend = P._pend or {}
+local PEND = P._pend
 local function log(fmt, ...)
-  PEND_N = PEND_N + 1
-  PEND[PEND_N] = (select("#", ...) == 0) and fmt or string.format(fmt, ...)
+  PEND[#PEND + 1] = (select("#", ...) == 0) and fmt or string.format(fmt, ...)
 end
 P.log = log
 
 local function drain()
-  if PEND_N == 0 then return end
-  for i = 1, PEND_N do mhfu.log(PEND[i]); PEND[i] = nil end
-  PEND_N = 0
+  local n = #PEND
+  for i = 1, n do mhfu.log(PEND[i]); PEND[i] = nil end
 end
 
 -- ------------------------------------------------------------- native seams

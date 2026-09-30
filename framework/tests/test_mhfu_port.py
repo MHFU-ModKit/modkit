@@ -48,6 +48,12 @@ def test_hot_reload(lua: Any) -> None:
     assert lua.eval("port.ports.x ~= nil and port.ports.x ~= before")
 
 
+def test_log_survives_reload(lua: Any) -> None:
+    lua.execute('port = require("mhfu_port"); old_log = port.log' + RELOAD)
+    lua.execute('old_log("from a handler of the first load"); mhfu_tick()')
+    assert "from a handler of the first load" in lua.eval("mhfu.logs").values()
+
+
 def test_play_fallback(lua: Any) -> None:
     lua.execute(
         """
