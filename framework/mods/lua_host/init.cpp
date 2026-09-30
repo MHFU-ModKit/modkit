@@ -1,12 +1,14 @@
 /* lua_host: a sandboxed Lua 5.4 VM running mods from the memory stick against the
  * mhfu.* API. Setup, the 10 Hz worker and the mod descriptor. */
+#include <pspctrl.h>
 #include <pspthreadman.h>
 #include <string.h>
 
 #include "mhfu/mhfu.h"
 #include "lua_host.h"
+#include "lua_api.gen.inc"        /* k_mhfu_funcs, k_mhfu_consts */
 
-/* embed.S: NUL-terminated copies of lua/_prelude.lua and the generated address table */
+/* embed.S: NUL-terminated copies of lua/lib/_prelude.lua and the generated address table */
 extern "C" const char mhfu_lua_prelude[];
 extern "C" const char mhfu_lua_addresses[];
 
@@ -25,17 +27,11 @@ static int mhfu_index(lua_State *L)
 static void register_mhfu_api(lua_State *L)
 {
     lua_newtable(L);                       /* the mhfu table */
-    mhfu_lua_bind_memory(L);
-    mhfu_lua_bind_entity(L);
-    mhfu_lua_bind_quest(L);
-    mhfu_lua_bind_inject(L);
-    mhfu_lua_bind_input(L);
-    mhfu_lua_bind_ai(L);
-    mhfu_lua_bind_em(L);
-    mhfu_lua_bind_capture(L);
-    mhfu_lua_bind_freecam(L);
-    mhfu_lua_bind_combat(L);
-    mhfu_lua_bind_events(L);
+    luaL_setfuncs(L, k_mhfu_funcs, 0);
+    for (int i = 0; k_mhfu_consts[i].name; i++) {
+        lua_pushinteger(L, k_mhfu_consts[i].value);
+        lua_setfield(L, -2, k_mhfu_consts[i].name);
+    }
     lua_newtable(L);                       /* its metatable: mhfu.addr on first use */
     lua_pushcfunction(L, mhfu_index);
     lua_setfield(L, -2, "__index");
@@ -46,7 +42,7 @@ static void register_mhfu_api(lua_State *L)
 static void remove_unsafe_globals(lua_State *L)
 {
     static const char *unsafe[] = {
-        "dofile", "loadfile", "load", "loadstring", "require",
+        "dofile", "loadfile", "load", "loadstring",
         "collectgarbage", "rawget", "rawset", "rawequal", "rawlen", 0
     };
     for (int i = 0; unsafe[i]; i++) {
@@ -55,7 +51,8 @@ static void remove_unsafe_globals(lua_State *L)
     }
 }
 
-/* Only base, table, string and math are opened; io, os and debug are not linked. */
+/* Only base, table, string, math and a require limited to mods/lib are opened; io, os and
+ * debug are not linked. */
 static int lua_host_setup(void)
 {
     if (mhfu_lua_vm_open() != 0) return -1;
@@ -65,6 +62,7 @@ static int lua_host_setup(void)
     luaL_requiref(L, "table",  luaopen_table,  1); lua_pop(L, 1);
     luaL_requiref(L, "string", luaopen_string, 1); lua_pop(L, 1);
     luaL_requiref(L, "math",   luaopen_math,   1); lua_pop(L, 1);
+    mhfu_lua_install_require(L);
     remove_unsafe_globals(L);
     register_mhfu_api(L);
 
@@ -86,9 +84,11 @@ static int lua_host_setup(void)
     mhfu_lua_have_tick = lua_isfunction(L, -1);
     lua_pop(L, 1);
 
-    mhfu_log("[lua_host] VM ready: lua_Number=%dB live=%uB peak=%uB tick=%d",
-             (int)sizeof(lua_Number), mhfu_lua_slab_live(), mhfu_lua_slab_peak,
-             mhfu_lua_have_tick);
+    mhfu_log("[lua_host] VM ready: api=%d lua_Number=%dB live=%uB peak=%uB tick=%d",
+             MHFU_LUA_API_VERSION, (int)sizeof(lua_Number), mhfu_lua_slab_live(),
+             mhfu_lua_slab_peak, mhfu_lua_have_tick);
+    /* the scripts were just read from ms0, so a boot error need not wait for gameplay */
+    mhfu_log_flush_held();
     return 0;
 }
 

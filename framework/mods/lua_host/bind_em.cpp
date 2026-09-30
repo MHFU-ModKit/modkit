@@ -21,12 +21,12 @@
 #include "mhfu/mhfu.h"
 #include "lua_host.h"
 
-static int lb_em_installed(lua_State *L)
+int lb_em_installed(lua_State *L)
 {
     lua_pushboolean(L, mhfu_em_installed());
     return 1;
 }
-static int lb_em_request(lua_State *L)
+int lb_em_request(lua_State *L)
 {
     int ok = mhfu_em_request((uint8_t)luaL_checkinteger(L, 1),
                               (uint8_t)luaL_checkinteger(L, 2),
@@ -34,7 +34,7 @@ static int lb_em_request(lua_State *L)
     lua_pushboolean(L, ok);
     return 1;
 }
-static int lb_em_substitute(lua_State *L)
+int lb_em_substitute(lua_State *L)
 {
     mhfu_em_substitute((int)luaL_checkinteger(L, 1),
                         (uint8_t)luaL_checkinteger(L, 2),
@@ -66,7 +66,7 @@ static int tbl_bool(lua_State *L, int idx, const char *k)
     lua_pop(L, 1);
     return v;
 }
-static int lb_em_rule(lua_State *L)
+int lb_em_rule(lua_State *L)
 {
     int slot = (int)luaL_checkinteger(L, 1);
     if (lua_isnoneornil(L, 2)) { mhfu_em_rule(slot, 0); lua_pushboolean(L, 1); return 1; }
@@ -88,13 +88,13 @@ static int lb_em_rule(lua_State *L)
     lua_pushboolean(L, 1);
     return 1;
 }
-static int lb_em_clear(lua_State *L)
+int lb_em_clear(lua_State *L)
 {
     mhfu_em_clear();
     lua_pushboolean(L, 1);
     return 1;
 }
-static int lb_em_status(lua_State *L)
+int lb_em_status(lua_State *L)
 {
     mhfu_em_status_t st;
     mhfu_em_status(&st);
@@ -140,23 +140,4 @@ static int lb_em_status(lua_State *L)
     lua_setfield(L, -2, "sub_left");
 #undef SF_INT
     return 1;
-}
-
-static const luaL_Reg k_api[] = {
-    { "em_installed",     lb_em_installed },
-    { "em_request",       lb_em_request },
-    { "em_substitute",    lb_em_substitute },
-    { "em_rule",          lb_em_rule },
-    { "em_clear",         lb_em_clear },
-    { "em_status",        lb_em_status },
-    { 0, 0 },
-};
-
-void mhfu_lua_bind_em(lua_State *L)
-{
-    luaL_setfuncs(L, k_api, 0);
-    /* EM_UNLIMITED is -1 in this build's 32-bit lua_Integer; the cast back to
-     * uint32_t on the way in restores it. */
-    lua_pushinteger(L, (lua_Integer)MHFU_EM_SUB_ANY);   lua_setfield(L, -2, "EM_ANY");
-    lua_pushinteger(L, (lua_Integer)MHFU_EM_UNLIMITED); lua_setfield(L, -2, "EM_UNLIMITED");
 }

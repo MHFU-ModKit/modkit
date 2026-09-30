@@ -1,6 +1,9 @@
-/* Mods are .lua files in LUA_MODS_DIR: run at boot, re-run when one changes. */
+/* Mods are .lua files in LUA_MODS_DIR: run at boot, re-run when one changes. Libraries are
+ * .lua files in its lib/ subdirectory, run only through require and re-run in place when one
+ * that has been required changes. */
 #include <pspsysmem.h>
 #include <pspiofilemgr.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -8,6 +11,7 @@
 #include "lua_host.h"
 
 #define LUA_MODS_DIR "ms0:/PSP/PLUGINS/mhfu_framework/mods"
+#define LIB_PREFIX   "lib/"
 /* Per-file read buffer, allocated at init to keep it off the PRX load image.
  * A script over this size is skipped with only one boot-log line; keep every
  * script (and the port runtime library) under 96 KB. */
@@ -15,8 +19,8 @@
 static char  *g_filebuf;
 static SceUID g_filebuf_uid = -1;
 
-/* Hot reload tracks MAX_TRACKED scripts with names under NAME_CAP bytes; any other script
- * never runs, since an untracked one would re-run on every scan. */
+/* Hot reload tracks MAX_TRACKED scripts and libraries with names (lib/ included) under NAME_CAP
+ * bytes; any other script never runs, since an untracked one would re-run on every scan. */
 #define MAX_TRACKED 16
 #define NAME_CAP    64
 
@@ -48,9 +52,8 @@ static int ends_with_lua(const char *s)
         && (s[n-1]|0x20) == 'a';
 }
 
-/* Read, compile and run one script by basename. The caller holds the VM (setup
- * is single-threaded; hot reload takes the lock). 0 ok / -1 err. */
-static int load_lua_file(lua_State *L, const char *name)
+/* Read one script (a basename, or lib/<name>.lua) into g_filebuf; its length, or -1. */
+static int read_script(const char *name)
 {
     script_path_t path;
     script_path(path, name);
@@ -65,7 +68,14 @@ static int load_lua_file(lua_State *L, const char *name)
         return -1;
     }
     g_filebuf[n] = 0;
+    return n;
+}
 
+/* Read and compile one script, leaving its chunk on the stack; -1 on failure (logged). */
+static int compile_script(lua_State *L, const char *name)
+{
+    int n = read_script(name);
+    if (n < 0) return -1;
     char chunk[NAME_CAP + 1];
     snprintf(chunk, sizeof(chunk), "@%.*s", NAME_CAP - 1, name);   /* '@': a file name */
     if (luaL_loadbuffer(L, g_filebuf, (size_t)n, chunk) != LUA_OK) {
@@ -73,6 +83,15 @@ static int load_lua_file(lua_State *L, const char *name)
         lua_pop(L, 1);
         return -1;
     }
+    return n;
+}
+
+/* Read, compile and run one mod by basename. The caller holds the VM (setup
+ * is single-threaded; hot reload takes the lock). 0 ok / -1 err. */
+static int load_lua_file(lua_State *L, const char *name)
+{
+    int n = compile_script(L, name);
+    if (n < 0) return -1;
     if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
         mhfu_log("[lua_host] run FAILED %s: %s", name, lua_tostring(L, -1));
         lua_pop(L, 1);
@@ -87,7 +106,8 @@ static int load_lua_file(lua_State *L, const char *name)
  * mhfu.on_*(fn) calls replace the stored handlers, so the installed hooks call
  * the new closures with no reinstall. One shared global env: a script's module
  * locals reset on reload, two scripts on one event means the last wins, and a
- * deleted script's handlers stay registered. */
+ * deleted script's handlers stay registered. A library re-runs with
+ * package.loaded[name] still set, so one that keeps state can reuse its table. */
 typedef struct {
     char           name[NAME_CAP];
     SceOff         size;
@@ -96,6 +116,7 @@ typedef struct {
 static tracked_t g_tracked[MAX_TRACKED];
 static int       g_ntracked;
 static int       g_refusal_logged;
+static int       g_boot_load;             /* the boot load reads ms0 before gameplay */
 
 static int find_tracked(const char *name)
 {
@@ -121,6 +142,104 @@ static void log_refusal(const char *name)
     g_refusal_logged = 1;
 }
 
+/* Records the file's (size, mtime): -1 no file, 1 it differs from the recorded one, else 0. */
+static int restat(tracked_t *t)
+{
+    script_path_t path;
+    script_path(path, t->name);
+    SceIoStat st;
+    memset(&st, 0, sizeof(st));
+    if (sceIoGetstat(path, &st) < 0) return -1;
+    int changed = t->size != st.st_size
+        || memcmp(&t->mtime, &st.sce_st_mtime, sizeof(ScePspDateTime)) != 0;
+    t->size  = st.st_size;
+    t->mtime = st.sce_st_mtime;
+    return changed;
+}
+
+/* ------------------------------------------------------------ require
+ * package.searchers is {preload, lib_searcher}: require("name") runs mods/lib/name.lua once
+ * and caches what it returns in package.loaded. Outside the boot load a library is read only
+ * in gameplay, so a mod requires its libraries at its top level. */
+static int lib_searcher(lua_State *L)
+{
+    const char *mod = luaL_checkstring(L, 1);
+    for (const char *c = mod; *c; c++)
+        if (!isalnum((unsigned char)*c) && *c != '_') {
+            lua_pushfstring(L, "no library '%s': names are letters, digits and _", mod);
+            return 1;
+        }
+    char name[NAME_CAP];
+    if (!*mod || snprintf(name, sizeof(name), LIB_PREFIX "%s.lua", mod) >= (int)sizeof(name)) {
+        lua_pushfstring(L, "no library '%s': the name is empty or too long", mod);
+        return 1;
+    }
+    if (!g_boot_load && !mhfu_world_ms0_io_safe()) {
+        lua_pushfstring(L, "mods/%s not read: no Memory Stick access now, require it at a "
+                           "mod's top level", name);
+        return 1;
+    }
+    script_path_t path;
+    script_path(path, name);
+    SceIoStat st;
+    memset(&st, 0, sizeof(st));
+    if (sceIoGetstat(path, &st) < 0) {
+        lua_pushfstring(L, "no file 'mods/%s'", name);
+        return 1;
+    }
+    int idx = track_slot(name);
+    if (idx < 0) {
+        log_refusal(name);
+        return luaL_error(L, "mods/%s not loaded: hot reload tracks at most %d files",
+                          name, MAX_TRACKED);
+    }
+    restat(&g_tracked[idx]);
+    if (compile_script(L, name) < 0)
+        return luaL_error(L, "mods/%s did not load (framework.log has why)", name);
+    lua_pushstring(L, path);
+    return 2;
+}
+
+void mhfu_lua_install_require(lua_State *L)
+{
+    luaL_requiref(L, LUA_LOADLIBNAME, luaopen_package, 1);   /* package and require */
+    lua_getfield(L, -1, "searchers");
+    lua_pushcfunction(L, lib_searcher); lua_rawseti(L, -2, 2);
+    lua_pushnil(L); lua_rawseti(L, -2, 4);
+    lua_pushnil(L); lua_rawseti(L, -2, 3);
+    lua_pop(L, 1);
+    /* the rest of package reads files or loads C */
+    static const char *const drop[] = { "loadlib", "searchpath", "path", "cpath", 0 };
+    for (int i = 0; drop[i]; i++) { lua_pushnil(L); lua_setfield(L, -2, drop[i]); }
+    lua_pop(L, 1);
+}
+
+/* Re-runs a required library in place; 0 ok, 1 not required yet, -1 failed (logged). */
+static int rerun_library(lua_State *L, const char *name)
+{
+    char mod[NAME_CAP];
+    snprintf(mod, sizeof(mod), "%s", name + sizeof(LIB_PREFIX) - 1);
+    mod[strlen(mod) - 4] = 0;                               /* ".lua" */
+    luaL_getsubtable(L, LUA_REGISTRYINDEX, LUA_LOADED_TABLE);
+    int required = lua_getfield(L, -1, mod) != LUA_TNIL;
+    lua_pop(L, 1);
+    if (!required) { lua_pop(L, 1); return 1; }
+    if (compile_script(L, name) < 0) { lua_pop(L, 1); return -1; }
+    script_path_t path;
+    script_path(path, name);
+    lua_pushstring(L, mod);
+    lua_pushstring(L, path);
+    if (lua_pcall(L, 2, 1, 0) != LUA_OK) {
+        mhfu_log("[lua_host] run FAILED %s: %s", name, lua_tostring(L, -1));
+        lua_pop(L, 2);
+        return -1;
+    }
+    if (lua_isnil(L, -1)) lua_pop(L, 1);
+    else lua_setfield(L, -2, mod);
+    lua_pop(L, 1);
+    return 0;
+}
+
 int mhfu_lua_load_dir(lua_State *L)
 {
     SceUID d = sceIoDopen(LUA_MODS_DIR);
@@ -128,17 +247,19 @@ int mhfu_lua_load_dir(lua_State *L)
         mhfu_log("[lua_host] mods dir absent (%s) rc=0x%08X", LUA_MODS_DIR, (unsigned)d);
         return 0;
     }
+    g_boot_load = 1;
     int loaded = 0;
     SceIoDirent ent;
     for (;;) {
         memset(&ent, 0, sizeof(ent));
         int r = sceIoDread(d, &ent);
         if (r <= 0) break;                              /* end of dir / error */
-        if (FIO_S_ISDIR(ent.d_stat.st_mode)) continue;  /* skip subdirs */
+        if (FIO_S_ISDIR(ent.d_stat.st_mode)) continue;  /* skip subdirs, lib/ among them */
         if (!ends_with_lua(ent.d_name)) continue;
         if (track_slot(ent.d_name) < 0) { log_refusal(ent.d_name); continue; }
         if (load_lua_file(L, ent.d_name) == 0) loaded++;
     }
+    g_boot_load = 0;
     sceIoDclose(d);
     return loaded;
 }
@@ -146,15 +267,16 @@ int mhfu_lua_load_dir(lua_State *L)
 /* After the boot load, so the first poll does not see every file as changed. */
 void mhfu_lua_prime_tracked(void)
 {
-    for (int i = 0; i < g_ntracked; i++) {
-        script_path_t path;
-        script_path(path, g_tracked[i].name);
-        SceIoStat st;
-        memset(&st, 0, sizeof(st));
-        if (sceIoGetstat(path, &st) < 0) continue;
-        g_tracked[i].size  = st.st_size;
-        g_tracked[i].mtime = st.sce_st_mtime;
-    }
+    for (int i = 0; i < g_ntracked; i++) restat(&g_tracked[i]);
+}
+
+/* The VM is held: the tick may have changed hands, and the old closures are garbage. */
+static void after_reload(lua_State *L)
+{
+    lua_getglobal(L, "mhfu_tick");
+    mhfu_lua_have_tick = lua_isfunction(L, -1);
+    lua_pop(L, 1);
+    lua_gc(L, LUA_GCCOLLECT, 0);
 }
 
 /* Worker thread. The stat is recorded before the reload, so a script that fails
@@ -179,31 +301,32 @@ void mhfu_lua_hot_reload_scan(void)
             if (!g_refusal_logged) log_refusal(ent.d_name);
             continue;
         }
-        script_path_t path;
-        script_path(path, ent.d_name);
-        SceIoStat st;
-        memset(&st, 0, sizeof(st));
-        if (sceIoGetstat(path, &st) < 0) continue;
-        tracked_t *t = &g_tracked[idx];
-        if (!fresh && t->size == st.st_size
-            && memcmp(&t->mtime, &st.sce_st_mtime, sizeof(ScePspDateTime)) == 0)
-            continue;
-        t->size  = st.st_size;                 /* recorded first (no retry spin) */
-        t->mtime = st.sce_st_mtime;
+        int changed = restat(&g_tracked[idx]);   /* recorded first (no retry spin) */
+        if (changed < 0 || (!fresh && !changed)) continue;
 
         if (!mhfu_lua_enter()) break;          /* VM busy/dead — try later */
         mhfu_log("[lua_host] hot-reload %s ...", ent.d_name);
         if (load_lua_file(mhfu_lua_vm, ent.d_name) == 0) {
-            lua_getglobal(mhfu_lua_vm, "mhfu_tick");
-            mhfu_lua_have_tick = lua_isfunction(mhfu_lua_vm, -1);
-            lua_pop(mhfu_lua_vm, 1);
-            lua_gc(mhfu_lua_vm, LUA_GCCOLLECT, 0);      /* reclaim old closures */
+            after_reload(mhfu_lua_vm);
             reloaded++;
         }
         mhfu_lua_leave();
     }
     sceIoDclose(d);
+
+    for (int i = 0; i < g_ntracked; i++) {
+        tracked_t *t = &g_tracked[i];
+        if (strncmp(t->name, LIB_PREFIX, sizeof(LIB_PREFIX) - 1) != 0) continue;
+        if (restat(t) != 1) continue;
+        if (!mhfu_lua_enter()) break;
+        mhfu_log("[lua_host] hot-reload %s ...", t->name);
+        if (rerun_library(mhfu_lua_vm, t->name) == 0) {
+            after_reload(mhfu_lua_vm);
+            reloaded++;
+        }
+        mhfu_lua_leave();
+    }
     if (reloaded)
-        mhfu_log("[lua_host] hot-reloaded %d mod(s), live=%uB",
+        mhfu_log("[lua_host] hot-reloaded %d script(s), live=%uB",
                  reloaded, mhfu_lua_slab_live());
 }

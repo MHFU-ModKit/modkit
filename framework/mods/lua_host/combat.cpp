@@ -9,7 +9,7 @@
  * combatants, so this is how a clone deals damage. A heavy engine call: only from
  * an override callback (game thread blocked), never from mhfu_tick. */
 typedef void (*mhfu_attack_resolver_fn)(uint32_t entity);
-static int lb_resolve_attack(lua_State *L)
+int lb_resolve_attack(lua_State *L)
 {
     uint32_t e = (uint32_t)luaL_checkinteger(L, 1);
     if (e >= MHFU_MAIN_RAM && e < MHFU_EXTRA_RAM_END) ((mhfu_attack_resolver_fn)MHFU_ATTACK_RESOLVER)(e);
@@ -51,7 +51,7 @@ static const float *mhfu_bone_world(uint32_t ent, int bone)
     return (const float *)(joints + (uint32_t)bone * MHFU_JOINT_SIZE + MHFU_JOINT_POSITION);
 }
 
-static int lb_bone_pos(lua_State *L)
+int lb_bone_pos(lua_State *L)
 {
     const float *p = mhfu_bone_world((uint32_t)luaL_checkinteger(L, 1),
                                      (int)luaL_checkinteger(L, 2));
@@ -72,7 +72,7 @@ static int mhfu_fx_spawn(uint32_t ent, int eid, int bone)
     return ((mhfu_fx_spawn_fn)MHFU_EFFECT_SPAWN)(ent, eid, base, owner, bone, pos, 3);
 }
 
-static int lb_spawn_effect(lua_State *L)
+int lb_spawn_effect(lua_State *L)
 {
     lua_pushinteger(L, mhfu_fx_spawn((uint32_t)luaL_checkinteger(L, 1),
                                      (int)luaL_checkinteger(L, 2),
@@ -126,7 +126,7 @@ static void clone_combat_step(const mhfu_bigmonster_ai_step_ctx_t *ctx)
  * a script that never enables it leaves the AI tick unpatched. Experimental: the
  * re-entered AI tick can misalign the stack for the engine's VFPU transform code
  * (an alignment crash was seen). */
-static int lb_clone_combat(lua_State *L)
+int lb_clone_combat(lua_State *L)
 {
     int en = lua_toboolean(L, 1);
     g_clone_resolve = en;
@@ -137,7 +137,7 @@ static int lb_clone_combat(lua_State *L)
     return 0;
 }
 /* mhfu.clones_set({ptr,ptr,...}) — set the live clone pointers the driver ticks. */
-static int lb_clones_set(lua_State *L)
+int lb_clones_set(lua_State *L)
 {
     int n = 0;
     if (lua_istable(L, 1)) {
@@ -241,7 +241,7 @@ static void combat_node_post(mhfu_regs_t *regs)
 /* mhfu.combat_swap(): builds the wrapper once and re-points the field whenever it
  * holds the original (a quest reload reverts it). Call each tick while
  * combat_nodes(true). */
-static int lb_combat_swap(lua_State *L)
+int lb_combat_swap(lua_State *L)
 {
     (void)L;
     if (!g_combat_nodes) return 0;
@@ -261,24 +261,10 @@ static int lb_combat_swap(lua_State *L)
 }
 
 /* mhfu.combat_nodes(enable) — arm/disarm the clone combat-node builder. */
-static int lb_combat_nodes(lua_State *L)
+int lb_combat_nodes(lua_State *L)
 {
     g_combat_nodes = lua_toboolean(L, 1);
     return 0;
 }
 /* mhfu.combat_register_all() — a no-op kept for scripts; the field swap drives it. */
-static int lb_combat_register_all(lua_State *L) { (void)L; return 0; }
-
-static const luaL_Reg k_api[] = {
-    { "resolve_attack",   lb_resolve_attack },
-    { "spawn_effect",     lb_spawn_effect },
-    { "bone_pos",         lb_bone_pos },
-    { "clone_combat",     lb_clone_combat },
-    { "combat_nodes",         lb_combat_nodes },
-    { "combat_swap",          lb_combat_swap },
-    { "combat_register_all",  lb_combat_register_all },
-    { "clones_set",       lb_clones_set },
-    { 0, 0 },
-};
-
-void mhfu_lua_bind_combat(lua_State *L) { luaL_setfuncs(L, k_api, 0); }
+int lb_combat_register_all(lua_State *L) { (void)L; return 0; }

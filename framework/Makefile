@@ -9,7 +9,7 @@ PRXS  = build/mhfu_framework.prx build/mhfu_boot.prx
 .PHONY: all clean
 
 # psp-prxgen copies EF_MIPS_ABI_EABI32 into the PRX, which old firmware rejects (0x800200D9)
-all: $(GEN)/addresses.gen.h $(GEN)/addresses.lua
+all: $(GEN)/addresses.gen.h $(GEN)/addresses.lua $(GEN)/lua_api.gen.h $(GEN)/prelude.lua
 	docker run --rm --platform linux/amd64 --user "$$(id -u):$$(id -g)" -v "$(CURDIR)":/work -w /work \
 	    $(IMAGE) make -f Makefile.psp $(if $(findstring k,$(firstword -$(MAKEFLAGS))),-k)
 	uv run python tools/patch_prx_eflags.py $(PRXS)
@@ -25,6 +25,15 @@ $(GEN)/addresses.gen.lua: $(ADDR).toml $(ADDR).py
 # the copy the PRX embeds, without the doc comments (a third of the size)
 $(GEN)/addresses.lua: $(GEN)/addresses.gen.lua
 	grep -v '^[[:space:]]*---' $< > $@
+
+# the Lua API's registration table and prototypes (lua_api.gen.inc comes with the header)
+$(GEN)/lua_api.gen.h: lua/meta/mhfu.d.lua tools/lua_api.py
+	uv run python tools/lua_api.py $< -o $(GEN)
+
+# the prelude the PRX embeds, annotations blanked so line numbers in its errors still hold
+$(GEN)/prelude.lua: lua/lib/_prelude.lua
+	@mkdir -p $(@D)
+	sed 's/^[[:space:]]*---.*$$//' $< > $@
 
 clean:
 	rm -rf build

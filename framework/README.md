@@ -19,6 +19,7 @@ make -C framework clean
 | `build/mhfu_boot.prx` | the real-PSP loader: a kernel plugin that loads the framework from its own directory once the game shows the title or a menu |
 | `build/*.elf` | the same with symbols and relocations |
 | `build/gen/addresses.gen.h`, `.lua` | the address map, rendered from `packages/mhfu`; Lua reads it as `mhfu.addr` |
+| `build/gen/lua_api.gen.h`, `.inc` | the `mhfu` table's C side, rendered from `lua/meta/mhfu.d.lua` |
 
 `mods.manifest` lists the mods linked into the plugin, one directory under `mods/` per line; `#`
 disables one. Every mod directory is compiled either way.
@@ -31,6 +32,7 @@ PSP/PLUGINS/mhfu_framework/
     mhfu_boot.prx       real PSP only
     plugin.ini          PPSSPP only
     mods/*.lua          Lua mods, loaded at boot and reloaded when they change
+    mods/lib/*.lua      Lua libraries, run by require and reloaded when they change
     framework.log       written at run time
 ```
 
@@ -56,3 +58,22 @@ ms0:/PSP/PLUGINS/mhfu_framework/mhfu_boot.prx 1
 ```
 
 The plugin loads on a cold boot only; after loading a PPSSPP savestate it no longer runs.
+
+## Lua mods
+
+| `lua/` | |
+|---|---|
+| `meta/mhfu.d.lua` | the `mhfu` API, every function and constant with its doc; the build registers exactly what it declares |
+| `lib/` | `_prelude.lua`, embedded and run before any mod, and `mhfu_port.lua`, the ported-monster runtime |
+| `tools/` | `cli_bridge.lua`, the in-game side of `mhfu shell` |
+| `examples/` | small mods to start from |
+
+A mod is a `.lua` file in `mods/`. A library in `mods/lib/` runs once, when a mod first requires
+it: `local port = require("mhfu_port")`. Require at a mod's top level; later, while the Memory Stick
+may be busy, `require` refuses to read a new library. A mod that needs a newer API checks
+`mhfu.api_version`. Errors from the boot load are written to `framework.log` right after it.
+
+An editor with the Lua language server (VS Code's Lua extension) gets completion and hover docs
+from `.luarc.json` at the repo root; `mhfu.addr` needs `make -C framework
+build/gen/addresses.gen.lua` once. Outside this repo, add `framework/lua/meta` and
+`framework/lua/lib` to `workspace.library`.

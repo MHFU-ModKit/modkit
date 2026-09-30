@@ -6,7 +6,7 @@ import pytest
 from lupa.lua54 import LuaRuntime
 from mhfu import addresses as a
 
-SCRIPT = Path(__file__).parents[1] / "lua" / "cli_bridge.lua"
+SCRIPT = Path(__file__).parents[1] / "lua" / "tools" / "cli_bridge.lua"
 MAGIC = 0x4D484252
 FORCE, FREEZE, CLEAR = 1, 2, 3
 FREEZE_BITS = 0x10100

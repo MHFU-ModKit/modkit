@@ -6,7 +6,7 @@
 /* mhfu.capture(on [, scale [, interval_ms [, path]]]) -> running:bool
  * Streams the framebuffer to host0:/cap/stream.bin (psplink usbhostfs) on its own
  * thread; scale 1 full, 2 half (default); interval_ms 66 is about 15 fps. */
-static int lb_capture(lua_State *L)
+int lb_capture(lua_State *L)
 {
     int on = lua_toboolean(L, 1);
     if (on && !lua_isnoneornil(L, 2)) {
@@ -20,7 +20,7 @@ static int lb_capture(lua_State *L)
 }
 
 /* mhfu.capture_status() -> active:bool, frames:int, kb:int, last_err:int */
-static int lb_capture_status(lua_State *L)
+int lb_capture_status(lua_State *L)
 {
     int f = 0, kb = 0, err = 0;
     int active = mhfu_capture_status(&f, &kb, &err);
@@ -30,11 +30,3 @@ static int lb_capture_status(lua_State *L)
     lua_pushinteger(L, err);
     return 4;
 }
-
-static const luaL_Reg k_api[] = {
-    { "capture",          lb_capture },
-    { "capture_status",   lb_capture_status },
-    { 0, 0 },
-};
-
-void mhfu_lua_bind_capture(lua_State *L) { luaL_setfuncs(L, k_api, 0); }

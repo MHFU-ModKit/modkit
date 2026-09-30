@@ -40,6 +40,30 @@ jobs:
       - run: uv sync --locked
       - run: uv run pytest
 
+  # the Lua that ships against the mhfu API it declares (framework/lua/meta/mhfu.d.lua)
+  lua:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      LUALS: 3.19.1
+      LUALS_SHA256: e9235d2d72ef55bc41cf8c99cda2ed64777682024b4bb81f5dea425060c5cbb8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: |
+          mkdir -p framework/build/gen
+          uv run python -m mhfu.addresses lua -o framework/build/gen/addresses.gen.lua
+      - name: lua-language-server --check
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSLo luals.tar.gz "https://github.com/LuaLS/lua-language-server/releases/download/$LUALS/lua-language-server-$LUALS-linux-x64.tar.gz"
+          echo "$LUALS_SHA256  luals.tar.gz" | sha256sum -c
+          mkdir luals && tar xzf luals.tar.gz -C luals
+          luals/bin/lua-language-server --check="$GITHUB_WORKSPACE" --checklevel=Warning --logpath="$RUNNER_TEMP/luals-log"
+
   # advisory until the first release: breaking changes show up as annotations on the PR
   api:
     if: github.event_name == 'pull_request'

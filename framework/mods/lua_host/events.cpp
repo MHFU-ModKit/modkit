@@ -238,79 +238,64 @@ static void check(const char *api, mhfu_hook_rc_t rc)
     if (rc != MHFU_HOOK_OK) mhfu_log("[lua_host] mhfu.%s: not subscribed (rc=%d)", api, (int)rc);
 }
 
-static int lb_on_quest(lua_State *L)
+int lb_on_quest_targets_building(lua_State *L)
 {
     store_ref(L, &r_quest);
     check("on_quest_targets_building",
           mhfu_on_quest_targets_building(tramp_quest, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_spawn(lua_State *L)
+int lb_on_bigmonster_spawn(lua_State *L)
 {
     store_ref(L, &r_spawn);
     check("on_bigmonster_spawn", mhfu_on_bigmonster_spawn(tramp_spawn, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_death(lua_State *L)
+int lb_on_bigmonster_death(lua_State *L)
 {
     store_ref(L, &r_death);
     check("on_bigmonster_death", mhfu_on_bigmonster_death(tramp_death, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_damaged(lua_State *L)
+int lb_on_bigmonster_damaged(lua_State *L)
 {
     store_ref(L, &r_damaged);
     check("on_bigmonster_damaged",
           mhfu_on_bigmonster_damaged(tramp_damaged, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_overlay(lua_State *L)
+int lb_on_ai_overlay_loaded(lua_State *L)
 {
     store_ref(L, &r_overlay);
     check("on_ai_overlay_loaded",
           mhfu_on_ai_overlay_loaded(tramp_overlay, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_slot(lua_State *L)
+int lb_on_bigmonster_slot_picked(lua_State *L)
 {
     store_ref(L, &r_slot);
     check("on_bigmonster_slot_picked",
           mhfu_on_bigmonster_slot_picked(tramp_slot, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_input(lua_State *L)
+int lb_on_bigmonster_action_input(lua_State *L)
 {
     store_ref(L, &r_input);
     check("on_bigmonster_action_input",
           mhfu_on_bigmonster_action_input(tramp_input, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_decided(lua_State *L)
+int lb_on_bigmonster_action_decided(lua_State *L)
 {
     store_ref(L, &r_decided);
     check("on_bigmonster_action_decided",
           mhfu_on_bigmonster_action_decided(tramp_decided, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_action(lua_State *L)
+int lb_on_bigmonster_action(lua_State *L)
 {
     store_ref(L, &r_action);
     check("on_bigmonster_action",
           mhfu_on_bigmonster_action(tramp_action, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-
-static const luaL_Reg k_api[] = {
-    { "on_quest_targets_building",  lb_on_quest },
-    { "on_bigmonster_spawn",        lb_on_spawn },
-    { "on_bigmonster_death",        lb_on_death },
-    { "on_bigmonster_damaged",      lb_on_damaged },
-    { "on_ai_overlay_loaded",       lb_on_overlay },
-    { "on_bigmonster_slot_picked",  lb_on_slot },
-    { "on_bigmonster_action_input", lb_on_input },
-    { "on_bigmonster_action_decided", lb_on_decided },
-    { "on_bigmonster_action",       lb_on_action },
-    { 0, 0 },
-};
-
-void mhfu_lua_bind_events(lua_State *L) { luaL_setfuncs(L, k_api, 0); }
