@@ -76,7 +76,7 @@ def test_refill_rebuilds_on_change_only(qtbot: Any) -> None:
 def test_put_is_quiet(qtbot: Any) -> None:
     got: list[object] = []
     boxes = [
-        kit.number(tip="n", on=got.append),
+        kit.number(tip="n", decimals=1, on=got.append),
         kit.integer(tip="i", on=got.append),
         kit.check("c", tip="c", on=got.append),
         kit.choice([("a", "A"), ("b", "B")], tip="ch", on=got.append),
