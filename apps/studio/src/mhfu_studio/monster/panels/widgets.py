@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 
 SWATCH = 12
 IGNORED = QSizePolicy.Policy.Ignored
+LEFT = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
 OPEN_HINT = "Open a port manifest (ports/<name>.toml) or a monster PAC to work on it here."
 OPEN_TIP = "Choose a port manifest or a monster PAC; the monster workspace opens it"
 
@@ -110,6 +111,7 @@ class Table(kit.Table):
 
     def __init__(self, headers: Sequence[str], *, tip: str, swatch_column: int = 0) -> None:
         super().__init__(headers, tip=tip)
+        self.horizontalHeader().setDefaultAlignment(LEFT)
         self.swatch_column = swatch_column
         self._extra: object = None
 
