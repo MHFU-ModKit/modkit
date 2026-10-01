@@ -7,6 +7,7 @@
 
 #include "mhfu/log.h"
 #include "internal.h"
+#include "xram.h"
 #include "addresses.gen.h"
 
 #define MOD_NAME "mhfu_framework"
@@ -41,6 +42,19 @@ static void reserve_self_memory(void)
     }
 }
 
+/* The studio's collision push writes STAGE_SCRATCH through the debugger; keep our own blocks
+ * (the Lua slab first) out of it. Emulator only: nothing writes it on a PSP, where RAM is short. */
+static void reserve_stage_scratch(void)
+{
+    if (mhfu_xram_mode != XRAM_RAW) return;
+    SceUID blk = sceKernelAllocPartitionMemory(
+        PSP_MEMORY_PARTITION_USER, "mhfu_stage_scratch", PSP_SMEM_Addr,
+        MHFU_STAGE_SCRATCH_COUNT, (void *)MHFU_STAGE_SCRATCH);
+    mhfu_log("[framework] stage scratch [0x%08X,+%uKB) %s rc/blk=0x%X",
+             (unsigned)MHFU_STAGE_SCRATCH, (unsigned)(MHFU_STAGE_SCRATCH_COUNT / 1024),
+             blk >= 0 ? "reserved" : "NOT reserved", (unsigned)blk);
+}
+
 PSP_MODULE_INFO(MOD_NAME, 0, 1, 1);
 PSP_MAIN_THREAD_ATTR(0);
 /* Caps the newlib heap for incidental malloc; Lua runs on its own slab. */
@@ -71,6 +85,8 @@ static int framework_main(SceSize args, void *argp)
 
     /* before any model registers */
     mhfu_xram_init();
+    /* before any mod allocates (the Lua slab would land on it) */
+    reserve_stage_scratch();
     mhfu_hook_init();
     mhfu_em_init();
     mhfu_joint_fix_init();

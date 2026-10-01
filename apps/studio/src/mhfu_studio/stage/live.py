@@ -18,7 +18,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from mhfu import addresses as a
 from mhfu import files
@@ -110,64 +110,102 @@ class Bytes:
         return mem.read(pac + self.offset + o, n) == self.data[o : o + n]
 
 
+class ScratchError(ValueError):
+    """The scratch is not free: the push refuses rather than write memory it does not own."""
+
+
 @dataclass
 class Collision:
     """A collision plan written into the running game: moved records where they are, added
-    records and the changed cell lists in `scratch`, one grid word per changed cell."""
+    records and the changed cell lists in `scratch`, one grid word per changed cell.
+
+    The scratch is written only where it is zero or holds what this document's last push
+    wrote there (`owned`), never over anything else."""
 
     stage: StageFile
     plan: Plan
     scratch: int = a.STAGE_SCRATCH
+    size: int = a.STAGE_SCRATCH.count or 0
+    """Bytes the push may use from `scratch`."""
     name: str = "collision"
-    undo: list[tuple[int, bytes]] = field(default_factory=list)
-    """(address, the bytes there before) of every write into the PAC, from the last apply."""
+    undo: list[tuple[int, bytes, bytes]] = field(default_factory=list)
+    """(address, the bytes there before, what the push wrote) of every write into the PAC."""
+    owned: bytes = b""
+    """What this document last wrote at `scratch`: the one non-zero content it may replace."""
     _probe: tuple[int, int, int, bytes] | None = None
     """(chunk, GRID_POINTER or TRIS_POINTER, offset from that pointer, what we wrote there)."""
 
     def pointers(self, mem: Memory, pac: int, chunk: int) -> tuple[int, int, int]:
         return chunk_pointers(mem, self.stage, pac, chunk)
 
-    def apply(self, mem: Memory, pac: int) -> None:
-        p, undo = self.plan, []
-        chunks = sorted({c for c, _, _ in p.moved} | {c for c, _ in p.added} | set(p.cells))
-        live = {c: self.pointers(mem, pac, c) for c in chunks}
-
-        def put(addr: int, data: bytes) -> None:
-            undo.append((addr, mem.read(addr, len(data))))
-            mem.write(addr, data)
-
-        for c, t, tri in p.moved:
-            put(live[c][2] + TRI_SIZE * t, tri.to_bytes())
-        at = self.scratch
-        added = {}
-        for k, (_, tri) in enumerate(p.added):
-            added[k] = at
-            mem.write(at, tri.to_bytes())
-            at += TRI_SIZE
-        probe = None
-        for c, cells in sorted(p.cells.items()):
-            _, grid, tris = live[c]
-            for cell, refs in sorted(cells.items()):
-                words = [added[r.number] if r.added else tris + TRI_SIZE * r.number for r in refs]
-                body = b"".join(w.to_bytes(4, "little") for w in [*words, TERM])
-                mem.write(at, body)
-                put(grid + 4 * cell, at.to_bytes(4, "little"))
-                probe = probe or (c, GRID_POINTER, 4 * cell, at.to_bytes(4, "little"))
-                at += len(body)
-        if probe is None and p.moved:
-            c, t, tri = p.moved[0]
-            probe = (c, TRIS_POINTER, TRI_SIZE * t, tri.to_bytes())
-        self._probe, self.undo = probe, undo
-
-    def scratch_free(self, mem: Memory) -> bool:
-        """Zero where the plan writes: not a previous push's, nor anything the game keeps."""
-        return not any(mem.read(self.scratch, self.scratch_used))
-
     @property
     def scratch_used(self) -> int:
         p = self.plan
         lists = sum(4 * (len(r) + 1) for cells in p.cells.values() for r in cells.values())
         return TRI_SIZE * len(p.added) + lists
+
+    def check_scratch(self, mem: Memory) -> None:
+        """Raise ScratchError unless the plan fits the scratch and every byte it would write
+        over is zero or this document's own."""
+        need = max(self.scratch_used, len(self.owned))
+        if self.scratch_used > self.size:
+            raise ScratchError(
+                f"the collision needs {self.scratch_used} bytes of scratch;"
+                f" 0x{self.scratch:08X} has {self.size}"
+            )
+        here = mem.read(self.scratch, need)
+        mine = self.owned.ljust(need, b"\0")
+        foreign = [i for i, (x, y) in enumerate(zip(here, mine, strict=True)) if x and x != y]
+        if foreign:
+            at = foreign[0]
+            raise ScratchError(
+                f"scratch at 0x{self.scratch + at:08X} holds data this document did not write;"
+                " refusing to write over it (give --scratch free memory)"
+            )
+
+    def adopt(self, saved: dict[str, Any]) -> None:
+        """Take a previous push's undo file as this one's own: the scratch it wrote."""
+        at, data = saved.get("scratch", [self.scratch, ""])
+        if at == self.scratch:
+            self.owned = bytes.fromhex(data)
+
+    def apply(self, mem: Memory, pac: int) -> None:
+        p = self.plan
+        chunks = sorted({c for c, _, _ in p.moved} | {c for c, _ in p.added} | set(p.cells))
+        live = {c: self.pointers(mem, pac, c) for c in chunks}
+        self.check_scratch(mem)
+        writes: list[tuple[int, bytes]] = []
+        for c, t, tri in p.moved:
+            writes.append((live[c][2] + TRI_SIZE * t, tri.to_bytes()))
+        blob = bytearray()
+        added = {}
+        for k, (_, tri) in enumerate(p.added):
+            added[k] = self.scratch + len(blob)
+            blob += tri.to_bytes()
+        probe = None
+        for c, cells in sorted(p.cells.items()):
+            _, grid, tris = live[c]
+            for cell, refs in sorted(cells.items()):
+                at = self.scratch + len(blob)
+                words = [added[r.number] if r.added else tris + TRI_SIZE * r.number for r in refs]
+                blob += b"".join(w.to_bytes(4, "little") for w in [*words, TERM])
+                writes.append((grid + 4 * cell, at.to_bytes(4, "little")))
+                probe = probe or (c, GRID_POINTER, 4 * cell, at.to_bytes(4, "little"))
+        if probe is None and p.moved:
+            c, t, tri = p.moved[0]
+            probe = (c, TRIS_POINTER, TRI_SIZE * t, tri.to_bytes())
+        # what the last push left past this one's end is ours and no longer linked: clear it
+        mem.write(self.scratch, bytes(blob).ljust(len(self.owned), b"\0"))
+        self.owned = bytes(blob)
+        # a word still holding what the last apply wrote keeps that apply's "before"
+        last = {addr: (old, new) for addr, old, new in self.undo}
+        undo = []
+        for addr, data in writes:
+            here = mem.read(addr, len(data))
+            old, new = last.get(addr, (here, b""))
+            undo.append((addr, old if here == new else here, data))
+            mem.write(addr, data)
+        self._probe, self.undo = probe, undo
 
     def intact(self, mem: Memory, pac: int) -> bool:
         if self._probe is None:
@@ -179,8 +217,9 @@ class Collision:
 
     def save_undo(self, path: Path, pac: int) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        undo = [[addr, data.hex()] for addr, data in self.undo]
-        path.write_text(json.dumps({"stage": self.stage.number, "pac": pac, "undo": undo}))
+        undo = [[addr, old.hex(), new.hex()] for addr, old, new in self.undo]
+        saved = {"stage": self.stage.number, "pac": pac, "undo": undo}
+        path.write_text(json.dumps(saved | {"scratch": [self.scratch, self.owned.hex()]}))
 
 
 def chunk_pointers(mem: Memory, stage: StageFile, pac: int, chunk: int) -> tuple[int, int, int]:
@@ -194,11 +233,14 @@ def chunk_pointers(mem: Memory, stage: StageFile, pac: int, chunk: int) -> tuple
 
 
 def undo(mem: Memory, path: Path) -> int:
-    """Replay an undo file backwards; returns how many writes it held."""
-    saved = json.loads(path.read_text())["undo"]
-    for addr, data in reversed(saved):
-        mem.write(addr, bytes.fromhex(data))
-    return len(saved)
+    """Take an undo file's writes back out, newest first, where each still holds what the push
+    wrote (a reload or another push has replaced the rest); returns how many."""
+    n = 0
+    for addr, old, new in reversed(json.loads(path.read_text())["undo"]):
+        if mem.read(addr, len(new) // 2) == bytes.fromhex(new):
+            mem.write(addr, bytes.fromhex(old))
+            n += 1
+    return n
 
 
 @dataclass
@@ -231,6 +273,7 @@ def prepare(
     collision: bool = True,
     textures: bool = True,
     scratch: int = a.STAGE_SCRATCH,
+    scratch_size: int = a.STAGE_SCRATCH.count or 0,
 ) -> Push:
     """The writes for the halves asked for, built offline."""
     out = Push(stage)
@@ -249,7 +292,7 @@ def prepare(
         out.log += p.log
         out.findings += p.findings
         if not p.empty:
-            out.collision = Collision(stage, p, scratch)
+            out.collision = Collision(stage, p, scratch, scratch_size)
     if textures and any(O.touches_textures(op) for op in ops):
         bank = build(stage, ops, base_dir)
         out.log += bank.log
@@ -318,6 +361,13 @@ def run(
     pac = pac_address(mem, stage.number)
     if pac is None:
         raise ValueError(f"{stage.label}.pac is not resident: stand in the area first")
+    saved = None
+    if push.collision:
+        if undo_file is not None and undo_file.exists():
+            saved = json.loads(undo_file.read_text())
+            if saved.get("stage") == stage.number:
+                push.collision.adopt(saved)
+        push.collision.check_scratch(mem)  # before anything is written
     for b in push.mesh:
         b.apply(mem, pac)
         log(f"{b.name}: written at 0x{pac + b.offset:08X}, verified {b.verify(mem, pac)}")
@@ -330,8 +380,8 @@ def run(
         catch(client, mem, push, catch_for, log)
         pac = pac_address(mem, stage.number) or pac
     if push.collision:
-        if not push.collision.scratch_free(mem):
-            log(f"[!] scratch at 0x{push.collision.scratch:08X} is not zero: a previous push's?")
+        if saved is not None and undo_file is not None and (n := undo(mem, undo_file)):
+            log(f"collision: took the last push's {n} writes back out")
         push.collision.apply(mem, pac)
         log(f"collision: applied at 0x{pac:08X}")
         if undo_file is not None:
@@ -366,14 +416,16 @@ def catch(
     poll: float = 0.25,
 ) -> bool:
     """Wait up to `seconds` for the stage's PAC to be re-read, and put the mesh edit on top
-    while the loader is stopped on it. A slot can be reused by another stage, so a stop counts
-    only when the PAC there is this stage's."""
+    while the loader is stopped on it. A slot can be reused by another file: the first write
+    to the watched word that is not this stage's ends the watch, so a file that keeps writing
+    there never stops the game write by write."""
     if not push.mesh:
         return False
+    label = push.stage.label
     deadline = time.monotonic() + seconds
     log(
-        f"watching the tail of {push.stage.label}.pac for {seconds:.0f} s: take the transition"
-        " now (the game runs slower while it is armed)"
+        f"watching the tail of {label}.pac for {seconds:.0f} s: take the transition now"
+        " (the game runs slower while it is armed)"
     )
     while time.monotonic() < deadline:
         addr = pac_address(mem, push.stage.number)
@@ -381,20 +433,32 @@ def catch(
             time.sleep(poll)
             continue
         caught = _watch(client, mem, push, addr, deadline, poll)
+        if caught == "moved":
+            continue
         if caught is not None:
             client.resume()
+        if isinstance(caught, tuple):
             here, ok = caught
             log(f"caught the reload at 0x{here:08X}; re-applied, verified: {ok}")
             return True
+        if caught == "reused":
+            log(
+                f"{label}'s slot at 0x{addr:08X} went to another file: nothing caught; push"
+                " again with --hold to carry the edit across the next transition"
+            )
+            return False
+        break
     log(f"nothing caught in {seconds:.0f} s: the PAC was not re-read")
     return False
 
 
 def _watch(
     client: Client, mem: Memory, push: Push, addr: int, deadline: float, poll: float
-) -> tuple[int, bool] | None:
-    """One watch on the tail of the PAC at `addr`: (where, verified) with the CPU left stopped,
-    or None once the PAC moves or time runs out."""
+) -> tuple[int, bool] | str | None:
+    """One watch on the tail of the PAC at `addr`, removed before this returns:
+    (where, verified) with the CPU left stopped on a reload of this stage; "reused", the CPU
+    left stopped, when a write there is another file's; "moved" when the PAC moved; None
+    when time ran out."""
     stage = push.stage
     tail = max(b.offset + len(b.original) for b in push.mesh) - 4
     ident_at = stage.table[TERRAIN][0] + IDENT_AT
@@ -406,12 +470,11 @@ def _watch(
             except TimeoutError:
                 now = pac_address(mem, stage.number)
                 if now is not None and now != addr:
-                    return None
+                    return "moved"
                 continue
             here = pac_address(mem, stage.number) or addr
             if mem.read(here + ident_at, IDENT_SIZE) != ident:
-                client.resume()
-                continue
+                return "reused"
             for b in push.mesh:
                 b.apply(mem, here)
             return here, all(b.verify(mem, here) for b in push.mesh)

@@ -138,19 +138,54 @@ def test_collision_lands_as_planned(mem: Space, st: StageFile, push: live.Push, 
     load(mem, st)
     shipped = walk(mem, st)
     patch = push.collision
-    assert patch is not None and patch.scratch_free(mem)
+    assert patch is not None
     patch.apply(mem, PAC)
     assert walk(mem, st) == offline(patch.plan) != shipped
     assert patch.intact(mem, PAC)
-    assert not patch.scratch_free(mem)
+    patch.apply(mem, PAC)  # a re-apply writes over its own records
     patch.save_undo(tmp_path / "undo.json", PAC)
     assert json.loads((tmp_path / "undo.json").read_text())["pac"] == PAC
     assert live.undo(mem, tmp_path / "undo.json") == len(patch.undo)
     assert walk(mem, st) == shipped and not patch.intact(mem, PAC)
+    assert live.undo(mem, tmp_path / "undo.json") == 0  # nothing of it is in any more
     patch.apply(mem, PAC)
     live.restore(mem, st, log=lambda _: None)
     assert walk(mem, st) == shipped
     assert mem.read(PAC, len(st.data)) != st.data  # the fixup stays
+
+
+def test_scratch_of_another_owner_is_refused(mem: Space, st: StageFile, assets: Path):
+    load(mem, st)
+    mem.write(a.STAGE_SCRATCH + 40, b"lua heap")
+    before = (mem.read(PAC, len(st.data)), mem.read(a.STAGE_SCRATCH, 0x1000))
+    push = live.prepare(st, OPS, assets)
+    with pytest.raises(live.ScratchError, match=f"0x{a.STAGE_SCRATCH + 40:08X}"):
+        live.run(None, mem, push, log=lambda _: None)
+    assert (mem.read(PAC, len(st.data)), mem.read(a.STAGE_SCRATCH, 0x1000)) == before
+
+
+def test_a_repush_takes_its_own_records(mem: Space, st: StageFile, assets: Path):
+    load(mem, st)
+    undo = assets / "undo.json"
+    live.run(None, mem, live.prepare(st, OPS, assets), undo_file=undo, log=lambda _: None)
+    fresh = live.prepare(st, OPS[2:3], assets)  # another list: only the box collider
+    with pytest.raises(live.ScratchError):
+        live.run(None, mem, live.prepare(st, OPS[2:3], assets), log=lambda _: None)
+    lines: list[str] = []
+    live.run(None, mem, fresh, undo_file=undo, log=lines.append)
+    assert any("took the last push's" in line for line in lines)
+    assert walk(mem, st) == offline(fresh.collision.plan)
+    used = fresh.collision.scratch_used
+    assert not any(mem.read(a.STAGE_SCRATCH + used, 0x1000))  # the last push's tail is cleared
+
+
+def test_a_plan_bigger_than_the_scratch_is_refused(mem: Space, st: StageFile, assets: Path):
+    load(mem, st)
+    push = live.prepare(st, OPS, assets, scratch_size=64)
+    before = mem.read(PAC, len(st.data))
+    with pytest.raises(live.ScratchError, match="has 64"):
+        live.run(None, mem, push, log=lambda _: None)
+    assert mem.read(PAC, len(st.data)) == before
 
 
 def test_restore_writes_the_file_back(mem: Space, st: StageFile, push: live.Push):
@@ -250,19 +285,27 @@ def test_catch_lands_on_the_reload(ppsspp, st: StageFile, push: live.Push):
     assert push.mesh[0].verify(mem, PAC)
 
 
-def test_catch_skips_another_stage(ppsspp, st: StageFile, push: live.Push):
+def test_catch_stops_once_on_another_file(ppsspp, st: StageFile, push: live.Push):
     game, client, mem = ppsspp
     caught: list[bool] = []
-    t = threading.Thread(
-        target=lambda: caught.append(live.catch(client, mem, push, 1.0, lambda _: None, 0.05))
-    )
+    lines: list[str] = []
+
+    def watch() -> None:
+        caught.append(live.catch(client, mem, push, 30, lines.append, 0.05))
+
+    t = threading.Thread(target=watch)
+    t0 = time.monotonic()
     t.start()
     game.until(lambda: bool(game.fake.watchpoints))
-    ident = PAC + st.table[0][0] + live.IDENT_AT
-    mem.write(ident, b"\xee" * live.IDENT_SIZE)
-    game.run(game.fake.access(_tail(push)))
+    mem.write(PAC + st.table[0][0] + live.IDENT_AT, b"\xee" * live.IDENT_SIZE)
+    game.run(game.fake.access(_tail(push)))  # the slot's new owner writes the word...
+    game.until(lambda: not game.fake.watchpoints and not game.fake.stepping)
+    for _ in range(20):  # ...and keeps writing it: nothing stops the game any more
+        game.run(game.fake.access(_tail(push)))
+        assert not game.fake.stepping
     t.join(timeout=10)
-    assert caught == [False] and not game.fake.stepping and not game.fake.watchpoints
+    assert caught == [False] and time.monotonic() - t0 < 10
+    assert "went to another file" in lines[-1] and "--hold" in lines[-1]
     assert not push.mesh[0].verify(mem, PAC)
 
 

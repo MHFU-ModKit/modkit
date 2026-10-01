@@ -162,7 +162,7 @@ GATHER_SPOT_CURRENT = { eu = 0x090BEE60, type = "ptr", doc = "the GATHER_SPOT th
 MAP_MANAGER_PTR = { eu = 0x09A4F060, type = "ptr", doc = "pointer to the map manager (struct MAP_MANAGER): the session's map row and the stage on screen" }
 ATTACK_TABLE_SETTER = { eu = 0x09B674C0, type = "fn", doc = "(node, entity, attack id, table handle): copies ATTACK_RECORD[id] into the ATTACK_NODE; every species overlay calls it" }
 MAP_TABLE = { eu = 0x09CE4708, type = "bytes", doc = "32 MAP_ROW rows in game_sub.ovl, one per map; the stage loader resolves areas through it" }
-STAGE_SCRATCH = { eu = 0x09E00000, type = "bytes", doc = "1 MB that stays zero through a quest session; the collision push writes added triangles and cell lists here" }
+STAGE_SCRATCH = { eu = 0x09E00000, type = "bytes[65536]", doc = "free RAM the collision push writes added triangles and cell lists to; the framework reserves it on the emulator, ahead of its Lua slab" }
 USER_RAM_END = { eu = 0x0A000000, type = "bytes", doc = "first address past the user partition, and the start of the emulator's extra-RAM window" }
 
 # --- big-monster behaviour: moves, phases, chains ---

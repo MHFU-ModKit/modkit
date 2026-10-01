@@ -73,6 +73,9 @@ def register(groups: Groups) -> None:
     c.add_argument("--restore", action="store_true", help="put the file's bytes back instead")
     c.add_argument("--undo", type=Path, metavar="FILE", help="replay a collision undo file")
     c.add_argument("--scratch", type=lambda s: int(s, 0), help="free RAM for added collision")
+    c.add_argument(
+        "--scratch-size", type=int, help="bytes free at --scratch (default: STAGE_SCRATCH's)"
+    )
     c.add_argument("--dry", action="store_true", help="plan it offline; touch no emulator")
     c.set_defaults(run=push)
 
@@ -297,7 +300,9 @@ def push(args: argparse.Namespace) -> int:
     halves = {h: getattr(args, h) for h in ("mesh", "collision", "textures")}
     if not any(halves.values()):
         halves = dict.fromkeys(halves, True)
-    p = live.prepare(sf, ops, args.ops.parent, scratch=args.scratch or a.STAGE_SCRATCH, **halves)
+    scratch = args.scratch or a.STAGE_SCRATCH
+    size = args.scratch_size or a.STAGE_SCRATCH.count or 0
+    p = live.prepare(sf, ops, args.ops.parent, scratch=scratch, scratch_size=size, **halves)
     for line in [*p.log, *map(str, p.findings), *live.describe(p)]:
         print(line)
     catch = args.catch
