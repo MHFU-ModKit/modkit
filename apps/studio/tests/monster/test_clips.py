@@ -1,0 +1,154 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 sp00ktober
+import pytest
+from mhfu_port import manifest, slots
+from mhfu_port.manifest import ManifestError
+from mhfu_studio.monster import clips as C
+from mhfu_studio.monster.inputs import donor_anim, host_anim
+from mhp_formats import fu
+
+LABELS = """
+[clips.charge]
+slot = 61
+frames = 382
+loop = false
+label = "charge"
+labelled_build = "b.bin@1"
+
+[moves.charge]
+main = 2
+sub = 8
+clip = "charge"
+"""
+
+
+def pack(**slots):
+    """`slotN=clip` keyword arguments -> one stream."""
+    n = max(int(k[4:]) for k in slots) + 1
+    stream = [slots.get(f"slot{i}") for i in range(n)]
+    return fu.Anim([stream])
+
+
+@pytest.fixture
+def packs(make_clip):
+    idle, own, host4, d5, p5, extra = (
+        make_clip(f, lp) for f, lp in ((100, 1), (50, 0), (70, 0), (30, 0), (31, 0), (90, 0))
+    )
+    donor = pack(slot1=idle, slot2=own, slot5=d5, slot6=make_clip(100, 1), slot7=extra)
+    port = pack(slot1=idle, slot2=own, slot3=idle, slot4=host4, slot5=p5, slot6=idle)
+    host = pack(
+        slot1=make_clip(20),
+        slot2=make_clip(20),
+        slot3=make_clip(20),
+        slot4=host4,
+        slot5=make_clip(20),
+        slot6=make_clip(20),
+    )
+    return port, host, donor
+
+
+def test_coverage(packs):
+    port, host, donor = packs
+    cov = C.coverage(port, host, donor)
+    kinds = {s: c.kind for s, c in cov.slots.items()}
+    assert kinds == {1: C.CARRIED, 2: C.CARRIED, 3: C.FILLER, 4: C.HOST, 5: C.ALTERED, 6: C.CARRIED}
+    assert cov.dropped == {7: (90, False)} and cov.slots[2].scriptable
+    assert cov.counts()[C.DROPPED] == 1 and "1 donor clip(s) DROPPED" in cov.summary()
+    assert "COPY OF THE IDLE" in cov.slots[3].why()
+
+
+def test_coverage_without_evidence(packs):
+    port, _, donor = packs
+    cov = C.coverage(port)
+    assert {c.kind for c in cov.slots.values()} == {C.UNKNOWN} and "all UNKNOWN" in cov.summary()
+    no_host = C.coverage(port, donor=donor)
+    assert no_host.kind(4) == C.ALTERED and not no_host.dropped
+    assert "no host pack" in no_host.summary()
+
+
+def test_tables(packs):
+    port, _, _ = packs
+    assert C.clip_table(port)[1] == (100, True) and C.clip_table(port)[2] == (50, False)
+    assert C.build_id("z.bin", b"x") == "z.bin@11f6ad8e"
+
+
+def test_tracks(make):
+    m = make(LABELS + "\n[clips.walk]\nslot = 5\nframes = 40\n\n[clips.raw]\nslot = 9\n")
+    table = {61: (382, False), 5: (12, False), 6: (40, True), 9: (1, False)}
+    t = {x.name: x for x in C.track_labels(m, table, "b.bin@1")}
+    assert t["charge"].status == C.CURRENT and t["charge"].trusted
+    assert t["walk"].status == C.MOVED and t["walk"].now_at == 6
+    assert t["raw"].status == C.UNCHECKABLE
+    assert C.track_labels(m, table, "other")[0].status == C.STILL_VALID
+    table[7] = (40, False)
+    walk = next(x for x in C.track_labels(m, table) if x.name == "walk")
+    assert walk.status == C.AMBIGUOUS and walk.candidates == (6, 7)
+    lost = next(x for x in C.track_labels(m, {61: (1, False)}) if x.name == "charge")
+    assert lost.status == C.LOST and not lost.trusted
+    assert C.unlabelled_slots(m, table) == [6, 7]
+
+
+def test_label(doc):
+    d = doc(LABELS)
+    s = C.LabelSession(d, {61: (382, False), 5: (120, True)}, "new.bin@2")
+    assert s.default_name(5) == "clip_05" and s.default_name(61) == "charge"
+    s.label(5, "walk", "slow walk", impact_frame=40)
+    c = d.manifest.clips["walk"]
+    assert (c.frames, c.loop, c.labelled_build, c.impact_frame) == (120, True, "new.bin@2", 40)
+    s.label(61, "rush")
+    assert "charge" not in d.manifest.clips and d.manifest.moves["charge"].clip == "rush"
+    assert d.manifest.clips["rush"].label == ""
+    d.undo()
+    assert d.manifest.moves["charge"].clip == "charge"
+    for bad, why in (("a b", "not a name"), ("walk", "already exists"), ("", "not a name")):
+        with pytest.raises(ManifestError, match=why):
+            s.label(61, bad)
+    with pytest.raises(ManifestError, match="not populated"):
+        s.label(7, "nothing")
+
+
+def test_bind_move(doc):
+    d = doc(LABELS)
+    s = C.LabelSession(d, {61: (382, False)})
+    assert s.bind_move("rush", 1, 4, "charge") == "moves.rush = (1,4) on charge"
+    assert d.manifest.moves["rush"].main == 1
+    with pytest.raises(ManifestError, match="not named"):
+        s.bind_move("x", 1, 4, "nope")
+
+
+def test_import(doc, packs):
+    port, host, donor = packs
+    d = doc(LABELS)
+    table = {**C.clip_table(port), 61: (382, False)}
+    labels = {2: "bite", 3: "idle again", 61: "rush", 99: "nowhere"}
+    done = C.import_labels(
+        d, labels, table, C.UNRECORDED.format("f.txt"), C.coverage(port, host, donor)
+    )
+    assert done == [2]
+    clip = d.manifest.clips["clip_02"]
+    assert clip.label == "bite" and clip.labelled_build.startswith("unrecorded: f.txt")
+    assert C.import_labels(d, labels, table, "b", overwrite=True) == [2, 3, 61]
+    assert d.manifest.clips["charge"].label == "rush"
+
+
+def test_report(make, packs):
+    port, host, donor = packs
+    m = make("\n[clips.bite]\nslot = 2\nframes = 50\nloop = false\n")
+    v = C.survey(m, C.clip_table(port), C.coverage(port, host, donor), "p.bin@1")
+    text = C.report("t", v)
+    assert "p.bin@1" in text and "1 trustworthy" in text and "CARRIED: 1, 6" in text
+    assert v.track(2).name == "bite" and v.kind(3) == C.FILLER and not v.suspect
+
+
+def test_zinogre(games, built, ports):
+    m = manifest.load(ports / "zinogre.toml")
+    port = slots.anim_of(built("zinogre"))
+    cov = C.coverage(port, host_anim(m, games), donor_anim(m, games))
+    n = cov.counts()
+    assert len(cov.slots) == 64 and n[C.FILLER] == 30 and n[C.DROPPED] == 8
+    assert all(t.trusted for t in C.track_labels(m, C.clip_table(port)))
+
+
+def test_brute(built):
+    table = C.pac_clip_table(built("brute_tigrex"))
+    assert 82 not in table and table[69] == table[1] and table[61] == (382, False)

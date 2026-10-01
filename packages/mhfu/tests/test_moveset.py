@@ -40,6 +40,22 @@ def test_fork():
     assert guards == {46: ("species!=81",), 54: ("species==81",)}
 
 
+def test_counted_loop_falls_through():
+    loop = code(
+        asm.li("s0", 0),
+        asm.addiu("s0", "s0", 1),  # 1
+        asm.li("v1", 3),
+        asm.bne("s0", "v1", va(1), va(3)),
+        asm.NOP,
+        asm.li("a1", 46),
+        asm.jal(a.ACTION_EXECUTOR),
+        asm.NOP,
+        asm.RET,
+        asm.NOP,
+    )
+    assert [s.args[0] for s in Walker(loop, {a.ACTION_EXECUTOR: "anim"}).run(BASE)] == [46]
+
+
 def test_tail_call_through_vtable():
     helper = code(
         asm.lbu("v0", a.ENTITY.PHASE, "a0"),

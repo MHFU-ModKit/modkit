@@ -43,6 +43,15 @@ def test_default_inject_dir(tmp_path, monkeypatch):
         inject.default_inject_dir()
 
 
+def test_default_mods_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(inject, "MEMSTICK_ROOTS", (str(tmp_path / "none"), str(tmp_path)))
+    assert inject.memstick() == tmp_path
+    with pytest.raises(FileNotFoundError):
+        inject.default_mods_dir()
+    (tmp_path / inject.MODS_SUBDIR).mkdir(parents=True)
+    assert inject.default_mods_dir() == tmp_path / inject.MODS_SUBDIR
+
+
 def test_cli(tmp_path, capsys):
     pac, orig = tmp_path / "edited.pac", tmp_path / "orig.pac"
     pac.write_bytes(b"e" * 8)
