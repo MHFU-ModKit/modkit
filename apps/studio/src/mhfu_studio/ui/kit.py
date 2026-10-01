@@ -12,9 +12,7 @@ from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from mhfu_studio.shell.findings import Level
-from mhfu_studio.ui import theme
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
@@ -41,6 +39,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from mhfu_studio.shell.findings import Level
+from mhfu_studio.ui import theme
 
 Role = Literal["normal", "primary", "danger"]
 Slot = Callable[..., object]
@@ -448,6 +449,13 @@ class Items(QListWidget):
             w.setFlags(Qt.ItemFlag.NoItemFlags)
             self.addItem(w)
         return True
+
+    def changeEvent(self, e: QEvent) -> None:  # noqa: N802
+        super().changeEvent(e)
+        if e.type() == QEvent.Type.StyleChange:  # a theme switch: level colours follow
+            for i, it in enumerate(self._shown or []):
+                if it.level is not None:
+                    self.item(i).setForeground(theme.level(it.level))
 
     def _pick(self, w: QListWidgetItem) -> None:
         data = w.data(Qt.ItemDataRole.UserRole)
