@@ -354,7 +354,10 @@ class Window(QMainWindow):
             "Open…", "Opens a document; the workspace that reads it comes up", self.ask_open, k.Open
         )
         self.save_action = self._action(
-            "Save", "Writes the document back to its file", self.save, k.Save
+            "Save",
+            "Writes the document back to its file; asks for one the first time",
+            s.save,
+            k.Save,
         )
         self.save_as_action = self._action(
             "Save As…",
@@ -465,9 +468,6 @@ class Window(QMainWindow):
 
     def ask_open(self) -> None:
         dialogs.open_document(self, self.studio)
-
-    def save(self) -> bool:
-        return self.studio.save()
 
     def save_as(self) -> bool:
         path = dialogs.ask_save_as(self, self.studio.active)
