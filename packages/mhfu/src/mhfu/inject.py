@@ -1,4 +1,5 @@
-"""Files for the framework's live model injection, in the memory stick's inject directory.
+"""The framework's directories on the PPSSPP memory stick, and the files for its live model
+injection in the inject directory.
 
 The framework PRX polls that directory; it overwrites a loaded file's raw buffer with
 `file_<id>.bin`, or relocates a grown file (`file_<id>_grown.bin`) into extra RAM, once the
@@ -19,21 +20,36 @@ MEMSTICK_ROOTS = (
 )
 """PPSSPP memory-stick roots, most likely first; the PRX sees them as ms0:/PSP."""
 INJECT_SUBDIR = "PLUGINS/mhfu_framework/inject"
+MODS_SUBDIR = "PLUGINS/mhfu_framework/mods"
+"""Where the framework loads Lua mods from; `require` reads its `lib/`."""
 ORIG = ".orig"
 
 _NAME = re.compile(r"file_(\d{4,6})\b")
 
 
-def default_inject_dir(create: bool = True) -> str:
-    """The inject directory on the first memory stick found, created unless `create` is off."""
+def memstick() -> Path:
+    """The first memory-stick root that exists."""
     for root in MEMSTICK_ROOTS:
         base = Path(root).expanduser()
         if base.is_dir():
-            d = base / INJECT_SUBDIR
-            if create:
-                d.mkdir(parents=True, exist_ok=True)
-            return str(d)
+            return base
     raise FileNotFoundError(f"no PPSSPP memory stick in {', '.join(MEMSTICK_ROOTS)}")
+
+
+def default_inject_dir(create: bool = True) -> str:
+    """The inject directory on the memory stick, created unless `create` is off."""
+    d = memstick() / INJECT_SUBDIR
+    if create:
+        d.mkdir(parents=True, exist_ok=True)
+    return str(d)
+
+
+def default_mods_dir() -> Path:
+    """The framework's Lua mods directory on the memory stick; FileNotFoundError without one."""
+    d = memstick() / MODS_SUBDIR
+    if not d.is_dir():
+        raise FileNotFoundError(f"no framework mods directory at {d}")
+    return d
 
 
 def file_id_from_name(name: str | os.PathLike[str]) -> int:

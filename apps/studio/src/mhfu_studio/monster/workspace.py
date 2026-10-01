@@ -1,0 +1,778 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 sp00ktober
+"""The monster workspace: a port manifest (or a bare monster PAC), its scene in the viewport,
+and the panels around it. The panels draw; this holds what they share and does what they ask.
+
+Every edit goes through the `PortDocument`, one undo step each; whatever depends on the
+manifest (clip names, volumes, the alignment) is re-read once per frame when the document's
+manifest is a different object, so an edit, an undo and a save-as all land the same way.
+"""
+
+from __future__ import annotations
+
+import tomllib
+from collections.abc import Callable, Hashable, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from mhfu import files
+from mhfu.em.intel import AttackIntel, HostSummary, PairIntel, PartIntel, SpeciesIntel
+from mhfu.files import Extracted
+from mhfu_port import slots
+from mhfu_port.data import Data
+from mhfu_port.manifest import Clip as ManifestClip
+from mhfu_port.manifest import Manifest, ManifestError
+from mhp_formats.pac import Pac
+from mhp_formats.skeleton import Skeleton
+
+from mhfu_studio.monster import align, clips, inputs, species
+from mhfu_studio.monster.attacks import AttackSession
+from mhfu_studio.monster.core.scene import MHFU, Scene
+from mhfu_studio.monster.document import PortDocument
+from mhfu_studio.monster.parts import PartSession
+from mhfu_studio.shell.workspace import MAIN, Gesture, Panel, Split, View, Workspace, register
+
+if TYPE_CHECKING:
+    import moderngl
+
+    from mhfu_studio.monster.panels.moves import MoveGraph
+    from mhfu_studio.monster.render.hitboxes import HitboxOverlay
+    from mhfu_studio.monster.render.viewport import MonsterViewport
+
+Pair = tuple[int, int]
+PORT, HOST = "port", "host"
+
+
+class MonsterWorkspace(Workspace):
+    name = "monster"
+    filters = ("Port manifest", "*.toml", "Monster PAC", "*.bin *.pac")
+
+    def __init__(self, data: Data | None = None, intel_root: Path | None = None) -> None:
+        self._data = data
+        #: species intel from this directory instead of the cache built from the game
+        self.intel_root = intel_root
+        self.intel_cache: dict[int, SpeciesIntel | None] = {}
+        self.doc: PortDocument | None = None
+        self.scene: Scene | None = None
+        self.vp: MonsterViewport | None = None
+        #: the last action's outcome, for the status bar
+        self.message = ""
+        self._seen: Manifest | None = None
+        #: every overlay summarised, once surveyed
+        self.hosts: list[HostSummary] | None = None
+        self._survey: Future[list[HostSummary]] | None = None
+        self._pool: ThreadPoolExecutor | None = None
+        self._reset()
+
+    def _reset(self) -> None:
+        """Per-document view state."""
+        from mhfu_studio.monster.panels.moves import MoveGraph
+
+        self.show_joint_ids = False
+        self.undriven: dict[int, int] = {}
+        self.markers: list[align.Marker] = []
+        self.alignment: align.Alignment | None = None
+        self.browse: int | None = None
+        self.show_host = False
+        self.host_scenes: dict[int, Scene | None] = {}
+        self.host_clip: int | None = None
+        self.pair: Pair | None = None
+        self.move: str | None = None
+        self.graph: MoveGraph = MoveGraph()
+        self.pair_filter = ""
+        self.bind_buf = ""
+        self.clip_filter = ""
+        self.show_parts = False
+        self.parts_source = HOST
+        self.selected_part: int | None = None
+        self.selected_volume: int | None = None
+        self.only_selected_part = False
+        self.part_name_buf = ""
+        self.grid_state = 0
+        #: a grid state to bring forward next frame (a finding was revealed)
+        self.show_state: int | None = None
+        self.hit_export: Path | None = None
+        self.show_attacks = False
+        self.attacks_source = HOST
+        self.selected_set: int | None = None
+        self.selected_attack_volume: int | None = None
+        self.sets_of_move_only = True
+        self.attack_label_buf = ""
+        self.edit_slot: int | None = None
+        self.name_buf = ""
+        self.label_buf = ""
+        self.part_orphans: tuple[object, ...] = ()
+        self.attack_orphans: tuple[object, ...] = ()
+        self._vocab: clips.Vocabulary | None = None
+        self._coverage: tuple[clips.Coverage, list[str]] | None = None
+        self._travel: dict[int, tuple[float, float]] = {}
+        self._counts: dict[int, int] | None = None
+        self._labels: clips.LabelSession | None = None
+        self._parts: PartSession | None = None
+        self._attacks: AttackSession | None = None
+
+    # the shell's side
+
+    @property
+    def document(self) -> PortDocument | None:
+        return self.doc
+
+    @property
+    def viewport(self) -> MonsterViewport | None:
+        return self.vp
+
+    def can_open(self, path: Path) -> bool:
+        """A port manifest (a TOML with a `[port]` table) or a monster PAC (one with a skeleton)."""
+        try:
+            if path.suffix == ".toml":
+                return "port" in tomllib.loads(path.read_text(encoding="utf-8"))
+            if path.suffix not in (".bin", ".pac"):
+                return False
+            return any(Skeleton.sniff(e) for e in Pac.from_bytes(path.read_bytes()).entries)
+        except (OSError, ValueError, tomllib.TOMLDecodeError):
+            return False
+
+    def open(self, path: Path) -> None:
+        """A manifest is built in memory from the extracted games; a PAC is read as it is."""
+        if path.suffix == ".toml":
+            doc = PortDocument.open(path)
+            self.load(Scene.from_manifest(doc.manifest, None, "port", self.games()), doc)
+        else:
+            self.load(Scene.from_path(path))
+        self.message = f"opened {path.name}"
+
+    def load(self, scene: Scene, doc: PortDocument | None = None) -> None:
+        """Shows `scene`; `doc` is the manifest it was built from."""
+        from mhfu_studio.monster.render.skeleton import undriven_geometry
+
+        self.scene, self.doc = scene, doc
+        self._reset()
+        self.undriven = undriven_geometry(scene)
+        if doc is not None:
+            doc.pac = scene.pac
+            doc.intel = self.host_intel()
+        if self.vp is not None:
+            self.vp.set_scene(scene)
+        self.sync()
+
+    def setup(self, ctx: moderngl.Context) -> MonsterViewport:
+        from mhfu_studio.monster.render.viewport import MonsterViewport
+
+        self.vp = MonsterViewport(ctx)
+        if self.scene is not None:
+            self.vp.set_scene(self.scene)
+            self.sync()
+        return self.vp
+
+    def panels(self) -> Sequence[Panel]:
+        from mhfu_studio.monster.panels import (
+            action,
+            clips,
+            hitboxes,
+            moves,
+            parts,
+            scene,
+            timeline,
+        )
+
+        return (
+            Panel("Moves", MAIN, lambda: moves.panel(self), scroll=False),
+            Panel("Timeline", "Bottom", lambda: timeline.panel(self), focus=True),
+            Panel("Scene", "Left", lambda: scene.scene_panel(self)),
+            Panel("View", "Left", lambda: scene.view_panel(self)),
+            Panel("Joints", "Left", lambda: scene.joints_panel(self)),
+            Panel("Clips", "Right", lambda: clips.panel(self)),
+            Panel("Parts", "Right", lambda: parts.panel(self)),
+            Panel("Hitboxes", "Right", lambda: hitboxes.panel(self)),
+            Panel("Action", "BottomRight", lambda: action.panel(self)),
+        )
+
+    def layout(self) -> Sequence[Split]:
+        return (
+            Split(MAIN, "Left", "left", 0.18),
+            Split(MAIN, "Right", "right", 0.20),
+            Split(MAIN, "Bottom", "down", 0.30),
+            Split("Bottom", "BottomRight", "right", 0.45),
+        )
+
+    def status(self) -> str:
+        return self.message
+
+    def frame(self, dt: float) -> None:
+        if self.doc is not None and self.doc.manifest is not self._seen:
+            self.sync()
+        if self.vp is not None:
+            self.vp.tick(dt)
+
+    def input(self, view: View) -> Gesture:
+        from mhfu_studio.monster.panels import viewport
+
+        return viewport.pick(self, view)
+
+    def overlay(self, view: View) -> None:
+        from mhfu_studio.monster.panels import viewport
+
+        viewport.joint_labels(self, view)
+
+    def animating(self) -> bool:
+        vp = self.vp
+        if vp is None or vp.actor is None:
+            return False
+        ref = vp.reference
+        return vp.actor.playback.playing or (ref is not None and ref.playback.playing)
+
+    def refresh(self) -> None:
+        self.sync()
+
+    def reveal(self, target: Hashable) -> None:
+        """A finding's `(section, key)`: select it and bring its panel forward."""
+        if not isinstance(target, tuple) or len(target) != 2 or self.manifest is None:
+            return
+        section, key = target
+        m = self.manifest
+        if section == "clips" and isinstance(key, str) and key in m.clips:
+            self.play_slot(m.clips[key].slot)
+            focus("Clips")
+        elif section == "moves" and isinstance(key, str) and key in m.moves:
+            mv = m.moves[key]
+            if mv.clip in m.clips:
+                self.play_slot(m.clips[mv.clip].slot)
+            self.select_pair(mv.main, mv.sub, key)
+            focus("Action")
+        elif section == "hurtbox" and isinstance(key, int) and key < len(m.hurtboxes):
+            self.show_parts, self.parts_source = True, PORT
+            self.sync_hitboxes()
+            self.select_volume(key)
+            focus("Parts")
+        elif section == "hitzone" and isinstance(key, int):
+            self.parts_source, self.show_state = PORT, key
+            focus("Parts")
+        elif section == "hitbox" and isinstance(key, int) and key < len(m.hitboxes):
+            self.show_attacks, self.attacks_source = True, PORT
+            self.select_set(m.hitboxes[key].set)
+            self.sync_attacks()
+            self.select_attack_volume(key)
+            focus("Hitboxes")
+        elif section == "attack" and isinstance(key, int) and key < len(m.attacks):
+            vol = m.attacks[key].volume
+            self.show_attacks = True
+            if vol is not None:
+                self.select_set(vol)
+            self.sync_attacks()
+            focus("Hitboxes")
+        elif section == "effect" and isinstance(key, int) and key < len(m.effects):
+            e = m.effects[key]
+            if self.vp is not None:
+                self.vp.select_joint(e.bone)
+            if e.move in m.moves:
+                self.select_pair(m.moves[e.move].main, m.moves[e.move].sub, e.move)
+            focus("Action")
+
+    def close(self) -> None:
+        if self.vp is not None:
+            self.vp.release()
+            self.vp = None
+        if self._pool is not None:
+            self._pool.shutdown(wait=False, cancel_futures=True)
+            self._pool = None
+
+    # what the document says
+
+    @property
+    def manifest(self) -> Manifest | None:
+        return None if self.doc is None else self.doc.manifest
+
+    def sync(self) -> None:
+        """Re-reads everything the manifest decides."""
+        m = self.manifest
+        self._seen = m
+        if self.scene is not None and m is not None:
+            self.scene.attach_manifest(m)
+        self._vocab = None
+        self.sync_hitboxes()
+        self.sync_attacks()
+        self.recompute_alignment()
+
+    def edit(self, what: str, fn: Callable[[], object]) -> bool:
+        """Runs a session call, a refusal reported instead of raised; `what` (or the call's own
+        message) goes to the status bar."""
+        try:
+            got = fn()
+        except ManifestError as e:
+            self.message = str(e)
+            return False
+        self.sync()
+        self.message = got if isinstance(got, str) and not what else what
+        return True
+
+    def save(self) -> None:
+        if self.doc is None:
+            self.message = "this scene has no manifest file"
+            return
+        try:
+            self.message = f"saved {self.doc.save()}"
+        except (OSError, ManifestError) as e:
+            self.message = f"{type(e).__name__}: {e}"
+
+    def revert(self) -> None:
+        if self.doc is not None:
+            self.doc.revert()
+            self.sync()
+            self.message = "back to the file on disk"
+
+    # the games and the intel
+
+    def games(self) -> Data:
+        if self._data is None:
+            self._data = Data.find()
+        return self._data
+
+    def fu(self) -> Extracted:
+        return self._data.fu if self._data is not None else Extracted.find()
+
+    def intel_of(self, sp: int | None) -> SpeciesIntel | None:
+        if sp is None:
+            return None
+        if sp not in self.intel_cache:
+            root = self._data.fu.root if self._data is not None else None
+            try:
+                self.intel_cache[sp] = species.find(sp, self.intel_root, root)
+            except (OSError, ValueError) as e:
+                self.message = f"no intel for em{sp:02d}: {e}"
+                self.intel_cache[sp] = None
+        return self.intel_cache[sp]
+
+    @property
+    def host_species(self) -> int | None:
+        m = self.manifest
+        return None if m is None else m.port.host_species
+
+    def host_intel(self) -> SpeciesIntel | None:
+        return self.intel_of(self.host_species)
+
+    def host_parts(self) -> PartIntel | None:
+        """The host's part intel: the volumes the port rides, whatever overlay is browsed."""
+        si = self.host_intel()
+        return si.parts if si is not None and si.parts.present else None
+
+    def host_attacks(self) -> AttackIntel | None:
+        si = self.host_intel()
+        return si.attacks if si is not None and si.attacks.present else None
+
+    @property
+    def browsing_species(self) -> int | None:
+        return self.host_species if self.browse is None else self.browse
+
+    @property
+    def browsing_the_host(self) -> bool:
+        return self.browsing_species == self.host_species
+
+    @property
+    def intel(self) -> SpeciesIntel | None:
+        """The overlay the Action panel shows: the host's unless browsing another."""
+        return self.intel_of(self.browsing_species)
+
+    def browse_species(self, sp: int) -> None:
+        """Another overlay's action table: comparing, not re-hosting (host_species also picks
+        the host PAC the porter files clips into, so changing it is a rebuild)."""
+        self.browse = int(sp)
+        self.clear_pair()
+
+    def host_options(self) -> list[HostSummary] | None:
+        """Every overlay summarised, surveyed in the background on first ask (building the
+        cache takes a minute); None until it is done."""
+        if self.hosts is not None:
+            return self.hosts
+        if self._survey is None:
+            self._pool = self._pool or ThreadPoolExecutor(1)
+            root = self._data.fu.root if self._data is not None else None
+            self._survey = self._pool.submit(species.survey, self.intel_root, root)
+        if not self._survey.done():
+            return None
+        try:
+            self.hosts = self._survey.result()
+        except (OSError, ValueError) as e:
+            self.message = f"no overlay survey: {e}"
+            self.hosts = []
+        return self.hosts
+
+    # sessions
+
+    @property
+    def label_session(self) -> clips.LabelSession | None:
+        if self._labels is None and self.doc is not None and self.scene is not None:
+            self._labels = clips.LabelSession(self.doc, self.clip_table(), self.scene.build_id)
+        return self._labels
+
+    @property
+    def part_session(self) -> PartSession | None:
+        if self._parts is None and self.doc is not None and self.scene is not None:
+            self._parts = PartSession(self.doc, self.scene.rig.n)
+            host = self.host_parts()
+            self._parts.capacity = None if host is None else host.capacity
+        return self._parts
+
+    @property
+    def attack_session(self) -> AttackSession | None:
+        if self._attacks is None and self.doc is not None and self.scene is not None:
+            self._attacks = AttackSession(self.doc, self.scene.rig.n)
+            host = self.host_attacks()
+            if host is not None:
+                self._attacks.capacities = {st.index: st.capacity for st in host.sets}
+        return self._attacks
+
+    # clips
+
+    def clip_table(self) -> dict[int, clips.Fingerprint]:
+        """The open build's fingerprints."""
+        sc = self.scene
+        if sc is None:
+            return {}
+        if sc.game == MHFU and sc.pac is not None:
+            return clips.pac_clip_table(sc.pac)
+        return sc.clip_table()
+
+    def coverage(self) -> tuple[clips.Coverage, list[str]]:
+        """What is in each slot: needs the donor moveset and the host pack, and says so."""
+        if self._coverage is None:
+            self._coverage = self._measure_coverage()
+        return self._coverage
+
+    def _measure_coverage(self) -> tuple[clips.Coverage, list[str]]:
+        sc, m, notes = self.scene, self.manifest, []
+        if sc is None or sc.pac is None or sc.game != MHFU:
+            cov = clips.Coverage()
+            for c in [] if sc is None else sc.clips:
+                cov.slots[c.slot] = clips.SlotCoverage(c.slot, clips.UNKNOWN, c.frames, c.loop)
+            notes.append("this is the DONOR pack: coverage describes a built port")
+            return cov, notes
+        port = slots.anim_of(sc.pac)
+        if m is None:
+            notes.append(
+                "no manifest: slots cannot be classified, and a label typed here would have "
+                "nowhere to go"
+            )
+            return clips.coverage(port), notes
+        host = donor = None
+        try:
+            games = self.games()
+        except FileNotFoundError as e:
+            notes.append(f"no host pack and no donor moveset: {e}")
+            return clips.coverage(port), notes
+        for what, read in (("host pack", inputs.host_anim), ("donor moveset", inputs.donor_anim)):
+            try:
+                got = read(m, games)
+            except (OSError, ValueError) as e:
+                notes.append(f"{what} unreadable ({e})")
+                continue
+            if what == "host pack":
+                host = got
+            else:
+                donor = got
+        return clips.coverage(port, host, donor), notes
+
+    def vocabulary(self) -> clips.Vocabulary:
+        if self._vocab is None:
+            cov, notes = self.coverage()
+            build = None if self.scene is None else self.scene.build_id
+            self._vocab = clips.survey(self.manifest, self.clip_table(), cov, build, notes)
+        return self._vocab
+
+    def manifest_clip(self, slot: int) -> tuple[str, ManifestClip] | None:
+        m = self.manifest
+        return None if m is None else clips.entry(m, slot)
+
+    def pick_clip(self, slot: int) -> None:
+        """Selects `slot` for naming and loads its name and label into the boxes."""
+        self.edit_slot = slot
+        found = self.manifest_clip(slot)
+        self.name_buf = found[0] if found else clips.clip_key(slot)
+        self.label_buf = found[1].label if found else ""
+
+    def play_slot(self, slot: int, frame: float | None = None) -> None:
+        if self.scene is None or self.vp is None:
+            return
+        try:
+            self.vp.play_clip(self.scene.clip(slot), frame)
+        except KeyError:
+            self.message = f"slot {slot} is not in this PAC"
+            return
+        self.pick_clip(slot)
+        self.recompute_alignment()
+
+    def label(self) -> None:
+        s = self.label_session
+        if s is None or self.edit_slot is None:
+            self.message = "no manifest to write to"
+            return
+        slot = self.edit_slot
+        self.edit(f"clips.{self.name_buf}", lambda: s.label(slot, self.name_buf, self.label_buf))
+
+    def set_impact_here(self) -> None:
+        """The current frame becomes this clip's `impact_frame`."""
+        s, vp = self.label_session, self.vp
+        if s is None:
+            self.message = "impact frames live in the manifest: open a port manifest"
+            return
+        if vp is None or vp.clip is None:
+            self.message = "no clip is playing"
+            return
+        slot, frame = vp.clip.slot, int(round(vp.playback.phase))
+        found = self.manifest_clip(slot)
+        name = found[0] if found else self.name_buf or clips.clip_key(slot)
+        label = found[1].label if found else self.label_buf
+        if self.edit("", lambda: s.label(slot, name, label, impact_frame=frame)):
+            self.message = f"impact = frame {frame}.  {self.message}"
+
+    def travel(self, slot: int) -> tuple[float, float]:
+        """`root_travel`, once per clip: it samples the clip."""
+        from mhfu_studio.monster.render.playback import root_travel
+
+        if slot not in self._travel and self.scene is not None:
+            self._travel[slot] = root_travel(self.scene, self.scene.clip(slot))
+        return self._travel.get(slot, (0.0, 0.0))
+
+    def joint_counts(self) -> dict[int, int]:
+        from mhfu_studio.monster.render.skeleton import vertex_counts
+
+        if self._counts is None:
+            self._counts = {} if self.scene is None else vertex_counts(self.scene)
+        return self._counts
+
+    # the action
+
+    def port_rig(self) -> align.PortRig | None:
+        sc = self.scene
+        if sc is None:
+            return None
+        driven = {j for c in sc.clips for j in c.driven}
+        return align.PortRig(sc.rig.n, driven, self.joint_counts())
+
+    def select_pair(self, main: int, sub: int, move: str | None = None) -> None:
+        self.pair, self.move = (int(main), int(sub)), move
+        self.recompute_alignment()
+        self.follow_action()
+
+    def clear_pair(self) -> None:
+        self.pair, self.move, self.alignment, self.markers = None, None, None, []
+
+    def recompute_alignment(self) -> None:
+        """The host pair against the clip on screen; its length from the SCENE, since a
+        rebuild moves clips and a stale length gives the wrong answer."""
+        m = self.manifest
+        if m is None or self.pair is None:
+            self.alignment, self.markers = None, []
+            return
+        clip = None if self.vp is None else self.vp.clip
+        found = None if clip is None else clips.entry(m, clip.slot)
+        mv = m.moves.get(self.move or "")
+        self.alignment = align.align_pair(
+            m,
+            self.pair[0],
+            self.pair[1],
+            self.intel,
+            move=self.move,
+            clip=found[0] if found else (clip.name if clip else None),
+            slot=None if clip is None else clip.slot,
+            clip_frames=None if clip is None else clip.frames,
+            impact=found[1].impact_frame if found else None,
+            allow_unentered=mv.allow_unentered if mv is not None else False,
+            rig=self.port_rig(),
+        )
+        self.markers = self.alignment.markers
+
+    def bind_move(self) -> None:
+        al, s = self.alignment, self.label_session
+        if al is None or s is None:
+            return
+        name = self.bind_buf or f"move_{al.main}_{al.sub}"
+        if self.edit("", lambda: s.bind_move(name, al.main, al.sub, al.clip)):
+            self.select_pair(al.main, al.sub, name)
+
+    def host_pair(self) -> PairIntel | None:
+        """The selected pair's intel when it is the host's; None while browsing."""
+        if self.pair is None or not self.browsing_the_host:
+            return None
+        si = self.host_intel()
+        return None if si is None else si.pair(*self.pair)
+
+    def pair_sets(self) -> list[int]:
+        """The volume sets the selected pair's handler hits with."""
+        host, p = self.host_attacks(), self.host_pair()
+        if host is None or p is None or not p.attack_ids:
+            return []
+        return host.sets_for(p.attack_ids, self.host_species)
+
+    # the host reference
+
+    def host_scene(self) -> Scene | None:
+        """The browsed species' own model PAC, read once; None with the reason in `message`."""
+        sp = self.browsing_species
+        if sp is None:
+            return None
+        if sp not in self.host_scenes:
+            scene = None
+            try:
+                data = self.fu().read(files.monster_pac(sp))
+                scene = Scene.from_bytes(data, f"em{sp:02d}")
+            except (OSError, ValueError) as e:
+                self.message = f"no host PAC for em{sp:02d}: {e}"
+            self.host_scenes[sp] = scene
+        return self.host_scenes[sp]
+
+    def host_clip_table(self) -> dict[int, tuple[int, bool]]:
+        sc = self.host_scene()
+        return {} if sc is None else sc.clip_table()
+
+    def sync_reference(self) -> None:
+        """The viewport's reference follows the toggle and the browsed species."""
+        vp = self.vp
+        if vp is None:
+            return
+        want = self.host_scene() if self.show_host else None
+        have = None if vp.reference is None else vp.reference.scene
+        if want is have:
+            return
+        self.host_clip = None
+        if want is None:
+            vp.clear_reference(frame_camera=True)
+            return
+        vp.set_reference(want)
+        self.follow_action()
+        vp.sync_focus("hitboxes")
+
+    def host_a1(self) -> list[int]:
+        al = self.alignment
+        return [] if al is None or al.pair is None else list(al.pair.a1)
+
+    def follow_action(self) -> None:
+        """The reference plays the first a1 of the pair that its pack populates."""
+        vp = self.vp
+        if vp is None or vp.reference is None:
+            return
+        table = self.host_clip_table()
+        a1 = next((a for a in self.host_a1() if a in table), None)
+        if a1 is not None:
+            self.play_host_clip(a1)
+
+    def play_host_clip(self, a1: int) -> None:
+        vp = self.vp
+        if vp is None or vp.reference is None:
+            return
+        self.host_clip = a1
+        vp.play_reference_clip(vp.reference.scene.clip(a1), 0.0)
+
+    # volumes
+
+    def sync_hitboxes(self) -> None:
+        """The chosen source's hurtboxes into the viewport; the host actor draws the host's."""
+        from mhfu_studio.monster.render.hitboxes import volumes
+
+        vp = self.vp
+        if vp is None or vp.scene is None:
+            return
+        if not self.show_parts:
+            vp.clear_hitboxes()
+            self.part_orphans = ()
+            return
+        host = self.host_parts()
+        if self.parts_source == PORT:
+            sess = self.part_session
+            vols = volumes(sess.volumes() if sess is not None else [])
+        else:
+            vols = volumes(host.spheres() if host is not None else [])
+        ov = vp.set_hitboxes(vols)
+        self.part_orphans = () if ov is None else ov.orphans
+        if ov is not None:
+            ov.set_selected_group(self.selected_part)
+            ov.set_selected_volume(self.selected_volume if self.parts_source == PORT else None)
+        vp.set_reference_hitboxes(volumes(host.spheres()) if host is not None else [])
+
+    def select_volume(self, index: int | None) -> None:
+        self.selected_volume = index
+        ov = self._overlay("hitboxes")
+        if ov is not None:
+            ov.set_selected_volume(index if self.parts_source == PORT else None)
+
+    def select_part(self, part: int | None) -> None:
+        self.selected_part = part
+        sess = self.part_session
+        self.part_name_buf = "" if sess is None or part is None else sess.name_of(part)
+        ov = self._overlay("hitboxes")
+        if ov is not None and self.vp is not None:
+            ov.set_selected_group(part)
+            self.vp.sync_focus("hitboxes")
+
+    def visible_sets(self) -> list[int] | None:
+        """The selected set; else the selected move's; else all authored on the port, none on
+        the host (a whole overlay's sets at once is two hundred volumes of fog)."""
+        if self.selected_set is not None:
+            return [self.selected_set]
+        ps = self.pair_sets()
+        if ps and self.sets_of_move_only:
+            return ps
+        return None if self.attacks_source == PORT else []
+
+    def sync_attacks(self) -> None:
+        from mhfu_studio.monster.render.hitboxes import attack_volumes, volumes
+
+        vp = self.vp
+        if vp is None or vp.scene is None:
+            return
+        if not self.show_attacks:
+            vp.clear_attacks()
+            self.attack_orphans = ()
+            return
+        host = self.host_attacks()
+        if self.attacks_source == PORT:
+            sess = self.attack_session
+            vols = volumes(sess.volumes() if sess is not None else [])
+        else:
+            vols = attack_volumes(host.sets) if host is not None else []
+        ov = vp.set_attacks(vols)
+        self.attack_orphans = () if ov is None else ov.orphans
+        if ov is not None:
+            ov.set_visible(self.visible_sets())
+            ov.set_selected_group(self.selected_set)
+            ov.set_selected_volume(
+                self.selected_attack_volume if self.attacks_source == PORT else None
+            )
+        vp.set_reference_attacks(attack_volumes(host.sets) if host is not None else [])
+        vp.sync_focus("attacks")
+
+    def select_set(self, index: int | None) -> None:
+        self.selected_set = index
+        self.selected_attack_volume = None
+        ov = self._overlay("attacks")
+        if ov is not None and self.vp is not None:
+            ov.set_visible(self.visible_sets())
+            ov.set_selected_group(index)
+            ov.set_selected_volume(None)
+            self.vp.sync_focus("attacks")
+
+    def select_attack_volume(self, index: int | None) -> None:
+        self.selected_attack_volume = index
+        ov = self._overlay("attacks")
+        if ov is not None:
+            ov.set_selected_volume(index if self.attacks_source == PORT else None)
+
+    def _overlay(self, which: str) -> HitboxOverlay | None:
+        vp = self.vp
+        return None if vp is None else vp.hitboxes if which == "hitboxes" else vp.attacks
+
+
+def focus(label: str) -> None:
+    """Brings a docked panel to the front next frame; nothing without a running window."""
+    try:
+        from imgui_bundle import hello_imgui
+
+        dp = hello_imgui.get_runner_params().docking_params
+        w = dp.dockable_window_of_name(label) if dp is not None else None
+    except (AttributeError, RuntimeError):
+        return
+    if w is not None:
+        w.focus_window_at_next_frame = True
+
+
+register("monster", MonsterWorkspace)

@@ -1,5 +1,5 @@
 """Everything the overlay and the log say about a species' behaviour pairs, joined into one
-document per species (schema `mhfu.species_intel/1`, which the monster editor reads).
+document per species (schema `mhfu.species_intel/1`), and its typed reader (`SpeciesIntel`).
 
 Each pair field says where it comes from: `static` (read from the overlay's code, the same in
 every run), `measured` (a census sample) or `absent`. A census is attached only to the species
@@ -13,8 +13,11 @@ handler reaches (em75's species-byte switch) are listed once, as `unattributed_e
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 import time
 from collections import Counter, defaultdict
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
@@ -616,3 +619,903 @@ def summarise(doc: Doc) -> str:
         else f"  census: ABSENT ({c['reason']})"
     )
     return "\n".join(out)
+
+
+# --- reading a document ---
+
+MIN_DWELL_TICKS = 3.0
+"""2 Hz ticks a pair must hold, when the engine picks it, before it is worth scripting."""
+
+BIND_OK = "OK"
+BIND_NO_HANDLER = "NO_HANDLER"
+BIND_NEVER_ENTERED = "NEVER_ENTERED"
+BIND_SHORT_DWELL = "SHORT_DWELL"
+BIND_UNMEASURED = "UNMEASURED"
+BIND_UNKNOWN_PAIR = "UNKNOWN_PAIR"
+
+Pair = ch.Pair
+
+
+def _va(v: Any) -> int | None:
+    """An address or hex field as written ("0x1C", or an int); None for null or ""."""
+    if v is None or v == "":
+        return None
+    return int(v, 0) if isinstance(v, str) else int(v)
+
+
+def _opt_int(v: Any) -> int | None:
+    return None if v is None else int(v)
+
+
+def _frames(v: Iterable[Any]) -> tuple[float | None, ...]:
+    return tuple(None if f is None else float(f) for f in v)
+
+
+@dataclass(frozen=True)
+class EffectRecipe:
+    """One literal effect spawn: the host's `bone`, and `frame` only for the framed primitive."""
+
+    id: int
+    bone: int | None = None
+    frame: int | None = None
+    site: int | None = None
+    via: str = ""
+    fn: int | None = None
+
+    def __str__(self) -> str:
+        s = f"{self.id}@b{'?' if self.bone is None else self.bone}"
+        return s if self.frame is None else f"{s}@f{self.frame}"
+
+    @classmethod
+    def read(cls, d: Doc) -> EffectRecipe:
+        return cls(
+            int(d["id"]),
+            _opt_int(d.get("bone")),
+            _opt_int(d.get("frame")),
+            _va(d.get("site")),
+            str(d.get("via", "")),
+            _va(d.get("fn")),
+        )
+
+
+@dataclass(frozen=True)
+class Budget:
+    """The ACTION_BUDGET frame countdown a handler may end on."""
+
+    gated: bool = False
+    phase0_seeds: tuple[int, ...] = ()
+    """Literals the handler's phase-0 block re-seeds it with."""
+    post_hook_owns: bool | None = None
+    """True when a slot-32 post-hook can own it (phase 0 only consumes it)."""
+
+    @classmethod
+    def read(cls, d: Doc | None) -> Budget:
+        d = d or {}
+        return cls(
+            bool(d.get("gated")),
+            tuple(int(x) for x in d.get("phase0_seeds", [])),
+            d.get("post_hook_owns"),
+        )
+
+
+_ANIM_INPUT_BASE = 0x3E8
+"""ENTITY.ANIM_INPUT holds the executor's a1 plus this (see its doc)."""
+_CELLS = {
+    0x280: "reaction pending",
+    a.ENTITY.ACTION_BUDGET: "frame budget",
+    0x637: "run budget armed",
+    a.ENTITY.SECTION: "section",
+    a.ENTITY.PHASE + 2: "phase3",
+    a.ENTITY.SPECIES: "species",
+    0xBE: "clip busy",
+    a.ENTITY.CLIP_FLAGS: "clip playing",
+}
+"""Entity cells a guard tests, named where pinned; the rest stay `+0xNNN`."""
+_FLAG_OFF = {
+    "reaction pending": "no reaction pending",
+    "run budget armed": "run budget unarmed",
+    "clip busy": "clip done",
+    "clip playing": "clip ended",
+}
+_GUARD = re.compile(r"^(!?)\+0x([0-9A-Fa-f]+)(==|!=|<=|>=|<|>)(-?\d+)$")
+
+
+def describe_guard(g: str) -> str:
+    """A guard as a person reads it: `+0x280!=0` is `reaction pending`; unpinned cells come
+    back unchanged. `budget spent` is the run budget, not the frame budget."""
+    if g in ("budget spent", "!budget spent"):
+        return "run budget spent" if g[0] != "!" else "run budget left"
+    m = _GUARD.match(g)
+    if not m:
+        return g
+    off, op, val = int(m[2], 16), m[3], int(m[4])
+    if off == a.ENTITY.ANIM_INPUT and op in ("==", "!=") and 0 <= val - _ANIM_INPUT_BASE < 200:
+        return f"{'not ' if op == '!=' else ''}playing a1 {val - _ANIM_INPUT_BASE}"
+    if off == a.ENTITY.ACTION_BUDGET and val == 0 and op in ("<=", ">"):
+        return "frame budget spent" if op == "<=" else "frame budget left"
+    name = _CELLS.get(off)
+    if name is None:
+        return g
+    if name in _FLAG_OFF:
+        if (op, val) in (("==", 0), ("!=", 1)):
+            return _FLAG_OFF[name]
+        if (op, val) in (("!=", 0), ("==", 1)):
+            return name
+    return f"{name}{op}{val}"
+
+
+@dataclass(frozen=True)
+class Handoff:
+    """One way a handler ends its action: the pair(s) it enters and the guards on the path.
+
+    `to` holds two pairs where the translator remaps the id under a flag; `mode` is act_set's
+    fourth argument; `alts` are the other guard sets that reach the same call."""
+
+    to: tuple[Pair, ...]
+    guards: tuple[str, ...] = ()
+    mode: int | None = None
+    site: int | None = None
+    via: tuple[int, ...] = ()
+    alts: tuple[tuple[str, ...], ...] = ()
+
+    @property
+    def reason(self) -> str:
+        """The guards other than the phase, pinned cells named."""
+        return " & ".join(describe_guard(g) for g in self.guards if not g.startswith("phase"))
+
+    @property
+    def raw_reason(self) -> str:
+        return " & ".join(g for g in self.guards if not g.startswith("phase"))
+
+    def describe(self) -> str:
+        return " & ".join(describe_guard(g) for g in self.guards)
+
+    @property
+    def phase(self) -> int | None:
+        for g in self.guards:
+            if g.startswith("phase=="):
+                try:
+                    return int(g[7:])
+                except ValueError:
+                    return None
+        return None
+
+    def __str__(self) -> str:
+        target = "/".join(f"({m},{s})" for m, s in self.to) or "(computed)"
+        return target + (f"  [{self.describe()}]" if self.guards else "")
+
+    @classmethod
+    def read(cls, d: Doc) -> Handoff:
+        return cls(
+            tuple((int(m), int(s)) for m, s in d.get("to", [])),
+            tuple(str(g) for g in d.get("guards", [])),
+            _opt_int(d.get("mode")),
+            _va(d.get("site")),
+            tuple(v for v in (_va(x) for x in d.get("via", [])) if v is not None),
+            tuple(tuple(str(g) for g in alt) for alt in d.get("alts", [])),
+        )
+
+
+@dataclass(frozen=True)
+class PairIntel:
+    """One (main, sub) pair. `entered` None means unmeasured, 0 measured never entered: only
+    the second may refuse a bind. `a1` is the census's when it saw any, else the static one."""
+
+    main: int
+    sub: int
+    entered: int | None = None
+    dwell_ticks: float = 0.0
+    a1: tuple[int, ...] = ()
+    note: str = ""
+    """What the census said, else the static note."""
+    handler: int | None = None
+    """None: the dispatcher's case runs inline."""
+    a1_static: tuple[int, ...] = ()
+    a1_computed: bool = False
+    ends_on: str = ""
+    event_frames: tuple[float | None, ...] = ()
+    """Cursor frames the handler tests; None where the literal came from data."""
+    window_frames: tuple[float | None, ...] = ()
+    """The windowed test's literals, one edge per site; negative ones are kept."""
+    windows: int = 0
+    budget: Budget = Budget()
+    effects: tuple[EffectRecipe, ...] = ()
+    attack_ids: tuple[int, ...] = ()
+    """Attack ids the handler passes the spawner, before any species id offset."""
+    attack_sites: int = 0
+    attack_sites_computed: int = 0
+    next: tuple[Handoff, ...] | None = None
+    """None: the document predates the chain join; empty: the handler never ends itself."""
+    prev: tuple[Pair, ...] = ()
+    static_note: str = ""
+    a1_measured: tuple[int, ...] = ()
+    move_per_tick: float | None = None
+    move_samples: int = 0
+    provenance: Mapping[str, str] = field(default_factory=dict)
+
+    @property
+    def successors(self) -> list[Pair]:
+        """Every pair this one hands to, first seen first."""
+        out: list[Pair] = []
+        for e in self.next or ():
+            out += [t for t in e.to if t not in out]
+        return out
+
+    @property
+    def ends_itself(self) -> bool | None:
+        return None if self.next is None else bool(self.next)
+
+    @property
+    def measured(self) -> bool:
+        return self.entered is not None
+
+    @property
+    def never_entered(self) -> bool:
+        return self.entered == 0
+
+    @property
+    def a1_provenance(self) -> str:
+        """Where `a1` came from (not `provenance["a1"]`, which is always the static list)."""
+        if self.a1_measured:
+            return MEASURED
+        return STATIC if self.a1_static else ABSENT
+
+    @property
+    def ends_on_clip(self) -> bool:
+        return self.ends_on in ("clip", "clip+cursor")
+
+    @property
+    def fixed_event_frames(self) -> list[float]:
+        return [f for f in self.event_frames if f is not None]
+
+    @property
+    def fixed_window_frames(self) -> list[float]:
+        return sorted({f for f in self.window_frames if f is not None})
+
+    @property
+    def tested_frames(self) -> list[float]:
+        """Every clip frame the handler names, of either kind."""
+        return sorted(set(self.fixed_event_frames) | set(self.fixed_window_frames))
+
+    def __str__(self) -> str:
+        bits = [f"({self.main},{self.sub})", f"0x{self.handler:08X}" if self.handler else "inline"]
+        if self.a1:
+            bits.append("a1=" + ",".join(map(str, self.a1)))
+        if self.ends_on:
+            bits.append("ends:" + self.ends_on)
+        if self.tested_frames:
+            bits.append("f@" + ",".join(f"{f:g}" for f in self.tested_frames))
+        if self.effects:
+            bits.append("fx " + " ".join(map(str, self.effects)))
+        bits.append(f"entered={'?' if self.entered is None else self.entered}")
+        return "  ".join(bits)
+
+    @classmethod
+    def read(cls, d: Doc) -> PairIntel:
+        meas = d.get("measured") or {}
+        a1_static = tuple(int(x) for x in d.get("a1", []))
+        a1_meas = tuple(int(x) for x in meas.get("a1", []))
+        nxt = d.get("next")
+        return cls(
+            main=int(d["main"]),
+            sub=int(d["sub"]),
+            entered=int(meas.get("entered", 0)) if meas else None,
+            dwell_ticks=float(meas.get("dwell_ticks", 0.0)),
+            a1=a1_meas or a1_static,
+            note=str(meas.get("note", "") or d.get("note", "")),
+            handler=_va(d.get("handler")),
+            a1_static=a1_static,
+            a1_computed=bool(d.get("a1_computed")),
+            ends_on=str(d.get("ends_on", "")),
+            event_frames=_frames(d.get("event_frames", [])),
+            window_frames=_frames(d.get("window_frames", [])),
+            windows=int(d.get("windows", 0)),
+            budget=Budget.read(d.get("budget")),
+            effects=tuple(EffectRecipe.read(e) for e in d.get("effects", [])),
+            attack_ids=tuple(int(x) for x in d.get("attack_ids", [])),
+            attack_sites=int(d.get("attack_sites", 0)),
+            attack_sites_computed=int(d.get("attack_sites_computed", 0)),
+            next=None if nxt is None else tuple(Handoff.read(e) for e in nxt),
+            prev=tuple((int(m), int(s)) for m, s in d.get("prev", [])),
+            static_note=str(d.get("note", "")),
+            a1_measured=a1_meas,
+            move_per_tick=meas.get("move_per_tick"),
+            move_samples=int(meas.get("move_samples", 0)),
+            provenance=dict(d.get("provenance", {})),
+        )
+
+
+@dataclass(frozen=True)
+class Bind:
+    """May a move be bound to a pair; `unverified` when that rests on absent evidence."""
+
+    ok: bool
+    code: str
+    reason: str
+    overridden: bool = False
+    unverified: bool = False
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+
+Vec = tuple[float, float, float]
+
+
+def _vec(v: Iterable[Any]) -> Vec:
+    x, y, z = (float(c) for c in v)
+    return (x, y, z)
+
+
+@dataclass(frozen=True)
+class HitSphere:
+    """One volume record. `part` (the damage accumulator) and `hitzone_row` (the grid row) are
+    different fields; an attack volume carries neither."""
+
+    bone: int
+    part: int
+    hitzone_row: int
+    radius: float
+    shape: str = "sphere"
+    a: Vec = (0.0, 0.0, 0.0)
+    b: Vec | None = None
+    flags: int = 0
+
+    @property
+    def is_capsule(self) -> bool:
+        return self.shape == "capsule"
+
+    @property
+    def is_marker(self) -> bool:
+        return self.bone in hz.MARKER_BONES
+
+    @classmethod
+    def read(cls, d: Doc) -> HitSphere:
+        b = d.get("b")
+        return cls(
+            int(d["bone"]),
+            int(d.get("part", 0)),
+            int(d.get("hitzone_row", 0)),
+            float(d.get("radius", 0.0)),
+            str(d.get("shape", "sphere")),
+            _vec(d.get("a", (0, 0, 0))),
+            None if b is None else _vec(b),
+            _va(d.get("flags")) or 0,
+        )
+
+
+@dataclass(frozen=True)
+class HitboxSet:
+    """One sentinel-delimited run of volumes in the overlay; `species` are the ids whose row
+    points at it."""
+
+    va: int
+    kind: str
+    spheres: tuple[HitSphere, ...] = ()
+    species: tuple[int, ...] = ()
+
+    @property
+    def parts(self) -> list[int]:
+        return sorted({s.part for s in self.spheres})
+
+    @property
+    def bones(self) -> list[int]:
+        return sorted({s.bone for s in self.spheres})
+
+    @classmethod
+    def read(cls, d: Doc) -> HitboxSet:
+        return cls(
+            _va(d.get("va")) or 0,
+            str(d.get("kind", "")),
+            tuple(HitSphere.read(x) for x in d.get("spheres", [])),
+            tuple(int(x) for x in d.get("species", [])),
+        )
+
+
+@dataclass(frozen=True)
+class GridState:
+    """One hitzone grid: rows of `hz.COLUMNS` percentages."""
+
+    va: int
+    rows: tuple[tuple[int, ...], ...]
+
+    def value(self, row: int, column: str) -> int:
+        return self.rows[row][hz.COLUMNS.index(column)]
+
+
+@dataclass(frozen=True)
+class PartIntel:
+    """Where the host can be hit: the overlay's volume sets and the species grid. The grid is
+    shared species data; `grid_note` says so."""
+
+    present: bool = False
+    sets: tuple[HitboxSet, ...] = ()
+    states: tuple[GridState, ...] = ()
+    columns: tuple[str, ...] = hz.COLUMNS
+    column_provenance: Mapping[str, str] = field(default_factory=dict)
+    species_row: int | None = None
+    state_table: int | None = None
+    grid_reason: str = ""
+    grid_note: str = ""
+    unclassified_runs: int = 0
+    active_set_va: int | None = None
+    """The set this species walks."""
+    sphere_table_field: int | None = None
+    """The u32 holding the pointer to it."""
+
+    @property
+    def has_grid(self) -> bool:
+        return bool(self.states)
+
+    @property
+    def n_states(self) -> int:
+        return len(self.states)
+
+    @property
+    def hurtboxes(self) -> list[HitboxSet]:
+        return [s for s in self.sets if s.kind == hz.HURTBOX]
+
+    @property
+    def active(self) -> HitboxSet | None:
+        """The one set a weapon resolves against for this species."""
+        return next((s for s in self.sets if s.va == self.active_set_va), None)
+
+    @property
+    def capacity(self) -> int | None:
+        """Records that fit in place: the active set's count."""
+        st = self.active
+        return None if st is None else len(st.spheres)
+
+    def spheres(self) -> list[HitSphere]:
+        """The active set's volumes; every hurtbox set's when the document names none."""
+        st = self.active
+        return list(st.spheres) if st is not None else self.all_spheres()
+
+    def all_spheres(self) -> list[HitSphere]:
+        return [s for st in self.hurtboxes for s in st.spheres]
+
+    def parts(self) -> list[int]:
+        return sorted({s.part for s in self.spheres()})
+
+    def bones_of_part(self, part: int) -> list[int]:
+        return sorted({s.bone for s in self.spheres() if s.part == part})
+
+    def rows_of_part(self, part: int) -> list[int]:
+        """A part's volumes may use several rows; all of them, never an average."""
+        return sorted({s.hitzone_row for s in self.spheres() if s.part == part})
+
+    def inferred_columns(self) -> list[str]:
+        """Columns whose name is an inference, not read out of the game."""
+        return [c for c in self.columns if self.column_provenance.get(c, "").startswith("inferred")]
+
+    @classmethod
+    def read(cls, d: Doc | None) -> PartIntel:
+        if not d or not d.get("present"):
+            return cls(grid_reason=(d or {}).get("reason", "no parts block"))
+        g = d.get("grid") or {}
+        return cls(
+            present=True,
+            sets=tuple(HitboxSet.read(x) for x in d.get("sets", [])),
+            states=tuple(
+                GridState(_va(s.get("va")) or 0, tuple(tuple(r) for r in s.get("rows", [])))
+                for s in g.get("states", [])
+            ),
+            columns=tuple(g.get("columns") or hz.COLUMNS),
+            column_provenance=dict(g.get("column_provenance") or {}),
+            species_row=_va(g.get("species_row")),
+            state_table=_va(g.get("state_table")),
+            grid_reason="" if g.get("present") else str(g.get("reason", "")),
+            grid_note=str(g.get("note", "")),
+            unclassified_runs=int(d.get("unclassified_runs", 0)),
+            active_set_va=_va(d.get("active_set")),
+            sphere_table_field=_va(d.get("sphere_table_field")),
+        )
+
+
+@dataclass(frozen=True)
+class AttackSet:
+    """One attack volume set: `index` is what a record's volume field names; it is written in
+    place, so `capacity` is its record count."""
+
+    index: int
+    va: int
+    spheres: tuple[HitSphere, ...] = ()
+    rigged: bool = True
+    """Some record is on a real joint; else it hangs on the node's own position."""
+
+    @property
+    def capacity(self) -> int:
+        return len(self.spheres)
+
+    @property
+    def bones(self) -> list[int]:
+        return sorted({s.bone for s in self.spheres if s.bone not in hz.MARKER_BONES})
+
+    def describe(self) -> str:
+        return ", ".join(
+            f"bone{s.bone}{'/cap' if s.is_capsule else ''} r={s.radius:g}"
+            + (f" @{tuple(round(v) for v in s.a)}" if any(s.a) else "")
+            for s in self.spheres
+        )
+
+    @classmethod
+    def read(cls, d: Doc) -> AttackSet:
+        sp = tuple(HitSphere.read(x) for x in d.get("spheres", []))
+        rigged = d.get("rigged", any(s.bone not in hz.MARKER_BONES for s in sp))
+        return cls(int(d.get("index", 0)), _va(d.get("va")) or 0, sp, bool(rigged))
+
+
+@dataclass(frozen=True)
+class AttackRecord:
+    """One attack record; `power`, `element` and `volume` are the measured levers."""
+
+    id: int
+    va: int
+    power: int
+    element: int
+    volume: int
+    kind: int = 0
+    flags: int = 0
+    angle: int = 0
+    tag: int = 0
+    u16_0c: int = 0
+    value_14: int = 0
+    raw: bytes = b""
+
+    @property
+    def is_blank(self) -> bool:
+        """Record 0 is all zero in every overlay."""
+        return not any(self.raw)
+
+    def describe(self) -> str:
+        return f"power {self.power}, element 0x{self.element:02X}, set {self.volume}"
+
+    @classmethod
+    def read(cls, d: Doc) -> AttackRecord:
+        return cls(
+            int(d["id"]),
+            _va(d.get("va")) or 0,
+            int(d.get("power", 0)),
+            _va(d.get("element")) or 0,
+            int(d.get("volume", 0)),
+            int(d.get("kind", 0)),
+            _va(d.get("flags")) or 0,
+            int(d.get("angle", 0)),
+            _va(d.get("tag")) or 0,
+            int(d.get("u16_0c", 0)),
+            int(d.get("value_14", 0)),
+            bytes.fromhex(d["raw"]) if d.get("raw") else b"",
+        )
+
+
+@dataclass(frozen=True)
+class AttackTable:
+    """One (records, volume sets) pair the overlay registers; `primary` is the one handler
+    literals index."""
+
+    handle_va: int
+    records_va: int
+    volume_table_va: int | None
+    primary: bool = False
+    rigged: bool = True
+    sets: tuple[AttackSet, ...] = ()
+    attacks: tuple[AttackRecord, ...] = ()
+
+    def set(self, index: int) -> AttackSet | None:
+        return next((s for s in self.sets if s.index == index), None)
+
+    def attack(self, id: int) -> AttackRecord | None:
+        """By record id, not list position."""
+        return next((r for r in self.attacks if r.id == id), None)
+
+    def volume_for(self, id: int) -> AttackSet | None:
+        r = self.attack(id)
+        return None if r is None else self.set(r.volume)
+
+    def attacks_using(self, set_index: int) -> list[AttackRecord]:
+        return [r for r in self.attacks if not r.is_blank and r.volume == set_index]
+
+    @classmethod
+    def read(cls, d: Doc) -> AttackTable:
+        return cls(
+            _va(d.get("handle")) or 0,
+            _va(d.get("records")) or 0,
+            _va(d.get("volume_table")),
+            bool(d.get("primary")),
+            bool(d.get("rigged", True)),
+            tuple(AttackSet.read(x) for x in d.get("sets", [])),
+            tuple(AttackRecord.read(x) for x in d.get("attacks", [])),
+        )
+
+
+@dataclass(frozen=True)
+class AttackIntel:
+    """Where the host hits: its attack tables and the spawner its handlers call. `join` says
+    whether the spawner-to-table join was measured (em75) or inferred."""
+
+    present: bool = False
+    reason: str = ""
+    spawner: int | None = None
+    join: str = ""
+    join_provenance: str = ""
+    id_offsets: Mapping[int, int] = field(default_factory=dict)
+    """Entity species -> what it adds to a handler literal to get the record id."""
+    field_provenance: Mapping[str, str] = field(default_factory=dict)
+    tables: tuple[AttackTable, ...] = ()
+    attack_sites: int = 0
+    attack_sites_uncredited: int = 0
+    note: str = ""
+
+    @property
+    def primary(self) -> AttackTable | None:
+        return next((t for t in self.tables if t.primary), self.tables[0] if self.tables else None)
+
+    @property
+    def sets(self) -> list[AttackSet]:
+        t = self.primary
+        return [] if t is None else list(t.sets)
+
+    @property
+    def attacks(self) -> list[AttackRecord]:
+        t = self.primary
+        return [] if t is None else [r for r in t.attacks if not r.is_blank]
+
+    def set(self, index: int) -> AttackSet | None:
+        t = self.primary
+        return None if t is None else t.set(index)
+
+    def attack(self, id: int) -> AttackRecord | None:
+        t = self.primary
+        return None if t is None else t.attack(id)
+
+    def capacity(self, set_index: int) -> int | None:
+        st = self.set(set_index)
+        return None if st is None else st.capacity
+
+    def id_offset(self, entity_species: int) -> int | None:
+        """None for a species the overlay was not read for: never assume 0."""
+        return self.id_offsets.get(entity_species)
+
+    def records_for(
+        self, literal_ids: Iterable[int], entity_species: int | None = None
+    ) -> list[AttackRecord]:
+        """The records handler literals reach for an entity of `entity_species` (default: the
+        overlay's own, offset 0)."""
+        off = 0 if entity_species is None else self.id_offset(entity_species)
+        if off is None:
+            return []
+        found = (self.attack(i + off) for i in literal_ids)
+        return [r for r in found if r is not None and not r.is_blank]
+
+    def sets_for(self, literal_ids: Iterable[int], entity_species: int | None = None) -> list[int]:
+        return sorted({r.volume for r in self.records_for(literal_ids, entity_species)})
+
+    def attacks_using(self, set_index: int) -> list[AttackRecord]:
+        t = self.primary
+        return [] if t is None else t.attacks_using(set_index)
+
+    @classmethod
+    def read(cls, d: Doc | None) -> AttackIntel:
+        if not d or not d.get("present"):
+            d = d or {}
+            return cls(
+                reason=str(d.get("reason", "no attacks block")), spawner=_va(d.get("spawner"))
+            )
+        return cls(
+            present=True,
+            spawner=_va(d.get("spawner")),
+            join=str(d.get("join", "")),
+            join_provenance=str(d.get("join_provenance", "")),
+            id_offsets={int(k): int(v) for k, v in (d.get("id_offsets") or {}).items()},
+            field_provenance=dict(d.get("field_provenance") or {}),
+            tables=tuple(AttackTable.read(t) for t in d.get("tables", [])),
+            attack_sites=int(d.get("attack_sites", 0)),
+            attack_sites_uncredited=int(d.get("attack_sites_uncredited", 0)),
+            note=str(d.get("note", "")),
+        )
+
+
+class SpeciesIntel:
+    """A species document, typed: `pair(main, sub)` and the joins over pairs, parts and
+    attacks. `doc` is the document itself (`summarise(si.doc)`)."""
+
+    def __init__(self, doc: Doc, source: str = "") -> None:
+        self.doc = doc
+        self.source = source
+        self.host_species = int(doc.get("host_species", -1))
+        self._pairs = {(p.main, p.sub): p for p in map(PairIntel.read, doc.get("pairs", []))}
+        census = doc.get("census") or {}
+        self.has_census = bool(census.get("present"))
+        self.census_reason = str(census.get("reason", ""))
+        self.census_transitions = int(census.get("transitions", 0))
+        self.has_static = bool((doc.get("static") or {}).get("present"))
+        self.main_states: list[Doc] = list(doc.get("main_states") or [])
+        self.enumerated_mains = {int(m["main"]) for m in self.main_states if m.get("enumerated")}
+        self.unattributed_effects: list[Doc] = list(doc.get("unattributed_effects") or [])
+        self.overlay: Doc = dict(doc.get("overlay") or {})
+        self.chain: Doc = dict(doc.get("chain") or {})
+        self.parts = PartIntel.read(doc.get("parts"))
+        self.attacks = AttackIntel.read(doc.get("attacks"))
+
+    @classmethod
+    def load(cls, path: str | Path) -> SpeciesIntel:
+        p = Path(path)
+        return cls(json.loads(p.read_text(encoding="utf-8")), str(p))
+
+    def pair(self, main: int, sub: int) -> PairIntel | None:
+        return self._pairs.get((main, sub))
+
+    def __len__(self) -> int:
+        return len(self._pairs)
+
+    def __iter__(self) -> Iterator[PairIntel]:
+        return iter(p for _, p in sorted(self._pairs.items()))
+
+    def pairs_with_effects(self) -> list[PairIntel]:
+        return [p for p in self if p.effects]
+
+    def budget_gated(self) -> list[PairIntel]:
+        return [p for p in self if p.budget.gated]
+
+    def framed_effects(self) -> list[EffectRecipe]:
+        """Every framed spawn, by frame: all unattributed, so the species' vocabulary rather
+        than any one pair's."""
+        out = [
+            EffectRecipe.read(s)
+            for u in self.unattributed_effects
+            for s in u.get("sites", [])
+            if s.get("frame") is not None
+        ]
+        return sorted(out, key=lambda e: (e.frame or 0, e.id))
+
+    def bindable(self, main: int, sub: int, override: bool = False) -> Bind:
+        """Refuses only a pair the census measured as never entered (forced, it survives one
+        tick) and, from static intel, a sub the main's dispatcher does not have."""
+        p = self.pair(main, sub)
+        if p is None:
+            if self.has_static and main in self.enumerated_mains:
+                n = next((m.get("sub_states") for m in self.main_states if m["main"] == main), None)
+                return Bind(
+                    False,
+                    BIND_NO_HANDLER,
+                    f"main {main} dispatches {n} sub_state(s) and {sub} is not one of them — "
+                    "act_set would land on nothing.",
+                )
+            return Bind(
+                True,
+                BIND_UNKNOWN_PAIR,
+                f"nothing is known about ({main},{sub}): it is neither in the overlay's jump "
+                "tables nor in the census.",
+                unverified=True,
+            )
+        if p.handler is None:
+            return Bind(
+                True,
+                BIND_NO_HANDLER,
+                f"the dispatcher's case for ({main},{sub}) runs inline and calls no handler, so "
+                "nothing offline can say what it does.",
+                unverified=True,
+            )
+        if p.never_entered:
+            why = (
+                f"the census says the engine enters ({main},{sub}) ZERO times. Forced, it "
+                "survives exactly one tick — 411 of 411 did."
+            )
+            return Bind(override, BIND_NEVER_ENTERED, why, overridden=override)
+        if not p.measured:
+            extra = f" {self.census_reason}" if self.census_reason else ""
+            return Bind(
+                True,
+                BIND_UNMEASURED,
+                f"no census covers ({main},{sub}), so whether the engine ever enters it is "
+                f"UNKNOWN — not zero.{extra}",
+                unverified=True,
+            )
+        if p.dwell_ticks and p.dwell_ticks < MIN_DWELL_TICKS:
+            return Bind(
+                True,
+                BIND_SHORT_DWELL,
+                f"({main},{sub}) holds for only {p.dwell_ticks:.1f} ticks "
+                f"({p.dwell_ticks / 2:.1f} s at 2 Hz) even when the ENGINE picks it.",
+                unverified=True,
+            )
+        return Bind(
+            True,
+            BIND_OK,
+            f"the engine entered ({main},{sub}) {p.entered} time(s) and held it "
+            f"{p.dwell_ticks:.1f} tick(s).",
+        )
+
+    # the chain
+
+    @property
+    def has_chain(self) -> bool:
+        return bool(self.chain) and any(p.next is not None for p in self)
+
+    @property
+    def hubs(self) -> list[Pair]:
+        """Where most hand-offs land: the brain picks again there."""
+        return [(int(m), int(s)) for m, s in self.chain.get("hubs", [])]
+
+    def successors(self, main: int, sub: int) -> list[Handoff]:
+        p = self.pair(main, sub)
+        return list(p.next or ()) if p is not None else []
+
+    def predecessors(self, main: int, sub: int) -> list[PairIntel]:
+        p = self.pair(main, sub)
+        if p is None:
+            return []
+        return [q for q in (self.pair(*k) for k in p.prev) if q is not None]
+
+    def chain_from(self, main: int, sub: int, depth: int = 6) -> list[PairIntel]:
+        """The pairs reachable by hand-offs, breadth first; hubs are terminals."""
+        start = self.pair(main, sub)
+        if start is None:
+            return []
+        hubs = set(self.hubs)
+        seen = {(main, sub)}
+        order, frontier = [start], [start]
+        for _ in range(depth):
+            nxt = []
+            for p in frontier:
+                if (p.main, p.sub) in hubs and p is not start:
+                    continue
+                for t in p.successors:
+                    q = self.pair(*t)
+                    if t in seen or q is None:
+                        continue
+                    seen.add(t)
+                    order.append(q)
+                    nxt.append(q)
+            frontier = nxt
+            if not frontier:
+                break
+        return order
+
+    def entries(self) -> list[PairIntel]:
+        """Handled pairs nothing hands to: the brain's entry points."""
+        return [p for p in self if p.handler is not None and not p.prev and p.next is not None]
+
+    def pairs_hitting_with(
+        self, set_index: int, entity_species: int | None = None
+    ) -> list[PairIntel]:
+        """Every pair whose handler spawns an attack that hits with volume set `set_index`."""
+        at = self.attacks
+        if not at.present:
+            return []
+        return [
+            p
+            for p in self
+            if p.attack_ids and set_index in at.sets_for(p.attack_ids, entity_species)
+        ]
+
+
+@dataclass(frozen=True)
+class HostSummary:
+    """One overlay at the size a host chooser needs."""
+
+    species: int
+    pairs: int
+    handled: int
+    timed: int
+    """Pairs whose handler tests fixed clip frames."""
+    budget: int
+    effects: int
+    opaque_mains: int
+    """Mains with no sub_state jump table: not enumerable, which is not absent."""
+
+    @property
+    def free_timing(self) -> int:
+        return self.pairs - self.timed
+
+    @classmethod
+    def of(cls, si: SpeciesIntel) -> HostSummary:
+        return cls(
+            si.host_species,
+            len(si),
+            sum(p.handler is not None for p in si),
+            sum(bool(p.tested_frames) for p in si),
+            len(si.budget_gated()),
+            len(si.pairs_with_effects()),
+            sum(not m.get("enumerated") for m in si.main_states),
+        )

@@ -442,9 +442,11 @@ class Walker:
         f = self._cond(ins, p)
         likely = ins.isBranchLikely()
         if f.outcome is not None:
-            if f.outcome or not likely:
+            # a decided branch back into code this path ran is a counted loop: leave it
+            jumps = f.outcome and target not in p.visited
+            if jumps or not likely:
                 self._exec(slot, p)
-            p.pc = target if f.outcome else p.pc + 8
+            p.pc = target if jumps else p.pc + 8
             return
         taken = p.fork(target, f.taken)
         if f.cell is not None:

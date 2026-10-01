@@ -1,0 +1,191 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 sp00ktober
+import pytest
+from mhfu_port import manifest
+from mhfu_studio.monster import validate as V
+
+CLIP = "\n[clips.c]\nslot = 61\nframes = 382\nloop = false\n"
+MOVE = '\n[moves.m]\nmain = {}\nsub = {}\nclip = "c"\n'
+NEXT = {"to": [[0, 3]], "guards": ["phase==3", "budget spent"]}
+ATTACKS = {
+    "present": True,
+    "join": "inferred",
+    "tables": [
+        {
+            "handle": "0x1",
+            "records": "0x2",
+            "volume_table": "0x3",
+            "primary": True,
+            "sets": [
+                {"index": 0, "va": "0x4", "spheres": [{"bone": 1, "radius": 1.0}]},
+                {"index": 1, "va": "0x5", "rigged": False, "spheres": [{"bone": 127, "radius": 1}]},
+            ],
+            "attacks": [{"id": 1, "power": 9, "volume": 0, "raw": "01"}],
+        }
+    ],
+}
+
+
+def found(findings, code=None):
+    return {f.code: f for f in findings} if code is None else {f.code: f for f in findings}[code]
+
+
+def test_no_evidence(make):
+    out = found(V.validate(make(CLIP + MOVE.format(2, 8))))
+    assert out["PAC_ABSENT"].level == "warning" and out["INTEL_ABSENT"].level == "warning"
+    assert V.validate(make()) == []
+    assert V.report([]) == "OK: no findings."
+
+
+def test_census(make, species, make_pair):
+    m = make(CLIP + MOVE.format(4, 15))
+    never = species([make_pair(4, 15, measured={"entered": 0})], census=True)
+    f = found(V.validate(m, intel=never), "MOVE_PAIR_NEVER_ENTERED")
+    assert f.level == "error" and f.where == "moves.m" and f.target == ("moves", "m")
+    allowed = make(CLIP + MOVE.format(4, 15) + "allow_unentered = true\n")
+    assert found(V.validate(allowed, intel=never), "MOVE_PAIR_NEVER_ENTERED").level == "warning"
+    blind = found(V.validate(m, intel=species([make_pair(4, 15)])))
+    assert "MOVE_PAIR_NEVER_ENTERED" not in blind and blind["INTEL_ABSENT"].level == "warning"
+    short = species([make_pair(4, 15, measured={"entered": 3, "dwell_ticks": 1.0})], census=True)
+    assert "MOVE_PAIR_SHORT_DWELL" in found(V.validate(m, intel=short))
+    unseen = found(V.validate(make(CLIP + MOVE.format(1, 1)), intel=short))
+    assert unseen["MOVE_PAIR_NO_HANDLER"].level == "error"
+    assert (
+        found(V.validate(make(CLIP + MOVE.format(4, 1)), intel=short))["MOVE_PAIR_UNOBSERVED"].level
+        == "warning"
+    )
+
+
+def test_wrong_species(make, species, make_pair):
+    si = species([make_pair(2, 8)], host_species=76)
+    assert set(found(V.validate(make(CLIP + MOVE.format(2, 8)), intel=si))) == {
+        "INTEL_WRONG_SPECIES",
+        "PAC_ABSENT",
+    }
+
+
+def test_chain(make, species, make_pair):
+    m = make(CLIP + MOVE.format(1, 4))
+    si = species([make_pair(1, 4, next=[NEXT]), make_pair(0, 3)])
+    out = found(V.validate(m, intel=si))
+    assert {"MOVE_PAIR_PARKS", "MOVE_BUDGET_ROOT_MOTION"} <= set(out)
+    parks = species([make_pair(1, 4, next=[])])
+    assert (
+        "never ends the action itself"
+        in found(V.validate(m, intel=parks), "MOVE_PAIR_PARKS").message
+    )
+    chained = make(
+        CLIP + MOVE.format(1, 4) + 'after = "stop"\n\n[moves.stop]\nmain = 0\nsub = 6\nanim = 3\n'
+        '\n[[rule]]\nplay = "stop"\nfrom = "m"\nmin_frames = 30\n'
+    )
+    out = found(V.validate(chained, intel=si))
+    assert "MOVE_PAIR_PARKS" not in out and "MOVE_BUDGET_ROOT_MOTION" not in out
+    assert out["MOVE_AFTER_ENGINE"].level == "info"
+    budget = {"gated": True, "phase0_seeds": [60], "post_hook_owns": False}
+    si = species([make_pair(1, 4, ends_on="budget", budget=budget)])
+    assert "[60]" in found(V.validate(m, intel=si), "MOVE_PAIR_BUDGET_GATED").message
+
+
+def test_pac(make, synthetic_pac):
+    m = make(
+        '\n[clips.idle]\nslot = 1\nframes = 10\nloop = true\nlabel = "x"\n'
+        "\n[clips.head]\nslot = 2\nframes = 7\n"
+        "\n[clips.gone]\nslot = 9\n"
+        "\n[[hurtbox]]\nbone = 3\nradius = 0.0\npart = 1\n"
+        "\n[[hurtbox]]\nbone = 125\nradius = 0.0\npart = 1\n"
+        '\n[[effect]]\nmove = "m"\nframe = 1\nid = 2\nbone = 5\n'
+        "\n[moves.m]\nmain = 0\nsub = 1\nanim = 1\n"
+    )
+    out = V.validate(m, synthetic_pac)
+    by = {(f.code, f.where) for f in out}
+    assert ("CLIP_SLOT_MISSING", "clips.gone") in by
+    assert ("CLIP_FRAMES_MISMATCH", "clips.head") in by and ("LABEL_UNKEYED", "clips.idle") in by
+    assert ("HURTBOX_BONE_RANGE", "hurtbox[0]") in by and ("HURTBOX_RADIUS", "hurtbox[0]") in by
+    assert not any(w == "hurtbox[1]" for _, w in by), "a marker is not a joint"
+    assert ("EFFECT_BONE_RANGE", "effect[0]") in by
+    assert V.bone_count(synthetic_pac) == 3
+    with pytest.raises(ValueError):
+        V.bone_count(b"\0" * 64)
+
+
+def test_filler(make, synthetic_pac, monkeypatch):
+    monkeypatch.setattr(V.clips, "pac_clip_table", lambda pac: {1: (10, True), 5: (10, True)})
+    out = found(V.validate(make("\n[clips.f]\nslot = 5\n"), synthetic_pac))
+    assert out["CLIP_IS_FILLER"].level == "warning"
+    assert "CLIP_IS_FILLER" not in found(V.validate(make("\n[clips.f]\nslot = 1\n"), synthetic_pac))
+
+
+def test_settings():
+    m = manifest.loads(
+        "[port]\nname = 't'\nhost_species = 75\npac = 't.bin'\n"
+        "[source]\nmodel = 5248\nem_id = 58\ngeo = 9\n"
+        "[build]\nskin = 'source'\nbone_offset = 3\n"
+    )
+    out = found(V.validate(m))
+    assert {"SOURCE_FILES_UNEXPECTED", "SKIN_SOURCE_WITHOUT_RIG", "BONE_OFFSET_OVERRIDE"} <= set(
+        out
+    )
+
+
+def test_parts(make, species):
+    m = make(
+        "\n[parts.head]\nindex = 1\n\n[parts.skull]\nindex = 1\n"
+        "\n[[hurtbox]]\nbone = 1\nradius = 9.0\n"
+        '\n[[hurtbox]]\nbone = 1\nradius = 9.0\npart = 4\nshape = "capsule"\n'
+        '\n[[hitzone]]\nstate = "a"\nrows = ' + str([[0] * 10] * 7) + "\n"
+        '\n[[hitzone]]\nstate = "a"\nrows = ' + str([[1] * 10] * 7) + "\n"
+    )
+    parts = {
+        "present": True,
+        "active_set": "0x1",
+        "sets": [{"va": "0x1", "kind": "hurtbox", "spheres": [{"bone": 1, "radius": 1}]}],
+        "grid": {"present": True, "states": [{"va": "0x2", "rows": [[0] * 10] * 7}]},
+    }
+    out = found(V.validate(m, intel=species([], parts=parts)))
+    for code, level in (
+        ("PART_INDEX_DUPLICATE", "error"),
+        ("HURTBOX_NO_PART", "warning"),
+        ("HURTBOX_PART_UNNAMED", "warning"),
+        ("HURTBOX_CAPSULE_NO_END", "error"),
+        ("HITZONE_ALL_ZERO", "warning"),
+        ("HITZONE_STATE_DUPLICATE", "error"),
+        ("HITZONE_STATE_COUNT", "warning"),
+        ("HITZONE_SHARED", "warning"),
+        ("HURTBOX_OVER_CAPACITY", "warning"),
+    ):
+        assert out[code].level == level, code
+    unnamed = make("\n[[hurtbox]]\nbone = 1\nradius = 9.0\npart = 1\n")
+    assert "PARTS_UNNAMED" in found(V.validate(unnamed))
+
+
+def test_attacks(make, species):
+    m = make(
+        "\n[[hitbox]]\nbone = 1\nradius = 1.0\nset = 0\n"
+        '\n[[hitbox]]\nbone = 1\nradius = 1.0\nset = 0\nshape = "capsule"\n'
+        "\n[[hitbox]]\nbone = 1\nradius = 1.0\nset = 1\n"
+        "\n[[hitbox]]\nbone = 1\nradius = 1.0\nset = 7\n"
+        "\n[[attack]]\nid = 1\n\n[[attack]]\nid = 50\nvolume = 9\n"
+    )
+    out = found(V.validate(m, intel=species([], attacks=ATTACKS)))
+    for code in (
+        "HITBOX_CAPSULE_NO_END",
+        "ATTACK_EMPTY",
+        "HITBOX_SET_UNKNOWN",
+        "HITBOX_OVER_CAPACITY",
+        "HITBOX_SET_UNRIGGED",
+        "HITBOX_SET_UNUSED",
+        "ATTACK_RECORD_UNKNOWN",
+        "ATTACK_VOLUME_UNKNOWN",
+        "ATTACK_JOIN_INFERRED",
+        "HITBOX_SHARED",
+    ):
+        assert code in out, code
+    assert "HITBOX_UNCHECKED" in found(V.validate(m))
+    assert not [f for f in V.validate(make()) if f.code.startswith(("HITBOX", "ATTACK"))]
+
+
+@pytest.mark.parametrize("name", ["zinogre", "brute_tigrex"])
+def test_ports(name, ports, built, em75):
+    m = manifest.load(ports / f"{name}.toml")
+    out = V.validate(m, built(name), em75)
+    assert not [f for f in out if f.level == "error"], [str(f) for f in out]
