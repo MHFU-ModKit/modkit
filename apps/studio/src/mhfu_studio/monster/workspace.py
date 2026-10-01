@@ -13,8 +13,9 @@ from __future__ import annotations
 import tomllib
 from collections.abc import Callable, Hashable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
+from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from mhfu import files
 from mhfu.em.intel import AttackIntel, HostSummary, PairIntel, PartIntel, SpeciesIntel
@@ -31,7 +32,7 @@ from mhfu_studio.monster.attacks import AttackSession
 from mhfu_studio.monster.core.scene import MHFU, Scene
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.parts import PartSession
-from mhfu_studio.shell.workspace import MAIN, Gesture, Panel, Split, View, Workspace, register
+from mhfu_studio.shell.workspace import Dock, Workspace, register
 
 if TYPE_CHECKING:
     import moderngl
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
     from mhfu_studio.monster.panels.moves import MoveGraph
     from mhfu_studio.monster.render.hitboxes import HitboxOverlay
     from mhfu_studio.monster.render.viewport import MonsterViewport
+    from mhfu_studio.shell.studio import Studio
 
 Pair = tuple[int, int]
 PORT, HOST = "port", "host"
@@ -58,6 +60,8 @@ class MonsterWorkspace(Workspace):
         self.vp: MonsterViewport | None = None
         #: the last action's outcome, for the status bar
         self.message = ""
+        #: a dock to bring forward, for the window (`take_focus`)
+        self._focus: str | None = None
         self._seen: Manifest | None = None
         #: every overlay summarised, once surveyed
         self.hosts: list[HostSummary] | None = None
@@ -165,36 +169,55 @@ class MonsterWorkspace(Workspace):
             self.sync()
         return self.vp
 
-    def panels(self) -> Sequence[Panel]:
-        from mhfu_studio.monster.panels import (
-            action,
-            clips,
-            hitboxes,
-            moves,
-            parts,
-            scene,
-            timeline,
-        )
+    def docks(self) -> Sequence[Dock]:
+        def build(module: str, panel: str) -> Callable[[Studio], Any]:
+            """The panel class imported when its dock is first built (Qt loads only then)."""
+            return lambda studio: getattr(
+                import_module(f"mhfu_studio.monster.panels.{module}"), panel
+            )(self, studio)
 
         return (
-            Panel("Moves", MAIN, lambda: moves.panel(self), scroll=False),
-            Panel("Timeline", "Bottom", lambda: timeline.panel(self), focus=True),
-            Panel("Scene", "Left", lambda: scene.scene_panel(self)),
-            Panel("View", "Left", lambda: scene.view_panel(self)),
-            Panel("Joints", "Left", lambda: scene.joints_panel(self)),
-            Panel("Clips", "Right", lambda: clips.panel(self)),
-            Panel("Parts", "Right", lambda: parts.panel(self)),
-            Panel("Hitboxes", "Right", lambda: hitboxes.panel(self)),
-            Panel("Action", "BottomRight", lambda: action.panel(self)),
-        )
-
-    def layout(self) -> Sequence[Split]:
-        return (
-            Split(MAIN, "Left", "left", 0.18),
-            Split(MAIN, "Right", "right", 0.20),
-            Split(MAIN, "Bottom", "down", 0.30),
-            Split("Bottom", "BottomRight", "right", 0.45),
-        )
+            Dock(
+                "Timeline", "bottom", build("timeline", "TimelinePanel"),
+                "Play the clip at the game's own speed, and see where the host move's events"
+                " fall on it.",
+                focus=True,
+            ),
+            Dock(
+                "Moves", "bottom", build("moves", "MovesPanel"),
+                "The host monster's moves as a graph of which move hands over to which. Click"
+                " one to read it; double-click to work on it in Action.",
+            ),
+            Dock(
+                "Action", "bottom", build("action", "ActionPanel"),
+                "What the host monster's move expects of the clip on screen: its frames, its"
+                " effects and its hits.",
+            ),
+            Dock(
+                "Scene", "left", build("scene", "ScenePanel"),
+                "What the opened port holds: the model, its skeleton, clips and textures.",
+            ),
+            Dock(
+                "View", "left", build("scene", "ViewPanel"),
+                "What the view shows and how. Changes nothing in the port.",
+            ),
+            Dock(
+                "Joints", "left", build("scene", "JointsPanel"),
+                "The skeleton's bones; pick one to find it on the model.",
+            ),
+            Dock(
+                "Clips", "right", build("clips", "ClipsPanel"),
+                "Every animation slot, what is really in it, and the name it goes by.",
+            ),
+            Dock(
+                "Parts", "right", build("parts", "PartsPanel"),
+                "Where the monster can be hit, and how much each spot takes.",
+            ),
+            Dock(
+                "Hitboxes", "right", build("hitboxes", "HitboxesPanel"),
+                "Where the monster hits you: its attack spheres and their sizes, to tweak.",
+            ),
+        )  # fmt: skip
 
     def status(self) -> str:
         return self.message
@@ -204,16 +227,6 @@ class MonsterWorkspace(Workspace):
             self.sync()
         if self.vp is not None:
             self.vp.tick(dt)
-
-    def input(self, view: View) -> Gesture:
-        from mhfu_studio.monster.panels import viewport
-
-        return viewport.pick(self, view)
-
-    def overlay(self, view: View) -> None:
-        from mhfu_studio.monster.panels import viewport
-
-        viewport.joint_labels(self, view)
 
     def animating(self) -> bool:
         vp = self.vp
@@ -225,6 +238,10 @@ class MonsterWorkspace(Workspace):
     def refresh(self) -> None:
         self.sync()
 
+    def take_focus(self) -> str | None:
+        label, self._focus = self._focus, None
+        return label
+
     def reveal(self, target: Hashable) -> None:
         """A finding's `(section, key)`: select it and bring its panel forward."""
         if not isinstance(target, tuple) or len(target) != 2 or self.manifest is None:
@@ -233,41 +250,41 @@ class MonsterWorkspace(Workspace):
         m = self.manifest
         if section == "clips" and isinstance(key, str) and key in m.clips:
             self.play_slot(m.clips[key].slot)
-            focus("Clips")
+            self._focus = "Clips"
         elif section == "moves" and isinstance(key, str) and key in m.moves:
             mv = m.moves[key]
             if mv.clip in m.clips:
                 self.play_slot(m.clips[mv.clip].slot)
             self.select_pair(mv.main, mv.sub, key)
-            focus("Action")
+            self._focus = "Action"
         elif section == "hurtbox" and isinstance(key, int) and key < len(m.hurtboxes):
             self.show_parts, self.parts_source = True, PORT
             self.sync_hitboxes()
             self.select_volume(key)
-            focus("Parts")
+            self._focus = "Parts"
         elif section == "hitzone" and isinstance(key, int):
             self.parts_source, self.show_state = PORT, key
-            focus("Parts")
+            self._focus = "Parts"
         elif section == "hitbox" and isinstance(key, int) and key < len(m.hitboxes):
             self.show_attacks, self.attacks_source = True, PORT
             self.select_set(m.hitboxes[key].set)
             self.sync_attacks()
             self.select_attack_volume(key)
-            focus("Hitboxes")
+            self._focus = "Hitboxes"
         elif section == "attack" and isinstance(key, int) and key < len(m.attacks):
             vol = m.attacks[key].volume
             self.show_attacks = True
             if vol is not None:
                 self.select_set(vol)
             self.sync_attacks()
-            focus("Hitboxes")
+            self._focus = "Hitboxes"
         elif section == "effect" and isinstance(key, int) and key < len(m.effects):
             e = m.effects[key]
             if self.vp is not None:
                 self.vp.select_joint(e.bone)
             if e.move in m.moves:
                 self.select_pair(m.moves[e.move].main, m.moves[e.move].sub, e.move)
-            focus("Action")
+            self._focus = "Action"
 
     def close(self) -> None:
         if self.vp is not None:
@@ -760,19 +777,6 @@ class MonsterWorkspace(Workspace):
     def _overlay(self, which: str) -> HitboxOverlay | None:
         vp = self.vp
         return None if vp is None else vp.hitboxes if which == "hitboxes" else vp.attacks
-
-
-def focus(label: str) -> None:
-    """Brings a docked panel to the front next frame; nothing without a running window."""
-    try:
-        from imgui_bundle import hello_imgui
-
-        dp = hello_imgui.get_runner_params().docking_params
-        w = dp.dockable_window_of_name(label) if dp is not None else None
-    except (AttributeError, RuntimeError):
-        return
-    if w is not None:
-        w.focus_window_at_next_frame = True
 
 
 register("monster", MonsterWorkspace)

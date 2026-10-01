@@ -9,14 +9,13 @@ from mhfu_studio.shell.workspace import Gesture, View, discover, pick, register
 
 
 def test_registry() -> None:
-    before = workspace.registered()
     register("fake", lambda: FakeWorkspace("fake"))
     try:
         found = discover(AREAS)
-        assert found["fake"]().name == "fake"
+        assert found["fake"]().name == "fake" and {"map", "monster"} <= set(found)
     finally:
         workspace.unregister("fake")
-    assert workspace.registered() == before
+    assert "fake" not in workspace.registered()
 
 
 def test_pick_and_defaults() -> None:
