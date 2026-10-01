@@ -63,3 +63,11 @@ def test_table_picks_row_data(qtbot: Any) -> None:
     t.picked.connect(got.append)
     t.cellClicked.emit(1, 0)
     assert got == ["B"] and not t.set_rows([("a", "1"), ("b", "2")], data=["A", "B"])
+
+
+def test_refill_rebuilds_on_change_only(qtbot: Any) -> None:
+    got: list[str] = []
+    box = kit.choice([("a", "A")], tip="which", on=got.append)
+    qtbot.addWidget(box)
+    assert kit.refill(box, [("a", "A"), ("b", "B")], current="b")
+    assert not kit.refill(box, [("a", "A"), ("b", "B")]) and box.currentData() == "b" and not got

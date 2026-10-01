@@ -290,6 +290,23 @@ def choice(
     return b
 
 
+def refill(box: QComboBox, items: Sequence[tuple[str, str]], current: str | None = None) -> bool:
+    """Sets `box`'s (id, label) items and current id without signals; rebuilds only on change."""
+    box.blockSignals(True)
+    try:
+        now = [(box.itemData(i), box.itemText(i)) for i in range(box.count())]
+        changed = now != list(items)
+        if changed:
+            box.clear()
+            for cid, text in items:
+                box.addItem(text, cid)
+        if current is not None:
+            box.setCurrentIndex(max(box.findData(current), 0))
+        return changed
+    finally:
+        box.blockSignals(False)
+
+
 def text_field(
     *,
     tip: str,
