@@ -218,6 +218,10 @@ class Workspace(Protocol):
     def paint(self, o: Overlay) -> None:
         """Drawn over the picture after every frame: gizmo, labels, a selection box."""
 
+    def take_focus(self) -> str | None:
+        """A dock label to bring to the front (after `reveal`, say); asked once per change."""
+        return None
+
 
 Factory = Callable[[], Workspace]
 _registry: dict[str, Factory] = {}
