@@ -12,8 +12,6 @@ from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from mhfu_studio.shell.findings import Level
-from mhfu_studio.ui import theme
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -41,6 +39,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from mhfu_studio.shell.findings import Level
+from mhfu_studio.ui import theme
 
 Role = Literal["normal", "primary", "danger"]
 Slot = Callable[..., object]

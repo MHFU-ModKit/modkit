@@ -13,11 +13,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
-from mhfu_studio.shell.findings import Level
-from mhfu_studio.shell.overlay import RGBA, Color, Ink
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPalette
 from PySide6.QtWidgets import QAbstractButton, QApplication
+
+from mhfu_studio.shell.findings import Level
+from mhfu_studio.shell.overlay import RGBA, Color, Ink
 
 FAMILIES = ("Ember", "Moss")
 Mode = Literal["system", "dark", "light"]
@@ -35,7 +36,7 @@ def _inks(dark: bool, accent: str) -> dict[Ink, RGBA]:
         Ink.AXIS_Y: _rgba("#66bb6a" if dark else "#43a047"),
         Ink.AXIS_Z: _rgba("#42a5f5" if dark else "#1e88e5"),
         Ink.AXIS_VIEW: _rgba("#e6e6e6" if dark else "#37474f"),
-        Ink.HOT: _rgba("#ffd54f"),
+        Ink.HOT: _rgba("#ffd54f" if dark else "#d97706"),
         Ink.SELECTION: _rgba(accent),
         Ink.HOVER: _rgba(accent, 0.6),
         Ink.BOX: _rgba(accent, 0.9),
