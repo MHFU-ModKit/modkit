@@ -17,6 +17,9 @@ dependencies = [
 ]
 classifiers = ["Typing :: Typed"]
 
+[project.optional-dependencies]
+qt = ["pyside6-essentials>=6.11"]
+
 [project.scripts]
 studio = "mhfu_studio.cli:main"
 
