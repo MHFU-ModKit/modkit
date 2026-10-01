@@ -94,10 +94,10 @@ class ClipsPanel(kit.Panel):
         self.filter.textChanged.connect(self._filter)
         lay.addWidget(self.filter)
         self.table = Table(
-            ["a1", "Name", "Kind", "Frames", "Loop", "Travel"],
+            ["a1", "Kind", "Frames", "Loop", "Travel", "Name"],
             tip="Every slot in the build. Click one to play it. a1 is the number a script"
             " passes to force it; Travel is how far the clip carries the body.",
-            swatch_column=2,
+            swatch_column=1,
         )
         self.table.picked.connect(self._play)
         lay.addWidget(self.table, 1)
@@ -218,11 +218,11 @@ class ClipsPanel(kit.Panel):
             rows.append(
                 (
                     str(c.slot),
-                    c.name if c.names else "",
                     kind_text(cov),
                     str(c.frames),
                     "loop" if c.loop else "",
                     f"{net:.0f}" if net >= 1.0 else "",
+                    c.name if c.names else "",
                 )
             )
             data.append(c.slot)

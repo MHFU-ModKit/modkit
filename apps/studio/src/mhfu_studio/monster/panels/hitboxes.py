@@ -51,8 +51,9 @@ SET_TIP = (
 )
 SHARED = (
     "The sets are SPECIES data: with the port REPLACING its host they are his alone; beside a"
-    " native em{sp:02d} they re-arm the native too. Deploy syncs mhfu_port.lua as well: a stale"
-    " library silently drops these tables."
+    " native em{sp:02d} they re-arm the native too. The in-place write and the P.hit() path are"
+    " proven live. Deploy syncs mhfu_port.lua as well: a stale library silently drops these"
+    " tables."
 )
 LEVER_HEADS = ("Attack", "Power", "Element", "Set", "From")
 
@@ -133,7 +134,7 @@ class HitboxesPanel(kit.Panel):
         self.orphans = alert(level="error")
         self.sets_head = kit.label(role="muted")
         self.sets = Table(
-            ["Set", "Attacks", "Moves", "Vols", "Bones"],
+            ["Set", "Attacks", "Vols", "Bones", "Moves"],
             tip=SET_TIP + " Vols reads port/host: how many the port authors, how many fit.",
         )
         self.sets.picked.connect(self._pick_set)
@@ -582,9 +583,9 @@ class HitboxesPanel(kit.Panel):
         for idx in listed:
             st = host.set(idx)
             atks = host.attacks_using(idx)
-            more = f" +{len(atks) - 3}" if len(atks) > 3 else ""
+            more = f" +{len(atks) - 2}" if len(atks) > 2 else ""
             names, others = moves_hitting(ws, idx)
-            moves = ", ".join(names[:2]) + (f" +{len(names) - 2}" if len(names) > 2 else "")
+            moves = ", ".join(names[:1]) + (f" +{len(names) - 1}" if len(names) > 1 else "")
             if others:
                 moves += (" " if moves else "") + f"({others} pair{'' if others == 1 else 's'})"
             n_host = 0 if st is None else st.capacity
@@ -603,10 +604,10 @@ class HitboxesPanel(kit.Panel):
             rows.append(
                 (
                     str(idx),
-                    ", ".join(f"{a.id}(p{a.power})" for a in atks[:3]) + more,
-                    moves,
+                    ", ".join(f"{a.id}(p{a.power})" for a in atks[:2]) + more,
                     count,
                     bone_span(bones) if bones else ("node" if unrigged else ""),
+                    moves,
                 )
             )
             tip = [f"attack {a.id}: {a.describe()}" for a in atks]
