@@ -300,7 +300,7 @@ QHeaderView::section {{ background: transparent; color: {t.muted}; border: none;
 QTableView {{ gridline-color: transparent; }}
 QTableView::item {{ border-radius: 0; }}
 QTabWidget::pane {{ border: none; }}
-QTabBar::tab {{ background: transparent; color: {t.muted}; padding: 5px 12px; border: none;
+QTabBar::tab {{ background: transparent; color: {t.muted}; padding: 4px 7px; border: none;
     border-bottom: 2px solid transparent; }}
 QTabBar::tab:selected {{ color: {t.text}; border-bottom: 2px solid {t.accent}; }}
 QScrollBar:vertical {{ background: transparent; width: 9px; margin: 2px; }}
