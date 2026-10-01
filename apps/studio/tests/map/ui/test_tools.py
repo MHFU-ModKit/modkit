@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The map's tool groups on the window's toolbar."""
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -11,20 +11,12 @@ from mhfu_studio.map.core.atlas import Atlas
 from mhfu_studio.map.core.edit import COLLISION, FACE
 from mhfu_studio.map.tools import MOVE, PICK, SCALE, TOOL
 from mhfu_studio.map.workspace import MapWorkspace
-from mhfu_studio.shell.context import borrowed
 from mhfu_studio.ui.window import Window
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication
 
 LABELS = ["Select", "Move", "Rotate", "Scale", "Groups", "Objects", "Faces", "Collision"]
-
-
-@pytest.fixture(autouse=True)
-def _gl_back() -> Iterator[None]:
-    """A window leaves Qt's context current; the shared headless one is current again after."""
-    with borrowed():
-        yield
 
 
 @pytest.fixture

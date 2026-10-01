@@ -1,22 +1,19 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The map workspace in the real window: the view's mouse and keys, the docks, the menus."""
+"""The map workspace in the real window, offscreen: the view's mouse and keys, the docks and
+the menus. The workspace draws on the shared headless context; the view only takes input."""
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pytest
 from mhfu.files import Extracted
-from mhfu_studio.map.core.atlas import Atlas
 from mhfu_studio.map.panels.selection import SelectionPanel
 from mhfu_studio.map.tools import MOVE, TOOL
 from mhfu_studio.map.workspace import MapWorkspace
-from mhfu_studio.shell.context import borrowed
 from mhfu_studio.shell.manipulator import ARM_PX, world_per_px
 from mhfu_studio.ui import kit
-from mhfu_studio.ui.testing import gl_or_skip
 from mhfu_studio.ui.window import Window
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QKeyEvent, QMouseEvent
@@ -33,17 +30,9 @@ def errors(w: Window) -> list[str]:
     return [label for label, _ in w.studio.errors if label not in skip]
 
 
-@pytest.fixture(autouse=True)
-def _gl_back() -> Iterator[None]:
-    """A window leaves Qt's context current; the shared headless one is current again after."""
-    with borrowed():
-        yield
-
-
-def open_map(make_window: Callable[..., Window], ws: MapWorkspace, qtbot: Any) -> Window:
-    gl_or_skip()
+def open_map(make_window: Callable[..., Window], ws: MapWorkspace) -> Window:
+    assert ws.vp is not None and ws.scene is not None
     w = make_window(ws)
-    qtbot.waitUntil(lambda: ws.vp is not None and ws.scene is not None, timeout=10000)
     w.sync()
     return w
 
@@ -99,11 +88,8 @@ def panel(w: Window, label: str) -> Any:
     return d.widget()
 
 
-def test_opens_on_the_village(
-    make_window: Callable[..., Window], game: Extracted, atlas: Atlas, qtbot: Any
-) -> None:
-    ws = MapWorkspace(game, atlas)
-    w = open_map(make_window, ws, qtbot)
+def test_opens_on_the_village(make_window: Callable[..., Window], ws: MapWorkspace) -> None:
+    w = open_map(make_window, ws)
     assert ws.scene is not None and ws.scene.stage == 139 and ws.row == 0
     assert "st139 Pokke village" in w.where.text() and errors(w) == []
     for label in MINE:
@@ -114,11 +100,8 @@ def test_opens_on_the_village(
     assert isinstance(panel(w, "Selection"), SelectionPanel)
 
 
-def test_click_drag_undo(
-    make_window: Callable[..., Window], game: Extracted, atlas: Atlas, qtbot: Any
-) -> None:
-    ws = MapWorkspace(game, atlas)
-    w = open_map(make_window, ws, qtbot)
+def test_click_drag_undo(make_window: Callable[..., Window], ws: MapWorkspace) -> None:
+    w = open_map(make_window, ws)
     assert ws.vp is not None and ws.scene is not None and ws.session is not None
     ws.vp.camera.look("top")
     g = ws.scene.group(0, 1)
@@ -138,13 +121,15 @@ def test_click_drag_undo(
     assert not ws.session.ops and panel(w, "Selection").count.text() == "No edits yet"
     w.view.keyPressEvent(QKeyEvent(T.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier))
     assert ws.selection.empty
-    w.view.grabFramebuffer()
     assert errors(w) == []
 
 
-def test_real_village(make_window: Callable[..., Window], mhfu_data: Path, qtbot: Any) -> None:
+def test_real_village(make_window: Callable[..., Window], mhfu_data: Path, gl: Any) -> None:
     ws = MapWorkspace(Extracted.find(mhfu_data))
-    w = open_map(make_window, ws, qtbot)
+    ws.setup(gl)
+    assert ws.vp is not None
+    ws.vp.resize((640, 400))
+    w = open_map(make_window, ws)
     assert ws.vp is not None and ws.scene is not None and ws.session is not None
     assert ws.scene.stage == 139 and "Pokke" in ws.scene.name
     click(w, (w.view.width() / 2, w.view.height() / 2))
@@ -154,5 +139,4 @@ def test_real_village(make_window: Callable[..., Window], mhfu_data: Path, qtbot
     assert len(ws.session.ops) == 1 and ws.session.ops[0]["op"] == "transform"
     w.undo_action.trigger()
     assert not ws.session.ops
-    w.view.grabFramebuffer()
     assert errors(w) == []
