@@ -15,6 +15,7 @@ def test_layout():
     assert data.index(b"abc") == 32
     assert data.index(b"defgh") == 48
     assert data.endswith(b"defgh\0\0")
+    assert pac.table() == [(32, 3), (0, 0), (48, 5)]
 
 
 def test_nested_alignment():

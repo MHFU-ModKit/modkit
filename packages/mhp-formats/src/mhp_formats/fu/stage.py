@@ -3,9 +3,10 @@
 """MHFU stage file `st<NNN>.pac`: a PAC of terrain, textures, props, environment, parameter
 blocks and the `HITS` collision.
 
-Inside a `HITS` chunk every offset is relative to the chunk start + 8, except the cell-list
+Inside a `HITS` chunk every offset is relative to the chunk start + `BASE`, except the cell-list
 words, which are `tri_index * 56` into the triangle array. Cell `(ix, iz)` is grid entry
-`ix * nz + iz`; the engine applies no origin and no bounds check.
+`ix * nz + iz`; the engine applies no origin and no bounds check. At load the engine turns the
+two header offsets, every grid word and every list word into pointers.
 """
 
 import struct
@@ -25,10 +26,16 @@ TRI_SIZE = 56
 TERM = 0xFFFFFFFF
 """Ends every cell list."""
 
+BASE = 8
+"""Offsets inside a `HITS` chunk count from its start + BASE."""
+GRID_POINTER = 0x20
+"""The header word holding the grid's offset."""
+TRIS_POINTER = 0x24
+"""The header word holding the triangle array's offset."""
+GRID_AT = 0x28
+"""Where the grid starts in a chunk: one cell-list offset per cell."""
+
 _ROLES = 6
-_BASE = 8
-_GRID_AT = 0x20
-_HEADER_SIZE = 0x28
 
 # construct parses and builds these ~60x slower than struct (14 us per triangle, ~300k
 # triangles over the retail stages), so triangle records and u32 runs go through struct.
@@ -133,6 +140,19 @@ class Tri:
         d = _f32(-sum(unit[k] * p0[k] for k in range(3)))
         return cls(flags or TriFlags(), p0, _f32v(v1), _f32v(v2), unit, d)
 
+    def to_bytes(self) -> bytes:
+        f = self.flags
+        return _TRI.pack(
+            f.surface_id,
+            f.material,
+            f.exclude,
+            *self.v0,
+            *self.v1,
+            *self.v2,
+            *self.normal,
+            self.plane_d,
+        )
+
     def vertical(self) -> bool:
         """The xz projection is a line; retail cell lists may leave these out."""
         (ax, az), (bx, bz), (cx, cz) = _xz(self)
@@ -179,22 +199,22 @@ class Hits:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> Self:
-        if len(data) < _HEADER_SIZE or not cls.sniff(data):
+        if len(data) < GRID_AT or not cls.sniff(data):
             raise FormatError("not a HITS chunk")
         h = _HEADER.parse(data)
         ncells = h.nx * h.nz
-        lists_at = _HEADER_SIZE + 4 * ncells
-        tri_at = _BASE + h.tris
-        if h.size != len(data) or h.grid != _GRID_AT or not lists_at <= tri_at <= len(data):
+        lists_at = GRID_AT + 4 * ncells
+        tri_at = BASE + h.tris
+        if h.size != len(data) or h.grid != GRID_AT - BASE or not lists_at <= tri_at <= len(data):
             raise FormatError("HITS header does not describe the chunk")
         if (len(data) - tri_at) % TRI_SIZE:
             raise FormatError("HITS triangle array is not whole 56-byte records")
         ntri = (len(data) - tri_at) // TRI_SIZE
-        heads = struct.unpack_from(f"<{ncells}I", data, _HEADER_SIZE)
+        heads = struct.unpack_from(f"<{ncells}I", data, GRID_AT)
         words = struct.unpack_from(f"<{(tri_at - lists_at) // 4}I", data, lists_at)
         cells, pos = [], 0
         for head in heads:
-            if _BASE + head != lists_at + 4 * pos:
+            if BASE + head != lists_at + 4 * pos:
                 raise FormatError("HITS cell lists are not packed in cell order")
             try:
                 end = words.index(TERM, pos)
@@ -221,33 +241,37 @@ class Hits:
             raise ValueError(f"{len(self.cells)} cell lists for a {nx}x{nz} grid")
         if any(not 0 <= t < len(self.tris) for run in self.cells for t in run):
             raise ValueError("a cell list names a triangle the chunk does not have")
-        heads, words = [], []
-        at = _HEADER_SIZE - _BASE + 4 * nx * nz
-        for run in self.cells:
-            heads.append(at)
-            words += [t * TRI_SIZE for t in run]
-            words.append(TERM)
-            at += 4 * (len(run) + 1)
+        heads = self.heads()
+        words = [w for run in self.cells for w in (*(t * TRI_SIZE for t in run), TERM)]
         header = _Header(
-            size=_BASE + at + TRI_SIZE * len(self.tris),
+            size=self.tri_offset + TRI_SIZE * len(self.tris),
             cell_x=self.cell[0],
             cell_z=self.cell[1],
             nx=nx,
             nz=nz,
             origin_x=self.origin[0],
             origin_z=self.origin[1],
-            grid=_GRID_AT,
-            tris=at,
+            grid=GRID_AT - BASE,
+            tris=self.tri_offset - BASE,
         )
         out = bytearray(_HEADER.build(header))
         out += struct.pack(f"<{len(heads)}I", *heads)
         out += struct.pack(f"<{len(words)}I", *words)
-        for t in self.tris:
-            f = t.flags
-            out += _TRI.pack(
-                f.surface_id, f.material, f.exclude, *t.v0, *t.v1, *t.v2, *t.normal, t.plane_d
-            )
+        out += b"".join(t.to_bytes() for t in self.tris)
         return bytes(out)
+
+    def heads(self) -> list[int]:
+        """The grid as `to_bytes` writes it: each cell list's offset from the chunk + BASE."""
+        out, at = [], GRID_AT - BASE + 4 * len(self.cells)
+        for run in self.cells:
+            out.append(at)
+            at += 4 * (len(run) + 1)
+        return out
+
+    @property
+    def tri_offset(self) -> int:
+        """Where the triangle array starts in the chunk; triangle t is TRI_SIZE * t past it."""
+        return GRID_AT + 4 * (len(self.cells) + sum(len(run) + 1 for run in self.cells))
 
     def cell_of(self, x: float, z: float) -> int | None:
         """Grid index holding a world xz, or None outside the lattice."""
@@ -301,7 +325,14 @@ class Collision:
         return cls([Hits.from_bytes(e) for e in pac.entries], pac.align, pac.tail)
 
     def to_bytes(self) -> bytes:
-        return Pac([c.to_bytes() for c in self.chunks], self.align, self.tail).to_bytes()
+        return self._pac().to_bytes()
+
+    def table(self) -> list[tuple[int, int]]:
+        """The `(offset, size)` of each chunk where `to_bytes` puts it."""
+        return self._pac().table()
+
+    def _pac(self) -> Pac:
+        return Pac([c.to_bytes() for c in self.chunks], self.align, self.tail)
 
     def verify(self) -> PlaneCheck:
         checks = [c.verify() for c in self.chunks]
@@ -358,6 +389,14 @@ class Stage:
         )
 
     def to_bytes(self) -> bytes:
+        return self._pac().to_bytes()
+
+    def table(self) -> list[tuple[int, int]]:
+        """The `(offset, size)` of each entry where `to_bytes` puts it: [0] terrain .. [5]
+        collision, then `extra`."""
+        return self._pac().table()
+
+    def _pac(self) -> Pac:
         entries = [
             self.terrain,
             self.textures,
@@ -367,7 +406,7 @@ class Stage:
             self.collision.to_bytes() if self.collision else b"",
             *self.extra,
         ]
-        return Pac(entries, self.align, self.tail).to_bytes()
+        return Pac(entries, self.align, self.tail)
 
     def verify(self) -> PlaneCheck:
         return self.collision.verify() if self.collision else PlaneCheck(0, 0)

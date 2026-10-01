@@ -91,7 +91,8 @@ def exits(args: argparse.Namespace) -> int:
             continue
         print(f"st{n:03d}  stage{n:03d}.ovl")
         for e in links[n]:
-            note = _check(n, e.target, table) if args.check else ""
+            fault = S.exit_fault(n, e.target, table) if args.check else ""
+            note = f"   !! {fault}" if fault else ""
             flagged += bool(note)
             tx, ty, tz = e.trigger
             dx, dy, dz = e.dest
@@ -110,15 +111,6 @@ def exits(args: argparse.Namespace) -> int:
     if args.check:
         print(f"flagged: {flagged}")
     return 0
-
-
-def _check(stage: int, target: int, table: list[tuple[int, ...]]) -> str:
-    """Why an exit from `stage` to `target` leads nowhere sensible, or ""."""
-    if target not in files.STAGES or not target:
-        return "   !! no such stage"
-    if not any(stage in row and target in row for row in table):
-        return "   !! the target shares no map with this stage"
-    return ""
 
 
 def surfaces(args: argparse.Namespace) -> int:

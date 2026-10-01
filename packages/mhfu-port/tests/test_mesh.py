@@ -154,8 +154,8 @@ def test_palette_limit():
 
 
 DONORS = {  # model, geometry: groups, vertices, triangles, sha256 of our PMO on an identity map
-    "brute": (5248, 5249, 88, 2862, 2973, "0420ce1d9fb6993e"),
-    "zinogre": (5339, 5340, 181, 4336, 4426, "785126e4ac0c9f7a"),
+    "brute": (5248, 5249, 88, 2862, 2973, "cb0d830eb6c61a09"),
+    "zinogre": (5339, 5340, 181, 4336, 4426, "98b3869f594ce302"),
 }
 
 

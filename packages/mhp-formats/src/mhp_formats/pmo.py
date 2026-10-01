@@ -83,7 +83,7 @@ class Packed(NamedTuple):
     """Primitives written."""
     triangles: int
     skipped: int
-    """Primitives left alone because they share a vertex (positions-only packing)."""
+    """Chosen primitives left as they were because they share a vertex (positions only)."""
     left: int
     """Triangles that did not fit."""
     vertices_used: int
@@ -148,7 +148,7 @@ class Block:
     def clear_prims(self, prims: Iterable[int]) -> int:
         """Collapse the numbered primitives onto their first index, which draws nothing and moves
         no byte of the layout. Returns how many collapsed."""
-        spans = self._spans()
+        spans = self.spans()
         n = 0
         for p in sorted(_chosen(prims, len(spans))):
             lo, count = spans[p]
@@ -159,7 +159,7 @@ class Block:
 
     def budget(self, prims: Iterable[int] | None = None) -> Budget:
         """What `pack` can fit into the numbered primitives (all when None)."""
-        spans, kinds = self._spans(), self._kinds()
+        spans, kinds = self.spans(), self._kinds()
         chosen = _chosen(prims, len(spans))
         return Budget(
             prims=len(chosen),
@@ -189,19 +189,25 @@ class Block:
         `positions` are model units (the `scale` that `Vertices.positions` takes), `uvs` 0..1 per
         source vertex (None keeps each slot's), `color` RGBA for every vertex written.
         `reindex` points the chosen primitives' indices at vertex slots no other primitive draws;
-        without it only positions are written, and a primitive sharing a vertex is skipped.
+        without it only positions are written, so only a primitive whose vertices no other
+        primitive draws can take triangles, and the others are skipped.
         `collapse` makes the chosen primitives left over draw nothing.
+        Either way no vertex moves that a primitive left as it was still draws.
         """
         vt = self.vertices.vtype
         if vt.through:
             raise ValueError("pack needs transformed vertices")
-        spans, kinds = self._spans(), self._kinds()
+        spans, kinds = self.spans(), self._kinds()
         chosen = sorted(_chosen(prims, len(spans)))
         writer = _Writer(vt, positions, scale, uvs, color)
+        run = _Pack(self, spans, kinds, chosen, triangles, writer, collapse)
+        if not reindex:
+            result = run.in_place()
+            writer.commit(self.vertices)
+            return result.packed
         source = list(self.indices)
         keep = self._drawn(spans, set(range(len(spans))) - set(chosen))
-        run = _Pack(self, spans, kinds, chosen, triangles, writer, reindex, collapse)
-        result = run(keep)
+        result = run.reindexed(keep)
         # a vertex may be written only if no primitive keeping its indices draws it; which of
         # the chosen ones keep theirs is known only after packing, so widen and repack
         while True:  # `keep` only grows, so this ends
@@ -211,11 +217,11 @@ class Block:
                 break
             keep |= extra
             self.indices = list(source)
-            result = run(keep)
+            result = run.reindexed(keep)
         writer.commit(self.vertices)
         return result.packed
 
-    def _spans(self) -> list[tuple[int, int]]:
+    def spans(self) -> list[tuple[int, int]]:
         """(first index, count) of each primitive in `indices`."""
         if not self.vertices.vtype.index:
             raise ValueError("the block draws without indices")
@@ -284,7 +290,7 @@ class _Writer:
 
 @dataclass
 class _Pack:
-    """One packing pass over a block, from a set of vertices it must not write."""
+    """Packing passes over a block: reindexed, or positions only."""
 
     block: Block
     spans: list[tuple[int, int]]
@@ -292,17 +298,26 @@ class _Pack:
     chosen: list[int]
     triangles: Sequence[Triangle]
     writer: _Writer
-    reindex: bool
     collapse: bool
 
-    def __call__(self, keep: set[int]) -> _Result:
+    def _take(self, stripper: Stripper, p: int, count: int) -> tuple[list[int], int]:
+        """Source vertices for the `count` slots of primitive `p`, and the triangles they make."""
+        face_order = self.kinds[p] >> 8
+        if self.kinds[p] & 0xFF == Prim.TRIANGLE_STRIP:
+            strip = stripper.strip(count, face_order)
+            return strip + strip[-1:] * (count - len(strip)), max(0, len(strip) - 2)
+        loose = stripper.loose(count // 3, face_order)
+        src = [i for tri in loose for i in tri]
+        return src + src[-1:] * (count - len(src)), len(loose)
+
+    def reindexed(self, keep: set[int]) -> _Result:
+        """One pass that points indices at vertex slots outside `keep`."""
         self.writer.writes = {}
-        keep = set(keep)
         pool = [i for i in range(len(self.block.vertices)) if i not in keep][::-1]
         slot_of: dict[int, int] = {}
         stripper = Stripper(self.triangles)
         indices = self.block.indices
-        placed = skipped = used = 0
+        placed = used = 0
         ran_out = False
         last: int | None = None
 
@@ -315,59 +330,110 @@ class _Pack:
 
         for p in self.chosen:
             lo, count = self.spans[p]
-            slots = indices[lo : lo + count]
             if count < 3:
                 continue
             if not len(stripper):
                 if not self.collapse:
                     continue
-                if self.reindex:
-                    s = slot(0)
-                    if s is None:
-                        ran_out = True
-                        break
-                    indices[lo : lo + count] = [s] * count
-                elif keep.intersection(slots):
-                    skipped += 1
-                    continue
-                else:
-                    self.writer.writes.update(dict.fromkeys(slots, 0))
-                used, last = used + 1, p
-                continue
-            if not self.reindex and (keep.intersection(slots) or len(set(slots)) != count):
-                skipped += 1  # checked before taking triangles, or the skip would drop them
-                continue
-            face_order = self.kinds[p] >> 8
-            if self.kinds[p] & 0xFF == Prim.TRIANGLE_STRIP:
-                strip = stripper.strip(count, face_order)
-                src = strip + strip[-1:] * (count - len(strip))
-                made = max(0, len(strip) - 2)
-            else:
-                loose = stripper.loose(count // 3, face_order)
-                src = [i for tri in loose for i in tri]
-                src += src[-1:] * (count - len(src))
-                made = len(loose)
-            if self.reindex:
-                row = [slot(i) for i in src]
-                if None in row:
+                s = slot(0)
+                if s is None:
                     ran_out = True
                     break
-                indices[lo : lo + count] = [s for s in row if s is not None]
-            else:
-                self.writer.writes.update(zip(slots, src, strict=True))
-                keep.update(slots)
+                indices[lo : lo + count] = [s] * count
+                used, last = used + 1, p
+                continue
+            src, made = self._take(stripper, p, count)
+            row = [slot(i) for i in src]
+            if None in row:
+                ran_out = True
+                break
+            indices[lo : lo + count] = [s for s in row if s is not None]
             placed, used, last = placed + made, used + 1, p
         packed = Packed(
             prims=len(self.chosen),
             used=used,
             triangles=placed,
-            skipped=skipped,
+            skipped=0,
             left=len(stripper),
             vertices_used=len(slot_of),
             vertices_free=len(pool),
             ran_out=ran_out,
         )
         return _Result(packed, last)
+
+    def in_place(self) -> _Result:
+        """Positions only. A primitive takes triangles only when no other primitive draws any of
+        its vertices; left over, a set of chosen primitives that share vertices only among
+        themselves collapses whole. Any other primitive keeps drawing exactly as it was."""
+        self.writer.writes = {}
+        indices = self.block.indices
+        slots = {p: indices[lo : lo + n] for p, (lo, n) in enumerate(self.spans)}
+        owners: dict[int, set[int]] = {}
+        for p, run in slots.items():
+            if len(run) >= 3:
+                for v in run:
+                    owners.setdefault(v, set()).add(p)
+        stripper = Stripper(self.triangles)
+        placed = used = 0
+        last: int | None = None
+        written: set[int] = set()
+        passed: list[int] = []
+        rest: list[int] = []
+        for p in self.chosen:
+            run = slots[p]
+            if len(run) < 3:
+                continue
+            if not len(stripper):
+                rest.append(p)
+                continue
+            if len(set(run)) != len(run) or any(owners[v] != {p} for v in run):
+                passed.append(p)  # checked before taking triangles, or the skip would drop them
+                rest.append(p)
+                continue
+            src, made = self._take(stripper, p, len(run))
+            self.writer.writes.update(zip(run, src, strict=True))
+            written.add(p)
+            placed, used, last = placed + made, used + 1, p
+        if self.collapse:
+            for group in _sharing(rest, slots):
+                verts = {v for p in group for v in slots[p]}
+                if all(owners[v] <= group for v in verts):
+                    self.writer.writes.update(dict.fromkeys(verts, 0))
+                    written |= group
+                    used += len(group)
+        untouched = {v for p, run in slots.items() if p not in written for v in run}
+        packed = Packed(
+            prims=len(self.chosen),
+            used=used,
+            triangles=placed,
+            skipped=len(set(passed) - written),
+            left=len(stripper),
+            vertices_used=0,
+            vertices_free=len(self.block.vertices) - len(untouched),
+            ran_out=False,
+        )
+        return _Result(packed, last)
+
+
+def _sharing(prims: list[int], slots: dict[int, list[int]]) -> list[set[int]]:
+    """`prims` grouped into sets that share vertices, directly or through each other."""
+    parent = {p: p for p in prims}
+
+    def root(p: int) -> int:
+        while parent[p] != p:
+            parent[p] = parent[parent[p]]
+            p = parent[p]
+        return p
+
+    first: dict[int, int] = {}
+    for p in prims:
+        for v in slots[p]:
+            q = first.setdefault(v, p)
+            parent[root(p)] = root(q)
+    groups: dict[int, set[int]] = {}
+    for p in prims:
+        groups.setdefault(root(p), set()).add(p)
+    return list(groups.values())
 
 
 def _chosen(prims: Iterable[int] | None, count: int) -> set[int]:
