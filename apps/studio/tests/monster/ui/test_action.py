@@ -4,7 +4,6 @@ from typing import Any
 
 import pytest
 from mhfu_studio.monster.panels.action import ActionPanel
-from mhfu_studio.monster.panels.widgets import Table
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.ui import kit
@@ -32,7 +31,7 @@ def panel(qtbot: Any, workspace: MonsterWorkspace) -> ActionPanel:
     return make(qtbot, workspace)
 
 
-def click_row(t: Table, data: object) -> None:
+def click_row(t: kit.Table, data: object) -> None:
     row = next(
         r for r in range(t.rowCount()) if t.item(r, 0).data(Qt.ItemDataRole.UserRole) == data
     )

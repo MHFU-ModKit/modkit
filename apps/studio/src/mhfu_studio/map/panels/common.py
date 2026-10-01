@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtWidgets import QListWidget, QStackedWidget, QWidget
+from PySide6.QtWidgets import QListWidget, QWidget
 
 from mhfu_studio.shell.widgets import plain
 from mhfu_studio.ui import kit
@@ -26,17 +26,15 @@ DATA_HINT = (
 NO_SECTION = "No section loaded"
 
 
-class Gate(QStackedWidget):
-    """A panel's page, or an empty state that says what is missing and how to get it."""
+class Gate(kit.Pages):
+    """A map panel's page, or an empty state that says what is missing and how to get it."""
+
+    empty: kit.Empty
 
     def __init__(self, page: QWidget, what: str) -> None:
         """`what` ends "Load a section in the Map panel to …", say "see its textures"."""
-        super().__init__()
-        self.page = page
+        super().__init__(page, kit.Empty(NO_SECTION, ""))
         self.what = what
-        self.empty = kit.Empty(NO_SECTION, "")
-        self.addWidget(page)
-        self.addWidget(self.empty)
 
     def check(self, ws: MapWorkspace, *, section: bool = True) -> bool:
         """The page when the game files are there and, with `section`, a section is loaded;
@@ -51,13 +49,11 @@ class Gate(QStackedWidget):
     def need(self, title: str, hint: str) -> bool:
         """The empty state with `title` and `hint`; False."""
         self.empty.say(title, hint)
-        if self.currentWidget() is not self.empty:
-            self.setCurrentWidget(self.empty)
+        self.show_page(False)
         return False
 
     def ready(self) -> bool:
-        if self.currentWidget() is not self.page:
-            self.setCurrentWidget(self.page)
+        self.show_page(True)
         return True
 
 

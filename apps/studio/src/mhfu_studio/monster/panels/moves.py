@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
 
 from mhfu_studio.monster.panels import graph
 from mhfu_studio.monster.panels.graph import KINDS, NODE_H, NODE_W, Arrow, Layout, Node, Pair
-from mhfu_studio.monster.panels.widgets import NoScene, Pages
+from mhfu_studio.monster.panels.widgets import NoScene
 from mhfu_studio.shell.overlay import Color, Ink
 from mhfu_studio.ui import kit, theme
 
@@ -529,7 +529,7 @@ class MovesPanel(kit.Panel):
         self.empty = QStackedWidget()
         self.empty.addWidget(self.no_scene)
         self.empty.addWidget(self.note)
-        self.pages = Pages(self.canvas, self.empty)
+        self.pages = kit.Pages(self.canvas, self.empty)
         self.tools = kit.row(self.scope, self.fit, self.relayout, stretch=True)
         top = QWidget()
         lay = QVBoxLayout(top)

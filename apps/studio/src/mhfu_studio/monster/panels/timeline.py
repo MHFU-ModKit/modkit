@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QSizePolicy, QStackedWidget, QToolTip, QVBoxLayout
 
 from mhfu_studio.monster.align import EFFECT, GATE, IMPACT, OURS, WINDOW, Marker
 from mhfu_studio.monster.panels.common import MARKERS
-from mhfu_studio.monster.panels.widgets import NoScene, Pages
+from mhfu_studio.monster.panels.widgets import NoScene
 from mhfu_studio.monster.render.playback import GAME_HZ, OBSERVED_SPEEDS
 from mhfu_studio.shell.overlay import Ink
 from mhfu_studio.shell.widgets import plain
@@ -272,7 +272,7 @@ class TimelinePanel(kit.Panel):
         self.empty = QStackedWidget()
         self.empty.addWidget(self.no_scene)
         self.empty.addWidget(self.no_clip)
-        self.pages = Pages(page, self.empty)
+        self.pages = kit.Pages(page, self.empty)
         self.body.addWidget(self.pages)
         self._playing: bool | None = None
         self.timer = QTimer(self)

@@ -22,12 +22,8 @@ from .common import bone_span
 from .parts import HOST, HOST_BONES, PORT
 from .widgets import (
     ExportRow,
-    Grid,
     NoScene,
-    Pages,
     SaveRow,
-    Swatch,
-    Table,
     VolumeForm,
     alert,
     describe,
@@ -133,7 +129,7 @@ class HitboxesPanel(kit.Panel):
         self.no_attack = kit.label(role="muted")
         self.orphans = alert(level="error")
         self.sets_head = kit.label(role="muted")
-        self.sets = Table(
+        self.sets = kit.Table(
             ["Set", "Attacks", "Vols", "Bones", "Moves"],
             tip=SET_TIP + " Vols reads port/host: how many the port authors, how many fit.",
         )
@@ -169,7 +165,7 @@ class HitboxesPanel(kit.Panel):
         )
         self.vols_head = kit.label(role="muted")
         self.over = alert(level="error")
-        self.vols = Table(
+        self.vols = kit.Table(
             ["Vol", "Set", "Bone", "Shape", "Radius", "Offset"],
             tip="The port's hitboxes, the picked set's or all; * marks one changed since the"
             " last save. Click one to edit it and light it in the view.",
@@ -201,7 +197,7 @@ class HitboxesPanel(kit.Panel):
             hi=0,
             on=lambda v: self._stage(set=v),
         )
-        self.set_swatch = Swatch(tip="The set's colour in the view")
+        self.set_swatch = kit.Swatch(tip="The set's colour in the view")
         self.label = kit.text_field(
             tip="Your note for this hitbox: 'tail tip', 'left claw'", placeholder="what it is"
         )
@@ -244,7 +240,7 @@ class HitboxesPanel(kit.Panel):
             " three bytes are decoded.",
         )
         self.records_head = kit.label(role="muted")
-        self.records = Grid(
+        self.records = kit.Grid(
             LEVER_HEADS,
             tip="The attack records on the picked set or move. On the port, double-click power,"
             " element (0x hex is fine) or set to change it; a value equal to the host's says"
@@ -289,7 +285,7 @@ class HitboxesPanel(kit.Panel):
         )
         lay.addWidget(self.no_manifest)
 
-        self.pages = Pages(page, NoScene(studio))
+        self.pages = kit.Pages(page, NoScene(studio))
         self.body.addWidget(self.pages)
         self.body.addStretch(1)
 

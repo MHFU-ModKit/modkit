@@ -16,7 +16,7 @@ from mhfu_studio.shell.findings import Level
 from mhfu_studio.ui import kit
 
 from .common import COVERAGE
-from .widgets import NoScene, Pages, SaveRow, Swatch, Table, alert, set_level
+from .widgets import NoScene, SaveRow, alert, set_level
 
 if TYPE_CHECKING:
     from mhfu_studio.monster.workspace import MonsterWorkspace
@@ -62,10 +62,10 @@ class ClipsPanel(kit.Panel):
         self.build.setToolTip(BUILD_TIP)
         lay.addWidget(kit.row(self.count, self.build, stretch=True))
 
-        self.kinds: dict[str, tuple[Swatch, QLabel]] = {}
+        self.kinds: dict[str, tuple[kit.Swatch, QLabel]] = {}
         row: list[QWidget] = []
         for kind in KINDS:
-            sw, text = Swatch(COVERAGE[kind], KIND_TIPS[kind]), kit.label(wrap=False)
+            sw, text = kit.Swatch(COVERAGE[kind], KIND_TIPS[kind]), kit.label(wrap=False)
             text.setToolTip(KIND_TIPS[kind])
             self.kinds[kind] = (sw, text)
             row += [sw, text]
@@ -93,7 +93,7 @@ class ClipsPanel(kit.Panel):
         )
         self.filter.textChanged.connect(self._filter)
         lay.addWidget(self.filter)
-        self.table = Table(
+        self.table = kit.Table(
             ["a1", "Kind", "Frames", "Loop", "Travel", "Name"],
             tip="Every slot in the build. Click one to play it. a1 is the number a script"
             " passes to force it; Travel is how far the clip carries the body.",
@@ -104,7 +104,7 @@ class ClipsPanel(kit.Panel):
 
         self.editor = kit.Section("Name the clip", tip="Write a name and a label into the manifest")
         self.slot = kit.label(role="title", wrap=False)
-        self.slot_swatch = Swatch()
+        self.slot_swatch = kit.Swatch()
         self.slot_kind = kit.label(wrap=False)
         self.editor.body.addWidget(
             kit.row(self.slot, self.slot_swatch, self.slot_kind, stretch=True)
@@ -140,7 +140,7 @@ class ClipsPanel(kit.Panel):
         lay.addWidget(self.editor)
 
         self.empty = NoScene(studio)
-        self.pages = Pages(page, self.empty)
+        self.pages = kit.Pages(page, self.empty)
         self.body.addWidget(self.pages)
 
     def _filter(self, text: str) -> None:
