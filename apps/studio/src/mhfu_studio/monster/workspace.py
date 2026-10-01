@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The monster workspace: a port manifest (or a bare monster PAC), its scene in the viewport,
-and the panels around it. The panels draw; this holds what they share and does what they ask.
+and the docks around it. The panels show; this holds what they share and does what they ask.
 
 Every edit goes through the `PortDocument`, one undo step each; whatever depends on the
 manifest (clip names, volumes, the alignment) is re-read once per frame when the document's
@@ -31,19 +31,23 @@ from mhfu_studio.monster import align, clips, inputs, species
 from mhfu_studio.monster.attacks import AttackSession
 from mhfu_studio.monster.core.scene import MHFU, Scene
 from mhfu_studio.monster.document import PortDocument
+from mhfu_studio.monster.panels.graph import MoveGraph
 from mhfu_studio.monster.parts import PartSession
-from mhfu_studio.shell.workspace import Dock, Workspace, register
+from mhfu_studio.shell.input import Button, Key, Mod, Pointer
+from mhfu_studio.shell.overlay import Overlay
+from mhfu_studio.shell.workspace import Dock, Gesture, Workspace, register
 
 if TYPE_CHECKING:
     import moderngl
 
-    from mhfu_studio.monster.panels.moves import MoveGraph
     from mhfu_studio.monster.render.hitboxes import HitboxOverlay
     from mhfu_studio.monster.render.viewport import MonsterViewport
     from mhfu_studio.shell.studio import Studio
 
 Pair = tuple[int, int]
 PORT, HOST = "port", "host"
+#: points a click may travel and still pick, not orbit
+CLICK_SLOP = 4.0
 
 
 class MonsterWorkspace(Workspace):
@@ -62,6 +66,8 @@ class MonsterWorkspace(Workspace):
         self.message = ""
         #: a dock to bring forward, for the window (`take_focus`)
         self._focus: str | None = None
+        #: where the left button went down over the view, until it comes up
+        self._press: tuple[float, float] | None = None
         self._seen: Manifest | None = None
         #: every overlay summarised, once surveyed
         self.hosts: list[HostSummary] | None = None
@@ -71,8 +77,6 @@ class MonsterWorkspace(Workspace):
 
     def _reset(self) -> None:
         """Per-document view state."""
-        from mhfu_studio.monster.panels.moves import MoveGraph
-
         self.show_joint_ids = False
         self.undriven: dict[int, int] = {}
         self.markers: list[align.Marker] = []
@@ -83,7 +87,7 @@ class MonsterWorkspace(Workspace):
         self.host_clip: int | None = None
         self.pair: Pair | None = None
         self.move: str | None = None
-        self.graph: MoveGraph = MoveGraph()
+        self.graph = MoveGraph()
         self.pair_filter = ""
         self.bind_buf = ""
         self.clip_filter = ""
@@ -242,6 +246,41 @@ class MonsterWorkspace(Workspace):
         label, self._focus = self._focus, None
         return label
 
+    def focus(self, dock: str) -> None:
+        """Brings the dock labelled `dock` to the front after this change."""
+        self._focus = dock
+
+    def pointer(self, ev: Pointer) -> Gesture:
+        """A left click that does not travel picks (`viewport.pick`); a drag stays the camera's."""
+        if ev.kind == "press" and ev.button == Button.LEFT:
+            self._press = ev.pos
+        elif ev.kind == "release" and ev.button == Button.LEFT and self._press is not None:
+            (x, y), self._press = self._press, None
+            if abs(ev.x - x) + abs(ev.y - y) <= CLICK_SLOP:
+                from mhfu_studio.monster.panels import viewport
+
+                viewport.pick(self, ev.x, ev.y, ev.size)
+        return Gesture.NONE
+
+    def key(self, ev: Key) -> bool:
+        """Space plays or pauses the clip, Left and Right step a game frame, Home rewinds."""
+        keys: dict[str, Callable[[], None]] = {
+            "Space": self.play_pause,
+            "Left": lambda: self.step(-1),
+            "Right": lambda: self.step(1),
+            "Home": self.rewind,
+        }
+        fn = keys.get(ev.name)
+        if fn is None or ev.mods != Mod.NONE or self.vp is None or self.vp.clip is None:
+            return False
+        fn()
+        return True
+
+    def paint(self, o: Overlay) -> None:
+        from mhfu_studio.monster.panels import viewport
+
+        viewport.joint_labels(self, o)
+
     def reveal(self, target: Hashable) -> None:
         """A finding's `(section, key)`: select it and bring its panel forward."""
         if not isinstance(target, tuple) or len(target) != 2 or self.manifest is None:
@@ -250,41 +289,41 @@ class MonsterWorkspace(Workspace):
         m = self.manifest
         if section == "clips" and isinstance(key, str) and key in m.clips:
             self.play_slot(m.clips[key].slot)
-            self._focus = "Clips"
+            self.focus("Clips")
         elif section == "moves" and isinstance(key, str) and key in m.moves:
             mv = m.moves[key]
             if mv.clip in m.clips:
                 self.play_slot(m.clips[mv.clip].slot)
             self.select_pair(mv.main, mv.sub, key)
-            self._focus = "Action"
+            self.focus("Action")
         elif section == "hurtbox" and isinstance(key, int) and key < len(m.hurtboxes):
             self.show_parts, self.parts_source = True, PORT
             self.sync_hitboxes()
             self.select_volume(key)
-            self._focus = "Parts"
+            self.focus("Parts")
         elif section == "hitzone" and isinstance(key, int):
             self.parts_source, self.show_state = PORT, key
-            self._focus = "Parts"
+            self.focus("Parts")
         elif section == "hitbox" and isinstance(key, int) and key < len(m.hitboxes):
             self.show_attacks, self.attacks_source = True, PORT
             self.select_set(m.hitboxes[key].set)
             self.sync_attacks()
             self.select_attack_volume(key)
-            self._focus = "Hitboxes"
+            self.focus("Hitboxes")
         elif section == "attack" and isinstance(key, int) and key < len(m.attacks):
             vol = m.attacks[key].volume
             self.show_attacks = True
             if vol is not None:
                 self.select_set(vol)
             self.sync_attacks()
-            self._focus = "Hitboxes"
+            self.focus("Hitboxes")
         elif section == "effect" and isinstance(key, int) and key < len(m.effects):
             e = m.effects[key]
             if self.vp is not None:
                 self.vp.select_joint(e.bone)
             if e.move in m.moves:
                 self.select_pair(m.moves[e.move].main, m.moves[e.move].sub, e.move)
-            self._focus = "Action"
+            self.focus("Action")
 
     def close(self) -> None:
         if self.vp is not None:
@@ -395,6 +434,7 @@ class MonsterWorkspace(Workspace):
         the host PAC the porter files clips into, so changing it is a rebuild)."""
         self.browse = int(sp)
         self.clear_pair()
+        self.sync_reference()
 
     def host_options(self) -> list[HostSummary] | None:
         """Every overlay summarised, surveyed in the background on first ask (building the
@@ -599,11 +639,12 @@ class MonsterWorkspace(Workspace):
         )
         self.markers = self.alignment.markers
 
-    def bind_move(self) -> None:
+    def bind_move(self, name: str = "") -> None:
+        """The alignment as `[moves.<name>]`, `move_<main>_<sub>` when unnamed."""
         al, s = self.alignment, self.label_session
         if al is None or s is None:
             return
-        name = self.bind_buf or f"move_{al.main}_{al.sub}"
+        name = name.strip() or f"move_{al.main}_{al.sub}"
         if self.edit("", lambda: s.bind_move(name, al.main, al.sub, al.clip)):
             self.select_pair(al.main, al.sub, name)
 
@@ -620,6 +661,26 @@ class MonsterWorkspace(Workspace):
         if host is None or p is None or not p.attack_ids:
             return []
         return host.sets_for(p.attack_ids, self.host_species)
+
+    # the transport (the Timeline and the keys)
+
+    def play_pause(self) -> None:
+        if self.vp is not None and self.vp.clip is not None:
+            self.vp.playback.toggle()
+
+    def step(self, frames: int) -> None:
+        """Whole game frames at the clip's speed; pauses."""
+        if self.vp is not None and self.vp.clip is not None:
+            self.vp.playback.step(frames)
+            self.vp.set_pose(self.vp.clip, self.vp.playback.phase)
+
+    def rewind(self) -> None:
+        self.seek(0.0)
+
+    def seek(self, frame: float) -> None:
+        if self.vp is not None and self.vp.clip is not None:
+            self.vp.playback.seek(frame)
+            self.vp.set_pose(self.vp.clip, self.vp.playback.phase)
 
     # the host reference
 
@@ -641,6 +702,11 @@ class MonsterWorkspace(Workspace):
     def host_clip_table(self) -> dict[int, tuple[int, bool]]:
         sc = self.host_scene()
         return {} if sc is None else sc.clip_table()
+
+    def set_show_host(self, on: bool) -> None:
+        """The browsed species' own model beside the port, playing the selected action."""
+        self.show_host = on
+        self.sync_reference()
 
     def sync_reference(self) -> None:
         """The viewport's reference follows the toggle and the browsed species."""
@@ -767,6 +833,15 @@ class MonsterWorkspace(Workspace):
             ov.set_selected_group(index)
             ov.set_selected_volume(None)
             self.vp.sync_focus("attacks")
+
+    def edit_set(self, index: int) -> None:
+        """Attack set `index` in Hitboxes: the port's copy when it has one, else the host's."""
+        sess = self.attack_session
+        self.show_attacks = True
+        self.attacks_source = PORT if sess is not None and sess.volumes_of(index) else HOST
+        self.select_set(index)
+        self.sync_attacks()
+        self.focus("Hitboxes")
 
     def select_attack_volume(self, index: int | None) -> None:
         self.selected_attack_volume = index
