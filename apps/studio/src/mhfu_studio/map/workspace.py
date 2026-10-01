@@ -19,8 +19,11 @@ import numpy as np
 from mhfu.files import Extracted
 
 from mhfu_studio.shell.camera import Bounds
+from mhfu_studio.shell.input import Key as KeyEvent
+from mhfu_studio.shell.input import Pointer
+from mhfu_studio.shell.overlay import Overlay
 from mhfu_studio.shell.widgets import plain
-from mhfu_studio.shell.workspace import Dock, Workspace, register
+from mhfu_studio.shell.workspace import Dock, Gesture, ToolGroup, Workspace, register
 
 from .adding import AddForm
 from .core.atlas import Atlas
@@ -38,7 +41,7 @@ from .core.edit import (
 )
 from .core.scene import Key, MapScene, SceneError, open_stage
 from .document import MANIFEST, MapDocument
-from .tools import ViewportTools
+from .tools import GROUPS, ViewportTools
 
 if TYPE_CHECKING:
     import moderngl
@@ -206,8 +209,9 @@ class MapWorkspace(Workspace):
     def hud(self) -> str:
         sc = self.scene
         head = f"st{sc.stage:03d}  {sc.name}" if sc else self.data_error or "no section loaded"
-        lines = [head, "F frames; ALT+drag orbits in select mode; right-drag pans"]
+        lines = [head]
         if sc is not None:
+            lines.append(f"{self.tools.hint()}; F frames, Esc clears")
             sel = self.col_sel if self.tools.kind == COLLISION else self.selection
             hov = ""
             if self.tools.hover is not None:
@@ -219,6 +223,38 @@ class MapWorkspace(Workspace):
         if self.message:
             lines.append(plain(self.message))
         return "\n".join(lines)
+
+    def tool_groups(self) -> Sequence[ToolGroup]:
+        return GROUPS
+
+    def tool_on(self, group: str, tool: str) -> bool:
+        return self.tools.is_on(group, tool)
+
+    def set_tool(self, group: str, tool: str, on: bool = True) -> None:
+        self.tools.choose(group, tool, on)
+
+    def pointer(self, ev: Pointer) -> Gesture:
+        return self.tools.pointer(ev)
+
+    def key(self, ev: KeyEvent) -> bool:
+        return self.tools.key(ev)
+
+    def paint(self, o: Overlay) -> None:
+        self._labels(o)
+        self.tools.paint(o)
+
+    def _labels(self, o: Overlay) -> None:
+        """The exits', arrivals' and spheres' names at their places, in their colours."""
+        vp = self.vp
+        labels = vp.labels() if vp is not None else []
+        if vp is None or not labels:
+            return
+        w, h = o.size
+        pts = vp.camera.project(np.array([lb.pos for lb in labels]), o.size)
+        for lb, (x, y, z) in zip(labels, pts, strict=True):
+            if 0.0 <= z <= 1.0 and 0.0 <= x <= w and 0.0 <= y <= h:
+                r, g, b, _ = lb.color
+                o.text((float(x) + 6.0, float(y) - 8.0), lb.text, (r, g, b, 0.95))
 
     def reveal(self, target: Hashable) -> None:
         """A finding's (stage, op index): load the stage and select what the op names."""
@@ -250,6 +286,7 @@ class MapWorkspace(Workspace):
             self.tools.select_collision(CollisionSelection([(int(op.get("chunk", 1)), op["tri"])]))
 
     def refresh(self) -> None:
+        self.message = ""  # it named the edit an undo just took back
         self.tools.reseat()
 
     # sections
@@ -431,13 +468,15 @@ class MapWorkspace(Workspace):
         self.tools.reseat()
 
     def frame_selection(self) -> None:
+        """The camera on the selection of the current pick kind, else on the whole section."""
         vp, sc = self.vp, self.scene
         if vp is None or sc is None:
             return
-        if self.selection.empty:
+        sel = self.col_sel if self.tools.kind == COLLISION else self.selection
+        if sel.empty:
             vp.frame_all()
             return
-        lo, hi = self.selection.bounds(sc)
+        lo, hi = sel.bounds(sc)
         b = Bounds(lo.astype(float), hi.astype(float))
         if b.radius < SMALL:
             b = Bounds(b.center - 4 * SMALL, b.center + 4 * SMALL)
