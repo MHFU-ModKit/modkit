@@ -7,7 +7,7 @@ section's fog, so one clear colour measures them all."""
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import moderngl
 from mhfu import stage as S
@@ -23,7 +23,7 @@ Arrivals = Sequence[tuple[int, S.Exit]]
 
 @dataclass(frozen=True)
 class Layers:
-    """What a render draws besides the mesh."""
+    """What a render draws."""
 
     collision: bool = False
     lattice: bool = False
@@ -31,8 +31,13 @@ class Layers:
     mode: int = 0
     """The draw mode: 0 textured, 1 vertex colour, 2 texture only, 3 by group, 4 flat."""
     fog: bool = True
+    mesh: bool = True
+    markers: bool = True
+    """Exits, arrivals and overlay spheres."""
 
     def apply(self, vp: MapViewport) -> None:
+        vp.show_mesh = self.mesh
+        vp.show_exits = vp.show_arrivals = vp.show_spheres = self.markers
         vp.show_collision = self.collision
         vp.show_lattice = self.lattice
         vp.use_fog_background = self.fog
@@ -76,7 +81,7 @@ def tiles(
 ) -> Shots:
     """One tile per scene from the same view, named stNNN, over the plain background."""
     lay = layers or Layers()
-    flat = Layers(lay.collision, lay.lattice, lay.backdrop, lay.mode, fog=False)
+    flat = replace(lay, fog=False)
     with offscreen(lambda c: MapViewport(c, size, samples), ctx) as vp:
         out: dict[str, Image8] = {}
         for scene, arrivals in scenes:

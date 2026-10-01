@@ -6,8 +6,10 @@ from typing import Any
 import numpy as np
 import pytest
 from mhfu.files import Extracted
+from mhfu_studio.harness.render import Shots
 from mhfu_studio.harness.stats import compare_all, load_golden, measure
 from mhfu_studio.map.core.atlas import Atlas
+from mhfu_studio.map.core.edit import EditSession, Selection, compose
 from mhfu_studio.map.core.scene import MapScene
 from mhfu_studio.map.render.headless import Layers, tiles, views
 from mhfu_studio.map.render.stage_mesh import HL_SELECTED
@@ -108,9 +110,69 @@ def test_edits_reach_the_gpu(gl: Any, scene: MapScene, tmp_path: Path):
         assert vp.mesh.gl_texture(0) is not None and "StageMesh" in repr(vp.mesh)
 
 
+LAYERS = {
+    "collision": Layers(collision=True, mesh=False, markers=False),
+    "markers": Layers(mesh=False),
+}
+"""Layers also drawn alone: over the mesh their thin lines move too few pixels to be seen go."""
+COVERAGE_ONLY = tuple(f"_{name}" for name in LAYERS)
+"""Images checked on coverage alone across renderers: a translucent fill sits on one colour,
+and a level's difference moves the whole fill to another histogram bin."""
+
+
+def golden_shots(scene: MapScene, arrivals: Any, ctx: Any = None) -> Shots:
+    """The synthetic golden: the section from each view, and each layer of `LAYERS` alone."""
+    shots = views(scene, VIEWS, arrivals=arrivals, size=SIZE, ctx=ctx)
+    images = dict(shots.images)
+    for name, layers in LAYERS.items():
+        alone = views(
+            scene,
+            ("iso", "top"),
+            arrivals=arrivals,
+            layers=layers,
+            size=SIZE,
+            ctx=ctx,
+            label=lambda v, name=name: f"{v}_{name}",
+        )
+        images |= alone.images
+    return Shots(images, shots.renderer, shots.clear)
+
+
+def errors(shots: Shots, renderer: str | None = None) -> list[str]:
+    """The golden's errors; with `renderer`, as statistics measured on another renderer."""
+    stats = {
+        k: measure(v, shots.clear, renderer or shots.renderer) for k, v in shots.images.items()
+    }
+    golden = load_golden(GOLDEN / "synthetic.json")
+    return [
+        f"{f.where} {f.code}"
+        for f in compare_all(stats, golden)
+        if f.level == "error"
+        and not (f.where.endswith(COVERAGE_ONLY) and f.code in ("mean", "histogram"))
+    ]
+
+
 def test_synthetic_golden(gl: Any, scene: MapScene, synth: Any):
-    shots = views(scene, VIEWS, arrivals=[(98, synth.EXITS[0])], size=SIZE, ctx=gl)
-    assert matches(shots, GOLDEN / "synthetic.json") == []
+    assert errors(golden_shots(scene, [(98, synth.EXITS[0])], gl)) == []
+
+
+def test_golden_sees_a_shift(gl: Any, game: Extracted, synth: Any):
+    """Statistics alone, as on a renderer the golden was not written on, still fail a moved
+    mesh, a missing overlay or a deleted collision triangle."""
+    other = "another renderer"
+    arrivals = [(98, synth.EXITS[0])]
+    assert errors(golden_shots(synth.build(game), arrivals, gl), other) == []
+    moved = synth.build(game)
+    EditSession(moved).apply_now(Selection.group(moved, (0, 0)), compose(by=(500, 0, 0)))
+    assert "iso cells" in errors(golden_shots(moved, arrivals, gl), other)
+    bare = synth.build(game)
+    bare.exits = []
+    found = errors(golden_shots(bare, arrivals, gl), other)
+    assert {"iso_markers cells", "top_markers cells"} <= set(found)
+    holed = synth.build(game)
+    EditSession(holed).collision_delete([(1, 0), (1, 1)])
+    found = errors(golden_shots(holed, arrivals, gl), other)
+    assert {"iso_collision cells", "top_collision cells"} <= set(found)
 
 
 def test_tiles(gl: Any, game: Extracted, synth: Any):

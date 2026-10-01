@@ -61,7 +61,7 @@ def test_synthetic(scene: MapScene, synth: SimpleNamespace):
     floor, crates, far, plain = scene.terrain
     assert floor.texture == 0 and crates.texture == 1 and plain.untextured and plain.texture is None
     assert crates.n_components == 2 and floor.n_components == 1
-    assert far.backdrop and not floor.backdrop and not crates.backdrop
+    assert far.backdrop and far.untextured and not floor.backdrop and not crates.backdrop
     assert crates.budget.triangles == 144 and len(crates.prims) == 12
     assert crates.free_prims().tolist() == []
     assert floor.colours is not None and floor.colours.shape == (81, 4) and floor.uvs is not None

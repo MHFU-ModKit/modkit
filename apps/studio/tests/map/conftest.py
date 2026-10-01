@@ -4,8 +4,8 @@
 
 st139 (the village's number, so the workspace opens on it): a floor grid textured with an
 opaque slot, two 7x7 "crates" in one group (two welded components, alpha-masked slot), a far
-backdrop quad, an untextured plane; props hold one more grid. Collision: a floor (one triangle
-on a sink surface), two walls, one of them climbable.
+untextured backdrop quad, an untextured plane; props hold one more grid. Collision: a floor
+(one triangle on a sink surface), two walls, one of them climbable.
 """
 
 from collections.abc import Sequence
@@ -67,7 +67,9 @@ def terrain() -> Pmo:
     groups = [
         Group(block([(9, (0.0, 0.0, 0.0))]), 0),
         Group(block([(7, (300.0, 100.0, 300.0)), (7, (1300.0, 100.0, 1300.0))], step=50.0), 1),
-        Group(block([(2, (-9000.0, -500.0, -9000.0))], shade=120, step=20000.0), 0),
+        # untextured: each renderer samples a texture this wide at the horizon its own way
+        # (Mesa 22 against 25 moves a golden cell by 2 %)
+        Group(block([(2, (-9000.0, -500.0, -9000.0))], shade=120, step=20000.0), 2),
         Group(block([(3, (500.0, 400.0, 1500.0))], shade=90, step=100.0), 2),
     ]
     materials = [Material(texture=0), Material(texture=1), Material(texture=0xFF)]

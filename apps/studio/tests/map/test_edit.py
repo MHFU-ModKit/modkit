@@ -200,7 +200,7 @@ def test_material_and_texture(scene: MapScene):
         and sess.ops[-1]["mat"] == 1
         and sess.textures_changed is False
     )
-    assert sess.material_sharers((0, 0)) == [(0, 2)]
+    assert sess.material_sharers((0, 3)) == [(0, 2)] and sess.material_sharers((0, 0)) == []
     with pytest.raises(EditError, match="nothing to change"):
         sess.set_material((0, 1))
     sess.undo()
