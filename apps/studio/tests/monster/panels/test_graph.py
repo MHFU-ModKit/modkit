@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Moves tab's layout without imgui; its drawing runs in test_panels."""
+"""The Moves graph's layout and state, without a toolkit; its canvas runs in ui/test_moves."""
 
 from typing import Any
 
@@ -85,3 +85,34 @@ def test_em75_lays_the_zinogre_chain_out(em75: SpeciesIntel, ports: Any) -> None
     assert lay.nodes[(1, 4)].move == "lunge"
     big = graph.build(em75, m.moves, None, "attacks")
     assert 20 <= len(big.nodes) <= 60 and len(big.arrows) < 400
+
+
+def test_drags_survive_a_rebuild_with_the_same_nodes(intel75: SpeciesIntel) -> None:
+    g = graph.MoveGraph()
+    lay = g.layout(intel75, MOVES, None)
+    assert g.fresh
+    g.fresh = False
+    lay.nodes[(1, 4)].x += 40.0
+    again = g.layout(intel75, MOVES, (1, 4))
+    assert again is not lay and again.nodes[(1, 4)].x == lay.nodes[(1, 4)].x and not g.fresh
+    assert g.layout(intel75, MOVES, (1, 4)) is again, "cached while nothing changes"
+    g.relayout()
+    assert g.layout(intel75, MOVES, (1, 4)).nodes[(1, 4)].x < lay.nodes[(1, 4)].x and g.fresh
+
+
+def test_scope_change_drops_a_pick_it_hides(intel75: SpeciesIntel) -> None:
+    g = graph.MoveGraph()
+    g.layout(intel75, MOVES, None)
+    g.picked = (0, 6)
+    g.fresh = False
+    g.set_scope("selected")
+    g.set_scope("nonsense")
+    assert g.scope == "selected"
+    assert g.layout(intel75, MOVES, None).empty and g.picked is None and g.fresh
+
+
+def test_node_kinds(intel75: SpeciesIntel) -> None:
+    lay = graph.build(intel75, MOVES, None, "moves")
+    kinds = {k: n.kind for k, n in lay.nodes.items()}
+    assert kinds[(1, 4)] == "move" and kinds[(0, 1)] == "hub" and kinds[(0, 3)] == "plain"
+    assert set(kinds.values()) <= set(graph.KINDS)
