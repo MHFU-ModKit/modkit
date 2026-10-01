@@ -52,8 +52,9 @@ if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
 
 Point = tuple[float, float]
-#: the wheel's zoom range, and the range a fit may pick
-ZOOM, FIT_ZOOM = (0.25, 2.5), (0.35, 1.25)
+#: the wheel's zoom range, and the range a fit may pick: text scales with the canvas, so a fit
+#: stops where it stays legible and leaves the rest to a pan
+ZOOM, FIT_ZOOM = (0.25, 2.5), (0.6, 1.25)
 STEP = 1.12
 #: scene room around the layout, so the canvas pans past its edges
 MARGIN = 10000.0
@@ -355,15 +356,19 @@ class GraphView(QGraphicsView):
         return QRectF() if lay is None else QRectF(0, 0, lay.width, lay.height)
 
     def fit(self) -> None:
-        """Frames the whole layout, at a zoom that keeps the text readable."""
+        """Frames the whole layout at a zoom that keeps the text readable; what does not fit
+        then is cut on the right and the bottom, so the roots stay in view."""
         rect = self.nodes_rect()
         if rect.isEmpty():
             return
         self.resetTransform()
         self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
-        k = min(max(self.zoom(), FIT_ZOOM[0]), FIT_ZOOM[1]) / self.zoom()
-        self.scale(k, k)
-        self.centerOn(rect.center())
+        z = min(max(self.zoom(), FIT_ZOOM[0]), FIT_ZOOM[1])
+        self.scale(z / self.zoom(), z / self.zoom())
+        w, h = self.viewport().width() / z, self.viewport().height() / z
+        x = rect.center().x() if rect.width() <= w else rect.left() + w / 2
+        y = rect.center().y() if rect.height() <= h else rect.top() + h / 2
+        self.centerOn(x, y)
         self._fit_pending = False
 
     def _fit_if_sized(self) -> None:

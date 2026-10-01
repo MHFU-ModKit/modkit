@@ -154,3 +154,13 @@ def test_relayout_forgets_drags(panel: MovesPanel, workspace: MonsterWorkspace) 
     moved = panel.canvas.nodes[(1, 4)].pos().x()
     panel.relayout.click()
     assert panel.canvas.nodes[(1, 4)].pos().x() < moved
+
+
+def test_a_short_canvas_keeps_the_roots(panel: MovesPanel, qtbot: Any) -> None:
+    panel.resize(420, 170)
+    qtbot.wait(10)
+    panel.fit.click()
+    c = panel.canvas
+    assert c.zoom() == pytest.approx(moves.FIT_ZOOM[0])
+    root = c.mapFromScene(c.nodes[(1, 4)].rect()).boundingRect()
+    assert c.viewport().rect().contains(root.topLeft())
