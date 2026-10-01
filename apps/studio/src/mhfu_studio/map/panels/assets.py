@@ -106,13 +106,11 @@ class AssetsPanel(kit.Panel):
         form.row("Object", self.object)
         form.row("Into group", self.target)
         self.need = kit.Alert(level="info")
-        self.mismatch = kit.pill("warning")
-        self.mismatch.setWordWrap(True)
+        self.mismatch = kit.Alert()
         self.where = kit.label(role="muted")
-        self.unsaved = kit.pill(
-            "warning", "Save the document first: the copy is written into its assets/ folder."
+        self.unsaved = kit.Alert(
+            "Save the document first: the copy is written into its assets/ folder."
         )
-        self.unsaved.setWordWrap(True)
         self.copy_button = kit.button(
             "Copy the object here",
             tip="Copies the object into the chosen group here, where the Add panel puts a new"

@@ -102,8 +102,7 @@ class GroupsPanel(kit.Panel):
         ]
         form.row("Texture", self.slot)
         form.row("Colour", kit.row(*self.rgba, spacing=4))
-        self.shared = kit.pill("warning", "")
-        self.shared.setWordWrap(True)
+        self.shared = kit.Alert()
         self.apply = kit.button(
             "Apply material",
             tip="Writes the texture slot and colour into the group's material as one edit; Undo"

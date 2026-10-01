@@ -188,8 +188,7 @@ class CollisionPanel(kit.Panel):
             role="danger",
             icon="ph.trash",
         )
-        self.warn = kit.pill("warning", "")
-        self.warn.setWordWrap(True)
+        self.warn = kit.Alert()
         self.edit = QWidget()
         edit = QVBoxLayout(self.edit)
         edit.setContentsMargins(0, 0, 0, 0)
