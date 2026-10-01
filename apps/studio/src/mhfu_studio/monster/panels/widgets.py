@@ -12,15 +12,10 @@ from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
-    QComboBox,
-    QDoubleSpinBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QSizePolicy,
-    QSpinBox,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -68,26 +63,6 @@ class Swatch(QLabel):
         self.setVisible(color is not None)
         if color is not None:
             self.setPixmap(swatch_icon(color).pixmap(SWATCH, SWATCH))
-
-
-def put(w: QWidget, value: object) -> None:
-    """Sets a control's value without its signals: a sync must never act."""
-    with QSignalBlocker(w):
-        if isinstance(w, QSpinBox):
-            w.setValue(int(value))  # type: ignore[call-overload]
-        elif isinstance(w, QDoubleSpinBox):
-            w.setValue(float(value))  # type: ignore[arg-type]
-        elif isinstance(w, QCheckBox):
-            w.setChecked(bool(value))
-        elif isinstance(w, QLineEdit):
-            if w.text() != str(value):
-                w.setText(str(value))
-        elif isinstance(w, QComboBox):
-            w.setCurrentIndex(max(w.findData(value), 0))
-        elif isinstance(w, kit.Segmented):
-            w.set(str(value))
-        else:
-            raise TypeError(f"put: {type(w).__name__}")
 
 
 def alert(text: str = "", level: Level = "warning") -> QLabel:

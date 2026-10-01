@@ -13,7 +13,7 @@ from mhfu_studio.monster.render import skeleton
 from mhfu_studio.monster.render.mesh import MODES
 from mhfu_studio.ui import kit, theme
 
-from .widgets import NoScene, Pages, Table, alert, put
+from .widgets import NoScene, Pages, Table, alert
 
 if TYPE_CHECKING:
     from mhfu_studio.monster.render.skeleton import SkeletonOverlay
@@ -235,7 +235,7 @@ class ViewPanel(kit.Panel):
                 self.empty.say("No 3D view", self.studio.error or "The view starts in a moment.")
             return
         self.fov.set(vp.camera.fov)
-        put(self.shading, MODES[vp.mesh.mode])
+        kit.put(self.shading, MODES[vp.mesh.mode])
         for box, attr in (
             (self.mesh, "show_mesh"),
             (self.wire, "wireframe"),
@@ -246,9 +246,9 @@ class ViewPanel(kit.Panel):
             (self.box, "show_bounds"),
             (self.points, "show_points"),
         ):
-            put(box, getattr(vp, attr))
-        put(self.ids, ws.show_joint_ids)
-        put(self.host, ws.show_host)
+            kit.put(box, getattr(vp, attr))
+        kit.put(self.ids, ws.show_joint_ids)
+        kit.put(self.host, ws.show_host)
         sp = ws.browsing_species
         self.host.setText("Host beside" if sp is None else f"Host em{sp:02d} beside")
 
@@ -332,7 +332,7 @@ class JointsPanel(kit.Panel):
                 f" ({joints}): they stay at bind, which is why they sit apart from the animal."
             )
         self.undriven.setVisible(bool(ws.undriven))
-        put(self.isolate, ISOLATE[vp.mesh.isolate][0])
+        kit.put(self.isolate, ISOLATE[vp.mesh.isolate][0])
         counts = ws.joint_counts()
         n = len(sk.positions)
         rows = [("", str(j), role(sk, j), str(counts.get(j, 0) or "")) for j in range(n)]
