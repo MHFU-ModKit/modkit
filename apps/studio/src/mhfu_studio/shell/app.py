@@ -10,14 +10,12 @@ each keeps its own docking arrangement in the ini.
 from __future__ import annotations
 
 import sys
-import time
-import traceback
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mhfu_studio.shell.context import ContextError, attached, describe
-from mhfu_studio.shell.findings import LEVELS, Finding
+from mhfu_studio.shell import studio as core
+from mhfu_studio.shell.findings import LEVELS
 from mhfu_studio.shell.widgets import (
     LEVEL_COLORS,
     camera_line,
@@ -26,10 +24,9 @@ from mhfu_studio.shell.widgets import (
     overlay_text,
     plain,
 )
-from mhfu_studio.shell.workspace import MAIN, Gesture, View, Workspace, pick
+from mhfu_studio.shell.workspace import MAIN, Gesture, View, Workspace
 
 if TYPE_CHECKING:
-    import moderngl
     from imgui_bundle import hello_imgui
 
     from mhfu_studio.shell.camera import OrbitCamera
@@ -62,42 +59,8 @@ class IdleHold:
             self.pref = None
 
 
-class Findings:
-    """The active document's findings, re-checked on demand and, when `auto`, now and then.
-
-    The interval adapts to the check's own cost so a slow check cannot eat the frame rate.
-    """
-
-    def __init__(self) -> None:
-        self.auto = True
-        self.found: list[Finding] = []
-        self._doc: object | None = None
-        self._at = float("-inf")
-        self._cost = 0.0
-        self._stale = True
-
-    def stale(self) -> None:
-        self._stale = True
-
-    def get(self, doc: Any, now: float | None = None) -> list[Finding]:
-        now = time.monotonic() if now is None else now
-        if doc is None:
-            self.found, self._doc = [], None
-            return self.found
-        due = self.auto and now - self._at >= max(1.0, 10 * self._cost)
-        if self._stale or doc is not self._doc or due:
-            t0 = time.monotonic()
-            try:
-                self.found = list(doc.findings())
-            except Exception as e:
-                self.found = [Finding("error", "check-failed", f"{type(e).__name__}: {e}")]
-            self._cost = time.monotonic() - t0
-            self._at, self._doc, self._stale = now, doc, False
-        return self.found
-
-
-class Studio:
-    """The shell around the registered workspaces; `run` blocks until the window closes."""
+class Studio(core.Studio):
+    """The imgui window around the controller; `run` blocks until the window closes."""
 
     def __init__(
         self,
@@ -107,130 +70,33 @@ class Studio:
         title: str = "MHFU Studio",
         ini_folder: Path | None = None,
     ) -> None:
-        if not workspaces:
-            raise ValueError("no workspaces are installed")
-        names = [w.name for w in workspaces]
-        if len(set(names)) != len(names):
-            raise ValueError(f"workspace names repeat: {names}")
-        self.workspaces = list(workspaces)
-        self.active = self.workspaces[0]
+        super().__init__(workspaces, title=title)
         self.size = size
-        self.title = title
         #: None: the per-user config folder; a test passes a temp folder
         self.ini_folder = ini_folder
-        self.ctx: moderngl.Context | None = None
-        self.renderer = ""
-        #: why there is no GL, shown in the viewport window instead of a picture
-        self.error: str | None = None
-        #: the last action's outcome, for the status bar
-        self.message = ""
-        #: the first exception each panel raised this run (label, traceback); the window goes on
-        self.errors: list[tuple[str, str]] = []
-        self.findings = Findings()
         self.idle = IdleHold()
         self._opened = False
         self._live = False
-        self._closed = False
         self._dialog: tuple[str, Any] | None = None
 
-    # ---- actions (no imgui) -------------------------------------------------------- #
-    def workspace(self, name: str) -> Workspace:
-        for w in self.workspaces:
-            if w.name == name:
-                return w
-        raise KeyError(f"no workspace {name!r} (have: {', '.join(self.names)})")
-
-    @property
-    def names(self) -> list[str]:
-        return [w.name for w in self.workspaces]
-
     def switch(self, name: str) -> None:
-        self.active = self.workspace(name)
-        self.findings.stale()
+        super().switch(name)
         if self._running():
             from imgui_bundle import hello_imgui
 
             hello_imgui.switch_layout(name)
 
     def open(self, path: Path | str) -> bool:
-        """Opens `path` in the first workspace that can, and switches to it."""
-        path = Path(path)
-        ws = pick(self.workspaces, path)
-        if ws is None:
-            self.message = f"nothing here opens {path.name}"
-            return False
-        try:
-            ws.open(path)
-        except Exception as e:
-            self.message = f"could not open {path.name}: {e}"
-            return False
-        self._opened = True
-        self.switch(ws.name)
-        self.message = f"opened {path}"
-        return True
-
-    def save(self, path: Path | str | None = None) -> bool:
-        doc = self.active.document
-        if doc is None:
-            self.message = "nothing to save"
-            return False
-        try:
-            where = doc.save(None if path is None else Path(path))
-        except Exception as e:
-            self.message = f"not saved: {e}"
-            return False
-        if path is not None:
-            self.active.refresh()
-        self.findings.stale()
-        self.message = f"saved {where}"
-        return True
-
-    def undo(self) -> None:
-        self._history("undo")
-
-    def redo(self) -> None:
-        self._history("redo")
-
-    def _history(self, which: str) -> None:
-        doc = self.active.document
-        if doc is None:
-            return
-        can = doc.can_undo() if which == "undo" else doc.can_redo()
-        if not can:
-            self.message = f"nothing to {which}"
-            return
-        if which == "undo":
-            doc.undo()
-        else:
-            doc.redo()
-        self.active.refresh()
-        self.findings.stale()
-        self.message = which
-
-    def guard(self, label: str, fn: Callable[[], None]) -> Callable[[], None]:
-        """`fn` with its exceptions recorded and reported instead of ending the window."""
-
-        def guarded() -> None:
-            try:
-                fn()
-            except Exception as e:
-                self.message = f"{label}: {type(e).__name__}: {e}"
-                if not any(lb == label for lb, _ in self.errors):  # once, not every frame
-                    tb = traceback.format_exc()
-                    print(f"studio: {label}: {tb}", file=sys.stderr)
-                    self.errors.append((label, tb))
-
-        return guarded
+        ok = super().open(path)
+        self._opened = self._opened or ok
+        return ok
 
     def close(self) -> None:
-        """Releases every workspace's GL objects while the context still exists; once."""
-        if self._closed:
-            return
-        self._closed = True
         self._live = False
-        for w in self.workspaces:
-            w.close()
-        self.ctx = None
+        super().close()
+
+    def _ensure_gl(self, ws: Workspace) -> Viewport | None:
+        return self.ensure_gl(ws)
 
     # ---- the runner ---------------------------------------------------------------- #
     def runner_params(self) -> hello_imgui.RunnerParams:
@@ -417,20 +283,6 @@ class Studio:
         parts = [f"{ws.name} {name}{dirty}".strip(), plain(ws.status()), plain(self.message)]
         parts.append(self.renderer or "attaching to the GL context...")
         imgui.text("   ".join(p for p in parts if p))
-
-    def _ensure_gl(self, ws: Workspace) -> Viewport | None:
-        """Attaches inside the first frame, when hello_imgui's context is current."""
-        vp = ws.viewport
-        if vp is not None or self.error:
-            return vp
-        try:
-            if self.ctx is None:
-                self.ctx = attached()
-            self.renderer = describe(self.ctx)
-            return ws.setup(self.ctx)
-        except ContextError as e:
-            self.error = str(e)
-            return None
 
     def _viewport_window(self) -> None:
         from imgui_bundle import hello_imgui, imgui, imguizmo

@@ -1,7 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""Fixtures every studio test shares; game data comes from modkit-testing (`mhfu_data`)."""
+"""Fixtures every studio test shares; game data comes from modkit-testing (`mhfu_data`).
 
+Qt tests live in directories named `ui/` and are not collected where Qt cannot load (CI has
+neither a display nor Qt's system libraries) or pytest-qt is not installed (`--no-group qt`).
+"""
+
+import importlib.util
+import os
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -9,6 +16,26 @@ from typing import Any
 import pytest
 
 PORTS = Path(__file__).parents[3] / "ports"
+
+
+def _qt_loads() -> bool:
+    if importlib.util.find_spec("pytestqt") is None:
+        return False
+    try:
+        import PySide6.QtWidgets  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+if _qt_loads():
+    # a display where there is one (GL tests need it); widgets alone render offscreen
+    if sys.platform != "darwin" and not (
+        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    ):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+else:
+    collect_ignore_glob = ["ui/*", "*/ui/*"]
 
 
 @pytest.fixture(scope="session")

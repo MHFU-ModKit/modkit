@@ -6,9 +6,10 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from mhfu_studio.shell.app import Findings, IdleHold, Studio, camera_input
+from mhfu_studio.shell.app import IdleHold, Studio, camera_input
 from mhfu_studio.shell.camera import OrbitCamera
 from mhfu_studio.shell.findings import Finding
+from mhfu_studio.shell.studio import Findings
 from mhfu_studio.shell.testing import FakeBundle, FakeWorkspace, chord, fake_imgui
 from mhfu_studio.shell.workspace import Gesture, View
 

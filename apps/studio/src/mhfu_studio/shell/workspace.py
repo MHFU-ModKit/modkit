@@ -3,7 +3,11 @@
 """What a workspace gives the shell, and the registry workspaces add themselves to.
 
 A workspace module `mhfu_studio.<area>.workspace` calls `register` at import; `discover`
-imports every area's. Nothing here imports GL or imgui.
+imports every area's. Nothing here imports GL or a toolkit.
+
+Two sets of hooks live here while the studio moves to Qt: the imgui ones (`panels`,
+`layout`, `toolbar`, `input`, `overlay`) and the Qt ones (`docks`, `tools`, `pointer`, `key`,
+`paint`). A workspace implements one set; the imgui set goes when the last workspace has moved.
 """
 
 from __future__ import annotations
@@ -14,13 +18,16 @@ import importlib.util
 from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from mhfu_studio.shell.document import Document
+from mhfu_studio.shell.input import Key, Pointer
+from mhfu_studio.shell.overlay import Overlay
 
 if TYPE_CHECKING:
     import moderngl
 
+    from mhfu_studio.shell.studio import Studio
     from mhfu_studio.shell.viewport import Viewport
 
 #: the dock space the shell's viewport window lives in; a workspace's splits start from it
@@ -65,6 +72,40 @@ class View:
         return x - self.origin[0], y - self.origin[1]
 
 
+@dataclass(frozen=True)
+class Dock:
+    """A dockable panel. `build` makes its widget once (a QWidget with a `sync()` that re-reads
+    what it shows); the shell calls `sync()` after every change. `tip` says what it is for."""
+
+    label: str
+    area: Literal["left", "right", "bottom"]
+    build: Callable[[Studio], Any]
+    tip: str
+    #: in front of the other docks tabbed with it when the workspace opens
+    focus: bool = False
+
+
+@dataclass(frozen=True)
+class Tool:
+    """One viewport mode; `key` is its single-key shortcut ("Q"), `icon` a qtawesome name."""
+
+    id: str
+    label: str
+    key: str
+    icon: str
+    tip: str
+
+
+@dataclass(frozen=True)
+class ToolGroup:
+    """Tools shown together above the viewport; one is on at a time unless `toggles`."""
+
+    id: str
+    label: str
+    tools: tuple[Tool, ...]
+    toggles: bool = False
+
+
 class Gesture(enum.Flag):
     """Camera gestures a workspace's input hook consumed this frame."""
 
@@ -104,7 +145,8 @@ class Workspace(Protocol):
         """Builds the viewport inside the first frame, when the window's context is current."""
         ...
 
-    def panels(self) -> Sequence[Panel]: ...
+    def panels(self) -> Sequence[Panel]:
+        return ()
 
     def status(self) -> str: ...
 
@@ -150,6 +192,31 @@ class Workspace(Protocol):
 
     def refresh(self) -> None:
         """The shell changed the document (undo, redo, save as): re-read what depends on it."""
+
+    # ---- the Qt shell ------------------------------------------------------------------- #
+    def docks(self) -> Sequence[Dock]:
+        return ()
+
+    def tool_groups(self) -> Sequence[ToolGroup]:
+        return ()
+
+    def tool_on(self, group: str, tool: str) -> bool:
+        """Whether `tool` of `group` is on, for the toolbar's checked state."""
+        return False
+
+    def set_tool(self, group: str, tool: str, on: bool = True) -> None:
+        """Turns `tool` on (excluding the rest of its group unless the group `toggles`)."""
+
+    def pointer(self, ev: Pointer) -> Gesture:
+        """A mouse event over the viewport; returns the camera gestures it consumed."""
+        return Gesture.NONE
+
+    def key(self, ev: Key) -> bool:
+        """A key over the viewport; True when it was used."""
+        return False
+
+    def paint(self, o: Overlay) -> None:
+        """Drawn over the picture after every frame: gizmo, labels, a selection box."""
 
 
 Factory = Callable[[], Workspace]

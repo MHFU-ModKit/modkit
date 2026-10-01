@@ -13,9 +13,12 @@ dev = [
     "lupa>=2",
     "mhp-formats[iso]",
     "unicorn>=2.1.4",
-    "pytest-qt>=4.5",
-    "pyside6-essentials>=6.11",  # pytest-qt refuses to start without a binding
 ]
+# the studio's Qt tests; CI leaves it out (no display, no Qt system libraries there)
+qt = ["pytest-qt>=4.5"]
+
+[tool.uv]
+default-groups = ["dev", "qt"]
 
 [tool.uv.sources]
 mhp-formats = { workspace = true }
@@ -49,5 +52,5 @@ files = [
 ]
 
 [[tool.mypy.overrides]]
-module = ["mhef.*", "pycdlib.*", "elftools.*"]
+module = ["mhef.*", "pycdlib.*", "elftools.*", "qtawesome.*"]
 ignore_missing_imports = true
