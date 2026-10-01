@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import pytest
 from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.workspace import MonsterWorkspace
@@ -170,3 +171,10 @@ def test_window_builds_the_docks(
     w.sync()
     moves = w.findChild(QDockWidget, "monster/Moves")
     assert moves is not None and moves.isVisible()
+
+
+def test_deploy_needs_a_stick(workspace: MonsterWorkspace, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(MonsterWorkspace, "mods_dir", staticmethod(lambda: None))
+    assert workspace.exportable() and not MonsterWorkspace().exportable()
+    with pytest.raises(FileNotFoundError, match="memory stick"):
+        workspace.deploy_hit()

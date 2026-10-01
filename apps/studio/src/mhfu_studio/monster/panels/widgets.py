@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mhfu_studio.monster.panels import common
 from mhfu_studio.shell.findings import Level
 from mhfu_studio.ui import dialogs, kit
 
@@ -135,7 +134,7 @@ class ExportRow(QWidget):
             tip="Writes <name>_hit.lua beside you: the SAVED hurtboxes, damage grid, hitboxes"
             " and attack records as the one P.hit() call mhfu_port.lua makes in the game, each"
             " table written over the host's.",
-            on=studio.act("export", lambda: common.export_hit(ws)),
+            on=studio.act("export", ws.export_hit),
             icon="ph.export",
         )
         self.deploy = kit.button(
@@ -143,7 +142,7 @@ class ExportRow(QWidget):
             tip="Exports, then copies the module to the memory stick's mods folder (and"
             " mhfu_port.lua when the stick's is older: a stale library silently skips fields it"
             " does not know). A running game reloads it; a cold one loads it at boot.",
-            on=studio.act("deploy", self._deploy),
+            on=studio.act("deploy", ws.deploy_hit),
             role="primary",
         )
         self.hint = kit.label(role="muted")
@@ -152,23 +151,17 @@ class ExportRow(QWidget):
         lay.addWidget(kit.row(self.export, self.deploy, stretch=True))
         lay.addWidget(self.hint)
 
-    def _deploy(self) -> None:
-        mods = common.mods_dir()
-        if mods is None:
-            raise FileNotFoundError("no memory stick with the framework's mods folder")
-        common.deploy_hit(self.ws, mods)
-
     def sync(self) -> None:
         doc = self.ws.doc
         self.setVisible(doc is not None and doc.path is not None)
         if doc is None:
             return
-        ok = common.exportable(self.ws)
+        ok, mods = self.ws.exportable(), self.ws.mods_dir()
         self.export.setEnabled(ok)
-        self.deploy.setEnabled(ok and common.mods_dir() is not None)
+        self.deploy.setEnabled(ok and mods is not None)
         if not ok:
             text = "Nothing to export yet: save volumes, a grid, a hitbox set or a record first."
-        elif common.mods_dir() is None:
+        elif mods is None:
             text = "No memory stick found to deploy to; Export still writes the module."
         elif doc.dirty:
             text = "Exports the SAVED file: save first, or your latest edits stay behind."

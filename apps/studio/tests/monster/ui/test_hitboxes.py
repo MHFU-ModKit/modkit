@@ -6,7 +6,6 @@ from typing import Any
 
 import pytest
 from mhfu.em.intel import SpeciesIntel
-from mhfu_studio.monster.panels import common
 from mhfu_studio.monster.panels.hitboxes import HitboxesPanel
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
@@ -139,7 +138,7 @@ def test_export_and_deploy(
     mods = tmp_path / "mods"
     mods.mkdir()
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(common, "mods_dir", lambda: mods)
+    monkeypatch.setattr(MonsterWorkspace, "mods_dir", staticmethod(lambda: mods))
     p.sync()
     assert p.export.deploy.isEnabled()
     p.export.deploy.click()

@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""What the monster panels share, toolkit-free: data colours, the bone-span format, the runtime
-export; and the imgui helpers the panels not yet on Qt still use."""
+"""What the monster panels share, toolkit-free: data colours and the bone-span format; and the
+imgui helpers the panels not yet on Qt still use."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from mhfu_studio.shell.widgets import plain
@@ -136,52 +135,6 @@ def save_row(ws: MonsterWorkspace) -> None:
         ws.revert()
 
 
-def exportable(ws: MonsterWorkspace) -> bool:
-    """The saved manifest has tables the runtime module carries."""
-    doc = ws.doc
-    if doc is None or doc.path is None:
-        return False
-    s = doc.saved_manifest
-    return bool(s.hurtboxes or s.hitzones or s.hitboxes or s.attacks)
-
-
-def export_hit(ws: MonsterWorkspace) -> None:
-    """The SAVED manifest's tables as `./<name>_hit.lua`: the module names its source and
-    content, so an unsaved edit would disagree without a trace."""
-    from mhfu_studio.monster import runtime
-
-    if ws.doc is None:
-        raise ValueError("no manifest to export")
-    saved, intel = ws.doc.saved_manifest, ws.host_intel()
-    cap = runtime.host_capacity(intel)
-    ws.hit_export = runtime.export(saved, None, cap, runtime.host_attack_tables(intel))
-    ws.message = f"wrote {ws.hit_export.name} (id {runtime.content_id(saved)})"
-
-
-def deploy_hit(ws: MonsterWorkspace, mods: Path) -> None:
-    """Exports when nothing is exported yet, then copies the module (and a stale
-    `mhfu_port.lua`) to the memory stick."""
-    from mhfu_studio.monster import runtime
-
-    if ws.hit_export is None:
-        export_hit(ws)
-    if ws.hit_export is not None:
-        dep = runtime.deploy(ws.hit_export, mods)
-        ws.message = (
-            f"deployed {dep.describe()}. A running game hot-reloads it; a cold one loads it at boot"
-        )
-
-
-def mods_dir() -> Path | None:
-    """The memory stick's mods directory, when there is one."""
-    from mhfu import inject
-
-    try:
-        return inject.default_mods_dir()
-    except FileNotFoundError:
-        return None
-
-
 def export_buttons(ws: MonsterWorkspace) -> None:
     """The imgui export and deploy buttons."""
     from imgui_bundle import imgui
@@ -189,26 +142,26 @@ def export_buttons(ws: MonsterWorkspace) -> None:
     m, doc = ws.manifest, ws.doc
     if m is None or doc is None or doc.path is None:
         return
-    if not exportable(ws):
+    if not ws.exportable():
         imgui.text_disabled(
             "nothing to export yet: save volumes, a grid, a hitbox set or an attack record first"
         )
         return
     if imgui.button("export runtime table"):
         try:
-            export_hit(ws)
+            ws.export_hit()
         except (OSError, ValueError) as e:
             ws.message = f"{type(e).__name__}: {e}"
     tooltip(
         f"./{doc.saved_manifest.port.name}_hit.lua: the SAVED [[hurtbox]], [[hitzone]], "
         "[[hitbox]] and [[attack]] as the one P.hit() call mhfu_port.lua writes into the game"
     )
-    mods = mods_dir()
+    mods = ws.mods_dir()
     if mods is not None:
         imgui.same_line()
         if imgui.button("deploy to memstick"):
             try:
-                deploy_hit(ws, mods)
+                ws.deploy_hit(mods)
             except (OSError, ValueError) as e:
                 ws.message = f"{type(e).__name__}: {e}"
     if doc.dirty:
