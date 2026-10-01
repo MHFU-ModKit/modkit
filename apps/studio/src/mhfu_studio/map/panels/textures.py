@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from ..core.scene import MapScene, TextureImage
     from ..workspace import MapWorkspace
 
-ZOOM = (48, 192, 96)
+ZOOM = (48, 192, 72)
 """Thumbnail sides in pixels: smallest, largest, first."""
 WIDE = 640
 """Wider than this, the import form sits beside the grid instead of above it."""
@@ -274,4 +274,7 @@ class TexturesPanel(kit.Panel):
         for i, t in enumerate(sc.textures):
             it = self.grid.item(i)
             if it is not None:
-                it.setIcon(QIcon(thumbnail(t, side)))
+                pix, icon = thumbnail(t, side), QIcon()
+                for mode in (QIcon.Mode.Normal, QIcon.Mode.Selected):  # no selection tint
+                    icon.addPixmap(pix, mode)
+                it.setIcon(icon)

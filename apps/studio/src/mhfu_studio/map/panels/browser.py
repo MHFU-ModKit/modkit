@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from ..workspace import MapWorkspace
 
 DATA = Qt.ItemDataRole.UserRole
+EXITS_SHOWN = 5
 TREE_TIP = (
     "The game's areas (rows) and the sections the player walks through in each, entry area"
     " first. Click a section to load it alone; the loaded one is bold, with a pin. Greyed"
@@ -74,7 +75,6 @@ class BrowserPanel(kit.Panel):
             tip="Where each exit of this section leads. Click one to load that section, the"
             " way the player would walk through it.",
         )
-        self.exits.setMaximumHeight(120)
         self.exits.picked.connect(self._exit)
         self.arrivals = kit.label(role="muted")
         for w in (self.title, self.exits, self.arrivals):
@@ -138,7 +138,7 @@ class BrowserPanel(kit.Panel):
             return
         self.title.setText(f"st{sc.stage:03d}  {sc.name}")
         self.exits.setVisible(bool(sc.exits))
-        self.exits.set_items(
+        rebuilt = self.exits.set_items(
             [
                 kit.Item(
                     f"exit {e.index}  to st{e.target:03d}  {e.target_name}",
@@ -149,6 +149,9 @@ class BrowserPanel(kit.Panel):
                 for e in sc.exits
             ]
         )
+        if rebuilt and sc.exits:  # as tall as its exits, up to EXITS_SHOWN
+            rows = min(len(sc.exits), EXITS_SHOWN) * self.exits.sizeHintForRow(0)
+            self.exits.setFixedHeight(rows + 2 * self.exits.frameWidth() + 4)
         self.arrivals.setText(self._arrivals(sc.stage))
 
     def _mark(self, now: tuple[int, int] | None) -> None:
@@ -167,7 +170,8 @@ class BrowserPanel(kit.Panel):
         top = it.parent() if it is not None else None
         if it is not None and top is not None:
             top.setExpanded(True)
-            self.tree.scrollToItem(it)
+            # after the layout settles: a dock just shown has no height yet
+            QTimer.singleShot(0, self.tree, lambda: self.tree.scrollToItem(it))
 
     def _arrivals(self, stage: int) -> str:
         """Where the player arrives from, read once per stage."""
