@@ -292,7 +292,6 @@ class SaveRow(QWidget):
             " read the saved file, so save before you ship.",
             on=studio.save,
             role="primary",
-            icon="ph.floppy-disk",
         )
         self.discard = kit.button(
             "Discard",
@@ -340,7 +339,6 @@ class ExportRow(QWidget):
             " does not know). A running game reloads it; a cold one loads it at boot.",
             on=studio.act("deploy", self._deploy),
             role="primary",
-            icon="ph.rocket-launch",
         )
         self.hint = kit.label(role="muted")
         lay = QVBoxLayout(self)
