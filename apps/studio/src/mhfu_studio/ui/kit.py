@@ -802,14 +802,14 @@ INTERACTIVE = (QAbstractButton, QAbstractSpinBox, QComboBox, QLineEdit, QSlider,
 
 def missing_tips(root: QWidget) -> list[QWidget]:
     """Controls under `root` (itself included) without a tooltip; a control's own parts
-    (a spin box's line edit, a combo box's list) do not count."""
+    (a spin box's line edit, a combo box's list, a tab bar's scroll arrows) do not count."""
     out: list[QWidget] = []
     for w in [root, *root.findChildren(QWidget)]:
         if not isinstance(w, INTERACTIVE) or w.toolTip().strip():
             continue
         p, inside = w.parentWidget(), False
         while p is not None and p is not root.parentWidget():
-            if isinstance(p, INTERACTIVE) or isinstance(p, Segmented):
+            if isinstance(p, (*INTERACTIVE, Segmented)) or _is_chrome(p):
                 inside = True
                 break
             p = p.parentWidget()

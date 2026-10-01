@@ -13,7 +13,7 @@ from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QByteArray, QSettings, QSize, Qt, QTimer
+from PySide6.QtCore import QByteArray, QPoint, QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
@@ -21,11 +21,13 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QSizePolicy,
+    QTabBar,
     QTabWidget,
     QToolBar,
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import getCppPointer
 
 from mhfu_studio.shell.studio import doc_name
 from mhfu_studio.shell.widgets import plain
@@ -61,7 +63,7 @@ MODES: dict[theme.Mode, tuple[str, str]] = {
 
 class DockTitle(QWidget):
     """A dock's title: its name in small caps, which explains the dock, and a close button.
-    Tabbed with others a dock shows only its tab (`Window._retitle`)."""
+    Tabbed with others a dock shows only its tab, whose right-click menu hides it."""
 
     def __init__(self, dock: QDockWidget, tip: str) -> None:
         super().__init__()
@@ -198,6 +200,27 @@ class Window(QMainWindow):
             want = blank if tabbed else title
             if d.titleBarWidget() is not want:
                 d.setTitleBarWidget(want)
+        # the dock tab bars: Qt makes a new one for every tab group
+        for bar in self.findChildren(QTabBar, options=Qt.FindChildOption.FindDirectChildrenOnly):
+            if bar.contextMenuPolicy() != Qt.ContextMenuPolicy.CustomContextMenu:
+                bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                bar.customContextMenuRequested.connect(partial(self._tab_menu, bar))
+
+    def _tab_menu(self, bar: QTabBar, pos: QPoint) -> None:
+        """A dock tab's right-click menu: its View menu entry, which hides it, and Float."""
+        docks = {getCppPointer(d)[0]: d for d in self._titles}
+        d = docks.get(bar.tabData(bar.tabAt(pos)))  # Qt keys a tab by its dock's address
+        if d is None:
+            return
+        name = d.windowTitle()
+        m = QMenu(self)
+        m.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        m.setToolTipsVisible(True)
+        m.addAction(d.toggleViewAction())
+        a = m.addAction(f"Float {name}")
+        a.setToolTip(f"Takes {name} out into its own window; double-click its title to dock it")
+        a.triggered.connect(lambda: d.setFloating(True))
+        m.popup(bar.mapToGlobal(pos))
 
     def _build(self, ws: Workspace) -> list[QDockWidget]:
         out = []
