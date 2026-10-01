@@ -88,8 +88,6 @@ class MonsterWorkspace(Workspace):
         self.pair: Pair | None = None
         self.move: str | None = None
         self.graph = MoveGraph()
-        self.pair_filter = ""
-        self.bind_buf = ""
         self.clip_filter = ""
         self.show_parts = False
         self.parts_source = HOST
