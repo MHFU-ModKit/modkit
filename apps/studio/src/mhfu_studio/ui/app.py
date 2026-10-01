@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -34,12 +33,12 @@ def prepare() -> None:
     QLocale.setDefault(QLocale(QLocale.Language.C))
 
 
-def application(argv: Sequence[str] | None = None) -> QCoreApplication:
+def application() -> QCoreApplication:
     """The running QApplication, or a new one after `prepare`."""
     app = QApplication.instance()
     if app is None:
         prepare()
-        app = QApplication(list(argv) if argv is not None else sys.argv[:1])
+        app = QApplication(sys.argv[:1])
     app.setApplicationName("MHFU Studio")
     app.setOrganizationName("mhfu-studio")
     return app
@@ -76,13 +75,10 @@ def build(
 
 
 def main(
-    argv: Sequence[str] | None = None,
-    path: Path | None = None,
-    workspace: str | None = None,
-    size: tuple[int, int] | None = None,
+    path: Path | None = None, workspace: str | None = None, size: tuple[int, int] | None = None
 ) -> int:
     """Runs the window until it closes."""
-    app = application(argv)
+    app = application()
     w = build(path, workspace, size)
     w.show()
     return int(app.exec())
