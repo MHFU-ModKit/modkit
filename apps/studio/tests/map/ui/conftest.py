@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""A map workspace on a viewport and a Studio over it; Qt tests never block on a question."""
+"""A map workspace on a viewport and a Studio over it."""
 
 from collections.abc import Iterator
 from typing import Any
@@ -13,8 +13,8 @@ from mhfu_studio.shell.studio import Studio
 
 
 @pytest.fixture(autouse=True)
-def _no_prompts(asked: list[Any]) -> None:
-    pass
+def _ui(asked: list[Any], gl_back: None) -> None:
+    """No question blocks; the GL context comes back after the test's windows close."""
 
 
 @pytest.fixture
