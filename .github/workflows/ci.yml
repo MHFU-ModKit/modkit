@@ -39,8 +39,9 @@ jobs:
           enable-cache: true
       # Mesa for the studio's GL tests; X11 headers because glcontext has no wheel for 3.14
       - run: sudo apt-get update && sudo apt-get install -y libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri libx11-dev
-      - run: uv sync --locked
-      - run: uv run pytest
+      # no Qt tests here: no display and none of Qt's system libraries (they skip)
+      - run: uv sync --locked --no-group qt
+      - run: uv run --no-group qt pytest
 
   # the Lua that ships against the mhfu API it declares (framework/lua/meta/mhfu.d.lua)
   lua:

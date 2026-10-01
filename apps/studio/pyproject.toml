@@ -12,6 +12,8 @@ dependencies = [
     "numpy>=2",
     "moderngl>=5.12",
     "imgui-bundle>=1.92",
+    "pyside6-essentials>=6.11",
+    "qtawesome>=1.4",
     "pillow>=11",
     "tomli-w>=1.2",
 ]
