@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
 
 from mhfu_studio.monster.panels import graph
 from mhfu_studio.monster.panels.graph import KINDS, NODE_H, NODE_W, Arrow, Layout, Node, Pair
-from mhfu_studio.monster.panels.widgets import NoScene, Pages, put
+from mhfu_studio.monster.panels.widgets import NoScene, Pages
 from mhfu_studio.shell.overlay import Color, Ink
 from mhfu_studio.ui import kit, theme
 
@@ -561,7 +561,7 @@ class MovesPanel(kit.Panel):
         if m is None:
             self._empty(self.no_scene)
             return
-        put(self.scope, ws.graph.scope)
+        kit.put(self.scope, ws.graph.scope)
         self.walk.setText(self._walk_line(intel))
         sp = ws.browsing_species or 0
         if intel is None:

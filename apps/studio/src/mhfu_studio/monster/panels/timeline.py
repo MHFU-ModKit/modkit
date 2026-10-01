@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QSizePolicy, QStackedWidget, QToolTip, QVBoxLayout
 
 from mhfu_studio.monster.align import EFFECT, GATE, IMPACT, OURS, WINDOW, Marker
 from mhfu_studio.monster.panels.common import MARKERS
-from mhfu_studio.monster.panels.widgets import NoScene, Pages, put
+from mhfu_studio.monster.panels.widgets import NoScene, Pages
 from mhfu_studio.monster.render.playback import GAME_HZ, OBSERVED_SPEEDS
 from mhfu_studio.shell.overlay import Ink
 from mhfu_studio.shell.widgets import plain
@@ -303,9 +303,9 @@ class TimelinePanel(kit.Panel):
         if pb.playing != self._playing:
             self._playing = pb.playing
             theme.bind(self.play, "ph.pause" if pb.playing else "ph.play")
-        put(self.loop, pb.loop)
-        put(self.in_place, vp.strip_root)
-        put(self.speed, pb.speed)
+        kit.put(self.loop, pb.loop)
+        kit.put(self.in_place, vp.strip_root)
+        kit.put(self.speed, pb.speed)
         self._show_phase()
         self.hint.setVisible(not ws.markers)
         self.timing.setText(

@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from mhfu_studio.monster import species
 from mhfu_studio.monster.align import Alignment
-from mhfu_studio.monster.panels.widgets import NoScene, Pages, Table, alert, put, set_level
+from mhfu_studio.monster.panels.widgets import NoScene, Pages, Table, alert, set_level
 from mhfu_studio.shell.findings import Level, worst
 from mhfu_studio.shell.widgets import plain
 from mhfu_studio.ui import kit
@@ -369,7 +369,7 @@ class ActionPanel(kit.Panel):
             for s in ids:
                 self.species.addItem(f"em{s:02d}" + ("  (host)" if s == hs else ""), s)
             self.species.blockSignals(False)
-        put(self.species, cur)
+        kit.put(self.species, cur)
         self.host_note.setText(
             f"the host this port rides (host_species = {hs})" if ws.browsing_the_host else ""
         )
@@ -381,7 +381,7 @@ class ActionPanel(kit.Panel):
             " rebuild."
         )
         self.show_host.setText(f"Show em{cur or 0:02d} beside the port")
-        put(self.show_host, ws.show_host)
+        kit.put(self.show_host, ws.show_host)
         hosts = ws.host_options() if self.compare.isChecked() else None
         waiting = self.compare.isChecked() and hosts is None
         self.hosts_wait.setVisible(waiting)
@@ -615,7 +615,7 @@ class ActionPanel(kit.Panel):
             self.show_findings.setText(f"Show the {len(al.findings)} finding{s}{counts}")
             if (al.main, al.sub) != self._findings_pair:  # a new pair opens on its errors
                 self._findings_pair = (al.main, al.sub)
-                put(self.show_findings, bool(al.errors))
+                kit.put(self.show_findings, bool(al.errors))
             bits: list[tuple[str, Level]] = [
                 (f.code.replace("_", " ").lower(), f.level)
                 for f in al.findings
