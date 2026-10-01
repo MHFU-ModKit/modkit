@@ -345,7 +345,7 @@ class MapWorkspace(Workspace):
         if sess.revision != self._seen:
             self._seen = sess.revision
             if sess.ops and self.doc.stage(sc.stage) is None:
-                self.doc.ensure_stage(sc.stage, ops=sess.ops)
+                self.doc.ensure_stage(sc.stage, ops=sess.ops, row=self.row)
         if vp is None or vp.mesh is None:
             return
         if sess.rebuilt:

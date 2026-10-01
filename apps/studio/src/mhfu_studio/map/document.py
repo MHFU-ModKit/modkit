@@ -11,7 +11,8 @@
     ops = "st098.json"            # the schema of `stage.ops`
 
 Stages naming the same list (a night twin) share it: editing one edits both. The loaded
-stage's list is its edit session's own, so undo, redo and dirty go through the session.
+stage's list is its edit session's own, so undo, redo and dirty go through the session. A stage
+whose list is empty (every edit undone) is neither saved nor a change.
 """
 
 from __future__ import annotations
@@ -99,10 +100,15 @@ class MapDocument:
         return next((s for s in self.stages if s.number == number), None)
 
     def ensure_stage(
-        self, number: int, ops_file: str | None = None, ops: list[Op] | None = None
+        self,
+        number: int,
+        ops_file: str | None = None,
+        ops: list[Op] | None = None,
+        row: int | None = None,
     ) -> StageEntry:
         """The stage's entry, added when missing: over `ops` (a session's own list), else the
-        list another stage keeps in that file, else a new one."""
+        list another stage keeps in that file, else a new one. A document without a row takes
+        `row`, the map the stage was loaded from."""
         s = self.stage(number)
         if s is None:
             file = ops_file or default_file(number)
@@ -111,8 +117,14 @@ class MapDocument:
                 ops = shared if shared is not None else []
             s = StageEntry(number, file, ops)
             self.stages.append(s)
+            if self.row is None:
+                self.row = row
             self.touch()
         return s
+
+    def kept(self) -> list[StageEntry]:
+        """The stages a save writes: those with edits."""
+        return [s for s in self.stages if s.ops]
 
     def shared_lists(self) -> dict[str, list[int]]:
         """Per ops file, the stages using it."""
@@ -177,7 +189,7 @@ class MapDocument:
             raise ValueError("the document has no folder yet: pick one (Save As, or Document)")
         d = self.directory
         d.mkdir(parents=True, exist_ok=True)
-        for file, ops in {s.ops_file: s.ops for s in self.stages}.items():
+        for file, ops in self._lists().items():
             (d / file).parent.mkdir(parents=True, exist_ok=True)
             (d / file).write_text(json.dumps(ops, indent=1) + "\n", encoding="utf-8")
         p = d / MANIFEST
@@ -196,12 +208,18 @@ class MapDocument:
         if self.description:
             table["description"] = self.description
         table.update(self.extra)
-        stages = [{"number": s.number, "ops": s.ops_file} for s in self.stages]
+        stages = [{"number": s.number, "ops": s.ops_file} for s in self.kept()]
         return {"map": table, "stage": stages} if stages else {"map": table}
 
+    def _lists(self) -> dict[str, list[Op]]:
+        return {s.ops_file: s.ops for s in self.kept()}
+
     def _state(self) -> str:
-        lists = {s.ops_file: s.ops for s in self.stages}
-        return json.dumps([self.manifest(), lists], sort_keys=True)
+        """What a save writes; the row only with a stage it places (the first edit sets it)."""
+        m = self.manifest()
+        if "stage" not in m:
+            m["map"].pop("row", None)
+        return json.dumps([m, self._lists()], sort_keys=True)
 
     @property
     def dirty(self) -> bool:
@@ -274,7 +292,7 @@ class MapDocument:
         base = self.directory or Path(".")
         manifest: dict[str, Any] = {"schema": SCHEMA, "name": self.name, "row": self.row}
         stages = []
-        for s in self.stages:
+        for s in self.kept():
             sf = self.file(s.number)
             rec: dict[str, Any] = {"stage": s.number, "ops": len(s.ops), "mesh": {}}
             rec["collision"] = rec["texture"] = None
