@@ -119,7 +119,9 @@ def key(e: QKeyEvent) -> Key | None:
 class QtOverlay:
     """`shell.overlay.Overlay` on a QPainter; `Ink` roles come from the theme."""
 
-    def __init__(self, painter: QPainter, font: QFont) -> None:
+    def __init__(self, painter: QPainter, font: QFont, size: tuple[int, int] | None = None) -> None:
+        dev = painter.device()
+        self.size = size or (dev.width(), dev.height())
         self.painter = painter
         self.font = QFont(font)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -244,7 +246,7 @@ class GLView(QOpenGLWidget):
         self._pixel_store()
         p = QPainter(self)  # after moderngl, not around it: a native bracket loses the text
         try:
-            o = QtOverlay(p, self.font())
+            o = QtOverlay(p, self.font(), (self.width(), self.height()))
             ws.paint(o)
             hud = "\n".join(t for t in (ws.hud(), camera_line(vp.camera)) if t)
             o.text(HUD_AT, plain(hud))
