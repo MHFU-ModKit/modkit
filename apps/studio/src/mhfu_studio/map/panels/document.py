@@ -135,8 +135,7 @@ class DocumentPanel(kit.Panel):
         self.note = kit.label(role="muted", selectable=True)
         checks.body.addWidget(self.note)
 
-        self.nodata = kit.pill("warning", f"{NO_DATA}: no section can load. {DATA_HINT}")
-        self.nodata.setWordWrap(True)
+        self.nodata = kit.Alert(f"{NO_DATA}: no section can load. {DATA_HINT}")
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)

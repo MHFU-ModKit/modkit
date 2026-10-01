@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from mhfu_studio.monster import species
 from mhfu_studio.monster.align import Alignment
-from mhfu_studio.monster.panels.widgets import NoScene, alert, set_level
+from mhfu_studio.monster.panels.widgets import NoScene
 from mhfu_studio.shell.findings import Level, worst
 from mhfu_studio.shell.widgets import plain
 from mhfu_studio.ui import kit
@@ -96,7 +96,7 @@ class ActionPanel(kit.Panel):
         self._species_key: object = None
         self._choices = species_choices(ws)
         self.host_note = kit.label(role="muted")
-        self.browsing = alert(level="warning")
+        self.browsing = kit.Alert()
         self.show_host = kit.check(
             "Show the host beside the port",
             tip="Loads the host's own model and plays the clip its code picks for this action,"
@@ -163,7 +163,7 @@ class ActionPanel(kit.Panel):
         self.clip = kit.label(role="muted")
         self.headline = kit.label()
         self.host_plays = Strip()
-        self.host_none = alert(level="warning")
+        self.host_none = kit.Alert()
         self.hits = Strip(column=True)
         self.hits_text = kit.label(selectable=True)
         self.then = Strip(column=True)
@@ -174,13 +174,13 @@ class ActionPanel(kit.Panel):
             on=act("show in moves", self._show_in_moves),
             icon="ph.flow-arrow",
         )
-        self.then_warn = alert(level="warning")
+        self.then_warn = kit.Alert()
         self.show_findings = kit.check(
             "Show the findings",
             tip="Every check on this pair against the clip, with what it means",
             on=lambda on: self._fold(on),
         )
-        self.dots = alert()
+        self.dots = kit.Alert()
         self.findings = QWidget()
         self.findings_lay = QVBoxLayout(self.findings)
         self.findings_lay.setContentsMargins(0, 0, 0, 0)
@@ -607,7 +607,7 @@ class ActionPanel(kit.Panel):
                     w.deleteLater()
             marks = {"error": "x", "warning": "!", "info": "·"}
             for f in al.findings:
-                lb = alert(plain(f"{marks.get(f.level, '·')}  {f.message}"), f.level)
+                lb = kit.Alert(plain(f"{marks.get(f.level, '·')}  {f.message}"), f.level)
                 self.findings_lay.addWidget(lb)
             n_err, n_warn = len(al.errors), len(al.warnings)
             s = "" if len(al.findings) == 1 else "s"
@@ -623,7 +623,7 @@ class ActionPanel(kit.Panel):
             ]
 
             self.dots.setText("  ·  ".join(code for code, _ in bits) or "nothing to flag")
-            set_level(self.dots, worst(al.findings) if bits else "info")
+            self.dots.set_level(worst(al.findings) if bits else "info")
         p = al.pair
         a1 = "" if p is None else ",".join(map(str, p.a1)) or "-"
         self.handler.setText(

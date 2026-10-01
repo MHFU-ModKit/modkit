@@ -95,18 +95,18 @@ class Studio:
         self.ask_path: Callable[[Workspace], Path | None] | None = None
         self._closed = False
         self._listeners: list[Callable[[], None]] = []
-        #: each workspace's `message` as last copied to ours
-        self._heard = {w.name: w.message for w in self.workspaces}
+        #: each workspace's `said` when we last looked
+        self._heard = {w.name: w.said for w in self.workspaces}
 
     # ---- change ------------------------------------------------------------------- #
     def listen(self, fn: Callable[[], None]) -> None:
         self._listeners.append(fn)
 
     def changed(self) -> None:
-        """Tells the listeners; a new message from the active workspace becomes ours."""
+        """Tells the listeners; a message the active workspace set since becomes ours."""
         ws = self.active
-        if ws.message != self._heard.get(ws.name):
-            self._heard[ws.name] = ws.message
+        if ws.said != self._heard.get(ws.name):
+            self._heard[ws.name] = ws.said
             if ws.message:
                 self.message = ws.message
         for fn in list(self._listeners):
