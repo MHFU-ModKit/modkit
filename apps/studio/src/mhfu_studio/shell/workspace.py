@@ -6,8 +6,9 @@ A workspace module `mhfu_studio.<area>.workspace` calls `register` at import; `d
 imports every area's. Nothing here imports GL or a toolkit.
 
 Two sets of hooks live here while the studio moves to Qt: the imgui ones (`panels`,
-`layout`, `toolbar`, `input`, `overlay`) and the Qt ones (`docks`, `tools`, `pointer`, `key`,
-`paint`). A workspace implements one set; the imgui set goes when the last workspace has moved.
+`layout`, `toolbar`, `input`, `overlay`) and the Qt ones (`docks`, `tool_groups`, `pointer`,
+`key`, `paint`). A workspace implements one set; the imgui set goes when the last
+workspace has moved.
 """
 
 from __future__ import annotations

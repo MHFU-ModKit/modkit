@@ -16,6 +16,7 @@ from typing import Literal
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPalette
 from PySide6.QtWidgets import QAbstractButton, QApplication
+from shiboken6 import isValid
 
 from mhfu_studio.shell.findings import Level
 from mhfu_studio.shell.overlay import RGBA, Color, Ink
@@ -159,7 +160,8 @@ def apply(t: Theme) -> None:
             Qt.ColorScheme.Dark if t.dark else Qt.ColorScheme.Light  # native dialogs, title bar
         )
     for target, name in list(_bound.items()):
-        target.setIcon(icon(name))
+        if isValid(target):  # a deleted widget's wrapper lingers until Python collects it
+            target.setIcon(icon(name))
     for fn in list(_listeners):
         fn(t)
 
