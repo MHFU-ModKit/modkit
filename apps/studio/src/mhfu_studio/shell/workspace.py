@@ -127,6 +127,8 @@ class Workspace(Protocol):
     name: str
     #: open-dialog filters as portable-file-dialogs pairs: ("Port manifest", "*.toml", ...)
     filters: Sequence[str] = ("All files", "*")
+    #: the last action's outcome or refusal; the studio shows a new one in the status bar
+    message: str = ""
 
     @property
     def document(self) -> Document | None: ...

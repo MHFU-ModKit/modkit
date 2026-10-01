@@ -234,7 +234,7 @@ class GamePanel(kit.Panel):
         self.log.clear()
 
     def _save_as(self) -> None:
-        path = dialogs.ask_save_as(self, self.studio)
+        path = dialogs.ask_save_as(self, self.ws)
         if path is not None:
             self.studio.save(path)
 

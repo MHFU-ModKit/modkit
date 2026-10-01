@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mhfu_studio.shell.studio import doc_name
 from mhfu_studio.shell.widgets import plain
 from mhfu_studio.shell.workspace import Dock, Tool, ToolGroup, Workspace
 from mhfu_studio.ui import chrome, dialogs, kit, theme
@@ -149,6 +150,8 @@ class Window(QMainWindow):
         QGuiApplication.styleHints().colorSchemeChanged.connect(self._scheme_changed)
         self._apply_theme()
 
+        studio.ask_discard = lambda names: dialogs.confirm_unsaved(self, names)
+        studio.ask_path = lambda ws: dialogs.ask_save_as(self, ws)
         geo = self.settings.value("geometry")
         if not (isinstance(geo, QByteArray) and self.restoreGeometry(geo)):
             self.resize(1500, 940)
@@ -434,18 +437,13 @@ class Window(QMainWindow):
     # ---- documents ------------------------------------------------------------------- #
 
     def ask_open(self) -> None:
-        path = dialogs.ask_open(self, self.studio)
-        if path is not None and not self.studio.open(path):
-            dialogs.warn(self, "Not opened", plain(self.studio.message))
+        dialogs.open_document(self, self.studio)
 
     def save(self) -> bool:
-        doc = self.studio.active.document
-        if doc is not None and doc.path is None:
-            return self.save_as()
         return self.studio.save()
 
     def save_as(self) -> bool:
-        path = dialogs.ask_save_as(self, self.studio)
+        path = dialogs.ask_save_as(self, self.studio.active)
         return path is not None and self.studio.save(path)
 
     # ---- sync ------------------------------------------------------------------------ #
@@ -485,7 +483,7 @@ class Window(QMainWindow):
         for a in self.workspace_actions:
             a.setChecked(a.data() == ws.name)
         self.bar.sync()
-        self.setWindowTitle(f"{chrome.doc_name(ws)}[*] - {self.studio.title}")
+        self.setWindowTitle(f"{doc_name(ws)}[*] - {self.studio.title}")
         self.setWindowModified(doc is not None and doc.dirty)
         self.message.setText(plain(self.studio.message))
         self.where.setText(plain(ws.status()))
@@ -499,12 +497,9 @@ class Window(QMainWindow):
     # ---- closing --------------------------------------------------------------------- #
 
     def closeEvent(self, e: QCloseEvent) -> None:  # noqa: N802
-        dirty = [w for w in self.studio.workspaces if w.document is not None and w.document.dirty]
-        if dirty:
-            got = dialogs.confirm_unsaved(self, [chrome.doc_name(w) for w in dirty])
-            if got == "cancel" or (got == "save" and not self._save_all(dirty)):
-                e.ignore()
-                return
+        if not self.studio.discard_ok(*self.studio.workspaces):
+            e.ignore()
+            return
         self._closed = True
         self._pending.stop()
         self._slow.stop()
@@ -514,10 +509,3 @@ class Window(QMainWindow):
         self.settings.sync()
         self.view.release()
         e.accept()
-
-    def _save_all(self, workspaces: list[Workspace]) -> bool:
-        for w in workspaces:
-            self.studio.switch(w.name)
-            if not self.save():
-                return False
-        return True

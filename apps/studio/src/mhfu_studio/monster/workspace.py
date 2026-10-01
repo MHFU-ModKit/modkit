@@ -62,7 +62,6 @@ class MonsterWorkspace(Workspace):
         self.doc: PortDocument | None = None
         self.scene: Scene | None = None
         self.vp: MonsterViewport | None = None
-        #: the last action's outcome, for the status bar
         self.message = ""
         #: a dock to bring forward, for the window (`take_focus`)
         self._focus: str | None = None
@@ -222,7 +221,11 @@ class MonsterWorkspace(Workspace):
         )  # fmt: skip
 
     def status(self) -> str:
-        return self.message
+        """What is open; the last action's outcome is the studio's `message`."""
+        sc, sp = self.scene, self.host_species
+        if sc is None:
+            return ""
+        return sc.name if sp is None else f"{sc.name}   host em{sp:02d}"
 
     def frame(self, dt: float) -> None:
         if self.doc is not None and self.doc.manifest is not self._seen:

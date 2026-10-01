@@ -137,6 +137,24 @@ def test_close_asks(make_window: Make, asked: list[Any], monkeypatch: Any, tmp_p
     assert w.studio.workspace("map").doc.saved_to == [tmp_path / "a.toml"]
 
 
+def test_open_asks(make_window: Make, asked: list[Any], monkeypatch: Any, tmp_path: Path) -> None:
+    w = make_window()
+    w.studio.active.add_item()
+    monkeypatch.setattr(dialogs, "ask_open", lambda *a: tmp_path / "b.toml")
+    monkeypatch.setattr(dialogs, "confirm_unsaved", lambda p, n: asked.append(n) or "cancel")
+    (tmp_path / "b.toml").write_text("x")
+    w.open_action.trigger()
+    assert asked == [["untitled map"]] and w.studio.active.doc.path is None
+
+
+def test_refusals_reach_the_status_bar(make_window: Make) -> None:
+    w = make_window()
+    ws = w.studio.active
+    w.studio.act("move", lambda: setattr(ws, "message", "move refused: no room"))()
+    w.sync()
+    assert w.message.text() == "move refused: no room"
+
+
 def test_take_focus(make_window: Make) -> None:
     w = make_window()
     ws = w.studio.active

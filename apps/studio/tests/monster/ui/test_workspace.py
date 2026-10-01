@@ -35,6 +35,10 @@ def test_nothing_open() -> None:
     assert ws.document is None and ws.status() == ""
 
 
+def test_status_names_the_scene(workspace: MonsterWorkspace) -> None:
+    assert workspace.status() == "t   host em75"
+
+
 def test_keys_drive_the_transport(workspace: MonsterWorkspace) -> None:
     ws = workspace
     assert ws.vp is not None

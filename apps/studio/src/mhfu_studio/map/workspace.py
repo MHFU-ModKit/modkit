@@ -81,7 +81,6 @@ class MapWorkspace(Workspace):
         self.col_sel = CollisionSelection()
         self.selected_group: Key | None = None
         self.tools = ViewportTools(self)
-        #: the last action's outcome, shown in the HUD
         self.message = ""
         self.load_error = ""
         self.load_time = 0.0

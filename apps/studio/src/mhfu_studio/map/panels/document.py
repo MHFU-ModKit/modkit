@@ -102,7 +102,7 @@ class DocumentPanel(kit.Panel):
                     "Save",
                     tip="Writes map.toml and the edit lists into the document's folder; asks for"
                     " a folder the first time",
-                    on=self._save,
+                    on=studio.save,
                     role="primary",
                     icon="ph.floppy-disk",
                 ),
@@ -173,23 +173,17 @@ class DocumentPanel(kit.Panel):
         self.note.setText(f"New document {doc.name}: not saved yet.")
 
     def _new(self) -> None:
+        if not self.studio.discard_ok(self.ws):
+            return
         got = QFileDialog.getExistingDirectory(self, "A folder for the new map document")
         if got:
             self.studio.act("new document", lambda: self.new(Path(got)))()
 
     def _open(self) -> None:
-        path = dialogs.ask_open(self, self.studio)
-        if path is not None and not self.studio.open(path):
-            dialogs.warn(self, "Not opened", plain(self.studio.message))
-
-    def _save(self) -> None:
-        if self.ws.doc.path is None:
-            self._save_as()
-        else:
-            self.studio.save()
+        dialogs.open_document(self, self.studio)
 
     def _save_as(self) -> None:
-        path = dialogs.ask_save_as(self, self.studio)
+        path = dialogs.ask_save_as(self, self.ws)
         if path is not None:
             self.studio.save(path)
 

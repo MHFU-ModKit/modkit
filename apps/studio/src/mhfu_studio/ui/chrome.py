@@ -16,11 +16,11 @@ from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QMouseEvent, QShowEvent
 from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMenuBar, QToolButton, QWidget
 
+from mhfu_studio.shell.studio import doc_name
 from mhfu_studio.ui import kit
 
 if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
-    from mhfu_studio.shell.workspace import Workspace
 
 MAC = sys.platform == "darwin"
 #: the traffic lights span 9 to 69 points from the left and sit centred in the title area,
@@ -38,13 +38,6 @@ SWITCH_TIP = (
 
 def switch_tip(name: str) -> str:
     return f"Switch to the {name} workspace. {SWITCH_TIP}"
-
-
-def doc_name(ws: Workspace) -> str:
-    doc = ws.document
-    if doc is None:
-        return "no document"
-    return doc.path.name if doc.path is not None else f"untitled {ws.name}"
 
 
 def frame(win: QMainWindow, native: bool = MAC) -> None:

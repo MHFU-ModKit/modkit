@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
 
 from mhfu_studio.monster.panels import common
 from mhfu_studio.shell.findings import Level
-from mhfu_studio.shell.widgets import plain
 from mhfu_studio.ui import dialogs, kit, theme
 
 if TYPE_CHECKING:
@@ -275,9 +274,7 @@ class NoScene(kit.Empty):
         self.studio = studio
 
     def _open(self) -> None:
-        path = dialogs.ask_open(self, self.studio)
-        if path is not None and not self.studio.open(path):
-            dialogs.warn(self, "Not opened", plain(self.studio.message))
+        dialogs.open_document(self, self.studio)
 
 
 class SaveRow(QWidget):
