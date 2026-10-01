@@ -48,6 +48,7 @@ def test_shows(panel: CollisionPanel, ws: MapWorkspace) -> None:
     assert ws.vp is not None and ws.vp.collision is not None
     assert kit.missing_tips(panel) == []
     assert sorted(panel.chunk_checks) == [0, 1] and "4 triangles" in panel.chunk_checks[1].text()
+    assert "grid of 5 x 5 cells" in panel.chunk_checks[1].toolTip()
     assert (
         panel.classes["climb"].text() == "climb  (1)" and not panel.classes["climb"].icon().isNull()
     )
