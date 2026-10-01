@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, TypeAlias
 if TYPE_CHECKING:
     Subparsers: TypeAlias = argparse._SubParsersAction[argparse.ArgumentParser]
 
-AREAS = ("shell", "harness", "map", "monster", "stage", "ui")
+AREAS = ("harness", "map", "monster", "stage", "ui")
 
 
 @dataclass(frozen=True)

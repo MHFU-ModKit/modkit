@@ -7,10 +7,14 @@ from __future__ import annotations
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QLocale, Qt
+from PySide6.QtCore import QCoreApplication, QLocale, QSettings, Qt
 from PySide6.QtGui import QSurfaceFormat
 from PySide6.QtWidgets import QApplication
+
+if TYPE_CHECKING:
+    from mhfu_studio.ui.window import Window
 
 
 def surface_format() -> QSurfaceFormat:
@@ -30,22 +34,55 @@ def prepare() -> None:
     QLocale.setDefault(QLocale(QLocale.Language.C))
 
 
-def main(argv: Sequence[str] | None = None, path: Path | None = None) -> int:
-    """Runs the window until it closes; `path` opens in the workspace that reads it."""
-    from mhfu_studio.cli import AREAS
-    from mhfu_studio.shell.studio import Studio
-    from mhfu_studio.shell.workspace import discover
-    from mhfu_studio.ui.window import Window
-
+def application(argv: Sequence[str] | None = None) -> QCoreApplication:
+    """The running QApplication, or a new one after `prepare`."""
     app = QApplication.instance()
     if app is None:
         prepare()
         app = QApplication(list(argv) if argv is not None else sys.argv[:1])
     app.setApplicationName("MHFU Studio")
     app.setOrganizationName("mhfu-studio")
+    return app
+
+
+def build(
+    path: Path | None = None,
+    workspace: str | None = None,
+    size: tuple[int, int] | None = None,
+    settings: QSettings | None = None,
+) -> Window:
+    """The window over every registered workspace, not shown yet.
+
+    `path` opens in the workspace that reads it; `size` wins over the restored geometry. Raises
+    ValueError for an unknown `workspace` or a `path` that does not open.
+    """
+    from mhfu_studio.cli import AREAS
+    from mhfu_studio.shell.studio import Studio
+    from mhfu_studio.shell.workspace import discover
+    from mhfu_studio.ui.window import Window
+
     studio = Studio([make() for make in discover(AREAS).values()])
+    if workspace is not None:
+        try:
+            studio.switch(workspace)
+        except KeyError as e:
+            raise ValueError(e.args[0]) from None
     if path is not None and not studio.open(path):
         raise ValueError(studio.message)
-    w = Window(studio)
+    w = Window(studio, settings)
+    if size is not None:
+        w.resize(*size)
+    return w
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    path: Path | None = None,
+    workspace: str | None = None,
+    size: tuple[int, int] | None = None,
+) -> int:
+    """Runs the window until it closes."""
+    app = application(argv)
+    w = build(path, workspace, size)
     w.show()
     return int(app.exec())
