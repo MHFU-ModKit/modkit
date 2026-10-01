@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """One frame of a 3D view, shared by the window and every headless render.
 
-A workspace subclasses `Viewport` and draws its scene in `draw_scene`; the window shows
-`target.texture`, a render reads `target`. There is no second renderer.
+A workspace subclasses `Viewport` and draws its scene in `draw_scene`; the window blits
+`target`, a render reads it. There is no second renderer.
 """
 
 from __future__ import annotations
@@ -53,8 +53,8 @@ class Viewport:
     def draw(self) -> moderngl.Texture:
         """Renders one frame into `target` and returns its resolved texture.
 
-        Restores the framebuffer bound on entry: left bound, imgui draws the whole UI into it
-        and the window stays black while every offscreen check passes.
+        Restores the framebuffer bound on entry: left bound, what draws next lands in the
+        target and the window stays black while every offscreen check passes.
         """
         ctx, t = self.ctx, self.target
         prev = bound_framebuffer(ctx)
