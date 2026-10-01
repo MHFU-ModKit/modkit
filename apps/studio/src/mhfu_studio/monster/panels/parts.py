@@ -7,80 +7,56 @@ different fields of one record: a Tigrex wing is part 6 and row 5."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from functools import partial
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from mhfu import hitzone
 from mhfu.em.intel import HitSphere, PartIntel
 from mhfu_port.manifest import Hurtbox
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from mhfu_studio.monster.render.hitboxes import PART_COLORS
+from mhfu_studio.ui import kit
 
-from .common import (
-    AMBER,
-    RED,
-    SHAPES,
-    bone_span,
-    colored,
-    columns,
-    export_buttons,
-    no_scene,
-    save_row,
-    span_all,
-    swatch,
-    table_flags,
-    tooltip,
+from .common import bone_span
+from .widgets import (
+    ExportRow,
+    Grid,
+    NoScene,
+    Pages,
+    SaveRow,
+    Table,
+    VolumeForm,
+    alert,
+    describe,
+    fly_to,
+    tiles,
 )
 
 if TYPE_CHECKING:
+    from mhfu_studio.monster.parts import PartSession
     from mhfu_studio.monster.workspace import MonsterWorkspace
+    from mhfu_studio.shell.studio import Studio
 
 Vol = HitSphere | Hurtbox
+HOST, PORT = "host", "port"
 HOST_BONES = (
-    "! the bone indices are the HOST's. This port ships its own rig, so a copied sphere lands "
-    "on whatever joint sits at that index: a starting point you can SEE, not a correct answer."
+    "The bone numbers are the HOST's. This port ships its own rig, so a copied volume lands on"
+    " whatever joint has that number here: a starting point you can SEE, not a correct answer."
 )
-
-
-def panel(ws: MonsterWorkspace) -> None:
-    from imgui_bundle import imgui
-
-    vp = ws.vp
-    if no_scene(ws) or vp is None:
-        return
-    host = ws.host_parts()
-    changed = False
-    for key, label in (("host", f"host em{ws.host_species or 0:02d}"), ("port", "this port")):
-        if imgui.radio_button(label, ws.parts_source == key):
-            ws.parts_source, changed = key, True
-        imgui.same_line()
-    imgui.new_line()
-    ch, ws.show_parts = imgui.checkbox("show", ws.show_parts)
-    imgui.same_line()
-    _, vp.hitboxes_xray = imgui.checkbox("x-ray", vp.hitboxes_xray)
-    if ch or changed or (vp.hitboxes is None and ws.show_parts):
-        ws.sync_hitboxes()
-    if ws.parts_source == "host" and host is None:
-        imgui.text_disabled(f"no part intel for em{ws.host_species or 0:02d}")
-        return
-    part_table(ws, host)
-    imgui.separator()
-    if ws.parts_source == "port":
-        volume_editor(ws)
-        imgui.separator()
-    grid_view(ws, host)
-    imgui.separator()
-    actions(ws, host)
-
-
-def volumes_now(ws: MonsterWorkspace) -> Sequence[Vol]:
-    """Whichever source the panel shows."""
-    if ws.parts_source == "port":
-        sess = ws.part_session
-        return [] if sess is None else sess.volumes()
-    host = ws.host_parts()
-    return [] if host is None else host.spheres()
+PART_VS_ROW = (
+    "A part is one of the eight damage counters: what breaks or severs when enough damage"
+    " lands on it. The row is a different number: which line of the damage grid scales a hit"
+    " there. A Tigrex wing is part 6 but row 5."
+)
+SOURCE_TIPS = {
+    HOST: "The host monster's own tables, as the game has them: read only",
+    PORT: "What this port's manifest writes over the host's tables: yours to edit",
+}
+GRID_NOTE = (
+    "Grid writes are proven live (every byte 0xFF gave 411-damage hits); the volumes are still"
+    " being tested. A * marks a column whose name is inferred."
+)
 
 
 def _part(v: Vol) -> int:
@@ -91,363 +67,637 @@ def _row(v: Vol) -> int:
     return v.hitzone_row or 0
 
 
-def part_table(ws: MonsterWorkspace, host: PartIntel | None) -> None:
-    """One row per accumulator: colour, name, what is attached, and the select that isolates."""
-    from imgui_bundle import imgui
+def _section(title: str, tip: str) -> tuple[kit.Section, QVBoxLayout]:
+    s = kit.Section(title, tip=tip)
+    return s, s.body
 
-    vols = volumes_now(ws)
-    nb = 0 if ws.scene is None else ws.scene.rig.n
-    real = [v for v in vols if not v.is_marker]
-    markers = "" if len(real) == len(vols) else f", +{len(vols) - len(real)} walker marker(s)"
-    imgui.text_disabled(
-        f"{len(real)} volume(s) on {len({v.bone for v in real})} bone(s) of {nb}{markers}"
-    )
-    if ws.parts_source == "host" and host is not None:
-        if host.active is not None:
-            sp = ",".join(map(str, host.active.species)) or "?"
-            imgui.text_disabled(
-                f"the set species {sp} walks: 0x{host.active.va:08X} ({host.capacity} records). "
-                f"The overlay holds {len(host.hurtboxes)}; the rest are other species ids'."
-            )
-        else:
-            imgui.text_disabled(
-                "every hurtbox set in the overlay: this intel does not say which one the "
-                "species walks"
-            )
-    if ws.part_orphans:
-        lost = ", ".join(str(getattr(o, "bone", "?")) for o in ws.part_orphans[:6])
-        colored(
-            f"! {len(ws.part_orphans)} volume(s) name a bone this rig does not have ({lost}) and "
-            "are drawn NOWHERE. Bone indices belong to the rig that ships them.",
-            RED,
-            wrapped=True,
+
+class PartsPanel(kit.Panel):
+    """Where the monster can be hit: parts, hurtbox volumes and the damage grid."""
+
+    def __init__(self, ws: MonsterWorkspace, studio: Studio) -> None:
+        super().__init__()
+        self.ws, self.studio = ws, studio
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
+
+        show, body = _section("Show", "Which tables, and whether the view draws their volumes")
+        self.source = kit.Segmented(
+            [(HOST, "Host"), (PORT, "This port")],
+            tip="Whose hurtboxes and grid to show",
+            tips=SOURCE_TIPS,
+            on=lambda k: self._act("parts source", lambda: self._source(k)),
         )
-    if imgui.begin_table("##parts", 6, table_flags(), imgui.ImVec2(0.0, 170.0)):
-        columns(
-            (("", 0.22), ("#", 0.22), ("name", 1.0), ("vols", 0.35), ("bones", 0.9), ("row", 0.45))
+        self.draw = kit.check(
+            "Show in view",
+            tip="Draws the hurtbox volumes on the monster, coloured by part",
+            on=lambda on: self._act("show parts", lambda: self._show(on)),
         )
+        self.xray = kit.check(
+            "Through the mesh",
+            tip="Draws the volumes on top, even where the body hides them",
+            on=lambda on: self._act("x-ray", lambda: self._vp("hitboxes_xray", on)),
+        )
+        body.addWidget(self.source)
+        body.addWidget(kit.row(self.draw, self.xray, stretch=True))
+        self.no_intel = alert(level="info")
+        body.addWidget(self.no_intel)
+        lay.addWidget(show)
+
+        parts, body = _section("Parts", PART_VS_ROW)
+        self.summary = kit.label(role="muted")
+        self.provenance = kit.label(role="muted")
+        self.orphans = alert(level="error")
+        self.parts = Table(
+            ["Part", "Name", "Vols", "Bones", "Row"],
+            tip="The eight damage counters and the volumes that feed each. Click one to light"
+            " only its volumes in the view. " + PART_VS_ROW,
+        )
+        self.parts.picked.connect(self._pick_part)
+        self.part_name = kit.text_field(
+            tip="A name for the picked part, written into the manifest's [parts]",
+            placeholder="head",
+        )
+        self.part_name.returnPressed.connect(self._name_part)
+        self.part_name.textEdited.connect(lambda t: setattr(ws, "part_name_buf", t))
+        self.name_button = kit.button(
+            "Name", tip="Names the picked part in the manifest (unsaved)", on=self._name_part
+        )
+        self.name_row = kit.row(self.part_name, self.name_button)
+        for w in (self.summary, self.provenance, self.orphans, self.parts, self.name_row):
+            body.addWidget(w)
+        lay.addWidget(parts)
+
+        vols, body = _section(
+            "Volumes", "The port's hurtboxes: pick one here or click it in the view, then edit"
+        )
+        self.host_hint = kit.label(role="muted")
+        self.to_port = kit.button(
+            "Edit on this port",
+            tip="Switches to the port's own volumes, the ones you can change",
+            on=lambda: self._act("parts source", lambda: self._source(PORT)),
+            role="primary",
+        )
+        self.add = kit.button(
+            "Add a sphere",
+            tip="Adds one sphere on bone 1 to the port's hurtboxes, to move where you want it",
+            on=self._add,
+            icon="ph.plus",
+        )
+        self.vols_head = kit.label(role="muted")
+        self.over = alert(level="error")
+        self.only = kit.check(
+            "Only the picked part",
+            tip="Lists only the volumes of the part picked above",
+            on=lambda on: self._act("only part", lambda: setattr(ws, "only_selected_part", on)),
+        )
+        self.vols = Table(
+            ["Vol", "Bone", "Shape", "Radius", "Part", "Row", "Offset"],
+            tip="The port's hurtboxes, one per row; * marks one changed since the last save."
+            " Click one to edit it and light it in the view.",
+            swatch_column=4,
+        )
+        self.vols.picked.connect(self._pick_volume)
+        self.pick_hint = kit.label("Pick a volume, here or in the view, to edit it.", role="muted")
+        self.part_box = kit.integer(
+            tip="The damage counter this volume feeds (0 to 7). " + PART_VS_ROW,
+            lo=0,
+            hi=hitzone.PART_MASK,
+            on=lambda v: self._stage(part=v),
+        )
+        self.row_box = kit.integer(
+            tip="Which grid row's percentages this volume takes (0 to 6). NOT the part.",
+            lo=0,
+            hi=hitzone.MAX_ROW,
+            on=lambda v: self._stage(hitzone_row=v),
+        )
+        self.form = VolumeForm(
+            self._stage,
+            lambda: None if ws.vp is None else ws.vp.selected_joint,
+            bone_tip="A joint number of THIS port's rig. Pick a joint in the view to read it.",
+            extra=[("Part", self.part_box), ("Grid row", self.row_box)],
+        )
+        self.keep = kit.button(
+            "Keep only this",
+            tip="Drops every other volume: with one left, where a hit lands is the whole answer",
+            on=self._keep,
+        )
+        self.delete = kit.button(
+            "Delete", tip="Removes this volume", on=self._delete, role="danger", icon="ph.trash"
+        )
+        self.copy = kit.button(
+            "Duplicate", tip="Adds a copy of this volume to move", on=self._copy, icon="ph.copy"
+        )
+        self.look = kit.button(
+            "Show in view",
+            tip="Points the camera at this volume",
+            on=self._act_slot("look at volume", self._look),
+            icon="ph.eye",
+        )
+        self.form_box = QWidget()
+        fl = QVBoxLayout(self.form_box)
+        fl.setContentsMargins(0, 4, 0, 0)
+        fl.addWidget(self.form)
+        fl.addWidget(tiles(self.keep, self.copy, self.look, self.delete))
+        for w in (
+            self.host_hint,
+            self.to_port,
+            self.vols_head,
+            self.over,
+            self.only,
+            self.vols,
+            self.add,
+            self.pick_hint,
+            self.form_box,
+        ):
+            body.addWidget(w)
+        self.vols_box = vols
+        lay.addWidget(vols)
+
+        grid, body = _section(
+            "Damage grid",
+            "How much of each kind of damage a hit takes, in percent, per row and per state",
+        )
+        self.grid_head = kit.label(role="muted")
+        self.states = kit.Segmented(
+            [("0", "state 0")],
+            tip="The monster's states: normal, enraged and so on, each with its own grid",
+            on=lambda k: self._act("grid state", lambda: setattr(ws, "grid_state", int(k))),
+        )
+        self.state_row = QWidget()
+        self.state_lay = QVBoxLayout(self.state_row)
+        self.state_lay.setContentsMargins(0, 0, 0, 0)
+        self.state_lay.addWidget(self.states)
+        self._state_names: tuple[str, ...] = ()
+        self._heads: tuple[str, ...] = ()
+        self.grid = Grid(
+            hitzone.COLUMNS,
+            tip="Percent of each damage kind a hit on a row's volumes takes (0 to 255);"
+            " double-click a cell to type once the port owns a grid",
+            rows=[str(r) for r in range(hitzone.MAX_ROW + 1)],
+        )
+        self.grid.edited.connect(self._grid_edit)
+        for c, col in enumerate(hitzone.COLUMNS):
+            head = self.grid.horizontalHeaderItem(c)
+            if head is not None:
+                head.setToolTip(hitzone.COLUMN_PROVENANCE.get(col, ""))
+        self.max_row = kit.button(
+            "Max the picked row",
+            tip="Cut, impact and shot to 255% on the picked row: every weapon does the most the"
+            " grid can say there. A quick way to prove which row a spot uses.",
+            on=self._max_row,
+        )
+        self.grid_note = alert()
+        self.grid_text = kit.label(GRID_NOTE, role="muted")
+        for w in (
+            self.grid_head,
+            self.state_row,
+            self.grid,
+            self.max_row,
+            self.grid_note,
+            self.grid_text,
+        ):
+            body.addWidget(w)
+        lay.addWidget(grid)
+
+        adopt, body = _section("Start from the host", "Copy the host's tables into the port")
+        self.adopt_grid = kit.button(
+            "Adopt the host's grid",
+            tip="Copies the host's damage grid into the manifest to edit. The port inherits it"
+            " at runtime either way.",
+            on=self._adopt_grid,
+            icon="ph.download-simple",
+        )
+        self.adopt_vols = kit.button(
+            "Adopt the host's volumes",
+            tip="Copies the host's hurtboxes into the port. " + HOST_BONES,
+            on=self._adopt_volumes,
+            icon="ph.download-simple",
+        )
+        body.addWidget(tiles(self.adopt_grid, self.adopt_vols, columns=1))
+        self.adopt_box = adopt
+        lay.addWidget(adopt)
+
+        ship, body = _section("Save and ship", "Write the manifest, then send it to the game")
+        self.save = SaveRow(ws, studio)
+        self.export = ExportRow(ws, studio)
+        body.addWidget(self.save)
+        body.addWidget(self.export)
+        self.ship_box = ship
+        lay.addWidget(ship)
+        self.no_manifest = kit.label(
+            "This scene has no manifest, so there is nothing to write parts into.", role="muted"
+        )
+        lay.addWidget(self.no_manifest)
+
+        self.pages = Pages(page, NoScene(studio))
+        self.body.addWidget(self.pages)
+        self.body.addStretch(1)
+
+    # ---- actions --------------------------------------------------------------------- #
+
+    def _act(self, label: str, fn: Callable[[], object]) -> None:
+        self.studio.act(label, fn)()
+
+    def _act_slot(self, label: str, fn: Callable[[], object]) -> Callable[..., None]:
+        return self.studio.act(label, fn)
+
+    def _vp(self, attr: str, value: object) -> None:
+        if self.ws.vp is not None:
+            setattr(self.ws.vp, attr, value)
+
+    def _source(self, key: str) -> None:
+        self.ws.parts_source = key
+        self.ws.sync_hitboxes()
+
+    def _show(self, on: bool) -> None:
+        self.ws.show_parts = on
+        self.ws.sync_hitboxes()
+
+    def _session(self) -> PartSession:
+        sess = self.ws.part_session
+        if sess is None:
+            raise RuntimeError("no manifest to edit")
+        return sess
+
+    def _pick_part(self, part: object) -> None:
+        if isinstance(part, int):
+            pick = None if self.ws.selected_part == part else part
+            self._act("pick part", lambda: self.ws.select_part(pick))
+
+    def _name_part(self) -> None:
+        part, name = self.ws.selected_part, self.part_name.text()
+
+        def run() -> None:
+            sess = self._session()
+            if part is not None:
+                self.ws.edit(f"part {part} = {name} (unsaved)", lambda: sess.name_part(part, name))
+
+        self._act("name part", run)
+
+    def _pick_volume(self, index: object) -> None:
+        if isinstance(index, int):
+            pick = None if self.ws.selected_volume == index else index
+            self._act("pick volume", lambda: self.ws.select_volume(pick))
+
+    def _stage(self, **fields: Any) -> None:
+        i = self.ws.selected_volume
+
+        def run() -> None:
+            sess = self._session()
+            if i is not None:
+                msg = f"volume {i}: {describe(fields)} (unsaved)"
+                self.ws.edit(msg, lambda: sess.edit_volume(i, **fields))
+
+        self._act("edit volume", run)
+
+    def _add(self) -> None:
+        def run() -> None:
+            sess = self._session()
+            new = Hurtbox(bone=1, radius=150.0, part=1, hitzone_row=0, offset=[0.0, 0.0, 0.0])
+            if self.ws.edit("added a sphere (unsaved)", lambda: sess.add_volume(new)):
+                self.ws.select_volume(len(sess.volumes()) - 1)
+
+        self._act("add volume", run)
+
+    def _keep(self) -> None:
+        i = self.ws.selected_volume
+
+        def run() -> None:
+            sess = self._session()
+            if i is None:
+                return
+            gone = len(sess.volumes()) - 1
+            msg = f"kept volume {i}, dropped {gone}: a hit lands there or nowhere (unsaved)"
+            if self.ws.edit(msg, lambda: sess.keep_only(i)):
+                self.ws.select_volume(0)
+
+        self._act("keep only", run)
+
+    def _delete(self) -> None:
+        i = self.ws.selected_volume
+
+        def run() -> None:
+            sess = self._session()
+            if i is not None and self.ws.edit(
+                f"deleted volume {i} (unsaved)", lambda: sess.remove_volume(i)
+            ):
+                self.ws.select_volume(None)
+
+        self._act("delete volume", run)
+
+    def _copy(self) -> None:
+        i = self.ws.selected_volume
+
+        def run() -> None:
+            sess = self._session()
+            if i is None:
+                return
+            v = sess.volumes()[i]
+            if self.ws.edit(f"volume {i} duplicated (unsaved)", lambda: sess.add_volume(v)):
+                self.ws.select_volume(len(sess.volumes()) - 1)
+
+        self._act("duplicate volume", run)
+
+    def _look(self) -> None:
+        vp = self.ws.vp
+        fly_to(vp, None if vp is None else vp.hitboxes, self.ws.selected_volume)
+
+    def _grid_edit(self, row: int, column: int, value: int) -> None:
+        state = self.ws.grid_state
+
+        def run() -> None:
+            sess = self._session()
+            name = sess.states()[state].name
+            msg = f"{name} row {row} {hitzone.COLUMNS[column]} = {value} (unsaved)"
+            self.ws.edit(msg, lambda: sess.set_hitzone(state, row, column, value))
+
+        self._act("grid", run)
+
+    def _max_row(self) -> None:
+        state, row = self.ws.grid_state, self.grid.currentRow()
+
+        def run() -> None:
+            sess = self._session()
+            if row < 0:
+                self.ws.message = "pick a grid row first"
+                return
+            name = sess.states()[state].name
+            msg = f"{name} row {row}: cut, impact, shot = 255, the most a byte says (unsaved)"
+            self.ws.edit(msg, lambda: sess.fill_row(state, row, 255))
+
+        self._act("max row", run)
+
+    def _adopt_grid(self) -> None:
+        def run() -> None:
+            sess, host = self._session(), self.ws.host_parts()
+            if host is None:
+                return
+            states = host.states
+            msg = "adopted the host's grid: the port inherits it at runtime either way (unsaved)"
+            if self.ws.edit(msg, lambda: sess.adopt_grid(states)):
+                self._source(PORT)
+
+        self._act("adopt grid", run)
+
+    def _adopt_volumes(self) -> None:
+        def run() -> None:
+            sess, host = self._session(), self.ws.host_parts()
+            if host is None:
+                return
+            got = sess.adopt_volumes(host.spheres(), source=f"em{self.ws.host_species or 0:02d}")
+            self.ws.parts_source = PORT
+            self.ws.sync()
+            self.ws.message = got.describe()
+
+        self._act("adopt volumes", run)
+
+    # ---- sync ------------------------------------------------------------------------ #
+
+    def volumes_now(self) -> Sequence[Vol]:
+        """Whichever source the panel shows."""
+        ws = self.ws
+        if ws.parts_source == PORT:
+            sess = ws.part_session
+            return [] if sess is None else sess.volumes()
+        host = ws.host_parts()
+        return [] if host is None else host.spheres()
+
+    def sync(self) -> None:
+        ws, vp = self.ws, self.ws.vp
+        self.pages.show_page(ws.scene is not None)
+        if ws.scene is None:
+            return
+        host, sess = ws.host_parts(), ws.part_session
+        hs = f"em{ws.host_species or 0:02d}"
+        self.source.buttons[HOST].setText(f"Host {hs}")
+        kit.put(self.source, ws.parts_source)
+        kit.put(self.draw, ws.show_parts)
+        kit.put(self.xray, vp is not None and vp.hitboxes_xray)
+        self.xray.setEnabled(vp is not None)
+        port = ws.parts_source == PORT
+        missing = not port and host is None
+        self.no_intel.setText(f"No part intel for {hs}: switch to This port, or survey the host.")
+        self.no_intel.setVisible(missing)
+        vols = self.volumes_now()
+        self._parts(vols, host, sess, missing)
+        self._volumes(sess, port)
+        self._grid(host, sess)
+        has_doc = sess is not None and ws.manifest is not None
+        self.adopt_box.setVisible(has_doc and host is not None)
+        if host is not None:
+            self.adopt_grid.setVisible(host.has_grid)
+            self.adopt_vols.setVisible(bool(host.spheres()))
+        self.ship_box.setVisible(has_doc)
+        self.save.sync()
+        self.export.sync()
+        self.no_manifest.setVisible(not has_doc)
+
+    def _parts(
+        self, vols: Sequence[Vol], host: PartIntel | None, sess: PartSession | None, missing: bool
+    ) -> None:
+        ws = self.ws
+        nb = 0 if ws.scene is None else ws.scene.rig.n
+        real = [v for v in vols if not v.is_marker]
+        markers = "" if len(real) == len(vols) else f", +{len(vols) - len(real)} walker marker(s)"
+        self.summary.setText(
+            f"{len(real)} volume(s) on {len({v.bone for v in real})} bone(s) of {nb}{markers}"
+        )
+        prov = ""
+        if ws.parts_source == HOST and host is not None:
+            if host.active is not None:
+                sp = ",".join(map(str, host.active.species)) or "?"
+                prov = (
+                    f"The set species {sp} walks: 0x{host.active.va:08X} ({host.capacity}"
+                    f" records). The overlay holds {len(host.hurtboxes)}; the rest are other"
+                    " species ids'."
+                )
+            else:
+                prov = (
+                    "Every hurtbox set in the overlay: this intel does not say which one the"
+                    " species walks."
+                )
+        self.provenance.setText(prov)
+        self.provenance.setVisible(bool(prov))
+        lost = ws.part_orphans
+        self.orphans.setText(
+            f"{len(lost)} volume(s) name a bone this rig does not have"
+            f" ({', '.join(str(getattr(o, 'bone', '?')) for o in lost[:6])}) and are drawn"
+            " NOWHERE. Bone numbers belong to the rig that ships them."
+        )
+        self.orphans.setVisible(bool(lost))
+        self.parts.setVisible(not missing)
         by_part: dict[int, list[Vol]] = {}
         for v in vols:
             by_part.setdefault(_part(v), []).append(v)
-        sess = ws.part_session
+        rows, tips = [], []
         for i in range(hitzone.PART_MASK + 1):
             mine = by_part.get(i, [])
-            imgui.table_next_row()
-            imgui.table_next_column()
-            swatch(f"##sw{i}", PART_COLORS[i])
-            imgui.table_next_column()
-            sel = ws.selected_part == i
-            if imgui.selectable(f"{i}##p{i}", sel, span_all())[0]:
-                ws.select_part(None if sel else i)
-            imgui.table_next_column()
             name = "" if sess is None else sess.name_of(i)
-            if name:
-                imgui.text(name)
-            else:
-                imgui.text_disabled("unassigned" if i == 0 else "-")
-            imgui.table_next_column()
-            imgui.text(str(len(mine)) if mine else "·")
-            imgui.table_next_column()
             bones = sorted({v.bone for v in mine})
-            imgui.text(bone_span(bones))
-            if bones:
-                tooltip(", ".join(map(str, bones)))
-            imgui.table_next_column()
-            rows = sorted({_row(v) for v in mine})
-            imgui.text(",".join(map(str, rows)) if rows else "·")
-            if len(rows) > 1:
-                tooltip(
-                    "this part's volumes use DIFFERENT hitzone rows, so they take different "
-                    "percentages. Not an error: the Tigrex's wings do it."
+            rws = sorted({_row(v) for v in mine})
+            rows.append(
+                (
+                    str(i),
+                    name or ("nobody" if i == 0 else ""),
+                    str(len(mine)) if mine else "",
+                    bone_span(bones) if bones else "",
+                    ",".join(map(str, rws)),
                 )
-        imgui.end_table()
-    sess = ws.part_session
-    if ws.selected_part is not None and sess is not None:
-        imgui.set_next_item_width(-90)
-        _, ws.part_name_buf = imgui.input_text("##pname", ws.part_name_buf)
-        imgui.same_line()
-        part = ws.selected_part
-        if imgui.button(f"name {part}"):
-            name = ws.part_name_buf
-            ws.edit(f"part {part} = {name} (unsaved)", lambda: sess.name_part(part, name))
-
-
-def volume_editor(ws: MonsterWorkspace) -> None:
-    """The port's volumes, a row each, and the selected one's fields: pick a sphere, make it
-    obviously different, keep only it, ship it."""
-    from imgui_bundle import imgui
-
-    sess = ws.part_session
-    if sess is None:
-        imgui.text_disabled("no manifest, so no volumes to edit")
-        return
-    vols = sess.volumes()
-    if not vols:
-        imgui.text_disabled("no [[hurtbox]] authored: adopt the host's below, or add one")
-        if imgui.button("add a sphere"):
-            new = Hurtbox(bone=1, radius=150.0, part=1, hitzone_row=0, offset=[0.0, 0.0, 0.0])
-            if ws.edit("added a sphere (unsaved)", lambda: sess.add_volume(new)):
-                ws.select_volume(len(sess.volumes()) - 1)
-        return
-    head = f"{len(vols)} volume(s)"
-    if sess.capacity is not None:
-        head += f", {sess.capacity} fit in place"
-    imgui.text_disabled(head)
-    if sess.over_capacity:
-        imgui.same_line()
-        colored(f"! {sess.over_capacity} over: the runtime truncates", RED)
-    if ws.selected_part is not None:
-        imgui.same_line()
-        _, ws.only_selected_part = imgui.checkbox(
-            f"only part {ws.selected_part}", ws.only_selected_part
-        )
-    if imgui.begin_table("##vols", 7, table_flags(scroll=True), imgui.ImVec2(0.0, 150.0)):
-        columns(
-            (
-                ("#", 0.3),
-                ("bone", 0.4),
-                ("shape", 0.55),
-                ("r", 0.5),
-                ("part", 0.4),
-                ("row", 0.4),
-                ("offset", 1.2),
             )
-        )
+            tip = [f"bones {', '.join(map(str, bones))}"] if bones else []
+            if len(rws) > 1:
+                tip.append(
+                    "Its volumes use DIFFERENT grid rows, so they take different percentages."
+                    " Not an error: the Tigrex's wings do it."
+                )
+            tips.append("\n".join(tip))
+        n = hitzone.PART_MASK + 1
+        self.parts.set_rows(rows, list(range(n)), colors=list(PART_COLORS[:n]), tips=tips)
+        self.parts.fit(n)
+        if ws.selected_part is None:
+            self.parts.clearSelection()
+        else:
+            self.parts.select_data(ws.selected_part)
+        naming = ws.selected_part is not None and sess is not None
+        self.name_row.setVisible(naming)
+        if naming and ws.selected_part is not None:
+            self.name_button.setText(f"Name part {ws.selected_part}")
+            kit.put(self.part_name, ws.part_name_buf)
+
+    def _volumes(self, sess: PartSession | None, port: bool) -> None:
+        ws = self.ws
+        vols = [] if sess is None else sess.volumes()
+        editing = port and sess is not None
+        self.vols_box.setVisible(sess is not None)
+        self.host_hint.setVisible(not port)
+        self.to_port.setVisible(not port)
+        if not port:
+            self.host_hint.setText(
+                "These are the host's volumes, read only. To change them, edit them on this"
+                " port" + (": adopt the host's first, below." if not vols else ".")
+            )
+        for w in (self.vols_head, self.vols):
+            w.setVisible(editing and bool(vols))
+        self.add.setVisible(editing and not vols)
+        if not editing or sess is None:
+            self.over.setVisible(False)
+            self.only.setVisible(False)
+            self.pick_hint.setVisible(False)
+            self.form_box.setVisible(False)
+            return
+        head = f"{len(vols)} volume(s)"
+        if sess.capacity is not None:
+            head += f", {sess.capacity} fit in place"
+        self.vols_head.setText(head if vols else "No [[hurtbox]] yet: adopt the host's, or add one")
+        self.vols_head.setVisible(True)
+        self.over.setText(f"{sess.over_capacity} more than fit: the runtime truncates the list")
+        self.over.setVisible(sess.over_capacity > 0)
+        self.only.setVisible(bool(vols) and ws.selected_part is not None)
+        self.only.setText(f"Only part {ws.selected_part}")
+        kit.put(self.only, ws.only_selected_part)
+        rows, data, colors, tips = [], [], [], []
         for i, v in enumerate(vols):
             part = _part(v)
             if ws.only_selected_part and ws.selected_part not in (None, part):
                 continue
-            imgui.table_next_row()
-            imgui.table_next_column()
-            sel = ws.selected_volume == i
-            if imgui.selectable(f"{i}##v{i}", sel, span_all())[0]:
-                ws.select_volume(None if sel else i)
-            if sess.volume_changed(i):
-                tooltip("changed: not saved yet")
-            imgui.table_next_column()
-            if v.is_marker:
-                imgui.text_disabled(f"0x{v.bone:X}")
-                tooltip("a walker MARKER, not a joint: 0x7D is the tail-sever skip. Drawn nowhere.")
-            else:
-                imgui.text(str(v.bone))
-            imgui.table_next_column()
-            imgui.text("mark" if v.is_marker else v.shape[:4])
-            imgui.table_next_column()
-            imgui.text(f"{v.radius:g}")
-            imgui.table_next_column()
-            swatch(f"##vs{i}", PART_COLORS[part])
-            imgui.same_line()
-            imgui.text(str(part))
-            imgui.table_next_column()
-            imgui.text(str(_row(v)))
-            imgui.table_next_column()
             o = v.offset or (0.0, 0.0, 0.0)
-            imgui.text(f"{o[0]:g} {o[1]:g} {o[2]:g}")
-        imgui.end_table()
-    pick = ws.selected_volume
-    if pick is None or not 0 <= pick < len(vols):
-        imgui.text_disabled("select a volume (here, or click its gizmo) to edit it")
-        return
-    _fields(ws, pick, vols[pick])
-
-
-def _fields(ws: MonsterWorkspace, i: int, v: Hurtbox) -> None:
-    from imgui_bundle import imgui
-
-    sess = ws.part_session
-    if sess is None:
-        return
-
-    def stage(**fields: Any) -> None:
-        what = ", ".join(f"{k}={val}" for k, val in fields.items())
-        ws.edit(f"volume {i}: {what} (unsaved)", lambda: sess.edit_volume(i, **fields))
-
-    imgui.text(f"volume {i}" + (f": {v.label}" if v.label else ""))
-    imgui.set_next_item_width(70)
-    ch, bone = imgui.input_int("bone##vb", int(v.bone), 1, 5)
-    if ch:
-        stage(bone=max(0, bone))
-    n = 0 if ws.scene is None else ws.scene.rig.n
-    tooltip(
-        f"an index into THIS port's rig ({n} joints). Click a joint in the viewport to read "
-        "its number."
-    )
-    imgui.same_line()
-    imgui.set_next_item_width(60)
-    ch, part = imgui.input_int("part##vp", int(v.part or 0), 1, 1)
-    if ch:
-        stage(part=max(0, min(hitzone.PART_MASK, part)))
-    imgui.same_line()
-    imgui.set_next_item_width(60)
-    ch, row = imgui.input_int("row##vr", int(v.hitzone_row or 0), 1, 1)
-    if ch:
-        stage(hitzone_row=max(0, min(hitzone.MAX_ROW, row)))
-    tooltip("hitzone_row: which grid row's percentages this volume takes. NOT the part.")
-    imgui.same_line()
-    imgui.set_next_item_width(90)
-    ch, si = imgui.combo("##vshape", SHAPES.index(v.shape), list(SHAPES))
-    if ch:
-        capsule = SHAPES[si] == "capsule"
-        stage(shape=SHAPES[si], to=(list(v.to) if v.to else [0.0, 0.0, 200.0]) if capsule else v.to)
-    imgui.set_next_item_width(140)
-    ch, r = imgui.drag_float("radius##vrad", float(v.radius), 1.0, 0.0, 5000.0, "%.1f")
-    if ch:
-        stage(radius=max(0.0, r))
-    for k, f in (("x2", 2.0), ("x3", 3.0), ("x0.5", 0.5)):
-        imgui.same_line()
-        if imgui.button(k):
-            stage(radius=v.radius * f)
-    imgui.set_next_item_width(230)
-    ch, off = imgui.input_float3("offset##voff", list(v.offset or (0.0, 0.0, 0.0)), "%.1f")
-    if ch:
-        stage(offset=[float(x) for x in off])
-    if v.is_capsule:
-        imgui.set_next_item_width(230)
-        ch, to = imgui.input_float3("to##vto", list(v.to or (0.0, 0.0, 0.0)), "%.1f")
-        if ch:
-            stage(to=[float(x) for x in to])
-    imgui.text_disabled(f"flags 0x{v.flags:X}" + ("  (shipped as-is)" if v.flags else ""))
-    if imgui.button("keep only this"):
-        gone = len(sess.volumes()) - 1
-        msg = f"kept volume {i}, dropped {gone}: one sphere, a hit lands there or nowhere (unsaved)"
-        if ws.edit(msg, lambda: sess.keep_only(i)):
-            ws.select_volume(0)
-    tooltip("with ONE volume left, where a hit registers is the whole answer")
-    imgui.same_line()
-    if imgui.button("delete") and ws.edit(
-        f"deleted volume {i} (unsaved)", lambda: sess.remove_volume(i)
-    ):
-        ws.select_volume(None)
-    imgui.same_line()
-    if imgui.button("duplicate") and ws.edit(
-        f"volume {i} duplicated (unsaved)", lambda: sess.add_volume(v)
-    ):
-        ws.select_volume(len(sess.volumes()) - 1)
-
-
-def grid_view(ws: MonsterWorkspace, host: PartIntel | None) -> None:
-    """The damage grid: seven rows of ten per state, editable once the port owns one."""
-    from imgui_bundle import imgui
-
-    sess = ws.part_session
-    own = [] if sess is None else sess.states()
-    states: Sequence[Any] = own if own else (host.states if host is not None else ())
-    if not states:
-        imgui.text_disabled("no damage grid: adopt the host's below")
-        return
-    editable = bool(own)
-    tail = "" if editable else ", the HOST's (read only)"
-    imgui.text_disabled(f"damage grid: {len(states)} state(s){tail}")
-    if imgui.begin_tab_bar("##hzstates"):
-        for i, st in enumerate(states):
-            name = getattr(st, "name", None) or f"state {i}"
-            front = imgui.TabItemFlags_.set_selected.value if ws.show_state == i else 0
-            if imgui.begin_tab_item(f" {name} ##hz{i}", None, front)[0]:
-                ws.grid_state = i
-                grid_table(ws, st.rows, name, i, editable)
-                imgui.end_tab_item()
-        imgui.end_tab_bar()
-        ws.show_state = None
-    if host is not None and host.grid_note:
-        colored("! " + host.grid_note, AMBER, wrapped=True)
-    imgui.text_wrapped(
-        "grid writes are proven live (every byte 0xFF gave 411-damage hits); the volumes are "
-        "still being tested. A * marks a column whose NAME is inferred."
-    )
-
-
-def grid_table(
-    ws: MonsterWorkspace, rows: Sequence[Sequence[int]], name: str, index: int, editable: bool
-) -> None:
-    from imgui_bundle import imgui
-
-    host = ws.host_parts()
-    inferred = set() if host is None else set(host.inferred_columns())
-    flags = table_flags(borders=True, fit=True)
-    if not imgui.begin_table(
-        f"##grid{index}", 1 + len(hitzone.COLUMNS), flags, imgui.ImVec2(0.0, 190.0)
-    ):
-        return
-    imgui.table_setup_column("row")
-    for col in hitzone.COLUMNS:
-        imgui.table_setup_column(col + ("*" if col in inferred else ""))
-    imgui.table_setup_scroll_freeze(1, 1)
-    imgui.table_headers_row()
-    sess = ws.part_session
-    for r, row in enumerate(rows):
-        imgui.table_next_row()
-        imgui.table_next_column()
-        imgui.text(str(r))
-        owner = row_owner(ws, r)
-        if owner:
-            tooltip(f"used by {owner}")
-        if editable and sess is not None:
-            imgui.same_line()
-            if imgui.small_button(f"255##max{index}_{r}"):
-                msg = f"{name} row {r}: cut/impact/shot = 255, the most a byte can say (unsaved)"
-                ws.edit(msg, partial(sess.fill_row, index, r, 255))
-            tooltip(
-                "cut, impact and shot to 255%: every weapon class does the most the grid "
-                "can express against this row"
+            changed = sess.volume_changed(i)
+            rows.append(
+                (
+                    f"{i}{' *' if changed else ''}",
+                    f"0x{v.bone:X}" if v.is_marker else str(v.bone),
+                    "mark" if v.is_marker else v.shape,
+                    f"{v.radius:g}",
+                    str(part),
+                    str(_row(v)),
+                    f"{o[0]:g} {o[1]:g} {o[2]:g}",
+                )
             )
-        for c, value in enumerate(row):
-            imgui.table_next_column()
-            if not editable or sess is None:
-                if value:
-                    imgui.text(str(value))
-                else:
-                    imgui.text_disabled("0")
-                continue
-            imgui.set_next_item_width(38)
-            ch, v = imgui.input_int(f"##g{index}_{r}_{c}", int(value), 0, 0)
-            if ch:
-                v = max(0, min(255, int(v)))
-                msg = f"{name} row {r} {hitzone.COLUMNS[c]} = {v} (unsaved)"
-                ws.edit(msg, partial(sess.set_hitzone, index, r, c, v))
-    imgui.end_table()
+            data.append(i)
+            colors.append(PART_COLORS[part])
+            tip = ["Changed, not saved yet."] if changed else []
+            if v.is_marker:
+                tip.append("A walker MARKER, not a joint: 0x7D is the tail-sever skip.")
+            tips.append(" ".join(tip))
+        self.vols.set_rows(rows, data, colors=colors, tips=tips)
+        self.vols.fit(8)
+        pick = ws.selected_volume
+        picked = pick is not None and 0 <= pick < len(vols)
+        if picked and pick is not None:
+            self.vols.select_data(pick)
+            n = 0 if ws.scene is None else ws.scene.rig.n
+            v = vols[pick]
+            self.form.show_volume(f"Volume {pick}", v, n)
+            kit.put(self.part_box, v.part or 0)
+            kit.put(self.row_box, v.hitzone_row or 0)
+            self.form.bone.setToolTip(
+                f"A joint number of THIS port's rig ({n} joints). Pick a joint in the view to"
+                " read it."
+            )
+        else:
+            self.vols.clearSelection()
+        self.pick_hint.setVisible(bool(vols) and not picked)
+        self.form_box.setVisible(picked)
 
+    def _grid(self, host: PartIntel | None, sess: PartSession | None) -> None:
+        ws = self.ws
+        own = [] if sess is None else sess.states()
+        states: Sequence[Any] = own if own else (host.states if host is not None else ())
+        editable = bool(own)
+        if ws.show_state is not None:  # a finding asked for this state
+            ws.grid_state, ws.show_state = ws.show_state, None
+        if not states:
+            self.grid_head.setText("No damage grid: adopt the host's below.")
+            for w in (self.state_row, self.grid, self.max_row, self.grid_text):
+                w.setVisible(False)
+        else:
+            tail = "" if editable else ", the HOST's (read only)"
+            self.grid_head.setText(f"{len(states)} state(s){tail}")
+            for w in (self.state_row, self.grid, self.grid_text):
+                w.setVisible(True)
+            self.max_row.setVisible(editable)
+            names = tuple(getattr(st, "name", None) or f"state {i}" for i, st in enumerate(states))
+            if names != self._state_names:
+                self._state_names = names
+                self.state_lay.removeWidget(self.states)
+                self.states.deleteLater()
+                self.states = kit.Segmented(
+                    [(str(i), n) for i, n in enumerate(names)],
+                    tip="The monster's states: normal, enraged and so on, each with its own grid",
+                    on=lambda k: self._act("grid state", lambda: setattr(ws, "grid_state", int(k))),
+                )
+                self.state_lay.addWidget(self.states)
+            state = min(max(ws.grid_state, 0), len(states) - 1)
+            kit.put(self.states, str(state))
+            inferred = set() if host is None else set(host.inferred_columns())
+            heads = tuple(c + ("*" if c in inferred else "") for c in hitzone.COLUMNS)
+            if heads != self._heads:
+                self._heads = heads
+                for c, text in enumerate(heads):
+                    head = self.grid.horizontalHeaderItem(c)
+                    if head is not None:
+                        head.setText(text)
+            rows = states[state].rows
+            cells = [[str(v) for v in row] for row in rows]
+            tips = [f"used by {o}" if (o := self.row_owner(r)) else "" for r in range(len(rows))]
+            self.grid.set_cells(cells, editable=editable, tips=tips)
+            self.grid.fit(len(rows))
+        note = host.grid_note if host is not None else ""
+        self.grid_note.setText(note)
+        self.grid_note.setVisible(bool(note))
 
-def row_owner(ws: MonsterWorkspace, row: int) -> str:
-    """Which named parts read this grid row: the join that makes the table legible."""
-    sess = ws.part_session
-    if sess is None:
-        return ""
-    names: list[str] = []
-    for v in volumes_now(ws):
-        if _row(v) == row:
-            n = sess.name_of(_part(v))
-            if n and n not in names:
-                names.append(n)
-    return ", ".join(names)
-
-
-def actions(ws: MonsterWorkspace, host: PartIntel | None) -> None:
-    """Adopt, save, revert, export, and what adopting costs."""
-    from imgui_bundle import imgui
-
-    sess = ws.part_session
-    if sess is None or ws.manifest is None:
-        imgui.text_disabled("this scene has no manifest, so there is nothing to write parts into")
-        return
-    if host is not None and host.has_grid:
-        if imgui.button("adopt the host's grid"):
-            states = host.states
-            msg = "adopted the host's grid: the port inherits it at runtime either way (unsaved)"
-            if ws.edit(msg, lambda: sess.adopt_grid(states)):
-                ws.parts_source = "port"
-        imgui.same_line()
-    if host is not None and host.spheres():
-        if imgui.button("adopt the host's volumes"):
-            spheres, src = host.spheres(), f"em{ws.host_species or 0:02d}"
-            got = None
-            try:
-                got = sess.adopt_volumes(spheres, source=src)
-            except ValueError as e:
-                ws.message = str(e)
-            if got is not None:
-                ws.parts_source = "port"
-                ws.sync()
-                ws.message = got.describe()
-        tooltip(HOST_BONES)
-    export_buttons(ws)
-    save_row(ws)
+    def row_owner(self, row: int) -> str:
+        """Which named parts read this grid row: what makes the grid legible."""
+        sess = self.ws.part_session
+        if sess is None:
+            return ""
+        names: list[str] = []
+        for v in self.volumes_now():
+            if _row(v) == row:
+                n = sess.name_of(_part(v))
+                if n and n not in names:
+                    names.append(n)
+        return ", ".join(names)

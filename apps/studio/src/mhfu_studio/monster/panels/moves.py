@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Moves tab beside the Viewport: the host's pairs as a graph of hand-offs (`graph.build`).
+"""The Moves dock: the host's pairs as a graph of hand-offs (`graph.build`), on a QGraphicsView.
 
-Click a node to read its hand-offs, double-click to select it in the Action tab; drag a node to
-move it, the canvas to pan; the wheel zooms. Edge labels show only for the focused node's
+Click a node to read its hand-offs, double-click to select it in Action; drag a node to move it,
+the canvas to pan (any button); the wheel zooms. Edge labels show only for the focused node's
 edges: all at once, a five-node chain is unreadable."""
 
 from __future__ import annotations
@@ -13,311 +13,82 @@ from typing import TYPE_CHECKING, Any
 
 from mhfu.em.intel import SpeciesIntel
 from mhfu_port.manifest import Move
+from PySide6.QtCore import QPointF, QRect, QRectF, Qt
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontDatabase,
+    QMouseEvent,
+    QPainter,
+    QPainterPath,
+    QPalette,
+    QPen,
+    QPolygonF,
+    QResizeEvent,
+    QShowEvent,
+    QWheelEvent,
+)
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QGraphicsItem,
+    QGraphicsScene,
+    QGraphicsSceneHoverEvent,
+    QGraphicsView,
+    QStackedWidget,
+    QStyleOptionGraphicsItem,
+    QVBoxLayout,
+    QWidget,
+)
 
-from . import graph
-from .graph import NODE_H, NODE_W, SCOPES, Arrow, Layout, Node, Pair
+from mhfu_studio.monster.panels import graph
+from mhfu_studio.monster.panels.graph import KINDS, NODE_H, NODE_W, Arrow, Layout, Node, Pair
+from mhfu_studio.monster.panels.widgets import NoScene, Pages
+from mhfu_studio.shell.overlay import Color, Ink
+from mhfu_studio.ui import kit, theme
 
 if TYPE_CHECKING:
     from mhfu_studio.monster.workspace import MonsterWorkspace
+    from mhfu_studio.shell.studio import Studio
 
 Point = tuple[float, float]
-Rect = tuple[float, float, float, float]
-SCOPE_LABELS = ["from [moves]", "from selected", "every attack"]
+#: the wheel's zoom range, and the range a fit may pick: text scales with the canvas, so a fit
+#: stops where it stays legible and leaves the rest to a pan
+ZOOM, FIT_ZOOM = (0.25, 2.5), (0.6, 1.25)
+STEP = 1.12
+#: scene room around the layout, so the canvas pans past its edges
+MARGIN = 10000.0
+PAD = 18.0
+SCOPES = (("moves", "From moves"), ("selected", "From selected"), ("attacks", "Every attack"))
+SCOPE_TIPS = {
+    "moves": "Starts at the pairs your manifest's [moves] bind, and follows what each hands to",
+    "selected": "Starts at the pair selected in Action, with the pairs that lead into it",
+    "attacks": "Every pair that hits with an attack; pairs that act alike are drawn once",
+}
+CANVAS_TIP = (
+    "The host's behaviour pairs: an arrow is what a pair's code does when its action ends."
+    " Click a node to read its hand-offs, double-click to work on it in Action. Drag a node to"
+    " move it, drag the canvas to pan, and use the wheel to zoom."
+)
+WALK_TIP = (
+    "Read from the host's code, not watched in the game. A pair with no arrow out never ends by"
+    " itself: the engine enters it only through the translator, which provisions it."
+)
+LEGEND: tuple[tuple[str, Color], ...] = (
+    ("move", KINDS["move"]),
+    ("attacks", KINDS["attacks"]),
+    ("hub", KINDS["hub"]),
+    ("picked", Ink.SELECTION),
+    ("in Action", Ink.HOT),
+)
 
 
-def panel(ws: MonsterWorkspace) -> None:
-    from imgui_bundle import imgui
-
-    if ws.manifest is None:
-        imgui.text_wrapped(
-            "The graph is the HOST overlay's, and which host needs a manifest. Open a port "
-            "manifest."
-        )
-        return
-    if ws.intel is None:
-        imgui.text_wrapped(f"no action intel for em{ws.browsing_species or 0:02d}")
-        return
-    ws.graph.draw(ws)
+def _alpha(c: QColor, a: float) -> QColor:
+    c.setAlphaF(c.alphaF() * a)
+    return c
 
 
-class MoveGraph:
-    """Scope, pan and zoom, the cached layout, the hovered and the picked node."""
-
-    def __init__(self) -> None:
-        self.scope = "moves"
-        self.pan = [0.0, 0.0]
-        self.zoom = 1.0
-        self.hover: Pair | None = None
-        self.picked: Pair | None = None
-        self._layout: Layout | None = None
-        self._key: tuple[object, ...] | None = None
-        self._fit_pending = True
-        self._press: tuple[Pair | None, float, float] | None = None
-        self._moved = False
-
-    def layout(
-        self, intel: SpeciesIntel | None, moves: Mapping[str, Move], selected: Pair | None
-    ) -> Layout:
-        key = (
-            id(intel),
-            self.scope,
-            selected,
-            tuple(sorted((n, m.main, m.sub) for n, m in moves.items())),
-        )
-        if self._layout is None or key != self._key:
-            self._layout = graph.build(intel, moves, selected, self.scope)
-            self._key = key
-            self._fit_pending = True
-            if self.picked is not None and self.picked not in self._layout.nodes:
-                self.picked = None
-        return self._layout
-
-    def invalidate(self) -> None:
-        self._layout, self._key = None, None
-
-    def fit(self, w: float, h: float) -> None:
-        lay = self._layout
-        if lay is None or lay.empty:
-            return
-        self.zoom = max(0.35, min(w / max(lay.width, 1.0), h / max(lay.height, 1.0), 1.25))
-        self.pan = [(w - lay.width * self.zoom) / 2.0, (h - lay.height * self.zoom) / 2.0]
-        self._fit_pending = False
-
-    def draw(self, ws: MonsterWorkspace) -> None:
-        from imgui_bundle import imgui
-
-        from mhfu_studio.shell.widgets import mouse_buttons
-
-        intel, m = ws.intel, ws.manifest
-        moves = {} if m is None else dict(m.moves)
-        selected = ws.pair
-        self._toolbar(ws, intel, selected)
-        lay = self.layout(intel, moves, selected)
-        avail = imgui.get_content_region_avail()
-        w, h = max(float(avail.x), 1.0), max(float(avail.y), 1.0)
-        if lay.empty:
-            imgui.text_wrapped(lay.note)
-            return
-        if self._fit_pending:
-            self.fit(w, h)
-        o = imgui.get_cursor_screen_pos()
-        origin = (float(o.x), float(o.y))
-        imgui.invisible_button("##movegraph", imgui.ImVec2(w, h), mouse_buttons())
-        hovered, active = imgui.is_item_hovered(), imgui.is_item_active()
-        mp = imgui.get_io().mouse_pos
-        mouse = (float(mp.x), float(mp.y))
-        self.hover = None
-        if hovered:
-            for n in lay.nodes.values():
-                if _inside(self._rect(origin, n), mouse):
-                    self.hover = n.pair
-        self._input(ws, lay, origin, hovered, active, mouse)
-        draw = imgui.get_window_draw_list()
-        p0, p1 = imgui.ImVec2(*origin), imgui.ImVec2(origin[0] + w, origin[1] + h)
-        draw.add_rect_filled(p0, p1, _col(0.09, 0.10, 0.12, 1.0))
-        imgui.push_clip_rect(p0, p1, True)
-        focus = self.picked if self.picked is not None else self.hover
-        hot = [a for a in lay.arrows if focus in (a.src, a.dst)]
-        for a in lay.arrows:
-            if focus not in (a.src, a.dst):
-                self._arrow(draw, origin, lay, a, selected, focus, False)
-        for n in lay.nodes.values():
-            self._node(draw, origin, n, selected)
-        for i, a in enumerate(hot):  # last, so their labels sit on top
-            self._arrow(draw, origin, lay, a, selected, focus, True, i)
-        if intel is not None:
-            _info_box(draw, origin, w, intel, lay, focus, moves)
-        imgui.pop_clip_rect()
-        _legend(draw, origin, h)
-
-    def _toolbar(
-        self, ws: MonsterWorkspace, intel: SpeciesIntel | None, selected: Pair | None
-    ) -> None:
-        from imgui_bundle import imgui
-
-        imgui.set_next_item_width(110.0)
-        idx = SCOPES.index(self.scope) if self.scope in SCOPES else 0
-        changed, pick = imgui.combo("##scope", idx, SCOPE_LABELS)
-        if changed:
-            self.scope = SCOPES[pick]
-            self.invalidate()
-        imgui.same_line()
-        if imgui.small_button("fit"):
-            self._fit_pending = True
-        imgui.same_line()
-        if imgui.small_button("re-layout"):
-            self.invalidate()
-        imgui.same_line()
-        sp = ws.browsing_species or 0
-        if intel is None or not intel.has_chain:
-            imgui.text_disabled(f"em{sp:02d}: no hand-off intel")
-            return
-        if selected is not None and intel.pair(*selected) is not None:
-            imgui.text_disabled(graph.walk_line(intel, selected))
-        else:
-            hubs = " ".join(f"({m},{s})" for m, s in intel.hubs)
-            imgui.text_disabled(
-                f"em{sp:02d}: arrows are what the HANDLER does when its action ends; hubs {hubs} "
-                "are where the brain picks again"
-            )
-        if imgui.is_item_hovered():
-            imgui.set_tooltip(
-                "Static, read from the overlay. A pair with no arrow out never ends by itself: the "
-                "engine only enters it through the translator, which provisions it.\nClick a node "
-                "to read its hand-offs; DOUBLE-click to select it in the Action tab. Drag a node "
-                "to move it, drag the canvas to pan, wheel to zoom."
-            )
-
-    def _input(
-        self,
-        ws: MonsterWorkspace,
-        lay: Layout,
-        origin: Point,
-        hovered: bool,
-        active: bool,
-        mouse: Point,
-    ) -> None:
-        """A press remembers what was under it: a node is dragged, a release without movement
-        picks it; empty canvas pans."""
-        from imgui_bundle import imgui
-
-        if hovered and imgui.is_mouse_clicked(0):
-            self._press, self._moved = (self.hover, *mouse), False
-        if active and self._press is not None and imgui.is_mouse_dragging(0):
-            d = imgui.get_mouse_drag_delta(0)
-            node = lay.nodes.get(self._press[0]) if self._press[0] is not None else None
-            if node is not None:
-                node.x += float(d.x) / self.zoom
-                node.y += float(d.y) / self.zoom
-            else:
-                self.pan[0] += float(d.x)
-                self.pan[1] += float(d.y)
-            imgui.reset_mouse_drag_delta(0)
-            self._moved = True
-        if self._press is not None and imgui.is_mouse_released(0):
-            if not self._moved:
-                self.picked = self._press[0]
-            self._press, self._moved = None, False
-        if hovered and self.hover is not None and imgui.is_mouse_double_clicked(0):
-            self.picked = self.hover
-            ws.select_pair(*self.hover)
-        for btn in (1, 2):
-            if active and imgui.is_mouse_dragging(btn):
-                d = imgui.get_mouse_drag_delta(btn)
-                self.pan[0] += float(d.x)
-                self.pan[1] += float(d.y)
-                imgui.reset_mouse_drag_delta(btn)
-        wheel = float(imgui.get_io().mouse_wheel)
-        if hovered and wheel:
-            mx, my = mouse[0] - origin[0], mouse[1] - origin[1]
-            old = self.zoom
-            self.zoom = max(0.25, min(2.5, self.zoom * (1.12 if wheel > 0 else 1 / 1.12)))
-            k = self.zoom / old
-            self.pan = [mx - (mx - self.pan[0]) * k, my - (my - self.pan[1]) * k]
-
-    def _pt(self, origin: Point, x: float, y: float) -> Point:
-        return origin[0] + self.pan[0] + x * self.zoom, origin[1] + self.pan[1] + y * self.zoom
-
-    def _rect(self, origin: Point, n: Node) -> Rect:
-        x0, y0 = self._pt(origin, n.x, n.y)
-        return x0, y0, x0 + NODE_W * self.zoom, y0 + NODE_H * self.zoom
-
-    def _node(self, draw: Any, origin: Point, n: Node, selected: Pair | None) -> None:
-        from imgui_bundle import imgui
-
-        x0, y0, x1, y1 = self._rect(origin, n)
-        sel, pick, hov = n.pair == selected, n.pair == self.picked, n.pair == self.hover
-        if n.hub:
-            fill, edge = _col(0.18, 0.19, 0.21, 1.0), _col(0.45, 0.47, 0.50, 1.0)
-        elif n.move:
-            fill, edge = _col(0.16, 0.27, 0.36, 1.0), _col(0.35, 0.70, 0.95, 1.0)
-        elif n.attacks:
-            fill, edge = _col(0.32, 0.20, 0.14, 1.0), _col(0.95, 0.60, 0.30, 1.0)
-        else:
-            fill, edge = _col(0.16, 0.17, 0.20, 1.0), _col(0.40, 0.42, 0.46, 1.0)
-        if sel:
-            edge = _col(1.0, 0.90, 0.35, 1.0)
-        if pick:
-            edge = _col(0.95, 0.95, 0.95, 1.0)
-        elif hov and not sel:
-            edge = _col(0.75, 0.76, 0.78, 1.0)
-        r = 6.0 * self.zoom
-        a, b = imgui.ImVec2(x0, y0), imgui.ImVec2(x1, y1)
-        draw.add_rect_filled(a, b, fill, r)
-        draw.add_rect(a, b, edge, r, 2.5 if pick else 2.0 if (sel or hov) else 1.0)
-        if self.zoom < 0.5:
-            draw.add_text(imgui.ImVec2(x0 + 4, y0 + 3), _col(0.9, 0.9, 0.9, 1.0), n.lines[0])
-            return
-        text, dim = _col(0.92, 0.93, 0.95, 1.0), _col(0.62, 0.65, 0.70, 1.0)
-        step = 16 * min(self.zoom, 1.0)
-        for i, line in enumerate(n.lines[:3]):
-            draw.add_text(imgui.ImVec2(x0 + 7, y0 + 5 + i * step), text if i == 0 else dim, line)
-        if n.hub:
-            draw.add_text(
-                imgui.ImVec2(x0 + 7, y1 - 15 * min(self.zoom, 1.0)), dim, "brain picks next"
-            )
-
-    def _arrow(
-        self,
-        draw: Any,
-        origin: Point,
-        lay: Layout,
-        a: Arrow,
-        selected: Pair | None,
-        focus: Pair | None,
-        labelled: bool,
-        slot: int = 0,
-    ) -> None:
-        from imgui_bundle import imgui
-
-        s, d = lay.nodes[a.src], lay.nodes[a.dst]
-        sx0, sy0, sx1, sy1 = self._rect(origin, s)
-        dx0, dy0, dx1, dy1 = self._rect(origin, d)
-        hot, sel = focus in (a.src, a.dst), selected in (a.src, a.dst)
-        if hot:
-            col = _col(0.95, 0.88, 0.45, 1.0)
-        elif sel:
-            col = _col(0.75, 0.68, 0.35, 0.9)
-        else:
-            col = _col(0.42, 0.44, 0.48, 0.6)
-        th = 2.2 if hot else 1.6 if sel else 1.0
-        if a.src == a.dst:
-            v = [
-                imgui.ImVec2(*q)
-                for q in (
-                    (sx1 - 10, sy0),
-                    (sx1 + 24, sy0 - 26),
-                    (sx1 - 44, sy0 - 26),
-                    (sx1 - 30, sy0),
-                )
-            ]
-            draw.add_bezier_cubic(v[0], v[1], v[2], v[3], col, th)
-            return
-        if d.x > s.x + NODE_W * 0.5:
-            p1, p4 = (sx1, (sy0 + sy1) / 2), (dx0, (dy0 + dy1) / 2)
-            bend = max(30.0, (dx0 - sx1) * 0.5)
-            p2, p3 = (sx1 + bend, p1[1]), (dx0 - bend, p4[1])
-        elif d.x < s.x - NODE_W * 0.5:
-            p1, p4 = (sx0, (sy0 + sy1) / 2), (dx1, (dy0 + dy1) / 2)
-            bend = max(30.0, (sx0 - dx1) * 0.5)
-            p2, p3 = (sx0 - bend, p1[1]), (dx1 + bend, p4[1])
-        else:  # stacked: leave from the bottom or top, arrive at the top or bottom
-            down = d.y > s.y
-            p1 = ((sx0 + sx1) / 2, sy1 if down else sy0)
-            p4 = ((dx0 + dx1) / 2, dy0 if down else dy1)
-            lift = (40 if down else -40) * self.zoom
-            p2, p3 = (p1[0], p1[1] + lift), (p4[0], p4[1] - lift)
-        v = [imgui.ImVec2(*q) for q in (p1, p2, p3, p4)]
-        draw.add_bezier_cubic(v[0], v[1], v[2], v[3], col, th)
-        _head(draw, v[2], v[3], col, 7.0 * min(self.zoom, 1.2))
-        if labelled and a.label:
-            t = (0.30, 0.50, 0.70, 0.40, 0.60)[slot % 5]  # staggered: a fan does not pile up
-            x, y = _bezier(p1, p2, p3, p4, t)
-            lab = a.label if len(a.label) < 44 else a.label[:41] + "..."
-            _pill(draw, x, y - 9, lab, _col(0.98, 0.94, 0.70, 1.0))
-
-
-def _bezier(p1: Point, p2: Point, p3: Point, p4: Point, t: float) -> Point:
+def bezier(p1: Point, p2: Point, p3: Point, p4: Point, t: float) -> Point:
     u = 1.0 - t
     return (
         u**3 * p1[0] + 3 * u * u * t * p2[0] + 3 * u * t * t * p3[0] + t**3 * p4[0],
@@ -325,95 +96,503 @@ def _bezier(p1: Point, p2: Point, p3: Point, p4: Point, t: float) -> Point:
     )
 
 
-def _pill(draw: Any, x: float, y: float, text: str, col: int) -> None:
-    """Text on a dark rounded backing, readable over arrows and boxes."""
-    from imgui_bundle import imgui
+def curve(s: QRectF, d: QRectF) -> tuple[Point, Point, Point, Point]:
+    """An arrow's control points from `s` to `d`: sideways between columns, else stacked."""
+    if d.left() > s.left() + NODE_W * 0.5:
+        p1, p4 = (s.right(), s.center().y()), (d.left(), d.center().y())
+        bend = max(30.0, (d.left() - s.right()) * 0.5)
+        return p1, (p1[0] + bend, p1[1]), (p4[0] - bend, p4[1]), p4
+    if d.left() < s.left() - NODE_W * 0.5:
+        p1, p4 = (s.left(), s.center().y()), (d.right(), d.center().y())
+        bend = max(30.0, (s.left() - d.right()) * 0.5)
+        return p1, (p1[0] - bend, p1[1]), (p4[0] + bend, p4[1]), p4
+    down = d.top() > s.top()
+    p1 = (s.center().x(), s.bottom() if down else s.top())
+    p4 = (d.center().x(), d.top() if down else d.bottom())
+    lift = 40.0 if down else -40.0
+    return p1, (p1[0], p1[1] + lift), (p4[0], p4[1] - lift), p4
 
-    ts = imgui.calc_text_size(text)
-    a, b = imgui.ImVec2(x - 4.0, y - 2), imgui.ImVec2(x + float(ts.x) + 4.0, y + float(ts.y) + 2)
-    draw.add_rect_filled(a, b, _col(0.05, 0.06, 0.07, 0.92), 4.0)
-    draw.add_text(imgui.ImVec2(x, y), col, text)
+
+class NodeItem(QGraphicsItem):
+    """One pair; dragging it writes the layout's node, so the position outlives the panel."""
+
+    def __init__(self, canvas: GraphView, node: Node) -> None:
+        super().__init__()
+        self.canvas, self.node = canvas, node
+        self.edges: list[EdgeItem] = []
+        flag = QGraphicsItem.GraphicsItemFlag
+        self.setFlags(flag.ItemIsMovable | flag.ItemSendsGeometryChanges)
+        self.setAcceptHoverEvents(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setZValue(1)
+        self.setPos(node.x, node.y)
+
+    def boundingRect(self) -> QRectF:  # noqa: N802
+        return QRectF(-2, -2, NODE_W + 4, NODE_H + 4)
+
+    def rect(self) -> QRectF:
+        """In the scene."""
+        return QRectF(self.pos().x(), self.pos().y(), NODE_W, NODE_H)
+
+    def paint(self, p: QPainter, opt: QStyleOptionGraphicsItem, w: QWidget | None = None) -> None:
+        c, n = self.canvas, self.node
+        edge, width = theme.color(KINDS[n.kind]), 1.0
+        if n.pair == c.selected:
+            edge, width = theme.color(Ink.HOT), 2.0
+        if n.pair == c.picked:
+            edge, width = theme.color(Ink.SELECTION), 2.5
+        elif n.pair == c.hover and n.pair != c.selected:
+            edge, width = theme.color(Ink.HOVER), 2.0
+        box = QRectF(0, 0, NODE_W, NODE_H)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(c.palette().color(QPalette.ColorRole.Base))
+        p.drawRoundedRect(box, 6, 6)
+        p.setBrush(_alpha(theme.color(KINDS[n.kind]), 0.22))
+        p.setPen(QPen(edge, width))
+        p.drawRoundedRect(box, 6, 6)
+        text, dim = c.palette().color(QPalette.ColorRole.Text), c.dim()
+        p.setFont(c.small)
+        lod = QStyleOptionGraphicsItem.levelOfDetailFromTransform(p.worldTransform())
+        lines = n.lines[:1] if lod < 0.5 else n.lines[:3]
+        for i, line in enumerate(lines):
+            p.setPen(text if i == 0 else dim)
+            p.drawText(QRectF(7, 4 + i * 16, NODE_W - 12, 16), Qt.AlignmentFlag.AlignLeft, line)
+        if n.hub and lod >= 0.5:
+            p.setPen(dim)
+            p.drawText(QRectF(7, NODE_H - 17, NODE_W - 12, 16), 0, "brain picks next")
+
+    def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:  # noqa: N802
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
+            self.node.x, self.node.y = self.pos().x(), self.pos().y()
+            for e in self.edges:
+                e.adjust()
+        return super().itemChange(change, value)
+
+    def hoverEnterEvent(self, e: QGraphicsSceneHoverEvent) -> None:  # noqa: N802
+        self.canvas.set_hover(self.node.pair)
+
+    def hoverLeaveEvent(self, e: QGraphicsSceneHoverEvent) -> None:  # noqa: N802
+        if self.canvas.hover == self.node.pair:
+            self.canvas.set_hover(None)
 
 
-def _info_box(
-    draw: Any,
-    origin: Point,
-    w: float,
-    intel: SpeciesIntel,
-    lay: Layout,
-    pair: Pair | None,
-    moves: Mapping[str, Move],
-) -> None:
-    """The focused node's hand-offs as text, top right of the canvas."""
-    from imgui_bundle import imgui
+class EdgeItem(QGraphicsItem):
+    """A hand-off; labelled only while one of its ends is focused."""
 
-    dim = pair is None or intel.pair(*pair) is None
-    lines = (
-        ["click a node to read its hand-offs, double-click to select it"]
-        if pair is None or dim
-        else graph.info_lines(intel, pair, lay, moves)
-    )
-    lh = float(imgui.get_text_line_height()) + 3.0
-    tw = max(float(imgui.calc_text_size(t).x) for t in lines)
-    bw, bh = tw + 20.0, lh * len(lines) + 12.0
-    x0, y0 = origin[0] + w - bw - 8.0, origin[1] + 8.0
-    a, b = imgui.ImVec2(x0, y0), imgui.ImVec2(x0 + bw, y0 + bh)
-    draw.add_rect_filled(a, b, _col(0.05, 0.06, 0.07, 0.90), 6.0)
-    draw.add_rect(a, b, _col(0.35, 0.37, 0.40, 1.0), 6.0, 1.0)
-    for i, t in enumerate(lines):
-        if dim:
-            col = _col(0.55, 0.58, 0.62, 1.0)
-        elif i == 0:
-            col = _col(0.95, 0.95, 0.97, 1.0)
-        elif t.startswith("  ->"):
-            col = _col(0.98, 0.94, 0.70, 1.0)
-        elif t.startswith("double-click"):
-            col = _col(0.50, 0.52, 0.56, 1.0)
+    def __init__(self, canvas: GraphView, arrow: Arrow, src: NodeItem, dst: NodeItem) -> None:
+        super().__init__()
+        self.canvas, self.arrow, self.src, self.dst = canvas, arrow, src, dst
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        #: where the label sits along the curve, staggered so a fan does not pile up
+        self.t = 0.5
+        self._ends: tuple[Point, Point, Point, Point] | None = None
+        self._path = QPainterPath()
+        src.edges.append(self)
+        dst.edges.append(self)
+        self.adjust()
+
+    def adjust(self) -> None:
+        self.prepareGeometryChange()
+        s, path = self.src.rect(), QPainterPath()
+        if self.src is self.dst:
+            path.moveTo(s.right() - 10, s.top())
+            path.cubicTo(
+                s.right() + 24, s.top() - 26, s.right() - 44, s.top() - 26, s.right() - 30, s.top()
+            )
+            self._ends = None
         else:
-            col = _col(0.72, 0.75, 0.80, 1.0)
-        draw.add_text(imgui.ImVec2(x0 + 10.0, y0 + 6.0 + i * lh), col, t)
+            self._ends = p1, p2, p3, p4 = curve(s, self.dst.rect())
+            path.moveTo(*p1)
+            path.cubicTo(QPointF(*p2), QPointF(*p3), QPointF(*p4))
+        self._path = path
+
+    @property
+    def hot(self) -> bool:
+        return self.canvas.focus in (self.arrow.src, self.arrow.dst)
+
+    def boundingRect(self) -> QRectF:  # noqa: N802
+        # room for the arrow head and a label beside the curve
+        return self._path.boundingRect().adjusted(-12, -24, 300, 24)
+
+    def paint(self, p: QPainter, opt: QStyleOptionGraphicsItem, w: QWidget | None = None) -> None:
+        c, a = self.canvas, self.arrow
+        if self.hot:
+            col, width = theme.color(Ink.SELECTION), 2.2
+        elif c.selected in (a.src, a.dst):
+            col, width = _alpha(theme.color(Ink.HOT), 0.85), 1.6
+        else:
+            col, width = _alpha(c.dim(), 0.6), 1.0
+        pen = QPen(col, width)
+        pen.setCosmetic(True)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(self._path)
+        if self._ends is None:
+            return
+        p1, p2, p3, p4 = self._ends
+        self._head(p, p3, p4, col)
+        if self.hot and a.label:
+            x, y = bezier(p1, p2, p3, p4, self.t)
+            self._pill(p, x, y - 9, a.label if len(a.label) < 44 else a.label[:41] + "...")
+
+    def _head(self, p: QPainter, frm: Point, to: Point, col: QColor, size: float = 7.0) -> None:
+        dx, dy = to[0] - frm[0], to[1] - frm[1]
+        n = (dx * dx + dy * dy) ** 0.5 or 1.0
+        ux, uy = dx / n, dy / n
+        bx, by, half = to[0] - ux * size, to[1] - uy * size, size * 0.5
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(col)
+        tri = [
+            QPointF(*to),
+            QPointF(bx - uy * half, by + ux * half),
+            QPointF(bx + uy * half, by - ux * half),
+        ]
+        p.drawPolygon(QPolygonF(tri))
+
+    def _pill(self, p: QPainter, x: float, y: float, text: str) -> None:
+        """Text on a backing of its own, readable over arrows and boxes."""
+        c = self.canvas
+        p.setFont(c.small)
+        r = p.fontMetrics().boundingRect(text)
+        box = QRectF(x - 4, y - 2, r.width() + 8, r.height() + 4)
+        p.setPen(QPen(_alpha(theme.color(Ink.SELECTION), 0.6), 1.0))
+        p.setBrush(_alpha(c.palette().color(QPalette.ColorRole.Base), 0.94))
+        p.drawRoundedRect(box, 4, 4)
+        p.setPen(c.palette().color(QPalette.ColorRole.Text))
+        p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 
 
-def _legend(draw: Any, origin: Point, h: float) -> None:
-    from imgui_bundle import imgui
+class GraphView(QGraphicsView):
+    """The canvas: nodes, arrows, the info box and the legend."""
 
-    x, y = origin[0] + 8, origin[1] + h - 18
-    for text, (r, g, b) in (
-        ("move", (0.35, 0.70, 0.95)),
-        ("attacks", (0.95, 0.60, 0.30)),
-        ("hub", (0.45, 0.47, 0.50)),
-        ("picked", (0.95, 0.95, 0.95)),
-        ("Action tab", (1.0, 0.90, 0.35)),
-    ):
-        draw.add_rect_filled(
-            imgui.ImVec2(x, y + 3), imgui.ImVec2(x + 10, y + 13), _col(r, g, b, 1.0), 2.0
+    def __init__(self, panel: MovesPanel) -> None:
+        super().__init__()
+        self.panel = panel
+        self.setScene(QGraphicsScene(self))
+        self.setToolTip(CANVAS_TIP)
+        self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.TextAntialiasing)
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.small = QFont(self.font())
+        self.small.setPixelSize(11)
+        self.mono = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        self.mono.setPixelSize(11)
+        self.lay: Layout | None = None
+        self.nodes: dict[Pair, NodeItem] = {}
+        self.edges: list[EdgeItem] = []
+        self.selected: Pair | None = None
+        self.picked: Pair | None = None
+        self.hover: Pair | None = None
+        self.info: tuple[SpeciesIntel, Mapping[str, Move]] | None = None
+        self._press: tuple[Pair | None, QPointF] | None = None
+        self._pan: QPointF | None = None
+        self._fit_pending = False
+
+    @property
+    def focus(self) -> Pair | None:
+        return self.picked if self.picked is not None else self.hover
+
+    def dim(self) -> QColor:
+        return self.palette().color(QPalette.ColorRole.PlaceholderText)
+
+    def zoom(self) -> float:
+        return self.transform().m11()
+
+    # ---- content ----------------------------------------------------------------------- #
+
+    def show_layout(self, lay: Layout, fit: bool) -> None:
+        """Builds the items when `lay` is new; `fit` frames it once the view has a size, as
+        does the first layout a view gets."""
+        fit = fit or self.lay is None
+        if lay is not self.lay:
+            self.lay, self.hover = lay, None
+            sc = self.scene()
+            sc.clear()
+            self.nodes = {k: NodeItem(self, n) for k, n in lay.nodes.items()}
+            for item in self.nodes.values():
+                sc.addItem(item)
+            self.edges = [
+                EdgeItem(self, a, self.nodes[a.src], self.nodes[a.dst]) for a in lay.arrows
+            ]
+            for e in self.edges:
+                sc.addItem(e)
+            sc.setSceneRect(
+                QRectF(0, 0, lay.width, lay.height).adjusted(-MARGIN, -MARGIN, MARGIN, MARGIN)
+            )
+        if fit:
+            self._fit_pending = True
+            self._fit_if_sized()
+
+    def set_state(self, selected: Pair | None, picked: Pair | None) -> None:
+        if (selected, picked) != (self.selected, self.picked):
+            self.selected, self.picked = selected, picked
+            self.restyle()
+
+    def set_hover(self, pair: Pair | None) -> None:
+        if pair != self.hover:
+            self.hover = pair
+            self.restyle()
+
+    def restyle(self) -> None:
+        """The focused node's arrows on top, their labels staggered along the curves."""
+        hot = 0
+        for e in self.edges:
+            if e.hot:
+                e.setZValue(3)
+                e.t = (0.30, 0.50, 0.70, 0.40, 0.60)[hot % 5]
+                hot += 1
+            else:
+                e.setZValue(0)
+        self.scene().update()
+        self.viewport().update()
+
+    def nodes_rect(self) -> QRectF:
+        lay = self.lay
+        return QRectF() if lay is None else QRectF(0, 0, lay.width, lay.height)
+
+    def fit(self) -> None:
+        """Frames the whole layout at a zoom that keeps the text readable; what does not fit
+        then is cut on the right and the bottom, so the roots stay in view."""
+        rect = self.nodes_rect()
+        if rect.isEmpty():
+            return
+        self.resetTransform()
+        self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+        z = min(max(self.zoom(), FIT_ZOOM[0]), FIT_ZOOM[1])
+        self.scale(z / self.zoom(), z / self.zoom())
+        w, h = self.viewport().width() / z, self.viewport().height() / z
+        x = rect.center().x() if rect.width() <= w else rect.left() + w / 2
+        y = rect.center().y() if rect.height() <= h else rect.top() + h / 2
+        self.centerOn(x, y)
+        self._fit_pending = False
+
+    def _fit_if_sized(self) -> None:
+        if self._fit_pending and self.isVisible() and self.viewport().width() > 1:
+            self.fit()
+
+    def node_at(self, pos: QPointF) -> Pair | None:
+        for it in self.items(pos.toPoint()):
+            if isinstance(it, NodeItem):
+                return it.node.pair
+        return None
+
+    # ---- input ------------------------------------------------------------------------- #
+
+    def wheelEvent(self, e: QWheelEvent) -> None:  # noqa: N802
+        notches = e.angleDelta().y() / 120.0
+        if notches:
+            want = min(max(self.zoom() * STEP**notches, ZOOM[0]), ZOOM[1])
+            k = want / self.zoom()
+            self.scale(k, k)
+        e.accept()
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:  # noqa: N802
+        if e.button() in (Qt.MouseButton.RightButton, Qt.MouseButton.MiddleButton):
+            self._pan = e.position()
+            self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+            e.accept()
+            return
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._press = (self.node_at(e.position()), e.position())
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e: QMouseEvent) -> None:  # noqa: N802
+        if self._pan is not None:
+            d = e.position() - self._pan
+            self._pan = e.position()
+            h, v = self.horizontalScrollBar(), self.verticalScrollBar()
+            h.setValue(h.value() - round(d.x()))
+            v.setValue(v.value() - round(d.y()))
+            e.accept()
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e: QMouseEvent) -> None:  # noqa: N802
+        if self._pan is not None and e.button() != Qt.MouseButton.LeftButton:
+            self._pan = None
+            self.viewport().unsetCursor()
+            e.accept()
+            return
+        super().mouseReleaseEvent(e)
+        if e.button() == Qt.MouseButton.LeftButton and self._press is not None:
+            pair, at = self._press
+            self._press = None
+            if (e.position() - at).manhattanLength() < QApplication.startDragDistance():
+                self.panel.pick(pair)
+
+    def mouseDoubleClickEvent(self, e: QMouseEvent) -> None:  # noqa: N802
+        pair = self.node_at(e.position())
+        if pair is not None and e.button() == Qt.MouseButton.LeftButton:
+            self.panel.select(pair)
+            e.accept()
+            return
+        super().mouseDoubleClickEvent(e)
+
+    def resizeEvent(self, e: QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(e)
+        self._fit_if_sized()
+
+    def showEvent(self, e: QShowEvent) -> None:  # noqa: N802
+        super().showEvent(e)
+        self._fit_if_sized()
+
+    # ---- painting ---------------------------------------------------------------------- #
+
+    def drawBackground(self, p: QPainter, rect: QRectF | QRect) -> None:  # noqa: N802
+        p.fillRect(rect, self.palette().color(QPalette.ColorRole.Base))
+
+    def drawForeground(self, p: QPainter, rect: QRectF | QRect) -> None:  # noqa: N802
+        """The info box and the legend, in view coordinates."""
+        p.save()
+        p.resetTransform()
+        self._info_box(p)
+        self._legend(p)
+        p.restore()
+
+    def info_lines(self) -> tuple[list[str], bool]:
+        """The focused node's hand-offs, or how to get them; and whether they are the hint."""
+        pair, lay = self.focus, self.lay
+        if self.info is None or lay is None or pair is None or self.info[0].pair(*pair) is None:
+            return ["click a node to read its hand-offs, double-click to select it"], True
+        intel, moves = self.info
+        return graph.info_lines(intel, pair, lay, moves), False
+
+    def _info_box(self, p: QPainter) -> None:
+        lines, hint = self.info_lines()
+        p.setFont(self.mono)
+        fm = p.fontMetrics()
+        most = self.viewport().width() * 0.6
+        lines = [fm.elidedText(t, Qt.TextElideMode.ElideRight, int(most)) for t in lines]
+        lh = fm.height() + 2
+        bw = max(fm.horizontalAdvance(t) for t in lines) + 20.0
+        box = QRectF(self.viewport().width() - bw - 8, 8, bw, lh * len(lines) + 12.0)
+        p.setPen(QPen(_alpha(self.dim(), 0.5), 1.0))
+        p.setBrush(_alpha(self.palette().color(QPalette.ColorRole.Base), 0.92))
+        p.drawRoundedRect(box, 6, 6)
+        text = self.palette().color(QPalette.ColorRole.Text)
+        for i, t in enumerate(lines):
+            if hint or t.startswith("double-click"):
+                p.setPen(self.dim())
+            elif t.startswith("  ->"):
+                p.setPen(theme.color(Ink.HOT))
+            else:
+                p.setPen(text)
+            p.drawText(QPointF(box.left() + 10, box.top() + 6 + fm.ascent() + i * lh), t)
+
+    def _legend(self, p: QPainter) -> None:
+        p.setFont(self.small)
+        fm = p.fontMetrics()
+        x, y = 8.0, self.viewport().height() - 18.0
+        for name, color in LEGEND:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(theme.color(color))
+            p.drawRoundedRect(QRectF(x, y + 3, 10, 10), 2, 2)
+            p.setPen(self.dim())
+            p.drawText(QPointF(x + 14, y + 3 + fm.ascent() - 1), name)
+            x += 14 + fm.horizontalAdvance(name) + 12
+
+
+class MovesPanel(kit.Panel):
+    def __init__(self, ws: MonsterWorkspace, studio: Studio) -> None:
+        super().__init__(scroll=False)
+        self.ws, self.studio = ws, studio
+        act = studio.act
+        self.scope = kit.Segmented(
+            SCOPES,
+            tip="Which pairs the graph starts from",
+            tips=SCOPE_TIPS,
+            on=lambda s: act("graph scope", lambda: ws.graph.set_scope(s))(),
         )
-        draw.add_text(imgui.ImVec2(x + 14, y), _col(0.7, 0.72, 0.76, 1.0), text)
-        x += 14 + 8 * (len(text) + 2)
+        self.fit = kit.icon_button(
+            "ph.arrows-in", tip="Fits the whole graph in view", on=lambda: self.canvas.fit()
+        )
+        self.relayout = kit.icon_button(
+            "ph.arrows-clockwise",
+            tip="Puts every node back where the layout places it, undoing your drags",
+            on=act("re-layout", lambda: ws.graph.relayout()),
+        )
+        self.walk = kit.label(role="muted")
+        self.walk.setToolTip(WALK_TIP)
+        self.canvas = GraphView(self)
+        self.no_scene = NoScene(studio)
+        self.no_scene.say(
+            "No port manifest",
+            "The graph is the host monster's moves, and the port manifest names the host."
+            " Open one (ports/<name>.toml).",
+        )
+        self.note = kit.Empty("Nothing to draw", "")
+        self.empty = QStackedWidget()
+        self.empty.addWidget(self.no_scene)
+        self.empty.addWidget(self.note)
+        self.pages = Pages(self.canvas, self.empty)
+        self.tools = kit.row(self.scope, self.fit, self.relayout, stretch=True)
+        top = QWidget()
+        lay = QVBoxLayout(top)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.tools)
+        lay.addWidget(self.walk)
+        self.body.addWidget(top)
+        self.body.addWidget(self.pages, 1)
 
+    def pick(self, pair: Pair | None) -> None:
+        """A click: the node's hand-offs in the info box; empty canvas clears it."""
+        self.studio.act("pick node", lambda: setattr(self.ws.graph, "picked", pair))()
 
-def _head(draw: Any, frm: Any, to: Any, col: int, size: float) -> None:
-    from imgui_bundle import imgui
+    def select(self, pair: Pair) -> None:
+        """A double-click: the pair goes to Action, which comes to the front."""
 
-    dx, dy = float(to.x) - float(frm.x), float(to.y) - float(frm.y)
-    n = (dx * dx + dy * dy) ** 0.5 or 1.0
-    ux, uy = dx / n, dy / n
-    bx, by = float(to.x) - ux * size, float(to.y) - uy * size
-    half = size * 0.5
-    draw.add_triangle_filled(
-        to,
-        imgui.ImVec2(bx - uy * half, by + ux * half),
-        imgui.ImVec2(bx + uy * half, by - ux * half),
-        col,
-    )
+        def run() -> None:
+            self.ws.graph.picked = pair
+            self.ws.select_pair(*pair)
+            self.ws.focus("Action")
 
+        self.studio.act("select pair", run)()
 
-def _inside(rect: Rect, pos: Point) -> bool:
-    x0, y0, x1, y1 = rect
-    return x0 <= pos[0] <= x1 and y0 <= pos[1] <= y1
+    def sync(self) -> None:
+        ws = self.ws
+        m, intel = ws.manifest, ws.intel
+        self.tools.setVisible(m is not None)
+        self.walk.setVisible(m is not None)
+        if m is None:
+            self._empty(self.no_scene)
+            return
+        kit.put(self.scope, ws.graph.scope)
+        self.walk.setText(self._walk_line(intel))
+        sp = ws.browsing_species or 0
+        if intel is None:
+            self.note.say("No action intel", f"There is no action intel for em{sp:02d}.")
+            self._empty(self.note)
+            return
+        moves = dict(m.moves)
+        lay = ws.graph.layout(intel, moves, ws.pair)
+        if lay.empty:
+            self.note.say("Nothing to draw", lay.note)
+            self._empty(self.note)
+            return
+        self.pages.show_page(True)
+        self.canvas.info = (intel, moves)
+        self.canvas.show_layout(lay, ws.graph.fresh)
+        ws.graph.fresh = False
+        self.canvas.set_state(ws.pair, ws.graph.picked)
+        self.canvas.viewport().update()
 
+    def _empty(self, which: QWidget) -> None:
+        self.empty.setCurrentWidget(which)
+        self.pages.show_page(False)
 
-def _col(r: float, g: float, b: float, a: float) -> int:
-    from imgui_bundle import imgui
-
-    return int(imgui.get_color_u32(imgui.ImVec4(r, g, b, a)))
+    def _walk_line(self, intel: SpeciesIntel | None) -> str:
+        sp, sel = self.ws.browsing_species or 0, self.ws.pair
+        if intel is None or not intel.has_chain:
+            return f"em{sp:02d}: no hand-off intel"
+        if sel is not None and intel.pair(*sel) is not None:
+            return graph.walk_line(intel, sel)
+        hubs = " ".join(f"({m},{s})" for m, s in intel.hubs)
+        return (
+            f"em{sp:02d}: an arrow is what a pair's code does when its action ends; at the hubs"
+            f" {hubs} the brain picks again"
+        )
