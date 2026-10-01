@@ -94,17 +94,14 @@ def test_second_monster_logs_tigrex_spawns(lua: Any) -> None:
 
 
 FAKE_PORT = """
-local port = { played = {} }
+local port = {}
 function port.mod(name, fn)
   port.name = name
   fn({
     log = function(fmt, ...) mhfu.logs[#mhfu.logs + 1] = string.format(fmt, ...) end,
     define = function(spec)
       port.spec = spec
-      return {
-        brain = function(self, f) port.brain = f; return self end,
-        play = function(_, move) port.played[#port.played + 1] = move; return true end,
-      }
+      return { brain = function(self, f) port.brain = f; return self end }
     end,
   })
 end
@@ -112,28 +109,22 @@ package.loaded.mhfu_port = port
 """
 
 
-@pytest.mark.parametrize(
-    ("state", "played"),
-    [
-        ({"same_section": True, "dist": 2000, "since_play": 99}, ["charge"]),
-        ({"same_section": True, "dist": 900, "since_play": 99}, []),
-        ({"same_section": True, "dist": 5000, "since_play": 99}, []),
-        ({"same_section": False, "dist": 2000, "since_play": 99}, []),
-        ({"same_section": True, "dist": 2000, "since_play": 3}, []),
-        ({"same_section": True, "dist": 2000, "since_play": 99, "move": "charge"}, []),
-    ],
-)
-def test_ported_brute_brain(lua: Any, state: dict[str, Any], played: list[str]) -> None:
+def test_ported_brute_reports_section_changes(lua: Any) -> None:
     lua.execute(FAKE_PORT)
-    run(lua, "ported_brute")
+    m = run(lua, "ported_brute")
     port = lua.eval("package.loaded.mhfu_port")
-    assert (port.name, port.spec.name, port.spec.moves.charge.clip) == (
-        "ported_brute",
-        "brute_tigrex",
-        "charge",
-    )
-    port.brain(lua.table_from(state))
-    assert list(port.played.values()) == played
+    assert (port.name, port.spec.name, port.spec.fid) == ("ported_brute", "brute_tigrex", 6186)
+    for state in (
+        {"same_section": False, "dist": 9000},
+        {"same_section": True, "dist": 2000.4},
+        {"same_section": True, "dist": 1500},
+        {"same_section": False, "dist": 4000},
+    ):
+        port.brain(lua.table_from(state))
+    assert list(m.logs.values()) == [
+        "[ported_brute] in your section, 2000 units away",
+        "[ported_brute] left your section",
+    ]
 
 
 @pytest.mark.skipif(
