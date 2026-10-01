@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QListWidget, QWidget
 
-from mhfu_studio.shell.widgets import plain
+from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit
 
 if TYPE_CHECKING:

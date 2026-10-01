@@ -15,7 +15,7 @@ from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import QFileDialog, QVBoxLayout, QWidget
 
 from mhfu_studio.shell.findings import LEVELS
-from mhfu_studio.shell.widgets import plain
+from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import dialogs, kit
 
 from ..document import MapDocument

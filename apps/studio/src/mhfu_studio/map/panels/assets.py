@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import numpy as np
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-from mhfu_studio.shell.widgets import plain
+from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit
 
 from ..core import shapes

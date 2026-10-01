@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
 
 from mhfu_studio.shell.findings import LEVELS
-from mhfu_studio.shell.widgets import plain
+from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit, theme
 
 if TYPE_CHECKING:

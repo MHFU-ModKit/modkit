@@ -28,7 +28,7 @@ from PySide6.QtWidgets import QWidget
 
 from mhfu_studio.shell.input import Button, Key, Mod, Pointer
 from mhfu_studio.shell.overlay import Color, Ink, Point
-from mhfu_studio.shell.widgets import camera_line, plain
+from mhfu_studio.shell.text import camera_line, plain
 from mhfu_studio.shell.workspace import Gesture
 from mhfu_studio.ui import theme
 

@@ -28,7 +28,7 @@ from mhfu_studio.monster import species
 from mhfu_studio.monster.align import Alignment
 from mhfu_studio.monster.panels.widgets import NoScene, alert, set_level
 from mhfu_studio.shell.findings import Level, worst
-from mhfu_studio.shell.widgets import plain
+from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit
 
 if TYPE_CHECKING:

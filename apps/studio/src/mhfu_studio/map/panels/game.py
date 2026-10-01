@@ -16,7 +16,7 @@ from PySide6.QtCore import QByteArray, QProcess, QProcessEnvironment, QSignalBlo
 from PySide6.QtWidgets import QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
 from shiboken6 import isValid
 
-from mhfu_studio.shell.widgets import plain
+from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import dialogs, kit
 
 from ...stage.live import CLIMB, QUEST_CATCH

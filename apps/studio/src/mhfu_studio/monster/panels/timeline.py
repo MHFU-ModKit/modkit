@@ -21,7 +21,7 @@ from mhfu_studio.monster.panels.common import MARKERS
 from mhfu_studio.monster.panels.widgets import NoScene
 from mhfu_studio.monster.render.playback import GAME_HZ, OBSERVED_SPEEDS
 from mhfu_studio.shell.overlay import Ink
-from mhfu_studio.shell.widgets import plain
+from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit, theme
 
 if TYPE_CHECKING:
