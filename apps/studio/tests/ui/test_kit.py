@@ -88,3 +88,9 @@ def test_put_is_quiet(qtbot: Any) -> None:
         kit.put(w, v)
     assert not got and boxes[0].value() == 2.5 and boxes[3].currentData() == "b"
     assert boxes[5].value() == [1.0, 2.0, 3.0]
+
+
+def test_vec3_fits_a_dock(qtbot: Any) -> None:
+    v = kit.Vec3(tip="by", decimals=1)
+    qtbot.addWidget(v)
+    assert v.minimumSizeHint().width() <= 3 * kit.MIN_FIELD + 16

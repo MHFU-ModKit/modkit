@@ -44,6 +44,8 @@ from mhfu_studio.shell.findings import Level
 from mhfu_studio.ui import theme
 
 Role = Literal["normal", "primary", "danger"]
+#: a number field's least width; three share a 300 px dock
+MIN_FIELD = 56
 Slot = Callable[..., object]
 
 
@@ -163,6 +165,7 @@ def number(
     b.setSuffix(suffix)
     b.setKeyboardTracking(False)
     b.setAccelerated(True)
+    b.setMinimumWidth(MIN_FIELD)  # else the range's widest text sets it, wider than a dock
     if on is not None:
         b.valueChanged.connect(on)
     return b
@@ -183,6 +186,7 @@ def integer(
     b.setSingleStep(step)
     b.setValue(value)
     b.setKeyboardTracking(False)
+    b.setMinimumWidth(MIN_FIELD)
     if on is not None:
         b.valueChanged.connect(on)
     return b
@@ -211,7 +215,7 @@ class Vec3(QWidget):
             b.setPrefix(f"{axis}  ")
             if on is not None:
                 b.valueChanged.connect(lambda _v: on(self.value()))
-            lay.addWidget(b)
+            lay.addWidget(b, 1)
             self.boxes.append(b)
 
     def value(self) -> list[float]:
