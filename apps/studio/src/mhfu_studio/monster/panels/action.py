@@ -262,8 +262,6 @@ def then_row(ws: MonsterWorkspace, al: Alignment) -> None:
     """What the ENGINE does after this pair, beside what the move DECLARES."""
     from imgui_bundle import imgui
 
-    from mhfu_studio.monster.workspace import focus
-
     p = al.pair
     if p is None or p.next is None:
         return
@@ -294,7 +292,7 @@ def then_row(ws: MonsterWorkspace, al: Alignment) -> None:
         imgui.text_disabled(f"declared after = {mv.after}{where}")
     imgui.same_line()
     if imgui.small_button("open in Moves tab"):
-        focus("Moves")
+        ws._focus = "Moves"
 
 
 def host_clip_row(ws: MonsterWorkspace, al: Alignment) -> None:

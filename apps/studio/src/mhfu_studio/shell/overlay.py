@@ -38,6 +38,9 @@ Point = tuple[float, float]
 
 
 class Overlay(Protocol):
+    #: the view in points, for projecting
+    size: tuple[int, int]
+
     def line(self, a: Point, b: Point, color: Color, width: float = 1.0) -> None: ...
 
     def polyline(
@@ -69,7 +72,8 @@ class Overlay(Protocol):
 class Recorder:
     """An `Overlay` that keeps every call as `(method, args...)`, for tests."""
 
-    def __init__(self) -> None:
+    def __init__(self, size: tuple[int, int] = (640, 480)) -> None:
+        self.size = size
         self.calls: list[tuple[Any, ...]] = []
 
     def line(self, a: Point, b: Point, color: Color, width: float = 1.0) -> None:

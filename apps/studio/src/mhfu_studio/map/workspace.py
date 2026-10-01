@@ -11,17 +11,21 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Hashable, Sequence
+from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from mhfu.files import Extracted
 
-from mhfu_studio.shell import gizmo
 from mhfu_studio.shell.camera import Bounds
+from mhfu_studio.shell.input import Key as KeyEvent
+from mhfu_studio.shell.input import Pointer
+from mhfu_studio.shell.overlay import Overlay
 from mhfu_studio.shell.widgets import plain
-from mhfu_studio.shell.workspace import MAIN, Gesture, Panel, Split, View, Workspace, register
+from mhfu_studio.shell.workspace import Dock, Gesture, ToolGroup, Workspace, register
 
+from .adding import AddForm
 from .core.atlas import Atlas
 from .core.edit import (
     COLLISION,
@@ -37,10 +41,12 @@ from .core.edit import (
 )
 from .core.scene import Key, MapScene, SceneError, open_stage
 from .document import MANIFEST, MapDocument
-from .tools import ViewportTools
+from .tools import GROUPS, ViewportTools
 
 if TYPE_CHECKING:
     import moderngl
+
+    from mhfu_studio.shell.studio import Studio
 
     from .render.viewport import MapViewport
 
@@ -86,34 +92,8 @@ class MapWorkspace(Workspace):
         self._want: int | None = None
         self._seen = -1
         self._assets: dict[int, MapScene | None] = {}
-        from .panels import (
-            add,
-            assets,
-            browser,
-            collision,
-            document,
-            groups,
-            selection,
-            textures,
-            view,
-        )
-        from .panels import (
-            game as game_panel,
-        )
-
-        self.add = add.AddPanel(self)
-        self._panels = [
-            Panel("Map", "Left", browser.BrowserPanel(self).draw, focus=True),
-            Panel("View", "Left", view.ViewPanel(self).draw),
-            Panel("Document", "Left", document.DocumentPanel(self).draw),
-            Panel("Game", "Left", game_panel.GamePanel(self).draw),
-            Panel("Selection", "Right", selection.SelectionPanel(self).draw, focus=True),
-            Panel("Add", "Right", self.add.draw),
-            Panel("Assets", "Right", assets.AssetsPanel(self).draw),
-            Panel("Groups", "Right", groups.GroupsPanel(self).draw),
-            Panel("Collision", "Right", collision.CollisionPanel(self).draw),
-            Panel("Textures", "Bottom", textures.TexturesPanel(self).draw),
-        ]
+        #: the Add panel's form; Assets places with it too
+        self.add = AddForm(self)
 
     # the shell's hooks
 
@@ -149,15 +129,66 @@ class MapWorkspace(Workspace):
             self.load_stage(want, row=self.row if self._want is not None else 0)
         return self.vp
 
-    def panels(self) -> Sequence[Panel]:
-        return self._panels
+    def docks(self) -> Sequence[Dock]:
+        def build(module: str, panel: str) -> Callable[[Studio], Any]:
+            """The panel class imported when its dock is first built (Qt loads only then)."""
+            return lambda studio: getattr(import_module(f"mhfu_studio.map.panels.{module}"), panel)(
+                self, studio
+            )
 
-    def layout(self) -> Sequence[Split]:
         return (
-            Split(MAIN, "Left", "left", 0.20),
-            Split(MAIN, "Right", "right", 0.24),
-            Split(MAIN, "Bottom", "down", 0.24),
-        )
+            Dock(
+                "Map", "left", build("browser", "BrowserPanel"),
+                "Every area of the game and its sections, in walking order. Pick a section to"
+                " load it alone, the way the player walks through them.",
+                focus=True,
+            ),
+            Dock(
+                "View", "left", build("view", "ViewPanel"),
+                "How the section is drawn: textures or flat colours, which layers show, camera"
+                " presets and brightness. Changes nothing in the map.",
+            ),
+            Dock(
+                "Document", "left", build("document", "DocumentPanel"),
+                "Your map edits as one file: start a new one, open, save, check it for problems"
+                " and export it.",
+            ),
+            Dock(
+                "Game", "left", build("game", "GamePanel"),
+                "Send this section's edits into the game running in PPSSPP, without touching"
+                " the ISO.",
+            ),
+            Dock(
+                "Selection", "right", build("selection", "SelectionPanel"),
+                "What you clicked in the view: move, rotate or scale it by typed amounts, remove"
+                " it, and see how much of the section's drawing budget is left.",
+                focus=True,
+            ),
+            Dock(
+                "Add", "right", build("add", "AddPanel"),
+                "Put a new shape, or a copy of the selection, into the section. It reuses free"
+                " drawing slots, so the budget decides what fits.",
+            ),
+            Dock(
+                "Assets", "right", build("assets", "AssetsPanel"),
+                "Objects and textures from the area's other sections, to copy into this one.",
+            ),
+            Dock(
+                "Groups", "right", build("groups", "GroupsPanel"),
+                "Every mesh group of the section, and the material settings of the one you"
+                " pick.",
+            ),
+            Dock(
+                "Collision", "right", build("collision", "CollisionPanel"),
+                "The invisible floors and walls the player stands on and bumps into: what is"
+                " where, what is climbable, and the selected triangles' settings.",
+            ),
+            Dock(
+                "Textures", "bottom", build("textures", "TexturesPanel"),
+                "The section's texture bank: who uses each slot, and importing a picture into"
+                " one. A texture change shows in the running game at once.",
+            ),
+        )  # fmt: skip
 
     def status(self) -> str:
         if self.data_error:
@@ -175,26 +206,12 @@ class MapWorkspace(Workspace):
     def frame(self, dt: float) -> None:
         self.sync_renderer()
 
-    def toolbar(self) -> None:
-        from .panels.toolbar import draw
-
-        draw(self)
-
-    def wants_mouse(self) -> bool:
-        return self.tools.gizmo_visible and gizmo.hot()
-
-    def input(self, view: View) -> Gesture:
-        return self.tools.input(view)
-
-    def overlay(self, view: View) -> None:
-        self.tools.overlay(view)
-        self._labels(view)
-
     def hud(self) -> str:
         sc = self.scene
         head = f"st{sc.stage:03d}  {sc.name}" if sc else self.data_error or "no section loaded"
-        lines = [head, "F frames; ALT+drag orbits in select mode; right-drag pans"]
+        lines = [head]
         if sc is not None:
+            lines.append(f"{self.tools.hint()}; F frames, Esc clears")
             sel = self.col_sel if self.tools.kind == COLLISION else self.selection
             hov = ""
             if self.tools.hover is not None:
@@ -206,6 +223,38 @@ class MapWorkspace(Workspace):
         if self.message:
             lines.append(plain(self.message))
         return "\n".join(lines)
+
+    def tool_groups(self) -> Sequence[ToolGroup]:
+        return GROUPS
+
+    def tool_on(self, group: str, tool: str) -> bool:
+        return self.tools.is_on(group, tool)
+
+    def set_tool(self, group: str, tool: str, on: bool = True) -> None:
+        self.tools.choose(group, tool, on)
+
+    def pointer(self, ev: Pointer) -> Gesture:
+        return self.tools.pointer(ev)
+
+    def key(self, ev: KeyEvent) -> bool:
+        return self.tools.key(ev)
+
+    def paint(self, o: Overlay) -> None:
+        self._labels(o)
+        self.tools.paint(o)
+
+    def _labels(self, o: Overlay) -> None:
+        """The exits', arrivals' and spheres' names at their places, in their colours."""
+        vp = self.vp
+        labels = vp.labels() if vp is not None else []
+        if vp is None or not labels:
+            return
+        w, h = o.size
+        pts = vp.camera.project(np.array([lb.pos for lb in labels]), o.size)
+        for lb, (x, y, z) in zip(labels, pts, strict=True):
+            if 0.0 <= z <= 1.0 and 0.0 <= x <= w and 0.0 <= y <= h:
+                r, g, b, _ = lb.color
+                o.text((float(x) + 6.0, float(y) - 8.0), lb.text, (r, g, b, 0.95))
 
     def reveal(self, target: Hashable) -> None:
         """A finding's (stage, op index): load the stage and select what the op names."""
@@ -237,6 +286,7 @@ class MapWorkspace(Workspace):
             self.tools.select_collision(CollisionSelection([(int(op.get("chunk", 1)), op["tri"])]))
 
     def refresh(self) -> None:
+        self.message = ""  # it named the edit an undo just took back
         self.tools.reseat()
 
     # sections
@@ -418,13 +468,15 @@ class MapWorkspace(Workspace):
         self.tools.reseat()
 
     def frame_selection(self) -> None:
+        """The camera on the selection of the current pick kind, else on the whole section."""
         vp, sc = self.vp, self.scene
         if vp is None or sc is None:
             return
-        if self.selection.empty:
+        sel = self.col_sel if self.tools.kind == COLLISION else self.selection
+        if sel.empty:
             vp.frame_all()
             return
-        lo, hi = self.selection.bounds(sc)
+        lo, hi = sel.bounds(sc)
         b = Bounds(lo.astype(float), hi.astype(float))
         if b.radius < SMALL:
             b = Bounds(b.center - 4 * SMALL, b.center + 4 * SMALL)
@@ -450,27 +502,6 @@ class MapWorkspace(Workspace):
         sc = self.scene
         if sc is not None:
             self.tools.select(Selection.group(sc, key) if key is not None else Selection(GROUP))
-
-    def _labels(self, view: View) -> None:
-        from imgui_bundle import imgui
-
-        vp = self.vp
-        labels = vp.labels() if vp is not None else []
-        if vp is None or not labels:
-            return
-        pts = vp.camera.project(np.array([lb.pos for lb in labels]), view.size)
-        draw = imgui.get_window_draw_list()
-        shadow = imgui.get_color_u32(imgui.ImVec4(0.0, 0.0, 0.0, 0.75))
-        ox, oy = view.origin
-        w, h = view.size
-        for lb, p in zip(labels, pts, strict=True):
-            if not (0 <= p[2] <= 1.0 and 0 <= p[0] <= w and 0 <= p[1] <= h):
-                continue
-            r, g, b, _ = lb.color
-            col = imgui.get_color_u32(imgui.ImVec4(r, g, b, 0.95))
-            x, y = ox + float(p[0]) + 6, oy + float(p[1]) - 8
-            draw.add_text(imgui.ImVec2(x + 1, y + 1), shadow, lb.text)
-            draw.add_text(imgui.ImVec2(x, y), col, lb.text)
 
 
 register("map", MapWorkspace)
