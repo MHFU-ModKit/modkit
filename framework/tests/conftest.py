@@ -1,12 +1,14 @@
 """Host builds of framework sources, for tests that call them through ctypes."""
 
 import ctypes
+import importlib.util
 import shutil
 import struct
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 from unicorn import (
@@ -186,3 +188,38 @@ class Mips:
 def mips() -> type[Mips]:
     """The Mips class: Mips() is a fresh machine, Mips.jal(...) and friends encode words."""
     return Mips
+
+
+@pytest.fixture
+def lua() -> Any:
+    """A Lua 5.4 runtime set up like lua_host: `require` finds lua/lib, and the global `mhfu`
+    holds every function lua/meta/mhfu.d.lua declares as a stub returning 0, every constant,
+    `addr`, and the lists `calls` ({name, args...}) and `logs`. Tests replace fields."""
+    from lupa.lua54 import LuaRuntime
+    from mhfu import addresses
+
+    spec = importlib.util.spec_from_file_location("lua_api", FRAMEWORK / "tools" / "lua_api.py")
+    assert spec and spec.loader
+    lua_api = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lua_api)
+    api = lua_api.parse((FRAMEWORK / "lua" / "meta" / "mhfu.d.lua").read_text(encoding="utf-8"))
+
+    rt = LuaRuntime()
+    rt.execute(f"package.path = {str(FRAMEWORK / 'lua' / 'lib' / '?.lua')!r}")
+    build = rt.eval(
+        """function(funcs, consts, addr)
+          local m = { calls = {}, logs = {}, addr = addr }
+          for _, name in ipairs(funcs) do
+            m[name] = function(...) m.calls[#m.calls + 1] = { name, ... }; return 0 end
+          end
+          for name, value in pairs(consts) do m[name] = value end
+          m.log = function(s) m.logs[#m.logs + 1] = s end
+          mhfu = m
+        end"""
+    )
+    build(
+        rt.table_from(list(api.funcs)),
+        rt.table_from({k.name: k.value for k in api.consts}),
+        rt.execute(addresses.render_lua(addresses.table())),
+    )
+    return rt

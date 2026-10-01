@@ -1,8 +1,8 @@
 /*
  * Freecam: flies the camera by overriding the engine's orbit-camera inputs, so
  * the engine still builds eye, matrix and GE upload itself. Toggle: double-tap
- * SELECT. Not installed: that toggle collides with monster_nameplates' (see
- * freecam_install).
+ * SELECT. Not installed, and without Lua bindings until it is: that toggle collides
+ * with monster_nameplates' (see freecam_install).
  *
  * The quest camera update (MHFU_CAM_ORBIT_UPDATE) builds eye = pivot +
  * R(euler angles) * offset:
@@ -19,7 +19,6 @@
 
 #include "mhfu/mhfu.h"
 #include "internal.h"
-#include "lua_host.h"
 
 /* displaced instructions the stubs replay */
 #define ENC_SWC1_F1_S4_44  0xE6810044u
@@ -28,9 +27,6 @@
 #define ENC_LWC1_F0_SP_1C  0xC7A0001Cu
 
 static volatile int   g_fc_active   = 0;
-static volatile int   g_fc_snap_off = 0;   /* set from Lua, read by nothing yet      */
-static volatile int   g_fc_village  = 0;   /* set from Lua, read by nothing yet      */
-static volatile int   g_fc_freeze   = 1;   /* set from Lua, read by nothing yet      */
 static volatile int   g_fc_inited   = 0;
 static volatile int   g_fc_ang_cap  = 0;   /* quest orbit-angle seed captured        */
 static float    g_fc_pivot[3] = {0,0,0};   /* camera focus x/z (eye anchor)           */
@@ -49,7 +45,7 @@ static uint32_t *g_cam_w4 = 0;
 
 /* injection 4, quest and village: the toggle and the pad; flies the village eye
  * (nothing else writes it) and sets the look-at to eye + aim. */
-extern "C" void mhfu_lua_cam_target_c(void)
+static void mhfu_lua_cam_target_c(void)
 {
     SceCtrlData pad; sceCtrlPeekBufferPositive(&pad, 1);
     unsigned b = pad.Buttons;
@@ -110,7 +106,7 @@ extern "C" void mhfu_lua_cam_target_c(void)
 }
 
 /* injection 3: eye_y = our height + the rotated offset's y. */
-extern "C" void mhfu_lua_cam_eye_y_c(uint32_t s4base, uint32_t player)
+static void mhfu_lua_cam_eye_y_c(uint32_t s4base, uint32_t player)
 {
     if (!g_fc_active) return;
     float *eye_y = (float *)(s4base + MHFU_CAM_ORBIT_EYE + 4);
@@ -120,7 +116,7 @@ extern "C" void mhfu_lua_cam_eye_y_c(uint32_t s4base, uint32_t player)
 
 /* injection 1, quest only: our position into the orbit pivot, and the orbit
  * angles frozen so the d-pad (aim, injection 4) does not also orbit the eye. */
-extern "C" void mhfu_lua_cam_orbit_c(uint32_t cam_sp, uint32_t player)
+static void mhfu_lua_cam_orbit_c(uint32_t cam_sp, uint32_t player)
 {
     (void)player;
     if (!g_fc_active) return;
@@ -246,34 +242,3 @@ static int freecam_install(void)
     return (r0==MHFU_HOOK_OK&&r1==MHFU_HOOK_OK&&r4==MHFU_HOOK_OK&&r5==MHFU_HOOK_OK
             &&r6==MHFU_HOOK_OK&&r7==MHFU_HOOK_OK) ? 0 : -1;
 }
-
-static int lb_freecam(lua_State *L){ g_fc_active = lua_toboolean(L,1); g_fc_inited = 0; return 0; }
-static int lb_freecam_active(lua_State *L){ lua_pushboolean(L, g_fc_active); return 1; }
-static int lb_cam_snap_disable(lua_State *L){ g_fc_snap_off = lua_toboolean(L,1); return 0; }
-static int lb_cam_freeze_player(lua_State *L){ g_fc_freeze = lua_toboolean(L,1); return 0; }
-static int lb_cam_village_unlock(lua_State *L){ g_fc_village = lua_toboolean(L,1); return 0; }
-static int lb_cam_config(lua_State *L){
-    if (!lua_isnoneornil(L,1)) g_fc_move_spd  = (float)luaL_checknumber(L,1);
-    if (!lua_isnoneornil(L,2)) g_fc_rot_spd   = (float)luaL_checknumber(L,2);
-    if (!lua_isnoneornil(L,3)) g_fc_look_dist = (float)luaL_checknumber(L,3);
-    return 0;
-}
-static int lb_cam_eye(lua_State *L){
-    lua_pushnumber(L, *(volatile float*)MHFU_CAM_EYE);
-    lua_pushnumber(L, *(volatile float*)(MHFU_CAM_EYE+4));
-    lua_pushnumber(L, *(volatile float*)(MHFU_CAM_EYE+8));
-    return 3;
-}
-
-static const luaL_Reg k_api[] = {
-    { "freecam",          lb_freecam },
-    { "freecam_active",   lb_freecam_active },
-    { "cam_snap_disable", lb_cam_snap_disable },
-    { "cam_freeze_player", lb_cam_freeze_player },
-    { "cam_village_unlock", lb_cam_village_unlock },
-    { "cam_config",       lb_cam_config },
-    { "cam_eye",          lb_cam_eye },
-    { 0, 0 },
-};
-
-void mhfu_lua_bind_freecam(lua_State *L) { luaL_setfuncs(L, k_api, 0); }

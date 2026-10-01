@@ -1,5 +1,5 @@
-/* The event bridge: mhfu.on_<event>(fn [, priority]) stores fn and subscribes a C trampoline
- * (owner lua_host); game-thread events run their Lua on the exec thread (marshal.h). */
+/* The event bridge: each mhfu.on_<event> (lua/meta/mhfu.d.lua) stores fn and subscribes a C
+ * trampoline (owner lua_host); game-thread events run their Lua on the exec thread (marshal.h). */
 #include "mhfu/mhfu.h"
 #include "lua_host.h"
 
@@ -29,7 +29,7 @@ static const char *err_text(lua_State *L)
     return lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "(not a string)";
 }
 
-/* Push the action ctx table { entity, type, slot, input }. */
+/* Push the picker ctx table (mhfu.PickCtx). */
 static void push_action_ctx(lua_State *L, uint32_t ent, uint8_t type,
                             uint8_t slot, uint16_t input)
 {
@@ -56,21 +56,20 @@ static int run_request(lua_State *L)
 {
     mhfu_lua_req_t *q = (mhfu_lua_req_t *)lua_touserdata(L, 1);
     switch (q->kind) {
-    case REQ_INPUT:     /* function(ctx) -> new vt8_input */
+    case REQ_INPUT:
         lua_rawgeti(L, LUA_REGISTRYINDEX, r_input);
         push_action_ctx(L, q->entity, q->mtype, q->slot, (uint16_t)q->in);
         lua_call(L, 1, 1);
         if (lua_isnumber(L, -1)) q->out = (uint16_t)lua_tointeger(L, -1);
         break;
-    case REQ_DECIDED:   /* function(ctx, engine_value) -> value */
+    case REQ_DECIDED:
         lua_rawgeti(L, LUA_REGISTRYINDEX, r_decided);
         push_action_ctx(L, q->entity, q->mtype, q->slot, q->aux);
         lua_pushinteger(L, (lua_Integer)q->in);
         lua_call(L, 2, 1);
         if (lua_isnumber(L, -1)) q->out = (uint32_t)lua_tointeger(L, -1);
         break;
-    case REQ_ACTIONSEL: /* function({ entity, type, action_id }) -> new action id, which
-                         * the executor fans out to every body slot itself */
+    case REQ_ACTIONSEL:
         lua_rawgeti(L, LUA_REGISTRYINDEX, r_action);
         lua_createtable(L, 0, 3);
         lua_pushinteger(L, (lua_Integer)q->entity); lua_setfield(L, -2, "entity");
@@ -79,7 +78,7 @@ static int run_request(lua_State *L)
         lua_call(L, 1, 1);
         if (lua_isnumber(L, -1)) q->out = (uint32_t)lua_tointeger(L, -1);
         break;
-    case REQ_SLOT:      /* function({ entity, type, slot, count }, cur) -> slot */
+    case REQ_SLOT:
         lua_rawgeti(L, LUA_REGISTRYINDEX, r_slot);
         lua_createtable(L, 0, 4);
         lua_pushinteger(L, (lua_Integer)q->entity); lua_setfield(L, -2, "entity");
@@ -97,7 +96,7 @@ static int run_request(lua_State *L)
         lua_rawgeti(L, LUA_REGISTRYINDEX, r_overlay);
         lua_call(L, 0, 0);
         break;
-    case REQ_QUEST:     /* function(quest_ptr) */
+    case REQ_QUEST:
         lua_rawgeti(L, LUA_REGISTRYINDEX, r_quest);
         lua_pushinteger(L, (lua_Integer)q->entity);
         lua_call(L, 1, 0);
@@ -204,7 +203,7 @@ static void tramp_death(const mhfu_bigmonster_death_ctx_t *ctx)
     mhfu_lua_leave();
 }
 
-/* poll thread; Lua: function(entity_ptr, monster_type, amount, hp, slot) */
+/* poll thread */
 static void tramp_damaged(const mhfu_bigmonster_damaged_ctx_t *ctx)
 {
     if (r_damaged == LUA_NOREF || !mhfu_lua_enter()) return;
@@ -229,7 +228,7 @@ static void tramp_quest(const mhfu_quest_ctx_t *ctx)
     marshal(REQ_QUEST, (uint32_t)ctx->quest, 0, 0, 0, 0);
 }
 
-/* ---- mhfu.on_<event>(fn [, priority]): a second call rebinds fn; the first priority stays ---- */
+/* ---- the registrars ---- */
 
 static int prio(lua_State *L) { return (int)luaL_optinteger(L, 2, 0); }
 
@@ -238,79 +237,64 @@ static void check(const char *api, mhfu_hook_rc_t rc)
     if (rc != MHFU_HOOK_OK) mhfu_log("[lua_host] mhfu.%s: not subscribed (rc=%d)", api, (int)rc);
 }
 
-static int lb_on_quest(lua_State *L)
+int lb_on_quest_targets_building(lua_State *L)
 {
     store_ref(L, &r_quest);
     check("on_quest_targets_building",
           mhfu_on_quest_targets_building(tramp_quest, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_spawn(lua_State *L)
+int lb_on_bigmonster_spawn(lua_State *L)
 {
     store_ref(L, &r_spawn);
     check("on_bigmonster_spawn", mhfu_on_bigmonster_spawn(tramp_spawn, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_death(lua_State *L)
+int lb_on_bigmonster_death(lua_State *L)
 {
     store_ref(L, &r_death);
     check("on_bigmonster_death", mhfu_on_bigmonster_death(tramp_death, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_damaged(lua_State *L)
+int lb_on_bigmonster_damaged(lua_State *L)
 {
     store_ref(L, &r_damaged);
     check("on_bigmonster_damaged",
           mhfu_on_bigmonster_damaged(tramp_damaged, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_overlay(lua_State *L)
+int lb_on_ai_overlay_loaded(lua_State *L)
 {
     store_ref(L, &r_overlay);
     check("on_ai_overlay_loaded",
           mhfu_on_ai_overlay_loaded(tramp_overlay, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_slot(lua_State *L)
+int lb_on_bigmonster_slot_picked(lua_State *L)
 {
     store_ref(L, &r_slot);
     check("on_bigmonster_slot_picked",
           mhfu_on_bigmonster_slot_picked(tramp_slot, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_input(lua_State *L)
+int lb_on_bigmonster_action_input(lua_State *L)
 {
     store_ref(L, &r_input);
     check("on_bigmonster_action_input",
           mhfu_on_bigmonster_action_input(tramp_input, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_decided(lua_State *L)
+int lb_on_bigmonster_action_decided(lua_State *L)
 {
     store_ref(L, &r_decided);
     check("on_bigmonster_action_decided",
           mhfu_on_bigmonster_action_decided(tramp_decided, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-static int lb_on_action(lua_State *L)
+int lb_on_bigmonster_action(lua_State *L)
 {
     store_ref(L, &r_action);
     check("on_bigmonster_action",
           mhfu_on_bigmonster_action(tramp_action, prio(L), MHFU_LUA_HOST_ID));
     return 0;
 }
-
-static const luaL_Reg k_api[] = {
-    { "on_quest_targets_building",  lb_on_quest },
-    { "on_bigmonster_spawn",        lb_on_spawn },
-    { "on_bigmonster_death",        lb_on_death },
-    { "on_bigmonster_damaged",      lb_on_damaged },
-    { "on_ai_overlay_loaded",       lb_on_overlay },
-    { "on_bigmonster_slot_picked",  lb_on_slot },
-    { "on_bigmonster_action_input", lb_on_input },
-    { "on_bigmonster_action_decided", lb_on_decided },
-    { "on_bigmonster_action",       lb_on_action },
-    { 0, 0 },
-};
-
-void mhfu_lua_bind_events(lua_State *L) { luaL_setfuncs(L, k_api, 0); }

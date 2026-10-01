@@ -31,8 +31,11 @@ INCDIR   = include src/core $(GEN)
 CFLAGS   = -Os -G0 -Wall -fno-strict-aliasing
 # no exceptions, RTTI or static guards: the objects need no libstdc++ runtime
 CXXFLAGS = -std=gnu++17 -fno-exceptions -fno-rtti -fno-threadsafe-statics
-# .incbin in a mod's .S finds the Lua sources and the generated address table
-ASFLAGS  = -Wa,-Ilua,-I$(GEN)
+# .incbin in a mod's .S finds the generated prelude and address table
+ASFLAGS  = -Wa,-I$(GEN)
+# a Lua binding defined but not declared in lua/meta/mhfu.d.lua fails here; declared but not
+# defined fails the link
+$(OBJDIR)/mods/lua_host/%.o: CXXFLAGS += -Werror=missing-declarations
 
 # prxexports.o: real firmware rejects a PRX without the syslib export (0x800200D9); lua needs libm, libc
 LIBS = $(PSPSDK)/lib/prxexports.o -lpspsdk -lpspuser -lpspusb -lpspnet -lpspnet_apctl -llua -lm -lc

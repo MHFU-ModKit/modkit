@@ -9,8 +9,8 @@
 
 static SceUID g_log_fd = -1;
 
-/* Lines logged before ms0 is safe are held here and flushed on the first safe write, so a boot
- * failure (a mod that fails to compile) still reaches the log; overflow is counted. */
+/* Lines logged while ms0 is not safe are held here and flushed on the next safe write or
+ * mhfu_log_flush_held; overflow is counted. */
 #define EARLY_CAP 4096
 static char     g_early[EARLY_CAP];
 static unsigned g_early_n;
@@ -41,6 +41,16 @@ static void flush_early(void)
     }
 }
 
+static int open_log(void)
+{
+    if (g_log_fd < 0) {
+        g_log_fd = sceIoOpen(
+            "ms0:/PSP/PLUGINS/mhfu_framework/framework.log",
+            PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0666);
+    }
+    return g_log_fd >= 0;
+}
+
 extern "C" void mhfu_log(const char *fmt, ...)
 {
     char buf[256];
@@ -55,16 +65,16 @@ extern "C" void mhfu_log(const char *fmt, ...)
      * Memory Stick driver, and writing during a load or save freezes the PSP. */
     if (!mhfu_world_ms0_io_safe()) { stash(buf, n); return; }
 
-    if (g_log_fd < 0) {
-        g_log_fd = sceIoOpen(
-            "ms0:/PSP/PLUGINS/mhfu_framework/framework.log",
-            PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0666);
-    }
-    if (g_log_fd >= 0) {
+    if (open_log()) {
         flush_early();
         sceIoWrite(g_log_fd, buf, (size_t)n);
         sceIoWrite(g_log_fd, "\n", 1);
     }
+}
+
+extern "C" void mhfu_log_flush_held(void)
+{
+    if (open_log()) flush_early();
 }
 
 extern "C" void mhfu_log_close(void)

@@ -38,18 +38,9 @@ void mhfu_lua_scripts_init(void);         /* the read buffer */
 int  mhfu_lua_load_dir(lua_State *L);     /* runs every script; returns how many ran */
 void mhfu_lua_prime_tracked(void);        /* records each script's stat for hot reload */
 void mhfu_lua_hot_reload_scan(void);
+void mhfu_lua_install_require(lua_State *L);  /* package, with only the mods/lib searcher */
 
-/* --- the mhfu table: each adds its functions and constants to the table on top --- */
-void mhfu_lua_bind_memory(lua_State *L);
-void mhfu_lua_bind_entity(lua_State *L);
-void mhfu_lua_bind_quest(lua_State *L);
-void mhfu_lua_bind_inject(lua_State *L);
-void mhfu_lua_bind_input(lua_State *L);
-void mhfu_lua_bind_ai(lua_State *L);
-void mhfu_lua_bind_em(lua_State *L);
-void mhfu_lua_bind_capture(lua_State *L);
-void mhfu_lua_bind_freecam(lua_State *L);
-void mhfu_lua_bind_combat(lua_State *L);
-void mhfu_lua_bind_events(lua_State *L);
+/* --- the mhfu table: lb_<name> for each function lua/meta/mhfu.d.lua declares --- */
+#include "lua_api.gen.h"
 
 #endif /* MHFU_LUA_HOST_H */

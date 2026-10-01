@@ -9,6 +9,8 @@ extern "C" {
 
 void mhfu_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void mhfu_log_close(void);
+/* Writes the held lines now: only where ms0 is being read anyway (lua_host's boot load). */
+void mhfu_log_flush_held(void);
 
 #ifdef __cplusplus
 } /* extern "C" */
