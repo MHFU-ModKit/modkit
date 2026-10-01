@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtWidgets import QStackedWidget, QWidget
+from PySide6.QtWidgets import QListWidget, QStackedWidget, QWidget
 
 from mhfu_studio.shell.widgets import plain
 from mhfu_studio.ui import kit
@@ -59,6 +59,12 @@ class Gate(QStackedWidget):
         if self.currentWidget() is not self.page:
             self.setCurrentWidget(self.page)
         return True
+
+
+def fit(view: QListWidget, most: int = 5) -> None:
+    """`view` as tall as its rows, up to `most` of them."""
+    rows = max(1, min(view.count(), most)) * max(view.sizeHintForRow(0), 1)
+    view.setFixedHeight(rows + 2 * view.frameWidth() + 4)
 
 
 def image(t: TextureImage) -> QImage:

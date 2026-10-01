@@ -20,7 +20,7 @@ from mhfu_studio.shell.widgets import plain
 from mhfu_studio.ui import kit, theme
 
 from ..core.atlas import ROW_NAMES, MapRow, Section
-from .common import Gate
+from .common import Gate, fit
 
 if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     from ..workspace import MapWorkspace
 
 DATA = Qt.ItemDataRole.UserRole
-EXITS_SHOWN = 5
 TREE_TIP = (
     "The game's areas (rows) and the sections the player walks through in each, entry area"
     " first. Click a section to load it alone; the loaded one is bold, with a pin. Greyed"
@@ -149,9 +148,8 @@ class BrowserPanel(kit.Panel):
                 for e in sc.exits
             ]
         )
-        if rebuilt and sc.exits:  # as tall as its exits, up to EXITS_SHOWN
-            rows = min(len(sc.exits), EXITS_SHOWN) * self.exits.sizeHintForRow(0)
-            self.exits.setFixedHeight(rows + 2 * self.exits.frameWidth() + 4)
+        if rebuilt:
+            fit(self.exits)
         self.arrivals.setText(self._arrivals(sc.stage))
 
     def _mark(self, now: tuple[int, int] | None) -> None:

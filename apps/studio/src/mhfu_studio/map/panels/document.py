@@ -19,7 +19,7 @@ from mhfu_studio.shell.widgets import plain
 from mhfu_studio.ui import dialogs, kit
 
 from ..document import MapDocument
-from .common import DATA_HINT, NO_DATA
+from .common import DATA_HINT, NO_DATA, fit
 
 if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
@@ -69,7 +69,6 @@ class DocumentPanel(kit.Panel):
             " Click one to load it.",
             empty="No stage yet: edit a section and it joins.",
         )
-        self.stages.setMaximumHeight(120)
         self.stages.picked.connect(self._load)
         self.add = kit.button(
             "Add the loaded section",
@@ -255,7 +254,7 @@ class DocumentPanel(kit.Panel):
             f"{plain(str(doc.directory))}  ({row})" if doc.directory else f"not saved yet ({row})"
         )
         loaded = sc.stage if sc is not None else None
-        self.stages.set_items(
+        rebuilt = self.stages.set_items(
             [
                 kit.Item(
                     f"{s.label}  {s.ops_file}  {len(s.ops)} edit(s)"
@@ -266,6 +265,8 @@ class DocumentPanel(kit.Panel):
                 for s in doc.stages
             ]
         )
+        if rebuilt:
+            fit(self.stages)
         self.add.setVisible(
             sc is not None and ws.session is not None and doc.stage(sc.stage) is None
         )
