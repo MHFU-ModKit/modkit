@@ -21,13 +21,11 @@ from PySide6.QtWidgets import QDockWidget
 
 T, B = QEvent.Type, Qt.MouseButton
 MINE = ("Selection", "Add", "Groups", "Collision")
+
+
 #: docks ported on another branch; until it lands they fail to build here
-THEIRS = ("Map", "View", "Document", "Game", "Assets", "Textures")
-
-
 def errors(w: Window) -> list[str]:
-    skip = {f"{d} panel" for d in THEIRS} | {f"map/{d} panel" for d in THEIRS}
-    return [label for label, _ in w.studio.errors if label not in skip]
+    return [label for label, _ in w.studio.errors]
 
 
 def open_map(make_window: Callable[..., Window], ws: MapWorkspace) -> Window:

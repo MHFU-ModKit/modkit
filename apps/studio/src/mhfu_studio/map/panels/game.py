@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QByteArray, QProcess, QProcessEnvironment, QSignalBlocker, QTimer
 from PySide6.QtWidgets import QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
+from shiboken6 import isValid
 
 from mhfu_studio.shell.widgets import plain
 from mhfu_studio.ui import dialogs, kit
@@ -148,7 +149,8 @@ class GamePanel(kit.Panel):
 
     @property
     def busy(self) -> bool:
-        return self.proc is not None and self.proc.state() != QProcess.ProcessState.NotRunning
+        p = self.proc
+        return p is not None and isValid(p) and p.state() != QProcess.ProcessState.NotRunning
 
     def command(self, flags: list[str]) -> list[str]:
         """The inject command line for the loaded section, the interpreter first."""
@@ -221,7 +223,8 @@ class GamePanel(kit.Panel):
         p = self.proc
         if p is not None and self.busy:
             p.terminate()
-            QTimer.singleShot(KILL_AFTER, lambda: self._kill(p))
+            # the process is the timer's context: gone with it, the timer never fires
+            QTimer.singleShot(KILL_AFTER, p, lambda: self._kill(p))
 
     def _kill(self, p: QProcess) -> None:
         if p is self.proc and self.busy:
