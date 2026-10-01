@@ -3,7 +3,8 @@
 """The viewport's tools: the toolbar's groups, hover, click and box select, the gizmo, and the
 keys the window leaves to the view.
 
-The gizmo's pose starts as T(centre of the selection). While a handle is dragged the session
+The gizmo's pose is the selection's turn at its centre: unturned when the selection is picked,
+turned by each commit until another is picked or an undo. While a handle is dragged the session
 previews `M = pose @ inv(pose0)`, a world matrix applied to its snapshot; the release commits
 the same M.
 """
@@ -28,7 +29,6 @@ from .core.edit import (
     CollisionSelection,
     EditError,
     Selection,
-    compose,
 )
 from .core.pick import Hit, in_rect, pick, pick_collision
 from .core.scene import Array
@@ -46,6 +46,16 @@ TOOL, PICK, OPTIONS = "tool", "pick", "options"
 CLICK_SLOP = 4.0
 """A press and release closer than this is a click, not a box."""
 Box = tuple[float, float, float, float]
+
+
+def turn_of(m: Array) -> Array:
+    """The rotation nearest `m`'s linear part: its turn without its scale."""
+    u, _, vt = np.linalg.svd(np.asarray(m, np.float64)[:3, :3])
+    if np.linalg.det(u @ vt) < 0:
+        u[:, -1] *= -1.0
+    out: Array = u @ vt
+    return out
+
 
 GROUPS = (
     ToolGroup(
@@ -111,8 +121,9 @@ GROUPS = (
             ),
             Tool(
                 LOCAL, "Local", "", "ph.compass",
-                "The gizmo's arrows follow the selection's own turn during a drag instead of the"
-                " world's axes. Scaling always uses the selection's own axes.",
+                "The gizmo's arrows and rings follow the selection's own turn, the sum of your"
+                " rotations since you picked it, instead of the world's axes. Scaling always"
+                " uses the selection's own axes.",
             ),
         ),
         toggles=True,
@@ -136,6 +147,8 @@ class ViewportTools:
         self.manipulator = Manipulator()
         self._press: tuple[float, float] | None = None
         self._pose: Array | None = None
+        #: the selection's turn since it was picked: the gizmo's own axes
+        self._turn: Array = np.eye(3)
         #: the pose a running drag started from; None when no drag runs
         self._pose0: Array | None = None
 
@@ -152,12 +165,15 @@ class ViewportTools:
         return self._pose0 is not None
 
     def pose(self) -> Array:
-        """The gizmo's pose: the running drag's, else T(centre of the selection)."""
+        """The gizmo's pose: the running drag's, else the selection's turn at its centre."""
         if self._pose is None:
             sc = self.ws.scene
             assert sc is not None
             sel = self.ws.col_sel if self.kind == COLLISION else self.ws.selection
-            self._pose = compose(by=sel.centroid(sc))
+            pose = np.eye(4)
+            pose[:3, :3] = self._turn
+            pose[:3, 3] = sel.centroid(sc)
+            self._pose = pose
         return self._pose
 
     # the toolbar
@@ -470,8 +486,10 @@ class ViewportTools:
                 ops = sess.commit(got.matrix @ np.linalg.inv(pose0), pose0[:3, 3])
             except EditError as e:
                 ops, ws.message = [], f"refused: {e}"
+            if ops:
+                self._turn = turn_of(got.matrix)
             ws.after_commit(ops)
-            self.reseat()
+            self.follow()
         return got
 
     def end_gizmo(self) -> None:
@@ -482,9 +500,20 @@ class ViewportTools:
             if sess is not None and sess.previewing:
                 sess.cancel()
             self._pose0 = None
-        self.reseat()
+        self.follow()
+
+    def turned(self, m: Array) -> None:
+        """The selection was turned by the world matrix `m` (a typed transform)."""
+        self._turn = turn_of(m) @ self._turn
+        self.follow()
+
+    def follow(self) -> None:
+        """The gizmo goes to the selection's centre, keeping its turn: after an edit."""
+        if self._pose0 is None:
+            self._pose = None
 
     def reseat(self) -> None:
-        """The gizmo follows the selection after an edit, an undo or a new selection."""
+        """The gizmo restarts unturned: a new selection, an undo or a redo."""
         if self._pose0 is None:
+            self._turn = np.eye(3)
             self._pose = None

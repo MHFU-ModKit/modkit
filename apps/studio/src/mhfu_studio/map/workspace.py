@@ -385,6 +385,7 @@ class MapWorkspace(Workspace):
     def set_selection(self, sel: Selection) -> None:
         from .render.stage_mesh import HL_SELECTED
 
+        same = sel.same(self.selection)
         self.selection = sel
         mesh = self.vp.mesh if self.vp is not None else None
         if mesh is not None:
@@ -400,13 +401,21 @@ class MapWorkspace(Workspace):
         if keys and self.scene is not None:
             self.add.group = self.scene.groups.index(self.scene.group(*keys[0]))
             self.add.at_mode = 0
-        self.tools.reseat()
+        self._seat(same)
 
     def set_collision_selection(self, sel: CollisionSelection) -> None:
+        same = sel.tris == self.col_sel.tris
         self.col_sel = sel
         if self.vp is not None and self.vp.collision is not None:
             self.vp.collision.select(sel.tris)
-        self.tools.reseat()
+        self._seat(same)
+
+    def _seat(self, same: bool) -> None:
+        """The gizmo keeps its turn over the same selection (re-derived after a rebuild)."""
+        if same:
+            self.tools.follow()
+        else:
+            self.tools.reseat()
 
     def after_commit(self, ops: Sequence[Op]) -> None:
         if not ops:
@@ -429,7 +438,7 @@ class MapWorkspace(Workspace):
             self.after_commit(ops)
         else:
             self.message = f"{what}: done"
-        self.tools.reseat()
+        self.tools.follow()
         return ops
 
     def delete_selected(self) -> None:
@@ -456,16 +465,6 @@ class MapWorkspace(Workspace):
             where = ", ".join(f"sub{k[0]}.g{k[1]}: {n}" for k, n in bad.items())
             self.message += f"   [!] {where} vertices outside the PMO's range: they clamp on export"
 
-    def undo(self) -> None:
-        ops = self.session.undo() if self.session else None
-        self.message = f"undo: {describe_op(ops[0]) if ops else 'nothing to undo'}"
-        self.tools.reseat()
-
-    def redo(self) -> None:
-        ops = self.session.redo() if self.session else None
-        self.message = f"redo: {describe_op(ops[0]) if ops else 'nothing to redo'}"
-        self.tools.reseat()
-
     def frame_selection(self) -> None:
         """The camera on the selection of the current pick kind, else on the whole section."""
         vp, sc = self.vp, self.scene
@@ -491,11 +490,13 @@ class MapWorkspace(Workspace):
             if not self.col_sel.empty:
                 m = compose(pivot=self.col_sel.centroid(sc), by=by, rotate=rotate, scale=scale)
                 sess.begin_collision(self.col_sel)
-                self.do("transform", sess.commit_collision, m)
+                if self.do("transform", sess.commit_collision, m):
+                    self.tools.turned(m)
             return
         if not self.selection.empty:
             m = compose(pivot=self.selection.centroid(sc), by=by, rotate=rotate, scale=scale)
-            self.do("transform", sess.apply_now, self.selection, m)
+            if self.do("transform", sess.apply_now, self.selection, m):
+                self.tools.turned(m)
 
     def select_group(self, key: Key | None) -> None:
         sc = self.scene
