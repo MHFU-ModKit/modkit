@@ -216,6 +216,7 @@ def test_open_asks(make_window: Make, asked: list[Any], monkeypatch: Any, tmp_pa
     (tmp_path / "b.toml").write_text("x")
     w.open_action.trigger()
     assert asked == [["untitled map"]] and w.studio.active.doc.path is None
+    monkeypatch.setattr(dialogs, "confirm_unsaved", lambda p, n: "discard")  # teardown closes
 
 
 def test_refusals_reach_the_status_bar(make_window: Make) -> None:

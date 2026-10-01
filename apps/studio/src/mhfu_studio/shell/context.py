@@ -21,7 +21,8 @@ import moderngl
 
 GL_VERSION = 330
 
-#: contexts made here, newest last, so `standalone` can hand the current one back
+#: standalone contexts made here, newest last, so `standalone` can hand the current one back;
+#: never a toolkit's, which may be gone by then (re-entering a dead GLX one segfaults)
 _made: list[weakref.ref[moderngl.Context]] = []
 
 
@@ -61,7 +62,7 @@ def attached(version: int = GL_VERSION) -> moderngl.Context:
     errors: list[str] = []
     for settings in _attach_settings():
         try:
-            return _remember(moderngl.create_context(require=version, **settings))
+            return moderngl.create_context(require=version, **settings)
         except Exception as e:
             errors.append(f"{settings.get('backend', 'default')}: {e}")
     raise ContextError(
@@ -83,7 +84,7 @@ def _attach_settings() -> list[dict[str, Any]]:
 @contextmanager
 def borrowed() -> Iterator[None]:
     """For code that makes another context current (a toolkit's, a standalone one): the newest
-    one made here, and not released, is current again after."""
+    standalone one made here, and not released, is current again after."""
     before = _newest()
     try:
         yield

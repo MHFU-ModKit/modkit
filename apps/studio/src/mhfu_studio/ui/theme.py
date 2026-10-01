@@ -15,7 +15,15 @@ from typing import Literal
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPalette
-from PySide6.QtWidgets import QAbstractButton, QApplication
+from PySide6.QtWidgets import (
+    QAbstractButton,
+    QApplication,
+    QProxyStyle,
+    QStyle,
+    QStyleHintReturn,
+    QStyleOption,
+    QWidget,
+)
 from shiboken6 import isValid
 
 from mhfu_studio.shell.findings import LEVELS, Level
@@ -143,6 +151,25 @@ _bound: weakref.WeakKeyDictionary[QAbstractButton | QAction, str] = weakref.Weak
 _listeners: list[Callable[[Theme], None]] = []
 
 
+class Style(QProxyStyle):
+    """Fusion, the one style that honours every stylesheet rule the same way, without the
+    mnemonic underlines it draws in menus off macOS."""
+
+    def __init__(self) -> None:
+        super().__init__("Fusion")
+
+    def styleHint(  # noqa: N802
+        self,
+        hint: QStyle.StyleHint,
+        option: QStyleOption | None = None,
+        widget: QWidget | None = None,
+        data: QStyleHintReturn | None = None,
+    ) -> int:
+        if hint == QStyle.StyleHint.SH_UnderlineShortcut:
+            return 0
+        return super().styleHint(hint, option, widget, data)
+
+
 def current() -> Theme:
     return _current
 
@@ -153,7 +180,8 @@ def apply(t: Theme) -> None:
     _current = t
     app = QApplication.instance()
     if isinstance(app, QApplication):
-        app.setStyle("Fusion")  # the one style that honours every stylesheet rule the same way
+        if not isinstance(app.style(), Style):
+            app.setStyle(Style())
         app.setPalette(palette(t))
         app.setStyleSheet(qss(t))
         QGuiApplication.styleHints().setColorScheme(
