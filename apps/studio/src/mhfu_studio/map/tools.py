@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The viewport's tools: hover, click and box select, the tool keys, and the gizmo.
+"""The viewport's tools: the toolbar's groups, hover, click and box select, the gizmo, and the
+keys the window leaves to the view.
 
-The gizmo manipulates a pose that starts as T(pivot) at the selection's centre; from the frame
-it is first used, the preview is `M = pose_now @ inv(pose_0)`, a world matrix the session
-applies to its snapshot, and the same M is committed on release. ImGuizmo will not activate
-while an imgui item is active, so while it is hovered or dragging the workspace asks the shell
-for the mouse and no capture button is laid down.
+The gizmo's pose starts as T(centre of the selection). While a handle is dragged the session
+previews `M = pose @ inv(pose0)`, a world matrix applied to its snapshot; the release commits
+the same M.
 """
 
 from __future__ import annotations
@@ -15,8 +14,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mhfu_studio.shell import gizmo
-from mhfu_studio.shell.workspace import Gesture, View
+from mhfu_studio.shell.input import Button, Key, Mod, Pointer
+from mhfu_studio.shell.manipulator import Manipulation, Manipulator, Operation
+from mhfu_studio.shell.overlay import Ink, Overlay
+from mhfu_studio.shell.workspace import Gesture, Tool, ToolGroup
 
 from .core.edit import (
     COLLISION,
@@ -38,10 +39,85 @@ if TYPE_CHECKING:
 
 SELECT, MOVE, ROTATE, SCALE = "select", "move", "rotate", "scale"
 TOOLS = (SELECT, MOVE, ROTATE, SCALE)
-OPERATIONS: dict[str, gizmo.Operation] = {MOVE: "translate", ROTATE: "rotate", SCALE: "scale"}
+OPERATIONS: dict[str, Operation] = {MOVE: "translate", ROTATE: "rotate", SCALE: "scale"}
+VERBS = {MOVE: "move", ROTATE: "turn", SCALE: "resize"}
+SNAP, LOCAL = "snap", "local"
+TOOL, PICK, OPTIONS = "tool", "pick", "options"
 CLICK_SLOP = 4.0
 """A press and release closer than this is a click, not a box."""
 Box = tuple[float, float, float, float]
+
+GROUPS = (
+    ToolGroup(
+        TOOL,
+        "Tool",
+        (
+            Tool(
+                SELECT, "Select", "Q", "ph.cursor",
+                "Click picks what is under the pointer, shift-click adds or takes it away, and a"
+                " drag selects everything inside a box. Alt-drag turns the camera.",
+            ),
+            Tool(
+                MOVE, "Move", "W", "ph.arrows-out-cardinal",
+                "Drag an arrow to move the selection along it, a square to move it flat in that"
+                " plane, or the dot to slide it across the view. A click elsewhere still picks.",
+            ),
+            Tool(
+                ROTATE, "Rotate", "E", "ph.arrow-clockwise",
+                "Drag a coloured ring to turn the selection about that axis, or the outer ring"
+                " to turn it about your line of sight.",
+            ),
+            Tool(
+                SCALE, "Scale", "R", "ph.arrows-out",
+                "Drag a box handle to stretch the selection along that axis, or the centre box"
+                " to grow it (drag right) or shrink it (drag left) evenly.",
+            ),
+        ),
+    ),
+    ToolGroup(
+        PICK,
+        "Pick",
+        (
+            Tool(
+                GROUP, "Groups", "1", "ph.stack",
+                "A click picks a whole mesh group: every piece of the section that shares one"
+                " material and texture.",
+            ),
+            Tool(
+                OBJECT, "Objects", "2", "ph.cube",
+                "A click picks one object: the connected piece of mesh under the pointer, such"
+                " as a crate, a rock or a roof.",
+            ),
+            Tool(
+                FACE, "Faces", "3", "ph.triangle",
+                "A click picks single triangles of the mesh, for fine edits or to turn them into"
+                " collision in the Collision panel.",
+            ),
+            Tool(
+                COLLISION, "Collision", "4", "ph.wall",
+                "Shows the invisible collision the hunter stands on and bumps into, and a click"
+                " picks its triangles instead of the mesh.",
+            ),
+        ),
+    ),
+    ToolGroup(
+        OPTIONS,
+        "Options",
+        (
+            Tool(
+                SNAP, "Snap", "", "ph.magnet",
+                "Gizmo drags move in whole steps: 50 units, 15 degrees, or a tenth of the size."
+                " Turn it off to place things freely.",
+            ),
+            Tool(
+                LOCAL, "Local", "", "ph.compass",
+                "The gizmo's arrows follow the selection's own turn during a drag instead of the"
+                " world's axes. Scaling always uses the selection's own axes.",
+            ),
+        ),
+        toggles=True,
+    ),
+)  # fmt: skip
 
 
 class ViewportTools:
@@ -55,11 +131,13 @@ class ViewportTools:
         self.hover: Hit | None = None
         self.col_hover: tuple[int, int] | None = None
         self.last_pick: Hit | None = None
+        #: the rubber band being dragged, in view points
         self.box: Box | None = None
+        self.manipulator = Manipulator()
         self._press: tuple[float, float] | None = None
         self._pose: Array | None = None
+        #: the pose a running drag started from; None when no drag runs
         self._pose0: Array | None = None
-        self._using = False
 
     @property
     def gizmo_visible(self) -> bool:
@@ -69,78 +147,40 @@ class ViewportTools:
             return not self.ws.col_sel.empty
         return not self.ws.selection.empty
 
-    def _centroid(self) -> Array:
-        sc = self.ws.scene
-        assert sc is not None
-        if self.kind == COLLISION:
-            return self.ws.col_sel.centroid(sc)
-        return self.ws.selection.centroid(sc)
+    @property
+    def dragging(self) -> bool:
+        return self._pose0 is not None
 
-    # per frame
+    def pose(self) -> Array:
+        """The gizmo's pose: the running drag's, else T(centre of the selection)."""
+        if self._pose is None:
+            sc = self.ws.scene
+            assert sc is not None
+            sel = self.ws.col_sel if self.kind == COLLISION else self.ws.selection
+            self._pose = compose(by=sel.centroid(sc))
+        return self._pose
 
-    def input(self, view: View) -> Gesture:
-        """Keys, the gizmo, hover and clicks; returns the camera gestures they took."""
-        from imgui_bundle import imgui
+    # the toolbar
 
-        ws = self.ws
-        if ws.viewport is None or ws.scene is None or ws.session is None:
-            return Gesture.NONE
-        io = imgui.get_io()
-        mouse = view.mouse(io.mouse_pos.x, io.mouse_pos.y)
-        self._keys(view.hovered)
-        owns = self._gizmo(view) if self.gizmo_visible else False
-        if not self.gizmo_visible:
-            self.end_gizmo()
-        if view.hovered and not owns:
-            self._hover(mouse, view.size)
-        else:
-            self._set_hover(None)
-            self._set_col_hover(None)
-        if not owns:
-            self._clicks(mouse, view, io.key_shift)
-        if owns:
-            return Gesture.ORBIT | Gesture.PAN
-        # in the select tool a left-drag is a box; ALT+left-drag orbits there
-        return Gesture.ORBIT if self.tool == SELECT and not io.key_alt else Gesture.NONE
+    def is_on(self, group: str, tool: str) -> bool:
+        if group == TOOL:
+            return self.tool == tool
+        if group == PICK:
+            return self.kind == tool
+        return {SNAP: self.snap, LOCAL: self.space_local}.get(tool, False)
 
-    def overlay(self, view: View) -> None:
-        """The selection box being dragged."""
-        from imgui_bundle import imgui
-
-        if self.box is None:
-            return
-        x0, y0, x1, y1 = self.box
-        ox, oy = view.origin
-        dl = imgui.get_window_draw_list()
-        a = imgui.ImVec2(ox + min(x0, x1), oy + min(y0, y1))
-        b = imgui.ImVec2(ox + max(x0, x1), oy + max(y0, y1))
-        dl.add_rect_filled(a, b, imgui.get_color_u32(imgui.ImVec4(0.4, 0.7, 1.0, 0.15)))
-        dl.add_rect(a, b, imgui.get_color_u32(imgui.ImVec4(0.5, 0.8, 1.0, 0.9)))
-
-    def _keys(self, hovered: bool) -> None:
-        from imgui_bundle import imgui
-
-        if imgui.get_io().want_text_input:
-            return
-        k = imgui.Key
-        for key, tool in ((k.q, SELECT), (k.w, MOVE), (k.e, ROTATE), (k.r, SCALE)):
-            if imgui.is_key_pressed(key):
-                self.set_tool(tool)
-        for key, kind in ((k._1, GROUP), (k._2, OBJECT), (k._3, FACE), (k._4, COLLISION)):
-            if imgui.is_key_pressed(key):
-                self.set_kind(kind)
-        if imgui.is_key_pressed(k.escape):
-            if self.kind == COLLISION:
-                self.select_collision(CollisionSelection())
-            else:
-                self.select(Selection(self.kind))
-        if hovered and (imgui.is_key_pressed(k.delete) or imgui.is_key_pressed(k.backspace)):
-            self.ws.delete_selected()
-        if hovered and imgui.is_key_pressed(k.f):
-            self.ws.frame_selection()
+    def choose(self, group: str, tool: str, on: bool = True) -> None:
+        if group == TOOL:
+            self.set_tool(tool)
+        elif group == PICK:
+            self.set_kind(tool)
+        elif tool == SNAP:
+            self.snap = on
+        elif tool == LOCAL:
+            self.space_local = on
 
     def set_tool(self, tool: str) -> None:
-        if tool != self.tool:
+        if tool in TOOLS and tool != self.tool:
             self.end_gizmo()
             self.tool = tool
 
@@ -165,6 +205,103 @@ class ViewportTools:
     def select_collision(self, sel: CollisionSelection) -> None:
         self.end_gizmo()
         self.ws.set_collision_selection(sel)
+
+    def clear(self) -> None:
+        """Selects nothing of the current pick kind."""
+        if self.kind == COLLISION:
+            self.select_collision(CollisionSelection())
+        else:
+            self.select(Selection(self.kind))
+
+    def hint(self) -> str:
+        """What the mouse does now, for the HUD."""
+        if self.tool == SELECT:
+            return "click picks, shift adds, drag boxes; Alt-drag orbits, right-drag pans"
+        verb = VERBS[self.tool]
+        if self.gizmo_visible:
+            return f"drag a handle to {verb}; drag elsewhere orbits, right-drag pans"
+        return f"click something to {verb} it; drag orbits, right-drag pans"
+
+    # input
+
+    def pointer(self, ev: Pointer) -> Gesture:
+        """Hover, clicks, the box and the gizmo; returns the camera gestures they took."""
+        ws = self.ws
+        if ws.viewport is None or ws.scene is None or ws.session is None:
+            return Gesture.NONE
+        if ev.kind == "wheel":
+            return Gesture.NONE
+        if self.gizmo_visible:
+            got = self._gizmo(ev)
+            if got.consumed or got.done or got.over:
+                self._unhover()
+                return got.consumed
+        if ev.kind == "leave":
+            self._unhover()
+        elif ev.kind == "move":
+            self._move(ev)
+        elif ev.kind == "press" and ev.button == Button.LEFT:
+            if Mod.ALT in ev.mods:
+                return Gesture.NONE
+            self._press = ev.pos
+            # a drag in the select tool is a box, not an orbit
+            return Gesture.ORBIT if self.tool == SELECT else Gesture.NONE
+        elif ev.kind == "release" and ev.button == Button.LEFT:
+            self._release(ev)
+        return Gesture.NONE
+
+    def key(self, ev: Key) -> bool:
+        ws = self.ws
+        if ws.scene is None or ev.mods & (Mod.CTRL | Mod.ALT):
+            return False
+        if ev.name == "Escape":
+            if self.dragging:
+                self.end_gizmo()
+            elif self._press is not None:
+                self._press = self.box = None
+            else:
+                self.clear()
+            return True
+        if ev.name in ("Delete", "Backspace"):
+            ws.delete_selected()
+            return True
+        if ev.name == "F":
+            ws.frame_selection()
+            return True
+        return False
+
+    def paint(self, o: Overlay) -> None:
+        """The gizmo and the rubber band."""
+        vp = self.ws.viewport
+        if vp is None or self.ws.scene is None:
+            return
+        if self.gizmo_visible:
+            op = OPERATIONS[self.tool]
+            self.manipulator.paint(o, vp.camera, o.size, self.pose(), op, local=self.space_local)
+        if self.box is not None:
+            x0, y0, x1, y1 = self.box
+            o.rect((x0, y0), (x1, y1), color=Ink.BOX)
+
+    def _move(self, ev: Pointer) -> None:
+        if self._press is not None and Button.LEFT in ev.buttons and self.tool == SELECT:
+            px, py = self._press
+            if abs(ev.x - px) > CLICK_SLOP or abs(ev.y - py) > CLICK_SLOP:
+                self.box = (px, py, ev.x, ev.y)
+        if self.box is not None:
+            self._unhover()
+        else:
+            self._hover(ev.pos, ev.size)
+
+    def _release(self, ev: Pointer) -> None:
+        press, box = self._press, self.box
+        self._press = self.box = None
+        if press is None:
+            return
+        shift = Mod.SHIFT in ev.mods
+        if box is not None:
+            self.box_select(box, ev.size, shift)
+        elif abs(ev.x - press[0]) <= CLICK_SLOP and abs(ev.y - press[1]) <= CLICK_SLOP:
+            self.click(ev.pos, ev.size, shift)
 
     # picking
 
@@ -195,10 +332,6 @@ class ViewportTools:
     def _hover(self, mouse: tuple[float, float], size: tuple[int, int]) -> None:
         vp = self.ws.viewport
         assert vp is not None
-        if self.box is not None:
-            self._set_hover(None)
-            self._set_col_hover(None)
-            return
         o, d = vp.camera.ray(mouse[0], mouse[1], size)
         if self.kind == COLLISION:
             self._set_hover(None)
@@ -206,6 +339,10 @@ class ViewportTools:
             return
         self._set_col_hover(None)
         self._set_hover(self._pick_mesh(o, d))
+
+    def _unhover(self) -> None:
+        self._set_hover(None)
+        self._set_col_hover(None)
 
     def _set_col_hover(self, pair: tuple[int, int] | None) -> None:
         if pair != self.col_hover:
@@ -240,23 +377,6 @@ class ViewportTools:
             sel = Selection.from_pick(sc, self.kind, hit.key, hit.face)
             for k, ids in sel.vertices.items():
                 vp.mesh.highlight(k, ids, HL_HOVER, replace=False)
-
-    def _clicks(self, mouse: tuple[float, float], view: View, shift: bool) -> None:
-        from imgui_bundle import imgui
-
-        if view.hovered and imgui.is_mouse_clicked(0):
-            self._press = mouse
-        if self._press is not None and imgui.is_mouse_down(0):
-            dx, dy = mouse[0] - self._press[0], mouse[1] - self._press[1]
-            if self.tool == SELECT and (abs(dx) > CLICK_SLOP or abs(dy) > CLICK_SLOP):
-                self.box = (self._press[0], self._press[1], mouse[0], mouse[1])
-        if self._press is not None and imgui.is_mouse_released(0):
-            press, self._press = self._press, None
-            if self.box is not None:
-                box, self.box = self.box, None
-                self.box_select(box, view.size, shift)
-            elif abs(mouse[0] - press[0]) <= CLICK_SLOP and abs(mouse[1] - press[1]) <= CLICK_SLOP:
-                self.click(mouse, view.size, shift)
 
     def click(self, mouse: tuple[float, float], size: tuple[int, int], shift: bool) -> None:
         ws = self.ws
@@ -326,45 +446,45 @@ class ViewportTools:
 
     # the gizmo
 
-    def _gizmo(self, view: View) -> bool:
+    def _gizmo(self, ev: Pointer) -> Manipulation:
         ws = self.ws
         vp, sess = ws.viewport, ws.session
         assert vp is not None and sess is not None
-        if self._pose is None:
-            self._pose = compose(by=self._centroid())
         snap = self.snaps[self.tool] if self.snap else None
-        local = self.space_local or self.tool == SCALE
-        got = gizmo.manipulate(
-            vp.camera, view, self._pose, OPERATIONS[self.tool], local=local, snap=snap
+        got = self.manipulator.pointer(
+            ev, vp.camera, self.pose(), OPERATIONS[self.tool], local=self.space_local, snap=snap
         )
-        self._pose = got.matrix
-        if got.using and not self._using:
-            self._pose0 = got.matrix.copy()
-            if self.kind == COLLISION:
-                sess.begin_collision(ws.col_sel)
+        if got.using:
+            self._pose = got.matrix
+            if self._pose0 is None:  # the press that took a handle
+                self._pose0 = got.matrix.copy()
+                if self.kind == COLLISION:
+                    sess.begin_collision(ws.col_sel)
+                else:
+                    sess.begin(ws.selection)
             else:
-                sess.begin(ws.selection)
-        if self._pose0 is not None and (got.using or self._using):
-            m = got.matrix @ np.linalg.inv(self._pose0)
-            if got.using:
-                sess.preview(m)
-            else:
-                try:
-                    ops = sess.commit(m, self._pose0[:3, 3])
-                except EditError as e:
-                    ops, ws.message = [], f"refused: {e}"
-                ws.after_commit(ops)
-                self.reseat()
-        self._using = got.using
-        return got.using or got.over
+                sess.preview(got.matrix @ np.linalg.inv(self._pose0))
+        elif got.done and self._pose0 is not None:
+            pose0, self._pose0 = self._pose0, None
+            try:
+                ops = sess.commit(got.matrix @ np.linalg.inv(pose0), pose0[:3, 3])
+            except EditError as e:
+                ops, ws.message = [], f"refused: {e}"
+            ws.after_commit(ops)
+            self.reseat()
+        return got
 
     def end_gizmo(self) -> None:
-        sess = self.ws.session
-        if self._using and sess is not None and sess.previewing:
-            sess.cancel()
-        self._using = False
+        """Abandons a running drag; the selection goes back where it was."""
+        if self._pose0 is not None:
+            self.manipulator.cancel()
+            sess = self.ws.session
+            if sess is not None and sess.previewing:
+                sess.cancel()
+            self._pose0 = None
         self.reseat()
 
     def reseat(self) -> None:
-        """The gizmo follows the selection after an undo or a numeric apply."""
-        self._pose = self._pose0 = None
+        """The gizmo follows the selection after an edit, an undo or a new selection."""
+        if self._pose0 is None:
+            self._pose = None
