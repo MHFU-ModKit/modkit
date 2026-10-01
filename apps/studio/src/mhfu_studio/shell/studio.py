@@ -3,7 +3,8 @@
 """The documents and actions behind the window, for any toolkit to drive.
 
 Every action ends in `changed()`; a window listens once and re-reads what it shows, so no
-control has to know which others depend on what it did.
+control has to know which others depend on what it did. Questions (drop unsaved edits? where to
+save?) go through hooks the window installs; without them the studio goes on unasked.
 """
 
 from __future__ import annotations
@@ -59,6 +60,14 @@ class Findings:
         return self.found
 
 
+def doc_name(ws: Workspace) -> str:
+    """`ws`'s document as the window names it: its file, or "untitled <workspace>"."""
+    doc = ws.document
+    if doc is None:
+        return "no document"
+    return doc.path.name if doc.path is not None else f"untitled {ws.name}"
+
+
 class Studio:
     """The registered workspaces, the active one, and what the window can do to them."""
 
@@ -80,14 +89,26 @@ class Studio:
         #: the first exception each action raised this run (label, traceback); the window goes on
         self.errors: list[tuple[str, str]] = []
         self.findings = Findings()
+        #: "save", "discard" or "cancel" for the named documents' unsaved edits
+        self.ask_discard: Callable[[list[str]], str] | None = None
+        #: where to save a document that has no file yet; None is a cancel
+        self.ask_path: Callable[[Workspace], Path | None] | None = None
         self._closed = False
         self._listeners: list[Callable[[], None]] = []
+        #: each workspace's `message` as last copied to ours
+        self._heard = {w.name: w.message for w in self.workspaces}
 
     # ---- change ------------------------------------------------------------------- #
     def listen(self, fn: Callable[[], None]) -> None:
         self._listeners.append(fn)
 
     def changed(self) -> None:
+        """Tells the listeners; a new message from the active workspace becomes ours."""
+        ws = self.active
+        if ws.message != self._heard.get(ws.name):
+            self._heard[ws.name] = ws.message
+            if ws.message:
+                self.message = ws.message
         for fn in list(self._listeners):
             fn()
 
@@ -133,11 +154,15 @@ class Studio:
         self.changed()
 
     def open(self, path: Path | str) -> bool:
-        """Opens `path` in the first workspace that can, and switches to it."""
+        """Opens `path` in the first workspace that can, and switches to it; False when it
+        did not open, or its unsaved edits were kept (`discard_ok`)."""
         path = Path(path)
         ws = pick(self.workspaces, path)
         if ws is None:
             self.message = f"nothing here opens {path.name}"
+            self.changed()
+            return False
+        if not self.discard_ok(ws):
             self.changed()
             return False
         try:
@@ -151,9 +176,31 @@ class Studio:
         self.changed()
         return True
 
-    def save(self, path: Path | str | None = None) -> bool:
-        doc = self.active.document
+    def discard_ok(self, *workspaces: Workspace) -> bool:
+        """Whether their documents may be dropped: no unsaved edits, or `ask_discard` said to
+        discard them, or to save them and they saved. A cancel clears the message."""
+        dirty = [w for w in workspaces if w.document is not None and w.document.dirty]
+        if not dirty or self.ask_discard is None:
+            return True
+        got = self.ask_discard([doc_name(w) for w in dirty])
+        if got == "save":
+            return all(self.save(ws=w) for w in dirty)
+        if got != "discard":
+            self.message = ""
+        return got == "discard"
+
+    def save(self, path: Path | str | None = None, ws: Workspace | None = None) -> bool:
+        """`ws`'s document (the active one's) to `path`, or to its file; one without a file
+        asks `ask_path`."""
+        ws = self.active if ws is None else ws
+        doc = ws.document
         ok = False
+        if doc is not None and path is None and doc.path is None and self.ask_path is not None:
+            path = self.ask_path(ws)
+            if path is None:
+                self.message = ""
+                self.changed()
+                return False
         if doc is None:
             self.message = "nothing to save"
         else:
@@ -163,7 +210,7 @@ class Studio:
                 self.message = f"not saved: {e}"
             else:
                 if path is not None:
-                    self.active.refresh()
+                    ws.refresh()
                 self.findings.stale()
                 self.message = f"saved {where}"
                 ok = True

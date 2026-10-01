@@ -12,13 +12,13 @@ from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QLocale, QPointF, QRectF, Qt, QTimer
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QHelpEvent, QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import QSizePolicy, QStackedWidget, QToolTip, QVBoxLayout, QWidget
 
 from mhfu_studio.monster.align import EFFECT, GATE, IMPACT, OURS, WINDOW, Marker
 from mhfu_studio.monster.panels.common import MARKERS
-from mhfu_studio.monster.panels.widgets import NoScene, Pages
+from mhfu_studio.monster.panels.widgets import NoScene
 from mhfu_studio.monster.render.playback import GAME_HZ, OBSERVED_SPEEDS
 from mhfu_studio.shell.overlay import Ink
 from mhfu_studio.shell.widgets import plain
@@ -132,11 +132,12 @@ class FrameStrip(QWidget):
             if any(x < b and x + tw > a for a, b in taken):
                 continue
             taken.append((x - 2.0, x + tw + 2.0))
-            at = QPointF(x, 3 + fm.ascent())
-            p.setPen(theme.color(Ink.SHADOW))
-            p.drawText(at + QPointF(1, 1), mk.label)
+            # on a chip of the picture's shadow: the strip is mid-grey in a light theme
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(theme.color(Ink.SHADOW))
+            p.drawRoundedRect(QRectF(x - 2.0, 2.0, tw + 4.0, fm.height() + 1.0), 3.0, 3.0)
             p.setPen(theme.color(MARKERS[mk.kind]))
-            p.drawText(at, mk.label)
+            p.drawText(QPointF(x, 3 + fm.ascent()), mk.label)
 
     def _legend(self, p: QPainter) -> None:
         fm = p.fontMetrics()
@@ -218,7 +219,6 @@ class TimelinePanel(kit.Panel):
             suffix=" f/frame",
             on=lambda v: act("speed", lambda: self._set("speed", v))(),
         )
-        self.speed.setLocale(QLocale.c())  # a point, like the presets beside it
         presets = [
             kit.button(
                 f"{s:.1f}",
@@ -272,7 +272,7 @@ class TimelinePanel(kit.Panel):
         self.empty = QStackedWidget()
         self.empty.addWidget(self.no_scene)
         self.empty.addWidget(self.no_clip)
-        self.pages = Pages(page, self.empty)
+        self.pages = kit.Pages(page, self.empty)
         self.body.addWidget(self.pages)
         self._playing: bool | None = None
         self.timer = QTimer(self)

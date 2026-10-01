@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING, Literal
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
+from mhfu_studio.shell.studio import doc_name
+from mhfu_studio.shell.widgets import plain
+
 if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
     from mhfu_studio.shell.workspace import Workspace
@@ -47,12 +50,17 @@ def ask_open(parent: QWidget, studio: Studio) -> Path | None:
     return Path(got) if got else None
 
 
-def ask_save_as(parent: QWidget, studio: Studio) -> Path | None:
-    doc = studio.active.document
-    start = str(doc.path) if doc is not None and doc.path is not None else _folder(studio)
-    got, _ = QFileDialog.getSaveFileName(
-        parent, "Save the document as", start, filters([studio.active])
-    )
+def open_document(parent: QWidget, studio: Studio) -> None:
+    """Asks for a document and opens it; says why when it did not open (a cancel is silent)."""
+    path = ask_open(parent, studio)
+    if path is not None and not studio.open(path) and studio.message:
+        warn(parent, "Not opened", plain(studio.message))
+
+
+def ask_save_as(parent: QWidget, ws: Workspace) -> Path | None:
+    doc = ws.document
+    start = str(doc.path if doc is not None and doc.path is not None else Path.cwd())
+    got, _ = QFileDialog.getSaveFileName(parent, f"Save {doc_name(ws)} as", start, filters([ws]))
     return Path(got) if got else None
 
 
@@ -62,7 +70,7 @@ def confirm_unsaved(parent: QWidget, names: Sequence[str]) -> Answer:
     got = QMessageBox.question(
         parent,
         "Unsaved edits",
-        f"Save the edits to {', '.join(names)} before closing? Edits you don't save are lost.",
+        f"Save the edits to {', '.join(names)} first? Edits you don't save are lost.",
         b.Save | b.Discard | b.Cancel,
         b.Save,
     )

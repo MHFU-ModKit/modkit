@@ -234,6 +234,38 @@ def test_scale(ws: MapWorkspace) -> None:
     assert (hi2 - lo2)[0] == pytest.approx(2 * (hi - lo)[0], rel=0.05)
 
 
+def test_turn_is_kept(ws: MapWorkspace) -> None:
+    assert ws.scene is not None and ws.session is not None
+    pick_crate(ws, ROTATE)
+    s = 1 / np.sqrt(2)
+    _, a = arm(ws, (s, 0, s), 1.0)
+    _, b = arm(ws, (s, 0, -s), 1.0)
+    drag(ws, a, b)
+    turn = ws.tools.pose()[:3, :3]
+    assert abs(turn[2, 0]) == pytest.approx(1.0, abs=0.05)  # local x now runs along world z
+    ws.set_tool(TOOL, SCALE)
+    _, a = arm(ws, turn[:, 0], 1.0)
+    _, b = arm(ws, turn[:, 0], 2.0)
+    assert ws.vp is not None
+    assert hit(ws.vp.camera, SIZE, ws.tools.pose(), "scale", *a) == Handle("axis", 0)
+    drag(ws, a, b)
+    assert ws.session.ops[-1]["scale"] == pytest.approx([1.0, 1.0, 2.0], abs=0.05)
+    assert np.allclose(ws.tools.pose()[:3, :3], turn)
+    ws.document.undo()
+    ws.refresh()
+    assert np.allclose(ws.tools.pose()[:3, :3], np.eye(3))
+
+
+def test_new_selection_is_unturned(ws: MapWorkspace) -> None:
+    assert ws.scene is not None
+    pick_crate(ws, MOVE)
+    ws.apply_numeric((0, 0, 0), (0, 90, 0), (1, 1, 1))
+    ws.frame(0.0)
+    assert not np.allclose(ws.tools.pose()[:3, :3], np.eye(3))
+    ws.tools.select(Selection.object(ws.scene, (0, 1), 0))
+    assert np.allclose(ws.tools.pose()[:3, :3], np.eye(3))
+
+
 def test_collision_gizmo(ws: MapWorkspace) -> None:
     assert ws.scene is not None and ws.session is not None
     ws.set_tool(PICK, COLLISION)

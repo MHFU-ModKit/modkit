@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 from mhfu.files import Extracted
+from mhfu_studio.map.core.atlas import Atlas
 from mhfu_studio.map.core.edit import EditSession, Selection, compose
 from mhfu_studio.map.core.scene import MapScene
 from mhfu_studio.map.document import DocumentError, MapDocument
+from mhfu_studio.map.workspace import MapWorkspace
 from mhfu_studio.stage import mesh
 
 OP = {
@@ -150,6 +152,30 @@ def test_dirty_follows_the_session(scene: MapScene, doc_dir: Path):
     assert (
         not doc.dirty and json.loads((doc_dir / "st139.json").read_text())[0]["op"] == "transform"
     )
+
+
+def test_untitled_takes_the_row(game: Extracted, atlas: Atlas) -> None:
+    ws = MapWorkspace(game, atlas)
+    ws.load_stage(139, row=0)
+    assert ws.doc.row is None and ws.session is not None
+    assert ws.scene is not None
+    ws.session.apply_now(Selection.object(ws.scene, (0, 1), 0), compose(by=(10, 0, 0)))
+    ws.sync_renderer()
+    assert ws.doc.row == 0 and ws.doc.dirty and ws.doc.manifest()["map"]["row"] == 0
+
+
+def test_undone_is_clean(scene: MapScene, tmp_path: Path) -> None:
+    doc = MapDocument.untitled()
+    sess = EditSession(scene)
+    doc.session = sess
+    sess.apply_now(Selection.object(scene, (0, 1), 0), compose(by=(10, 0, 0)))
+    doc.ensure_stage(139, ops=sess.ops, row=0)
+    assert doc.dirty
+    doc.undo()
+    assert not doc.dirty and doc.stage(139) is not None and doc.kept() == []
+    doc.save(tmp_path / "d")
+    assert "stage" not in tomllib.loads((tmp_path / "d" / "map.toml").read_text())
+    assert not (tmp_path / "d" / "st139.json").exists()
 
 
 def test_export(game: Extracted, scene: MapScene, doc_dir: Path, tmp_path: Path):

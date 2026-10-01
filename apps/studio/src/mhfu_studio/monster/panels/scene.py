@@ -13,7 +13,7 @@ from mhfu_studio.monster.render import skeleton
 from mhfu_studio.monster.render.mesh import MODES
 from mhfu_studio.ui import kit, theme
 
-from .widgets import NoScene, Pages, Table, alert
+from .widgets import NoScene, alert
 
 if TYPE_CHECKING:
     from mhfu_studio.monster.render.skeleton import SkeletonOverlay
@@ -85,7 +85,7 @@ class ScenePanel(kit.Panel):
         self.notes_box.body.addWidget(self.notes)
         for w in (self.name, self.game, form, self.notes_box):
             lay.addWidget(w)
-        self.pages = Pages(page, NoScene(studio))
+        self.pages = kit.Pages(page, NoScene(studio))
         self.body.addWidget(self.pages)
         self.body.addStretch(1)
 
@@ -206,7 +206,7 @@ class ViewPanel(kit.Panel):
         for w in (cam, model, bones, around):
             lay.addWidget(w)
         self.empty = NoScene(studio)
-        self.pages = Pages(page, self.empty)
+        self.pages = kit.Pages(page, self.empty)
         self.body.addWidget(self.pages)
         self.body.addStretch(1)
 
@@ -282,7 +282,7 @@ class JointsPanel(kit.Panel):
                 "tag lead", lambda vp: vp.tag_joints(vp.skeleton.lead if vp.skeleton else ())
             ),
         )
-        self.table = Table(
+        self.table = kit.Table(
             ["Tag", "Joint", "Role", "Verts"],
             tip="Every joint. Click one to pick it (red in the view); click its Tag box to paint"
             " the geometry it carries red, then isolate it above.",
@@ -293,7 +293,7 @@ class JointsPanel(kit.Panel):
         for w in (self.head, self.undriven, self.isolate, kit.row(clear, lead, stretch=True)):
             lay.addWidget(w)
         lay.addWidget(self.table, 1)
-        self.pages = Pages(page, NoScene(studio))
+        self.pages = kit.Pages(page, NoScene(studio))
         self.body.addWidget(self.pages)
 
     def _vp_act(self, label: str, fn: Callable[[MonsterViewport], object]) -> Callable[..., None]:

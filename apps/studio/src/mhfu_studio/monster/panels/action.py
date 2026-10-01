@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from mhfu_studio.monster import species
 from mhfu_studio.monster.align import Alignment
-from mhfu_studio.monster.panels.widgets import NoScene, Pages, Table, alert, set_level
+from mhfu_studio.monster.panels.widgets import NoScene, alert, set_level
 from mhfu_studio.shell.findings import Level, worst
 from mhfu_studio.shell.widgets import plain
 from mhfu_studio.ui import kit
@@ -116,7 +116,7 @@ class ActionPanel(kit.Panel):
             role="hint",
         )
         self.hosts_wait = kit.label("Surveying the hosts (once, then cached)…", role="muted")
-        self.hosts = Table(
+        self.hosts = kit.Table(
             ["host", "pairs", "timed", "budget", "fx", "hidden"],
             tip="Click a host to read its action table. Hidden: mains whose sub-states the scan"
             " cannot see, which is not the same as none.",
@@ -143,7 +143,7 @@ class ActionPanel(kit.Panel):
             " when it fits.",
             role="hint",
         )
-        self.moves = Table(
+        self.moves = kit.Table(
             ["move", "pair", "clip"],
             tip="The moves this port binds; click one to play its clip and read its pair",
         )
@@ -198,7 +198,7 @@ class ActionPanel(kit.Panel):
             " fires them cannot be decided offline. Bones are the host's.",
             role="hint",
         )
-        self.effects = Table(
+        self.effects = kit.Table(
             ["effect", "bone", "frame"],
             tip="Hover a row: what that bone is on your rig",
         )
@@ -257,7 +257,7 @@ class ActionPanel(kit.Panel):
         )
         self.filter.textChanged.connect(lambda _t: self.sync())
         self.count = kit.label(role="muted", wrap=False)
-        self.pairs = Table(
+        self.pairs = kit.Table(
             ["pair", "ends on", "tests", "fx", "after"],
             tip="Every pair the host's code dispatches. Click one to try it against the clip on"
             " screen. Ends on: what finishes it (the clip, or a frame budget). Tests: clip"
@@ -293,7 +293,7 @@ class ActionPanel(kit.Panel):
             "An action binds a host behaviour pair to one of the port's clips, so it needs a"
             " port manifest. Open one (ports/<name>.toml).",
         )
-        self.pages = Pages(self.split, self.no_scene)
+        self.pages = kit.Pages(self.split, self.no_scene)
         self.body.addWidget(self.pages)
         self.poll = QTimer(self)
         self.poll.setInterval(POLL)

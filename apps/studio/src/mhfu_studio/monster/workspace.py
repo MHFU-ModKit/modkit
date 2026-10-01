@@ -62,7 +62,6 @@ class MonsterWorkspace(Workspace):
         self.doc: PortDocument | None = None
         self.scene: Scene | None = None
         self.vp: MonsterViewport | None = None
-        #: the last action's outcome, for the status bar
         self.message = ""
         #: a dock to bring forward, for the window (`take_focus`)
         self._focus: str | None = None
@@ -222,7 +221,11 @@ class MonsterWorkspace(Workspace):
         )  # fmt: skip
 
     def status(self) -> str:
-        return self.message
+        """What is open; the last action's outcome is the studio's `message`."""
+        sc, sp = self.scene, self.host_species
+        if sc is None:
+            return ""
+        return sc.name if sp is None else f"{sc.name}   host em{sp:02d}"
 
     def frame(self, dt: float) -> None:
         if self.doc is not None and self.doc.manifest is not self._seen:
@@ -374,6 +377,55 @@ class MonsterWorkspace(Workspace):
             self.doc.revert()
             self.sync()
             self.message = "back to the file on disk"
+
+    # the runtime module
+
+    def exportable(self) -> bool:
+        """The saved manifest has tables the runtime module carries."""
+        doc = self.doc
+        if doc is None or doc.path is None:
+            return False
+        s = doc.saved_manifest
+        return bool(s.hurtboxes or s.hitzones or s.hitboxes or s.attacks)
+
+    def export_hit(self) -> None:
+        """The SAVED manifest's tables as `./<name>_hit.lua`: the module names its source and
+        content, so an unsaved edit would disagree without a trace."""
+        from mhfu_studio.monster import runtime
+
+        if self.doc is None:
+            raise ValueError("no manifest to export")
+        saved, intel = self.doc.saved_manifest, self.host_intel()
+        cap = runtime.host_capacity(intel)
+        self.hit_export = runtime.export(saved, None, cap, runtime.host_attack_tables(intel))
+        self.message = f"wrote {self.hit_export.name} (id {runtime.content_id(saved)})"
+
+    def deploy_hit(self, mods: Path | None = None) -> None:
+        """Exports when nothing is exported yet, then copies the module (and a stale
+        `mhfu_port.lua`) to `mods`, the memory stick's mods folder by default."""
+        from mhfu_studio.monster import runtime
+
+        mods = mods if mods is not None else self.mods_dir()
+        if mods is None:
+            raise FileNotFoundError("no memory stick with the framework's mods folder")
+        if self.hit_export is None:
+            self.export_hit()
+        if self.hit_export is not None:
+            dep = runtime.deploy(self.hit_export, mods)
+            self.message = (
+                f"deployed {dep.describe()}. A running game hot-reloads it; a cold one loads it"
+                " at boot"
+            )
+
+    @staticmethod
+    def mods_dir() -> Path | None:
+        """The memory stick's mods folder, when there is one."""
+        from mhfu import inject
+
+        try:
+            return inject.default_mods_dir()
+        except FileNotFoundError:
+            return None
 
     # the games and the intel
 

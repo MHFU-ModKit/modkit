@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from PySide6.QtCore import QEvent, QSignalBlocker, Qt, Signal
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
@@ -31,8 +32,10 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
     QSpinBox,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -46,6 +49,9 @@ from mhfu_studio.ui import theme
 Role = Literal["normal", "primary", "danger"]
 #: a number field's least width; three share a 300 px dock
 MIN_FIELD = 56
+#: a data-colour square's side
+SWATCH = 12
+LEFT = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
 Slot = Callable[..., object]
 
 
@@ -374,6 +380,29 @@ def pill(lv: Level, text: str | None = None) -> QLabel:
     return w
 
 
+def swatch_icon(color: Sequence[float]) -> QIcon:
+    """A square of a data colour (RGB or RGBA, drawn opaque): the view's own, so a row and
+    what it names in the view match."""
+    pm = QPixmap(SWATCH, SWATCH)
+    pm.fill(theme.color((float(color[0]), float(color[1]), float(color[2]), 1.0)))
+    return QIcon(pm)
+
+
+class Swatch(QLabel):
+    """A data colour beside a heading or a field; `set(None)` hides it."""
+
+    def __init__(self, color: Sequence[float] | None = None, tip: str = "") -> None:
+        super().__init__()
+        if tip:
+            self.setToolTip(tip)
+        self.set(color)
+
+    def set(self, color: Sequence[float] | None) -> None:
+        self.setVisible(color is not None)
+        if color is not None:
+            self.setPixmap(swatch_icon(color).pixmap(SWATCH, SWATCH))
+
+
 # ---- layout ------------------------------------------------------------------------------ #
 
 
@@ -423,6 +452,32 @@ class Section(QFrame):
         self.body = QVBoxLayout()
         self.body.setSpacing(6)
         lay.addLayout(self.body)
+
+
+class Pages(QStackedWidget):
+    """A panel's page, or its empty state (a `Empty`, or a stack of them); only the one shown
+    takes room."""
+
+    def __init__(self, page: QWidget, empty: QWidget) -> None:
+        super().__init__()
+        self.page, self.empty = page, empty
+        self._own = [QSizePolicy(page.sizePolicy()), QSizePolicy(empty.sizePolicy())]
+        self.addWidget(page)
+        self.addWidget(empty)
+        self.show_page(True)
+
+    def show_page(self, on: bool) -> None:
+        cur = self.page if on else self.empty
+        hidden = QSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        changed = self.currentWidget() is not cur
+        for w, own in zip((self.page, self.empty), self._own, strict=True):
+            want = own if w is cur else hidden
+            if w.sizePolicy() != want:
+                w.setSizePolicy(want)
+                changed = True
+        if changed:
+            self.setCurrentWidget(cur)
+            self.updateGeometry()
 
 
 class Empty(QWidget):
@@ -508,43 +563,94 @@ class Items(QListWidget):
             self.picked.emit(data)
 
 
+def fit_rows(table: QTableWidget, most: int) -> None:
+    """`table` as tall as its rows, up to `most` of them, with room for a sideways scroll bar."""
+    n = max(1, min(table.rowCount(), most))
+    head = table.horizontalHeader().sizeHint().height()
+    bar = table.horizontalScrollBar().sizeHint().height()
+    table.setFixedHeight(head + n * table.verticalHeader().defaultSectionSize() + bar + 4)
+
+
+#: a shown row: cells, data, swatch colour, tip, level
+_Row = tuple[tuple[str, ...], Hashable, tuple[float, ...] | None, str, Level | None]
+
+
 class Table(QTableWidget):
-    """Rows of text, rebuilt only when they change; `picked` carries a clicked row's data."""
+    """Rows of text, rebuilt only when they change; `picked` carries a clicked row's data.
+
+    A row may also carry a data colour (a swatch in `swatch_column`), a tip and a level, whose
+    colour follows the theme."""
 
     picked = Signal(object)
 
-    def __init__(self, headers: Sequence[str], *, tip: str) -> None:
+    def __init__(self, headers: Sequence[str], *, tip: str, swatch_column: int = 0) -> None:
         super().__init__(0, len(headers))
         _tip(self, tip)
+        self.swatch_column = swatch_column
         self.setHorizontalHeaderLabels(list(headers))
         self.verticalHeader().hide()
-        self.horizontalHeader().setStretchLastSection(True)
-        self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        head = self.horizontalHeader()
+        head.setStretchLastSection(True)
+        head.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        head.setDefaultAlignment(LEFT)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setShowGrid(False)
-        self._shown: list[tuple[tuple[str, ...], Hashable]] | None = None
+        self._shown: list[_Row] | None = None
         self.cellClicked.connect(lambda r, _c: self._pick(r))
 
     def set_rows(
-        self, rows: Sequence[Sequence[str]], data: Sequence[Hashable] | None = None
+        self,
+        rows: Sequence[Sequence[str]],
+        data: Sequence[Hashable] | None = None,
+        *,
+        colors: Sequence[Sequence[float] | None] | None = None,
+        tips: Sequence[str] | None = None,
+        levels: Sequence[Level | None] | None = None,
     ) -> bool:
-        keyed = [(tuple(r), None if data is None else data[i]) for i, r in enumerate(rows)]
+        """True when it rebuilt."""
+        keyed: list[_Row] = []
+        for i, r in enumerate(rows):
+            c = None if colors is None else colors[i]
+            d = None if data is None else data[i]
+            tip, lv = "" if tips is None else tips[i], None if levels is None else levels[i]
+            keyed.append((tuple(r), d, None if c is None else tuple(c), tip, lv))
         if keyed == self._shown:
             return False
         self._shown = keyed
         self.setRowCount(len(keyed))
-        for i, (cells, d) in enumerate(keyed):
+        for i, (cells, d, color, tip, lv) in enumerate(keyed):
             for j, text in enumerate(cells):
                 it = QTableWidgetItem(text)
                 it.setData(Qt.ItemDataRole.UserRole, d)
+                if tip:
+                    it.setToolTip(tip)
+                if lv is not None:
+                    it.setForeground(theme.level(lv))
+                if color is not None and j == self.swatch_column:
+                    it.setIcon(swatch_icon(color))
                 self.setItem(i, j, it)
         return True
 
+    def fit(self, most: int = 8) -> None:
+        fit_rows(self, most)
+
+    def changeEvent(self, e: QEvent) -> None:  # noqa: N802
+        super().changeEvent(e)
+        if e.type() == QEvent.Type.StyleChange:  # a theme switch: level colours follow
+            for i, row in enumerate(self._shown or []):
+                lv = row[4]
+                if lv is None:
+                    continue
+                for j in range(self.columnCount()):
+                    it = self.item(i, j)
+                    if it is not None:
+                        it.setForeground(theme.level(lv))
+
     def select_data(self, d: Hashable) -> None:
-        for i, (_, x) in enumerate(self._shown or []):
-            if x == d:
+        for i, row in enumerate(self._shown or []):
+            if row[1] == d:
                 self.selectRow(i)
                 return
         self.clearSelection()
@@ -552,6 +658,83 @@ class Table(QTableWidget):
     def _pick(self, r: int) -> None:
         if self._shown is not None and 0 <= r < len(self._shown):
             self.picked.emit(self._shown[r][1])
+
+
+class Grid(QTableWidget):
+    """Numbers to type into: `edited(row, column, value)` after an edit parses (`0x` hex too)
+    and falls in `lo..hi`. Cells are rebuilt only when what they show changes."""
+
+    edited = Signal(int, int, int)
+
+    def __init__(
+        self,
+        columns: Sequence[str],
+        *,
+        tip: str,
+        lo: int = 0,
+        hi: int = 255,
+        rows: Sequence[str] = (),
+    ) -> None:
+        super().__init__(len(rows), len(columns))
+        _tip(self, tip)
+        self.lo, self.hi = lo, hi
+        self.setHorizontalHeaderLabels(list(columns))
+        if rows:
+            self.setVerticalHeaderLabels(list(rows))
+        else:
+            self.verticalHeader().hide()
+        self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.horizontalHeader().setStretchLastSection(True)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+            | QAbstractItemView.EditTrigger.AnyKeyPressed
+        )
+        self._shown: object = None
+        self.itemChanged.connect(self._changed)
+
+    def set_cells(
+        self,
+        cells: Sequence[Sequence[str]],
+        *,
+        editable: bool | Sequence[bool] = True,
+        tips: Sequence[str] | None = None,
+        headers: Sequence[str] | None = None,
+    ) -> bool:
+        """Rows of cell text; `editable` for all, or per column. True when it rebuilt."""
+        key = (tuple(map(tuple, cells)), editable, None if tips is None else tuple(tips), headers)
+        if key == self._shown:
+            return False
+        self._shown = key
+        with QSignalBlocker(self):
+            self.setRowCount(len(cells))
+            if headers is not None:
+                self.setVerticalHeaderLabels(list(headers))
+            for r, row in enumerate(cells):
+                for c, text in enumerate(row):
+                    it = QTableWidgetItem(text)
+                    it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    on = editable if isinstance(editable, bool) else editable[c]
+                    if not on:
+                        it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    if tips is not None and tips[r]:
+                        it.setToolTip(tips[r])
+                    self.setItem(r, c, it)
+        return True
+
+    def fit(self, most: int = 10) -> None:
+        fit_rows(self, most)
+
+    def _changed(self, it: QTableWidgetItem) -> None:
+        try:
+            v = int(it.text().strip(), 0)
+        except ValueError:
+            v = None
+        if v is None or not self.lo <= v <= self.hi:
+            self._shown = None  # the next sync puts the old value back
+            return
+        self.edited.emit(it.row(), it.column(), v)
 
 
 # ---- panels ------------------------------------------------------------------------------ #

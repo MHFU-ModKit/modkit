@@ -266,6 +266,7 @@ PARTS = {
     ],
     "grid": {"present": True, "states": [{"va": "0x3000", "rows": [[i] * 10 for i in range(7)]}]},
 }
+#: as an overlay has them: sets from 0, records from 0 with record 0 (and here 1-5) blank
 ATTACKS = {
     "present": True,
     "spawner": "0x4000",
@@ -275,14 +276,18 @@ ATTACKS = {
         {
             "handle": "0x5000",
             "records": "0x6000",
+            "volume_table": "0x7800",
             "primary": True,
             "sets": [
+                {"index": 0, "va": "0x6F00", "spheres": [sphere(1)]},
+                {"index": 1, "va": "0x6F10", "spheres": [sphere(1)]},
                 {"index": 2, "va": "0x7000", "spheres": [sphere(2, radius=40.0), sphere(1)]},
                 {"index": 3, "va": "0x7100", "spheres": [sphere(127, radius=50.0)]},
             ],
             "attacks": [
-                {"id": 6, "power": 64, "element": "0x10", "volume": 2},
-                {"id": 7, "power": 30, "volume": 3},
+                *({"id": i} for i in range(6)),
+                {"id": 6, "power": 64, "element": "0x10", "volume": 2, "raw": "0140"},
+                {"id": 7, "power": 30, "volume": 3, "raw": "011e"},
             ],
         }
     ],

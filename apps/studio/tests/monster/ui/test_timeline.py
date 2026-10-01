@@ -6,7 +6,7 @@ import pytest
 from mhfu_studio.monster.panels.timeline import STRIP_TIP, TimelinePanel
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
-from mhfu_studio.ui import kit
+from mhfu_studio.ui import kit, theme
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 
@@ -123,3 +123,19 @@ def test_sync_shows_an_outside_change(panel: TimelinePanel, workspace: MonsterWo
     assert panel.frame.text() == "frame 0.0 / 10", "nothing re-reads without a change"
     panel.sync()
     assert panel.frame.text() != "frame 0.0 / 10"
+
+
+def test_labels_read_in_a_light_theme(qtbot: Any, workspace: MonsterWorkspace) -> None:
+    theme.apply(theme.theme("Moss", False))
+    try:
+        workspace.play_slot(1, 0.0)
+        workspace.select_pair(1, 4)
+        p = make(qtbot, workspace)
+        s = p.strip
+        mk = next(m for m in s.markers if not m.unreachable)
+        img = s.grab().toImage()
+        under = img.pixelColor(round(s.x_of(mk.frame) + 2), 4)  # the label's chip
+        strip = theme.color(theme.current().view)
+        assert under.lightnessF() < strip.lightnessF() - 0.2
+    finally:
+        theme.apply(theme.theme("Ember", True))

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import pytest
 from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.workspace import MonsterWorkspace
@@ -33,6 +34,10 @@ def test_nothing_open() -> None:
     assert o.calls == [] and not ws.key(Key("Space")) and not ws.animating()
     assert ws.pointer(Pointer("press", 1, 1, (8, 8))) == Gesture.NONE
     assert ws.document is None and ws.status() == ""
+
+
+def test_status_names_the_scene(workspace: MonsterWorkspace) -> None:
+    assert workspace.status() == "t   host em75"
 
 
 def test_keys_drive_the_transport(workspace: MonsterWorkspace) -> None:
@@ -166,3 +171,23 @@ def test_window_builds_the_docks(
     w.sync()
     moves = w.findChild(QDockWidget, "monster/Moves")
     assert moves is not None and moves.isVisible()
+
+
+def test_deploy_needs_a_stick(workspace: MonsterWorkspace, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(MonsterWorkspace, "mods_dir", staticmethod(lambda: None))
+    assert workspace.exportable() and not MonsterWorkspace().exportable()
+    with pytest.raises(FileNotFoundError, match="memory stick"):
+        workspace.deploy_hit()
+
+
+def test_attacks_resolve_and_export(
+    workspace: MonsterWorkspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = workspace.host_attacks()
+    assert host is not None and [r.id for r in host.attacks] == [6, 7]
+    assert [r.id for r in host.attacks_using(2)] == [6]
+    workspace.select_pair(1, 4)
+    assert workspace.pair_sets() == [2]
+    monkeypatch.chdir(tmp_path)
+    workspace.export_hit()
+    assert (tmp_path / "t_hit.lua").is_file() and "wrote t_hit.lua" in workspace.message

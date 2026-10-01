@@ -175,6 +175,11 @@ class Selection:
     def empty(self) -> bool:
         return not any(len(v) for v in self.vertices.values())
 
+    def same(self, other: Selection) -> bool:
+        """The same vertices, whatever parts chose them."""
+        a, b = self.vertices, other.vertices
+        return a.keys() == b.keys() and all(np.array_equal(a[k], b[k]) for k in a)
+
     @property
     def n_vertices(self) -> int:
         return int(sum(len(v) for v in self.vertices.values()))

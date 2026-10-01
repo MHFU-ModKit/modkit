@@ -19,19 +19,7 @@ from mhfu_studio.monster.render.hitboxes import PART_COLORS
 from mhfu_studio.ui import kit
 
 from .common import bone_span
-from .widgets import (
-    ExportRow,
-    Grid,
-    NoScene,
-    Pages,
-    SaveRow,
-    Table,
-    VolumeForm,
-    alert,
-    describe,
-    fly_to,
-    tiles,
-)
+from .widgets import ExportRow, NoScene, SaveRow, VolumeForm, alert, describe, fly_to, tiles
 
 if TYPE_CHECKING:
     from mhfu_studio.monster.parts import PartSession
@@ -110,7 +98,7 @@ class PartsPanel(kit.Panel):
         self.summary = kit.label(role="muted")
         self.provenance = kit.label(role="muted")
         self.orphans = alert(level="error")
-        self.parts = Table(
+        self.parts = kit.Table(
             ["Part", "Name", "Vols", "Bones", "Row"],
             tip="The eight damage counters and the volumes that feed each. Click one to light"
             " only its volumes in the view. " + PART_VS_ROW,
@@ -153,7 +141,7 @@ class PartsPanel(kit.Panel):
             tip="Lists only the volumes of the part picked above",
             on=lambda on: self._act("only part", lambda: setattr(ws, "only_selected_part", on)),
         )
-        self.vols = Table(
+        self.vols = kit.Table(
             ["Vol", "Bone", "Shape", "Radius", "Part", "Row", "Offset"],
             tip="The port's hurtboxes, one per row; * marks one changed since the last save."
             " Click one to edit it and light it in the view.",
@@ -232,7 +220,7 @@ class PartsPanel(kit.Panel):
         self.state_lay.addWidget(self.states)
         self._state_names: tuple[str, ...] = ()
         self._heads: tuple[str, ...] = ()
-        self.grid = Grid(
+        self.grid = kit.Grid(
             hitzone.COLUMNS,
             tip="Percent of each damage kind a hit on a row's volumes takes (0 to 255);"
             " double-click a cell to type once the port owns a grid",
@@ -292,7 +280,7 @@ class PartsPanel(kit.Panel):
         )
         lay.addWidget(self.no_manifest)
 
-        self.pages = Pages(page, NoScene(studio))
+        self.pages = kit.Pages(page, NoScene(studio))
         self.body.addWidget(self.pages)
         self.body.addStretch(1)
 

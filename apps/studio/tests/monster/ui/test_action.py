@@ -4,7 +4,6 @@ from typing import Any
 
 import pytest
 from mhfu_studio.monster.panels.action import ActionPanel
-from mhfu_studio.monster.panels.widgets import Table
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.ui import kit
@@ -32,7 +31,7 @@ def panel(qtbot: Any, workspace: MonsterWorkspace) -> ActionPanel:
     return make(qtbot, workspace)
 
 
-def click_row(t: Table, data: object) -> None:
+def click_row(t: kit.Table, data: object) -> None:
     row = next(
         r for r in range(t.rowCount()) if t.item(r, 0).data(Qt.ItemDataRole.UserRole) == data
     )
@@ -131,20 +130,14 @@ def test_the_host_beside(panel: ActionPanel, workspace: MonsterWorkspace) -> Non
 def test_hits_and_the_hand_offs(panel: ActionPanel, workspace: MonsterWorkspace) -> None:
     workspace.select_pair(1, 4)
     panel.sync()
-    assert "attack id 6" in panel.hits_text.text()
+    assert "attack 6 (power 64" in panel.hits_text.text()
     button(panel.then, "(0,3)").click()
     assert workspace.pair == (0, 3)
     button(panel, "Show in Moves").click()
     assert workspace.take_focus() == "Moves" and workspace.graph.picked == (0, 3)
 
 
-def test_edit_set_in_hitboxes(
-    panel: ActionPanel, workspace: MonsterWorkspace, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The synthetic records are blank, so the join is stubbed to the one for set 2."""
-    host = workspace.host_attacks()
-    assert host is not None
-    monkeypatch.setattr(type(host), "records_for", lambda self, ids, sp=None: [self.attack(6)])
+def test_edit_set_in_hitboxes(panel: ActionPanel, workspace: MonsterWorkspace) -> None:
     workspace.select_pair(1, 4)
     panel.sync()
     assert "attack 6 (power 64, element 0x10) with set 2" in panel.hits_text.text()

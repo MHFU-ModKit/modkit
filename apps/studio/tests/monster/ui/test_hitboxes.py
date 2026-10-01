@@ -1,12 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-import copy
 from pathlib import Path
 from typing import Any
 
 import pytest
-from mhfu.em.intel import SpeciesIntel
-from mhfu_studio.monster.panels import common
 from mhfu_studio.monster.panels.hitboxes import HitboxesPanel
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
@@ -17,20 +14,6 @@ from PySide6.QtWidgets import QPushButton
 
 @pytest.fixture
 def ws(workspace: MonsterWorkspace) -> MonsterWorkspace:
-    """The synthetic port on intel whose attack records are not blank and whose table has an
-    address and every id from 0, so records resolve and the runtime module exports."""
-    si = workspace.host_intel()
-    assert si is not None and workspace.scene is not None
-    doc = copy.deepcopy(si.doc)
-    table = doc["attacks"]["tables"][0]
-    table["volume_table"] = "0x7800"
-    one = {"bone": 1, "part": 0, "hitzone_row": 0, "radius": 20.0}
-    table["sets"][:0] = [{"index": i, "va": f"0x6F{i}0", "spheres": [one]} for i in (0, 1)]
-    for a in table["attacks"]:
-        a["raw"] = "01"
-    table["attacks"][:0] = [{"id": i} for i in range(6)]  # blank, as record 0 is in the game
-    workspace.intel_cache[75] = SpeciesIntel(doc)
-    workspace.load(workspace.scene, workspace.doc)
     return workspace
 
 
@@ -139,7 +122,7 @@ def test_export_and_deploy(
     mods = tmp_path / "mods"
     mods.mkdir()
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(common, "mods_dir", lambda: mods)
+    monkeypatch.setattr(MonsterWorkspace, "mods_dir", staticmethod(lambda: mods))
     p.sync()
     assert p.export.deploy.isEnabled()
     p.export.deploy.click()

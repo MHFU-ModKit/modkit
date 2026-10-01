@@ -70,12 +70,6 @@ class DocumentPanel(kit.Panel):
             empty="No stage yet: edit a section and it joins.",
         )
         self.stages.picked.connect(self._load)
-        self.add = kit.button(
-            "Add the loaded section",
-            tip="Lists the loaded section in the document now, before it has any edit; a"
-            " section joins on its own with its first edit",
-            on=studio.act("add section", self._add),
-        )
 
         files = kit.Section("File", tip=DOC_TIP)
         files.body.addWidget(
@@ -102,7 +96,7 @@ class DocumentPanel(kit.Panel):
                     "Save",
                     tip="Writes map.toml and the edit lists into the document's folder; asks for"
                     " a folder the first time",
-                    on=self._save,
+                    on=studio.save,
                     role="primary",
                     icon="ph.floppy-disk",
                 ),
@@ -151,7 +145,6 @@ class DocumentPanel(kit.Panel):
         lay.addWidget(self.intro)
         lay.addWidget(head)
         lay.addWidget(self.stages)
-        lay.addWidget(self.add)
         lay.addWidget(files)
         lay.addWidget(checks)
         lay.addStretch(1)
@@ -173,23 +166,17 @@ class DocumentPanel(kit.Panel):
         self.note.setText(f"New document {doc.name}: not saved yet.")
 
     def _new(self) -> None:
+        if not self.studio.discard_ok(self.ws):
+            return
         got = QFileDialog.getExistingDirectory(self, "A folder for the new map document")
         if got:
             self.studio.act("new document", lambda: self.new(Path(got)))()
 
     def _open(self) -> None:
-        path = dialogs.ask_open(self, self.studio)
-        if path is not None and not self.studio.open(path):
-            dialogs.warn(self, "Not opened", plain(self.studio.message))
-
-    def _save(self) -> None:
-        if self.ws.doc.path is None:
-            self._save_as()
-        else:
-            self.studio.save()
+        dialogs.open_document(self, self.studio)
 
     def _save_as(self) -> None:
-        path = dialogs.ask_save_as(self, self.studio)
+        path = dialogs.ask_save_as(self, self.ws)
         if path is not None:
             self.studio.save(path)
 
@@ -202,11 +189,6 @@ class DocumentPanel(kit.Panel):
     def _set_name(self, name: str) -> None:
         self.ws.doc.name = name
         self.ws.doc.touch()
-
-    def _add(self) -> None:
-        ws = self.ws
-        if ws.scene is not None and ws.session is not None:
-            ws.doc.ensure_stage(ws.scene.stage, ops=ws.session.ops)
 
     def _load(self, stage: object) -> None:
         if isinstance(stage, int):
@@ -260,15 +242,11 @@ class DocumentPanel(kit.Panel):
                     f"{s.label}  {s.ops_file}  {len(s.ops)} edit(s)"
                     + ("  (loaded)" if s.number == loaded else ""),
                     s.number,
-                    f"{s.label}'s edits live in {s.ops_file}. Click to load it.",
+                    f"{s.label}'s edits live in {s.ops_file}. Click to load it."
+                    + ("" if s.ops else " With no edit left it is not saved."),
                 )
                 for s in doc.stages
             ]
         )
         if rebuilt:
             fit(self.stages)
-        self.add.setVisible(
-            sc is not None and ws.session is not None and doc.stage(sc.stage) is None
-        )
-        if sc is not None:
-            self.add.setText(f"Add st{sc.stage:03d} to the document")

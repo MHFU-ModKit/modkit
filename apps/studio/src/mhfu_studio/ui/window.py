@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mhfu_studio.shell.studio import doc_name
 from mhfu_studio.shell.widgets import plain
 from mhfu_studio.shell.workspace import Dock, Tool, ToolGroup, Workspace
 from mhfu_studio.ui import chrome, dialogs, kit, theme
@@ -46,7 +47,7 @@ AREAS = {
     "bottom": Qt.DockWidgetArea.BottomDockWidgetArea,
 }
 #: the share of the window each side's docks take in a fresh layout
-SHARES = {"left": 0.2, "right": 0.24, "bottom": 0.22}
+SHARES = {"left": 0.22, "right": 0.22, "bottom": 0.32}
 FAMILIES = {
     "Ember": "Warm: orange on dark brown, or burnt orange on cream",
     "Moss": "Cool: green on dark pine, or deep green on mint",
@@ -59,7 +60,8 @@ MODES: dict[theme.Mode, tuple[str, str]] = {
 
 
 class DockTitle(QWidget):
-    """A dock's title: its name in small caps, which explains the dock, and a close button."""
+    """A dock's title: its name in small caps, which explains the dock, and a close button.
+    Tabbed with others a dock shows only its tab (`Window._retitle`)."""
 
     def __init__(self, dock: QDockWidget, tip: str) -> None:
         super().__init__()
@@ -85,6 +87,12 @@ class Window(QMainWindow):
         self.settings = settings if settings is not None else QSettings()
         self._closed = False
         self._theming = False
+        #: per dock: its title bar, and the blank one it wears while tabbed
+        self._titles: dict[QDockWidget, tuple[DockTitle, QWidget]] = {}
+        self._retitling = QTimer(self)
+        self._retitling.setSingleShot(True)
+        self._retitling.setInterval(0)
+        self._retitling.timeout.connect(self._retitle)
         native = chrome.MAC  # read here, so a test can draw the other platforms' chrome
         chrome.frame(self, native)
         self.setDockOptions(
@@ -149,6 +157,8 @@ class Window(QMainWindow):
         QGuiApplication.styleHints().colorSchemeChanged.connect(self._scheme_changed)
         self._apply_theme()
 
+        studio.ask_discard = lambda names: dialogs.confirm_unsaved(self, names)
+        studio.ask_path = lambda ws: dialogs.ask_save_as(self, ws)
         geo = self.settings.value("geometry")
         if not (isinstance(geo, QByteArray) and self.restoreGeometry(geo)):
             self.resize(1500, 940)
@@ -162,14 +172,32 @@ class Window(QMainWindow):
         d.setObjectName(name)  # saveState keys on it
         d.setAllowedAreas(AREAS["left"] | AREAS["right"] | AREAS["bottom"])
         d.setWidget(widget)
-        d.setTitleBarWidget(DockTitle(d, tip))
+        title = DockTitle(d, tip)
+        self._titles[d] = (title, QWidget())
+        d.setTitleBarWidget(title)
         d.toggleViewAction().setToolTip(tip)
         d.visibilityChanged.connect(partial(self._dock_shown, d))
+        d.topLevelChanged.connect(self._retitle_soon)
+        d.dockLocationChanged.connect(self._retitle_soon)
         return d
 
     def _dock_shown(self, d: QDockWidget, visible: bool) -> None:
+        self._retitle_soon()
         if visible:
             self._sync_panel(d)
+
+    def _retitle_soon(self, *_: object) -> None:
+        """After the layout settles: a tab moved, a dock closed, floated or docked."""
+        if not self._closed:
+            self._retitling.start()
+
+    def _retitle(self) -> None:
+        """A dock alone in its area or floating wears its title bar; tabbed, only its tab."""
+        for d, (title, blank) in self._titles.items():
+            tabbed = not d.isFloating() and bool(self.tabifiedDockWidgets(d))
+            want = blank if tabbed else title
+            if d.titleBarWidget() is not want:
+                d.setTitleBarWidget(want)
 
     def _build(self, ws: Workspace) -> list[QDockWidget]:
         out = []
@@ -213,6 +241,7 @@ class Window(QMainWindow):
                 [round(size * SHARES[area])],
                 Qt.Orientation.Horizontal if across else Qt.Orientation.Vertical,
             )
+        self._retitle()
 
     def _focus(self, d: QDockWidget) -> bool:
         spec = self._specs.get(d)
@@ -233,6 +262,7 @@ class Window(QMainWindow):
         state = self.settings.value(f"layout/{ws.name}")
         if isinstance(state, QByteArray) and self.restoreState(state, STATE_VERSION):
             self._hide_others()  # in case a saved layout knew them as shown
+        self._retitle()
         self._fill_view_menu(ws)
         self._show_tools(ws)
 
@@ -324,7 +354,10 @@ class Window(QMainWindow):
             "Open…", "Opens a document; the workspace that reads it comes up", self.ask_open, k.Open
         )
         self.save_action = self._action(
-            "Save", "Writes the document back to its file", self.save, k.Save
+            "Save",
+            "Writes the document back to its file; asks for one the first time",
+            s.save,
+            k.Save,
         )
         self.save_as_action = self._action(
             "Save As…",
@@ -434,18 +467,10 @@ class Window(QMainWindow):
     # ---- documents ------------------------------------------------------------------- #
 
     def ask_open(self) -> None:
-        path = dialogs.ask_open(self, self.studio)
-        if path is not None and not self.studio.open(path):
-            dialogs.warn(self, "Not opened", plain(self.studio.message))
-
-    def save(self) -> bool:
-        doc = self.studio.active.document
-        if doc is not None and doc.path is None:
-            return self.save_as()
-        return self.studio.save()
+        dialogs.open_document(self, self.studio)
 
     def save_as(self) -> bool:
-        path = dialogs.ask_save_as(self, self.studio)
+        path = dialogs.ask_save_as(self, self.studio.active)
         return path is not None and self.studio.save(path)
 
     # ---- sync ------------------------------------------------------------------------ #
@@ -467,6 +492,7 @@ class Window(QMainWindow):
             if d.isVisible():
                 self._sync_panel(d)
         self.studio.guard("sync", lambda: self._sync_window(ws))()
+        self._retitle()
         self.view.update()
 
     def _sync_panel(self, d: QDockWidget) -> None:
@@ -485,7 +511,7 @@ class Window(QMainWindow):
         for a in self.workspace_actions:
             a.setChecked(a.data() == ws.name)
         self.bar.sync()
-        self.setWindowTitle(f"{chrome.doc_name(ws)}[*] - {self.studio.title}")
+        self.setWindowTitle(f"{doc_name(ws)}[*] - {self.studio.title}")
         self.setWindowModified(doc is not None and doc.dirty)
         self.message.setText(plain(self.studio.message))
         self.where.setText(plain(ws.status()))
@@ -499,25 +525,16 @@ class Window(QMainWindow):
     # ---- closing --------------------------------------------------------------------- #
 
     def closeEvent(self, e: QCloseEvent) -> None:  # noqa: N802
-        dirty = [w for w in self.studio.workspaces if w.document is not None and w.document.dirty]
-        if dirty:
-            got = dialogs.confirm_unsaved(self, [chrome.doc_name(w) for w in dirty])
-            if got == "cancel" or (got == "save" and not self._save_all(dirty)):
-                e.ignore()
-                return
+        if not self.studio.discard_ok(*self.studio.workspaces):
+            e.ignore()
+            return
         self._closed = True
         self._pending.stop()
         self._slow.stop()
+        self._retitling.stop()
         if self._shown is not None:
             self._save_layout(self._shown)
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.sync()
         self.view.release()
         e.accept()
-
-    def _save_all(self, workspaces: list[Workspace]) -> bool:
-        for w in workspaces:
-            self.studio.switch(w.name)
-            if not self.save():
-                return False
-        return True
