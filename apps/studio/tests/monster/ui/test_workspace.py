@@ -178,3 +178,16 @@ def test_deploy_needs_a_stick(workspace: MonsterWorkspace, monkeypatch: pytest.M
     assert workspace.exportable() and not MonsterWorkspace().exportable()
     with pytest.raises(FileNotFoundError, match="memory stick"):
         workspace.deploy_hit()
+
+
+def test_attacks_resolve_and_export(
+    workspace: MonsterWorkspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = workspace.host_attacks()
+    assert host is not None and [r.id for r in host.attacks] == [6, 7]
+    assert [r.id for r in host.attacks_using(2)] == [6]
+    workspace.select_pair(1, 4)
+    assert workspace.pair_sets() == [2]
+    monkeypatch.chdir(tmp_path)
+    workspace.export_hit()
+    assert (tmp_path / "t_hit.lua").is_file() and "wrote t_hit.lua" in workspace.message

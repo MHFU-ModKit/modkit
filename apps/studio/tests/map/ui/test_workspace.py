@@ -23,8 +23,8 @@ T, B = QEvent.Type, Qt.MouseButton
 MINE = ("Selection", "Add", "Groups", "Collision")
 
 
-#: docks ported on another branch; until it lands they fail to build here
 def errors(w: Window) -> list[str]:
+    """Every action, panel build and sync that raised: none may."""
     return [label for label, _ in w.studio.errors]
 
 
