@@ -100,6 +100,13 @@ class Target:
         return self._tex
 
     @property
+    def resolved(self) -> moderngl.Framebuffer:
+        """The single-sample framebuffer around `texture`; `resolve` first. A window blits it."""
+        if self._resolve is None:
+            raise RuntimeError("the target was released")
+        return self._resolve
+
+    @property
     def gl_texture_id(self) -> int:
         return int(self.texture.glo)
 
