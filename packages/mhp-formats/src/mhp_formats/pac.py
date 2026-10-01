@@ -48,17 +48,26 @@ class Pac:
         raise FormatError("PAC entries are not laid out at any alignment the games use")
 
     def to_bytes(self) -> bytes:
-        out = bytearray(_up(4 + 8 * len(self.entries), self.align))
-        table = []
-        for entry in self.entries:
-            if not entry:
-                table.append((0, 0))
-                continue
-            out += bytes(_up(len(out), self.align) - len(out))
-            table.append((len(out), len(entry)))
-            out += entry
+        table = self.table()
+        out = bytearray(_up(4 + 8 * len(table), self.align))
+        for (off, _), entry in zip(table, self.entries, strict=True):
+            if entry:
+                out += bytes(off - len(out)) + entry
         out[: 4 + 8 * len(table)] = _HEADER.build({"count": len(table), "table": table})
         return bytes(out) + self.tail
+
+    def table(self) -> list[tuple[int, int]]:
+        """The `(offset, size)` of each entry where `to_bytes` puts it."""
+        at = _up(4 + 8 * len(self.entries), self.align)
+        out = []
+        for entry in self.entries:
+            if not entry:
+                out.append((0, 0))
+                continue
+            at = _up(at, self.align)
+            out.append((at, len(entry)))
+            at += len(entry)
+        return out
 
 
 def _layout(data: bytes) -> list[tuple[int, int]] | None:

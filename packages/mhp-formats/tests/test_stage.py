@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 from mhp_formats import FormatError
 from mhp_formats.fu.stage import (
+    BASE,
+    GRID_AT,
+    GRID_POINTER,
     TERM,
+    TRI_SIZE,
+    TRIS_POINTER,
     Collision,
     Environment,
     Hits,
@@ -57,6 +62,23 @@ def test_round_trip():
     assert data.endswith(b"\x7f" * 5)
 
 
+def test_offsets():
+    stage = _stage()
+    data = stage.to_bytes()
+    table = stage.table()
+    assert table == [struct.unpack_from("<2I", data, 4 + 8 * k) for k in range(7)]
+    assert table[2] == (0, 0)
+    coll, _ = table[5]
+    for (at, size), hits in zip(stage.collision.table(), stage.collision.chunks, strict=True):
+        chunk = data[coll + at : coll + at + size]
+        assert chunk == hits.to_bytes()
+        assert struct.unpack_from("<I", chunk, GRID_POINTER)[0] == GRID_AT - BASE
+        assert struct.unpack_from("<I", chunk, TRIS_POINTER)[0] == hits.tri_offset - BASE
+        assert struct.unpack_from(f"<{len(hits.cells)}I", chunk, GRID_AT) == tuple(hits.heads())
+        last = hits.tri_offset + TRI_SIZE * (len(hits.tris) - 1)
+        assert chunk[last:] == hits.tris[-1].to_bytes()
+
+
 def test_placeholder():
     data = (6).to_bytes(4, "little") + bytes(48) + b"disc slack"
     assert Stage.sniff(data)
@@ -103,7 +125,8 @@ def test_hits_layout():
     assert (cx, cz, nx, nz, ox, oz, grid) == (501, 501, 3, 2, 0, 0, 0x20)
     assert tris == len(data) - 8 - 56 * 5
     heads = struct.unpack_from("<6I", data, 0x28)
-    assert heads[0] == 0x20 + 4 * 6
+    assert heads[0] == 0x20 + 4 * 6 and list(heads) == hits.heads()
+    assert hits.tri_offset == 8 + tris
     first = struct.unpack_from(f"<{len(hits.cells[0]) + 1}I", data, 8 + heads[0])
     assert list(first) == [t * 56 for t in hits.cells[0]] + [TERM]
     assert Hits.from_bytes(data) == hits

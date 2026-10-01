@@ -192,6 +192,12 @@ def test_clear_prims():
     assert quads.clear_prims([0, 4]) == 1
 
 
+def test_spans():
+    assert _quads().spans() == [(0, 0), (0, 4), (4, 4), (8, 6), (14, 2)]
+    with pytest.raises(ValueError):
+        Block([], Vertices(VertexType(position=BITS16))).spans()
+
+
 def test_budget():
     block = _grid()
     assert block.budget() == (4, 27, 19, 16)
@@ -260,16 +266,62 @@ def test_pack_runs_out():
     assert packed.ran_out and packed.used == 0
 
 
+def _bent(block: Block, before: list) -> int:
+    """Drawn triangles with some corners moved and some not: a primitive the pack left as it
+    was still drawing a vertex the pack wrote."""
+    after = block.vertices.position
+    moved = {i for i, (a, b) in enumerate(zip(before, after, strict=True)) if a != b}
+    return sum(0 < len(moved.intersection(t)) < 3 for t in block.triangles() if len(set(t)) == 3)
+
+
 def test_pack_skips_shared():
     block = _grid()
-    before = block.vertices.positions((8.0, 8.0, 8.0))
+    before = list(block.vertices.position)
+    packed = block.pack(QUAD, [(0, 1, 2)], (8.0, 8.0, 8.0), reindex=False, collapse=False)
+    # every strip shares a row with the next: none can take a triangle without bending one
+    assert (packed.used, packed.skipped, packed.triangles, packed.left) == (0, 4, 0, 1)
+    assert block.vertices.position == before
     packed = block.pack(QUAD, [(0, 1, 2)], (8.0, 8.0, 8.0), reindex=False)
-    assert (packed.used, packed.skipped, packed.triangles) == (1, 3, 1)
-    after = block.vertices.positions((8.0, 8.0, 8.0))
-    assert after[:8] == before[:8]
-    assert [after[i] for i in block.triangles()[12]] == QUAD[:3]
+    assert (packed.used, packed.skipped) == (4, 0)  # chosen whole, so they collapse together
+    assert all(len({block.vertices.position[i] for i in t}) == 1 for t in block.triangles())
     with pytest.raises(ValueError):
         block.pack(QUAD, QUAD_TRIS, (1.0, 1.0, 1.0), [9])
+
+
+def _chain() -> Block:
+    """A private strip; two strips sharing vertex 7; a triangle list sharing 10 with the last."""
+    block = Block.build(_grid().vertices, [])
+    for name in ("position", "texture", "color"):
+        setattr(block.vertices, name, getattr(block.vertices, name)[:13])
+    strip = Command.prim(Prim.TRIANGLE_STRIP, 4)
+    block.commands[6:6] = [strip, strip, strip, Command.prim(Prim.TRIANGLES, 3)]
+    block.indices = [0, 1, 2, 3, 4, 5, 6, 7, 7, 8, 9, 10, 10, 11, 12]
+    return block
+
+
+@pytest.mark.parametrize("collapse", [True, False])
+def test_pack_never_bends(collapse: bool):
+    loose = [(0.0, 0.5, 0.0), (1.0, 0.5, 0.0), (0.0, 0.5, 1.0)]
+    positions = [
+        *loose,
+        *((x + 2, y, z) for x, y, z in loose),
+        *((x + 4, y, z) for x, y, z in loose),
+    ]
+    tris = [(0, 1, 2), (3, 4, 5), (6, 7, 8)]
+    for prims in ([0, 1, 2], [1, 2], [0, 1, 2, 3], None):
+        block = _chain()
+        before = list(block.vertices.position)
+        packed = block.pack(
+            positions, tris, (8.0, 8.0, 8.0), prims, reindex=False, collapse=collapse
+        )
+        assert _bent(block, before) == 0, prims
+        assert block.indices == _chain().indices
+    block = _chain()
+    packed = block.pack(
+        positions, tris, (8.0, 8.0, 8.0), [0, 1, 2], reindex=False, collapse=collapse
+    )
+    assert (packed.triangles, packed.skipped, packed.left) == (1, 2, 2)
+    assert block.vertices.position[4:] == _chain().vertices.position[4:]
 
 
 def test_pack_no_collapse():

@@ -31,22 +31,32 @@ class Stripper:
         return self._left
 
     def strip(self, max_vertices: int, face_order: int = 0) -> list[int]:
-        """A strip of at most `max_vertices` indices, `[]` when none is left or it is under 3."""
+        """A strip of at most `max_vertices` indices, `[]` when none is left or it is under 3.
+
+        The first triangle starts in whichever of its rotations has a neighbour to go on to,
+        so a quad given as (a, b, c), (a, c, d) still makes one strip; winding is kept."""
         if max_vertices < 3 or not self._left:
             return []
         a, b, c = self._tris[self._take(self._first())]
-        out = [b, a, c] if face_order & 1 else [a, b, c]
+        rotations = [[y, x, z] if face_order & 1 else [x, y, z] for x, y, z in _turns(a, b, c)]
+        out = next(
+            (r for r in rotations if self._follow(r, 1, face_order) is not None), rotations[0]
+        )
         k = 1
         while len(out) < max_vertices:
-            p, q = out[-2], out[-1]
-            # triangle k of a strip is (p, q, x), or (q, p, x) when its winding flips
-            edge = (q, p) if (k + face_order) & 1 else (p, q)
-            nxt = next((t for t in self._by_edge.get(edge, ()) if self._alive[t]), None)
+            nxt = self._follow(out, k, face_order)
             if nxt is None:
                 break
-            out.append(self._third(self._take(nxt), p, q))
+            out.append(self._third(self._take(nxt), out[-2], out[-1]))
             k += 1
         return out
+
+    def _follow(self, out: list[int], k: int, face_order: int) -> int | None:
+        """A live triangle that can be triangle `k` of the strip `out`."""
+        p, q = out[-2], out[-1]
+        # triangle k of a strip is (p, q, x), or (q, p, x) when its winding flips
+        edge = (q, p) if (k + face_order) & 1 else (p, q)
+        return next((t for t in self._by_edge.get(edge, ()) if self._alive[t]), None)
 
     def loose(self, count: int, face_order: int = 0) -> list[Triangle]:
         """Up to `count` triangles for a triangle-list PRIM."""
@@ -68,3 +78,8 @@ class Stripper:
 
     def _third(self, i: int, p: int, q: int) -> int:
         return next(x for x in self._tris[i] if x != p and x != q)
+
+
+def _turns(a: int, b: int, c: int) -> list[Triangle]:
+    """The three rotations of a triangle, the given one first: all wound alike."""
+    return [(a, b, c), (b, c, a), (c, a, b)]

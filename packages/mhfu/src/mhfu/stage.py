@@ -33,6 +33,8 @@ RESOURCE_SLOTS = 43
 """Rows of the resident-file table."""
 FREE_FILE = 0xFFFF
 """RESOURCE_SLOT.FILE_ID of a free slot."""
+LOADED = 0x0002
+"""RESOURCE_SLOT.FLAGS bit of a slot whose file is in."""
 CHUNK = 1 << 20
 """Bytes per read when scanning live memory."""
 
@@ -192,6 +194,15 @@ def read_map_table(game: Extracted) -> list[tuple[int, ...]]:
     return map_table(game.overlay(files.GAME_SUB))
 
 
+def exit_fault(stage: int, target: int, table: list[tuple[int, ...]]) -> str:
+    """Why an exit from `stage` to `target` leads nowhere sensible, or "" for a sound one."""
+    if target not in files.STAGES or not target:
+        return "no such stage"
+    if not any(stage in row and target in row for row in table):
+        return "the target shares no map with this stage"
+    return ""
+
+
 # --- live tables: resident files, the map manager, gathering spots, small-monster spawns ---
 
 
@@ -204,14 +215,14 @@ class ResourceSlot(View):
 
 
 def resident_files(mem: Memory) -> dict[int, ResourceSlot]:
-    """The loaded files by extracted file id."""
+    """The loaded files by extracted file id: slots flagged LOADED, with a buffer."""
     base = mem.u32(a.RESOURCE_TABLE)
     if not base:
         return {}
     out = {}
     for k in range(RESOURCE_SLOTS):
         slot = ResourceSlot(mem, base + k * a.RESOURCE_SLOT.step)
-        if slot.file_id != FREE_FILE and slot.data:
+        if slot.file_id != FREE_FILE and slot.data and slot.flags & LOADED:
             out[slot.file_id - files.ENGINE_SKEW] = slot
     return out
 

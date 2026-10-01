@@ -111,6 +111,13 @@ def test_map_table():
     assert table[:3] == [(98, 92, 93), (), ()] and len(table) == S.MAP_ROWS
 
 
+def test_exit_fault():
+    table = [(98, 99), (139, 140)]
+    assert S.exit_fault(98, 99, table) == ""
+    assert S.exit_fault(98, 140, table) == "the target shares no map with this stage"
+    assert S.exit_fault(98, 0, table) == S.exit_fault(98, 999, table) == "no such stage"
+
+
 def ram(size: int = 0x2000) -> Image:
     return Image(bytes(size), a.USER_RAM)
 
@@ -121,6 +128,7 @@ def test_resident_files_and_map_manager():
     mem.write_u32(a.RESOURCE_TABLE, base)
     mem.write(base, struct.pack("<HHII", 2, files.engine_id(5905), 0x1234, 0))
     mem.write(base + 12, struct.pack("<HHII", 0, S.FREE_FILE, 0, 0))
+    mem.write(base + 24, struct.pack("<HHII", 0, files.engine_id(5906), 0x5678, 0))
     (slot,) = S.resident_files(mem).items()
     assert slot[0] == 5905 and slot[1].data == 0x1234
     mgr_mem = Image(bytes(0x400), a.MAP_MANAGER_PTR)

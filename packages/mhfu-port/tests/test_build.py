@@ -16,8 +16,8 @@ from mhp_formats.skeleton import Bone, Skeleton
 
 PORTS = Path(__file__).parents[3] / "ports"
 BUILT = {
-    "brute_tigrex": "a3c5e3be41e557b279699ba3017f72e45da1297294f78badab055dd188f48b34",
-    "zinogre": "afbdb95e06acd2f4729f28a2a47ec3452fc7723dffe331df51970ade70535f90",
+    "brute_tigrex": "e2ea7c5ce1c991b1230e0c1ba035e11a6bbd0c5b118e7f6b7f3db5c03e12c34d",
+    "zinogre": "e473098a2dd1b9d4d13f5f404689963fbfe11840d3452458f1579f4c2488a6cb",
 }
 """sha256 of each manifest's build: changes only with an intended change to the port."""
 HEAD = '[port]\nname = "t"\nhost_species = 75\npac = "t.bin"\n[source]\nmodel = 5248\n'

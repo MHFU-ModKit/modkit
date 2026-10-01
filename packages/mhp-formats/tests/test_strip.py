@@ -40,6 +40,31 @@ def test_strips(cap, face_order):
     assert s.strip(cap) == []
 
 
+def _fans(quads):
+    """Quads as an OBJ writes them: (a, b, c), (a, c, d), each fanned from its first corner."""
+    return [t for a, b, c, d in quads for t in ((a, b, c), (a, c, d))]
+
+
+BOX = [(0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
+
+
+@pytest.mark.parametrize("face_order", [0, 1])
+def test_fanned_quads_join(face_order):
+    source = _fans(BOX)
+    s = Stripper(source)
+    strips = []
+    while len(s):
+        strips.append(s.strip(4, face_order))
+    assert len(strips) == 6 and all(len(st) == 4 for st in strips)
+    drawn = [t for st in strips for t in triangles(Prim.TRIANGLE_STRIP, st, face_order)]
+    assert Counter(map(_canon, drawn)) == Counter(map(_canon, source))
+
+
+def test_rotation_only_when_it_helps():
+    assert Stripper([(0, 1, 2)]).strip(10) == [0, 1, 2]
+    assert Stripper([(0, 1, 2), (0, 2, 3)]).strip(10) in ([1, 2, 0, 3], [2, 0, 1, 3])
+
+
 def test_strips_chain():
     s = Stripper(_grid(10, 1))
     assert len(s.strip(22)) == 22
