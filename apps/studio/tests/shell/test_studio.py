@@ -93,3 +93,13 @@ def test_workspace_message(studio: Studio) -> None:
     assert studio.message == "saved"
     studio.switch("monster")
     assert studio.message == "elsewhere"
+
+
+def test_repeated_refusal_shows(studio: Studio) -> None:
+    ws = studio.active
+    refuse = studio.act("move", lambda: setattr(ws, "message", "move refused: too far"))
+    refuse()
+    studio.save()
+    assert studio.message == "nothing to save"
+    refuse()
+    assert studio.message == "move refused: too far" and ws.said == 2
