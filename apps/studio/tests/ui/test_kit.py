@@ -71,3 +71,20 @@ def test_refill_rebuilds_on_change_only(qtbot: Any) -> None:
     qtbot.addWidget(box)
     assert kit.refill(box, [("a", "A"), ("b", "B")], current="b")
     assert not kit.refill(box, [("a", "A"), ("b", "B")]) and box.currentData() == "b" and not got
+
+
+def test_put_is_quiet(qtbot: Any) -> None:
+    got: list[object] = []
+    boxes = [
+        kit.number(tip="n", decimals=1, on=got.append),
+        kit.integer(tip="i", on=got.append),
+        kit.check("c", tip="c", on=got.append),
+        kit.choice([("a", "A"), ("b", "B")], tip="ch", on=got.append),
+        kit.Segmented([("a", "A"), ("b", "B")], tip="s", on=got.append),
+        kit.Vec3(tip="v", on=got.append),
+    ]
+    for w, v in zip(boxes, (2.5, 3, True, "b", "b", (1, 2, 3)), strict=True):
+        qtbot.addWidget(w)
+        kit.put(w, v)
+    assert not got and boxes[0].value() == 2.5 and boxes[3].currentData() == "b"
+    assert boxes[5].value() == [1.0, 2.0, 3.0]
