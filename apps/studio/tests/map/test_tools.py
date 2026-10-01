@@ -198,6 +198,7 @@ def test_move(ws: MapWorkspace) -> None:
     ws.refresh()
     ws.frame(0.0)
     assert not ws.session.ops and np.allclose(ws.selection.centroid(ws.scene), start, atol=1.0)
+    assert "applied" not in ws.hud()
 
 
 def test_snap(ws: MapWorkspace) -> None:

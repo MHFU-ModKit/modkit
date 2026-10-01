@@ -132,7 +132,8 @@ class SelectionPanel(kit.Panel):
         self.ops.setMinimumHeight(140)
         self.warnings = kit.pill("warning", "")
         self.warnings.setWordWrap(True)
-        edits.body.addWidget(kit.row(self.count, self.undo, self.redo, stretch=False))
+        edits.body.addWidget(self.count)
+        edits.body.addWidget(kit.row(self.undo, self.redo, stretch=True))
         edits.body.addWidget(self.ops)
         edits.body.addWidget(self.warnings)
         lay.addWidget(edits)
@@ -214,8 +215,10 @@ class SelectionPanel(kit.Panel):
         where = ", ".join(f"sub{k[0]}.g{k[1]} x{n}" for k, n in bad.items())
         self.range.setText(f"Vertices past what the model can store: {where}" if bad else "")
         self.range.setVisible(bool(bad))
-        n = len(sess.ops)
-        self.count.setText(f"{n} edits in {sess.n_steps} steps" if n else "No edits yet")
+        n, steps = len(sess.ops), sess.n_steps
+        self.count.setText(
+            f"{n} edit{'s' * (n != 1)} in {steps} step{'s' * (steps != 1)}" if n else "No edits yet"
+        )
         newest = reversed(list(enumerate(sess.ops, 1)))
         self.ops.set_items([kit.Item(f"{i:3d}  {describe_op(op)}") for i, op in newest])
         warnings = [plain(w) for w in sess.warnings()[:3]]

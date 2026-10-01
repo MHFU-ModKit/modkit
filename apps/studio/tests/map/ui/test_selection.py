@@ -55,7 +55,7 @@ def test_transform(panel: SelectionPanel, ws: MapWorkspace) -> None:
     press(panel, "Apply")
     op = ws.session.ops[0]
     assert op["by"][0] == pytest.approx(100.0) and op["scale"][1] == pytest.approx(2.0)
-    assert panel.count.text() == "1 edits in 1 steps" and "transform" in panel.ops.item(0).text()
+    assert panel.count.text() == "1 edit in 1 step" and "transform" in panel.ops.item(0).text()
     assert panel.undo.isEnabled()
     press(panel, "Reset fields")
     assert panel.by.value() == [0.0, 0.0, 0.0] and panel.factor.value() == [1.0, 1.0, 1.0]

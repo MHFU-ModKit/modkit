@@ -286,6 +286,7 @@ class MapWorkspace(Workspace):
             self.tools.select_collision(CollisionSelection([(int(op.get("chunk", 1)), op["tri"])]))
 
     def refresh(self) -> None:
+        self.message = ""  # it named the edit an undo just took back
         self.tools.reseat()
 
     # sections
