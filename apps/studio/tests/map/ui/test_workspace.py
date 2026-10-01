@@ -14,6 +14,7 @@ from mhfu_studio.map.tools import MOVE, TOOL
 from mhfu_studio.map.workspace import MapWorkspace
 from mhfu_studio.shell.manipulator import ARM_PX, world_per_px
 from mhfu_studio.ui import kit
+from mhfu_studio.ui.testing import no_gl_or_skip
 from mhfu_studio.ui.window import Window
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QKeyEvent, QMouseEvent
@@ -29,6 +30,7 @@ def errors(w: Window) -> list[str]:
 
 
 def open_map(make_window: Callable[..., Window], ws: MapWorkspace) -> Window:
+    no_gl_or_skip()
     assert ws.vp is not None and ws.scene is not None
     w = make_window(ws)
     w.sync()

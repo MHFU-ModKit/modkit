@@ -32,6 +32,7 @@ if _qt_loads():
     # few tests of a real GL window skip; MHFU_UI_DISPLAY=1 runs them on the display
     if not os.environ.get("MHFU_UI_DISPLAY"):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ.setdefault("QT_QPA_OFFSCREEN_NO_GLX", "1")  # else it takes GLX from $DISPLAY
     from mhfu_studio.ui.app import prepare
 
     prepare()  # GL 3.3 core for every QOpenGLWidget: before pytest-qt makes the QApplication

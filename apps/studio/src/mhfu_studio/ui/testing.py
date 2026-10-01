@@ -146,6 +146,10 @@ class FakeWorkspace(testing.FakeWorkspace):
         return label
 
 
+#: platforms whose windows have no GL (offscreen only with QT_QPA_OFFSCREEN_NO_GLX on Linux)
+NO_GL = ("offscreen", "minimal")
+
+
 def gl_or_skip() -> None:
     """Skips the calling test where Qt cannot make a GL 3.3 context."""
     import pytest
@@ -153,7 +157,7 @@ def gl_or_skip() -> None:
 
     from mhfu_studio.ui.app import surface_format
 
-    if QGuiApplication.platformName() in ("offscreen", "minimal"):
+    if QGuiApplication.platformName() in NO_GL:
         pytest.skip(f"the {QGuiApplication.platformName()} platform has no GL")
     ctx, surface = QOpenGLContext(), QOffscreenSurface()
     ctx.setFormat(surface_format())
@@ -165,6 +169,16 @@ def gl_or_skip() -> None:
     ctx.doneCurrent()
     if not ok:
         pytest.skip(f"GL {ctx.format().version()} is older than 3.3")
+
+
+def no_gl_or_skip() -> None:
+    """Skips the calling test where the view has GL: it would draw a workspace set up on the
+    test's headless context from its own context, which does not own those objects."""
+    import pytest
+    from PySide6.QtGui import QGuiApplication
+
+    if QGuiApplication.platformName() not in NO_GL:
+        pytest.skip(f"the {QGuiApplication.platformName()} view draws with its own GL context")
 
 
 def shot(widget: QWidget, path: Path | str) -> Path:
