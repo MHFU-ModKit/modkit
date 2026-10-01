@@ -42,7 +42,8 @@ class Gate(QStackedWidget):
         """The page when the game files are there and, with `section`, a section is loaded;
         else the empty state naming what is missing. True when the page shows."""
         if ws.atlas is None:
-            return self.need(NO_DATA, f"{plain(ws.data_error).rstrip('.')}. {DATA_HINT}")
+            why = "" if "MHFU_DATA" in ws.data_error else f"{plain(ws.data_error)}. "
+            return self.need(NO_DATA, why + DATA_HINT)
         if section and (ws.scene is None or ws.session is None):
             return self.need(NO_SECTION, f"Load a section in the Map panel to {self.what}.")
         return self.ready()
