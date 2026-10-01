@@ -569,7 +569,12 @@ class ActionPanel(kit.Panel):
                     on=act("then", partial(ws.select_pair, *e.to[0]) if e.to else lambda: None),
                 )
                 why = kit.label(f"when {e.reason}" if e.reason else "always", role="muted")
-                out.append(kit.row(b, why, stretch=True))
+                row = QWidget()
+                lay = QHBoxLayout(row)
+                lay.setContentsMargins(0, 0, 0, 0)
+                lay.addWidget(b)
+                lay.addWidget(why, 1)  # the reason takes the width, not a wrap
+                out.append(row)
             return out
 
         self.then.setVisible(bool(nxt))

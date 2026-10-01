@@ -2,11 +2,10 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import json
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import pytest
 from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.workspace import MonsterWorkspace
@@ -137,15 +136,7 @@ def test_survey_runs_in_the_background(tmp_path: Path, intel75: Any) -> None:
     ws.close()
 
 
-@pytest.fixture
-def gl_back(gl: Any) -> Iterator[None]:
-    """The shared headless context current again once the window and its own are gone."""
-    yield
-    gl.__enter__()
-
-
 def test_window_builds_the_docks(
-    gl_back: None,
     make_window: Callable[..., Any],
     port_doc: PortDocument,
     synthetic_pac: bytes,
