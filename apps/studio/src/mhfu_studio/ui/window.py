@@ -47,7 +47,7 @@ AREAS = {
     "bottom": Qt.DockWidgetArea.BottomDockWidgetArea,
 }
 #: the share of the window each side's docks take in a fresh layout
-SHARES = {"left": 0.2, "right": 0.24, "bottom": 0.22}
+SHARES = {"left": 0.22, "right": 0.22, "bottom": 0.32}
 FAMILIES = {
     "Ember": "Warm: orange on dark brown, or burnt orange on cream",
     "Moss": "Cool: green on dark pine, or deep green on mint",
@@ -60,7 +60,8 @@ MODES: dict[theme.Mode, tuple[str, str]] = {
 
 
 class DockTitle(QWidget):
-    """A dock's title: its name in small caps, which explains the dock, and a close button."""
+    """A dock's title: its name in small caps, which explains the dock, and a close button.
+    Tabbed with others a dock shows only its tab (`Window._retitle`)."""
 
     def __init__(self, dock: QDockWidget, tip: str) -> None:
         super().__init__()
@@ -86,6 +87,12 @@ class Window(QMainWindow):
         self.settings = settings if settings is not None else QSettings()
         self._closed = False
         self._theming = False
+        #: per dock: its title bar, and the blank one it wears while tabbed
+        self._titles: dict[QDockWidget, tuple[DockTitle, QWidget]] = {}
+        self._retitling = QTimer(self)
+        self._retitling.setSingleShot(True)
+        self._retitling.setInterval(0)
+        self._retitling.timeout.connect(self._retitle)
         native = chrome.MAC  # read here, so a test can draw the other platforms' chrome
         chrome.frame(self, native)
         self.setDockOptions(
@@ -165,14 +172,32 @@ class Window(QMainWindow):
         d.setObjectName(name)  # saveState keys on it
         d.setAllowedAreas(AREAS["left"] | AREAS["right"] | AREAS["bottom"])
         d.setWidget(widget)
-        d.setTitleBarWidget(DockTitle(d, tip))
+        title = DockTitle(d, tip)
+        self._titles[d] = (title, QWidget())
+        d.setTitleBarWidget(title)
         d.toggleViewAction().setToolTip(tip)
         d.visibilityChanged.connect(partial(self._dock_shown, d))
+        d.topLevelChanged.connect(self._retitle_soon)
+        d.dockLocationChanged.connect(self._retitle_soon)
         return d
 
     def _dock_shown(self, d: QDockWidget, visible: bool) -> None:
+        self._retitle_soon()
         if visible:
             self._sync_panel(d)
+
+    def _retitle_soon(self, *_: object) -> None:
+        """After the layout settles: a tab moved, a dock closed, floated or docked."""
+        if not self._closed:
+            self._retitling.start()
+
+    def _retitle(self) -> None:
+        """A dock alone in its area or floating wears its title bar; tabbed, only its tab."""
+        for d, (title, blank) in self._titles.items():
+            tabbed = not d.isFloating() and bool(self.tabifiedDockWidgets(d))
+            want = blank if tabbed else title
+            if d.titleBarWidget() is not want:
+                d.setTitleBarWidget(want)
 
     def _build(self, ws: Workspace) -> list[QDockWidget]:
         out = []
@@ -216,6 +241,7 @@ class Window(QMainWindow):
                 [round(size * SHARES[area])],
                 Qt.Orientation.Horizontal if across else Qt.Orientation.Vertical,
             )
+        self._retitle()
 
     def _focus(self, d: QDockWidget) -> bool:
         spec = self._specs.get(d)
@@ -236,6 +262,7 @@ class Window(QMainWindow):
         state = self.settings.value(f"layout/{ws.name}")
         if isinstance(state, QByteArray) and self.restoreState(state, STATE_VERSION):
             self._hide_others()  # in case a saved layout knew them as shown
+        self._retitle()
         self._fill_view_menu(ws)
         self._show_tools(ws)
 
@@ -465,6 +492,7 @@ class Window(QMainWindow):
             if d.isVisible():
                 self._sync_panel(d)
         self.studio.guard("sync", lambda: self._sync_window(ws))()
+        self._retitle()
         self.view.update()
 
     def _sync_panel(self, d: QDockWidget) -> None:
@@ -503,6 +531,7 @@ class Window(QMainWindow):
         self._closed = True
         self._pending.stop()
         self._slow.stop()
+        self._retitling.stop()
         if self._shown is not None:
             self._save_layout(self._shown)
         self.settings.setValue("geometry", self.saveGeometry())

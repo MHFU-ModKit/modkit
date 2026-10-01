@@ -10,7 +10,7 @@ from mhfu_studio.shell.studio import Studio
 from mhfu_studio.shell.testing import FakeDocument
 from mhfu_studio.ui import chrome, dialogs, kit, theme
 from mhfu_studio.ui.testing import FakeWorkspace, gl_or_skip
-from mhfu_studio.ui.window import Window
+from mhfu_studio.ui.window import DockTitle, Window
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QDockWidget, QMainWindow
@@ -61,6 +61,32 @@ def test_reset_layout(make_window: Make) -> None:
     w.reset_action.trigger()
     assert w.dockWidgetArea(items) == LEFT and w.dockWidgetArea(notes) == RIGHT
     assert notes.isVisible() and dock(w, "Findings").isVisible()
+
+
+def test_tabbed_docks_show_only_their_tab(make_window: Make, qtbot: Any) -> None:
+    w = make_window()
+    items, notes = dock(w, "map/Items"), dock(w, "map/Notes")
+    titled = [d for d in (items, notes) if isinstance(d.titleBarWidget(), DockTitle)]
+    assert titled == [items, notes]
+    w.tabifyDockWidget(items, notes)
+    w.sync()
+    assert not isinstance(items.titleBarWidget(), DockTitle)
+    assert not isinstance(notes.titleBarWidget(), DockTitle)
+    notes.close()
+    qtbot.waitUntil(lambda: isinstance(items.titleBarWidget(), DockTitle))
+    notes.show()
+    qtbot.waitUntil(lambda: not isinstance(items.titleBarWidget(), DockTitle))
+    items.setFloating(True)
+    qtbot.waitUntil(lambda: isinstance(items.titleBarWidget(), DockTitle))
+
+
+def test_default_shares(make_window: Make) -> None:
+    w = make_window()
+    w.resize(1200, 800)
+    w.reset_layout()
+    QApplication.processEvents()
+    side, bottom = dock(w, "map/Items").width(), dock(w, "Findings").height()
+    assert 0.18 < side / w.width() < 0.26 and 0.28 < bottom / w.height() < 0.36
 
 
 def test_theme_menu(make_window: Make) -> None:
