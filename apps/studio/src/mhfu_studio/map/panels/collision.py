@@ -13,7 +13,7 @@ from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QCheckBox, QSpinBox, QVBoxLayout, QWidget
 
 from mhfu_studio.shell.camera import Bounds
-from mhfu_studio.shell.widgets import plain
+from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit, theme
 
 from ..core.edit import COLLISION, CollisionSelection

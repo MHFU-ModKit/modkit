@@ -4,11 +4,6 @@
 
 A workspace module `mhfu_studio.<area>.workspace` calls `register` at import; `discover`
 imports every area's. Nothing here imports GL or a toolkit.
-
-Two sets of hooks live here while the studio moves to Qt: the imgui ones (`panels`,
-`layout`, `toolbar`, `input`, `overlay`) and the Qt ones (`docks`, `tool_groups`, `pointer`,
-`key`, `paint`). A workspace implements one set; the imgui set goes when the last
-workspace has moved.
 """
 
 from __future__ import annotations
@@ -30,47 +25,6 @@ if TYPE_CHECKING:
 
     from mhfu_studio.shell.studio import Studio
     from mhfu_studio.shell.viewport import Viewport
-
-#: the dock space the shell's viewport window lives in; a workspace's splits start from it
-MAIN = "MainDockSpace"
-
-
-@dataclass(frozen=True)
-class Split:
-    """A dock space `name` cut from `parent` on `side`, taking `ratio` of it."""
-
-    parent: str
-    name: str
-    side: Literal["left", "right", "up", "down"]
-    ratio: float
-
-
-@dataclass(frozen=True)
-class Panel:
-    """A dockable window; `scroll=False` for panels that fill themselves (a graph, a canvas)."""
-
-    label: str
-    dock: str
-    draw: Callable[[], None]
-    focus: bool = False
-    scroll: bool = True
-
-
-@dataclass(frozen=True)
-class View:
-    """Where the viewport image is this frame, in imgui points, and what the mouse does on it."""
-
-    origin: tuple[float, float]
-    size: tuple[int, int]
-    hovered: bool
-    #: the capture button is held (true from press to release, wherever the pointer goes)
-    active: bool
-    #: framebuffer pixels per point
-    scale: float = 1.0
-
-    def mouse(self, x: float, y: float) -> tuple[float, float]:
-        """A screen position relative to the image."""
-        return x - self.origin[0], y - self.origin[1]
 
 
 @dataclass(frozen=True)
@@ -108,7 +62,7 @@ class ToolGroup:
 
 
 class Gesture(enum.Flag):
-    """Camera gestures a workspace's input hook consumed this frame."""
+    """Camera gestures a workspace's `pointer` hook consumed."""
 
     NONE = 0
     ORBIT = enum.auto()
@@ -125,7 +79,7 @@ class Workspace(Protocol):
 
     #: unique; the layout name and the menu entry
     name: str
-    #: open-dialog filters as portable-file-dialogs pairs: ("Port manifest", "*.toml", ...)
+    #: open-dialog filters as (name, pattern) pairs: ("Port manifest", "*.toml", ...)
     filters: Sequence[str] = ("All files", "*")
     #: how often `message` was set: the studio shows each one, a repeat too
     said: int = 0
@@ -159,46 +113,21 @@ class Workspace(Protocol):
         """Builds the viewport inside the first frame, when the window's context is current."""
         ...
 
-    def panels(self) -> Sequence[Panel]:
-        return ()
-
     def status(self) -> str: ...
 
     def close(self) -> None:
         """Releases GL objects; the context goes away after this."""
         ...
 
-    def layout(self) -> Sequence[Split]:
-        """Docking splits; the viewport keeps `MAIN`, the shell's Findings go to "Bottom"."""
-        return (
-            Split(MAIN, "Left", "left", 0.2),
-            Split(MAIN, "Right", "right", 0.24),
-            Split(MAIN, "Bottom", "down", 0.22),
-        )
-
     def frame(self, dt: float) -> None:
         """Once per frame before the viewport draws (advance playback, sync edits)."""
-
-    def toolbar(self) -> None:
-        """Drawn above the viewport image, inside the viewport window."""
-
-    def wants_mouse(self) -> bool:
-        """True when an overlay (a gizmo) owns the mouse; the shell then lays no capture."""
-        return False
-
-    def input(self, view: View) -> Gesture:
-        """Viewport mouse and keys before the camera; returns the gestures it consumed."""
-        return Gesture.NONE
-
-    def overlay(self, view: View) -> None:
-        """Drawn over the viewport image: gizmos, labels, a selection box."""
 
     def hud(self) -> str:
         """Lines at the image's top left, above the camera line."""
         return ""
 
     def animating(self) -> bool:
-        """True while the picture changes without input (holds the fps idling off)."""
+        """True while the picture changes without input (the view keeps redrawing)."""
         return False
 
     def reveal(self, target: Hashable) -> None:

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from mhfu_studio.shell.studio import doc_name
-from mhfu_studio.shell.widgets import plain
+from mhfu_studio.shell.text import plain
 
 if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
@@ -22,7 +22,7 @@ ALL = "All files (*)"
 
 
 def filters(workspaces: Iterable[Workspace]) -> str:
-    """Their portable-file-dialogs pairs ("Map document", "map.toml", ...) as one Qt filter."""
+    """Their filter pairs ("Map document", "map.toml", ...) as one Qt filter."""
     out: list[str] = []
     for w in workspaces:
         pairs: Sequence[str] = w.filters

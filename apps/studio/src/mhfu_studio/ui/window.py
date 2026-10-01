@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 from shiboken6 import getCppPointer
 
 from mhfu_studio.shell.studio import doc_name
-from mhfu_studio.shell.widgets import plain
+from mhfu_studio.shell.text import plain
 from mhfu_studio.shell.workspace import Dock, Tool, ToolGroup, Workspace
 from mhfu_studio.ui import chrome, dialogs, kit, theme
 from mhfu_studio.ui.findings import FindingsPanel

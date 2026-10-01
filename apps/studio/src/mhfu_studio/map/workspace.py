@@ -22,7 +22,7 @@ from mhfu_studio.shell.camera import Bounds
 from mhfu_studio.shell.input import Key as KeyEvent
 from mhfu_studio.shell.input import Pointer
 from mhfu_studio.shell.overlay import Overlay
-from mhfu_studio.shell.widgets import plain
+from mhfu_studio.shell.text import plain
 from mhfu_studio.shell.workspace import Dock, Gesture, ToolGroup, Workspace, register
 
 from .adding import AddForm

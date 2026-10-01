@@ -3,7 +3,7 @@
 import os
 
 from mhfu_studio.shell.camera import OrbitCamera
-from mhfu_studio.shell.widgets import camera_line, plain
+from mhfu_studio.shell.text import camera_line, plain
 
 
 def test_plain() -> None:

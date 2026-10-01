@@ -60,15 +60,6 @@ def ports() -> Path:
     return PORTS
 
 
-@pytest.fixture
-def imgui() -> Iterator[Any]:
-    """`imgui_bundle` swapped for `shell.testing`'s scripted fake: panels without a window."""
-    from mhfu_studio.shell.testing import fake_imgui
-
-    with fake_imgui() as fake:
-        yield fake
-
-
 # ---- Qt (use from a `ui/` directory, where Qt is known to load) ----
 
 

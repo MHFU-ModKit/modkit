@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from mhfu_studio.shell.widgets import plain
+from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit
 
 from ..core.edit import COLLISION, describe_op
