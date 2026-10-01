@@ -33,7 +33,8 @@ def run(*argv: str) -> int:
 
 def test_cli_stays_light():
     run_code = "import sys; from mhfu_studio.cli import parser; parser(); "
-    run_code += "print([m for m in sys.modules if m.startswith(('moderngl', 'imgui', 'numpy'))])"
+    heavy = "('moderngl', 'numpy', 'PySide6', 'qtawesome')"
+    run_code += f"print([m for m in sys.modules if m.startswith({heavy})])"
     import subprocess
 
     out = subprocess.run([sys.executable, "-c", run_code], capture_output=True, text=True)
