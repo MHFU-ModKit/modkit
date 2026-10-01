@@ -8,7 +8,6 @@ neither a display nor Qt's system libraries) or pytest-qt is not installed (`--n
 
 import importlib.util
 import os
-import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -29,14 +28,13 @@ def _qt_loads() -> bool:
 
 
 if _qt_loads():
+    # no windows on screen unless asked: offscreen draws every widget, but has no GL, so the
+    # few tests of a real GL window skip; MHFU_UI_DISPLAY=1 runs them on the display
+    if not os.environ.get("MHFU_UI_DISPLAY"):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from mhfu_studio.ui.app import prepare
 
     prepare()  # GL 3.3 core for every QOpenGLWidget: before pytest-qt makes the QApplication
-    # a display where there is one (GL tests need it); widgets alone render offscreen
-    if sys.platform != "darwin" and not (
-        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-    ):
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 else:
     collect_ignore_glob = ["ui/*", "*/ui/*"]
 
@@ -72,6 +70,15 @@ def imgui() -> Iterator[Any]:
 
 
 # ---- Qt (use from a `ui/` directory, where Qt is known to load) ----
+
+
+@pytest.fixture
+def gl_back() -> Iterator[None]:
+    """After a test that showed a GL view, the context current before it is current again."""
+    from mhfu_studio.shell.context import borrowed
+
+    with borrowed():
+        yield
 
 
 @pytest.fixture
