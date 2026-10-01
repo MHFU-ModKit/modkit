@@ -147,8 +147,7 @@ class AddPanel(kit.Panel):
         self.where.row("Into group", self.group)
         where.body.addWidget(self.where)
         where.body.addWidget(self.replace)
-        self.fits = kit.pill("info", "")
-        self.fits.setWordWrap(True)
+        self.fits = kit.Alert(level="info")
         self.fits.setToolTip(BUDGET_TIP)
         where.body.addWidget(self.fits)
         lay.addWidget(where)
@@ -266,11 +265,7 @@ class AddPanel(kit.Panel):
         need, (cap, free) = f.needs(), f.capacity()
         extra = f", +{cap - free} from the selection" if cap > free else ""
         self.fits.setText(f"Needs {need} triangles; {cap} fit here ({free} free{extra})")
-        level = "info" if need <= cap else "error"
-        if self.fits.property("level") != level:
-            self.fits.setProperty("level", level)
-            self.fits.style().unpolish(self.fits)
-            self.fits.style().polish(self.fits)
+        self.fits.set_level("info" if need <= cap else "error")
         self.add.setEnabled(need > 0 and (kind != COPY or not ws.selection.empty))
         self.remove.setEnabled(not ws.selection.empty)
         self.message.setText(plain(f.message))

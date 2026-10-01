@@ -11,11 +11,10 @@ from PySide6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
 
 from mhfu_studio.shell.findings import LEVELS
 from mhfu_studio.shell.text import plain
-from mhfu_studio.ui import kit, theme
+from mhfu_studio.ui import kit
 
 if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
-    from mhfu_studio.ui.theme import Theme
 
 PLURAL = {"error": "errors", "warning": "warnings", "info": "info"}
 OPEN_HINT = (
@@ -28,7 +27,6 @@ class FindingsPanel(kit.Panel):
     def __init__(self, studio: Studio, ask_open: Callable[[], object]) -> None:
         super().__init__(scroll=False)
         self.studio = studio
-        self._theme: Theme | None = None
         check = kit.button(
             "Check",
             tip="Runs every check on the document now, without waiting for the next pass",
@@ -87,9 +85,6 @@ class FindingsPanel(kit.Panel):
             self.auto.blockSignals(True)
             self.auto.setChecked(self.studio.findings.auto)
             self.auto.blockSignals(False)
-        if theme.current() is not self._theme:  # the level colours are baked into the items
-            self._theme = theme.current()
-            self.list.set_items([])
         self.list.set_items(
             [
                 kit.Item(

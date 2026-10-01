@@ -190,3 +190,17 @@ def test_numbers_use_a_point(qtbot: Any) -> None:
     b = kit.number(tip="n", value=9.0, decimals=1)
     qtbot.addWidget(b)
     assert b.text() == "9.0"
+
+
+def test_alert_recolours(qtbot: Any) -> None:
+    theme.apply(theme.theme("Ember", True))
+    a = kit.Alert("careful")
+    qtbot.addWidget(a)
+    a.show()
+    assert a.palette().color(a.foregroundRole()) == theme.level("warning")
+    a.set_level("error")
+    assert a.level == "error" and a.palette().color(a.foregroundRole()) == theme.level("error")
+    theme.apply(theme.theme("Moss", False))
+    assert a.palette().color(a.foregroundRole()) == theme.level("error")
+    a.set_level(None)
+    assert a.palette().color(a.foregroundRole()).name() == theme.current().text

@@ -25,10 +25,8 @@ from .widgets import (
     NoScene,
     SaveRow,
     VolumeForm,
-    alert,
     describe,
     fly_to,
-    set_level,
     tiles,
 )
 
@@ -107,9 +105,9 @@ class HitboxesPanel(kit.Panel):
             tip="Draws the volumes on top, even where the body hides them",
             on=lambda on: self._act("x-ray", lambda: self._vp("hitboxes_xray", on)),
         )
-        self.no_intel = alert(level="info")
-        self.join = kit.label(role="muted")
-        self.offset_note = kit.label(role="muted")
+        self.no_intel = kit.Alert(level="info")
+        self.join = kit.Alert(level=None, role="muted")
+        self.offset_note = kit.Alert(level=None, role="muted")
         for w in (
             self.source,
             kit.row(self.draw, self.xray, stretch=True),
@@ -127,7 +125,7 @@ class HitboxesPanel(kit.Panel):
             on=lambda on: self._act("move's sets", lambda: self._move_only(on)),
         )
         self.no_attack = kit.label(role="muted")
-        self.orphans = alert(level="error")
+        self.orphans = kit.Alert(level="error")
         self.sets_head = kit.label(role="muted")
         self.sets = kit.Table(
             ["Set", "Attacks", "Vols", "Bones", "Moves"],
@@ -164,7 +162,7 @@ class HitboxesPanel(kit.Panel):
             icon="ph.plus",
         )
         self.vols_head = kit.label(role="muted")
-        self.over = alert(level="error")
+        self.over = kit.Alert(level="error")
         self.vols = kit.Table(
             ["Vol", "Set", "Bone", "Shape", "Radius", "Offset"],
             tip="The port's hitboxes, the picked set's or all; * marks one changed since the"
@@ -266,7 +264,7 @@ class HitboxesPanel(kit.Panel):
             on=self._adopt_pair,
             icon="ph.download-simple",
         )
-        self.shared = alert()
+        self.shared = kit.Alert()
         body.addWidget(self.adopt_pair)
         body.addWidget(self.shared)
         self.adopt_box = adopt
@@ -527,7 +525,7 @@ class HitboxesPanel(kit.Panel):
                 f"Spawner {sp} to table: INFERRED ({host.join}). Only em75's join was walked to"
                 " the HP write; here the id range was matched to the biggest table."
             )
-        set_level(self.join, None if host.join == "measured" else "warning")
+        self.join.set_level(None if host.join == "measured" else "warning")
         self.join.setToolTip(host.join_provenance)
         self.join.setVisible(True)
         hsp = ws.host_species
@@ -539,7 +537,7 @@ class HitboxesPanel(kit.Panel):
             )
         else:
             self.offset_note.setText(f"Species {hsp} uses record = handler id + {off}.")
-        set_level(self.offset_note, "error" if off is None else None)
+        self.offset_note.set_level("error" if off is None else None)
         self.offset_note.setVisible(off is None or bool(off))
 
     def _sets(self, host: AttackIntel, sess: AttackSession | None) -> None:

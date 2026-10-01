@@ -19,7 +19,7 @@ from mhfu_studio.monster.render.hitboxes import PART_COLORS
 from mhfu_studio.ui import kit
 
 from .common import bone_span
-from .widgets import ExportRow, NoScene, SaveRow, VolumeForm, alert, describe, fly_to, tiles
+from .widgets import ExportRow, NoScene, SaveRow, VolumeForm, describe, fly_to, tiles
 
 if TYPE_CHECKING:
     from mhfu_studio.monster.parts import PartSession
@@ -90,14 +90,14 @@ class PartsPanel(kit.Panel):
         )
         body.addWidget(self.source)
         body.addWidget(kit.row(self.draw, self.xray, stretch=True))
-        self.no_intel = alert(level="info")
+        self.no_intel = kit.Alert(level="info")
         body.addWidget(self.no_intel)
         lay.addWidget(show)
 
         parts, body = _section("Parts", PART_VS_ROW)
         self.summary = kit.label(role="muted")
         self.provenance = kit.label(role="muted")
-        self.orphans = alert(level="error")
+        self.orphans = kit.Alert(level="error")
         self.parts = kit.Table(
             ["Part", "Name", "Vols", "Bones", "Row"],
             tip="The eight damage counters and the volumes that feed each. Click one to light"
@@ -135,7 +135,7 @@ class PartsPanel(kit.Panel):
             icon="ph.plus",
         )
         self.vols_head = kit.label(role="muted")
-        self.over = alert(level="error")
+        self.over = kit.Alert(level="error")
         self.only = kit.check(
             "Only the picked part",
             tip="Lists only the volumes of the part picked above",
@@ -237,7 +237,7 @@ class PartsPanel(kit.Panel):
             " grid can say there. A quick way to prove which row a spot uses.",
             on=self._max_row,
         )
-        self.grid_note = alert()
+        self.grid_note = kit.Alert()
         self.grid_text = kit.label(GRID_NOTE, role="muted")
         for w in (
             self.grid_head,

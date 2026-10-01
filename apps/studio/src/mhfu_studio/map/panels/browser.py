@@ -57,8 +57,7 @@ class BrowserPanel(kit.Panel):
     def __init__(self, ws: MapWorkspace, studio: Studio) -> None:
         super().__init__(scroll=False)
         self.ws, self.studio = ws, studio
-        self.error = kit.pill("error")
-        self.error.setWordWrap(True)
+        self.error = kit.Alert(level="error")
         self.tree = QTreeWidget()
         self.tree.setToolTip(TREE_TIP)
         self.tree.setHeaderHidden(True)

@@ -81,8 +81,19 @@ class Workspace(Protocol):
     name: str
     #: open-dialog filters as (name, pattern) pairs: ("Port manifest", "*.toml", ...)
     filters: Sequence[str] = ("All files", "*")
-    #: the last action's outcome or refusal; the studio shows a new one in the status bar
-    message: str = ""
+    #: how often `message` was set: the studio shows each one, a repeat too
+    said: int = 0
+    _message: str = ""
+
+    @property
+    def message(self) -> str:
+        """The last action's outcome or refusal, for the status bar."""
+        return self._message
+
+    @message.setter
+    def message(self, text: str) -> None:
+        self._message = text
+        self.said += 1
 
     @property
     def document(self) -> Document | None: ...

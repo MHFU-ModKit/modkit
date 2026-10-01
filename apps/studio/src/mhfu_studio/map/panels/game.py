@@ -96,10 +96,9 @@ class GamePanel(kit.Panel):
         self.what = ""
         self._stage: int | None = None
         how = kit.label(HOW, role="muted")
-        self.unsaved = kit.pill(
-            "warning", "Save the document first: the push reads the edits from its folder."
+        self.unsaved = kit.Alert(
+            "Save the document first: the push reads the edits from its folder."
         )
-        self.unsaved.setWordWrap(True)
         self.save_as = kit.button(
             "Save As…",
             tip="Picks a folder for the document and saves it there, so the push can read it",
@@ -109,8 +108,7 @@ class GamePanel(kit.Panel):
         self.catch.valueChanged.connect(lambda _v: self._warn())
         form = kit.Form()
         form.row("Catch", self.catch)
-        self.village = kit.pill("warning", VILLAGE_WARNING)
-        self.village.setWordWrap(True)
+        self.village = kit.Alert(VILLAGE_WARNING)
         self.pushes: list[QPushButton] = []
         for i, (label, flags, tip) in enumerate(PUSHES):
             b = kit.button(

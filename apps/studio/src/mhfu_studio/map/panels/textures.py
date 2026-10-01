@@ -104,11 +104,9 @@ class TexturesPanel(kit.Panel):
             tip="Replaces the slot with that stage's slot",
             on=studio.act("copy slot", self.copy_slot),
         )
-        self.unsaved = kit.pill(
-            "warning",
-            "Save the document first to import a picture: it is copied into its assets/ folder.",
+        self.unsaved = kit.Alert(
+            "Save the document first to import a picture: it is copied into its assets/ folder."
         )
-        self.unsaved.setWordWrap(True)
         self.info = kit.label(role="muted")
         self.zoom = kit.Slider(
             *ZOOM,

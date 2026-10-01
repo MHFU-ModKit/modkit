@@ -13,7 +13,8 @@ from mhfu_studio.ui.testing import FakeWorkspace, gl_or_skip
 from mhfu_studio.ui.window import DockTitle, Window
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QApplication, QDockWidget, QMainWindow
+from PySide6.QtWidgets import QApplication, QDockWidget, QMainWindow, QMenu, QTabBar
+from shiboken6 import getCppPointer
 
 Make = Callable[..., Window]
 LEFT, RIGHT = Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea
@@ -78,6 +79,50 @@ def test_tabbed_docks_show_only_their_tab(make_window: Make, qtbot: Any) -> None
     qtbot.waitUntil(lambda: not isinstance(items.titleBarWidget(), DockTitle))
     items.setFloating(True)
     qtbot.waitUntil(lambda: isinstance(items.titleBarWidget(), DockTitle))
+
+
+def tab_menu(w: Window, d: QDockWidget) -> QMenu:
+    """The menu a right-click on `d`'s tab opens."""
+    w.sync()
+    me = getCppPointer(d)[0]
+    for bar in w.findChildren(QTabBar):
+        for i in range(bar.count()):
+            if bar.tabData(i) == me:
+                bar.customContextMenuRequested.emit(bar.tabRect(i).center())
+                m = QApplication.activePopupWidget()
+                assert isinstance(m, QMenu)
+                return m
+    raise AssertionError(f"{d.objectName()} has no tab")
+
+
+def test_tab_menu(make_window: Make, qtbot: Any) -> None:
+    w = make_window()
+    items, notes = dock(w, "map/Items"), dock(w, "map/Notes")
+    w.tabifyDockWidget(items, notes)
+    m = tab_menu(w, notes)
+    m.actions()[0].trigger()
+    m.close()
+    assert notes.isHidden() and not notes.toggleViewAction().isChecked()
+    assert notes.toggleViewAction() in w.view_menu.actions()
+    notes.show()
+    w.addDockWidget(RIGHT, items)
+    w.addDockWidget(RIGHT, notes)
+    w.tabifyDockWidget(notes, items)
+    m = tab_menu(w, items)
+    m.actions()[0].trigger()
+    m.close()
+    assert items.isHidden() and notes.isVisible()
+    items.show()
+    switch(w, "monster")
+    switch(w, "map")  # a saved layout comes back: new tab bars
+    assert w.tabifiedDockWidgets(notes) == [items]
+    m = tab_menu(w, notes)
+    m.actions()[1].trigger()
+    m.close()
+    qtbot.waitUntil(lambda: isinstance(notes.titleBarWidget(), DockTitle))
+    assert notes.isFloating() and kit.missing_tips(w) == []
+    qtbot.mouseDClick(notes.titleBarWidget(), Qt.MouseButton.LeftButton)
+    assert not notes.isFloating()
 
 
 def test_default_shares(make_window: Make) -> None:
@@ -206,6 +251,7 @@ def test_hidden_docks_skip_sync(make_window: Make) -> None:
 
 def test_findings(make_window: Make) -> None:
     w = make_window()
+    w.set_theme(family="Ember", mode="dark")
     ws = w.studio.active
     ws.doc = FakeDocument()
     ws.doc.found = [Finding("error", "x", "bad", target=3), Finding("info", "y", "fyi")]
@@ -214,6 +260,8 @@ def test_findings(make_window: Make) -> None:
     panel = w.findings
     assert panel.list.count() == 2 and panel.pills["error"].text() == "1 error"
     assert panel.pills["warning"].isHidden()
+    w.set_theme(family="Moss", mode="light")
+    assert panel.list.item(0).foreground().color() == theme.level("error")
     panel.list.itemClicked.emit(panel.list.item(0))
     assert ws.log[-1] == ("reveal", 3)
     ws.doc = None
