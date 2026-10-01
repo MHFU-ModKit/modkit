@@ -12,7 +12,7 @@ from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import QEvent, QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
@@ -290,6 +290,23 @@ def choice(
     return b
 
 
+def refill(box: QComboBox, items: Sequence[tuple[str, str]], current: str | None = None) -> bool:
+    """Sets `box`'s (id, label) items and current id without signals; rebuilds only on change."""
+    box.blockSignals(True)
+    try:
+        now = [(box.itemData(i), box.itemText(i)) for i in range(box.count())]
+        changed = now != list(items)
+        if changed:
+            box.clear()
+            for cid, text in items:
+                box.addItem(text, cid)
+        if current is not None:
+            box.setCurrentIndex(max(box.findData(current), 0))
+        return changed
+    finally:
+        box.blockSignals(False)
+
+
 def text_field(
     *,
     tip: str,
@@ -304,6 +321,30 @@ def text_field(
     if on is not None:
         e.editingFinished.connect(lambda: on(e.text()))
     return e
+
+
+def put(w: QWidget, value: object) -> None:
+    """Shows `value` in a control without firing its slot: a `sync()` must never act. A text
+    field being typed in keeps what is typed."""
+    if isinstance(w, Vec3 | Slider):
+        w.set(value)  # type: ignore[arg-type]
+        return
+    with QSignalBlocker(w):
+        if isinstance(w, QSpinBox):
+            w.setValue(int(value))  # type: ignore[call-overload]
+        elif isinstance(w, QDoubleSpinBox):
+            w.setValue(float(value))  # type: ignore[arg-type]
+        elif isinstance(w, QAbstractButton):
+            w.setChecked(bool(value))
+        elif isinstance(w, QLineEdit):
+            if not w.hasFocus() and w.text() != str(value):
+                w.setText(str(value))
+        elif isinstance(w, QComboBox):
+            w.setCurrentIndex(max(w.findData(value), 0))
+        elif isinstance(w, Segmented):
+            w.set(str(value))
+        else:
+            raise TypeError(f"put: {type(w).__name__}")
 
 
 # ---- text -------------------------------------------------------------------------------- #
