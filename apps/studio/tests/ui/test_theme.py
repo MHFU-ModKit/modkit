@@ -7,6 +7,7 @@ import pytest
 from mhfu_studio.shell.overlay import Ink
 from mhfu_studio.ui import theme
 from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QApplication, QStyle
 
 SRC = Path(theme.__file__).parents[1]
 COLOUR = re.compile(r"#[0-9a-fA-F]{6}\b|QColor\(|fromRgbF?\(|rgba?\(")
@@ -40,3 +41,8 @@ def test_item_views_match_the_controls() -> None:
     q = theme.qss(t)
     assert "QAbstractItemView::indicator" in q and "QCheckBox::indicator, QAbstractItemView" in q
     assert f"selection-background-color: {t.soft};\n    selection-color: {t.text};" in q
+
+
+def test_no_mnemonic_underlines(qapp: QApplication) -> None:
+    theme.apply(theme.theme("Moss", False))
+    assert qapp.style().styleHint(QStyle.StyleHint.SH_UnderlineShortcut) == 0
