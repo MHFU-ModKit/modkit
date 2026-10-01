@@ -37,6 +37,8 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
+      # Mesa for the studio's GL tests; X11 headers because glcontext has no wheel for 3.14
+      - run: sudo apt-get update && sudo apt-get install -y libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri libx11-dev
       - run: uv sync --locked
       - run: uv run pytest
 
