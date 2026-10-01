@@ -184,3 +184,9 @@ def test_pages_show_one(qtbot: Any) -> None:
     assert pages.currentWidget() is empty and pages.minimumSizeHint().height() < 300
     pages.show_page(True)
     assert pages.currentWidget() is page and pages.minimumSizeHint().height() >= 300
+
+
+def test_numbers_use_a_point(qtbot: Any) -> None:
+    b = kit.number(tip="n", value=9.0, decimals=1)
+    qtbot.addWidget(b)
+    assert b.text() == "9.0"

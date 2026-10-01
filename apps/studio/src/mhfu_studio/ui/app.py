@@ -8,7 +8,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QLocale, Qt
 from PySide6.QtGui import QSurfaceFormat
 from PySide6.QtWidgets import QApplication
 
@@ -23,10 +23,11 @@ def surface_format() -> QSurfaceFormat:
 
 
 def prepare() -> None:
-    """`surface_format` for every QOpenGLWidget; before the QApplication exists (macOS shares
-    contexts only then)."""
+    """Before the QApplication exists (macOS shares GL contexts only then): `surface_format`
+    for every QOpenGLWidget, and the C locale, so a number reads 9.0 on every system."""
     QSurfaceFormat.setDefaultFormat(surface_format())
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+    QLocale.setDefault(QLocale(QLocale.Language.C))
 
 
 def main(argv: Sequence[str] | None = None, path: Path | None = None) -> int:

@@ -282,20 +282,23 @@ QSlider::sub-page:horizontal {{ background: {t.accent}; border-radius: 2px; }}
 QSlider::handle:horizontal {{ background: {t.accent}; width: 14px; height: 14px;
     margin: -5px 0; border-radius: 7px; }}
 QCheckBox, QRadioButton {{ spacing: 7px; }}
-QCheckBox::indicator {{ width: 15px; height: 15px; border-radius: 5px;
-    border: 1px solid {t.line}; background: {t.entry}; }}
-QCheckBox::indicator:checked {{ background: {t.accent}; border-color: {t.accent}; }}
+QCheckBox::indicator, QAbstractItemView::indicator {{ width: 15px; height: 15px;
+    border-radius: 5px; border: 1px solid {t.line}; background: {t.entry}; }}
+QCheckBox::indicator:checked, QAbstractItemView::indicator:checked {{ background: {t.accent};
+    border-color: {t.accent}; }}
 QRadioButton::indicator {{ width: 14px; height: 14px; border-radius: 7px;
     border: 1px solid {t.line}; background: {t.entry}; }}
 QRadioButton::indicator:checked {{ background: {t.accent}; border-color: {t.accent}; }}
 QAbstractItemView {{ background: transparent; border: none; outline: none;
-    alternate-background-color: {t.card}; }}
+    alternate-background-color: {t.card}; selection-background-color: {t.soft};
+    selection-color: {t.text}; }}
 QAbstractItemView::item {{ padding: 4px 6px; border-radius: 6px; }}
 QAbstractItemView::item:hover, QAbstractItemView::item:selected {{ background: {t.soft};
     color: {t.text}; }}
 QHeaderView::section {{ background: transparent; color: {t.muted}; border: none;
     border-bottom: 1px solid {t.line}; padding: 4px 6px; font-weight: 600; }}
 QTableView {{ gridline-color: transparent; }}
+QTableView::item {{ border-radius: 0; }}
 QTabWidget::pane {{ border: none; }}
 QTabBar::tab {{ background: transparent; color: {t.muted}; padding: 5px 12px; border: none;
     border-bottom: 2px solid transparent; }}

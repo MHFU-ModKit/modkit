@@ -33,3 +33,10 @@ def test_colours_live_in_the_theme() -> None:
     qt = [p for p in SRC.rglob("*.py") if "PySide6" in p.read_text() and p.name != "theme.py"]
     bad = [f"{p.relative_to(SRC)}:{m.group()}" for p in qt for m in COLOUR.finditer(p.read_text())]
     assert not bad
+
+
+def test_item_views_match_the_controls() -> None:
+    t = theme.theme("Moss", False)
+    q = theme.qss(t)
+    assert "QAbstractItemView::indicator" in q and "QCheckBox::indicator, QAbstractItemView" in q
+    assert f"selection-background-color: {t.soft};\n    selection-color: {t.text};" in q
