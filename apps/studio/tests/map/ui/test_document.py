@@ -35,7 +35,7 @@ def folder(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
 def test_no_data(qtbot: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MHFU_DATA", raising=False)
     p = panel(qtbot, MapWorkspace())
-    assert p.gate.currentWidget() is p.gate.empty and kit.missing_tips(p) == []
+    assert not p.nodata.isHidden() and kit.missing_tips(p) == []
 
 
 def test_new_and_save(

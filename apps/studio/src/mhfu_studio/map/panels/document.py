@@ -3,6 +3,7 @@
 """The Document panel: new, open, save, check and export a map document.
 
 Open and save are the studio's own (the File menu's); the findings list is the Findings dock.
+Without game files it still opens and saves; nothing can load.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from mhfu_studio.shell.widgets import plain
 from mhfu_studio.ui import dialogs, kit
 
 from ..document import MapDocument
-from .common import Gate
+from .common import DATA_HINT, NO_DATA
 
 if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
@@ -141,17 +142,21 @@ class DocumentPanel(kit.Panel):
         self.note = kit.label(role="muted", selectable=True)
         checks.body.addWidget(self.note)
 
+        self.nodata = kit.pill("warning", f"{NO_DATA}: no section can load. {DATA_HINT}")
+        self.nodata.setWordWrap(True)
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
+        self.intro = kit.label(DOC_TIP, role="muted")
+        lay.addWidget(self.nodata)
+        lay.addWidget(self.intro)
         lay.addWidget(head)
         lay.addWidget(self.stages)
         lay.addWidget(self.add)
         lay.addWidget(files)
         lay.addWidget(checks)
         lay.addStretch(1)
-        self.gate = Gate(page, "")
-        self.body.addWidget(self.gate)
+        self.body.addWidget(page)
 
     # ---- actions ---------------------------------------------------------------------- #
 
@@ -238,9 +243,9 @@ class DocumentPanel(kit.Panel):
 
     def sync(self) -> None:
         ws = self.ws
-        if not self.gate.check(ws, section=False):
-            return
+        self.nodata.setVisible(ws.atlas is None)
         doc, sc = ws.doc, ws.scene
+        self.intro.setVisible(doc.directory is None and not doc.stages)
         if not self.name.hasFocus() and self.name.text() != doc.name:
             with QSignalBlocker(self.name):
                 self.name.setText(doc.name)

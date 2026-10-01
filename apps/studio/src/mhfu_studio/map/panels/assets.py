@@ -130,7 +130,9 @@ class AssetsPanel(kit.Panel):
             tip="A picture from that section's texture bank, into a slot of this one",
         )
         self.slot_box = kit.choice(
-            [], tip="A texture slot of that section, with its size", on=self._pick_slot
+            [],
+            tip="A slot of that section's texture bank: one numbered picture, with its size",
+            on=lambda v: self._pick("slot", v),
         )
         self.thumb = QLabel()
         self.thumb.setToolTip("The picture in that slot")
@@ -160,9 +162,6 @@ class AssetsPanel(kit.Panel):
 
     def _pick(self, what: str, value: object) -> None:
         self.studio.act("pick", lambda: setattr(self, what, value))()
-
-    def _pick_slot(self, v: str) -> None:
-        self._pick("slot", v)
 
     def _memo(self, name: str, key: tuple[object, ...], fn: Callable[[], T]) -> T:
         """`fn()` again only when `key` changed (objects by identity)."""
@@ -310,7 +309,9 @@ class AssetsPanel(kit.Panel):
             self.gid,
         )
         picked = other.group(*key_of(self.gid)) if self.gid is not None else None
-        objs = self._memo("objects", (picked,), lambda: objects(picked) if picked else [])
+        objs = self._memo(
+            "objects", (picked,), lambda: objects(picked) if picked is not None else []
+        )
         if self.obj not in [c for c, _ in objs]:
             self.obj = objs[0][0] if objs else None
         kit.refill(self.object, objs, self.obj)

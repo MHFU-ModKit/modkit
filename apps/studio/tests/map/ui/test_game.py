@@ -70,12 +70,13 @@ def test_runs_and_logs(
     ws.load_stage(139, row=0)
     ws.doc.save(doc_dir)
     p = panel(qtbot, ws)
-    stub = [sys.executable, "-c", "print('line one')"]
+    stub = [sys.executable, "-c", "print('line one'); print('tail', end='')"]
     monkeypatch.setattr(p, "command", lambda flags: stub)
     p.pushes[0].click()
     assert p.busy and not p.pushes[0].isEnabled() and p.stop.isEnabled()
     qtbot.waitUntil(lambda: "[exit 0]" in p.log.toPlainText(), timeout=10_000)
-    assert "line one" in p.log.toPlainText() and not p.busy and p.pushes[0].isEnabled()
+    assert p.log.toPlainText().splitlines()[1:] == ["line one", "tail", "[exit 0]"]
+    assert not p.busy and p.pushes[0].isEnabled()
     p.clear.click()
     assert p.log.toPlainText() == ""
 

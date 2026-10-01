@@ -9,9 +9,10 @@ stays responsive while a catch waits for the area reload.
 from __future__ import annotations
 
 import sys
+from functools import partial
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QProcess, QProcessEnvironment, QSignalBlocker, QTimer
+from PySide6.QtCore import QByteArray, QProcess, QProcessEnvironment, QSignalBlocker, QTimer
 from PySide6.QtWidgets import QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
 
 from mhfu_studio.shell.widgets import plain
@@ -66,6 +67,10 @@ PUSHES = (
 )
 
 
+def text(data: QByteArray) -> str:
+    return bytes(data.data()).decode("utf-8", "replace")
+
+
 def in_village(ws: MapWorkspace) -> bool:
     """The loaded section is in row 0, whose files the game never re-reads."""
     sc, atlas = ws.scene, ws.atlas
@@ -110,7 +115,7 @@ class GamePanel(kit.Panel):
             b = kit.button(
                 label,
                 tip=tip,
-                on=lambda f=flags: self.run(f),
+                on=studio.act(f"push {label.lower()}", partial(self.run, flags)),
                 role="primary" if i == 0 else "normal",
             )
             self.pushes.append(b)
@@ -188,14 +193,18 @@ class GamePanel(kit.Panel):
         p.start(program, args)
         self.studio.changed()
 
-    def _read(self) -> None:
-        if self.proc is not None:
-            text = bytes(self.proc.readAllStandardOutput().data()).decode("utf-8", "replace")
-            for line in text.splitlines():
-                self._say(line)
+    def _read(self, *, rest: bool = False) -> None:
+        """Whole lines as they come; with `rest`, what is left after the last one."""
+        p = self.proc
+        if p is None:
+            return
+        while p.canReadLine():
+            self._say(text(p.readLine()).rstrip("\r\n"))
+        if rest and p.bytesAvailable():
+            self._say(text(p.readAll()))
 
     def _finished(self, code: int, _status: QProcess.ExitStatus) -> None:
-        self._read()
+        self._read(rest=True)
         self._say(f"[exit {code}]")
         self.studio.message = f"push {'done' if code == 0 else f'failed ({code})'}"
         self.studio.changed()
