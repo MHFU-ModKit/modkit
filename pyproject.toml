@@ -20,6 +20,7 @@ mhp-formats = { workspace = true }
 mhfu = { workspace = true }
 mhfu-port = { workspace = true }
 ppsspp-debug = { workspace = true }
+mhfu-studio = { workspace = true }
 
 [tool.ruff]
 line-length = 100
@@ -42,6 +43,7 @@ files = [
     "packages/mhp-formats/src",
     "packages/mhfu/src",
     "packages/mhfu-port/src",
+    "apps/studio/src",
 ]
 
 [[tool.mypy.overrides]]
