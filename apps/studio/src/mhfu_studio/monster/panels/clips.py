@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from mhfu_studio.monster import clips
 from mhfu_studio.monster.clips import SlotCoverage, Vocabulary
@@ -16,7 +16,7 @@ from mhfu_studio.shell.findings import Level
 from mhfu_studio.ui import kit
 
 from .common import COVERAGE
-from .widgets import NoScene, SaveRow, alert, set_level
+from .widgets import NoScene, SaveRow
 
 if TYPE_CHECKING:
     from mhfu_studio.monster.workspace import MonsterWorkspace
@@ -62,16 +62,17 @@ class ClipsPanel(kit.Panel):
         self.build.setToolTip(BUILD_TIP)
         lay.addWidget(kit.row(self.count, self.build, stretch=True))
 
-        self.kinds: dict[str, tuple[kit.Swatch, QLabel]] = {}
+        self.kinds: dict[str, tuple[kit.Swatch, kit.Alert]] = {}
         row: list[QWidget] = []
         for kind in KINDS:
-            sw, text = kit.Swatch(COVERAGE[kind], KIND_TIPS[kind]), kit.label(wrap=False)
+            sw = kit.Swatch(COVERAGE[kind], KIND_TIPS[kind])
+            text = kit.Alert(level=None, wrap=False)
             text.setToolTip(KIND_TIPS[kind])
             self.kinds[kind] = (sw, text)
             row += [sw, text]
         self.kind_row = kit.row(*row, stretch=True)
         lay.addWidget(self.kind_row)
-        self.filler = alert()
+        self.filler = kit.Alert()
         self.filler.setToolTip(KIND_TIPS[clips.FILLER])
         self.dropped = kit.label(role="muted")
         self.dropped.setToolTip(
@@ -79,7 +80,7 @@ class ClipsPanel(kit.Panel):
             " donor clips: they are not in this build at all."
         )
         self.notes = kit.label(role="muted")
-        self.health = alert()
+        self.health = kit.Alert()
         self.suspect = kit.Items(
             tip="Labels that stopped meaning what they say in this build; hover one for why"
         )
@@ -109,7 +110,7 @@ class ClipsPanel(kit.Panel):
         self.editor.body.addWidget(
             kit.row(self.slot, self.slot_swatch, self.slot_kind, stretch=True)
         )
-        self.why = kit.label(role="muted")
+        self.why = kit.Alert(level=None, role="muted")
         self.editor.body.addWidget(self.why)
         form = kit.Form()
         self.name = kit.text_field(
@@ -178,7 +179,7 @@ class ClipsPanel(kit.Panel):
         self.kind_row.setVisible(cov.has_source)
         for kind, (sw, text) in self.kinds.items():
             text.setText(f"{n[kind]} {kind.lower()}")
-            set_level(text, "warning" if kind == clips.FILLER and n[kind] else None)
+            text.set_level("warning" if kind == clips.FILLER and n[kind] else None)
             text.setEnabled(bool(n[kind]))
             sw.setEnabled(bool(n[kind]))
         self.filler.setText(FILLER_WARNING.format(n=n[clips.FILLER]))
@@ -263,7 +264,7 @@ class ClipsPanel(kit.Panel):
         self.slot_swatch.set(None if cov is None else COVERAGE[cov.kind])
         self.slot_kind.setText(kind_text(cov))
         self.why.setText(cov.why() if cov else "No coverage verdict for this slot.")
-        set_level(self.why, level_of(cov))
+        self.why.set_level(level_of(cov))
         if ws.edit_slot != self._slot:  # a new pick loads its name; typing is left alone
             self._slot = ws.edit_slot
             kit.put(self.name, ws.name_buf)

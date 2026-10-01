@@ -206,6 +206,7 @@ def test_hidden_docks_skip_sync(make_window: Make) -> None:
 
 def test_findings(make_window: Make) -> None:
     w = make_window()
+    w.set_theme(family="Ember", mode="dark")
     ws = w.studio.active
     ws.doc = FakeDocument()
     ws.doc.found = [Finding("error", "x", "bad", target=3), Finding("info", "y", "fyi")]
@@ -214,6 +215,8 @@ def test_findings(make_window: Make) -> None:
     panel = w.findings
     assert panel.list.count() == 2 and panel.pills["error"].text() == "1 error"
     assert panel.pills["warning"].isHidden()
+    w.set_theme(family="Moss", mode="light")
+    assert panel.list.item(0).foreground().color() == theme.level("error")
     panel.list.itemClicked.emit(panel.list.item(0))
     assert ws.log[-1] == ("reveal", 3)
     ws.doc = None

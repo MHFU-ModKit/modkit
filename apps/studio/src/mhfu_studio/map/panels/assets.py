@@ -105,7 +105,7 @@ class AssetsPanel(kit.Panel):
         form.row("Group", self.group)
         form.row("Object", self.object)
         form.row("Into group", self.target)
-        self.need = kit.label()
+        self.need = kit.Alert(level="info")
         self.mismatch = kit.pill("warning")
         self.mismatch.setWordWrap(True)
         self.where = kit.label(role="muted")
@@ -334,8 +334,7 @@ class AssetsPanel(kit.Panel):
         tris = self._memo("faces", (g, cid), lambda: len(g.component_faces(cid)))
         note = " (replacing the selection)" if sac else ""
         self.need.setText(f"Needs {tris} triangles; {cap} free in {tg.label}{note}.")
-        self.need.setProperty("level", "error" if tris > cap else "info")
-        self.need.style().polish(self.need)
+        self.need.set_level("error" if tris > cap else "info")
         self.mismatch.setText(
             f"It wears slot {g.texture} of st{self.src:03d}, which differs from this section's"
             f" slot {g.texture}: copy that texture too (below), or it wears {tg.label}'s."

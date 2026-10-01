@@ -13,7 +13,7 @@ from mhfu_studio.monster.render import skeleton
 from mhfu_studio.monster.render.mesh import MODES
 from mhfu_studio.ui import kit, theme
 
-from .widgets import NoScene, alert
+from .widgets import NoScene
 
 if TYPE_CHECKING:
     from mhfu_studio.monster.render.skeleton import SkeletonOverlay
@@ -263,7 +263,7 @@ class JointsPanel(kit.Panel):
         page, lay = _page()
         self.head = kit.label(role="mono")
         self.head.setToolTip(FORK_TIP)
-        self.undriven = alert()
+        self.undriven = kit.Alert()
         self.isolate = kit.Segmented(
             [(k, text) for k, text, _ in ISOLATE],
             tip="Which geometry the view draws, by the tagged joints",

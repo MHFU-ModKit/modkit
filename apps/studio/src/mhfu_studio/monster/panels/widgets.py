@@ -13,13 +13,11 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
     QHBoxLayout,
-    QLabel,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
-from mhfu_studio.shell.findings import Level
 from mhfu_studio.ui import dialogs, kit
 
 if TYPE_CHECKING:
@@ -57,21 +55,6 @@ def narrow(box: QAbstractSpinBox, span: float | None = None) -> None:
         box.setRange(-span, span)
     box.setMinimumWidth(kit.MIN_FIELD)
     box.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-
-
-def alert(text: str = "", level: Level = "warning") -> QLabel:
-    """A wrapped line in a level's colour: what must not be missed."""
-    w = kit.label(text)
-    set_level(w, level)
-    return w
-
-
-def set_level(w: QLabel, level: Level | None) -> None:
-    """Colours `w` as `level` (None: plain); the stylesheet does the colouring."""
-    if w.property("level") != level:
-        w.setProperty("level", level)
-        w.style().unpolish(w)
-        w.style().polish(w)
 
 
 class NoScene(kit.Empty):

@@ -18,7 +18,7 @@ from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPalette
 from PySide6.QtWidgets import QAbstractButton, QApplication
 from shiboken6 import isValid
 
-from mhfu_studio.shell.findings import Level
+from mhfu_studio.shell.findings import LEVELS, Level
 from mhfu_studio.shell.overlay import RGBA, Color, Ink
 
 FAMILIES = ("Ember", "Moss")
@@ -199,7 +199,11 @@ def color(c: Color) -> QColor:
 
 
 def level(lv: Level) -> QColor:
-    return QColor({"error": _current.danger, "warning": _current.warning}.get(lv, _current.muted))
+    return QColor(_level(_current, lv))
+
+
+def _level(t: Theme, lv: Level) -> str:
+    return {"error": t.danger, "warning": t.warning}.get(lv, t.muted)
 
 
 def palette(t: Theme) -> QPalette:
@@ -230,6 +234,7 @@ def palette(t: Theme) -> QPalette:
 
 def qss(t: Theme) -> str:
     s0, s1, s2 = t.stops
+    levels = "\n".join(f'QLabel[level="{lv}"] {{ color: {_level(t, lv)}; }}' for lv in LEVELS)
     return f"""
 * {{ color: {t.text}; }}
 QMainWindow {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
@@ -240,9 +245,7 @@ QLabel[role="title"] {{ font-weight: 600; }}
 QLabel[role="caps"] {{ color: {t.muted}; font-size: 11px; font-weight: 600; }}
 QLabel[role="chip"] {{ color: {t.second}; }}
 QLabel[role="mono"] {{ font-family: "Menlo", "DejaVu Sans Mono", monospace; }}
-QLabel[level="error"] {{ color: {t.danger}; }}
-QLabel[level="warning"] {{ color: {t.warning}; }}
-QLabel[level="info"] {{ color: {t.muted}; }}
+{levels}
 #Card {{ background: {t.card}; border: 1px solid {t.line}; border-radius: 12px; }}
 #Body, QScrollArea {{ background: transparent; border: none; }}
 #Section {{ border: 1px solid {t.line}; border-radius: 10px; }}

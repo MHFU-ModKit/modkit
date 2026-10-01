@@ -374,10 +374,38 @@ def label(
     return w
 
 
-def pill(lv: Level, text: str | None = None) -> QLabel:
-    w = QLabel(text if text is not None else lv)
-    w.setProperty("level", lv)
-    return w
+class Alert(QLabel):
+    """Text in a level's colour (None: its role's), which a theme switch recolours."""
+
+    def __init__(
+        self,
+        text: str = "",
+        level: Level | None = "warning",
+        *,
+        role: LabelRole = "body",
+        wrap: bool = True,
+    ) -> None:
+        super().__init__(text)
+        if role != "body":
+            self.setProperty("role", role)
+        self.setWordWrap(wrap)
+        self.set_level(level)
+
+    @property
+    def level(self) -> Level | None:
+        lv: Level | None = self.property("level")
+        return lv
+
+    def set_level(self, level: Level | None) -> None:
+        if self.level != level:
+            self.setProperty("level", level)
+            self.style().unpolish(self)  # the stylesheet's level rule applies on a re-polish
+            self.style().polish(self)
+
+
+def pill(lv: Level, text: str | None = None) -> Alert:
+    """A one-line `Alert` that names its level unless given `text`."""
+    return Alert(lv if text is None else text, lv, wrap=False)
 
 
 def swatch_icon(color: Sequence[float]) -> QIcon:
