@@ -5,9 +5,10 @@
 The loader refuses anything structural. What is left: an anim the build does not hold (the
 builder drops an original clip with no base monster's slot, and fills a third of the slots with
 idle), a move on an action the census saw never entered (it lasts one tick), and joint numbers
-off the skeleton the port ships. Missing evidence warns; it never passes silently. The damage
-grid and the hit groups being shared with a native base monster is said where they are edited,
-not here.
+off the skeleton the port ships. Missing evidence is said, never passed silently; a standing
+condition nobody fixes in a port (no census, a guessed attack table) is info, so the problem
+count holds only problems. The damage grid and the hit groups being shared with a native base
+monster is said where they are edited, not here.
 
 A finding names the control that fixes it (`FOCUS`, a key the Parts and Hitboxes panels land
 on), or says what to do (`FIX`).
@@ -325,7 +326,7 @@ def _moves(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
     host = m.port.host_species
     if intel is None:
         msg = f"no action data for {species.label(host)}: {len(m.moves)} move(s) not checked."
-        return [_f("warning", "INTEL_ABSENT", "moves", msg)]
+        return [_f("warning", "INTEL_ABSENT", "moves", msg)]  # no data at all, not only no census
     if intel.host_species != host:
         msg = (
             f"the action data is for {species.label(intel.host_species)}, but your base monster"
@@ -337,7 +338,7 @@ def _moves(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
         why = intel.census_reason or "no census was attached"
         out.append(
             _f(
-                "warning",
+                "info",
                 "INTEL_ABSENT",
                 "moves",
                 f"nothing was measured in the game ({why}), so whether it ever enters these "
@@ -586,9 +587,9 @@ def _attacks(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
                 f"hit group {st} is on no joint in the base monster (the attack's own place): a "
                 "joint here changes nothing."
             )
-            out.append(_f("warning", "HITBOX_SET_UNRIGGED", "hitbox", msg, at))
-        if not attacks.attacks_using(st):
-            msg = f"no attack uses hit group {st}, unless an [[attack]] points one at it."
+            out.append(_f("info", "HITBOX_SET_UNRIGGED", "hitbox", msg, at))
+        if not attacks.attacks_using(st) and not any(a.volume == st for a in m.attacks):
+            msg = f"no attack uses hit group {st}: an [[attack]] can point one at it."
             out.append(_f("warning", "HITBOX_SET_UNUSED", "hitbox", msg, at))
     for i, a in enumerate(m.attacks):
         if attacks.attack(a.id) is None:
@@ -602,7 +603,7 @@ def _attacks(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
             f"for {species.label(host)} the link from code to attack table is {attacks.join}, not"
             " measured: which hit group an action uses is a guess here."
         )
-        out.append(_f("warning", "ATTACK_JOIN_INFERRED", "hitbox", msg))
+        out.append(_f("info", "ATTACK_JOIN_INFERRED", "hitbox", msg))
     return out
 
 

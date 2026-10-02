@@ -46,7 +46,7 @@ def test_census(make, species, make_pair):
     assert found(V.validate(allowed, intel=never), "MOVE_PAIR_NEVER_ENTERED").level == "warning"
     blind = found(V.validate(m, intel=species([make_pair(4, 15)])))
     assert "MOVE_PAIR_NEVER_ENTERED" not in blind
-    assert blind["INTEL_ABSENT"].level == "warning"
+    assert blind["INTEL_ABSENT"].level == "info", "no census is everyone's, not a problem"
     short = species([make_pair(4, 15, measured={"entered": 3, "dwell_ticks": 1.0})], census=True)
     assert "MOVE_PAIR_SHORT_DWELL" in found(V.validate(m, intel=short))
     unseen = found(V.validate(make(CLIP + MOVE.format(1, 1)), intel=short))
@@ -188,7 +188,12 @@ def test_attacks(make, species):
     assert "HITBOX_SHARED" not in out, "said where hitboxes are edited, not as a finding"
     assert out["HITBOX_OVER_CAPACITY"].target == ("set", 0)
     assert out["HITBOX_OVER_CAPACITY"].focus == V.HIT_GROUP
+    assert out["ATTACK_JOIN_INFERRED"].level == out["HITBOX_SET_UNRIGGED"].level == "info"
     assert all(f.focus or f.fix for f in out.values())
+    pointed = make(
+        "\n[[hitbox]]\nbone = 1\nradius = 1.0\nset = 1\n\n[[attack]]\nid = 1\nvolume = 1\n"
+    )
+    assert "HITBOX_SET_UNUSED" not in found(V.validate(pointed, intel=species([], attacks=ATTACKS)))
     assert "HITBOX_UNCHECKED" in found(V.validate(m))
     assert not [f for f in V.validate(make()) if f.code.startswith(("HITBOX", "ATTACK"))]
 
