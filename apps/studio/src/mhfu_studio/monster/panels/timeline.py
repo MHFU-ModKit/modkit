@@ -37,10 +37,9 @@ LEGEND = (
     (IMPACT, "impact"),
 )
 STRIP_TIP = (
-    "The clip's frames, left to right; click or drag to scrub. The marks are the base monster's"
-    " own frames for the picked action: a hit check is a frame its code waits for, a timing"
-    " window opens or closes a stretch, the effects are where it spawns them, and the impact is"
-    " where your clip hits. Hover a mark to read it. A hollow mark past the end is never reached."
+    "The clip's frames; click or drag to scrub, hover a mark to read it. Marks are the base"
+    " monster's frames for the picked action (hit checks, timing windows, effects) and your"
+    " clip's impact; a hollow one past the end is never reached."
 )
 #: the strip's height and the legend's under it
 STRIP_H, LEGEND_H = 26.0, 18.0

@@ -276,9 +276,9 @@ class ActionPanel(kit.Panel):
         self.count = kit.label(role="muted", wrap=False)
         self.pairs = kit.Table(
             ["Action", "Ends", "Checks", "Effects", "Then"],
-            tip="Every action the base monster's code runs. Click one to try it with the clip on"
-            " screen. Ends: what finishes it (the clip, or a timer). Checks: clip frames its code"
-            " waits for. Then: where it goes next.",
+            tip="Every action the base monster's code runs; click one to try it with the clip on"
+            " screen. Ends: what finishes it; Checks: frames its code waits for; Then: where it"
+            " goes next.",
         )
         self.pairs.picked.connect(lambda pr: act("pair", lambda: ws.select_pair(*pr))())
         table = QWidget()

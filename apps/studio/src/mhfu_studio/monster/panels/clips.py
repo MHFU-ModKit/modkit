@@ -109,9 +109,8 @@ class ClipsPanel(kit.Panel):
         lay.addWidget(self.filter)
         self.table = kit.Table(
             ["Anim #", "Kind", "Frames", "Loop", "Travel", "Name"],
-            tip="Every anim in the build. Click one to play it from the start. The anim # is"
-            " the number a script passes to force it; Travel is how far the clip carries the"
-            " body.",
+            tip="Every anim in the build; click one to play it from the start. The anim # is what"
+            " a script passes to force it, Travel how far the clip carries the body.",
             swatch_column=1,
         )
         self.table.picked.connect(self._play)

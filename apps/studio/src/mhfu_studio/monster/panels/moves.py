@@ -72,9 +72,8 @@ SCOPE_TIPS = {
     "attacks": "Every action that hits with an attack; actions that act alike are drawn once",
 }
 CANVAS_TIP = (
-    "The base monster's actions: an arrow is where an action goes when it ends. Click a box to"
-    " read where it goes, double-click to work on it in Action. Drag a box to move it, drag the"
-    " canvas to pan, and use the wheel to zoom."
+    "The base monster's actions; an arrow is where one goes when it ends. Click a box to read"
+    " it, double-click to work on it in Action; drag to move or pan, wheel to zoom."
 )
 WALK_TIP = (
     "Read from the base monster's code, not watched in the game. An action with no arrow out"

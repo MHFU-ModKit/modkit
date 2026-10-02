@@ -44,13 +44,12 @@ if TYPE_CHECKING:
 
 Vol = HitSphere | Hurtbox
 HOST_BONES = (
-    "The joint numbers are the base monster's. Your port ships its own skeleton, so a copy"
-    " lands on whatever joint has that number here: a start you can see, not the answer."
+    "They keep the base monster's joint numbers: on your skeleton that is a start you can see,"
+    " not the answer."
 )
 PART_VS_ROW = (
-    "A breakable part is one of eight damage counters: what breaks or severs when enough"
-    " damage lands. The damage row is another number: which grid row scales a hit there."
-    " A Tigrex wing is part 6 but row 5."
+    "A breakable part is one of eight damage counters: what breaks when enough damage lands."
+    " The damage row is which grid row scales a hit: a Tigrex wing is part 6 but row 5."
 )
 GRID_NOTE = (
     "Grid writes are proven in the game (every byte 0xFF gave 411-damage hits); hurtbox"
@@ -119,8 +118,8 @@ class PartsPanel(kit.Panel):
         self.orphans = kit.Alert(level="error")
         self.parts = kit.Table(
             ["Part", "Name", "Hurtboxes", "Damage row"],
-            tip="The eight damage counters and the hurtboxes that feed each. Click one to light"
-            " only its hurtboxes in the view. " + PART_VS_ROW,
+            tip="The eight breakable parts and the hurtboxes that feed each. Click one to light"
+            " only its hurtboxes in the view.",
         )
         self.parts.picked.connect(self._pick_part)
         self.part_name = kit.text_field(
@@ -169,7 +168,8 @@ class PartsPanel(kit.Panel):
             "Pick a hurtbox, here or in the view, to change it.", role="muted"
         )
         self.part_box = kit.integer(
-            tip="The breakable part this hurtbox feeds (0 to 7). " + PART_VS_ROW,
+            tip="The breakable part this hurtbox feeds (0 to 7): what breaks when enough damage"
+            " lands. Not the damage row.",
             lo=0,
             hi=hitzone.PART_MASK,
             on=lambda v: self._stage(part=v),

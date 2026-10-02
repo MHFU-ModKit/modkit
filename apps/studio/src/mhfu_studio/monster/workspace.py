@@ -190,7 +190,7 @@ class MonsterWorkspace(Workspace):
         return (
             Dock(
                 "Clips", "left", build("clips", "ClipsPanel"),
-                "Every animation slot, what is really in it, and the name it goes by.",
+                "Every anim, what is really in it, and the name it goes by.",
             ),
             Dock(
                 "Scene", "left", build("scene", "ScenePanel"),

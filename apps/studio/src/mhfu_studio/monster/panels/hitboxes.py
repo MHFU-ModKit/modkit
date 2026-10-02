@@ -45,8 +45,8 @@ if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
 
 GROUP_TIP = (
-    "A move spawns an attack; the attack names a hit group, and the group's hitboxes are where"
-    " the blow lands. Pick a group to light it in the view."
+    "A move spawns an attack, the attack names a hit group, and the group's hitboxes are where"
+    " the blow lands."
 )
 LEVER_HEADS = ("Attack", "Power", "Element", "Group", "From")
 
@@ -126,7 +126,8 @@ class HitboxesPanel(kit.Panel):
         self.sets_head = kit.label(role="muted")
         self.sets = kit.Table(
             ["Group", "Hitboxes", "Used by", "Attacks"],
-            tip=GROUP_TIP + " Hitboxes reads yours/fit: how many you have, how many fit.",
+            tip="The hit groups; pick one to light it in the view. Hitboxes reads yours/fit: how"
+            " many you have, how many fit.",
         )
         self.sets.picked.connect(self._pick_set)
         for w in (self.move_only, self.no_attack, self.orphans, self.sets_head, self.sets):
@@ -259,8 +260,8 @@ class HitboxesPanel(kit.Panel):
         )
         self.keep = kit.button(
             "Keep only the picked hitbox",
-            tip="Drops the other hitboxes of its group: with one left, where the blow lands is"
-            " the whole answer. The other groups are other attacks and stay. A test tool.",
+            tip="Drops the other hitboxes of its group, so where the blow lands is the whole"
+            " answer. A test tool; the other groups stay.",
             on=self._keep,
         )
         self.again = QVBoxLayout()
