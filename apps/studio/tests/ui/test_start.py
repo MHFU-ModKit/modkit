@@ -12,7 +12,7 @@ from mhfu_studio.ui import dialogs, kit, steps
 from mhfu_studio.ui.start import StartPage
 from mhfu_studio.ui.testing import FakeWorkspace
 from mhfu_studio.ui.window import Window
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QLabel, QPushButton
 
 Make = Callable[..., Window]
@@ -160,3 +160,12 @@ def test_next_steps(make_window: Make, none: None, qtbot: Any) -> None:
     w.sync()
     assert w.steps.isVisibleTo(w) and w.settings.value("steps/map") is None
     qtbot.keyClick(w.view, Qt.Key.Key_Escape)  # the view keeps its keys
+
+
+def test_a_later_run_comes_back(make_window: Make, none: None, tmp_path: Path) -> None:
+    ini = QSettings(str(tmp_path / "studio.ini"), QSettings.Format.IniFormat)
+    ini.setValue("last/map", "choose:a")
+    ini.sync()
+    w = make_window(Fresh())  # its settings are that file
+    assert w.studio.active.document is not None
+    assert w.stage.currentWidget() is w.view
