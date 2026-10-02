@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from mhfu_studio.shell import settings
@@ -46,6 +47,7 @@ class Steps(QWidget):
         self.lay.setSpacing(10)
         self.lay.addWidget(kit.label("Next steps", role="caps", wrap=False))
         self.row = QWidget()
+        self.row.setMinimumWidth(1)  # a narrow view clips the line, not the panels beside it
         self.items = QHBoxLayout(self.row)
         self.items.setContentsMargins(0, 0, 0, 0)
         self.items.setSpacing(14)
@@ -78,6 +80,23 @@ class Steps(QWidget):
         for i, s in enumerate(steps):
             role: kit.LabelRole = "muted" if s.done else "next" if i == nxt else "body"
             lb = kit.label(text(i + 1, s), role=role, wrap=False)
-            lb.setToolTip("Done" if s.done else "Next" if i == nxt else "Later")
+            lb.setToolTip(f"Done: {s.text}" if s.done else "Next" if i == nxt else "Later")
             self.items.addWidget(lb)
+            lb.show()  # now, not a loop turn later: `_fit` measures it
             self.labels.append(lb)
+        self._fit()
+
+    def resizeEvent(self, e: QResizeEvent) -> None:
+        super().resizeEvent(e)
+        self._fit()
+
+    def _fit(self) -> None:
+        """Done steps shrink to their tick, the first first, until the line fits."""
+        shown = self._shown or ()
+        for i, (lb, s) in enumerate(zip(self.labels, shown, strict=True)):
+            lb.setText(text(i + 1, s))
+        for lb, s in zip(self.labels, shown, strict=True):
+            if self.sizeHint().width() <= self.width():
+                break
+            if s.done:
+                lb.setText(TICK)

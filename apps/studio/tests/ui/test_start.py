@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from mhfu_studio.shell import places, settings
+from mhfu_studio.shell.studio import Studio
 from mhfu_studio.shell.testing import FakeDocument
 from mhfu_studio.shell.workspace import Choice, Shelf, Step, Warmup
 from mhfu_studio.ui import dialogs, kit, steps
@@ -150,7 +151,8 @@ def test_next_steps(make_window: Make, none: None, qtbot: Any) -> None:
     assert w.steps.labels[0].property("role") == "next"
     ws.add_item()
     w.sync()
-    assert w.steps.labels[0].text() == f"{steps.TICK} Pick it"
+    done = w.steps.labels[0]
+    assert done.text().startswith(steps.TICK) and done.toolTip() == "Done: Pick it"  # or a tick
     assert w.steps.labels[1].property("role") == "next"
     w.steps.close_button.click()
     w.sync()
@@ -160,6 +162,24 @@ def test_next_steps(make_window: Make, none: None, qtbot: Any) -> None:
     w.sync()
     assert w.steps.isVisibleTo(w) and w.settings.value("steps/map") is None
     qtbot.keyClick(w.view, Qt.Key.Key_Escape)  # the view keeps its keys
+
+
+def test_done_steps_shrink_when_narrow(qtbot: Any) -> None:
+    ws = Fresh()
+    ws.choose("a")
+    ws.add_item()
+    s = steps.Steps(Studio([ws]))
+    qtbot.addWidget(s)
+    s.sync(False)
+    s.resize(1000, 40)
+    s.show()
+    qtbot.waitExposed(s)
+    wide = s.sizeHint().width()
+    assert s.labels[0].text() == f"{steps.TICK} Pick it" and s.minimumSizeHint().width() < 200
+    s.resize(wide - 1, 40)
+    assert s.labels[0].text() == steps.TICK and s.labels[1].text().startswith("2 Send")
+    s.resize(1000, 40)
+    assert s.labels[0].text() == f"{steps.TICK} Pick it"
 
 
 def test_a_later_run_comes_back(make_window: Make, none: None, tmp_path: Path) -> None:
