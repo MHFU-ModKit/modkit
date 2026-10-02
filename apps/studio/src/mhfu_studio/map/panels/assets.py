@@ -142,9 +142,8 @@ class AssetsPanel(kit.Panel):
         more = kit.More(tip="The group here that draws a copied object, and what the area holds")
         self.target = kit.choice(
             [],
-            tip="The group here that draws the copy, in its free drawing slots; objects of it"
-            " you select in the view give their slots up to the copy. Picking something in the"
-            " view picks its group.",
+            tip="The group here that draws the copy, in its free drawing slots or those of its"
+            " objects you select. Picking something in the view picks its group.",
             on=lambda v: self._pick("into", v),
         )
         into = kit.Form()

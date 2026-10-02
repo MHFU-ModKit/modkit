@@ -24,14 +24,14 @@ if TYPE_CHECKING:
     from ..render.viewport import MapViewport
     from ..workspace import MapWorkspace
 
-#: per entry of `MODES`: its name in the list and what it is for
-MODE_NAMES = (
-    ("As in the game", "texture times vertex colour, as the game draws it"),
-    ("Lighting only", "the baked lighting alone, to judge the shading"),
-    ("Textures only", "the textures without lighting"),
-    ("A colour per group", "each group its own colour, to see where one ends"),
-    ("One flat colour", "to read the shape alone"),
-)
+#: each of `MODES` by its name in the list
+MODE_NAMES = {
+    "textured": "As in the game",
+    "vertex colour": "Lighting only",
+    "texture only": "Textures only",
+    "by group": "A colour per group",
+    "flat": "One flat colour",
+}
 VIEW_TIPS = {
     "iso": "From above at an angle: the overview",
     "top": "Straight down, like a map",
@@ -44,7 +44,7 @@ Owner = Callable[[], object | None]
 
 
 def modes() -> list[tuple[str, str]]:
-    return [(str(i), MODE_NAMES[i][0]) for i in range(len(MODES))]
+    return [(str(i), MODE_NAMES[m]) for i, m in enumerate(MODES)]
 
 
 class ViewPanel(kit.Panel):
@@ -65,7 +65,8 @@ class ViewPanel(kit.Panel):
         draw = kit.Section("Draw", tip="How the area's surfaces are drawn")
         self.mode = kit.choice(
             modes(),
-            tip="What colours the surfaces.\n" + "\n".join(f"{n}: {t}" for n, t in MODE_NAMES),
+            tip="What colours the surfaces: as the game draws them, the lighting or the textures"
+            " alone, a colour per group, or one flat colour",
             on=lambda m: self._set(mesh, "mode", int(m)),
         )
         form = kit.Form()

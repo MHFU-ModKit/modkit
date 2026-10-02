@@ -38,9 +38,8 @@ UVS = ("Planar: the group's own texture", "Keep the slots' UVs", "The shape's ow
 SOLIDS = ("None", "A box around it", "Every triangle")
 SIZE_LABELS = {"box": "Size", "plane": "Size (y unused)", "ramp": "Width, height, length"}
 ROOM_TIP = (
-    "A group draws only in its own drawing slots: the free ones (removed, or empty as shipped)"
-    " and, with Replace, those of the objects selected in it. An estimate; the add says what"
-    " did not fit."
+    "A group draws only in its own drawing slots: the free ones and, with Replace, the selected"
+    " objects'. An estimate; Add says what did not fit."
 )
 
 

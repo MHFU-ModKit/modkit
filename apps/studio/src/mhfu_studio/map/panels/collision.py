@@ -431,9 +431,9 @@ class CollisionPanel(kit.Panel):
         for c in sc.collision:
             box = kit.check(
                 f"Chunk {c.index}",
-                tip="Shows or hides this chunk; chunk 1 is the floor the hunter stands on,"
-                " chunk 0 the walls and ceilings he bumps into. The game finds its triangles"
-                f" through a grid of {c.grid[0]} x {c.grid[1]} cells, {c.cell[0]} units wide.",
+                tip="Shows or hides this chunk: 1 is the floor, 0 the walls and ceilings. The game"
+                f" looks its triangles up in a grid of {c.grid[0]} x {c.grid[1]} cells,"
+                f" {c.cell[0]} units wide.",
                 on=self._chunk(c.index),
             )
             self.chunk_checks[c.index] = box

@@ -33,10 +33,8 @@ HOW = (
     " again: walk out and back in."
 )
 CATCH_TIP = (
-    "How long a send waits for the game to load the area again, to write the scenery as it"
-    " loads. A quest area needs it; the village never reloads its files, so there it is 0 and"
-    " the scenery shows after you step into a house and out. While it waits the game runs"
-    " slower."
+    "How long a send waits for the area to load again, to write the scenery then. A quest area"
+    " needs it; the village never reloads, so 0 there."
 )
 VILLAGE_WARNING = (
     "This is the village: set the wait to 0. The village never reloads its files, so waiting"
