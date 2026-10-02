@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""A finding clicked lands on the Parts or Hitboxes control that fixes it."""
+"""A finding clicked lands on the Clips, Parts or Hitboxes control that fixes it."""
 
 from typing import Any
 
 from mhfu_port.manifest import Hitbox
 from mhfu_studio.monster import validate as V
+from mhfu_studio.monster.panels.clips import ClipsPanel
 from mhfu_studio.monster.panels.hitboxes import HitboxesPanel
 from mhfu_studio.monster.panels.parts import PartsPanel
 from mhfu_studio.monster.workspace import MonsterWorkspace
@@ -78,3 +79,13 @@ def test_a_joint_off_the_rig_lands_on_the_joint(workspace: MonsterWorkspace, qtb
     p.sync()
     assert p.form_box.isVisibleTo(p)
     qtbot.waitUntil(lambda: p.focusWidget() is p.form.bone)
+
+
+def test_a_clip_finding_lands_on_its_name(workspace: MonsterWorkspace, qtbot: Any) -> None:
+    ws = workspace
+    p = shown(ClipsPanel, ws, qtbot)
+    ws.reveal(("clips", "walk"), V.CLIP_NAME)
+    assert ws.take_focus() == "Clips" and ws.edit_slot == 1
+    p.sync()
+    assert ws.landing == "" and p.name.text() == "walk"
+    qtbot.waitUntil(lambda: p.focusWidget() is p.name)

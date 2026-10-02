@@ -10,10 +10,11 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from mhfu_studio.monster import clips
+from mhfu_studio.monster import validate as V
 from mhfu_studio.monster.clips import SlotCoverage, Vocabulary
 from mhfu_studio.monster.render.playback import DEFAULT_SPEED, wall_clock
 from mhfu_studio.shell.findings import Level
-from mhfu_studio.ui import kit
+from mhfu_studio.ui import findings, kit
 
 from .common import COVERAGE
 from .widgets import NoScene
@@ -182,6 +183,7 @@ class ClipsPanel(kit.Panel):
         self._coverage(vocab)
         self._table(vocab)
         self._editor(vocab)
+        findings.take(ws, {V.CLIP_NAME: self.name})
 
     def _coverage(self, vocab: Vocabulary) -> None:
         cov = vocab.coverage
