@@ -294,6 +294,9 @@ QToolButton {{ background: transparent; border: none; border-radius: 6px; paddin
     color: {t.muted}; }}
 QToolButton:hover {{ background: {t.soft}; color: {t.text}; }}
 QToolButton:checked {{ background: {t.accent}; color: {t.on_accent}; font-weight: 600; }}
+QToolButton#More {{ padding: 2px 0; }}
+QToolButton#More:checked {{ background: transparent; color: {t.text}; font-weight: normal; }}
+QToolButton#More:hover, QToolButton#More:focus {{ background: transparent; color: {t.accent}; }}
 QToolButton[toggle="true"] {{ border: 1px solid {t.line}; padding: 3px 9px; }}
 QToolButton[toggle="true"]:checked {{ background: {t.soft}; color: {t.accent};
     border-color: {t.accent}; font-weight: normal; }}

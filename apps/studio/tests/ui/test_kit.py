@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from mhfu_studio.ui import kit, theme
 from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QFont, QFontMetrics, QWheelEvent
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QWheelEvent
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -296,3 +296,15 @@ def test_more_opens(qtbot: Any) -> None:
     assert not m.inner.isVisible() and not kit.missing_tips(m)
     qtbot.mouseClick(m.toggle, Qt.MouseButton.LeftButton)
     assert m.inner.isVisible()
+
+
+def test_open_more_is_not_filled(qtbot: Any) -> None:
+    theme.apply(theme.theme("Ember", True))
+    m = kit.More(tip="expert controls")
+    qtbot.addWidget(m)
+    m.show()
+    m.set_open(True)
+    img = m.toggle.grab().toImage()
+    accent = QColor(theme.current().accent)
+    px = {img.pixelColor(x, y).rgb() for x in range(img.width()) for y in range(img.height())}
+    assert m.toggle.isChecked() and accent.rgb() not in px

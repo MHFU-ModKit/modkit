@@ -529,6 +529,7 @@ class More(QFrame):
         lay.setContentsMargins(0, 2, 0, 4)
         lay.setSpacing(6)
         self.toggle = QToolButton()
+        self.toggle.setObjectName("More")  # the theme draws it as a quiet disclosure
         self.toggle.setText(title)
         self.toggle.setCheckable(True)
         self.toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
