@@ -90,6 +90,27 @@ def test_close_fails_a_call_waiting_in_another_thread(served):
         c.status()
 
 
+def test_close_from_many_threads(served):
+    errors: list[BaseException] = []
+
+    def close(c: Client) -> None:
+        try:
+            c.close()
+        except BaseException as e:
+            errors.append(e)
+
+    for _ in range(40):
+        c = Client.connect(port=served.fake.port)
+        closers = [threading.Thread(target=close, args=(c,), daemon=True) for _ in range(4)]
+        for t in closers:
+            t.start()
+        for t in closers:
+            t.join(2)
+        assert not any(t.is_alive() for t in closers)
+        assert c.closed
+    assert errors == []
+
+
 def test_every_async_method_is_mirrored():
     public = {n for n, v in vars(AsyncClient).items() if not n.startswith("_") and callable(v)}
     assert public <= set(vars(Client))
