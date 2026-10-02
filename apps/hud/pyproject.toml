@@ -1,0 +1,16 @@
+[project]
+name = "mhfu-hud"
+version = "0.1.0"
+description = "A live HUD next to PPSSPP: vitals, the quest map, the monsters and their AI cells."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = ["ppsspp-debug", "mhfu", "pygame-ce>=2.5"]
+classifiers = ["Typing :: Typed"]
+
+[project.scripts]
+hud = "mhfu_hud.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"

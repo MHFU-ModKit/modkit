@@ -49,6 +49,7 @@ files = [
     "packages/mhfu/src",
     "packages/mhfu-port/src",
     "apps/studio/src",
+    "apps/hud/src",
 ]
 
 [[tool.mypy.overrides]]
