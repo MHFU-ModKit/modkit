@@ -203,10 +203,9 @@ class QuestLayout(Layout):
         W.text(surface, "HEADING", (x, sub_y), size=10, color=C.TEXT_DIM, bold=True)
         W.text(surface, heading, (x + 60, sub_y - 1), size=13, color=C.TEXT, bold=True)
         W.text(surface, "MAP SEC", (col, sub_y), size=10, color=C.TEXT_DIM, bold=True)
-        sec = snapshot.tracked_section
-        W.text(
+        sec = W.text(
             surface,
-            "?" if sec is None else str(sec),
+            panels.section_text(snapshot),
             (col + 60, sub_y - 1),
             size=13,
             color=C.TEXT,
@@ -214,9 +213,8 @@ class QuestLayout(Layout):
         )
         W.text(
             surface,
-            f"({snapshot.tracked_section_source}, idx {snapshot.area_index}, "
-            f"sub {snapshot.map_subsection})",
-            (col + 80, sub_y - 1),
+            f"({snapshot.tracked_section_source}, idx {snapshot.area_index})",
+            (sec.right + 10, sub_y - 1),
             size=11,
             color=C.TEXT_FAINT,
         )
@@ -289,7 +287,7 @@ class QuestLayout(Layout):
             status = f"sec {sec} ({snapshot.tracked_section_source})  {mode}"
         else:
             q = self.calib.quest
-            status = f"sec ?  ({q['mode']}  x{q['scale']:.3f})"
+            status = f"sec {panels.section_text(snapshot)}  ({q['mode']}  x{q['scale']:.3f})"
         W.text(
             surface,
             status,
@@ -442,7 +440,7 @@ class QuestLayout(Layout):
                 )
                 W.bar(
                     surface,
-                    (row.x + 96, row.y + 22, row.w - 104, 8),
+                    (row.x + 40, row.y + 33, row.w - 46, 4),
                     m.hp / max(1, m.hp_max),
                     C.MONSTER,
                 )
@@ -464,9 +462,10 @@ class QuestLayout(Layout):
             align="right",
         )
         bag = snapshot.player.bag
-        cols, rows, pad = 6, 4, 6
+        cols, rows, pad = 6, 4, 4
         slot_w = (rect.w - (cols + 1) * pad) // cols
         slot_h = (rect.h - 22 - (rows + 1) * pad) // rows
+        prev = surface.get_clip()
         for i in range(cols * rows):
             x = rect.x + pad + (i % cols) * (slot_w + pad)
             y = rect.y + 22 + pad + (i // cols) * (slot_h + pad)
@@ -478,31 +477,24 @@ class QuestLayout(Layout):
                 continue
             pygame.draw.rect(surface, C.PANEL_HI, cell, border_radius=3)
             pygame.draw.rect(surface, C.ACCENT, cell, width=1, border_radius=3)
+            surface.set_clip(cell.clip(prev))  # nothing spills into a neighbour
             _name, slug = item_db.identify(slot.item_id)
-            size = min(slot_w - 8, slot_h - 16)
+            size = min(slot_w - 4, slot_h - 4)
             icon = self.assets.scaled(self.assets.item_icon(slug), (size, size))
             if icon is not None:
-                surface.blit(icon, icon.get_rect(center=(cell.centerx, cell.y + 4 + size // 2)))
+                surface.blit(icon, icon.get_rect(center=cell.center))
             else:
                 W.text(
                     surface,
-                    f"0x{slot.item_id:03X}",
-                    (cell.centerx, cell.y + 4),
-                    size=10,
-                    bold=True,
+                    f"{slot.item_id:X}",
+                    (cell.centerx, cell.y + 1),
+                    size=9,
+                    color=C.TEXT_DIM,
                     align="center",
                 )
-            chip = pygame.Rect(cell.right - 22, cell.bottom - 14, 20, 12)
-            pygame.draw.rect(surface, (0, 0, 0, 180), chip, border_radius=2)
-            W.text(
-                surface,
-                f"x{slot.count}",
-                (chip.centerx, chip.y - 1),
-                size=11,
-                color=C.SELECT,
-                bold=True,
-                align="center",
-            )
+            at = (cell.right - 2, cell.bottom - 12)
+            W.text(surface, f"x{slot.count}", at, 9, C.SELECT, bold=True, align="right")
+            surface.set_clip(prev)
 
     def _detail_panel(self, surface: pygame.Surface, snapshot: GameSnapshot) -> None:
         rect = self._detail_rect
@@ -522,48 +514,41 @@ class QuestLayout(Layout):
             return
         m = monsters[self.selected]
         x = rect.x + 12
-        icon = self.assets.scaled(self.assets.monster_icon(m.icon_slug), (64, 64))
+        icon_rect = pygame.Rect(x, rect.y + 28, 44, 44)
+        icon = self.assets.scaled(self.assets.monster_icon(m.icon_slug), icon_rect.size)
         if icon is not None:
-            surface.blit(icon, (rect.centerx - 32, rect.y + 28))
+            surface.blit(icon, icon_rect)
         else:
-            W.placeholder_box(surface, (rect.centerx - 32, rect.y + 28, 64, 64), "no icon")
-        W.text(
-            surface,
-            m.name,
-            (rect.centerx, rect.y + 96),
-            size=16,
-            color=C.SELECT,
-            bold=True,
-            align="center",
-        )
-        W.bar(surface, (x, rect.y + 122, rect.w - 24, 14), m.hp / max(1, m.hp_max), C.MONSTER)
-        W.text(
-            surface,
-            f"HP {m.hp}",
-            (rect.centerx, rect.y + 124),
-            size=11,
-            bold=True,
-            align="center",
-        )
+            W.placeholder_box(surface, icon_rect, "")
+        prev = surface.get_clip()
+        surface.set_clip(rect.inflate(-8, -4).clip(prev))  # long values stop at the border
+        right = icon_rect.right + 10
+        W.text(surface, m.name, (right, rect.y + 28), size=14, color=C.SELECT, bold=True)
+        bar = pygame.Rect(right, rect.y + 52, rect.right - 10 - right, 14)
+        W.bar(surface, bar, m.hp / max(1, m.hp_max), C.MONSTER)
+        W.text(surface, f"HP {m.hp}", (bar.centerx, bar.y), size=10, bold=True, align="center")
         dist = self._distance(m, snapshot.player)
         size = "?" if m.render_scale is None else f"{m.render_scale:.3f}x"
         rows = [
             ("Slot", m.slot),
-            ("Pointer", f"0x{m.ptr:08X}"),
             ("Species", f"0x{m.species:02X}"),
-            ("Entity ID", f"0x{m.entity_id:02X}"),
             ("Size", size),
-            ("Animating", action_text(m)[:20]),
+            ("Animating", action_text(m)),
             ("Move", state_text(m)),
+            ("Dist", "-" if dist is None else f"{dist:.0f}"),
+            ("Pointer", f"0x{m.ptr:08X}"),
+            ("Entity ID", f"0x{m.entity_id:02X}"),
             ("World X", f"{m.pos.x:.0f}"),
             ("World Z", f"{m.pos.z:.0f}"),
-            ("Dist", "-" if dist is None else f"{dist:.0f}"),
         ]
-        W.kv_rows(surface, (x, rect.y + 148), rows, size=12, line_h=18, key_w=92)
+        top, line_h, footer = rect.y + 82, 16, rect.bottom - 18
+        fit = max(0, (footer - top) // line_h)
+        W.kv_rows(surface, (x, top), rows[:fit], size=11, line_h=line_h, key_w=84)
+        surface.set_clip(prev)
         W.text(
             surface,
-            "+/- size  ·  PgUp/Dn species  ·  ENTER  ·  B bag",
-            (rect.centerx, rect.bottom - 22),
+            "ENTER details  ·  B bag",
+            (rect.centerx, footer),
             size=10,
             color=C.TEXT_FAINT,
             align="center",

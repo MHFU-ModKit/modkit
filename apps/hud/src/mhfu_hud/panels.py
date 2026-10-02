@@ -7,7 +7,7 @@ from mhfu.addresses import Field
 
 from . import widgets as W
 from .state import Cell, CellValue, Context, GameSnapshot, MonsterHUD, PlayerHUD
-from .theme import C, hp_color
+from .theme import C, font, hp_color
 
 QUEST_TIMER_FPS = 30
 """QUEST.TIMER counts frames of the 30 Hz game logic, not the 60 Hz display."""
@@ -50,6 +50,13 @@ def action_text(m: MonsterHUD) -> str:
 def state_text(m: MonsterHUD) -> str:
     main, sub = m.state
     return f"({main}, {sub})"
+
+
+def section_text(snap: GameSnapshot) -> str:
+    """The tracked section: "camp" for a base-camp area index, "?" while unknown."""
+    if snap.tracked_section is not None:
+        return str(snap.tracked_section)
+    return "camp" if snap.tracked_section_source == "area_index" else "?"
 
 
 def draw_vitals(surface: pygame.Surface, rect: RectLike, player: PlayerHUD) -> None:
@@ -132,8 +139,9 @@ def draw_raw_strip(surface: pygame.Surface, rect: RectLike, snapshot: GameSnapsh
     cw = rect.width / len(cells)
     for i, (label, value) in enumerate(cells):
         cx = rect.x + cw * i + 10
+        size = 15 if font(15).size(str(value))[0] <= cw - 14 else 11  # a narrow strip
         W.text(surface, label, (cx, rect.y + 7), size=10, color=C.TEXT_FAINT, bold=True)
-        W.text(surface, value, (cx, rect.y + 20), size=15, color=C.TEXT)
+        W.text(surface, value, (cx, rect.y + 20 + (15 - size) // 2), size=size, color=C.TEXT)
     return rect
 
 

@@ -17,6 +17,7 @@ TYPE_NAMES = {
     0x46: "Popo",
     0x48: "Popo",
     0x4B: "Tigrex",
+    0x4D: "Giadrome",
 }
 """Species id -> name, as observed live."""
 
@@ -28,6 +29,7 @@ PICKER_SPECIES: list[tuple[str, int | None]] = [
     ("Anteka", 0x45),
     ("Popo", 0x46),
     ("Tigrex", 0x4B),
+    ("Giadrome", 0x4D),
     # species ids not observed yet; the picker binds one by hand
     ("Velociprey", None),
     ("Velocidrome", None),
@@ -35,7 +37,6 @@ PICKER_SPECIES: list[tuple[str, int | None]] = [
     ("Gendrome", None),
     ("Ioprey", None),
     ("Iodrome", None),
-    ("Giadrome", None),
     ("Hornetaur", None),
     ("Bulldrome", None),
     ("Felyne", None),

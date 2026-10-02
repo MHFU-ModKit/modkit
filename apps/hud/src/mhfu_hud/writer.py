@@ -3,7 +3,7 @@ thread to the monsters in the snapshots the reader publishes.
 
 An edit writes each matching monster once. Entering a quest area with monsters (QUEST, IN_AREA
 and a monster in the registry, after a snapshot without) re-arms every edit, so a new quest or
-area gets them again. Snapshots without a game connected leave that state alone.
+area gets them again. Disconnected and boot snapshots leave that state alone.
 """
 
 from __future__ import annotations

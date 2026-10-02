@@ -14,7 +14,7 @@ import pygame
 from .. import widgets as W
 from ..assets import AssetLibrary
 from ..calibration import Calibration
-from ..panels import action_text, cell_label, fmt_value, state_text
+from ..panels import action_text, cell_label, fmt_value, section_text, state_text
 from ..state import Cell, GameSnapshot, MonsterHUD
 from ..theme import CANVAS_H, CANVAS_W, C, font
 from .base import Layout
@@ -128,8 +128,8 @@ class AIModLayout(Layout):
         W.text(surface, title, (R_HEADER.x + 12, R_HEADER.y + 4), size=15, color=color, bold=True)
         W.text(
             surface,
-            f"ctx {snap.context.value}  area {snap.area_index}  section {snap.tracked_section}  "
-            f"poll #{snap.poll_count}  read-only",
+            f"ctx {snap.context.value}  area {snap.area_index}  section {section_text(snap)}  "
+            f"poll #{snap.poll_count}",
             (R_HEADER.x + 12, R_HEADER.y + 24),
             size=11,
             color=C.TEXT_DIM,

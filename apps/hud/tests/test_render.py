@@ -4,6 +4,7 @@ import pygame
 import pytest
 from mhfu_hud.app import TAB_AI_MOD, TAB_LIVE, TABS
 from mhfu_hud.edits import Edit, Kind
+from mhfu_hud.panels import section_text
 from mhfu_hud.state import Context
 from mhfu_hud.theme import CANVAS_W, STATUS_H, C
 
@@ -78,3 +79,7 @@ def test_badge(app, writer, snaps):
     writer.toggle()
     app._render(snaps["quest"])
     assert not warn_in_status_row(app)
+
+
+def test_section_text(snaps):
+    assert [section_text(snaps[n]) for n in ("quest", "camp", "disconnected")] == ["1", "camp", "?"]

@@ -183,7 +183,7 @@ class QuestPrepLayout(Layout):
                 color=C.WARN,
                 bold=True,
             )
-        row_h = 14
+        row_h = 16
         n = len(PICKER_SPECIES)
         max_rows = (R_PICKER.h - 50) // row_h
         start = max(0, min(self.selected_species - max_rows // 2, n - max_rows))
