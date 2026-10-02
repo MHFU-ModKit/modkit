@@ -70,10 +70,7 @@ def test_chain(make, species, make_pair):
     out = found(V.validate(m, intel=si))
     assert {"MOVE_PAIR_PARKS", "MOVE_BUDGET_ROOT_MOTION"} <= set(out)
     parks = species([make_pair(1, 4, next=[])])
-    assert (
-        "never ends the action itself"
-        in found(V.validate(m, intel=parks), "MOVE_PAIR_PARKS").message
-    )
+    assert "never ends by itself" in found(V.validate(m, intel=parks), "MOVE_PAIR_PARKS").message
     chained = make(
         CLIP + MOVE.format(1, 4) + 'after = "stop"\n\n[moves.stop]\nmain = 0\nsub = 6\nanim = 3\n'
         '\n[[rule]]\nplay = "stop"\nfrom = "m"\nmin_frames = 30\n'
@@ -150,10 +147,10 @@ def test_parts(make, species):
         ("HITZONE_ALL_ZERO", "warning"),
         ("HITZONE_STATE_DUPLICATE", "error"),
         ("HITZONE_STATE_COUNT", "warning"),
-        ("HITZONE_SHARED", "warning"),
         ("HURTBOX_OVER_CAPACITY", "warning"),
     ):
         assert out[code].level == level, code
+    assert "HITZONE_SHARED" not in out, "said where the grid is edited, not as a finding"
     unnamed = make("\n[[hurtbox]]\nbone = 1\nradius = 9.0\npart = 1\n")
     assert "PARTS_UNNAMED" in found(V.validate(unnamed))
 
@@ -177,9 +174,9 @@ def test_attacks(make, species):
         "ATTACK_RECORD_UNKNOWN",
         "ATTACK_VOLUME_UNKNOWN",
         "ATTACK_JOIN_INFERRED",
-        "HITBOX_SHARED",
     ):
         assert code in out, code
+    assert "HITBOX_SHARED" not in out, "said where hitboxes are edited, not as a finding"
     assert "HITBOX_UNCHECKED" in found(V.validate(m))
     assert not [f for f in V.validate(make()) if f.code.startswith(("HITBOX", "ATTACK"))]
 

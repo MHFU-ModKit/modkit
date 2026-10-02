@@ -19,6 +19,17 @@ from mhfu import files
 from mhfu.em.intel import HostSummary, SpeciesIntel
 from mhfu.files import Extracted
 
+#: names checked against the game; any other species shows its id alone
+NAMES = {75: "Tigrex"}
+
+
+def label(species: int | None) -> str:
+    """`Tigrex (em75)`; `em07` without a checked name."""
+    if species is None:
+        return "no base monster"
+    name = NAMES.get(species)
+    return f"{name} (em{species:02d})" if name else f"em{species:02d}"
+
 
 def cache_root() -> Path:
     """The studio's per-user cache."""
