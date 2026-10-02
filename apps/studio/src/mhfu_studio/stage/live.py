@@ -14,6 +14,7 @@ climbable material is read at area load, so a climb edit needs a hold across the
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -58,6 +59,13 @@ class NotThisStage(ValueError):
 def pac_address(mem: Memory, stage: int) -> int | None:
     slot = S.resident_files(mem).get(files.stage_pac(stage))
     return slot.data if slot else None
+
+
+def undo_path(stage: int) -> Path:
+    """The stage's collision undo, one per user (`$XDG_STATE_HOME`), whichever route pushed:
+    the next push adopts the scratch the last one wrote."""
+    root = os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"
+    return Path(root) / "mhfu-studio" / "push" / f"st{stage:03d}_collision_undo.json"
 
 
 def in_village(game: Extracted, stage: int) -> bool:

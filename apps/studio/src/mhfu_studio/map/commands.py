@@ -127,7 +127,7 @@ def inject(args: argparse.Namespace) -> int:
             elif args.restore:
                 live.restore(mem, p.stage)
             else:
-                undo = base / ".inject" / f"{label}_collision_undo.json"
+                undo = live.undo_path(p.stage.number)
                 live.run(client, mem, p, catch_for=catch, hold_for=args.hold, undo_file=undo)
     return 0
 

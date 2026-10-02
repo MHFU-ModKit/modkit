@@ -134,6 +134,12 @@ EXITS = [
 SPHERES = [Sphere(24, (600.0, 100.0, 600.0), 150.0)]
 
 
+@pytest.fixture(autouse=True)
+def _state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A push's undo goes to the test's folder, never the user's."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+
 @pytest.fixture
 def game(tmp_path: Path) -> Extracted:
     """An extraction holding st139 and st098, both the synthetic section."""
