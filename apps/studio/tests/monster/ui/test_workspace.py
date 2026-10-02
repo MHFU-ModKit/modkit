@@ -43,9 +43,9 @@ def test_status_names_the_scene(workspace: MonsterWorkspace) -> None:
 def test_keys_drive_the_transport(workspace: MonsterWorkspace) -> None:
     ws = workspace
     assert ws.vp is not None
-    ws.play_slot(1, 0.0)
+    ws.play_slot(1)
     pb = ws.vp.playback
-    assert ws.key(Key("Space")) and pb.playing
+    assert pb.playing and pb.phase == 0.0, "a picked clip plays from its first frame"
     assert ws.key(Key("Space")) and not pb.playing
     assert ws.key(Key("Right")) and pb.phase == pb.speed and ws.vp.frame == pb.phase
     assert ws.key(Key("Left")) and pb.phase == 0.0
@@ -57,13 +57,30 @@ def test_keys_drive_the_transport(workspace: MonsterWorkspace) -> None:
 def test_playback_animates(workspace: MonsterWorkspace) -> None:
     ws = workspace
     assert ws.vp is not None
-    ws.play_slot(1, 0.0)
-    assert not ws.animating()
-    ws.play_pause()
+    ws.play_slot(1)
     assert ws.animating()
     for _ in range(4):
         ws.frame(1 / 30)
     assert ws.vp.frame > 0
+
+
+def test_the_host_restarts_with_the_port(workspace: MonsterWorkspace) -> None:
+    ws = workspace
+    assert ws.vp is not None
+    ws.select_pair(1, 4)
+    ws.set_show_host(True)
+    ref = ws.vp.reference
+    assert ref is not None
+    ws.play_slot(2)  # a one-shot of 6 frames
+    for _ in range(5):
+        ws.frame(1 / 30)
+    pb = ws.vp.playback
+    assert pb.at_end and not pb.playing and ref.playback.phase > 0
+    ws.play_pause()
+    assert pb.playing and pb.phase == 0.0 and ref.playback.phase == 0.0 and ref.frame == 0.0
+    ws.frame(1 / 30)
+    ws.play_slot(1)
+    assert pb.phase == 0.0 and ref.playback.phase == 0.0
 
 
 def test_reveal_follows_the_findings(workspace: MonsterWorkspace) -> None:

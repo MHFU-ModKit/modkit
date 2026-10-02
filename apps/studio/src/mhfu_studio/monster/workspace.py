@@ -597,14 +597,16 @@ class MonsterWorkspace(Workspace):
         self.name_buf = found[0] if found else clips.clip_key(slot)
         self.label_buf = found[1].label if found else ""
 
-    def play_slot(self, slot: int, frame: float | None = None) -> None:
+    def play_slot(self, slot: int) -> None:
+        """Plays `slot` from frame 0, the host beside restarted with it."""
         if self.scene is None or self.vp is None:
             return
         try:
-            self.vp.play_clip(self.scene.clip(slot), frame)
+            self.vp.play_clip(self.scene.clip(slot))
         except KeyError:
             self.message = f"slot {slot} is not in this PAC"
             return
+        self.vp.playback.play()
         self.pick_clip(slot)
         self.recompute_alignment()
 
@@ -716,7 +718,7 @@ class MonsterWorkspace(Workspace):
 
     def play_pause(self) -> None:
         if self.vp is not None and self.vp.clip is not None:
-            self.vp.playback.toggle()
+            self.vp.play_pause()
 
     def step(self, frames: int) -> None:
         """Whole game frames at the clip's speed; pauses."""
@@ -725,7 +727,8 @@ class MonsterWorkspace(Workspace):
             self.vp.set_pose(self.vp.clip, self.vp.playback.phase)
 
     def rewind(self) -> None:
-        self.seek(0.0)
+        if self.vp is not None and self.vp.clip is not None:
+            self.vp.restart()
 
     def seek(self, frame: float) -> None:
         if self.vp is not None and self.vp.clip is not None:

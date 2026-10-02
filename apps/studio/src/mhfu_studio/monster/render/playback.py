@@ -65,14 +65,25 @@ class Playback:
         self._carry = 0.0
         return self
 
+    @property
+    def at_end(self) -> bool:
+        """A one-shot clip the gate stops: the next step would pass its end."""
+        return not self.loop and self.end > 0 and self.phase + self.speed > self.end
+
     def play(self) -> None:
+        """Plays on; from the end of a one-shot, from frame 0."""
+        if self.at_end:
+            self.rewind()
         self.playing = True
 
     def pause(self) -> None:
         self.playing = False
 
     def toggle(self) -> None:
-        self.playing = not self.playing
+        if self.playing:
+            self.pause()
+        else:
+            self.play()
 
     def seek(self, frame: float) -> None:
         self.phase = max(0.0, min(float(frame), self.end))

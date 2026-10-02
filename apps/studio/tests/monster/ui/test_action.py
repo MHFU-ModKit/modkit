@@ -27,7 +27,7 @@ def make(qtbot: Any, ws: MonsterWorkspace) -> ActionPanel:
 
 @pytest.fixture
 def panel(qtbot: Any, workspace: MonsterWorkspace) -> ActionPanel:
-    workspace.play_slot(1, 0.0)
+    workspace.play_slot(1)
     return make(qtbot, workspace)
 
 
