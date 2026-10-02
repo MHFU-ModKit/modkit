@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The shell's Findings dock: what the checks found in the active workspace's document."""
+"""The shell's Findings dock: what the checks found in the active workspace's document. A line
+says where and what; its colour is the level, its tooltip the level and the code."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
 
-from mhfu_studio.shell.findings import LEVELS
+from mhfu_studio.shell.findings import LEVELS, Finding
 from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit
 
@@ -21,6 +22,14 @@ OPEN_HINT = (
     "Findings are what the checks spot in a document: a missing file, a clash, a value out of"
     " range. Open a map document or a port manifest to see its findings here."
 )
+
+
+def line(f: Finding) -> str:
+    return plain(f"{f.where}: {f.message}" if f.where else f.message)
+
+
+def tip(f: Finding) -> str:
+    return f"{f.level}: {f.code}" + ("\nClick to show it" if f.target is not None else "")
 
 
 class FindingsPanel(kit.Panel):
@@ -85,14 +94,4 @@ class FindingsPanel(kit.Panel):
             self.auto.blockSignals(True)
             self.auto.setChecked(self.studio.findings.auto)
             self.auto.blockSignals(False)
-        self.list.set_items(
-            [
-                kit.Item(
-                    plain(str(f)),
-                    f.target,
-                    "Click to show it" if f.target is not None else "",
-                    f.level,
-                )
-                for f in found
-            ]
-        )
+        self.list.set_items([kit.Item(line(f), f.target, tip(f), f.level) for f in found])

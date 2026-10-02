@@ -416,6 +416,8 @@ def test_findings(make_window: Make) -> None:
     w.sync()
     panel = w.findings
     assert panel.list.count() == 2 and panel.pills["error"].text() == "1 error"
+    first = panel.list.item(0)
+    assert first.text() == "bad" and first.toolTip().startswith("error: x")
     assert panel.pills["warning"].isHidden()
     w.set_theme(family="Moss", mode="light")
     assert panel.list.item(0).foreground().color() == theme.level("error")
