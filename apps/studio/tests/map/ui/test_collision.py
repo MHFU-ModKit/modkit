@@ -50,9 +50,12 @@ def test_shows(panel: CollisionPanel, ws: MapWorkspace) -> None:
     assert sorted(panel.chunk_checks) == [0, 1] and "4 triangles" in panel.chunk_checks[1].text()
     assert "grid of 5 x 5 cells" in panel.chunk_checks[1].toolTip()
     assert (
-        panel.classes["climb"].text() == "climb  (1)" and not panel.classes["climb"].icon().isNull()
+        panel.classes["climb"].text() == "climbable  (1)"
+        and not panel.classes["climb"].icon().isNull()
     )
-    assert "1 climbable" in panel.climb_text.text() and panel.surface.isHidden()
+    assert panel.climb_text.text() == "1 climbable triangle" and panel.surface.isHidden()
+    more = panel.findChild(kit.More)
+    assert more is not None and all(more.isAncestorOf(w) for w in (panel.chunk_box, *panel.flags))
     assert not panel.hint.isHidden() and panel.edit.isHidden()
     assert not any(w.isEnabled() for w in panel.filters)  # drawn only while shown
     ws.tools.show_layer(True)
@@ -83,7 +86,7 @@ def test_one_triangle(panel: CollisionPanel, ws: MapWorkspace) -> None:
     pick(ws, (0, 1))
     panel.sync()
     assert panel.hint.isHidden() and not panel.one.isHidden()
-    assert "Chunk 0 triangle 1: wall" in panel.info.text()
+    assert "wall triangle 1: wall" in panel.info.text() and panel.what.text().endswith(": 1 wall")
     assert panel.verts[0].value() == pytest.approx([1500.0, 0.0, 300.0])
     press(panel, "Climbable")
     assert (0, 1) in ws.scene.climbable() and panel.flags[1].value() == 10
@@ -117,7 +120,7 @@ def test_new_collision(panel: CollisionPanel, ws: MapWorkspace) -> None:
     assert not panel.box.isEnabled()
     ws.tools.select(Selection.face(ws.scene, (0, 1), 0))
     panel.add_flags[1].setValue(10)
-    press(panel, "Turn 1 selected faces into collision")
+    press(panel, "Turn 1 selected face into collision")
     op = ws.session.ops[-1]
     assert op["op"] == "collision" and len(op["add"]) == 1 and op["flags"]["material"] == 10
     panel.add_chunk.setCurrentIndex(panel.add_chunk.findData("1"))

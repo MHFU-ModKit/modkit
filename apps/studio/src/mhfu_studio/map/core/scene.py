@@ -49,6 +49,8 @@ TURN = 0x10000
 
 FLOOR, WALL, CLIMB, SINK, WADE = "floor", "wall", "climb", "sink", "wade"
 CLASSES = (FLOOR, WALL, CLIMB, SINK, WADE)
+#: a class as the panels name it
+CLASS_NAMES = {FLOOR: "floor", WALL: "wall", CLIMB: "climbable", SINK: "sinking", WADE: "wading"}
 
 
 class SceneError(RuntimeError):

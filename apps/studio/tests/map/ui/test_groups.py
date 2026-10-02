@@ -46,7 +46,9 @@ def test_lists_groups(panel: GroupsPanel, ws: MapWorkspace) -> None:
     assert ws.scene is not None
     assert kit.missing_tips(panel) == []
     assert panel.table.rowCount() == len(ws.scene.groups)
-    assert "Terrain: 4 groups" in panel.summary.text()
+    assert panel.summary.text().startswith("Model: 4 groups")
+    more = panel.findChild(kit.More)
+    assert more is not None and more.isAncestorOf(panel.backdrop) and more.inner.isHidden()
     assert panel.table.item(row_of(panel, "group 1"), 3).text() == "1"
     assert any("(far)" in panel.table.item(r, 0).text() for r in range(panel.table.rowCount()))
     panel.backdrop.setChecked(False)
@@ -60,6 +62,7 @@ def test_pick_and_frame(panel: GroupsPanel, ws: MapWorkspace) -> None:
     panel.table.cellClicked.emit(row_of(panel, "group 1"), 0)
     panel.sync()
     assert ws.selected_group == (0, 1) and "group 1: material 1" in panel.details.text()
+    assert panel.hint.isHidden() and not panel.material.isHidden()
     target = ws.vp.camera.target.copy()
     press(panel, "Frame")
     assert (ws.vp.camera.target != target).any()

@@ -24,7 +24,7 @@ from mhfu_studio.shell.findings import Finding
 from mhfu_studio.stage import collision, mesh, textures
 from mhfu_studio.stage import ops as O
 
-from .scene import CLIMB_MATERIALS, Array, Key, MapScene, Point, group_name
+from .scene import CLASS_NAMES, CLIMB_MATERIALS, Array, Key, MapScene, Point, group_name
 
 GROUP, OBJECT, FACE, COLLISION = "group", "object", "face", "collision"
 KINDS = (GROUP, OBJECT, FACE, COLLISION)
@@ -301,7 +301,7 @@ class CollisionSelection:
             return "no collision triangle selected"
         kinds: dict[str, int] = {}
         for c, t in self.tris:
-            k = str(scene.chunk(c).klass[t])
+            k = CLASS_NAMES[str(scene.chunk(c).klass[t])]
             kinds[k] = kinds.get(k, 0) + 1
         what = ", ".join(f"{n} {k}" for k, n in kinds.items())
         return f"{count(len(self), 'collision triangle')}: {what}"

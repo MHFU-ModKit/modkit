@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Collision panel: chunks and classes with their counts, the inspector of the collision
-selection (flags, vertices, climbable, delete) and new collision triangles."""
+"""The Collision panel: what collision shows and what is climbable, the selected triangles
+(climbable, delete) and new collision; chunks, exact values and flags under More."""
 
 from __future__ import annotations
 
@@ -9,15 +9,14 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QCheckBox, QSpinBox, QVBoxLayout, QWidget
 
 from mhfu_studio.shell.camera import Bounds
 from mhfu_studio.shell.text import plain
-from mhfu_studio.ui import kit, theme
+from mhfu_studio.ui import kit
 
-from ..core.edit import COLLISION, CollisionSelection
-from ..core.scene import CLASSES, MapScene
+from ..core.edit import COLLISION, CollisionSelection, count, triangle_name
+from ..core.scene import CLASS_NAMES, CLASSES, MapScene
 from ..render.overlays import CLASS_COLORS
 from .common import Gate
 
@@ -42,8 +41,8 @@ FLAG_TIPS = (
 )
 FLAG_HI = (255, 255, 65535)
 NEW_TIP = (
-    "Added triangles need no room in the file: they are linked into the game's collision grid"
-    " one cell at a time. Chunk 1 is what the hunter stands on, chunk 0 what he walks into."
+    "Added triangles need no room in the file: the game's collision grid links them one cell"
+    " at a time."
 )
 
 
@@ -53,6 +52,13 @@ def flags_of(fields: list[int]) -> dict[str, int]:
 
 def _flag_boxes() -> list[QSpinBox]:
     return [kit.integer(tip=tip, lo=0, hi=hi) for tip, hi in zip(FLAG_TIPS, FLAG_HI, strict=True)]
+
+
+def _flag_form(boxes: list[QSpinBox]) -> kit.Form:
+    form = kit.Form()
+    for text, spin in zip(("Surface", "Material", "Exclude"), boxes, strict=True):
+        form.row(text, spin)
+    return form
 
 
 class CollisionPanel(kit.Panel):
@@ -66,22 +72,103 @@ class CollisionPanel(kit.Panel):
 
         shown = kit.Section(
             "What is shown",
-            tip="Which collision the view draws while it shows (C, or Show collision on the"
-            " toolbar); edits nothing",
+            tip="Which collision the view draws while Show collision (C) is on; edits nothing",
         )
+        self.classes = {
+            k: kit.check(CLASS_NAMES[k], tip=CLASS_TIPS[k], on=self._view(self._class_setter(k)))
+            for k in CLASSES
+        }
+        for k, box in self.classes.items():
+            box.setIcon(kit.swatch_icon(CLASS_COLORS[k]))
+        self.xray = kit.check(
+            "X-ray",
+            tip="Shows the collision through the scenery, so walls behind a hill show too",
+            on=self._view(lambda vp, on: setattr(vp, "collision_xray", on)),
+        )
+        for box in (*self.classes.values(), self.xray):
+            shown.body.addWidget(box)
+        self.climb_text = kit.label()
+        self.frame_climb = kit.button(
+            "Frame them",
+            tip="Points the camera at every climbable wall of the area",
+            on=studio.act("frame climbable", self._frame_climb),
+            icon="ph.frame-corners",
+        )
+        self.select_climb = kit.button(
+            "Select them",
+            tip="Selects every climbable triangle, to inspect or change them below",
+            on=studio.act("select climbable", self._select_climb),
+        )
+        shown.body.addWidget(self.climb_text)
+        shown.body.addWidget(kit.row(self.frame_climb, self.select_climb, stretch=True))
+        lay.addWidget(shown)
+
+        picked = kit.Section("Selected triangles", tip="The collision triangles you clicked")
+        self.hint = kit.label(
+            "Press 4, or pick Collision on the toolbar, to click collision triangles in the view.",
+            role="muted",
+        )
+        self.what = kit.label(role="title")
+        self.climb10 = kit.button(
+            "Climbable",
+            tip="Makes the selected walls climbable like vines and ivy",
+            on=studio.act("climbable", lambda: self.climb(True, 10)),
+        )
+        self.climb9 = kit.button(
+            "Rock wall",
+            tip="Makes the selected walls climbable like a rock face",
+            on=studio.act("rock wall", lambda: self.climb(True, 9)),
+        )
+        self.unclimb = kit.button(
+            "Not climbable",
+            tip="Makes the selected triangles plain again",
+            on=studio.act("not climbable", lambda: self.climb(False)),
+        )
+        self.delete = kit.button(
+            "Delete",
+            tip="Removes the selected triangles: the hunter walks through where they were",
+            on=studio.act("delete collision", self._delete),
+            role="danger",
+            icon="ph.trash",
+        )
+        self.warn = kit.Alert()
+        self.edit = QWidget()
+        edit = QVBoxLayout(self.edit)
+        edit.setContentsMargins(0, 0, 0, 0)
+        edit.addWidget(kit.row(self.climb10, self.climb9, self.unclimb, stretch=True))
+        edit.addWidget(kit.row(self.delete, stretch=True))
+        edit.addWidget(self.warn)
+        for part in (self.hint, self.what, self.edit):
+            picked.body.addWidget(part)
+        lay.addWidget(picked)
+
+        new = kit.Section("New collision", tip=NEW_TIP)
+        self.box = kit.button(
+            "Box collider",
+            tip="A solid box around what is selected in the view, so the hunter cannot walk"
+            " through it",
+            on=studio.act("box collider", self._box),
+            icon="ph.bounding-box",
+        )
+        self.inflate = kit.number(
+            tip="Grows the box by this much on every side, in map units", lo=0.0, step=10.0
+        )
+        self.from_faces = kit.button(
+            "Faces to collision",
+            tip="Every face selected in the view (pick Faces, 3) becomes a collision triangle."
+            " To make a rock face climbable: select its faces, then Climbable.",
+            on=studio.act("faces to collision", self._from_faces),
+        )
+        new.body.addWidget(kit.row(self.box, kit.label("grown by", role="muted"), self.inflate))
+        new.body.addWidget(kit.row(self.from_faces, stretch=True))
+        lay.addWidget(new)
+
+        more = kit.More(tip="How collision draws, the selection's exact values, new collision's")
+        draws = kit.Section("How it draws", tip="Changes nothing in the map")
         self.chunk_box = QWidget()
         self.chunk_lay = QVBoxLayout(self.chunk_box)
         self.chunk_lay.setContentsMargins(0, 0, 0, 0)
         self.chunk_checks: dict[int, QCheckBox] = {}
-        self.classes = {
-            k: kit.check(k, tip=CLASS_TIPS[k], on=self._view(self._class_setter(k)))
-            for k in CLASSES
-        }
-        for k, box in self.classes.items():
-            r, g, b = CLASS_COLORS[k]
-            px = QPixmap(12, 12)
-            px.fill(theme.color((r, g, b, 1.0)))
-            box.setIcon(QIcon(px))
         self.fill = kit.Slider(
             0.0,
             1.0,
@@ -96,11 +183,6 @@ class CollisionPanel(kit.Panel):
             tip="How solid the collision's edges look",
             on=self._view(lambda vp, v: setattr(vp.collision, "edge_alpha", v)),
         )
-        self.xray = kit.check(
-            "X-ray",
-            tip="Shows the collision through the scenery, so walls behind a hill show too",
-            on=self._view(lambda vp, on: setattr(vp, "collision_xray", on)),
-        )
         self.fill_on = kit.check(
             "Faces",
             tip="Draws the collision triangles filled",
@@ -112,37 +194,15 @@ class CollisionPanel(kit.Panel):
             on=self._view(lambda vp, on: setattr(vp, "collision_edges", on)),
         )
         looks = kit.Form()
-        looks.row("", self.xray)
         looks.layout_.addRow(self.fill_on, self.fill)
         looks.layout_.addRow(self.edge_on, self.edge)
-        #: what draws only while the layer shows
-        self.filters: list[QWidget] = [self.chunk_box, *self.classes.values(), looks]
-        for w in self.filters:
-            shown.body.addWidget(w)
-        self.climb_text = kit.label()
-        self.frame_climb = kit.button(
-            "Frame them",
-            tip="Points the camera at every climbable wall of the section",
-            on=studio.act("frame climbable", self._frame_climb),
-            icon="ph.frame-corners",
-        )
-        self.select_climb = kit.button(
-            "Select them",
-            tip="Selects every climbable triangle, to inspect or change them below",
-            on=studio.act("select climbable", self._select_climb),
-        )
         self.surface = kit.label(role="muted", selectable=True)
-        shown.body.addWidget(self.climb_text)
-        shown.body.addWidget(kit.row(self.frame_climb, self.select_climb, stretch=True))
-        shown.body.addWidget(self.surface)
-        lay.addWidget(shown)
+        for w in (self.chunk_box, looks, self.surface):
+            draws.body.addWidget(w)
+        #: what draws only while the layer shows
+        self.filters: list[QWidget] = [*self.classes.values(), self.xray, self.chunk_box, looks]
 
-        picked = kit.Section("Selected triangles", tip="The collision triangles you clicked")
-        self.hint = kit.label(
-            "Press 4, or pick Collision on the toolbar, to click collision triangles in the view.",
-            role="muted",
-        )
-        self.what = kit.label(role="title")
+        self.exact = kit.Section("The selection's values", tip="The selected triangles' numbers")
         self.info = kit.label(role="muted", selectable=True)
         self.corners = kit.Form()
         self.verts = [
@@ -168,82 +228,29 @@ class CollisionPanel(kit.Panel):
         one.addWidget(self.corners)
         one.addWidget(kit.row(self.apply_verts, self.flip, stretch=True))
         self.flags = _flag_boxes()
-        flags = kit.Form()
-        for text, spin in zip(("Surface", "Material", "Exclude"), self.flags, strict=True):
-            flags.row(text, spin)
         self.apply_flags = kit.button(
             "Apply flags",
             tip="Gives every selected triangle these surface, material and exclude values",
             on=studio.act("collision flags", self._apply_flags),
-            role="primary",
         )
-        self.climb10 = kit.button(
-            "Climbable",
-            tip="Makes the selected walls climbable like vines and ivy (material 10)",
-            on=studio.act("climbable", lambda: self.climb(True, 10)),
-        )
-        self.climb9 = kit.button(
-            "Rock wall",
-            tip="Makes the selected walls climbable like a rock face (material 9)",
-            on=studio.act("rock wall", lambda: self.climb(True, 9)),
-        )
-        self.unclimb = kit.button(
-            "Not climbable",
-            tip="Sets the selected triangles' material back to plain (0)",
-            on=studio.act("not climbable", lambda: self.climb(False)),
-        )
-        self.delete = kit.button(
-            "Delete",
-            tip="Removes the selected triangles: the hunter walks through where they were",
-            on=studio.act("delete collision", self._delete),
-            role="danger",
-            icon="ph.trash",
-        )
-        self.warn = kit.Alert()
-        self.edit = QWidget()
-        edit = QVBoxLayout(self.edit)
-        edit.setContentsMargins(0, 0, 0, 0)
-        edit.addWidget(flags)
-        edit.addWidget(kit.row(self.apply_flags, self.delete, stretch=True))
-        edit.addWidget(kit.row(self.climb10, self.climb9, self.unclimb, stretch=True))
-        edit.addWidget(self.warn)
-        for part in (self.hint, self.what, self.info, self.one, self.edit):
-            picked.body.addWidget(part)
-        lay.addWidget(picked)
+        for w in (self.info, self.one, _flag_form(self.flags), kit.row(self.apply_flags)):
+            self.exact.body.addWidget(w)
 
-        new = kit.Section("New collision", tip=NEW_TIP)
-        form = kit.Form()
+        values = kit.Section("New collision's values", tip=NEW_TIP)
         self.add_chunk = kit.choice(
             CHUNKS,
-            tip="Where new triangles go: the floor chunk or the wall chunk, or sorted by their"
-            " slope",
+            tip="Where new triangles go: the floor chunk (what the hunter stands on), the wall"
+            " chunk (what he walks into), or sorted by their slope",
             on=lambda _k: None,
         )
         self.add_flags = _flag_boxes()
-        form.row("Chunk", self.add_chunk)
-        for text, spin in zip(("Surface", "Material", "Exclude"), self.add_flags, strict=True):
-            form.row(text, spin)
-        self.from_faces = kit.button(
-            "Faces to collision",
-            tip="Every face selected in the view (pick kind 3) becomes a collision triangle"
-            " with these flags. To make a rock face climbable: select its faces, material 10,"
-            " chunk 0.",
-            on=studio.act("faces to collision", self._from_faces),
-        )
-        self.inflate = kit.number(
-            tip="Grows the box by this much on every side, in map units", lo=0.0, step=10.0
-        )
-        self.box = kit.button(
-            "Box collider",
-            tip="A solid box around what is selected in the view, so the hunter cannot walk"
-            " through it",
-            on=studio.act("box collider", self._box),
-            icon="ph.bounding-box",
-        )
-        new.body.addWidget(form)
-        new.body.addWidget(self.from_faces)
-        new.body.addWidget(kit.row(self.box, kit.label("grown by", role="muted"), self.inflate))
-        lay.addWidget(new)
+        chunk = kit.Form()
+        chunk.row("Chunk", self.add_chunk)
+        for w in (chunk, _flag_form(self.add_flags)):
+            values.body.addWidget(w)
+        for part in (draws, self.exact, values):
+            more.body.addWidget(part)
+        lay.addWidget(more)
         lay.addStretch(1)
         self.gate = Gate(page, "see and edit its collision")
         self.body.addWidget(self.gate)
@@ -386,7 +393,7 @@ class CollisionPanel(kit.Panel):
             kit.put(box, col.show_chunk.get(c.index, True))
         for k, box in self.classes.items():
             n = sum(int(((c.klass == k) & c.alive).sum()) for c in sc.collision)
-            box.setText(f"{k}  ({n})")
+            box.setText(f"{CLASS_NAMES[k]}  ({n})")
             kit.put(box, col.show_class.get(k, True))
         self.fill.set(col.fill_alpha)
         self.edge.set(col.edge_alpha)
@@ -398,9 +405,7 @@ class CollisionPanel(kit.Panel):
             kit.put(box, on)
         climb = sc.climbable()
         self.climb_text.setText(
-            f"{len(climb)} climbable triangles (material 9 or 10, near-vertical)"
-            if climb
-            else "No climbable wall in this section"
+            count(len(climb), "climbable triangle") if climb else "No climbable wall in this area"
         )
         self.frame_climb.setEnabled(bool(climb))
         self.select_climb.setEnabled(bool(climb))
@@ -413,7 +418,7 @@ class CollisionPanel(kit.Panel):
         mesh = ws.selection
         n = mesh.n_faces(sc) if not mesh.empty else 0
         self.from_faces.setText(
-            f"Turn {n} selected faces into collision" if n else "Faces to collision"
+            f"Turn {count(n, 'selected face')} into collision" if n else "Faces to collision"
         )
         self.from_faces.setEnabled(n > 0)
         self.box.setEnabled(not mesh.empty)
@@ -441,6 +446,7 @@ class CollisionPanel(kit.Panel):
         self.hint.setVisible(ws.tools.kind != COLLISION)
         self.what.setText(sel.describe(sc))
         self.edit.setVisible(not sel.empty)
+        self.exact.setVisible(not sel.empty)
         self.one.setVisible(len(sel) == 1)
         if sel.empty:
             self.info.setText("")
@@ -453,7 +459,7 @@ class CollisionPanel(kit.Panel):
             upright = "near-vertical" if ch.vertical(t0) else f"flat (|n.y| {abs(n[1]):.2f})"
             height = float(ch.verts[t0][:, 1].max() - ch.verts[t0][:, 1].min())
             self.info.setText(
-                f"Chunk {c0} triangle {t0}{added}: {ch.klass[t0]}\n"
+                f"{triangle_name(c0, t0)}{added}: {CLASS_NAMES[str(ch.klass[t0])]}\n"
                 f"normal ({n[0]:.2f} {n[1]:.2f} {n[2]:.2f}), plane {ch.plane_d[t0]:.0f}\n"
                 f"{upright}, {height:.0f} tall, cells {ch.cells_of(t0)[:8]}"
             )
