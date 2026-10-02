@@ -257,8 +257,8 @@ class TimelinePanel(kit.Panel):
                 self.in_place, stretch=True,
             )
         )  # fmt: skip
-        lay.addWidget(kit.row(kit.label("Speed", role="muted"), self.speed, *presets, stretch=True))
         lay.addWidget(self.strip)
+        lay.addWidget(kit.row(kit.label("Speed", role="muted"), self.speed, *presets, stretch=True))
         lay.addWidget(self.hint)
         lay.addWidget(self.timing)
         lay.addWidget(self.travel)
