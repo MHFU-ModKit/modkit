@@ -13,6 +13,42 @@ from .views import View, f32, f32s, ptr, ptrs, s8, u8, u16, u16s, u32, vec3
 
 assert a.QUEST.TARGETS.count  # an array
 TARGET_GROUPS = a.QUEST.TARGETS.count  # the engine's cap
+EM_ID_SPECIES = 0xFF
+"""QUEST_TARGET.EM_ID holds the species in its low byte."""
+
+ACTION_INPUT_BASE = 0x3E8
+"""ENTITY.ANIM_INPUT[k] is the executor action id + ACTION_INPUT_BASE + k * ACTION_INPUT_STEP."""
+ACTION_INPUT_STEP = 0xC8
+EXECUTOR_VTABLES = frozenset({a.TIGREX_VTABLE})
+"""Species known to animate through ACTION_EXECUTOR, so their ANIM_INPUT decodes to action ids;
+the small-monster-shaped AI keeps its own ids there."""
+
+
+def _named(suffix: str) -> dict[int, str]:
+    table = a.table().addresses
+    return {int(v): n.removesuffix(suffix) for n, v in table.items() if n.endswith(suffix)}
+
+
+SPECIES_NAMES = {v: n.replace("_", " ").title() for v, n in _named("_VTABLE").items()}
+"""Entity vtable -> name; the vtable tells a species apart better than ENTITY.SPECIES."""
+
+SPECIES_IDS = {
+    0x05: "Bullfango",
+    0x13: "Vespoid",
+    0x23: "Giaprey",
+    0x3D: "Blango",
+    0x45: "Anteka",
+    0x46: "Popo",
+    0x48: "Popo",
+    0x4B: "Tigrex",
+    0x4D: "Giadrome",
+}
+"""ENTITY.SPECIES (the em id) -> name, for the ids checked in the game."""
+
+
+def input_action(value: int, slot: int) -> int:
+    """The executor action id in ENTITY.ANIM_INPUT[slot]."""
+    return value - ACTION_INPUT_BASE - slot * ACTION_INPUT_STEP
 
 
 class Screen(IntEnum):
@@ -86,6 +122,26 @@ class Entity(View):
         r = self.rotation
         return math.atan2(r[8], r[10])
 
+    @property
+    def name(self) -> str:
+        return SPECIES_NAMES.get(self.vtable, f"em{self.species}")
+
+    @property
+    def action(self) -> int:
+        """The executor action id the body is animating."""
+        return input_action(self.anim_input[0], 0)
+
+    @property
+    def slot_actions(self) -> tuple[int, ...] | None:
+        """The action id per body slot; None for a species outside EXECUTOR_VTABLES."""
+        if self.vtable not in EXECUTOR_VTABLES:
+            return None
+        return tuple(input_action(v, k) for k, v in enumerate(self.anim_input))
+
+    def resize(self, scale: float) -> None:
+        """Set the drawn size; SIZE_SCALE alone is re-derived every frame."""
+        self.size_scale, self.render_scale, self.size_radius = scale, (scale,) * 3, scale
+
 
 class Player(Entity):
     """The player's combat entity at PLAYER_ENTITY, in the village and in quests."""
@@ -151,6 +207,11 @@ class Quest(View):
     def targets(self) -> list[QuestTarget]:
         first, stride = self.base + a.QUEST.TARGETS, a.QUEST_TARGET.step
         return [QuestTarget(self.mem, first + i * stride) for i in range(TARGET_GROUPS)]
+
+    @property
+    def target_species(self) -> frozenset[int]:
+        """Species of the big-monster target groups that hold a monster."""
+        return frozenset(t.em_id & EM_ID_SPECIES for t in self.targets if t.count)
 
     @property
     def data(self) -> QuestData:

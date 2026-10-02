@@ -36,8 +36,6 @@ HISTORY = Path.home() / ".mhfu_cli_history"
 
 FREEZE_BITS = 0x10100
 """ENTITY.FREEZE_GATE bits that halt the AI tick."""
-ACTION_INPUT_BASE = 0x3E8
-"""ENTITY.ANIM_INPUT[0] minus this is the executor action id."""
 
 
 class CommandError(Exception):
@@ -69,27 +67,11 @@ class Command:
     run: Run
 
 
-def _named(suffix: str) -> dict[int, str]:
-    table = a.table().addresses
-    return {int(v): n.removesuffix(suffix) for n, v in table.items() if n.endswith(suffix)}
-
-
-SPECIES_NAMES = {v: n.replace("_", " ").title() for v, n in _named("_VTABLE").items()}
-"""Entity vtable -> name; the vtable tells a species apart better than ENTITY.SPECIES."""
 SCENES = {int(v): n for n, v in a.table().addresses.items() if n.startswith("SCENE_")}
 
 
 class Monster(Entity):
-    """An entity as the shell names and reads it."""
-
-    @property
-    def name(self) -> str:
-        return SPECIES_NAMES.get(self.vtable, f"em{self.species}")
-
-    @property
-    def action(self) -> int:
-        """The executor action id the body is animating."""
-        return self.anim_input[0] - ACTION_INPUT_BASE
+    """An entity as the shell reads it."""
 
     @property
     def frozen(self) -> bool:
