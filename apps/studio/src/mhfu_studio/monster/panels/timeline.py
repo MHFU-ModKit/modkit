@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Timeline: the transport at the engine's rate, and the host action's frames on the clip.
+"""The Timeline: the transport at the engine's rate, and the base monster's action's frames on
+the clip.
 
 The RATE is the action's (2.0 and 2.4 both measured on one monster); the clip owns only its
 SPAN. A gate past the clip's last frame never runs: the strip runs on past the end, shaded, and
@@ -29,17 +30,17 @@ if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
 
 LEGEND = (
-    (GATE, "gate"),
-    (WINDOW, "window edge"),
-    (EFFECT, "host effect"),
-    (OURS, "our effect"),
+    (GATE, "hit check"),
+    (WINDOW, "timing window"),
+    (EFFECT, "base monster's effect"),
+    (OURS, "your effect"),
     (IMPACT, "impact"),
 )
 STRIP_TIP = (
-    "The clip's frames, left to right; click or drag to scrub. The marks are the host move's"
-    " own frames: a gate is a frame its code waits for, a window edge opens or closes a"
-    " stretch, the effects are where it spawns them, and the impact is where your clip hits."
-    " Hover a mark to read it. A hollow mark past the end is never reached."
+    "The clip's frames, left to right; click or drag to scrub. The marks are the base monster's"
+    " own frames for the picked action: a hit check is a frame its code waits for, a timing"
+    " window opens or closes a stretch, the effects are where it spawns them, and the impact is"
+    " where your clip hits. Hover a mark to read it. A hollow mark past the end is never reached."
 )
 #: the strip's height and the legend's under it
 STRIP_H, LEGEND_H = 26.0, 18.0
@@ -209,8 +210,8 @@ class TimelinePanel(kit.Panel):
             on=lambda on: act("in place", lambda: self._in_place(on))(),
         )
         self.speed = kit.number(
-            tip="Clip frames the cursor moves per game frame. The host's move sets it, not the"
-            " clip: 2.0 and 2.4 were both measured on one monster.",
+            tip="Clip frames played per game frame. The action sets it, not the clip: 2.0 and"
+            " 2.4 were both measured on one monster.",
             value=2.0,
             step=0.1,
             decimals=2,
@@ -229,20 +230,20 @@ class TimelinePanel(kit.Panel):
         ]
         self.strip = FrameStrip(lambda f: act("scrub", lambda: ws.seek(f))())
         self.hint = kit.label(
-            "No frame marks yet: pick a move in Action and the host's own frames appear here.",
+            "No marks yet: pick an action in Action and the base monster's own frames appear here.",
             role="hint",
         )
         self.timing = kit.label(role="muted")
         self.timing.setToolTip(
             "How long the clip runs: its length in frames (the clip's) divided by the speed"
-            " (the move's) at the game's 30 frames a second"
+            " (the action's) at the game's 30 frames a second"
         )
         self.travel = kit.label(role="muted")
         self.travel.setToolTip("How far the body moves over the clip: start to end, and at most")
         self.impact = kit.button(
             "Set impact here",
             tip="Records the frame on screen as this clip's impact frame in the manifest: where"
-            " its hit lands. Action checks it against the host move's gates.",
+            " its hit lands. Action checks it against the base monster's hit checks.",
             on=act("set impact", ws.set_impact_here),
             icon="ph.target",
         )
@@ -258,16 +259,20 @@ class TimelinePanel(kit.Panel):
             )
         )  # fmt: skip
         lay.addWidget(self.strip)
-        lay.addWidget(kit.row(kit.label("Speed", role="muted"), self.speed, *presets, stretch=True))
         lay.addWidget(self.hint)
-        lay.addWidget(self.timing)
-        lay.addWidget(self.travel)
         self.impact_row = kit.row(self.impact, self.impact_note, stretch=True)
         lay.addWidget(self.impact_row)
+        self.more = kit.More(tip="The playback speed, how long the clip runs and how far it goes")
+        self.more.body.addWidget(
+            kit.row(kit.label("Speed", role="muted"), self.speed, *presets, stretch=True)
+        )
+        self.more.body.addWidget(self.timing)
+        self.more.body.addWidget(self.travel)
+        lay.addWidget(self.more)
         lay.addStretch(1)
         self.no_scene = NoScene(studio)
         self.no_clip = kit.Empty(
-            "No clip playing", "Pick a clip in Clips, or a move in Action, and it plays here."
+            "No clip playing", "Pick a clip in Clips, or an action in Action, and it plays here."
         )
         self.empty = QStackedWidget()
         self.empty.addWidget(self.no_scene)
@@ -314,7 +319,8 @@ class TimelinePanel(kit.Panel):
         )
         net, peak = ws.travel(clip.slot)
         self.travel.setText(
-            f"travel {net:.0f} net, {peak:.0f} at most" + ("" if net >= 1.0 else " (in place)")
+            f"travels {net:.0f} start to end, {peak:.0f} at most"
+            + ("" if net >= 1.0 else " (on the spot)")
         )
         found = ws.manifest_clip(clip.slot)
         self.impact_row.setVisible(ws.manifest is not None)

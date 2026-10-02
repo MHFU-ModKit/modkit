@@ -31,20 +31,20 @@ def codes(a):
 def test_headline(make, species, make_pair):
     m = make(MOVE)
     a = AL.align(m, "lunge", species([make_pair(1, 4, event_frames=[40.0, 60.0])]))
-    assert "tests frames 40, 60" in a.headline and "on the 40 test (+1.0)" in a.headline
+    assert "checks frames 40, 60" in a.headline and "on the 40 check (+1.0)" in a.headline
     a = AL.align(m, "lunge", species([make_pair(1, 4, event_frames=[50.0])]))
     assert "9.0 frame(s) early" in a.headline and codes(a)["IMPACT_OFF_GATE"] == "warning"
     a = AL.align(m, "lunge", species([make_pair(1, 4)]))
-    assert "only the clip's LENGTH" not in a.headline and "nothing has to line up" in a.headline
+    assert "only the clip's length" not in a.headline and "nothing has to line up" in a.headline
     assert codes(a)["NO_FIXED_FRAMES"] == "info" and codes(a)["ENDS_ON_CLIP"] == "info"
 
 
 def test_no_impact(make, species, make_pair):
     m = make(MOVE.replace("impact_frame = 41\n", ""))
     a = AL.align(m, "lunge", species([make_pair(1, 4, event_frames=[40.0])]))
-    assert "records no impact frame yet" in a.headline
+    assert "has no impact frame yet" in a.headline
     a = AL.align(m, "lunge", species([make_pair(1, 4)]))
-    assert "only the clip's LENGTH matters" in a.headline
+    assert "only the clip's length matters" in a.headline
 
 
 def test_gates(make, species, make_pair):

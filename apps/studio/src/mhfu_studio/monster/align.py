@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from mhfu.em.intel import PairIntel, SpeciesIntel
 from mhfu_port.manifest import Manifest
 
+from mhfu_studio.monster import species
 from mhfu_studio.shell.findings import Finding, Level
 
 GATE = "gate"
@@ -147,8 +148,8 @@ def align_pair(
     a = Alignment(move or f"({main},{sub})", main, sub, clip, slot, clip_frames, impact)
     if intel is None:
         a.headline = (
-            f"no intel for host em{m.port.host_species:02d}, so nothing is known about "
-            f"({main},{sub})."
+            f"no action data for {species.label(m.port.host_species)}, so nothing is known"
+            f" about ({main},{sub})."
         )
         a._add("warning", "INTEL_ABSENT", a.headline)
         _impact_marker(a)
@@ -224,8 +225,8 @@ def _census(a: Alignment, intel: SpeciesIntel, allow_unentered: bool) -> None:
 
 def _gates(a: Alignment, p: PairIntel) -> None:
     for frames, kind, what in (
-        (p.fixed_event_frames, GATE, "cursor >= {:g}"),
-        (p.fixed_window_frames, WINDOW, "window edge {:g}"),
+        (p.fixed_event_frames, GATE, "hit check: the code waits for frame {:g}"),
+        (p.fixed_window_frames, WINDOW, "a timing window opens or closes at {:g}"),
     ):
         for f in sorted(set(frames)):
             past = a.frames is not None and f > a.frames
@@ -312,7 +313,7 @@ def _effects(a: Alignment, p: PairIntel, rig: PortRig | None) -> None:
         if e.frame is None:
             continue
         past = a.frames is not None and e.frame > a.frames
-        detail = f"the host spawns effect {e.id} at ITS bone {e.bone} on frame {e.frame}"
+        detail = f"the base monster spawns effect {e.id} at its joint {e.bone} on frame {e.frame}"
         a.markers.append(Marker(float(e.frame), EFFECT, f"fx{e.id}", detail, past))
         if past:
             a._add(
@@ -356,7 +357,7 @@ def _our_effects(a: Alignment, m: Manifest, move: str | None, rig: PortRig | Non
             continue
         past = a.frames is not None and e.frame > a.frames
         on = "" if rig is None else f" ({rig.describe(e.bone)})"
-        detail = f"this port spawns effect {e.id} at ITS bone {e.bone} on frame {e.frame}{on}"
+        detail = f"your port spawns effect {e.id} at its joint {e.bone} on frame {e.frame}{on}"
         a.markers.append(Marker(float(e.frame), OURS, f"fx{e.id}*", detail, past))
         if past:
             a._add(
@@ -374,7 +375,7 @@ def _our_effects(a: Alignment, m: Manifest, move: str | None, rig: PortRig | Non
 
 def _impact_marker(a: Alignment) -> None:
     if a.impact is not None:
-        detail = f"where this clip's own contact is (clips.{a.clip}.impact_frame)"
+        detail = f"where your clip's own hit lands (clips.{a.clip}.impact_frame)"
         a.markers.append(Marker(float(a.impact), IMPACT, "impact", detail))
 
 
@@ -388,22 +389,22 @@ def _headline(a: Alignment) -> str:
     s = "s" if len(gates) > 1 else ""
     if a.impact is None:
         if not gates:
-            return f"({a.main},{a.sub}) names no fixed frames, so only the clip's LENGTH matters."
+            return f"({a.main},{a.sub}) checks no fixed frames, so only the clip's length matters."
         return (
-            f"this handler tests frame{s} {_gate_list(gates)}; this clip records no impact frame "
-            "yet: scrub to its contact and set it, and the gap is the answer."
+            f"the base monster's code checks frame{s} {_gate_list(gates)}; your clip has no impact"
+            " frame yet: scrub to where it hits, set it in Timeline, and the gap is the answer."
         )
     if not gates:
         return (
-            f"this clip's impact is at frame {a.impact:g}, and ({a.main},{a.sub}) tests no fixed "
-            "frames: nothing has to line up."
+            f"your clip's impact is at frame {a.impact:g}, and ({a.main},{a.sub}) checks no fixed"
+            " frames: nothing has to line up."
         )
     near = min(gates, key=lambda f: abs(f - (a.impact or 0.0)))
     gap = a.impact - near
-    head = f"this handler tests frame{s} {_gate_list(gates)}; this clip's impact is at frame"
-    head += f" {a.impact:g}"
+    head = f"the base monster's code checks frame{s} {_gate_list(gates)}; your clip's impact is"
+    head += f" at frame {a.impact:g}"
     if abs(gap) <= IMPACT_TOLERANCE:
-        return f"{head}, on the {near:g} test ({gap:+.1f})."
+        return f"{head}, on the {near:g} check ({gap:+.1f})."
     side = "after" if gap > 0 else "before"
     a._add(
         "warning",
@@ -412,4 +413,4 @@ def _headline(a: Alignment) -> str:
         "the handler fires at ITS number, so the hit and the animation part company by that much.",
     )
     when = "late" if gap > 0 else "early"
-    return f"{head}, {abs(gap):.1f} frame(s) {when} (the nearest test is {near:g})."
+    return f"{head}, {abs(gap):.1f} frame(s) {when} (the nearest check is {near:g})."
