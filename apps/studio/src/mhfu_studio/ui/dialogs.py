@@ -77,5 +77,29 @@ def confirm_unsaved(parent: QWidget, names: Sequence[str]) -> Answer:
     return "save" if got == b.Save else "discard" if got == b.Discard else "cancel"
 
 
+def revert_box(parent: QWidget, name: str) -> QMessageBox:
+    """Revert or Cancel for `name`; Cancel is the default, so Enter never discards."""
+    b = QMessageBox.StandardButton
+    box = QMessageBox(
+        QMessageBox.Icon.Question,
+        "Revert",
+        f"Discard the unsaved edits to {name} and go back to the saved file?",
+        b.Cancel,
+        parent,
+    )
+    box.addButton("Revert", QMessageBox.ButtonRole.DestructiveRole)
+    box.setDefaultButton(b.Cancel)
+    box.setEscapeButton(b.Cancel)
+    return box
+
+
+def confirm_revert(parent: QWidget, name: str) -> bool:
+    box = revert_box(parent, name)
+    box.exec()
+    got = box.clickedButton()
+    box.deleteLater()
+    return got is not None and box.buttonRole(got) == QMessageBox.ButtonRole.DestructiveRole
+
+
 def warn(parent: QWidget, title: str, text: str) -> None:
     QMessageBox.warning(parent, title, text)

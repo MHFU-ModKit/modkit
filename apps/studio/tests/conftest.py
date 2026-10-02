@@ -75,8 +75,8 @@ def gl_back() -> Iterator[None]:
 
 @pytest.fixture
 def asked(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
-    """Every unsaved-edits question answers "discard", so a teardown never blocks; the
-    questions and warnings land here."""
+    """Every unsaved-edits question answers "discard" (Revert: yes), so a teardown never
+    blocks; the questions and warnings land here."""
     from mhfu_studio.ui import dialogs
 
     got: list[Any] = []
@@ -86,6 +86,7 @@ def asked(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
         return "discard"
 
     monkeypatch.setattr(dialogs, "confirm_unsaved", confirm)
+    monkeypatch.setattr(dialogs, "confirm_revert", lambda parent, name: got.append(name) or True)
     monkeypatch.setattr(dialogs, "warn", lambda *a: got.append(a[1:]))
     return got
 

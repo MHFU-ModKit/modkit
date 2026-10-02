@@ -14,7 +14,16 @@ from mhfu_studio.ui.testing import FakeWorkspace, elsewhere, gl_or_skip
 from mhfu_studio.ui.window import STATE_VERSION, DockTitle, Window
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence, QOpenGLContext
-from PySide6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QMenu, QTabBar
+from PySide6.QtWidgets import (
+    QApplication,
+    QDockWidget,
+    QLabel,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QTabBar,
+    QWidget,
+)
 from shiboken6 import getCppPointer
 
 Make = Callable[..., Window]
@@ -332,8 +341,18 @@ def test_revert_menu(make_window: Make, asked: list[Any], tmp_path: Path) -> Non
     assert w.revert_action.isEnabled()
     w.revert_action.trigger()
     w.sync()
-    assert asked == [["a.toml"]] and ws.doc.history.value == ["x", "y"]
+    assert asked == ["a.toml"] and ws.doc.history.value == ["x", "y"]
     assert not w.revert_action.isEnabled() and w.message.text() == "back to the saved a.toml"
+
+
+def test_revert_question(qtbot: Any) -> None:
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    box = dialogs.revert_box(parent, "a.toml")
+    roles = {box.buttonRole(b): b.text() for b in box.buttons()}
+    cancel = box.button(QMessageBox.StandardButton.Cancel)
+    assert box.defaultButton() is cancel and box.escapeButton() is cancel
+    assert roles[QMessageBox.ButtonRole.DestructiveRole] == "Revert" and "a.toml" in box.text()
 
 
 def test_refusals_reach_the_status_bar(make_window: Make) -> None:

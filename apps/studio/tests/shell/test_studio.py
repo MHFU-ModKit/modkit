@@ -75,26 +75,28 @@ def test_discard_ok_names_every_dirty_one(studio: Studio, tmp_path: Path) -> Non
 
 def test_revert(studio: Studio, tmp_path: Path) -> None:
     ws = dirty(studio, "map", doc_file(tmp_path, "a.toml"))
-    asked = answer(studio, "cancel")
+    asked: list[str] = []
+    studio.ask_revert = lambda name: asked.append(name) or False
     studio.revert()
-    assert asked == [["a.toml"]] and ws.doc is not None and ws.doc.dirty
-    answer(studio, "discard")
+    assert asked == ["a.toml"] and ws.doc is not None and ws.doc.dirty
+    assert ws.doc.saved_to == [] and studio.message == ""
+    studio.ask_revert = lambda name: True
     studio.revert()
     assert ws.doc is not None and ws.doc.history.value == ["a", "b"] and not ws.doc.dirty
     assert studio.message == "back to the saved a.toml" and not studio.can_revert()
 
 
-def test_revert_save_keeps_edits(studio: Studio, tmp_path: Path) -> None:
+def test_revert_unasked(studio: Studio, tmp_path: Path) -> None:
     ws = dirty(studio, "map", doc_file(tmp_path, "a.toml"))
-    doc = ws.doc
-    answer(studio, "save")
+    discard = answer(studio, "save")
     studio.revert()
-    assert ws.doc is doc and doc is not None and doc.saved_to == [tmp_path / "a.toml"]
+    assert ws.doc is not None and not ws.doc.dirty and discard == []
 
 
-def test_revert_needs_edits_and_a_file(studio: Studio, tmp_path: Path) -> None:
+def test_revert_needs_edits_and_a_file(studio: Studio) -> None:
     dirty(studio)
-    asked = answer(studio, "discard")
+    asked: list[str] = []
+    studio.ask_revert = lambda name: asked.append(name) or True
     studio.revert()
     assert not studio.can_revert() and studio.message == "nothing to revert" and asked == []
 

@@ -189,6 +189,7 @@ class Window(QMainWindow):
         self.camera_action.setChecked(bool(on))
         self.view.show_camera = bool(on)
         studio.ask_discard = lambda names: dialogs.confirm_unsaved(self, names)
+        studio.ask_revert = lambda name: dialogs.confirm_revert(self, name)
         studio.ask_path = lambda ws: dialogs.ask_save_as(self, ws)
         geo = self.settings.value("geometry")
         if not (isinstance(geo, QByteArray) and self.restoreGeometry(geo)):
@@ -494,7 +495,7 @@ class Window(QMainWindow):
         )
         self.revert_action = self._action(
             "Revert",
-            "Drops the unsaved edits and goes back to the document as its file has it; asks first",
+            "Drops the unsaved edits and goes back to the saved file; asks first",
             s.revert,
         )
         quit_ = self._action(

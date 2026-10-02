@@ -111,6 +111,8 @@ class Studio:
         self.findings = Findings()
         #: "save", "discard" or "cancel" for the named documents' unsaved edits
         self.ask_discard: Callable[[list[str]], str] | None = None
+        #: whether to drop the named document's unsaved edits and go back to its file
+        self.ask_revert: Callable[[str], bool] | None = None
         #: where to save a document that has no file yet; None is a cancel
         self.ask_path: Callable[[Workspace], Path | None] | None = None
         #: runs a `Job` in the background (the window's); without one a job runs inline
@@ -266,12 +268,14 @@ class Studio:
         return doc is not None and doc.path is not None and doc.dirty
 
     def revert(self) -> None:
-        """The active document back to its file, once `discard_ok` lets its edits go."""
-        ws, doc = self.active, self.active.document
-        if doc is None or not self.can_revert():
+        """The active document back to its file, once `ask_revert` lets its edits go."""
+        ws = self.active
+        name = doc_name(ws)
+        if not self.can_revert():
             self.message = "nothing to revert"
-        elif self.discard_ok(ws) and doc.dirty:  # a "save" answer kept the edits in the file
-            name = doc_name(ws)
+        elif self.ask_revert is not None and not self.ask_revert(name):
+            self.message = ""
+        else:
             try:
                 ws.revert()
             except Exception as e:
