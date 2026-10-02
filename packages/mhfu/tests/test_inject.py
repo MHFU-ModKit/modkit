@@ -34,6 +34,11 @@ def test_named(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["file_06185.bin.orig", "zinogre.bin"]
 
 
+@pytest.fixture(autouse=True)
+def _no_env(monkeypatch):
+    monkeypatch.delenv(inject.MEMSTICK_ENV, raising=False)
+
+
 def test_default_inject_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(inject, "MEMSTICK_ROOTS", (str(tmp_path / "none"), str(tmp_path)))
     d = inject.default_inject_dir()
@@ -50,6 +55,24 @@ def test_default_mods_dir(tmp_path, monkeypatch):
         inject.default_mods_dir()
     (tmp_path / inject.MODS_SUBDIR).mkdir(parents=True)
     assert inject.default_mods_dir() == tmp_path / inject.MODS_SUBDIR
+
+
+def test_memstick_override(tmp_path, monkeypatch):
+    found, env, given = (tmp_path / n for n in ("found", "env", "given"))
+    for d in (found, env / "PSP", given):
+        d.mkdir(parents=True)
+    monkeypatch.setattr(inject, "MEMSTICK_ROOTS", (str(found),))
+    assert inject.memstick() == found == inject.detect()
+    monkeypatch.setenv(inject.MEMSTICK_ENV, str(env))
+    assert inject.memstick() == env / "PSP"  # the folder holding PSP means PSP
+    assert inject.memstick(given) == given
+    (given / inject.MODS_SUBDIR).mkdir(parents=True)
+    assert inject.default_mods_dir(given) == given / inject.MODS_SUBDIR
+    with pytest.raises(FileNotFoundError, match="no memory stick at"):
+        inject.memstick(tmp_path / "nowhere")
+    monkeypatch.setattr(inject, "MEMSTICK_ROOTS", ())
+    monkeypatch.delenv(inject.MEMSTICK_ENV)
+    assert inject.detect() is None
 
 
 def test_cli(tmp_path, capsys):
