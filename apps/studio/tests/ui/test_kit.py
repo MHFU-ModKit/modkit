@@ -4,8 +4,9 @@ from typing import Any
 
 import pytest
 from mhfu_studio.ui import kit, theme
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtGui import QWheelEvent
+from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QPushButton, QVBoxLayout, QWidget
 
 
 def test_a_control_needs_a_tip(qapp: object) -> None:
@@ -204,3 +205,32 @@ def test_alert_recolours(qtbot: Any) -> None:
     assert a.palette().color(a.foregroundRole()) == theme.level("error")
     a.set_level(None)
     assert a.palette().color(a.foregroundRole()).name() == theme.current().text
+
+
+def test_wheel_needs_focus(qtbot: Any) -> None:
+    p = kit.Panel()
+    slider = kit.Slider(0.0, 1.0, 0.5, tip="s")
+    choice = kit.choice([("a", "A"), ("b", "B")], tip="c", on=print)
+    for w in (kit.number(tip="n"), kit.integer(tip="i"), choice, slider):
+        p.body.addWidget(w)
+    qtbot.addWidget(p)
+    p.show()
+    p.activateWindow()
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is p)
+
+    def roll(f: Any) -> tuple[bool, Any]:
+        """Whether `f` took a wheel step down, and its value after."""
+        at = QPointF(5, 5)
+        e = QWheelEvent(
+            at, f.mapToGlobal(at), QPoint(), QPoint(0, -120), Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False,
+        )  # fmt: skip
+        QApplication.sendEvent(f, e)
+        return e.isAccepted(), f.currentIndex() if f is choice else f.value()
+
+    for f in [*p.findChildren(QAbstractSpinBox), choice, slider.slider]:
+        took, before = roll(f)
+        assert not took, f"{type(f).__name__}: an ignored wheel goes on to the panel"
+        assert roll(f)[1] == before
+        f.setFocus()
+        assert roll(f)[1] != before, type(f).__name__

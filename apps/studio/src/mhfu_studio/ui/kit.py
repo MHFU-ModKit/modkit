@@ -12,7 +12,7 @@ from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from PySide6.QtCore import QEvent, QSignalBlocker, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -150,6 +150,21 @@ class Segmented(QWidget):
 # ---- values ------------------------------------------------------------------------------ #
 
 
+class _WheelNeedsFocus(QObject):
+    """A wheel over a field without focus scrolls the panel instead of changing the value."""
+
+    def eventFilter(self, obj: QObject, ev: QEvent) -> bool:  # noqa: N802
+        if ev.type() != QEvent.Type.Wheel or not isinstance(obj, QWidget) or obj.hasFocus():
+            return False
+        ev.ignore()  # Qt hands an ignored wheel event on to the parent
+        return True
+
+
+def _wheel_needs_focus(w: QWidget) -> None:
+    w.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # not WheelFocus: a wheel does not take it
+    w.installEventFilter(_WheelNeedsFocus(w))
+
+
 def number(
     *,
     tip: str,
@@ -172,6 +187,7 @@ def number(
     b.setKeyboardTracking(False)
     b.setAccelerated(True)
     b.setMinimumWidth(MIN_FIELD)  # else the range's widest text sets it, wider than a dock
+    _wheel_needs_focus(b)
     if on is not None:
         b.valueChanged.connect(on)
     return b
@@ -193,6 +209,7 @@ def integer(
     b.setValue(value)
     b.setKeyboardTracking(False)
     b.setMinimumWidth(MIN_FIELD)
+    _wheel_needs_focus(b)
     if on is not None:
         b.valueChanged.connect(on)
     return b
@@ -256,6 +273,7 @@ class Slider(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         self.slider = QSlider(Qt.Orientation.Horizontal)
         _tip(self.slider, tip)
+        _wheel_needs_focus(self.slider)
         self.slider.setRange(0, 1000)
         self.label = label("", role="muted")
         self.label.setMinimumWidth(48)
@@ -292,6 +310,7 @@ def choice(
     """(id, label) pairs; `on(id)` fires on a user's pick."""
     b = QComboBox()
     _tip(b, tip)
+    _wheel_needs_focus(b)
     for cid, text in items:
         b.addItem(text, cid)
     if current is not None:
