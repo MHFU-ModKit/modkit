@@ -3,7 +3,8 @@
 """The transform gizmo without a toolkit: handles laid out, hit, dragged and painted in numpy.
 
 A pose goes in and the pose after the drag comes out; `new @ inv(start)` is a transform about
-the pivot (the pose's translation). Handles keep a constant size on screen, in view points.
+the pivot (the pose's translation). Handles keep a constant size on screen, in view points,
+except a scale drag's arms, which grow with the factor so the grabbed one stays under the pointer.
 """
 
 from __future__ import annotations
@@ -39,8 +40,6 @@ PLANE = (0.25, 0.5)
 PLANE_MIN = 0.2
 #: a ring seen closer to edge-on than this rotates by the screen angle instead
 EDGE_ON = 0.15
-#: a horizontal drag this long doubles the size (or halves it, leftwards)
-UNIFORM_PX = 100.0
 MIN_SCALE = 1e-3
 WIDTH = 2.5
 #: the far half of a ring
@@ -293,8 +292,14 @@ class _Layout:
 
 
 def _layout(
-    camera: OrbitCamera, size: tuple[int, int], matrix: Mat, op: Operation, local: bool
+    camera: OrbitCamera,
+    size: tuple[int, int],
+    matrix: Mat,
+    op: Operation,
+    local: bool,
+    grow: Vec | None = None,
 ) -> _Layout | None:
+    """`grow`: each axis arm's length in arms (a scale drag's factors)."""
     m = np.asarray(matrix, dtype=np.float64)
     pivot = m[:3, 3].copy()
     wpp = world_per_px(camera, pivot, size[1])
@@ -336,13 +341,14 @@ def _layout(
             corners = np.vstack([corners, pivot + lo * u + hi * v])
             shapes.append(_Quad(Handle("plane", k), screen(corners)))
     tips = camera.project(pivot + ax * arm, size)
+    ends = tips if grow is None else camera.project(pivot + ax * (arm * grow)[:, None], size)
     for i in range(3):
-        tip = tips[i, :2]
-        length = float(np.linalg.norm(tip - center))
-        if length < MIN_ARM_PX or tips[i, 2] > 1.0:
+        if float(np.linalg.norm(tips[i, :2] - center)) < MIN_ARM_PX or ends[i, 2] > 1.0:
             continue
-        start = center + (tip - center) / length * min(CENTER_PX, 0.5 * length)
-        shapes.append(_Arm(Handle("axis", i), start, tip, box=op == "scale"))
+        end = ends[i, :2]
+        length = max(float(np.linalg.norm(end - center)), 1e-9)
+        start = center + (end - center) / length * min(CENTER_PX, 0.5 * length)
+        shapes.append(_Arm(Handle("axis", i), start, end, box=op == "scale"))
     return _Layout(pivot, center, ax, tuple(shapes))
 
 
@@ -472,7 +478,8 @@ class _Turn(_Drag):
 
 
 class _Grow(_Drag):
-    """Along a local axis by the ratio of distances from the pivot, or uniformly."""
+    """Along a local axis by the ratio of distances from the pivot, or uniformly by a sideways
+    drag: one arm rightwards doubles the size, so a rightward arm's end moves with the pointer."""
 
     def __init__(
         self, handle: Handle, start: Mat, lay: _Layout, ray: Ray, pos: tuple[float, float]
@@ -488,7 +495,7 @@ class _Grow(_Drag):
     def pose(self, ray: Ray, pos: tuple[float, float], snap: float | None) -> Mat:
         d = self.dir
         if d is None:
-            self.raw = 2.0 ** ((pos[0] - self.x0) / UNIFORM_PX)
+            self.raw = 1.0 + (pos[0] - self.x0) / ARM_PX
         else:
             t = along(self.pivot, d, *ray)
             if t is not None and abs(self.t0) > 1e-12:
@@ -497,6 +504,15 @@ class _Grow(_Drag):
         lin = f * np.eye(3) if d is None else np.eye(3) + (f - 1.0) * np.outer(d, d)
         self.last = about(self.pivot, lin) @ self.start
         return self.last
+
+    @property
+    def grow(self) -> Vec:
+        """Each axis arm's length in arms."""
+        out = np.full(3, self.factor)
+        if self.handle.axis is not None:
+            out = np.ones(3)
+            out[self.handle.axis] = self.factor
+        return out
 
     def readout(self) -> str:
         return f"{self.handle.label} \N{MULTIPLICATION SIGN}{self.factor:.2f}".strip()
@@ -511,6 +527,9 @@ class Manipulator:
     def __init__(self) -> None:
         self._drag: _Drag | None = None
         self._hover: Handle | None = None
+
+    def _grow(self) -> Vec | None:
+        return self._drag.grow if isinstance(self._drag, _Grow) else None
 
     @property
     def hot(self) -> bool:
@@ -537,7 +556,7 @@ class Manipulator:
         m = np.array(matrix if drag is None else drag.last, dtype=np.float64)
         if drag is not None and ev.kind in ("move", "release"):
             m = drag.pose(camera.ray(ev.x, ev.y, ev.size), ev.pos, snap or None).copy()
-        lay = None if ev.kind == "leave" else _layout(camera, ev.size, m, op, local)
+        lay = None if ev.kind == "leave" else _layout(camera, ev.size, m, op, local, self._grow())
         self._hover = None if lay is None else lay.hit(ev.x, ev.y)
         over = self._hover is not None
         if drag is not None:
@@ -562,7 +581,7 @@ class Manipulator:
         local: bool = False,
     ) -> None:
         """The handles for `matrix`, the hovered or dragged one hot, and a drag's readout."""
-        lay = _layout(camera, size, matrix, op, local)
+        lay = _layout(camera, size, matrix, op, local, self._grow())
         if lay is None:
             return
         hot = self._drag.handle if self._drag is not None else self._hover
