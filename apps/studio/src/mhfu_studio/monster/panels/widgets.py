@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from mhfu_studio.monster import species
 from mhfu_studio.monster.workspace import HOST, PORT
-from mhfu_studio.ui import dialogs, kit
+from mhfu_studio.ui import kit
 
 if TYPE_CHECKING:
     from mhfu_port.manifest import Hitbox, Hurtbox
@@ -31,8 +31,7 @@ if TYPE_CHECKING:
     from mhfu_studio.monster.workspace import MonsterWorkspace
     from mhfu_studio.shell.studio import Studio
 
-OPEN_HINT = "Open a port manifest (ports/<name>.toml) or a monster PAC to work on it here."
-OPEN_TIP = "Choose a port manifest or a monster PAC; the monster workspace opens it"
+OPEN_HINT = "Pick a port on the start page, or open a port manifest or a monster PAC."
 #: the source switch: the base monster's tables, or the ones your port writes over them
 SOURCES = ((HOST, "Base monster (read only)"), (PORT, "Yours"))
 SHAPES = (
@@ -105,14 +104,11 @@ def narrow(box: QAbstractSpinBox, span: float | None = None) -> None:
 
 
 class NoScene(kit.Empty):
-    """What a monster panel shows with nothing open, and the way to open something."""
+    """What a monster panel shows with nothing open: the start page beside it opens one."""
 
     def __init__(self, studio: Studio, hint: str = OPEN_HINT) -> None:
-        super().__init__("No monster open", hint, ("Open…", OPEN_TIP, self._open))
+        super().__init__("No monster open", hint)
         self.studio = studio
-
-    def _open(self) -> None:
-        dialogs.open_document(self, self.studio)
 
 
 def see_through(ws: MonsterWorkspace, studio: Studio) -> QCheckBox:

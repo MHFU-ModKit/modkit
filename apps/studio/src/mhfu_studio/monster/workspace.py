@@ -10,9 +10,11 @@ manifest is a different object, so an edit, an undo and a save-as all land the s
 
 from __future__ import annotations
 
+import dataclasses
 import tomllib
 from collections.abc import Callable, Hashable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,7 +30,7 @@ from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Skeleton
 
 from mhfu_studio.monster import align, clips, inputs, species
-from mhfu_studio.monster.attacks import AttackSession
+from mhfu_studio.monster.attacks import AttackSession, hitbox_of
 from mhfu_studio.monster.core.scene import MHFU, Scene
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.panels.graph import MoveGraph
@@ -37,7 +39,18 @@ from mhfu_studio.shell import places
 from mhfu_studio.shell.input import Button, Key, Mod, Pointer
 from mhfu_studio.shell.overlay import Overlay
 from mhfu_studio.shell.text import keys
-from mhfu_studio.shell.workspace import Dock, Gesture, Shortcut, Workspace, register
+from mhfu_studio.shell.workspace import (
+    SEND_KEY,
+    Choice,
+    Dock,
+    Gesture,
+    Shelf,
+    Shortcut,
+    Step,
+    Warmup,
+    Workspace,
+    register,
+)
 
 if TYPE_CHECKING:
     import moderngl
@@ -59,6 +72,44 @@ STEP = Shortcut(("Left", "Right"), "One game frame back, or on")
 REWIND = Shortcut(("Home",), "Back to the clip's first frame")
 #: `intel_gap`'s subjects in words
 WORDS = {"part": "hurtbox", "attack": "attack", "action": "action"}
+OPEN_TIP = "Choose a port manifest (.toml) or a monster PAC; the monster workspace opens it"
+
+
+def port_files() -> list[Path]:
+    """modkit's `ports/*.toml`, beside the working directory or the studio's own source."""
+    here = Path(__file__).resolve().parents
+    roots = [Path.cwd() / "ports", Path.cwd() / "modkit" / "ports"]
+    roots += [here[5] / "ports"] if len(here) > 5 else []  # modkit/apps/studio/src/...
+    found: dict[Path, None] = {}
+    for root in roots:
+        for f in sorted(root.glob("*.toml")) if root.is_dir() else []:
+            found.setdefault(f.resolve())
+    return list(found)
+
+
+def port_choice(path: Path) -> Choice:
+    """A port manifest as the start page lists it: its name, on its base monster."""
+    try:
+        port = tomllib.loads(path.read_text(encoding="utf-8")).get("port", {})
+    except (OSError, tomllib.TOMLDecodeError):
+        port = {}
+    name = " ".join(w.capitalize() for w in str(port.get("name", path.stem)).split("_"))
+    host = port.get("host_species")
+    base = species.label(host if isinstance(host, int) else None)
+    return Choice(
+        name, f"Opens {path.name}: {name}, built on {base}", path=path, detail=f"on {base}"
+    )
+
+
+@dataclass(frozen=True)
+class _Warm:
+    """What `warmup` read for `open`."""
+
+    path: Path
+    doc: PortDocument
+    scene: Scene
+    species: int | None
+    intel: SpeciesIntel | None
 
 
 class MonsterWorkspace(Workspace):
@@ -70,6 +121,10 @@ class MonsterWorkspace(Workspace):
         #: games handed in stay; else `locate` drops them when `places` finds others
         self._handed = data is not None
         self._found = _roots()
+        #: what the last `warmup` read, for `open` to take
+        self._warm: _Warm | None = None
+        #: the manifest as the last Send to game sent it
+        self._sent: Manifest | None = None
         #: species intel from this directory instead of the cache built from the game
         self.intel_root = intel_root
         self.intel_cache: dict[int, SpeciesIntel | None] = {}
@@ -154,8 +209,12 @@ class MonsterWorkspace(Workspace):
             return False
 
     def open(self, path: Path) -> None:
-        """A manifest is built in memory from the extracted games; a PAC is read as it is."""
-        if path.suffix == ".toml":
+        """A manifest is built in memory from the extracted games, or comes from `warmup`; a PAC
+        is read as it is."""
+        warm, self._warm = self._warm, None
+        if warm is not None and warm.path == path:
+            self.load(warm.scene, warm.doc)
+        elif path.suffix == ".toml":
             doc = PortDocument.open(path)
             self.load(Scene.from_manifest(doc.manifest, None, "port", self.games()), doc)
         else:
@@ -168,6 +227,7 @@ class MonsterWorkspace(Workspace):
 
         self.scene, self.doc = scene, doc
         self._reset()
+        self._sent = None
         self.undriven = undriven_geometry(scene)
         if doc is not None:
             doc.pac = scene.pac
@@ -184,6 +244,69 @@ class MonsterWorkspace(Workspace):
             self.vp.set_scene(self.scene)
             self.sync()
         return self.vp
+
+    def shown(self) -> Hashable | None:
+        sc = self.scene
+        return None if sc is None else (None if self.doc is None else self.doc.path, sc.name)
+
+    def start(self) -> Sequence[Shelf]:
+        ports = tuple(port_choice(p) for p in port_files())
+        note = "" if ports else "No ports next to the studio (modkit's ports folder)."
+        needs = (places.MHFU, places.MHP3RD)
+        return (Shelf("Ports", ports, note, ("Open\u2026", OPEN_TIP), needs),)
+
+    def warmup(self, path: Path) -> Warmup | None:
+        """A port's manifest, its build and its base monster's data, read off the GUI thread."""
+        if path.suffix != ".toml":
+            return None
+        try:
+            games = self.games()
+        except places.Missing:
+            return None  # `open` says what is missing
+        intel_root, known = self.intel_root, set(self.intel_cache)
+
+        def run() -> _Warm:
+            doc = PortDocument.open(path)
+            scene = Scene.from_manifest(doc.manifest, None, "port", games)
+            sp = doc.manifest.port.host_species
+            root = None if intel_root is not None else games.fu.root
+            si = None if sp is None or sp in known else species.find(sp, intel_root, root)
+            return _Warm(path, doc, scene, sp, si)
+
+        def done(got: object) -> None:
+            if isinstance(got, _Warm):
+                self._warm = got
+                if got.species is not None and got.intel is not None:
+                    self.intel_cache.setdefault(got.species, got.intel)
+
+        return Warmup(
+            f"Opening {path.name}: building it, and its base monster's data the first time"
+            " (about ten seconds)",
+            run,
+            done,
+        )
+
+    def next_steps(self) -> Sequence[Step]:
+        m = self.manifest
+        if self.scene is None or m is None:
+            return ()
+        return (
+            Step("Pick a clip", self.edit_slot is not None),
+            Step("Copy the base monster's hitboxes", bool(m.hitboxes)),
+            Step("Change one", self._hitboxes_changed(m)),
+            Step("Send to game", self._sent is m, SEND_KEY),
+        )
+
+    def _hitboxes_changed(self, m: Manifest) -> bool:
+        """One of the port's hitboxes is not a copy of the base monster's."""
+        host = self.host_attacks()
+        if host is None:
+            return False
+        own = {
+            st.index: [dataclasses.replace(hitbox_of(sp, st.index), label="") for sp in st.spheres]
+            for st in host.sets
+        }
+        return any(dataclasses.replace(h, label="") not in own.get(h.set, []) for h in m.hitboxes)
 
     def docks(self) -> Sequence[Dock]:
         def build(module: str, panel: str) -> Callable[[Studio], Any]:
@@ -305,7 +428,7 @@ class MonsterWorkspace(Workspace):
     def hint(self) -> str:
         sc, vp = self.scene, self.vp
         if sc is None:
-            return "Open a port manifest (ports/<name>.toml) with File > Open"
+            return "Pick a port on the start page, or open one with File > Open"
         bits = []
         clip = None if vp is None else vp.clip
         if vp is None or clip is None:
@@ -463,6 +586,7 @@ class MonsterWorkspace(Workspace):
         m, cap, tables, source = self._module()
         out = runtime.cache_dir() / runtime.module_name(m)
         dep = runtime.ship(m, out, cap, tables, mods_dir=self.mods_dir(), source=source)
+        self._sent = m
         lib = "" if dep.library is None else f" and {runtime.LIB_SUBDIR}/{runtime.LIBRARY}"
         self.message = (
             f"sent {dep.module.name}{lib} to {_home(dep.module.parent)}; it applies when a mod"

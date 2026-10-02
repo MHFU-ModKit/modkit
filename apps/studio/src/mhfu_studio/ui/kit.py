@@ -397,7 +397,9 @@ def put(w: QWidget, value: object) -> None:
 
 # ---- text -------------------------------------------------------------------------------- #
 
-LabelRole = Literal["body", "muted", "title", "dock", "caps", "chip", "mono", "hint"]
+LabelRole = Literal[
+    "body", "muted", "title", "heading", "next", "dock", "caps", "chip", "mono", "hint"
+]
 
 
 def label(

@@ -27,10 +27,14 @@ from mhfu_studio.shell.input import Pointer
 from mhfu_studio.shell.overlay import Overlay
 from mhfu_studio.shell.text import keys, plain
 from mhfu_studio.shell.workspace import (
+    SEND_KEY,
+    Choice,
     Dock,
     Gesture,
     Job,
+    Shelf,
     Shortcut,
+    Step,
     ToolGroup,
     Workspace,
     register,
@@ -39,7 +43,7 @@ from mhfu_studio.stage import ops as O
 from mhfu_studio.stage.live import CLIMB, QUEST_CATCH
 
 from .adding import AddForm
-from .core.atlas import Atlas, row_name, stage_name, stage_title
+from .core.atlas import STAGE_NAMES, Atlas, row_name, stage_id, stage_name, stage_title
 from .core.edit import (
     COLLISION,
     FACE,
@@ -66,7 +70,7 @@ if TYPE_CHECKING:
     from .render.viewport import MapViewport
 
 VILLAGE = 139
-"""The section shown first when nothing else asks: Pokke village, row 0."""
+"""The section a viewport set up with nothing loaded shows: Pokke village, row 0."""
 SMALL = 50.0
 """A selection smaller than this is framed as a box this size around its centre."""
 
@@ -136,6 +140,9 @@ class MapWorkspace(Workspace):
         self.add = AddForm(self)
         #: a dock to bring forward, for the window (`take_focus`)
         self._focus: str | None = None
+        #: (stage, revision) of the send under way, and of the last one that went through
+        self._sending: tuple[Job, int, int] | None = None
+        self._sent: tuple[int, int] | None = None
         self.locate()
 
     # the shell's hooks
@@ -182,17 +189,83 @@ class MapWorkspace(Workspace):
         if self.scene is not None:
             self.load_stage(self.scene.stage, row=self.row)
         elif doc.stages:
-            self._want = doc.stages[0].number
-            self.row = doc.row
+            self._want, self.row = doc.stages[0].number, doc.row
+            self.load_stage(self._want, row=doc.row)
 
     def setup(self, ctx: moderngl.Context) -> MapViewport:
         from .render.viewport import MapViewport
 
         self.vp = MapViewport(ctx)
-        if self.atlas is not None:
+        if self.scene is not None:
+            self._show()
+        elif self.atlas is not None:
             want = self._want if self._want is not None else VILLAGE
             self.load_stage(want, row=self.row if self._want is not None else 0)
         return self.vp
+
+    def shown(self) -> Hashable | None:
+        sc = self.scene
+        return None if sc is None else (self.doc.path, sc.stage)
+
+    def start(self) -> Sequence[Shelf]:
+        named = self.named_areas()
+        if self.atlas is None:
+            note = "The areas come from the game: choose the MHFU extraction under Setup."
+        else:
+            note = "Every other map and area is in the Areas panel."
+        return (
+            Shelf("Pick an area", named, note, needs=(places.MHFU,)),
+            Shelf(
+                "Your map mods",
+                note="A map mod is a folder with a map.toml: your edits to one or more areas.",
+                browse=("Open a map mod\u2026", "Opens a map mod's map.toml and its first area"),
+            ),
+        )
+
+    def named_areas(self) -> tuple[Choice, ...]:
+        """The areas the game names, by map: the village, then each map's entry, then by name.
+        One click loads one."""
+        if self.atlas is None:
+            return ()
+        out: list[Choice] = []
+        seen: set[int] = set()
+        for r in self.atlas.live_rows():
+            named = [s for s in r.sections if s.stage in STAGE_NAMES and s.present]
+            named.sort(key=lambda s: (s.stage != VILLAGE, not s.is_entry, stage_name(s.stage)))
+            for sec in (s for s in named if s.stage not in seen):
+                seen.add(sec.stage)
+                out.append(
+                    Choice(
+                        stage_name(sec.stage),
+                        f"Loads {stage_title(sec.stage)} of {row_name(r.index)}",
+                        key=f"area:{sec.stage}:{r.index}",
+                        detail=stage_id(sec.stage),
+                        group=row_name(r.index),
+                    )
+                )
+        return tuple(out)
+
+    def choose(self, key: str) -> None:
+        """`area:<stage>:<row>` loads that area."""
+        kind, _, rest = key.partition(":")
+        stage, _, row = rest.partition(":")
+        if kind != "area" or not stage.isdigit():
+            raise ValueError(f"no area {key!r}")
+        if not self.load_stage(int(stage), row=int(row) if row.isdigit() else None):
+            raise ValueError(self.load_error or f"{stage_title(int(stage))} did not load")
+
+    def next_steps(self) -> Sequence[Step]:
+        sc, sess = self.scene, self.session
+        if sc is None or sess is None:
+            return ()
+        edits = bool(sess.ops)
+        picked = edits or not self.selection.empty or not self.col_sel.empty
+        sent = self._sent == (sc.stage, sess.revision)
+        return (
+            Step("Pick an object", picked),
+            Step("Move it", edits, TOOLS[MOVE].key),
+            Step("Send to game", sent, SEND_KEY),
+        )
 
     def docks(self) -> Sequence[Dock]:
         def build(module: str, panel: str) -> Callable[[Studio], Any]:
@@ -388,7 +461,16 @@ class MapWorkspace(Workspace):
         return self.push_blocker()
 
     def send(self) -> Job:
-        return self.push_job()
+        job = self.push_job()
+        sc, sess = self.scene, self.session
+        if sc is not None and sess is not None:
+            self._sending = (job, sc.stage, sess.revision)
+        return job
+
+    def ended(self, job: Job, ok: bool) -> None:
+        sending, self._sending = self._sending, None
+        if ok and sending is not None and sending[0] is job:
+            self._sent = sending[1:]
 
     def push_blocker(self, *, restore: bool = False) -> str | None:
         """Why the loaded section cannot be sent (restored) now; None when it can."""
@@ -470,12 +552,17 @@ class MapWorkspace(Workspace):
         self.selection = Selection(self.tools.kind if self.tools.kind != COLLISION else OBJECT)
         self.col_sel = CollisionSelection()
         self.tools.reseat()
-        if self.vp is not None:
-            self.vp.set_scene(scene, self.atlas.arrivals(stage))
-            self._clear_flags()
+        self._show()
         self.load_time = time.monotonic() - t0
-        self.add.at = [float(v) for v in self.vp.framed.center] if self.vp else [0.0] * 3
         return True
+
+    def _show(self) -> None:
+        """The loaded section into the viewport, when there is one."""
+        sc, vp, atlas = self.scene, self.vp, self.atlas
+        if sc is not None and vp is not None and atlas is not None:
+            vp.set_scene(sc, atlas.arrivals(sc.stage))
+            self._clear_flags()
+        self.add.at = [float(v) for v in vp.framed.center] if vp is not None else [0.0] * 3
 
     def _clear_flags(self) -> None:
         sess = self.session

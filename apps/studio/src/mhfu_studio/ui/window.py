@@ -35,11 +35,12 @@ from shiboken6 import getCppPointer
 from mhfu_studio.shell.findings import worst
 from mhfu_studio.shell.studio import doc_name
 from mhfu_studio.shell.text import plain
-from mhfu_studio.shell.workspace import Dock, Tool, ToolGroup, Workspace
-from mhfu_studio.ui import about, chrome, dialogs, kit, theme
+from mhfu_studio.shell.workspace import SEND_KEY, Dock, Tool, ToolGroup, Workspace
+from mhfu_studio.ui import about, chrome, dialogs, kit, steps, theme
 from mhfu_studio.ui import settings as saved
 from mhfu_studio.ui.findings import FindingsPanel
 from mhfu_studio.ui.job import JobLog, ProcessRunner
+from mhfu_studio.ui.start import StartPage
 from mhfu_studio.ui.view import GLView
 
 if TYPE_CHECKING:
@@ -117,10 +118,18 @@ class Window(QMainWindow):
 
         self.view = GLView(studio)
         studio.gl_current = self.view.current
+        #: in the view's place while there is nothing to show (`Studio.on_start`)
+        self.start_page = StartPage(studio)
+        self.stage = QStackedWidget()
+        self.stage.addWidget(self.view)
+        self.stage.addWidget(self.start_page)
+        self.steps = steps.Steps(studio)
         card = QWidget()
         lay = QVBoxLayout(card)
         lay.setContentsMargins(4, 0, 4, 2)
-        lay.addWidget(self.view)
+        lay.setSpacing(0)
+        lay.addWidget(self.steps)
+        lay.addWidget(self.stage)
         self.setCentralWidget(card)
         self.bar = chrome.TitleBar(self, studio, native)
         self.setMenuWidget(self.bar)
@@ -179,6 +188,7 @@ class Window(QMainWindow):
         self._slow = QTimer(self)
         self._slow.setInterval(250)
         self._slow.timeout.connect(self._recheck)
+        self._slow.timeout.connect(studio.guard("open", studio.poll))
         self._slow.start()
 
         family = str(self.settings.value("theme/family", "Ember"))
@@ -346,7 +356,9 @@ class Window(QMainWindow):
             self._fit(area)
 
     def _enter(self, ws: Workspace) -> None:
-        """Shows `ws`'s docks and tools in its saved layout, after saving the last one's."""
+        """Shows `ws`'s docks and tools in its saved layout, after saving the last one's; its
+        last document comes back the first time (`Studio.resume`)."""
+        self.studio.guard("reopen", self.studio.resume)()
         if self._shown is not None:
             self._save_layout(self._shown)
         self._shown = ws.name
@@ -403,7 +415,6 @@ class Window(QMainWindow):
             self._tool_rows.addWidget(self._tool_sets[ws.name][0])
         row, self._tool_actions = self._tool_sets[ws.name]
         self._tool_rows.setCurrentWidget(row)
-        self.tools.setVisible(bool(self._tool_actions))
 
     def _make_tools(self, ws: Workspace) -> tuple[QWidget, list[tuple[str, str, QAction]]]:
         """A row of `ws`'s tool groups: one-of tools as a segmented group under their name,
@@ -506,10 +517,17 @@ class Window(QMainWindow):
         )
         # tips and states follow the studio (`_sync_send`); Ctrl is Cmd on macOS
         self.send_action = self._action(
-            "Send to game", chrome.SEND_TIP, s.send, QKeySequence("Ctrl+Return")
+            "Send to game", chrome.SEND_TIP, s.send, QKeySequence(SEND_KEY)
         )
         self.stop_action = self._action("Stop", STOP_TIP, s.stop, QKeySequence("Ctrl+."))
-        f.addActions([self.open_action, self.save_action, self.save_as_action, self.revert_action])
+        self.start_action = self._action(
+            "Start page",
+            "Shows the start page: setup, what to open, and the recent documents",
+            lambda: s.show_start(True),
+        )
+        f.addActions([self.start_action, self.open_action])
+        f.addSeparator()
+        f.addActions([self.save_action, self.save_as_action, self.revert_action])
         f.addSeparator()
         f.addActions([self.send_action, self.stop_action])
         f.addSeparator()
@@ -529,6 +547,12 @@ class Window(QMainWindow):
             self._show_camera,
         )
         self.camera_action.setCheckable(True)
+        self.steps_action = self._action(
+            "Next steps",
+            "Shows the steps of the task at hand over the view, each ticked once done",
+            lambda: steps.hide(s.active, not self.steps_action.isChecked()),
+        )
+        self.steps_action.setCheckable(True)
         self.reset_action = self._action(
             "Reset layout",
             "Puts this workspace's panels back where they started",
@@ -601,6 +625,7 @@ class Window(QMainWindow):
         m = self.view_menu
         m.clear()
         m.addMenu(p)
+        m.addAction(self.steps_action)
         m.addAction(self.camera_action)
         m.addSeparator()
         m.addAction(self.reset_action)
@@ -726,11 +751,26 @@ class Window(QMainWindow):
             if d.isVisible():
                 self._sync_panel(d)
         self.studio.guard("send to game", self._sync_send)()
+        self.studio.guard("start page", self._sync_start)()
         self.studio.guard("sync", lambda: self._sync_window(ws))()
         if self._log is not None and self._log.isVisible():
             self._log.sync()
         self._retitle()
         self.view.update()
+
+    def _sync_start(self) -> None:
+        """The start page or the view; the next steps over the view."""
+        on = self.studio.on_start()
+        want = self.start_page if on else self.view
+        self.tools.setVisible(bool(self._tool_actions) and not on)  # nothing to work on yet
+        if self.stage.currentWidget() is not want:
+            self.stage.setCurrentWidget(want)
+            if not on:
+                self.view.setFocus()
+        if on:
+            self.start_page.sync()
+        self.steps.sync(on)
+        self.steps_action.setChecked(not steps.hidden(self.studio.active))
 
     def _sync_panel(self, d: QDockWidget) -> None:
         sync = getattr(self._panels.get(d), "sync", None)
