@@ -324,6 +324,17 @@ def test_title_bar_switches(make_window: Make, qtbot: Any) -> None:
     assert [a.data() for a in w.workspace_actions if a.isChecked()] == ["monster"]
 
 
+@pytest.mark.parametrize("native", [True, False])
+def test_window_title(make_window: Make, monkeypatch: Any, qtlog: Any, native: bool) -> None:
+    monkeypatch.setattr(chrome, "MAC", native)
+    w = make_window()
+    w.studio.active.add_item()
+    w.sync()
+    assert w.windowTitle() == ("" if native else "untitled map[*] - MHFU Studio")
+    assert w.bar.doc.text() == "untitled map" and w.bar.chip.text()
+    assert not [r for r in qtlog.records if "[*]" in r.message]
+
+
 def menu_actions(actions: list[QAction]) -> list[QAction]:
     out = []
     for a in actions:

@@ -95,7 +95,8 @@ class Window(QMainWindow):
         self._retitling.setSingleShot(True)
         self._retitling.setInterval(0)
         self._retitling.timeout.connect(self._retitle)
-        native = chrome.MAC  # read here, so a test can draw the other platforms' chrome
+        #: read here, so a test can draw the other platforms' chrome
+        self.native = native = chrome.MAC
         chrome.frame(self, native)
         self.setDockOptions(
             QMainWindow.DockOption.AnimatedDocks
@@ -550,8 +551,10 @@ class Window(QMainWindow):
         for a in self.workspace_actions:
             a.setChecked(a.data() == ws.name)
         self.bar.sync()
-        self.setWindowTitle(f"{doc_name(ws)}[*] - {self.studio.title}")
-        self.setWindowModified(doc is not None and doc.dirty)
+        title = chrome.title(doc_name(ws), self.studio.title, self.native)
+        self.setWindowTitle(title)
+        if title or QGuiApplication.platformName() == "cocoa":  # cocoa: a dot in the close button
+            self.setWindowModified(doc is not None and doc.dirty)
         self.message.setText(plain(self.studio.message))
         self.where.setText(plain(ws.status()))
         self.renderer.setText(self.studio.renderer)

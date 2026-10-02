@@ -54,6 +54,12 @@ def frame(win: QMainWindow, native: bool = MAC) -> None:
         Grips(win)
 
 
+def title(doc: str, app: str, native: bool = MAC) -> str:
+    """The window system's title: none on macOS, where AppKit draws it over `TitleBar`, which
+    names the document already."""
+    return "" if native else f"{doc}[*] - {app}"
+
+
 class TitleBar(QWidget):
     """The app's name, the workspace switcher, the document and its unsaved chip; the menus
     and window buttons too where the platform does not draw them."""
