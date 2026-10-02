@@ -509,6 +509,36 @@ class Section(QFrame):
         lay.addLayout(self.body)
 
 
+class More(QFrame):
+    """A collapsed group for the expert controls of a panel; add to `body`."""
+
+    def __init__(self, title: str = "More", *, tip: str) -> None:
+        super().__init__()
+        self.setObjectName("Section")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 2, 0, 4)
+        lay.setSpacing(6)
+        self.toggle = QToolButton()
+        self.toggle.setText(title)
+        self.toggle.setCheckable(True)
+        self.toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.toggle.setToolTip(tip)
+        self.toggle.toggled.connect(self.set_open)
+        lay.addWidget(self.toggle)
+        self.inner = QWidget()
+        self.body = QVBoxLayout(self.inner)
+        self.body.setContentsMargins(0, 0, 0, 0)
+        self.body.setSpacing(6)
+        lay.addWidget(self.inner)
+        self.inner.setVisible(False)
+
+    def set_open(self, on: bool) -> None:
+        self.toggle.setChecked(on)
+        self.toggle.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow)
+        self.inner.setVisible(on)
+
+
 class Pages(QStackedWidget):
     """A panel's page, or its empty state (a `Empty`, or a stack of them); only the one shown
     takes room."""

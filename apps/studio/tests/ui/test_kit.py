@@ -244,3 +244,13 @@ def test_wheel_needs_focus(qtbot: Any) -> None:
         assert roll(f)[1] == before
         f.setFocus()
         assert roll(f)[1] != before, type(f).__name__
+
+
+def test_more_opens(qtbot: Any) -> None:
+    m = kit.More(tip="expert controls")
+    qtbot.addWidget(m)
+    m.body.addWidget(kit.button("x", tip="x", on=lambda: None))
+    m.show()
+    assert not m.inner.isVisible() and not kit.missing_tips(m)
+    qtbot.mouseClick(m.toggle, Qt.MouseButton.LeftButton)
+    assert m.inner.isVisible()
