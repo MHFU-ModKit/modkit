@@ -30,7 +30,7 @@ from mhp_formats.skeleton import P3RD_MAGIC, Skeleton
 from mhp_formats.tmh import Tmh
 from numpy.typing import NDArray
 
-from mhfu_studio.monster.clips import build_id
+from mhfu_studio.monster.clips import build_id, clip_key
 from mhfu_studio.monster.core.pose import Pose
 from mhfu_studio.monster.inputs import built
 
@@ -96,7 +96,7 @@ class Clip:
 
     @property
     def name(self) -> str:
-        return self.names[0] if self.names else f"slot_{self.slot:02d}"
+        return self.names[0] if self.names else clip_key(self.slot)
 
 
 def _array(rows: Sequence[Sequence[float]], width: int) -> fk.Floats | None:

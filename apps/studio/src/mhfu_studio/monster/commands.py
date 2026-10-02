@@ -335,9 +335,12 @@ def run_hit(args: argparse.Namespace) -> int:
     cap = args.capacity if args.capacity is not None else runtime.host_capacity(intel)
     tables = runtime.host_attack_tables(intel)
     if args.print:
-        print(runtime.lua_hit_module(m, cap, f"ports/{args.manifest.name}", tables), end="")
+        print(runtime.lua_hit_module(m, cap, attacks=tables), end="")
         return 0
-    path = runtime.export(m, args.out, cap, tables)
+    path = args.out or Path(runtime.module_name(m))
+    dep = runtime.ship(m, path, cap, tables, library_path=args.library) if args.deploy else None
+    if dep is None:
+        runtime.export(m, path, cap, tables)
     print(
         f"wrote {path} ({len(m.hurtboxes)} volume(s), {len(m.hitzones)} state(s), "
         f"{len(runtime.sets_of(m))} attack set(s), {len(m.attacks)} attack record(s), "
@@ -349,7 +352,6 @@ def run_hit(args: argparse.Namespace) -> int:
         c = tables.capacities.get(s) if tables else None
         if c is not None and len(vols) > c:
             print(f"set {s}: {len(vols)} volume(s) but the host's holds {c}: truncated")
-    if args.deploy:
-        dep = runtime.deploy(path, library_path=args.library)
+    if dep is not None:
         print(f"deployed {dep.describe()}")
     return 0

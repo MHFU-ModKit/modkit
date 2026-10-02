@@ -28,7 +28,8 @@ def make(qtbot: Any, ws: MonsterWorkspace) -> TimelinePanel:
 
 @pytest.fixture
 def panel(qtbot: Any, workspace: MonsterWorkspace) -> TimelinePanel:
-    workspace.play_slot(1, 0.0)
+    workspace.play_slot(1)
+    workspace.play_pause()
     return make(qtbot, workspace)
 
 
@@ -128,7 +129,8 @@ def test_sync_shows_an_outside_change(panel: TimelinePanel, workspace: MonsterWo
 def test_labels_read_in_a_light_theme(qtbot: Any, workspace: MonsterWorkspace) -> None:
     theme.apply(theme.theme("Moss", False))
     try:
-        workspace.play_slot(1, 0.0)
+        workspace.play_slot(1)
+        workspace.play_pause()
         workspace.select_pair(1, 4)
         p = make(qtbot, workspace)
         s = p.strip

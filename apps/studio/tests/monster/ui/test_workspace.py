@@ -43,9 +43,9 @@ def test_status_names_the_scene(workspace: MonsterWorkspace) -> None:
 def test_keys_drive_the_transport(workspace: MonsterWorkspace) -> None:
     ws = workspace
     assert ws.vp is not None
-    ws.play_slot(1, 0.0)
+    ws.play_slot(1)
     pb = ws.vp.playback
-    assert ws.key(Key("Space")) and pb.playing
+    assert pb.playing and pb.phase == 0.0, "a picked clip plays from its first frame"
     assert ws.key(Key("Space")) and not pb.playing
     assert ws.key(Key("Right")) and pb.phase == pb.speed and ws.vp.frame == pb.phase
     assert ws.key(Key("Left")) and pb.phase == 0.0
@@ -57,13 +57,30 @@ def test_keys_drive_the_transport(workspace: MonsterWorkspace) -> None:
 def test_playback_animates(workspace: MonsterWorkspace) -> None:
     ws = workspace
     assert ws.vp is not None
-    ws.play_slot(1, 0.0)
-    assert not ws.animating()
-    ws.play_pause()
+    ws.play_slot(1)
     assert ws.animating()
     for _ in range(4):
         ws.frame(1 / 30)
     assert ws.vp.frame > 0
+
+
+def test_the_host_restarts_with_the_port(workspace: MonsterWorkspace) -> None:
+    ws = workspace
+    assert ws.vp is not None
+    ws.select_pair(1, 4)
+    ws.set_show_host(True)
+    ref = ws.vp.reference
+    assert ref is not None
+    ws.play_slot(2)  # a one-shot of 6 frames
+    for _ in range(5):
+        ws.frame(1 / 30)
+    pb = ws.vp.playback
+    assert pb.at_end and not pb.playing and ref.playback.phase > 0
+    ws.play_pause()
+    assert pb.playing and pb.phase == 0.0 and ref.playback.phase == 0.0 and ref.frame == 0.0
+    ws.frame(1 / 30)
+    ws.play_slot(1)
+    assert pb.phase == 0.0 and ref.playback.phase == 0.0
 
 
 def test_reveal_follows_the_findings(workspace: MonsterWorkspace) -> None:
@@ -96,6 +113,9 @@ def test_bind_names_the_move(workspace: MonsterWorkspace) -> None:
     ws.select_pair(0, 3)
     ws.bind_move()
     assert "move_0_3" in ws.manifest.moves and ws.move == "move_0_3"
+    ws.play_slot(2)
+    ws.bind_move("stop")
+    assert ws.manifest.moves["stop"].clip == "clip_02" and ws.manifest.clips["clip_02"].slot == 2
 
 
 def test_edit_set_opens_hitboxes(workspace: MonsterWorkspace) -> None:
@@ -174,7 +194,10 @@ def test_window_builds_the_docks(
 
 
 def test_deploy_needs_a_stick(workspace: MonsterWorkspace, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(MonsterWorkspace, "mods_dir", staticmethod(lambda: None))
+    def none() -> Path:
+        raise FileNotFoundError("no PPSSPP memory stick in ~/x")
+
+    monkeypatch.setattr(MonsterWorkspace, "mods_dir", staticmethod(none))
     assert workspace.exportable() and not MonsterWorkspace().exportable()
     with pytest.raises(FileNotFoundError, match="memory stick"):
         workspace.deploy_hit()
@@ -190,4 +213,4 @@ def test_attacks_resolve_and_export(
     assert workspace.pair_sets() == [2]
     monkeypatch.chdir(tmp_path)
     workspace.export_hit()
-    assert (tmp_path / "t_hit.lua").is_file() and "wrote t_hit.lua" in workspace.message
+    assert (tmp_path / "t_hit.lua").is_file() and "t_hit.lua (id " in workspace.message

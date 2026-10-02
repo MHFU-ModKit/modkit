@@ -122,5 +122,13 @@ def test_export_and_deploy(
     p.sync()
     assert p.export.deploy.isEnabled()
     p.export.deploy.click()
-    assert (tmp_path / "t_hit.lua").is_file() and (mods / "t_hit.lua").is_file()
-    assert "deployed" in workspace.message
+    assert (mods / "t_hit.lua").is_file() and not (tmp_path / "t_hit.lua").exists()
+    assert workspace.message.startswith("sent t_hit.lua")
+
+
+def test_no_intel_says_why(workspace: MonsterWorkspace, qtbot: Any) -> None:
+    workspace.intel_cache.pop(75)
+    p = build(workspace, qtbot)
+    text = p.no_intel.text()
+    assert text.startswith("No attack intel for em75: it is built from the extracted game")
+    assert "survey" not in text

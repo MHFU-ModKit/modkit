@@ -112,9 +112,9 @@ def test_render_command(
     args = ["render", "monster", str(pac), "--slot", "1", "--frames", "0,20", "--view", "three"]
     assert cli.main([*args, "--size", "160x120", "-o", str(out), "--sheet"]) == 0
     assert sorted(p.name for p in out.glob("*.png")) == [
+        "clip_01_f0_three.png",
+        "clip_01_f20_three.png",
         "sheet.png",
-        "slot_01_f0_three.png",
-        "slot_01_f20_three.png",
     ]
     assert cli.main(["render", "monster", str(pac), "--bind", "-o", str(out)]) == 0
     assert (out / "bind_three.png").is_file()

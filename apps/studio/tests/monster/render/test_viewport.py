@@ -51,6 +51,9 @@ def test_reference_beside_the_port(viewport: Any, rig: Scene, lit: Lit) -> None:
     vp.playback.play()
     assert vp.tick(1.0)
     assert ref.playback.speed == 3.0 and ref.playback.phase > 0
+    vp.play_clip(rig.clip(1))
+    assert vp.playback.phase == 0.0 and ref.playback.phase == 0.0
+    assert ref.clip is not None and ref.clip.slot == 2
     vp.strip_root = True
     assert ref.strip_root and vp.strip_root
     vp.clear_reference(frame_camera=True)

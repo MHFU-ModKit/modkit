@@ -76,13 +76,13 @@ class Actor:
     def repose(self) -> None:
         self.pose(self.clip, self.frame)
 
-    def play(self, clip: Clip | None, frame: float | None = None) -> None:
-        """Bind `clip` to the transport and pose it; `frame` None is mid-clip."""
+    def play(self, clip: Clip | None, frame: float = 0.0) -> None:
+        """Binds `clip` to the transport, posed at `frame`."""
         self.playback.set_clip(clip)
         if clip is None:
             self.pose(None)
             return
-        self.playback.seek(clip.frames * 0.5 if frame is None else frame)
+        self.playback.seek(frame)
         self.pose(clip, self.playback.phase)
 
     def overlay(
@@ -250,9 +250,26 @@ class MonsterViewport(Viewport):
             if a is not None:
                 a.repose()
 
-    def play_clip(self, clip: Clip | None, frame: float | None = None) -> None:
+    def play_clip(self, clip: Clip | None, frame: float = 0.0) -> None:
+        """The port on `clip` at `frame`; the host beside restarts its clip there, in step."""
         if self.actor is not None:
             self.actor.play(clip, frame)
+        if self.reference is not None:
+            self.reference.play(self.reference.clip, frame)
+
+    def restart(self) -> None:
+        """Both animals back to frame 0."""
+        for a in (self.actor, self.reference):
+            if a is not None:
+                a.playback.rewind()
+                a.pose(a.clip, 0.0)
+
+    def play_pause(self) -> None:
+        """The port's transport; a play from the end of a one-shot restarts both."""
+        pb = self.playback
+        if not pb.playing and pb.at_end:
+            self.restart()
+        pb.toggle()
 
     def tick(self, dt: float) -> bool:
         """Advances both transports `dt` real seconds; whether anything re-posed. The host
@@ -346,7 +363,7 @@ class MonsterViewport(Viewport):
         if frame_camera:
             self.camera.frame(self.bounds())
 
-    def play_reference_clip(self, clip: Clip | None, frame: float | None = None) -> None:
+    def play_reference_clip(self, clip: Clip | None, frame: float = 0.0) -> None:
         if self.reference is not None:
             self.reference.play(clip, frame)
 

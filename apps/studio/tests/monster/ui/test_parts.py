@@ -92,3 +92,22 @@ def test_adopt_volumes(workspace: MonsterWorkspace, qtbot: Any) -> None:
     assert ws.doc is not None
     p.adopt_vols.click()
     assert len(ws.doc.manifest.hurtboxes) == 5 and p.vols.rowCount() == 5
+
+
+def test_no_intel_says_why(workspace: MonsterWorkspace, qtbot: Any) -> None:
+    workspace.intel_cache.pop(75)
+    p = build(workspace, qtbot)
+    text = p.no_intel.text()
+    assert p.no_intel.isVisibleTo(p) and "MHFU_DATA" in text and "survey" not in text
+    assert "This port still takes" in text
+
+
+def test_a_bare_pac_has_no_host(qtbot: Any, synthetic_pac: bytes, gl: Any) -> None:
+    from mhfu_studio.monster.core.scene import Scene
+
+    ws = MonsterWorkspace()
+    ws.setup(gl)
+    ws.load(Scene.from_bytes(synthetic_pac, "t"))
+    p = build(ws, qtbot)
+    assert p.source.buttons["host"].text() == "No host" and "No host" in p.no_intel.text()
+    ws.close()

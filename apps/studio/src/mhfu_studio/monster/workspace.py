@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 
     from mhfu_studio.monster.render.hitboxes import HitboxOverlay
     from mhfu_studio.monster.render.viewport import MonsterViewport
+    from mhfu_studio.monster.runtime import AttackTables
     from mhfu_studio.shell.studio import Studio
 
 Pair = tuple[int, int]
@@ -59,6 +60,8 @@ class MonsterWorkspace(Workspace):
         #: species intel from this directory instead of the cache built from the game
         self.intel_root = intel_root
         self.intel_cache: dict[int, SpeciesIntel | None] = {}
+        #: why a species' intel is None in the cache
+        self.intel_errors: dict[int, str] = {}
         self.doc: PortDocument | None = None
         self.scene: Scene | None = None
         self.vp: MonsterViewport | None = None
@@ -97,7 +100,6 @@ class MonsterWorkspace(Workspace):
         self.grid_state = 0
         #: a grid state to bring forward next frame (a finding was revealed)
         self.show_state: int | None = None
-        self.hit_export: Path | None = None
         self.show_attacks = False
         self.attacks_source = HOST
         self.selected_set: int | None = None
@@ -378,54 +380,84 @@ class MonsterWorkspace(Workspace):
             self.sync()
             self.message = "back to the file on disk"
 
-    # the runtime module
+    # the runtime module: the manifest as it is now, saved or not (its header says which)
 
     def exportable(self) -> bool:
-        """The saved manifest has tables the runtime module carries."""
-        doc = self.doc
-        if doc is None or doc.path is None:
-            return False
-        s = doc.saved_manifest
-        return bool(s.hurtboxes or s.hitzones or s.hitboxes or s.attacks)
+        """The manifest has tables the runtime module carries."""
+        from mhfu_studio.monster import runtime
 
-    def export_hit(self) -> None:
-        """The SAVED manifest's tables as `./<name>_hit.lua`: the module names its source and
-        content, so an unsaved edit would disagree without a trace."""
+        return self.manifest is not None and runtime.has_tables(self.manifest)
+
+    def _module(self) -> tuple[Manifest, int | None, AttackTables | None, str]:
+        """What `runtime.export` takes for the document as it is now."""
         from mhfu_studio.monster import runtime
 
         if self.doc is None:
-            raise ValueError("no manifest to export")
-        saved, intel = self.doc.saved_manifest, self.host_intel()
-        cap = runtime.host_capacity(intel)
-        self.hit_export = runtime.export(saved, None, cap, runtime.host_attack_tables(intel))
-        self.message = f"wrote {self.hit_export.name} (id {runtime.content_id(saved)})"
+            raise ValueError("no port manifest open")
+        m, intel = self.doc.manifest, self.host_intel()
+        source = f"{runtime.source_of(m)}, unsaved edits" if self.doc.dirty else ""
+        return m, runtime.host_capacity(intel), runtime.host_attack_tables(intel), source
 
-    def deploy_hit(self, mods: Path | None = None) -> None:
-        """Exports when nothing is exported yet, then copies the module (and a stale
-        `mhfu_port.lua`) to `mods`, the memory stick's mods folder by default."""
+    def export_hit(self) -> None:
+        """`<name>_hit.lua` in the working directory."""
         from mhfu_studio.monster import runtime
 
-        mods = mods if mods is not None else self.mods_dir()
-        if mods is None:
-            raise FileNotFoundError("no memory stick with the framework's mods folder")
-        if self.hit_export is None:
-            self.export_hit()
-        if self.hit_export is not None:
-            dep = runtime.deploy(self.hit_export, mods)
-            self.message = (
-                f"deployed {dep.describe()}. A running game hot-reloads it; a cold one loads it"
-                " at boot"
-            )
+        m, cap, tables, source = self._module()
+        path = runtime.export(m, None, cap, tables, source).resolve()
+        self.message = f"wrote {path} (id {runtime.content_id(m)})"
+
+    def deploy_hit(self) -> None:
+        """Exported fresh into the studio's cache, then copied with a stale `mhfu_port.lua`
+        to the memory stick's mods folder."""
+        from mhfu_studio.monster import runtime
+
+        m, cap, tables, source = self._module()
+        out = runtime.cache_dir() / runtime.module_name(m)
+        dep = runtime.ship(m, out, cap, tables, mods_dir=self.mods_dir(), source=source)
+        lib = "" if dep.library is None else f" and {runtime.LIB_SUBDIR}/{runtime.LIBRARY}"
+        self.message = (
+            f"sent {dep.module.name}{lib} to {_home(dep.module.parent)}; it applies when a mod"
+            f" defines the port '{m.port.name}' and the monster is in the area (id"
+            f" {runtime.content_id(m)})"
+        )
 
     @staticmethod
-    def mods_dir() -> Path | None:
-        """The memory stick's mods folder, when there is one."""
+    def mods_dir() -> Path:
+        """The memory stick's mods folder; FileNotFoundError says where it looked."""
         from mhfu import inject
 
+        return inject.default_mods_dir()
+
+    def send_blocker(self) -> str | None:
+        from mhfu_studio.monster import runtime
+
+        m = self.manifest
+        if m is None:
+            if self.scene is None:
+                return "no port open: open a port manifest (ports/<name>.toml)"
+            return "a bare PAC has no hit tables: open its port manifest (.toml) instead"
+        if not runtime.has_tables(m):
+            return (
+                "nothing to send: this port has no hit tables yet. Start from the host's in"
+                " Parts or Hitboxes (This port, then Adopt the host's ...)"
+            )
         try:
-            return inject.default_mods_dir()
-        except FileNotFoundError:
-            return None
+            runtime.check(m, runtime.host_attack_tables(self.host_intel()))
+        except ManifestError as e:
+            gap = self.intel_gap("attack")
+            return f"cannot send hitboxes or attacks. {gap}" if gap else f"cannot send: {e}"
+        try:
+            self.mods_dir()
+        except FileNotFoundError as e:
+            return f"no memory stick to send to: {e}"
+        return None
+
+    def send(self) -> None:
+        """The hit tables onto the memory stick (`deploy_hit`), no save needed."""
+        try:
+            self.deploy_hit()
+        except (OSError, ValueError) as e:  # ManifestError is a ValueError
+            self.message = f"send failed: {e}"
 
     # the games and the intel
 
@@ -443,11 +475,33 @@ class MonsterWorkspace(Workspace):
         if sp not in self.intel_cache:
             root = self._data.fu.root if self._data is not None else None
             try:
-                self.intel_cache[sp] = species.find(sp, self.intel_root, root)
+                self.intel_cache[sp] = species.load(sp, self.intel_root, root)
+            except LookupError as e:
+                self.intel_errors[sp] = str(e)
+                self.intel_cache[sp] = None
             except (OSError, ValueError) as e:
-                self.message = f"no intel for em{sp:02d}: {e}"
+                self.intel_errors[sp] = f"reading or building it failed ({e})"
+                self.message = f"no intel for em{sp:02d}: {self.intel_errors[sp]}"
                 self.intel_cache[sp] = None
         return self.intel_cache[sp]
+
+    def intel_gap(self, what: str, sp: int | None = None) -> str:
+        """Why `sp`'s (the host's by default) `what` intel ("part", "attack", "action") is
+        missing, and what to do; empty when it is there."""
+        sp = self.host_species if sp is None else sp
+        if sp is None:
+            return "No host: a bare PAC names none. Open its port manifest (.toml) instead."
+        si = self.intel_of(sp)
+        if si is None:
+            why = self.intel_errors.get(sp, "it was not loaded")
+            return f"No {what} intel for em{sp:02d}: {why}."
+        if what == "part" and not si.parts.present:
+            why = si.parts.grid_reason
+        elif what == "attack" and not si.attacks.present:
+            why = si.attacks.reason
+        else:
+            return ""
+        return f"No {what} intel for em{sp:02d}: its overlay has none the analyser reads ({why})."
 
     @property
     def host_species(self) -> int | None:
@@ -597,14 +651,16 @@ class MonsterWorkspace(Workspace):
         self.name_buf = found[0] if found else clips.clip_key(slot)
         self.label_buf = found[1].label if found else ""
 
-    def play_slot(self, slot: int, frame: float | None = None) -> None:
+    def play_slot(self, slot: int) -> None:
+        """Plays `slot` from frame 0, the host beside restarted with it."""
         if self.scene is None or self.vp is None:
             return
         try:
-            self.vp.play_clip(self.scene.clip(slot), frame)
+            self.vp.play_clip(self.scene.clip(slot))
         except KeyError:
             self.message = f"slot {slot} is not in this PAC"
             return
+        self.vp.playback.play()
         self.pick_clip(slot)
         self.recompute_alignment()
 
@@ -690,12 +746,13 @@ class MonsterWorkspace(Workspace):
         self.markers = self.alignment.markers
 
     def bind_move(self, name: str = "") -> None:
-        """The alignment as `[moves.<name>]`, `move_<main>_<sub>` when unnamed."""
+        """The alignment as `[moves.<name>]`, `move_<main>_<sub>` when unnamed: a move of that
+        name is updated in place, an unnamed clip on screen named."""
         al, s = self.alignment, self.label_session
         if al is None or s is None:
             return
         name = name.strip() or f"move_{al.main}_{al.sub}"
-        if self.edit("", lambda: s.bind_move(name, al.main, al.sub, al.clip)):
+        if self.edit("", lambda: s.bind_move(name, al.main, al.sub, al.slot)):
             self.select_pair(al.main, al.sub, name)
 
     def host_pair(self) -> PairIntel | None:
@@ -716,7 +773,7 @@ class MonsterWorkspace(Workspace):
 
     def play_pause(self) -> None:
         if self.vp is not None and self.vp.clip is not None:
-            self.vp.playback.toggle()
+            self.vp.play_pause()
 
     def step(self, frames: int) -> None:
         """Whole game frames at the clip's speed; pauses."""
@@ -725,7 +782,8 @@ class MonsterWorkspace(Workspace):
             self.vp.set_pose(self.vp.clip, self.vp.playback.phase)
 
     def rewind(self) -> None:
-        self.seek(0.0)
+        if self.vp is not None and self.vp.clip is not None:
+            self.vp.restart()
 
     def seek(self, frame: float) -> None:
         if self.vp is not None and self.vp.clip is not None:
@@ -902,6 +960,14 @@ class MonsterWorkspace(Workspace):
     def _overlay(self, which: str) -> HitboxOverlay | None:
         vp = self.vp
         return None if vp is None else vp.hitboxes if which == "hitboxes" else vp.attacks
+
+
+def _home(path: Path) -> str:
+    """`path` with the home directory as `~`."""
+    try:
+        return str(Path("~") / path.relative_to(Path.home()))
+    except ValueError:
+        return str(path)
 
 
 register("monster", MonsterWorkspace)
