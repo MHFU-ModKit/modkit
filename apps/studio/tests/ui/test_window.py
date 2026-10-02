@@ -8,6 +8,7 @@ import pytest
 from mhfu_studio.shell.findings import Finding
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.shell.testing import FakeDocument
+from mhfu_studio.shell.workspace import Dock
 from mhfu_studio.ui import chrome, dialogs, kit, theme
 from mhfu_studio.ui.testing import FakeWorkspace, gl_or_skip
 from mhfu_studio.ui.window import DockTitle, Window
@@ -51,6 +52,51 @@ def test_layout_persists(make_window: Make) -> None:
     w.close()
     again = make_window()
     assert again.dockWidgetArea(dock(again, "map/Items")) == RIGHT
+
+
+class Tabbed(FakeWorkspace):
+    """Two docks a side, so every side is a tab group."""
+
+    def docks(self) -> tuple[Dock, ...]:
+        own = tuple(super().docks())
+        more = (Dock(f"{d.label} 2", d.area, lambda s: kit.Panel(), d.tip) for d in own)
+        return (*own, *more)
+
+
+def stray_tabs(w: Window) -> list[list[str]]:
+    """The tabs of every shown tab bar over the title bar, the toolbar or the view."""
+    others = [w.menuWidget(), w.tools, w.centralWidget()]
+    bars = w.findChildren(QTabBar, options=Qt.FindChildOption.FindDirectChildrenOnly)
+    return [
+        [b.tabText(i) for i in range(b.count())]
+        for b in bars
+        if b.isVisible()
+        and any(o.isVisible() and b.geometry().intersects(o.geometry()) for o in others)
+    ]
+
+
+def test_arranged_once(make_window: Make, qtbot: Any, monkeypatch: Any) -> None:
+    arranged: list[str] = []
+    arrange = Window._arrange
+    monkeypatch.setattr(Window, "_arrange", lambda w, n: arranged.append(n) or arrange(w, n))
+    w = make_window(Tabbed("map"), Tabbed("monster"))
+    switch(w, "monster")
+    switch(w, "map")
+    assert arranged == ["map", "monster"]
+    w.close()
+    again = make_window(Tabbed("map"), Tabbed("monster"))
+    switch(again, "monster")
+    switch(again, "map")
+    assert arranged == ["map", "monster"] and dock(again, "map/Items 2").isVisible()
+    again.reset_layout()
+    qtbot.wait(20)  # Qt deletes the tab bars a layout let go of on the loop's next turn
+    assert arranged[-1] == "map" and stray_tabs(again) == []
+
+
+def test_restore_places_new_docks(make_window: Make) -> None:
+    make_window().close()
+    w = make_window(Tabbed("map"), Tabbed("monster"))
+    assert w.dockWidgetArea(dock(w, "map/Notes 2")) == RIGHT
 
 
 def test_reset_layout(make_window: Make) -> None:

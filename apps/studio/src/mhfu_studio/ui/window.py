@@ -242,12 +242,16 @@ class Window(QMainWindow):
         p.body.addWidget(kit.label(f"{spec.label} could not be built: {self.studio.message}"))
         return p
 
+    def _area(self, d: QDockWidget) -> str:
+        """`d`'s side in the built-in arrangement."""
+        spec = self._specs.get(d)
+        return spec.area if spec is not None else "bottom"
+
     def _arrange(self, name: str) -> None:
         """The built-in arrangement: each side's docks tabbed together, focus docks in front."""
         sides: dict[str, list[QDockWidget]] = {}
         for d in [*self._docks[name], self.findings_dock]:
-            spec = self._specs.get(d)
-            sides.setdefault(spec.area if spec is not None else "bottom", []).append(d)
+            sides.setdefault(self._area(d), []).append(d)
         for area, docks in sides.items():
             for d in docks:
                 d.setFloating(False)
@@ -276,18 +280,30 @@ class Window(QMainWindow):
             self._save_layout(self._shown)
         self._shown = ws.name
         self._hide_others()
-        if ws.name not in self._docks:
+        fresh = ws.name not in self._docks
+        if fresh:
             self._docks[ws.name] = self._build(ws)
-            self._arrange(ws.name)
         else:
             for d in self._docks[ws.name]:
                 d.show()
-        state = self.settings.value(f"layout/{ws.name}")
-        if isinstance(state, QByteArray) and self.restoreState(state, STATE_VERSION):
+        # restored or arranged, never both: a replaced layout keeps its tab bars a loop turn
+        if self._restore(ws.name):
             self._hide_others()  # in case a saved layout knew them as shown
+        elif fresh:
+            self._arrange(ws.name)
         self._retitle()
         self._fill_view_menu(ws)
         self._show_tools(ws)
+
+    def _restore(self, name: str) -> bool:
+        """`name`'s saved layout, if it has one; a dock the layout does not know joins its side."""
+        state = self.settings.value(f"layout/{name}")
+        if not (isinstance(state, QByteArray) and self.restoreState(state, STATE_VERSION)):
+            return False
+        for d in [*self._docks[name], self.findings_dock]:
+            if not d.isFloating() and self.dockWidgetArea(d) == Qt.DockWidgetArea.NoDockWidgetArea:
+                self.addDockWidget(AREAS[self._area(d)], d)
+        return True
 
     def _hide_others(self) -> None:
         for name, docks in self._docks.items():
