@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit, theme
 
-from ..core.atlas import ROW_NAMES, MapRow, Section
+from ..core.atlas import ROW_NAMES, MapRow, Section, stage_title
 from .common import Gate, fit
 
 if TYPE_CHECKING:
@@ -42,8 +42,7 @@ def row_text(r: MapRow) -> str:
 
 
 def section_text(s: Section) -> str:
-    name = "" if s.name == f"st{s.stage:03d}" else f"  {s.name}"
-    return f"{s.slot}  st{s.stage:03d}{name}{'  (entry)' if s.is_entry else ''}"
+    return f"{s.slot}  {stage_title(s.stage)}{'  (entry)' if s.is_entry else ''}"
 
 
 def section_tip(s: Section) -> str:
@@ -134,12 +133,12 @@ class BrowserPanel(kit.Panel):
         self.here.setVisible(sc is not None)
         if sc is None:
             return
-        self.title.setText(f"st{sc.stage:03d}  {sc.name}")
+        self.title.setText(stage_title(sc.stage))
         self.exits.setVisible(bool(sc.exits))
         rebuilt = self.exits.set_items(
             [
                 kit.Item(
-                    f"exit {e.index}  to st{e.target:03d}  {e.target_name}",
+                    f"exit {e.index}  to {stage_title(e.target)}",
                     e.target,
                     f"Walking into exit {e.index} takes the player to st{e.target:03d}."
                     " Click to load it.",

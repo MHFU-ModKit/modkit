@@ -29,7 +29,7 @@ from mhfu_studio.stage import ops as O
 from mhfu_studio.stage.live import CLIMB, QUEST_CATCH
 
 from .adding import AddForm
-from .core.atlas import Atlas
+from .core.atlas import Atlas, stage_title
 from .core.edit import (
     COLLISION,
     GROUP,
@@ -210,7 +210,7 @@ class MapWorkspace(Workspace):
         sc = self.scene
         if sc is None:
             return "no section loaded"
-        return f"st{sc.stage:03d} {sc.name}   row {self.row}   loaded in {self.load_time:.2f} s"
+        return f"{stage_title(sc.stage)}   row {self.row}   loaded in {self.load_time:.2f} s"
 
     def close(self) -> None:
         if self.vp is not None:
@@ -222,7 +222,7 @@ class MapWorkspace(Workspace):
 
     def hud(self) -> str:
         sc = self.scene
-        head = f"st{sc.stage:03d}  {sc.name}" if sc else self.data_error or "no section loaded"
+        head = stage_title(sc.stage) if sc else self.data_error or "no section loaded"
         lines = [head]
         if sc is not None:
             lines.append(f"{self.tools.hint()}; F frames, Esc clears")

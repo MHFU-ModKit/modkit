@@ -1,12 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 from mhfu.files import Extracted
-from mhfu_studio.map.core.atlas import ORPHAN_STAGES, Atlas, row_name, stage_name
+from mhfu_studio.map.core.atlas import ORPHAN_STAGES, Atlas, row_name, stage_name, stage_title
 
 
 def test_names_are_not_guessed():
     assert row_name(0) == "Pokke village & town" and row_name(7) == "row 7"
     assert stage_name(98) == "Snowy base camp" and stage_name(200) == "st200"
+
+
+def test_an_unnamed_stage_says_its_id_once():
+    assert stage_title(139) == "st139  Pokke village" and stage_title(140) == "st140"
 
 
 def test_synthetic(atlas: Atlas, game: Extracted):

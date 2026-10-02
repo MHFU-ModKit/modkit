@@ -26,7 +26,7 @@ from mhfu_studio.stage.collision import Plan
 from mhfu_studio.stage.file import MESHES, TEXTURES, StageFile
 from mhfu_studio.stage.textures import UNTEXTURED
 
-from .atlas import stage_name
+from .atlas import stage_name, stage_title
 
 Array = npt.NDArray[Any]
 Point = Sequence[float] | Array
@@ -354,7 +354,7 @@ class MapScene:
 
     def summary(self) -> str:
         lines = [
-            f"st{self.stage:03d}  {self.name}",
+            stage_title(self.stage),
             f"  fog {self.fog_rgba}   subs {self.sub_sizes}",
         ]
         for sub, label in ((0, "terrain"), (2, "props")):
@@ -371,7 +371,7 @@ class MapScene:
             lines.append(f"  collision chunk {c.index}: {c.n_triangles} triangles  {kinds}")
         lines.append(f"  textures: {len(self.textures)}")
         for e in self.exits:
-            lines.append(f"  exit {e.index} -> st{e.target:03d} {e.target_name}")
+            lines.append(f"  exit {e.index} -> {stage_title(e.target)}")
         lines += [f"  note: {n}" for n in self.notes]
         return "\n".join(lines)
 

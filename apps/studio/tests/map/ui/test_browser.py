@@ -4,8 +4,8 @@ from typing import Any
 
 import pytest
 from mhfu.files import Extracted
-from mhfu_studio.map.core.atlas import Atlas
-from mhfu_studio.map.panels.browser import BrowserPanel
+from mhfu_studio.map.core.atlas import Atlas, Section, stage_name
+from mhfu_studio.map.panels.browser import BrowserPanel, section_text
 from mhfu_studio.map.workspace import MapWorkspace
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.ui import kit
@@ -23,6 +23,10 @@ def test_no_data(qtbot: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MHFU_DATA", raising=False)
     p = panel(qtbot, MapWorkspace())
     assert p.gate.currentWidget() is p.gate.empty and kit.missing_tips(p) == []
+
+
+def test_unnamed_section() -> None:
+    assert section_text(Section(140, 3, 0, stage_name(140), False)) == "3  st140"
 
 
 def test_click_loads(qtbot: Any, game: Extracted, atlas: Atlas) -> None:

@@ -14,6 +14,7 @@ from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit
 
 from ..core import shapes
+from ..core.atlas import stage_title
 from ..core.edit import OBJECT, EditError, Selection
 from .common import Gate, thumbnail
 
@@ -268,7 +269,7 @@ class AssetsPanel(kit.Panel):
             [
                 (
                     str(x.stage),
-                    f"st{x.stage:03d}  {x.name}{'  (loaded)' if x.stage == sc.stage else ''}",
+                    f"{stage_title(x.stage)}{'  (loaded)' if x.stage == sc.stage else ''}",
                 )
                 for x in secs
             ],
