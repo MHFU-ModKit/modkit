@@ -39,6 +39,8 @@ def test_host_sets(workspace: MonsterWorkspace, qtbot: Any) -> None:
     p = build(workspace, qtbot)
     assert kit.missing_tips(p) == [] and p.sets.rowCount() == 4
     assert p.to_port.isVisibleTo(p) and not p.edit_box.isVisibleTo(p)
+    host = p.source.buttons["host"]
+    assert host.minimumWidth() > host.fontMetrics().horizontalAdvance(host.text()), "room for bold"
     assert "measured" in p.join.text() and not p.join.isVisibleTo(p)
     p.more.set_open(True)
     assert p.join.isVisibleTo(p) and kit.missing_tips(p) == []

@@ -125,7 +125,7 @@ class HitboxesPanel(kit.Panel):
         self.orphans = kit.Alert(level="error")
         self.sets_head = kit.label(role="muted")
         self.sets = kit.Table(
-            ["Group", "Attacks", "Hitboxes", "Used by"],
+            ["Group", "Hitboxes", "Used by", "Attacks"],
             tip=GROUP_TIP + " Hitboxes reads yours/fit: how many you have, how many fit.",
         )
         self.sets.picked.connect(self._pick_set)
@@ -591,9 +591,9 @@ class HitboxesPanel(kit.Panel):
             rows.append(
                 (
                     str(idx),
-                    ", ".join(f"{a.id}(p{a.power})" for a in atks[:2]) + more,
                     count,
                     moves,
+                    ", ".join(f"{a.id}(p{a.power})" for a in atks[:2]) + more,
                 )
             )
             tip = [f"joints {bone_span(bones)}"] if bones else []

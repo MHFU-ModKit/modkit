@@ -36,18 +36,19 @@ NOTES = {
     "selected": "pick an action in Action",
     "attacks": "no action of this monster spawns an attack the code shows",
 }
-#: what ends an action (`PairIntel.ends_on`), in words
+#: what ends an action (`PairIntel.ends_on`), in words: in full, and on a graph node
 ENDS = {
-    "clip": "with the clip",
-    "clip+cursor": "with the clip",
-    "cursor": "at a clip frame",
-    "budget": "on a timer",
+    "clip": ("with the clip", "clip"),
+    "clip+cursor": ("with the clip", "clip"),
+    "cursor": ("at a clip frame", "clip frame"),
+    "budget": ("on a timer", "timer"),
 }
 
 
-def ends_text(p: PairIntel) -> str:
+def ends_text(p: PairIntel, short: bool = False) -> str:
     """`on a timer`; empty when unknown."""
-    return "on a timer" if p.budget.gated else ENDS.get(p.ends_on, "")
+    words = ENDS["budget"] if p.budget.gated else ENDS.get(p.ends_on, ("", ""))
+    return words[short]
 
 
 @dataclass
@@ -104,7 +105,7 @@ def _label(p: PairIntel, move: str | None) -> list[str]:
     if p.attack_ids:
         bits.append("attack " + ",".join(map(str, p.attack_ids[:3])))
     if ends_text(p):
-        bits.append("ends " + ends_text(p))
+        bits.append("ends: " + ends_text(p, short=True))
     if bits:
         lines.append("  ".join(bits))
     return lines
