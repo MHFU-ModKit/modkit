@@ -378,7 +378,7 @@ def put(w: QWidget, value: object) -> None:
 
 # ---- text -------------------------------------------------------------------------------- #
 
-LabelRole = Literal["body", "muted", "title", "caps", "chip", "mono", "hint"]
+LabelRole = Literal["body", "muted", "title", "dock", "caps", "chip", "mono", "hint"]
 
 
 def label(
@@ -484,13 +484,13 @@ class Form(QWidget):
 
 
 class Section(QFrame):
-    """A titled group inside a panel; add to `body`."""
+    """A titled group inside a panel, on the panel's own surface; add to `body`."""
 
     def __init__(self, title: str, *, tip: str = "") -> None:
         super().__init__()
         self.setObjectName("Section")
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 8, 10, 10)
+        lay.setContentsMargins(0, 2, 0, 4)
         lay.setSpacing(6)
         self.title = label(title, role="caps", wrap=False)
         if tip:
@@ -795,12 +795,12 @@ class Panel(QWidget):
         self.setObjectName("Card")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(1, 1, 1, 1)
+        outer.setContentsMargins(0, 0, 0, 0)
         inner = QWidget()
         inner.setObjectName("Body")
         self.body = QVBoxLayout(inner)
-        self.body.setContentsMargins(10, 10, 10, 10)
-        self.body.setSpacing(8)
+        self.body.setContentsMargins(10, 8, 10, 8)
+        self.body.setSpacing(12)
         if scroll:
             area = QScrollArea()
             area.setWidgetResizable(True)

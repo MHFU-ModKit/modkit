@@ -15,7 +15,7 @@ from mhfu_studio.ui.testing import gl_or_skip
 from mhfu_studio.ui.window import Window
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QToolButton, QWidget
 
 LABELS = ["Select", "Move", "Rotate", "Scale", "Groups", "Objects", "Faces", "Collision"]
 
@@ -35,9 +35,11 @@ def checked(w: Window) -> list[str]:
 
 
 def test_toolbar(window: Window) -> None:
-    shown = [a.text() for a in window.tools.actions() if not a.isSeparator()]
-    assert shown == [*LABELS, "Snap", "Local", "Show collision"]
-    assert sum(a.isSeparator() for a in window.tools.actions()) == 2
+    buttons = [b for b in window.tools.findChildren(QToolButton) if b.defaultAction()]
+    toggles = ["Snap", "Local", "Show collision"]
+    assert [b.text() for b in buttons] == [*LABELS, *toggles]
+    assert [b.text() for b in buttons if b.property("toggle")] == toggles
+    assert len([w for w in window.tools.findChildren(QWidget) if w.objectName() == "Seg"]) == 2
     keys = [action(window, t).shortcut().toString() for t in LABELS]
     assert keys == ["Q", "W", "E", "R", "1", "2", "3", "4"]
     assert "(W)" in action(window, "Move").toolTip()

@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 #: moderngl leaves the pixel store at 1 and QPainter's glyph uploads then shear
 GL_UNPACK_ALIGNMENT, GL_PACK_ALIGNMENT = 0x0CF5, 0x0D05
 #: the card's corner radius, the theme's #Card one
-RADIUS = 12
+RADIUS = 8
 HUD_AT: Point = (10.0, 8.0)
 PAN_BUTTONS = Button.RIGHT | Button.MIDDLE
 #: the camera's gestures, for Help > Keyboard shortcuts

@@ -22,9 +22,11 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QSizePolicy,
+    QStackedWidget,
     QTabBar,
     QTabWidget,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -67,18 +69,16 @@ MODES: dict[theme.Mode, tuple[str, str]] = {
 
 
 class DockTitle(QWidget):
-    """A dock's title: its name in small caps, which explains the dock, and a close button.
-    Tabbed with others a dock shows only its tab, whose right-click menu hides it."""
+    """A dock's title: its name, which explains the dock, and a close button. Tabbed with
+    others a dock shows only its tab, whose right-click menu hides it."""
 
     def __init__(self, dock: QDockWidget, tip: str) -> None:
         super().__init__()
         name = dock.windowTitle()
         self.setToolTip(tip)
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(14, 6, 6, 2)
-        label = kit.label(name.upper(), role="caps", wrap=False)
-        label.setToolTip(tip)
-        lay.addWidget(label)
+        lay.setContentsMargins(10, 6, 6, 2)
+        lay.addWidget(kit.label(name, role="dock", wrap=False))
         lay.addStretch(1)
         self.hide_button = kit.icon_button(
             "ph.x", tip=f"Hides {name}; View > Panels > {name} brings it back", on=dock.close
@@ -125,11 +125,12 @@ class Window(QMainWindow):
         self.tools = QToolBar("Tools")
         self.tools.setObjectName("Tools")
         self.tools.setMovable(False)
-        self.tools.setIconSize(QSize(16, 16))
-        self.tools.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(self.tools)
-        #: per workspace: the toolbar's actions, and (group, tool, action) for each tool
-        self._tool_sets: dict[str, tuple[list[QAction], list[tuple[str, str, QAction]]]] = {}
+        #: one row of tools per workspace; a hidden row's keys do nothing
+        self._tool_rows = QStackedWidget()
+        self.tools.addWidget(self._tool_rows)
+        #: per workspace: its row, and (group, tool, action) for each tool
+        self._tool_sets: dict[str, tuple[QWidget, list[tuple[str, str, QAction]]]] = {}
         self._tool_actions: list[tuple[str, str, QAction]] = []
 
         self.findings = FindingsPanel(studio, ask_open=studio.act("open", self.ask_open))
@@ -395,24 +396,35 @@ class Window(QMainWindow):
         """`ws`'s tools on the toolbar; made once and kept, as its docks are."""
         if ws.name not in self._tool_sets:
             self._tool_sets[ws.name] = self._make_tools(ws)
-        shown, self._tool_actions = self._tool_sets[ws.name]
-        self.tools.clear()
-        self.tools.addActions(shown)
-        self.tools.setVisible(bool(shown))
+            self._tool_rows.addWidget(self._tool_sets[ws.name][0])
+        row, self._tool_actions = self._tool_sets[ws.name]
+        self._tool_rows.setCurrentWidget(row)
+        self.tools.setVisible(bool(self._tool_actions))
 
-    def _make_tools(self, ws: Workspace) -> tuple[list[QAction], list[tuple[str, str, QAction]]]:
-        shown: list[QAction] = []
+    def _make_tools(self, ws: Workspace) -> tuple[QWidget, list[tuple[str, str, QAction]]]:
+        """A row of `ws`'s tool groups: one-of tools as a segmented group under their name,
+        on/off toggles as outlined buttons."""
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
         tools: list[tuple[str, str, QAction]] = []
         for i, group in enumerate(ws.tool_groups()):
             if i:
-                sep = QAction(self)
-                sep.setSeparator(True)
-                shown.append(sep)
+                lay.addSpacing(14)
+            box = QWidget()
+            inner = QHBoxLayout(box)
             exclusive = None if group.toggles else QActionGroup(self)
+            if exclusive is not None:
+                lay.addWidget(kit.label(group.label, role="caps", wrap=False))
+                box.setObjectName("Seg")
+                box.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            inner.setContentsMargins(*((0, 0, 0, 0) if group.toggles else (2, 2, 2, 2)))
+            inner.setSpacing(6 if group.toggles else 2)
             for tool in group.tools:
                 a = QAction(tool.label, self)
                 a.setCheckable(True)
-                theme.bind(a, tool.icon)
+                theme.bind(a, tool.icon, outlined=group.toggles)
                 if tool.key:
                     a.setShortcut(QKeySequence(tool.key))
                 a.setToolTip(f"{tool.tip} ({tool.key})" if tool.key else tool.tip)
@@ -420,9 +432,22 @@ class Window(QMainWindow):
                 a.triggered.connect(self.studio.act(f"tool {tool.label}", slot))
                 if exclusive is not None:
                     exclusive.addAction(a)
-                shown.append(a)
+                inner.addWidget(self._tool_button(a, group.toggles))
                 tools.append((group.id, tool.id, a))
-        return shown, tools
+            lay.addWidget(box)
+        lay.addStretch(1)
+        return row, tools
+
+    @staticmethod
+    def _tool_button(a: QAction, toggle: bool) -> QToolButton:
+        b = QToolButton()
+        b.setDefaultAction(a)  # the action's keys work while the button shows
+        b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        b.setIconSize(QSize(16, 16))
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        if toggle:
+            b.setProperty("toggle", True)
+        return b
 
     @staticmethod
     def _set_tool(ws: Workspace, group: ToolGroup, tool: Tool, a: QAction) -> None:
