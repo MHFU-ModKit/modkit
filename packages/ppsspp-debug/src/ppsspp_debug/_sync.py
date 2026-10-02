@@ -5,7 +5,7 @@ import concurrent.futures
 import functools
 import threading
 from collections.abc import Callable, Coroutine, Iterator
-from contextlib import AbstractAsyncContextManager, AbstractContextManager, contextmanager
+from contextlib import AbstractAsyncContextManager, AbstractContextManager, contextmanager, suppress
 from types import TracebackType
 from typing import Any, Concatenate, Generic, ParamSpec, TypeVar
 
@@ -27,15 +27,18 @@ class _Loop:
         )
         self._thread.start()
         self._stopping = False
+        # orders scheduling against stop: nothing reaches the loop once it is stopping
+        self._lock = threading.Lock()
 
     def run(self, coro: Coroutine[Any, Any, R]) -> R:
         if threading.current_thread() is self._thread:
             coro.close()
             raise RuntimeError("a blocking call on the client's own loop would deadlock")
-        if self._stopping:
-            coro.close()
-            raise Disconnected("the client is closed")
-        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        with self._lock:
+            if self._stopping:
+                coro.close()
+                raise Disconnected("the client is closed")
+            future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         try:
             return future.result()
         except concurrent.futures.CancelledError:
@@ -51,8 +54,9 @@ class _Loop:
         return self._stopping
 
     def stop(self) -> None:
-        """Cancel what still runs, so a call waiting in another thread fails instead of hanging."""
-        self._stopping = True
+        """Cancel what still runs, so a call waiting in another thread fails instead of hanging.
+
+        Safe from any thread and more than once; every caller returns once the loop is down."""
 
         async def cancel_all() -> None:
             tasks = asyncio.all_tasks() - {asyncio.current_task()}
@@ -60,7 +64,15 @@ class _Loop:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        asyncio.run_coroutine_threadsafe(cancel_all(), self._loop).result()
+        with self._lock:
+            cancelled = None
+            if not self._stopping:
+                self._stopping = True
+                cancelled = asyncio.run_coroutine_threadsafe(cancel_all(), self._loop)
+        if cancelled is None:  # another thread is stopping it
+            self._thread.join()
+            return
+        cancelled.result()
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join()
         self._loop.close()
@@ -162,8 +174,9 @@ class Client:
     def close(self) -> None:
         """Close the connection; breakpoints stay armed in PPSSPP."""
         if not self._loop.stopped:
-            self._loop.run(self._async.close())
-            self._loop.stop()
+            with suppress(Disconnected):  # another thread closed it meanwhile
+                self._loop.run(self._async.close())
+        self._loop.stop()
 
     def __enter__(self) -> Client:
         return self
