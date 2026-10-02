@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The Textures panel: the bank as thumbnails with who wears each slot, and the import that
 spends a slot (a PNG copied into the document's assets/, another stage's slot, a flat
-colour). A texture edit lands in the running game at once."""
+colour). A texture edit reaches the game when it is sent, and shows there next frame."""
 
 from __future__ import annotations
 

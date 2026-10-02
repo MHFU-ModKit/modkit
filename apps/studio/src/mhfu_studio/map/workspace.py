@@ -200,7 +200,7 @@ class MapWorkspace(Workspace):
             Dock(
                 "Textures", "bottom", build("textures", "TexturesPanel"),
                 "The section's texture bank: who uses each slot, and importing a picture into"
-                " one. A texture change shows in the running game at once.",
+                " one. Send to game shows a texture change in the running game.",
             ),
         )  # fmt: skip
 

@@ -139,7 +139,7 @@ class AssetsPanel(kit.Panel):
         self.copy_tex = kit.button(
             "Copy the texture",
             tip="Replaces a slot of this section with that picture: everything here wearing the"
-            " slot wears the new one. The running game shows a texture change at once.",
+            " slot wears the new one. Send to game shows it in the running game.",
             on=studio.act("copy texture", self.copy_texture),
         )
         slots = kit.Form()
