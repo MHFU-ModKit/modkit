@@ -51,7 +51,7 @@ def describe(fields: dict[str, Any]) -> str:
 
 
 def _pt(v: Any) -> tuple[float, float, float]:
-    x, y, z = (round(float(c), DECIMALS) for c in v)
+    x, y, z = (round(float(c), DECIMALS) + 0.0 for c in v)  # + 0.0: no -0.0
     return x, y, z
 
 
@@ -176,15 +176,15 @@ class VolumeTools:
         which, i, v, _ = got
         name = f"{NOUN[which]} {i}" + (f" of hit group {v.group}" if which == HIT else "")
         if not self.editable(which):
-            return f"the base monster's {NOUN[which]}: {self.read_only(which)} · F frame"
+            return f"the base monster's {NOUN[which]}: {self.read_only(which)} \u00b7 F frame"
         if self.tool == SIZE:
             does = "drag a box to resize it"
         elif v.b is not None:
             does = "drag the arrows at either end to move it; Shift moves both ends"
         else:
             does = "drag the arrows to move it"
-        keys = "W move · R size" if self.tool == SIZE else "R size"
-        return f"{name}: {does} · {keys} · F frame · Esc deselect"
+        other = "W move" if self.tool == SIZE else "R size"
+        return f"{name}: {does} \u00b7 {other} \u00b7 F frame \u00b7 Esc deselect"
 
     @staticmethod
     def read_only(which: str) -> str:
