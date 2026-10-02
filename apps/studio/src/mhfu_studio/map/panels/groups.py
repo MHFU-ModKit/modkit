@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHeaderView, QVBoxLayout, QWidget
 
 from mhfu_studio.shell.camera import Bounds
 from mhfu_studio.ui import kit
@@ -58,6 +58,9 @@ class GroupsPanel(kit.Panel):
             " double-click to point the camera at it.",
         )
         self.table.setMinimumHeight(220)
+        head = self.table.horizontalHeader()  # the name gives way, the numbers stay whole
+        head.setStretchLastSection(False)
+        head.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.picked.connect(self._pick)
         self.table.cellDoubleClicked.connect(self._double)
         self.frame = kit.button(
@@ -211,7 +214,8 @@ class GroupsPanel(kit.Panel):
         )
         kit.put(self.backdrop, self.show_backdrop)
         shown = [g for g in sc.groups if self.show_backdrop or not g.backdrop]
-        self.table.set_rows([_row(g, mesh.is_hidden(g.key)) for g in shown], [g.key for g in shown])
+        rows = [_row(g, mesh.is_hidden(g.key)) for g in shown]
+        self.table.set_rows(rows, [g.key for g in shown], tips=[r[0] for r in rows])
         key = self.picked()
         self.table.select_data(key)
         self.frame.setEnabled(key is not None)
