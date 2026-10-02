@@ -349,11 +349,11 @@ def test_problems(make_window: Make) -> None:
 
 def test_help(make_window: Make) -> None:
     w = make_window()
-    keys = {(k, where): does for k, does, where in about.rows(w.studio, w.bar.menus.actions())}
-    assert keys[about.native(QKeySequence.StandardKey.Save), "File menu"] == "Save"
-    assert keys["W", "Map toolbar"] == "Tool: Move" and ("W", "Monster toolbar") in keys
-    assert keys["Del", "Map view"] == "Removes the picked item"
-    assert ("Wheel", "the view") in keys
+    keys = {(where, k): does for where, k, does in about.rows(w.studio, w.bar.menus.actions())}
+    assert keys["File menu", about.native(QKeySequence.StandardKey.Save)] == "Save"
+    assert keys["Map toolbar", "W"] == "Tool: Move" and ("Monster toolbar", "W") in keys
+    assert keys["Map view", "Del"] == "Removes the picked item"
+    assert ("The view", "Wheel") in keys
     table = w.show_shortcuts().findChild(kit.Table)
     assert table is not None and table.rowCount() == len(keys)
     box = w.show_about()

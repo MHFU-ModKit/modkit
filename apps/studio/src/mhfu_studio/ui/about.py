@@ -20,6 +20,7 @@ from mhfu_studio.ui.view import MOUSE
 if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
 
+#: where, keys, what they do
 Row = tuple[str, str, str]
 CLOSE_TIP = "Closes this window"
 
@@ -37,20 +38,20 @@ def menu_rows(actions: Iterable[QAction], where: str = "") -> list[Row]:
         if isinstance(sub, QMenu):
             out += menu_rows(sub.actions(), f"{where} > {a.text()}" if where else a.text())
         elif not a.shortcut().isEmpty():
-            out.append((native(a.shortcut()), a.text().rstrip("…"), f"{where} menu"))
+            out.append((f"{where} menu", native(a.shortcut()), a.text().rstrip("…")))
     return out
 
 
 def rows(studio: Studio, menus: Iterable[QAction]) -> list[Row]:
-    """(keys, what they do, where): the menus, each workspace's tools and view, the mouse."""
-    out = [(k, does, where.replace("&", "")) for k, does, where in menu_rows(menus)]
+    """The menus, each workspace's tools and view keys, the mouse."""
+    out = [(where.replace("&", ""), k, does) for where, k, does in menu_rows(menus)]
     for ws in studio.workspaces:
         name = ws.name.capitalize()
         for g in ws.tool_groups():
-            out += [(native(t.key), f"{g.label}: {t.label}", f"{name} toolbar") for t in g.tools]
-        out += [(keys(s.keys), s.does, f"{name} view") for s in ws.shortcuts()]
-    out += [(keys(s.keys), s.does, "the view") for s in MOUSE]
-    return [r for r in out if r[0]]
+            out += [(f"{name} toolbar", native(t.key), f"{g.label}: {t.label}") for t in g.tools]
+        out += [(f"{name} view", keys(s.keys), s.does) for s in ws.shortcuts()]
+    out += [("The view", keys(s.keys), s.does) for s in MOUSE]
+    return [r for r in out if r[1]]
 
 
 def _dialog(title: str, parent: QWidget) -> tuple[QDialog, QVBoxLayout]:
@@ -75,14 +76,14 @@ class Shortcuts:
     def __init__(self, studio: Studio, menus: Iterable[QAction], parent: QWidget) -> None:
         self.dialog, lay = _dialog("Keyboard shortcuts", parent)
         self.table = kit.Table(
-            ["Keys", "What they do", "Where"],
+            ["Where", "Keys", "What they do"],
             tip="Every key and mouse gesture the studio knows; a tool's key works while its"
             " workspace is open",
         )
         self.table.set_rows(rows(studio, menus))
         lay.addWidget(self.table, 1)
         _close(self.dialog, lay)
-        self.dialog.resize(640, 560)
+        self.dialog.resize(760, 600)
 
 
 class About:

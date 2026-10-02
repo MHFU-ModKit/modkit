@@ -50,8 +50,8 @@ Pair = tuple[int, int]
 PORT, HOST = "port", "host"
 #: points a click may travel and still pick, not orbit
 CLICK_SLOP = 4.0
-#: the Timeline's height: its title, the transport and the frame strip
-TIMELINE_H = 124
+#: the Timeline's height: its title, the transport and the frame strip; the rest scrolls
+TIMELINE_H = 120
 PLAY = Shortcut(("Space",), "Plays the clip, or pauses it")
 STEP = Shortcut(("Left", "Right"), "One game frame back, or on")
 REWIND = Shortcut(("Home",), "Back to the clip's first frame")
