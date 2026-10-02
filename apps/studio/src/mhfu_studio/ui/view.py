@@ -197,7 +197,6 @@ class GLView(QOpenGLWidget):
         self.setMouseTracking(True)
         self.setMinimumSize(320, 240)
         self._clock = time.monotonic()
-        self._screen: tuple[int, moderngl.Framebuffer] | None = None
         #: the gestures each held button's press consumed, until that button's release
         self._held: dict[Button, Gesture] = {}
         self._last: tuple[float, float] | None = None
@@ -256,11 +255,9 @@ class GLView(QOpenGLWidget):
             self.update()
 
     def _screen_fbo(self, ctx: moderngl.Context) -> moderngl.Framebuffer:
-        """The widget's own framebuffer; Qt makes a new one on every resize. Never released."""
-        glo = int(self.defaultFramebufferObject())
-        if self._screen is None or self._screen[0] != glo:
-            self._screen = (glo, ctx.detect_framebuffer(glo))
-        return self._screen[1]
+        """The widget's own framebuffer, asked for every frame: a resize makes a new one, which
+        may reuse the old one's name. A reference: never released."""
+        return ctx.detect_framebuffer(int(self.defaultFramebufferObject()))
 
     def _pixel_store(self) -> None:
         ctx = self.context()

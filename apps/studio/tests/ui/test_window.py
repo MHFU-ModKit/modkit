@@ -357,6 +357,23 @@ def test_draws(make_window: Make, qtbot: Any) -> None:
     qtbot.waitUntil(lambda: bool(w.renderer.text()))
 
 
+def test_view_follows_resize(make_window: Make, qtbot: Any) -> None:
+    gl_or_skip()
+    w = make_window()
+    ws, v = w.studio.active, w.view
+    qtbot.waitUntil(lambda: ws.vp is not None, timeout=5000)
+
+    def follows() -> bool:
+        v.grabFramebuffer()
+        return bool(ws.vp.target.size == (v.size() * v.devicePixelRatioF()).toTuple())
+
+    for size in ((700, 500), (1200, 800)):
+        before = v.size()
+        w.resize(*size)
+        qtbot.waitUntil(lambda: v.size() != before)  # noqa: B023
+        qtbot.waitUntil(follows)
+
+
 @pytest.mark.parametrize("mode", ["dark", "light"])
 def test_viewport_follows_theme(make_window: Make, qtbot: Any, mode: str) -> None:
     gl_or_skip()
