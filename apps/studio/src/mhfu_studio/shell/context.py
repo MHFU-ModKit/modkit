@@ -14,13 +14,15 @@ import sys
 import weakref
 from collections.abc import Iterator
 from contextlib import contextmanager
+from ctypes.util import find_library
 from typing import Any, cast
 
 import moderngl
 
 GL_VERSION = 330
 
-#: contexts made here, newest last, so `standalone` can hand the current one back
+#: standalone contexts made here, newest last, so `standalone` can hand the current one back;
+#: never a toolkit's, which may be gone by then (re-entering a dead GLX one segfaults)
 _made: list[weakref.ref[moderngl.Context]] = []
 
 
@@ -47,25 +49,48 @@ def standalone(version: int = GL_VERSION) -> Iterator[moderngl.Context]:
     Making a standalone context makes it current, and releasing it leaves none current, which
     silently breaks whoever was drawing before (a test session's shared context).
     """
-    before = _newest()
-    ctx = headless(version)
-    try:
-        yield ctx
-    finally:
-        ctx.release()
-        if before is not None:
-            cast(Any, before).__enter__()  # current again; never exited, so it stays
+    with borrowed():
+        ctx = headless(version)
+        try:
+            yield ctx
+        finally:
+            ctx.release()
 
 
 def attached(version: int = GL_VERSION) -> moderngl.Context:
     """moderngl's view of the context the window toolkit made current; call inside a frame."""
+    errors: list[str] = []
+    for settings in _attach_settings():
+        try:
+            return moderngl.create_context(require=version, **settings)
+        except Exception as e:
+            errors.append(f"{settings.get('backend', 'default')}: {e}")
+    raise ContextError(
+        f"could not attach to the window's GL context (wanted {_pretty(version)} core); "
+        f"attach from inside the frame callback, where it is current: {'; '.join(errors)}"
+    )
+
+
+def _attach_settings() -> list[dict[str, Any]]:
+    """Always some: without settings moderngl hands back its one cached context, and on Linux
+    its own loader opens the unversioned libGL.so only the -dev packages install."""
+    if sys.platform.startswith("linux"):
+        return [{"libgl": find_library("GL") or "libGL.so.1"}, {"backend": "egl"}]
+    if sys.platform == "win32":
+        return [{"libgl": "opengl32.dll"}]
+    return [{"libgl": ""}]  # macOS ignores it
+
+
+@contextmanager
+def borrowed() -> Iterator[None]:
+    """For code that makes another context current (a toolkit's, a standalone one): the newest
+    standalone one made here, and not released, is current again after."""
+    before = _newest()
     try:
-        return _remember(moderngl.create_context(require=version))
-    except Exception as e:
-        raise ContextError(
-            f"could not attach to the window's GL context (wanted {_pretty(version)} core); "
-            f"attach from inside the frame callback, where it is current: {e}"
-        ) from e
+        yield
+    finally:
+        if before is not None:
+            cast(Any, before).__enter__()  # current again; never exited, so it stays
 
 
 def describe(ctx: moderngl.Context) -> str:

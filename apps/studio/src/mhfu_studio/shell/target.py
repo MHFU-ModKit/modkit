@@ -2,9 +2,9 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The offscreen framebuffer every viewport draws into, window or not.
 
-The window shows it with `imgui.image` and a headless render reads it back, so both are the
-same pixels. A multisample buffer cannot be read, so `read` resolves into a plain texture first
-(the one imgui samples too). GL's row 0 is the bottom: `read` flips, `uv` flips for imgui.
+The window blits it and a headless render reads it back, so both are the same pixels. A
+multisample buffer cannot be read, so `read` resolves into a plain texture first. GL's row 0 is
+the bottom: `read` flips.
 """
 
 from __future__ import annotations
@@ -26,8 +26,6 @@ CLEAR: RGBA = (0.10, 0.11, 0.13, 1.0)
 
 class Target:
     """A colour+depth framebuffer, resizable, readable as RGBA8 with row 0 at the top."""
-
-    uv: tuple[tuple[float, float], tuple[float, float]] = ((0.0, 1.0), (1.0, 0.0))
 
     def __init__(self, ctx: moderngl.Context, size: tuple[int, int], samples: int = SAMPLES):
         self.ctx = ctx
@@ -100,8 +98,11 @@ class Target:
         return self._tex
 
     @property
-    def gl_texture_id(self) -> int:
-        return int(self.texture.glo)
+    def resolved(self) -> moderngl.Framebuffer:
+        """The single-sample framebuffer around `texture`; `resolve` first. A window blits it."""
+        if self._resolve is None:
+            raise RuntimeError("the target was released")
+        return self._resolve
 
     def read(self, *, flip: bool = True) -> npt.NDArray[np.uint8]:
         """`(h, w, 4)` uint8, row 0 at the top."""

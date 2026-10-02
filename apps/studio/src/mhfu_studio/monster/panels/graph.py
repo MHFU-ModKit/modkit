@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The behaviour pairs as a layered graph: nodes are `(main, sub)`, arrows the hand-offs a handler
-makes when its action ends (`PairIntel.next`). No imgui: the Moves panel draws it.
+makes when its action ends (`PairIntel.next`). No toolkit: the Moves panel draws it.
 
 The engine walks a sequence (the Tigrex charge `(1,4)` hands to the skid `(0,3)`, which hands to
 `(0,1)`/`(0,2)` where the brain picks again), so the layout is a DAG from roots (the manifest's
@@ -17,15 +17,23 @@ from mhfu.em.intel import PairIntel, SpeciesIntel
 from mhfu_port.manifest import Move
 
 Pair = tuple[int, int]
+RGBA = tuple[float, float, float, float]
 
 NODE_W, NODE_H = 148.0, 58.0
 GAP_X, GAP_Y = 96.0, 22.0
 PAD = 18.0
 SCOPES = ("moves", "selected", "attacks")
+#: a node's colour by `Node.kind`
+KINDS: dict[str, RGBA] = {
+    "move": (0.35, 0.70, 0.95, 1.0),
+    "attacks": (0.95, 0.60, 0.30, 1.0),
+    "hub": (0.45, 0.47, 0.50, 1.0),
+    "plain": (0.40, 0.42, 0.46, 1.0),
+}
 NOTES = {
-    "moves": "[moves] is empty and nothing is selected: pick a pair in the Action tab, or bind "
-    "one, to see its chain",
-    "selected": "select a pair in the Action tab",
+    "moves": "[moves] is empty and nothing is selected: pick a pair in Action, or bind one, "
+    "to see its chain",
+    "selected": "select a pair in Action",
     "attacks": "no pair in this overlay names an attack id",
 }
 
@@ -44,6 +52,12 @@ class Node:
     attacks: bool = False
     #: pairs drawn as this one: same handler, hand-offs and attack ids
     siblings: tuple[Pair, ...] = ()
+
+    @property
+    def kind(self) -> str:
+        return (
+            "hub" if self.hub else "move" if self.move else "attacks" if self.attacks else "plain"
+        )
 
 
 @dataclass
@@ -333,5 +347,51 @@ def info_lines(
         lines.append("entered from: the brain (no handler hands here)")
     if p.measured:
         lines.append(f"census: entered {p.entered}, dwell {p.dwell_ticks:.1f} ticks")
-    lines.append("double-click: select in the Action tab")
+    lines.append("double-click: select it in Action")
     return lines
+
+
+class MoveGraph:
+    """The graph's per-document state: the scope, the picked node and the layout, whose node
+    positions a drag moves (so they outlive the panel)."""
+
+    def __init__(self) -> None:
+        self.scope = "moves"
+        self.picked: Pair | None = None
+        #: the layout is new to the view, which frames it and clears this
+        self.fresh = True
+        self._layout: Layout | None = None
+        self._key: tuple[object, ...] | None = None
+
+    def layout(
+        self, intel: SpeciesIntel | None, moves: Mapping[str, Move], selected: Pair | None
+    ) -> Layout:
+        """Rebuilt when its inputs change; the same nodes keep where they were dragged."""
+        key = (
+            id(intel),
+            self.scope,
+            selected,
+            tuple(sorted((n, m.main, m.sub) for n, m in moves.items())),
+        )
+        if self._layout is None or key != self._key:
+            old, self._layout, self._key = (
+                self._layout,
+                build(intel, moves, selected, self.scope),
+                key,
+            )
+            if old is not None and old.nodes.keys() == self._layout.nodes.keys():
+                for k, n in self._layout.nodes.items():
+                    n.x, n.y = old.nodes[k].x, old.nodes[k].y
+            else:
+                self.fresh = True
+            if self.picked not in self._layout.nodes:
+                self.picked = None
+        return self._layout
+
+    def set_scope(self, scope: str) -> None:
+        if scope in SCOPES:
+            self.scope = scope
+
+    def relayout(self) -> None:
+        """Forgets the dragged positions: the next layout is placed afresh."""
+        self._layout, self._key = None, None
