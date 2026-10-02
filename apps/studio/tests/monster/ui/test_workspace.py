@@ -17,13 +17,14 @@ from mhfu_studio.ui import kit
 from mhfu_studio.ui.testing import elsewhere, gl_or_skip
 from PySide6.QtWidgets import QDockWidget
 
-DOCKS = ("Timeline", "Moves", "Action", "Scene", "View", "Joints", "Clips", "Parts", "Hitboxes")
+DOCKS = ("Clips", "Scene", "View", "Joints", "Hitboxes", "Parts", "Timeline", "Moves", "Action")
 
 
 def test_registers_its_docks() -> None:
     assert "monster" in discover(["monster"])
     ws = MonsterWorkspace()
     assert [d.label for d in ws.docks()] == list(DOCKS)
+    assert [d.label for d in ws.docks() if d.shown] == ["Clips", "Hitboxes", "Timeline"]
     assert ws.tool_groups() == ()
 
 

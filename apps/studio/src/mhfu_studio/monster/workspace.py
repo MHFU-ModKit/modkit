@@ -49,6 +49,8 @@ Pair = tuple[int, int]
 PORT, HOST = "port", "host"
 #: points a click may travel and still pick, not orbit
 CLICK_SLOP = 4.0
+#: the Timeline's height: its title, the transport and the frame strip
+TIMELINE_H = 124
 
 
 class MonsterWorkspace(Workspace):
@@ -181,44 +183,51 @@ class MonsterWorkspace(Workspace):
 
         return (
             Dock(
+                "Clips", "left", build("clips", "ClipsPanel"),
+                "Every animation slot, what is really in it, and the name it goes by.",
+            ),
+            Dock(
+                "Scene", "left", build("scene", "ScenePanel"),
+                "What the opened port holds: the model, its skeleton, clips and textures.",
+                shown=False,
+            ),
+            Dock(
+                "View", "left", build("scene", "ViewPanel"),
+                "What the view shows and how. Changes nothing in the port.",
+                shown=False,
+            ),
+            Dock(
+                "Joints", "left", build("scene", "JointsPanel"),
+                "The skeleton's bones; pick one to find it on the model.",
+                shown=False,
+            ),
+            Dock(
+                "Hitboxes", "right", build("hitboxes", "HitboxesPanel"),
+                "Where the monster hits you: its attack spheres and their sizes, to tweak.",
+            ),
+            Dock(
+                "Parts", "right", build("parts", "PartsPanel"),
+                "Where the monster can be hit, and how much each spot takes.",
+                shown=False,
+            ),
+            Dock(
                 "Timeline", "bottom", build("timeline", "TimelinePanel"),
                 "Play the clip at the game's own speed, and see where the host move's events"
                 " fall on it.",
-                focus=True,
+                alone=True,
+                size=TIMELINE_H,
             ),
             Dock(
                 "Moves", "bottom", build("moves", "MovesPanel"),
                 "The host monster's moves as a graph of which move hands over to which. Click"
                 " one to read it; double-click to work on it in Action.",
+                shown=False,
             ),
             Dock(
                 "Action", "bottom", build("action", "ActionPanel"),
                 "What the host monster's move expects of the clip on screen: its frames, its"
                 " effects and its hits.",
-            ),
-            Dock(
-                "Scene", "left", build("scene", "ScenePanel"),
-                "What the opened port holds: the model, its skeleton, clips and textures.",
-            ),
-            Dock(
-                "View", "left", build("scene", "ViewPanel"),
-                "What the view shows and how. Changes nothing in the port.",
-            ),
-            Dock(
-                "Joints", "left", build("scene", "JointsPanel"),
-                "The skeleton's bones; pick one to find it on the model.",
-            ),
-            Dock(
-                "Clips", "right", build("clips", "ClipsPanel"),
-                "Every animation slot, what is really in it, and the name it goes by.",
-            ),
-            Dock(
-                "Parts", "right", build("parts", "PartsPanel"),
-                "Where the monster can be hit, and how much each spot takes.",
-            ),
-            Dock(
-                "Hitboxes", "right", build("hitboxes", "HitboxesPanel"),
-                "Where the monster hits you: its attack spheres and their sizes, to tweak.",
+                shown=False,
             ),
         )  # fmt: skip
 

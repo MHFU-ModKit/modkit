@@ -36,8 +36,12 @@ class Dock:
     area: Literal["left", "right", "bottom"]
     build: Callable[[Studio], Any]
     tip: str
-    #: in front of the other docks tabbed with it when the workspace opens
-    focus: bool = False
+    #: open in the default layout; the rest wait in View > Panels, tabbed at `area` when opened
+    shown: bool = True
+    #: never tabbed: the area's other docks tab together beside it
+    alone: bool = False
+    #: its starting width (left, right) or height (bottom) in points; 0 is the area's share
+    size: int = 0
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,14 @@ class ToolGroup:
     label: str
     tools: tuple[Tool, ...]
     toggles: bool = False
+
+
+@dataclass(frozen=True)
+class Shortcut:
+    """A key the view acts on, for Help > Keyboard shortcuts; `keys` are Qt names ("Escape")."""
+
+    keys: tuple[str, ...]
+    does: str
 
 
 @dataclass(frozen=True)
@@ -134,7 +146,11 @@ class Workspace(Protocol):
         """Once per frame before the viewport draws (advance playback, sync edits)."""
 
     def hud(self) -> str:
-        """Lines at the image's top left, above the camera line."""
+        """About the picture, at its top left: what is loaded, small."""
+        return ""
+
+    def hint(self) -> str:
+        """The status line: what is selected and the keys that act on it, else how to select."""
         return ""
 
     def animating(self) -> bool:
@@ -177,6 +193,10 @@ class Workspace(Protocol):
     def key(self, ev: Key) -> bool:
         """A key over the viewport; True when it was used."""
         return False
+
+    def shortcuts(self) -> Sequence[Shortcut]:
+        """The keys `key` acts on."""
+        return ()
 
     def paint(self, o: Overlay) -> None:
         """Drawn over the picture after every frame: gizmo, labels, a selection box."""

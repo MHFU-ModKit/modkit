@@ -104,7 +104,7 @@ class FakeWorkspace(testing.FakeWorkspace):
     def docks(self) -> Sequence[Dock]:
         return (
             Dock("Items", "left", self._make_items, tip="The document's items, one per row"),
-            Dock("Notes", "right", self._make_notes, tip="Fields to type into", focus=True),
+            Dock("Notes", "right", self._make_notes, tip="Fields to type into"),
         )
 
     def _make_items(self, studio: Studio) -> QWidget:

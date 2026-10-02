@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
 
 #: bump when the docks change shape, so an old saved layout is not forced onto new docks
-STATE_VERSION = 1
+STATE_VERSION = 2
 FINDINGS = "Findings"
 FINDINGS_TIP = "What the checks found in the document: errors, warnings and notes"
 STOP_TIP = "Stops the running Send to game job; nothing runs now"
@@ -78,7 +78,7 @@ class DockTitle(QWidget):
         lay.addWidget(label)
         lay.addStretch(1)
         self.hide_button = kit.icon_button(
-            "ph.x", tip=f"Hides {name}; View > {name} brings it back", on=dock.close
+            "ph.x", tip=f"Hides {name}; View > Panels > {name} brings it back", on=dock.close
         )
         self.hide_button.setIconSize(QSize(12, 12))
         lay.addWidget(self.hide_button)
@@ -132,7 +132,9 @@ class Window(QMainWindow):
         self.findings = FindingsPanel(studio, ask_open=studio.act("open", self.ask_open))
         self.findings_dock = self._dock(FINDINGS, FINDINGS, self.findings, FINDINGS_TIP)
         self._docks: dict[str, list[QDockWidget]] = {}
-        self._specs: dict[QDockWidget, Dock] = {}
+        self._specs: dict[QDockWidget, Dock] = {
+            self.findings_dock: Dock(FINDINGS, "bottom", lambda s: None, FINDINGS_TIP, shown=False)
+        }
         self._panels: dict[QDockWidget, Any] = {self.findings_dock: self.findings}
         self._shown: str | None = None
 
@@ -190,7 +192,9 @@ class Window(QMainWindow):
         title = DockTitle(d, tip)
         self._titles[d] = (title, QWidget())
         d.setTitleBarWidget(title)
-        d.toggleViewAction().setToolTip(tip)
+        opener = d.toggleViewAction()
+        opener.setToolTip(tip)
+        opener.triggered.connect(lambda on: self._opened(d, on))
         d.visibilityChanged.connect(partial(self._dock_shown, d))
         d.topLevelChanged.connect(self._retitle_soon)
         d.dockLocationChanged.connect(self._retitle_soon)
@@ -255,37 +259,74 @@ class Window(QMainWindow):
         p.body.addWidget(kit.label(f"{spec.label} could not be built: {self.studio.message}"))
         return p
 
-    def _area(self, d: QDockWidget) -> str:
-        """`d`'s side in the built-in arrangement."""
-        spec = self._specs.get(d)
-        return spec.area if spec is not None else "bottom"
+    def _spec(self, d: QDockWidget) -> Dock:
+        return self._specs[d]
 
     def _arrange(self, name: str) -> None:
-        """The built-in arrangement: each side's docks tabbed together, focus docks in front."""
+        """The default layout: each side's docks tabbed together beside its `alone` ones, the
+        first shown in front; then every dock not `shown` closes, keeping its place."""
         sides: dict[str, list[QDockWidget]] = {}
         for d in [*self._docks[name], self.findings_dock]:
-            sides.setdefault(self._area(d), []).append(d)
+            sides.setdefault(self._spec(d).area, []).append(d)
         for area, docks in sides.items():
+            alone = [d for d in docks if self._spec(d).alone]
+            tabbed = [d for d in docks if d not in alone]
             for d in docks:
                 d.setFloating(False)
                 self.removeDockWidget(d)
+            for d in [*tabbed[:1], *alone]:
                 self.addDockWidget(AREAS[area], d)
-                if d is not docks[0]:
-                    self.tabifyDockWidget(docks[0], d)
+                if tabbed and d is not tabbed[0]:  # split before tabbing: a tab takes no split
+                    self.splitDockWidget(tabbed[0], d, Qt.Orientation.Vertical)
+            for d in tabbed[1:]:
+                self.tabifyDockWidget(tabbed[0], d)
+            for d in docks:
                 d.show()
-            ([d for d in docks if self._focus(d)] or docks)[0].raise_()
-            across = area != "bottom"
-            size = self.width() if across else self.height()
-            self.resizeDocks(
-                [docks[0]],
-                [round(size * SHARES[area])],
-                Qt.Orientation.Horizontal if across else Qt.Orientation.Vertical,
-            )
+            if tabbed:
+                ([d for d in tabbed if self._spec(d).shown] or tabbed)[0].raise_()
+        for d in [*self._docks[name], self.findings_dock]:
+            if not self._spec(d).shown:
+                d.hide()
+        for area in sides:
+            self._fit(area)
         self._retitle()
 
-    def _focus(self, d: QDockWidget) -> bool:
-        spec = self._specs.get(d)
-        return spec is not None and spec.focus
+    def _docked(self, area: str) -> list[QDockWidget]:
+        """The open docks at `area`, a tab group's front first."""
+        out = [
+            d
+            for d in self._specs
+            if self._spec(d).area == area
+            and not d.isHidden()
+            and not d.isFloating()
+            and self.dockWidgetArea(d) == AREAS[area]
+        ]
+        return sorted(out, key=lambda d: d.visibleRegion().isEmpty())
+
+    def _fit(self, area: str) -> None:
+        """`area`'s open docks to their `size`, else to the area's share of the window."""
+        docks = self._docked(area)
+        groups = [d for d in docks if self._spec(d).alone]
+        tabbed = [d for d in docks if not self._spec(d).alone]
+        docks = [*tabbed[:1], *groups]
+        if not docks:
+            return
+        across = area != "bottom"
+        full = self.width() if across else self.height()
+        sizes = [self._spec(d).size or round(full * SHARES[area]) for d in docks]
+        if across:  # side by side in the window: one width for the area
+            self.resizeDocks(docks[:1], sizes[:1], Qt.Orientation.Horizontal)
+        else:
+            self.resizeDocks(docks, sizes, Qt.Orientation.Vertical)
+
+    def _opened(self, d: QDockWidget, on: bool) -> None:
+        """A dock opened from View > Panels: in front of its tabs; an area it opens sized."""
+        if not on:
+            return
+        d.raise_()
+        area = self._spec(d).area
+        if not [x for x in self._docked(area) if x is not d and not self._spec(x).alone]:
+            self._fit(area)
 
     def _enter(self, ws: Workspace) -> None:
         """Shows `ws`'s docks and tools in its saved layout, after saving the last one's."""
@@ -293,16 +334,12 @@ class Window(QMainWindow):
             self._save_layout(self._shown)
         self._shown = ws.name
         self._hide_others()
-        fresh = ws.name not in self._docks
-        if fresh:
+        if ws.name not in self._docks:
             self._docks[ws.name] = self._build(ws)
-        else:
-            for d in self._docks[ws.name]:
-                d.show()
         # restored or arranged, never both: a replaced layout keeps its tab bars a loop turn
         if self._restore(ws.name):
             self._hide_others()  # in case a saved layout knew them as shown
-        elif fresh:
+        else:
             self._arrange(ws.name)
         self._retitle()
         self._fill_view_menu(ws)
@@ -315,7 +352,8 @@ class Window(QMainWindow):
             return False
         for d in [*self._docks[name], self.findings_dock]:
             if not d.isFloating() and self.dockWidgetArea(d) == Qt.DockWidgetArea.NoDockWidgetArea:
-                self.addDockWidget(AREAS[self._area(d)], d)
+                self.addDockWidget(AREAS[self._spec(d).area], d)
+                d.setVisible(self._spec(d).shown)
         return True
 
     def _hide_others(self) -> None:
@@ -437,6 +475,8 @@ class Window(QMainWindow):
         e.addActions([self.undo_action, self.redo_action])
 
         self.view_menu = self._menu("&View")
+        self.panels_menu = QMenu("Panels", self)
+        self.panels_menu.setToolTipsVisible(True)
         self.reset_action = self._action(
             "Reset layout",
             "Puts this workspace's panels back where they started",
@@ -482,13 +522,18 @@ class Window(QMainWindow):
         return out
 
     def _fill_view_menu(self, ws: Workspace) -> None:
+        """View > Panels: `ws`'s docks by side, then Findings; a tick is an open one."""
+        p = self.panels_menu
+        p.clear()
+        for area in AREAS:
+            docks = [d for d in self._docks.get(ws.name, []) if self._spec(d).area == area]
+            p.addActions([d.toggleViewAction() for d in docks])
+            if docks:
+                p.addSeparator()
+        p.addAction(self.findings_dock.toggleViewAction())
         m = self.view_menu
         m.clear()
-        docks = self._docks.get(ws.name, [])
-        m.addActions([d.toggleViewAction() for d in docks])
-        if docks:
-            m.addSeparator()
-        m.addAction(self.findings_dock.toggleViewAction())
+        m.addMenu(p)
         m.addSeparator()
         m.addAction(self.reset_action)
         m.addMenu(self.theme_menu)

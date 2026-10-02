@@ -100,6 +100,10 @@ def test_opens_on_the_village(make_window: Callable[..., Window], ws: MapWorkspa
     assert isinstance(panel(w, "Selection"), SelectionPanel)
 
 
+def test_default_docks(ws: MapWorkspace) -> None:
+    assert [d.label for d in ws.docks() if d.shown] == ["Areas", "Selection"]
+
+
 def test_click_drag_undo(make_window: Callable[..., Window], ws: MapWorkspace) -> None:
     w = open_map(make_window, ws)
     assert ws.vp is not None and ws.scene is not None and ws.session is not None

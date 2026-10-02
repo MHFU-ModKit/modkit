@@ -108,6 +108,8 @@ class MapWorkspace(Workspace):
         self._assets: dict[int, MapScene | None] = {}
         #: the Add panel's form; Assets places with it too
         self.add = AddForm(self)
+        #: a dock to bring forward, for the window (`take_focus`)
+        self._focus: str | None = None
 
     # the shell's hooks
 
@@ -152,55 +154,61 @@ class MapWorkspace(Workspace):
 
         return (
             Dock(
-                "Map", "left", build("browser", "BrowserPanel"),
+                "Areas", "left", build("browser", "BrowserPanel"),
                 "Every area of the game and its sections, in walking order. Pick a section to"
                 " load it alone, the way the player walks through them.",
-                focus=True,
             ),
             Dock(
                 "View", "left", build("view", "ViewPanel"),
                 "How the section is drawn: textures or flat colours, which layers show, camera"
                 " presets and brightness. Changes nothing in the map.",
+                shown=False,
             ),
             Dock(
                 "Document", "left", build("document", "DocumentPanel"),
                 "Your map edits as one file: start a new one, open, save, check it for problems"
                 " and export it.",
+                shown=False,
             ),
             Dock(
                 "Game", "left", build("game", "GamePanel"),
                 "Send this section's edits into the game running in PPSSPP, without touching"
                 " the ISO.",
+                shown=False,
             ),
             Dock(
                 "Selection", "right", build("selection", "SelectionPanel"),
                 "What you clicked in the view: move, rotate or scale it by typed amounts, remove"
                 " it, and see how much of the section's drawing budget is left.",
-                focus=True,
             ),
             Dock(
                 "Add", "right", build("add", "AddPanel"),
                 "Put a new shape, or a copy of the selection, into the section. It reuses free"
                 " drawing slots, so the budget decides what fits.",
+                shown=False,
             ),
             Dock(
                 "Assets", "right", build("assets", "AssetsPanel"),
                 "Objects and textures from the area's other sections, to copy into this one.",
+                shown=False,
             ),
             Dock(
                 "Groups", "right", build("groups", "GroupsPanel"),
                 "Every mesh group of the section, and the material settings of the one you"
                 " pick.",
+                shown=False,
             ),
             Dock(
                 "Collision", "right", build("collision", "CollisionPanel"),
                 "The invisible floors and walls the player stands on and bumps into: what is"
                 " where, what is climbable, and the selected triangles' settings.",
+                shown=False,
             ),
             Dock(
                 "Textures", "bottom", build("textures", "TexturesPanel"),
                 "The section's texture bank: who uses each slot, and importing a picture into"
                 " one. Send to game shows a texture change in the running game.",
+                shown=False,
             ),
         )  # fmt: skip
 
@@ -295,13 +303,19 @@ class MapWorkspace(Workspace):
             ids = np.array([v for v in op["vertices"] if 0 <= v < n], np.int64)
             self.tools.select(Selection(OBJECT, {(int(op.get("sub", 0)), g): ids}, {}))
             self.frame_selection()
+            self._focus = "Selection"
         elif op.get("op") == "collision" and "tri" in op:
             self.tools.set_kind(COLLISION)
             self.tools.select_collision(CollisionSelection([(int(op.get("chunk", 1)), op["tri"])]))
+            self._focus = "Collision"
 
     def refresh(self) -> None:
         self.message = ""  # it named the edit an undo just took back
         self.tools.reseat()
+
+    def take_focus(self) -> str | None:
+        label, self._focus = self._focus, None
+        return label
 
     # the game
 
