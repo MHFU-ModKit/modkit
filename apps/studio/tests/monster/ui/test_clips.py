@@ -30,6 +30,15 @@ def test_loaded(workspace: MonsterWorkspace, qtbot: Any) -> None:
     assert not p.kind_row.isVisibleTo(p) and p.notes.isVisibleTo(p)
 
 
+def test_travel_fits_a_dock(workspace: MonsterWorkspace, qtbot: Any) -> None:
+    p = build(workspace, qtbot)
+    p.resize(317, 700)
+    p.show()
+    t, h = p.table, p.table.horizontalHeader()
+    assert t.horizontalHeaderItem(3).text() == "Travel" and t.item(0, 2).text().endswith("loop")
+    assert h.sectionPosition(3) + h.sectionSize(3) <= t.viewport().width()
+
+
 def test_pick_name_save(workspace: MonsterWorkspace, qtbot: Any) -> None:
     ws, p = workspace, build(workspace, qtbot)
     assert ws.doc is not None and ws.scene is not None and ws.vp is not None

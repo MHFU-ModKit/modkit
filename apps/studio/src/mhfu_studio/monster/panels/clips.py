@@ -108,9 +108,10 @@ class ClipsPanel(kit.Panel):
         self.filter.textChanged.connect(self._filter)
         lay.addWidget(self.filter)
         self.table = kit.Table(
-            ["Anim #", "Kind", "Frames", "Loop", "Travel", "Name"],
+            ["Anim", "Kind", "Frames", "Travel", "Name"],
             tip="Every anim in the build; click one to play it from the start. The anim # is what"
-            " a script passes to force it, Travel how far the clip carries the body.",
+            " a script passes to force it; a clip that repeats says loop after its frames;"
+            " Travel is how far the clip carries the body.",
             swatch_column=1,
         )
         self.table.picked.connect(self._play)
@@ -240,8 +241,7 @@ class ClipsPanel(kit.Panel):
                 (
                     str(c.slot),
                     kind_text(cov),
-                    str(c.frames),
-                    "loop" if c.loop else "",
+                    f"{c.frames} loop" if c.loop else str(c.frames),
                     f"{net:.0f}" if net >= 1.0 else "",
                     c.name if c.names else "",
                 )

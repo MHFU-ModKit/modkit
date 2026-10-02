@@ -686,6 +686,7 @@ class Table(QTableWidget):
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setShowGrid(False)
         self._shown: list[_Row] | None = None
         self.cellClicked.connect(lambda r, _c: self._pick(r))
