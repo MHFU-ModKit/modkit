@@ -297,7 +297,7 @@ class MonsterWorkspace(Workspace):
         if self.scene is None or m is None:
             return ()
         return (
-            Step("Pick a clip", self.edit_slot is not None),
+            Step("Pick an action", self.pair is not None),
             Step("Copy the base monster's hitboxes", bool(m.hitboxes)),
             Step("Change one", self._hitboxes_changed(m)),
             Step("Send to game", self._sent is m, SEND_KEY),
@@ -427,7 +427,7 @@ class MonsterWorkspace(Workspace):
         bits = []
         clip = None if vp is None else vp.clip
         if vp is None or clip is None:
-            bits.append("Pick a clip in Clips to play it")
+            bits.append("Pick an action in Actions, or a clip in Clips, to play it")
         else:
             found = self.manifest_clip(clip.slot)
             name = f" {found[0]}" if found else ""

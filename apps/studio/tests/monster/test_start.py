@@ -50,7 +50,7 @@ def test_shown_and_steps(
     sess.drop_set(2)
     assert [s.done for s in ws.next_steps()] == [False, False, False, False]
     assert ws.next_steps()[3].key == SEND_KEY
-    ws.pick_clip(1)
+    ws.select_action(1, 4)
     host = ws.host_attacks()
     assert host is not None
     sess.adopt_set(2, host.sets[2].spheres)
