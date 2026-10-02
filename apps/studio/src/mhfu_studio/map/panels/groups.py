@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     from ..workspace import MapWorkspace
 
-COLUMNS = ("Group", "Triangles", "Objects", "Texture", "Can draw")
+COLUMNS = ("Group", "Texture", "Triangles", "Objects")
 BUDGET_TIP = (
     "What the area can be made to draw: added shapes ride on the drawing slots each group"
     " already has."
@@ -55,8 +55,7 @@ class GroupsPanel(kit.Panel):
         self.table = kit.Table(
             COLUMNS,
             tip="Every group: click one to select it in the view, click it again to let go,"
-            " double-click to point the camera at it. Can draw is the triangles its drawing"
-            " slots hold.",
+            " double-click to point the camera at it.",
         )
         self.table.setMinimumHeight(220)
         self.table.picked.connect(self._pick)
@@ -264,4 +263,4 @@ class GroupsPanel(kit.Panel):
 def _row(g: MeshGroup, hidden: bool) -> list[str]:
     name = g.label + (" (far)" if g.backdrop else "") + (" (hidden)" if hidden else "")
     tex = "none" if g.untextured else ("?" if g.texture is None else str(g.texture))
-    return [name, str(g.n_faces), str(g.n_components), tex, str(g.budget.triangles)]
+    return [name, tex, str(g.n_faces), str(g.n_components)]

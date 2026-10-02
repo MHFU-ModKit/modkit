@@ -86,7 +86,10 @@ def test_one_triangle(panel: CollisionPanel, ws: MapWorkspace) -> None:
     pick(ws, (0, 1))
     panel.sync()
     assert panel.hint.isHidden() and not panel.one.isHidden()
-    assert "wall triangle 1: wall" in panel.info.text() and panel.what.text().endswith(": 1 wall")
+    assert (
+        "wall triangle 1: wall" in panel.info.text()
+        and panel.what.text() == "1 collision triangle: wall"
+    )
     assert panel.verts[0].value() == pytest.approx([1500.0, 0.0, 300.0])
     press(panel, "Climbable")
     assert (0, 1) in ws.scene.climbable() and panel.flags[1].value() == 10

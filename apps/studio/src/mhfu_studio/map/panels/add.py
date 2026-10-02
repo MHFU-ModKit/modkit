@@ -269,7 +269,7 @@ class AddPanel(kit.Panel):
         self.at_shown.setText(f"({x:.0f}, {y:.0f}, {z:.0f})")
         self.replace.setEnabled(kind != COPY)
         need, (cap, free) = f.needs(), f.capacity()
-        extra = f", {cap - free} of it the selection's" if cap > free else ""
+        extra = f" ({cap - free} from the selection)" if cap > free else ""
         into = target.label if target is not None else "no group"
         self.fits.setText(f"Needs {need} triangles; room for {cap} in {into}{extra}")
         self.fits.set_level("info" if need <= cap else "error")

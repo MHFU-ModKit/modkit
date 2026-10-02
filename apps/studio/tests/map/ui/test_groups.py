@@ -49,7 +49,7 @@ def test_lists_groups(panel: GroupsPanel, ws: MapWorkspace) -> None:
     assert panel.summary.text().startswith("Model: 4 groups")
     more = panel.findChild(kit.More)
     assert more is not None and more.isAncestorOf(panel.backdrop) and more.inner.isHidden()
-    assert panel.table.item(row_of(panel, "group 1"), 3).text() == "1"
+    assert panel.table.item(row_of(panel, "group 1"), 1).text() == "1"
     assert any("(far)" in panel.table.item(r, 0).text() for r in range(panel.table.rowCount()))
     panel.backdrop.setChecked(False)
     panel.sync()

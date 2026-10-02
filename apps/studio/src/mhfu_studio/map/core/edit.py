@@ -296,7 +296,7 @@ class CollisionSelection:
         return out
 
     def describe(self, scene: MapScene) -> str:
-        """In words, with the kinds: "3 collision triangles: 2 wall, 1 climb"."""
+        """In words, with the kinds: "3 collision triangles: 2 wall, 1 climbable"."""
         if self.empty:
             return "no collision triangle selected"
         kinds: dict[str, int] = {}
@@ -304,6 +304,8 @@ class CollisionSelection:
             k = CLASS_NAMES[str(scene.chunk(c).klass[t])]
             kinds[k] = kinds.get(k, 0) + 1
         what = ", ".join(f"{n} {k}" for k, n in kinds.items())
+        if len(kinds) == 1:
+            what = next(iter(kinds))
         return f"{count(len(self), 'collision triangle')}: {what}"
 
 
@@ -847,10 +849,10 @@ class EditSession:
         for c, t in tris:
             ch = self.scene.chunk(c)
             if not ch.vertical(t):
-                out.append(f"{triangle_name(c, t)} is too flat to climb: only a steep wall is")
+                out.append(f"{triangle_name(c, t)} is too flat to climb")
             h = float(ch.verts[t][:, 1].max() - ch.verts[t][:, 1].min())
             if h < SHORT_WALL:
-                out.append(f"{triangle_name(c, t)} is only {h:.0f} units tall")
+                out.append(f"{triangle_name(c, t)} is only {h:.0f} units tall: too short to climb")
             mats.add(int(ch.material[t]))
         if len(mats) > 1:
             out.append(f"the selected triangles mix materials {sorted(mats)}")
