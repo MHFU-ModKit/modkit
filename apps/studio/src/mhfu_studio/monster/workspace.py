@@ -736,7 +736,7 @@ class MonsterWorkspace(Workspace):
 
     @property
     def intel(self) -> SpeciesIntel | None:
-        """The overlay the Action panel shows: the host's unless browsing another."""
+        """The overlay the Actions panel shows: the host's unless browsing another."""
         return self.intel_of(self.browsing_species)
 
     def browse_species(self, sp: int) -> None:

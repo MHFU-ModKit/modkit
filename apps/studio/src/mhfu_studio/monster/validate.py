@@ -10,8 +10,8 @@ condition nobody fixes in a port (no census, a guessed attack table) is info, so
 count holds only problems. The damage grid and the hit groups being shared with a native base
 monster is said where they are edited, not here.
 
-A finding names the control that fixes it (`FOCUS`, a key the Parts and Hitboxes panels land
-on), or says what to do (`FIX`).
+A finding names the control that fixes it (`FOCUS`, a key the Clips, Parts and Hitboxes panels
+land on), or says what to do (`FIX`).
 """
 
 from __future__ import annotations
@@ -81,10 +81,10 @@ FIX = {
     "EFFECT_BONE_RANGE": MANIFEST + "give the [[effect]] a joint of your skeleton.",
     "INTEL_ABSENT": "Nothing to change: measure the game with mhfu intel --log to check them.",
     "INTEL_WRONG_SPECIES": "Open the studio with your base monster's data (--intel).",
-    "MOVE_PAIR_NO_HANDLER": "Pick another action for the move in Action.",
+    "MOVE_PAIR_NO_HANDLER": "Pick another action for the move in Actions.",
     "MOVE_PAIR_UNOBSERVED": "Nothing to change: only a census says whether it is entered.",
-    "MOVE_PAIR_NEVER_ENTERED": "Pick another action in Action, or allow_unentered = true.",
-    "MOVE_PAIR_SHORT_DWELL": "Pick another action in Action.",
+    "MOVE_PAIR_NEVER_ENTERED": "Pick another action in Actions, or allow_unentered = true.",
+    "MOVE_PAIR_SHORT_DWELL": "Pick another action in Actions.",
     "MOVE_PAIR_BUDGET_GATED": "Keep your clip within the action's timer, or hook the seam.",
     "MOVE_PAIR_PARKS": MANIFEST + "give the move after or hold_max in [moves].",
     "MOVE_BUDGET_ROOT_MOTION": MANIFEST + "add a [[rule]] from the move with min_frames.",

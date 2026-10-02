@@ -118,7 +118,7 @@ class HitboxesPanel(kit.Panel):
         sets = kit.Section("1  Pick a hit group", tip=GROUP_TIP)
         self.move_only = kit.check(
             "Only this action's hit groups",
-            tip="Lists and draws only the hit groups the action picked in Moves or Action uses",
+            tip="Lists and draws only the hit groups the action picked in Actions uses",
             on=lambda on: self._act("action's groups", lambda: self._move_only(on)),
         )
         self.no_attack = kit.label(role="muted")
