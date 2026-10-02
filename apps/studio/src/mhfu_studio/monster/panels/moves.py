@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Moves dock: the host's pairs as a graph of hand-offs (`graph.build`), on a QGraphicsView.
+"""The Moves dock: the base monster's actions as a graph of hand-offs (`graph.build`), on a
+QGraphicsView.
 
 Click a node to read its hand-offs, double-click to select it in Action; drag a node to move it,
 the canvas to pan (any button); the wheel zooms. Edge labels show only for the focused node's
@@ -41,6 +42,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mhfu_studio.monster import species
 from mhfu_studio.monster.panels import graph
 from mhfu_studio.monster.panels.graph import KINDS, NODE_H, NODE_W, Arrow, Layout, Node, Pair
 from mhfu_studio.monster.panels.widgets import NoScene
@@ -59,25 +61,29 @@ STEP = 1.12
 #: scene room around the layout, so the canvas pans past its edges
 MARGIN = 10000.0
 PAD = 18.0
-SCOPES = (("moves", "From moves"), ("selected", "From selected"), ("attacks", "Every attack"))
+SCOPES = (
+    ("moves", "From your moves"),
+    ("selected", "From the picked action"),
+    ("attacks", "Every attack"),
+)
 SCOPE_TIPS = {
-    "moves": "Starts at the pairs your manifest's [moves] bind, and follows what each hands to",
-    "selected": "Starts at the pair selected in Action, with the pairs that lead into it",
-    "attacks": "Every pair that hits with an attack; pairs that act alike are drawn once",
+    "moves": "Starts at the actions your moves use, and follows where each goes",
+    "selected": "Starts at the action picked in Action, with the actions that lead into it",
+    "attacks": "Every action that hits with an attack; actions that act alike are drawn once",
 }
 CANVAS_TIP = (
-    "The host's behaviour pairs: an arrow is what a pair's code does when its action ends."
-    " Click a node to read its hand-offs, double-click to work on it in Action. Drag a node to"
-    " move it, drag the canvas to pan, and use the wheel to zoom."
+    "The base monster's actions: an arrow is where an action goes when it ends. Click a box to"
+    " read where it goes, double-click to work on it in Action. Drag a box to move it, drag the"
+    " canvas to pan, and use the wheel to zoom."
 )
 WALK_TIP = (
-    "Read from the host's code, not watched in the game. A pair with no arrow out never ends by"
-    " itself: the engine enters it only through the translator, which provisions it."
+    "Read from the base monster's code, not watched in the game. An action with no arrow out"
+    " never ends by itself: the game enters it only its own way, which sets it up."
 )
 LEGEND: tuple[tuple[str, Color], ...] = (
-    ("move", KINDS["move"]),
+    ("your move", KINDS["move"]),
     ("attacks", KINDS["attacks"]),
-    ("hub", KINDS["hub"]),
+    ("brain picks", KINDS["hub"]),
     ("picked", Ink.SELECTION),
     ("in Action", Ink.HOT),
 )
@@ -458,7 +464,7 @@ class GraphView(QGraphicsView):
         """The focused node's hand-offs, or how to get them; and whether they are the hint."""
         pair, lay = self.focus, self.lay
         if self.info is None or lay is None or pair is None or self.info[0].pair(*pair) is None:
-            return ["click a node to read its hand-offs, double-click to select it"], True
+            return ["click a box to read where it goes, double-click to work on it"], True
         intel, moves = self.info
         return graph.info_lines(intel, pair, lay, moves), False
 
@@ -504,7 +510,7 @@ class MovesPanel(kit.Panel):
         act = studio.act
         self.scope = kit.Segmented(
             SCOPES,
-            tip="Which pairs the graph starts from",
+            tip="Which actions the graph starts from",
             tips=SCOPE_TIPS,
             on=lambda s: act("graph scope", lambda: ws.graph.set_scope(s))(),
         )
@@ -522,8 +528,8 @@ class MovesPanel(kit.Panel):
         self.no_scene = NoScene(studio)
         self.no_scene.say(
             "No port manifest",
-            "The graph is the host monster's moves, and the port manifest names the host."
-            " Open one (ports/<name>.toml).",
+            "The graph is the base monster's actions, and the port manifest names the base"
+            " monster. Open one (ports/<name>.toml).",
         )
         self.note = kit.Empty("Nothing to draw", "")
         self.empty = QStackedWidget()
@@ -565,7 +571,7 @@ class MovesPanel(kit.Panel):
         self.walk.setText(self._walk_line(intel))
         sp = ws.browsing_species or 0
         if intel is None:
-            self.note.say("No action intel", f"There is no action intel for em{sp:02d}.")
+            self.note.say("No action data", f"There is no action data for {species.label(sp)}.")
             self._empty(self.note)
             return
         moves = dict(m.moves)
@@ -586,13 +592,13 @@ class MovesPanel(kit.Panel):
         self.pages.show_page(False)
 
     def _walk_line(self, intel: SpeciesIntel | None) -> str:
-        sp, sel = self.ws.browsing_species or 0, self.ws.pair
+        name, sel = species.label(self.ws.browsing_species or 0), self.ws.pair
         if intel is None or not intel.has_chain:
-            return f"em{sp:02d}: no hand-off intel"
+            return f"{name}: where its actions lead is not known"
         if sel is not None and intel.pair(*sel) is not None:
             return graph.walk_line(intel, sel)
         hubs = " ".join(f"({m},{s})" for m, s in intel.hubs)
         return (
-            f"em{sp:02d}: an arrow is what a pair's code does when its action ends; at the hubs"
-            f" {hubs} the brain picks again"
+            f"{name}: an arrow is where an action goes when it ends; at {hubs} the brain picks"
+            " the next one"
         )

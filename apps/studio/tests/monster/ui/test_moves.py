@@ -75,7 +75,7 @@ def test_loaded(panel: MovesPanel) -> None:
     assert kit.missing_tips(panel) == []
     assert panel.pages.currentWidget() is panel.canvas
     assert {(1, 4), (0, 3), (0, 1)} <= set(panel.canvas.nodes)
-    assert "(1,4)" in panel.walk.text() or "hubs" in panel.walk.text()
+    assert "(1,4)" in panel.walk.text() or "brain picks" in panel.walk.text()
 
 
 def test_click_picks(panel: MovesPanel, workspace: MonsterWorkspace) -> None:
@@ -145,7 +145,7 @@ def test_scope_switches(panel: MovesPanel, workspace: MonsterWorkspace) -> None:
     assert workspace.graph.scope == "attacks" and (3, 9) in panel.canvas.nodes
     panel.scope.buttons["selected"].click()
     panel.sync()
-    assert panel.pages.currentWidget() is panel.empty and "select a pair" in panel.note.hint.text()
+    assert panel.pages.currentWidget() is panel.empty and "pick an action" in panel.note.hint.text()
 
 
 def test_relayout_forgets_drags(panel: MovesPanel, workspace: MonsterWorkspace) -> None:
