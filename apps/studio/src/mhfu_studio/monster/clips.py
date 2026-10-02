@@ -310,11 +310,11 @@ class LabelSession:
     def label(self, slot: int, name: str, label: str = "", impact_frame: int | None = None) -> str:
         """Name `slot`'s clip, renaming its old name and every move that plays it."""
         name = check_name(name)
-        fp = self._print(slot, name)
+        fp = self._fingerprint(slot, name)
         self.doc.edit(lambda m: _label(m, slot, name, fp, label, self.build, impact_frame))
         return f"clips.{name} = slot {slot}"
 
-    def _print(self, slot: int, name: str) -> Fingerprint:
+    def _fingerprint(self, slot: int, name: str) -> Fingerprint:
         """`slot`'s fingerprint, refusing a slot this build lacks or a name another slot has."""
         clash = self.doc.manifest.clips.get(name)
         if clash is not None and clash.slot != slot:
@@ -333,7 +333,7 @@ class LabelSession:
             found = self.entry(slot)
             clip = found[0] if found else clip_key(slot)
             if found is None:
-                new = (slot, clip, self._print(slot, clip))
+                new = (slot, clip, self._fingerprint(slot, clip))
 
         def bind(m: Manifest) -> None:
             if new is not None:
