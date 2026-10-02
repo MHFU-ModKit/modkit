@@ -116,6 +116,9 @@ class Studio:
         self.runner: Runner | None = None
         #: the running job, None when idle
         self.job: Job | None = None
+        #: the workspace that started the last job (its status gets the outcome), and a Stop
+        self._sender = self.active.name
+        self._stopped = False
         #: what the jobs printed, oldest first, `LOG_LINES` at most
         self.log: list[str] = []
         self._closed = False
@@ -277,7 +280,7 @@ class Studio:
             self.message = f"busy: {self.job.title}"
             self.changed()
             return
-        self.job = job
+        self.job, self._sender, self._stopped = job, self.active.name, False
         self.heard(f"$ studio {' '.join(job.argv)}")
         self.message = f"{job.title}…"
         self.changed()
@@ -291,6 +294,7 @@ class Studio:
 
     def stop(self) -> None:
         if self.job is not None and self.runner is not None:
+            self._stopped = True
             self.runner.stop()
 
     def heard(self, line: str) -> None:
@@ -303,7 +307,10 @@ class Studio:
         job, self.job = self.job, None
         self.heard(f"[exit {code}]")
         title = job.title if job is not None else "job"
-        self.message = f"{title}: {'done' if code == 0 else f'failed ({code}), see the log'}"
+        how = (
+            "stopped" if self._stopped else "done" if code == 0 else f"failed ({code}), see the log"
+        )
+        self._messages[self._sender] = f"{title}: {how}"
         self.changed()
 
     def undo(self) -> None:

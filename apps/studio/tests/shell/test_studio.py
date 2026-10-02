@@ -177,3 +177,15 @@ def test_send_job_inline() -> None:
     s = Studio([Sender(Job("help", ("--help",)))])
     s.send()
     assert s.job is None and s.message == "help: done" and s.log[-1] == "[exit 0]"
+
+
+def test_job_outcome_goes_to_its_workspace() -> None:
+    s = Studio([Sender(Job("push st139", ("map", "push"))), FakeWorkspace("monster")])
+    s.runner = Runner()
+    s.send()
+    s.switch("monster")
+    s.stop()
+    s.ended(-1)
+    assert s.message == ""
+    s.switch("map")
+    assert s.message == "push st139: stopped"
