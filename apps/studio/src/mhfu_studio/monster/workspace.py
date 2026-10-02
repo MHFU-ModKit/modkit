@@ -345,7 +345,7 @@ class MonsterWorkspace(Workspace):
             self.show_parts, self.parts_source = True, PORT
             self.sync_hitboxes()
             self.select_volume(key)
-            if m.hurtboxes[key].part is not None:
+            if m.hurtboxes[key].part:  # 0 is nobody
                 self.select_part((m.hurtboxes[key].part or 0) & hitzone.PART_MASK)
             self.focus("Parts")
         elif section == "part" and isinstance(key, int):

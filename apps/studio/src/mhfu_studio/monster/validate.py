@@ -108,10 +108,15 @@ def bone_count(pac: bytes) -> int:
 
 
 def _f(
-    level: Level, code: str, where: str, message: str, at: tuple[str, int] | None = None
+    level: Level,
+    code: str,
+    where: str,
+    message: str,
+    at: tuple[str, int] | None = None,
+    focus: str | None = None,
 ) -> Finding:
     """`where` is `section` or `section.key` / `section[i]`; `target` is that as a tuple, or
-    `at`; the control from `FOCUS`, else what to do from `FIX`."""
+    `at`; the control `focus`, else `FOCUS`'s, else what to do from `FIX`."""
     target: tuple[str, str | int] | None = at
     if at is None and "[" in where:
         section, i = where.rstrip("]").split("[")
@@ -119,7 +124,8 @@ def _f(
     elif at is None and "." in where:
         section, key = where.split(".", 1)
         target = (section, key)
-    return Finding(level, code, message, where, target, FOCUS.get(code, ""), FIX.get(code, ""))
+    focus = FOCUS.get(code, "") if focus is None else focus
+    return Finding(level, code, message, where, target, focus, FIX.get(code, ""))
 
 
 def validate(
@@ -540,8 +546,10 @@ def _parts(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
         out.append(_f("warning", "HURTBOX_OVER_CAPACITY", "hurtbox", msg, ("hurtbox", cap)))
     if m.hurtboxes and not m.parts:
         msg = f"{len(m.hurtboxes)} hurtbox(es) and no [parts] naming their parts."
-        first = min(((h.part or 0) for h in m.hurtboxes), key=lambda p: (p == 0, p))
-        out.append(_f("warning", "PARTS_UNNAMED", "parts", msg, ("part", first)))
+        used = sorted({h.part for h in m.hurtboxes if h.part})
+        # part 0 is nobody: with no other, a hurtbox needs a part before a name helps
+        at, focus = (("part", used[0]), PART_NAME) if used else (("hurtbox", 0), HURT_PART)
+        out.append(_f("warning", "PARTS_UNNAMED", "parts", msg, at, focus))
     return out
 
 

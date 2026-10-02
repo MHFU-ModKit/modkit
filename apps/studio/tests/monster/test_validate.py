@@ -162,6 +162,9 @@ def test_parts(make, species):
     )
     f = found(V.validate(unnamed), "PARTS_UNNAMED")
     assert f.target == ("part", 3) and f.focus == V.PART_NAME
+    nobody = found(V.validate(make("\n[[hurtbox]]\nbone = 1\nradius = 9.0\npart = 0\n")))
+    assert nobody["PARTS_UNNAMED"].target == ("hurtbox", 0), "part 0 is nobody: give it one"
+    assert nobody["PARTS_UNNAMED"].focus == V.HURT_PART
 
 
 def test_attacks(make, species):

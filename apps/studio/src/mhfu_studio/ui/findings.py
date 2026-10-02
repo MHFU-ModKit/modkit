@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Protocol
 
-from PySide6.QtCore import QCoreApplication, QEvent, Qt, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QScrollArea,
@@ -76,10 +76,15 @@ def land(w: QWidget) -> None:
 
 def _land(w: QWidget) -> None:
     QCoreApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest.value)
-    p = w.parentWidget()
+    section, p = None, w.parentWidget()
     while p is not None and not isinstance(p, QScrollArea):
+        if section is None and isinstance(p, kit.Section | kit.More):
+            section = p
         p = p.parentWidget()
-    if p is not None:
+    inner = None if p is None else p.widget()
+    if p is not None and inner is not None:
+        if section is not None:  # its title at the top, then as little more as `w` needs
+            p.verticalScrollBar().setValue(section.mapTo(inner, QPoint(0, 0)).y())
         p.ensureWidgetVisible(w, 0, MARGIN)
     if isinstance(w, QAbstractItemView) and w.currentIndex().isValid():
         w.scrollTo(w.currentIndex())
