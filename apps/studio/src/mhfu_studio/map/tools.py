@@ -90,8 +90,8 @@ GROUPS = (
         (
             Tool(
                 GROUP, "Groups", "1", "ph.stack",
-                "A click picks a whole mesh group: every piece of the section that shares one"
-                " material and texture.",
+                "A click picks a whole group: every piece of the area drawn with one texture"
+                " and colour.",
             ),
             Tool(
                 OBJECT, "Objects", "2", "ph.cube",

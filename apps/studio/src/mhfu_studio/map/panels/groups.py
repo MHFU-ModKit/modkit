@@ -122,7 +122,7 @@ class GroupsPanel(kit.Panel):
             more.body.addWidget(w)
         lay.addWidget(more)
         lay.addStretch(1)
-        self.gate = Gate(page, "see its mesh groups")
+        self.gate = Gate(page, "see its groups")
         self.body.addWidget(self.gate)
         #: the material fields were filled from (group, texture, colour word)
         self._seed: tuple[Key, int | None, int] | None = None

@@ -144,7 +144,7 @@ class TexturesPanel(kit.Panel):
         self.side.setMinimumWidth(SIDE)
         self.side.setMaximumWidth(SIDE + 60)
 
-        self.grid = kit.Items(tip=GRID_TIP, empty="This section has no textures.")
+        self.grid = kit.Items(tip=GRID_TIP, empty="This area has no textures.")
         self.grid.setViewMode(QListView.ViewMode.IconMode)
         self.grid.setResizeMode(QListView.ResizeMode.Adjust)
         self.grid.setMovement(QListView.Movement.Static)
