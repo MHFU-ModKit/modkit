@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
 
 #: bump when the docks change shape, so an old saved layout is not forced onto new docks
-STATE_VERSION = 2
+STATE_VERSION = 3
 FINDINGS = "Findings"
 FINDINGS_TIP = "What the checks found in the document: errors, warnings and notes"
 STOP_TIP = "Stops the running Send to game job; nothing runs now"
