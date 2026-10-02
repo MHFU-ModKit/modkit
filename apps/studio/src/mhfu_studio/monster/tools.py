@@ -158,7 +158,7 @@ class VolumeTools:
         tools = {MOVE_KEY.keys[0]: MOVE, SIZE_KEY.keys[0]: SIZE}
         if ev.name in tools:
             if not self.editable(which):
-                self.ws.message = self.read_only(which)
+                self.ws.message = f"the base monster's {NOUN[which]} is {self.read_only(which)}"
             elif self.tool != tools[ev.name]:
                 self.cancel()
                 self.tool = tools[ev.name]
