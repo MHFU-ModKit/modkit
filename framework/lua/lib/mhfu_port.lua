@@ -511,7 +511,8 @@ end
 -- in the quest, but beside a native of the same species this re-skins the native too.
 --
 -- Applied once the entity is live in-area, re-checked every tick against one record and one grid
--- byte, and re-applied with a log line if either changed (an overlay reload shows up here).
+-- byte, and re-applied with a log line if either changed (an overlay reload shows up here) or a
+-- re-export registers a new content id.
 --
 -- Attacks go the other way: a handler spawns an attack by id, and ATTACK_RECORD `id` at
 -- attack_tables.records names a volume set (VOLUME_SET), reached through the overlay's pointer
@@ -541,9 +542,7 @@ P._hit = P._hit or {}         -- port name -> table, from the generated module
 --- x states} | nil }. Keyed by PORT name so the data module and the brain module
 --- can load in either order; the tick joins them.
 function P.hit(name, tbl)
-  P._hit[name] = tbl
-  local port = P.ports[name]
-  if port then port._hit_id = nil end       -- a re-export applies on the next tick
+  P._hit[name] = tbl            -- a new id applies on the next tick (hit_tick)
   local nsets = 0
   if tbl.attack_sets then for _ in pairs(tbl.attack_sets) do nsets = nsets + 1 end end
   log("[port:%s] hit tables registered: %s volume(s), %s grid state(s), %d attack "
@@ -776,18 +775,20 @@ local function hit_apply(port, tbl)
 end
 
 --- Called from the tick for a live, in-area port. Applies on the first
---- opportunity and whenever the live bytes stop matching.
+--- opportunity, on a new export id and whenever the live bytes stop matching.
 local function hit_tick(port)
   local tbl = P._hit[port.name]
   if not tbl then return end
   if port._hit_id == tbl.id and hit_intact(port, tbl) then return end
-  local why = port._hit_id == tbl.id and "live table changed under us"
-           or (port._hit_id and "new export" or "first contact")
+  -- _hit_id is what is in place (nil after a failed apply, so it retries); _hit_last names
+  -- what got in last, for the log
+  local id = tostring(tbl.id)
+  local why = port._hit_last == nil and "first contact"
+           or (port._hit_last == id and "live table changed under us" or "new export")
   local ok, what = hit_apply(port, tbl)
   if ok then
-    port._hit_id = tbl.id
-    log("[port:%s] HIT TABLES APPLIED (%s): %s  id=%s", port.name, why, what,
-        tostring(tbl.id))
+    port._hit_id, port._hit_last = tbl.id, id
+    log("[port:%s] HIT TABLES APPLIED (%s): %s  id=%s", port.name, why, what, id)
   else
     port._hit_id = nil
     if (port._hit_fail or 0) % 20 == 0 then

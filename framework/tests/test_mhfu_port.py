@@ -101,6 +101,12 @@ def memory(lua: Any) -> None:
         mhfu.write_u16 = function(x, v) wr(x, v); wr(x + 1, v >> 8) end
         mhfu.read_u32 = function(x) return mhfu.read_u16(x) | mhfu.read_u16(x + 2) << 16 end
         mhfu.write_u32 = function(x, v) mhfu.write_u16(x, v); mhfu.write_u16(x + 2, v >> 16) end
+        mhfu.read_f32 = function(x)
+          return (string.unpack("<f", string.pack("<I4", mhfu.read_u32(x))))
+        end
+        mhfu.write_f32 = function(x, v)
+          mhfu.write_u32(x, (string.unpack("<I4", string.pack("<f", v))))
+        end
         mhfu.mem_valid = function(x) return x >= {RAM.start} and x < {RAM.stop} end
         mhfu.get_screen_state = function() return 17 end
         mhfu.get_area_index = function() return 99 end
@@ -349,6 +355,42 @@ assert(HOOK({ entity = ENT, action_id = 17 }) == 6, "a claimed pair the engine e
 def test_native_seam(lua: Any) -> None:
     memory(lua)
     lua.execute(NATIVE)
+
+
+HIT_RELOAD = """
+local P = require("mhfu_port")
+local HV = mhfu.addr.HIT_VOLUME
+local SET = ENT + 0x4000
+local row = mhfu.addr.SPECIES_TABLE + 75 * mhfu.addr.SPECIES.STRIDE
+mhfu.write_u32(row + mhfu.addr.SPECIES.HURTBOX_SET, SET)
+for i = 0, 2 do mhfu.write_u16(SET + i * HV.SIZE, 1) end
+mhfu.write_u16(SET + 3 * HV.SIZE, 0xFFFF)
+local zin = P.define{ name = "zinogre", species = 75 }
+zin.ent = ENT
+-- a hot-reloaded <name>_hit.lua re-runs this
+local function export(id, radius)
+  P.hit("zinogre", { species = 75, id = id, volumes = { { 2, 0, 0, 1, 0, radius,
+                                                          0, 0, 0, 0, 0, 0 } } })
+end
+local function radius() return mhfu.read_f32(SET + HV.RADIUS) end
+
+export("599b6933", 100.0); ticks(2)
+assert(count("APPLIED %(first contact%).*id=599b6933") == 1 and radius() == 100.0)
+export("73527c5b", 200.0); ticks(2)
+assert(count("APPLIED %(new export%).*id=73527c5b") == 1 and radius() == 200.0)
+export("73527c5b", 200.0); ticks(2)
+assert(count("APPLIED") == 2, "the same id is not re-applied")
+export("599b6933", 100.0); ticks(1)
+assert(count("APPLIED %(new export%).*id=599b6933") == 1 and radius() == 100.0)
+mhfu.write_f32(SET + HV.RADIUS, 5.0); ticks(1)
+assert(count("APPLIED %(live table changed under us%)") == 1 and radius() == 100.0)
+assert(count("first contact") == 1)
+"""
+
+
+def test_hit_reload(lua: Any) -> None:
+    memory(lua)
+    lua.execute(HIT_RELOAD)
 
 
 def test_fits_the_file_buffer() -> None:
