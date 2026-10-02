@@ -94,6 +94,25 @@ def test_workspace_message(studio: Studio) -> None:
     assert studio.message == "saved"
     studio.switch("monster")
     assert studio.message == "elsewhere"
+    studio.switch("map")
+    assert studio.message == "saved"
+
+
+class Noisy(FakeWorkspace):
+    def open(self, path: Path) -> None:
+        super().open(path)
+        self.message = "no intel for em75"
+
+
+def test_open_message(tmp_path: Path) -> None:
+    studio = Studio([FakeWorkspace("map", ".toml"), Noisy("monster", ".pac")])
+    studio.open(doc_file(tmp_path, "a.toml"))
+    assert studio.message == f"opened {tmp_path / 'a.toml'}"
+    studio.workspace("monster").message = "stale"
+    studio.open(doc_file(tmp_path, "b.pac"))
+    assert studio.message == "no intel for em75"
+    studio.switch("map")
+    assert studio.message.startswith("opened")
 
 
 def test_repeated_refusal_shows(studio: Studio) -> None:

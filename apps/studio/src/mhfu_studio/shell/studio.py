@@ -103,8 +103,8 @@ class Studio:
         self.renderer = ""
         #: why there is no GL, shown in the viewport instead of a picture
         self.error: str | None = None
-        #: the last action's outcome, for the status bar
-        self.message = ""
+        #: each workspace's last outcome; `message` is the active one's
+        self._messages = {w.name: "" for w in self.workspaces}
         #: the first exception each action raised this run (label, traceback); the window goes on
         self.errors: list[tuple[str, str]] = []
         self.findings = Findings()
@@ -122,6 +122,15 @@ class Studio:
         self._listeners: list[Callable[[], None]] = []
         #: each workspace's `said` when we last looked
         self._heard = {w.name: w.said for w in self.workspaces}
+
+    @property
+    def message(self) -> str:
+        """The active workspace's last outcome, for the status bar."""
+        return self._messages[self.active.name]
+
+    @message.setter
+    def message(self, text: str) -> None:
+        self._messages[self.active.name] = text
 
     # ---- change ------------------------------------------------------------------- #
     def listen(self, fn: Callable[[], None]) -> None:
@@ -190,15 +199,16 @@ class Studio:
         if not self.discard_ok(ws):
             self.changed()
             return False
+        before = ws.said
         try:
             ws.open(path)
         except Exception as e:
             self.message = f"could not open {path.name}: {e}"
             self.changed()
             return False
+        self._messages[ws.name] = f"opened {path}"
+        self._heard[ws.name] = before  # what it said while opening shows instead
         self.switch(ws.name)
-        self.message = f"opened {path}"
-        self.changed()
         return True
 
     def discard_ok(self, *workspaces: Workspace) -> bool:
