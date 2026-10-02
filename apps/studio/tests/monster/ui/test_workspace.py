@@ -14,7 +14,7 @@ from mhfu_studio.shell.input import Key, Mod, Pointer
 from mhfu_studio.shell.overlay import Recorder
 from mhfu_studio.shell.workspace import Gesture, discover
 from mhfu_studio.ui import kit
-from mhfu_studio.ui.testing import gl_or_skip
+from mhfu_studio.ui.testing import elsewhere, gl_or_skip
 from PySide6.QtWidgets import QDockWidget
 
 DOCKS = ("Timeline", "Moves", "Action", "Scene", "View", "Joints", "Clips", "Parts", "Hitboxes")
@@ -191,6 +191,32 @@ def test_window_builds_the_docks(
     w.sync()
     moves = w.findChild(QDockWidget, "monster/Moves")
     assert moves is not None and moves.isVisible()
+
+
+def test_window_shows_the_host(
+    make_window: Callable[..., Any],
+    port_doc: PortDocument,
+    synthetic_pac: bytes,
+    intel75: Any,
+    tmp_path: Path,
+) -> None:
+    """Show the host beside through an action, as its tick box does, then paint."""
+    gl_or_skip()
+    ws = MonsterWorkspace()
+    ws.intel_cache[75] = intel75
+    scene = Scene.from_bytes(
+        synthetic_pac, "t", manifest=port_doc.manifest, path=tmp_path / "t.bin"
+    )
+    ws.load(scene, port_doc)
+    ws.host_scenes[75] = Scene.from_bytes(synthetic_pac, "em75")
+    w = make_window(ws)
+    w.view.grabFramebuffer()
+    assert ws.vp is not None
+    w.studio.act("pick", lambda: ws.select_pair(1, 4))()
+    with elsewhere():
+        w.studio.act("show host", lambda: ws.set_show_host(True))()
+    w.view.grabFramebuffer()
+    assert ws.vp.reference is not None and w.studio.errors == []
 
 
 def test_deploy_needs_a_stick(workspace: MonsterWorkspace, monkeypatch: pytest.MonkeyPatch) -> None:

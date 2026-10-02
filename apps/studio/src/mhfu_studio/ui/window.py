@@ -110,6 +110,7 @@ class Window(QMainWindow):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
 
         self.view = GLView(studio)
+        studio.gl_current = self.view.current
         card = QWidget()
         lay = QVBoxLayout(card)
         lay.setContentsMargins(4, 0, 4, 2)
@@ -573,6 +574,10 @@ class Window(QMainWindow):
         """Re-reads everything the window shows."""
         if self._closed:
             return
+        with self.view.current():  # once for every guarded call below
+            self._sync()
+
+    def _sync(self) -> None:
         ws = self.studio.active
         if ws.name != self._shown:
             self._enter(ws)

@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -169,6 +170,27 @@ def gl_or_skip() -> None:
     ctx.doneCurrent()
     if not ok:
         pytest.skip(f"GL {ctx.format().version()} is older than 3.3")
+
+
+@contextmanager
+def elsewhere() -> Iterator[None]:
+    """Another GL context current inside, in the window's share group, as Qt's own is once it
+    has composed the window: what an action meets when a click runs it."""
+    from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
+
+    from mhfu_studio.ui.app import surface_format
+
+    ctx, surface = QOpenGLContext(), QOffscreenSurface()
+    ctx.setFormat(surface_format())
+    ctx.setShareContext(QOpenGLContext.globalShareContext())
+    surface.setFormat(surface_format())
+    surface.create()
+    if not (ctx.create() and ctx.makeCurrent(surface)):
+        raise RuntimeError("no second GL context")
+    try:
+        yield
+    finally:
+        ctx.doneCurrent()
 
 
 def no_gl_or_skip() -> None:

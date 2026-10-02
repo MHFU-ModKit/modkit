@@ -7,7 +7,8 @@ its overlay and the HUD through QPainter. Input reaches the workspace as `shell.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Literal
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
@@ -15,6 +16,7 @@ from PySide6.QtGui import (
     QFont,
     QKeyEvent,
     QMouseEvent,
+    QOpenGLContext,
     QPainter,
     QPainterPath,
     QPen,
@@ -26,6 +28,7 @@ from PySide6.QtGui import (
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QWidget
 
+from mhfu_studio.shell.context import borrowed
 from mhfu_studio.shell.input import Button, Key, Mod, Pointer
 from mhfu_studio.shell.overlay import Color, Ink, Point
 from mhfu_studio.shell.text import camera_line, plain
@@ -219,6 +222,21 @@ class GLView(QOpenGLWidget):
             ctx.release()
         if live:
             self.doneCurrent()
+
+    @contextmanager
+    def current(self) -> Iterator[None]:
+        """This view's GL context current inside (`Studio.gl_current`), none after; nothing to
+        do before the view has a context, or while it is current (a paint)."""
+        ctx = self.context()
+        if ctx is None or not self.isValid() or QOpenGLContext.currentContext() is ctx:
+            yield
+            return
+        with borrowed():
+            self.makeCurrent()
+            try:
+                yield
+            finally:
+                self.doneCurrent()
 
     def paintGL(self) -> None:  # noqa: N802
         self.studio.guard("draw", self._draw)()

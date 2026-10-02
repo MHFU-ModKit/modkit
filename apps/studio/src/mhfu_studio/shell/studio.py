@@ -14,6 +14,7 @@ import sys
 import time
 import traceback
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -114,6 +115,9 @@ class Studio:
         self.ask_path: Callable[[Workspace], Path | None] | None = None
         #: runs a `Job` in the background (the window's); without one a job runs inline
         self.runner: Runner | None = None
+        #: entered around every guarded call and a job's end: the view's GL context current, so
+        #: what an action makes or frees is the view's (a VAO is not shared between contexts)
+        self.gl_current: Callable[[], AbstractContextManager[object]] = nullcontext
         #: the running job, None when idle
         self.job: Job | None = None
         #: the workspace that started the last job (its status gets the outcome), and a Stop
@@ -164,7 +168,8 @@ class Studio:
 
         def guarded() -> None:
             try:
-                fn()
+                with self.gl_current():
+                    fn()
             except Exception as e:
                 self.message = f"{label}: {type(e).__name__}: {e}"
                 if not any(lb == label for lb, _ in self.errors):  # once, not every frame
@@ -304,6 +309,10 @@ class Studio:
 
     def ended(self, code: int) -> None:
         """The running job ended with exit `code`."""
+        with self.gl_current():
+            self._ended(code)
+
+    def _ended(self, code: int) -> None:
         job, self.job = self.job, None
         self.heard(f"[exit {code}]")
         title = job.title if job is not None else "job"

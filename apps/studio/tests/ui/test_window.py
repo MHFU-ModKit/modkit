@@ -10,10 +10,10 @@ from mhfu_studio.shell.studio import Studio
 from mhfu_studio.shell.testing import FakeDocument
 from mhfu_studio.shell.workspace import Dock
 from mhfu_studio.ui import chrome, dialogs, kit, theme
-from mhfu_studio.ui.testing import FakeWorkspace, gl_or_skip
+from mhfu_studio.ui.testing import FakeWorkspace, elsewhere, gl_or_skip
 from mhfu_studio.ui.window import DockTitle, Window
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QOpenGLContext
 from PySide6.QtWidgets import QApplication, QDockWidget, QMainWindow, QMenu, QTabBar
 from shiboken6 import getCppPointer
 
@@ -383,6 +383,21 @@ def test_view_follows_resize(make_window: Make, qtbot: Any) -> None:
         w.resize(*size)
         qtbot.waitUntil(lambda: v.size() != before)  # noqa: B023
         qtbot.waitUntil(follows)
+
+
+def test_actions_run_in_the_view_context(make_window: Make, qtbot: Any) -> None:
+    """Whatever context a click left current, an action's GL objects are the view's."""
+    gl_or_skip()
+    w = make_window()
+    ws = w.studio.active
+    qtbot.waitUntil(lambda: ws.vp is not None, timeout=5000)
+    seen: list[Any] = []
+    with elsewhere():
+        w.studio.act("look", lambda: seen.append(QOpenGLContext.currentContext()))()
+    assert seen == [w.view.context()]
+    img = w.view.grabFramebuffer()  # a guard inside the paint leaves its context alone
+    colours = {img.pixel(x, y) for x in range(0, img.width(), 7) for y in range(0, img.height(), 7)}
+    assert len(colours) > 20 and w.studio.errors == []
 
 
 @pytest.mark.parametrize("mode", ["dark", "light"])
