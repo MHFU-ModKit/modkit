@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from mhfu_studio.shell.studio import Studio, doc_name
 from mhfu_studio.shell.testing import FakeDocument, FakeWorkspace
+from mhfu_studio.shell.workspace import Job
 
 
 @pytest.fixture
@@ -103,3 +104,57 @@ def test_repeated_refusal_shows(studio: Studio) -> None:
     assert studio.message == "nothing to save"
     refuse()
     assert studio.message == "move refused: too far" and ws.said == 2
+
+
+class Sender(FakeWorkspace):
+    def __init__(self, job: Job | None, why: str | None = None) -> None:
+        super().__init__("map")
+        self.job, self.why = job, why
+
+    def send_blocker(self) -> str | None:
+        return self.why
+
+    def send(self) -> Job | None:
+        if self.job is None:
+            self.message = "sent"
+        return self.job
+
+
+class Runner:
+    def __init__(self) -> None:
+        self.started: list[tuple[list[str], bytes]] = []
+
+    def start(self, argv: list[str], stdin: bytes) -> None:
+        self.started.append((argv, stdin))
+
+    def stop(self) -> None:
+        pass
+
+
+def test_send_blocked() -> None:
+    s = Studio([Sender(None, why="no section")])
+    s.send()
+    assert s.message == "no section"
+
+
+def test_send_in_process() -> None:
+    s = Studio([Sender(None)])
+    s.send()
+    assert s.message == "sent"
+
+
+def test_send_job_runs_through_the_runner() -> None:
+    s = Studio([Sender(Job("push st139", ("map", "push"), b"[]"))])
+    s.runner = r = Runner()
+    s.send()
+    assert r.started[0][0][-2:] == ["map", "push"] and r.started[0][1] == b"[]"
+    assert s.send_blocker() == "busy: push st139"
+    s.heard("ok")
+    s.ended(0)
+    assert s.job is None and s.message == "push st139: done" and "ok" in s.log
+
+
+def test_send_job_inline() -> None:
+    s = Studio([Sender(Job("help", ("--help",)))])
+    s.send()
+    assert s.job is None and s.message == "help: done" and s.log[-1] == "[exit 0]"

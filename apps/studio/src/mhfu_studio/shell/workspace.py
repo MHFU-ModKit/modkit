@@ -61,6 +61,17 @@ class ToolGroup:
     toggles: bool = False
 
 
+@dataclass(frozen=True)
+class Job:
+    """A studio command the window runs in the background, its output going to the send log."""
+
+    #: what it does, for the log and the status line: "push st139 into the game"
+    title: str
+    #: the command line after `studio`: ("map", "push", ...)
+    argv: tuple[str, ...]
+    stdin: bytes = b""
+
+
 class Gesture(enum.Flag):
     """Camera gestures a workspace's `pointer` hook consumed."""
 
@@ -135,6 +146,15 @@ class Workspace(Protocol):
 
     def refresh(self) -> None:
         """The shell changed the document (undo, redo, save as): re-read what depends on it."""
+
+    def send_blocker(self) -> str | None:
+        """Why "Send to game" cannot run now, in words for its tooltip; None when it can."""
+        return "nothing here goes to the game"
+
+    def send(self) -> Job | None:
+        """Sends the edits to the game: a `Job` for the window to run, or None when it is done
+        already (the outcome in `message`). Called only while `send_blocker()` is None."""
+        return None
 
     # ---- the Qt shell ------------------------------------------------------------------- #
     def docks(self) -> Sequence[Dock]:

@@ -9,16 +9,17 @@ save?) go through hooks the window installs; without them the studio goes on una
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import time
 import traceback
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from mhfu_studio.shell.context import ContextError, attached, describe
 from mhfu_studio.shell.findings import Finding
-from mhfu_studio.shell.workspace import Workspace, pick
+from mhfu_studio.shell.workspace import Job, Workspace, pick
 
 if TYPE_CHECKING:
     import moderngl
@@ -60,6 +61,24 @@ class Findings:
         return self.found
 
 
+#: the studio's own command line, run by the interpreter running the window
+MAIN = "import sys; from mhfu_studio.cli import main; sys.exit(main())"
+LOG_LINES = 2000
+
+
+def command(job: Job) -> list[str]:
+    """`job`'s full command line, the interpreter first."""
+    return [sys.executable, "-c", MAIN, *job.argv]
+
+
+class Runner(Protocol):
+    """Runs one command at a time in the background; reports through `Studio.heard`/`ended`."""
+
+    def start(self, argv: list[str], stdin: bytes) -> None: ...
+
+    def stop(self) -> None: ...
+
+
 def doc_name(ws: Workspace) -> str:
     """`ws`'s document as the window names it: its file, or "untitled <workspace>"."""
     doc = ws.document
@@ -93,6 +112,12 @@ class Studio:
         self.ask_discard: Callable[[list[str]], str] | None = None
         #: where to save a document that has no file yet; None is a cancel
         self.ask_path: Callable[[Workspace], Path | None] | None = None
+        #: runs a `Job` in the background (the window's); without one a job runs inline
+        self.runner: Runner | None = None
+        #: the running job, None when idle
+        self.job: Job | None = None
+        #: what the jobs printed, oldest first, `LOG_LINES` at most
+        self.log: list[str] = []
         self._closed = False
         self._listeners: list[Callable[[], None]] = []
         #: each workspace's `said` when we last looked
@@ -216,6 +241,60 @@ class Studio:
                 ok = True
         self.changed()
         return ok
+
+    # ---- the game ---------------------------------------------------------------- #
+    def send_blocker(self) -> str | None:
+        """Why "Send to game" cannot run now; None when it can."""
+        if self.job is not None:
+            return f"busy: {self.job.title}"
+        return self.active.send_blocker()
+
+    def send(self) -> None:
+        """The active workspace's edits to the game, the outcome in `message`."""
+        why = self.send_blocker()
+        if why is not None:
+            self.message = why
+        else:
+            job = self.active.send()
+            if job is not None:
+                self.start(job)
+                return
+        self.changed()
+
+    def start(self, job: Job) -> None:
+        """Runs `job` through the runner, or inline without one."""
+        if self.job is not None:
+            self.message = f"busy: {self.job.title}"
+            self.changed()
+            return
+        self.job = job
+        self.heard(f"$ studio {' '.join(job.argv)}")
+        self.message = f"{job.title}…"
+        self.changed()
+        if self.runner is not None:
+            self.runner.start(command(job), job.stdin)
+            return
+        done = subprocess.run(command(job), input=job.stdin, capture_output=True, check=False)
+        for line in (done.stdout + done.stderr).decode(errors="replace").splitlines():
+            self.heard(line)
+        self.ended(done.returncode)
+
+    def stop(self) -> None:
+        if self.job is not None and self.runner is not None:
+            self.runner.stop()
+
+    def heard(self, line: str) -> None:
+        """One line of the running job's output."""
+        self.log.append(line)
+        del self.log[:-LOG_LINES]
+
+    def ended(self, code: int) -> None:
+        """The running job ended with exit `code`."""
+        job, self.job = self.job, None
+        self.heard(f"[exit {code}]")
+        title = job.title if job is not None else "job"
+        self.message = f"{title}: {'done' if code == 0 else f'failed ({code}), see the log'}"
+        self.changed()
 
     def undo(self) -> None:
         self._history("undo")
