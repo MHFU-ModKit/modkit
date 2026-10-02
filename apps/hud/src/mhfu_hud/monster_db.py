@@ -1,36 +1,25 @@
 """Monster names and icon slugs: by vtable through mhfu, else by species id (ENTITY.SPECIES).
 
-The species ids here are the ones seen live; QUEST_PREP stages edits by species id before any
-monster has spawned, so its picker needs them.
+QUEST_PREP stages edits by species id before any monster has spawned, so its picker lists the
+ids mhfu has checked (SPECIES_IDS) first.
 """
 
 from __future__ import annotations
 
-from mhfu.structs import SPECIES_NAMES
+from mhfu.structs import SPECIES_IDS, SPECIES_NAMES
 
-TYPE_NAMES = {
-    0x05: "Bullfango",
-    0x13: "Vespoid",
-    0x23: "Giaprey",
-    0x3D: "Blango",
-    0x45: "Anteka",
-    0x46: "Popo",
-    0x48: "Popo",
-    0x4B: "Tigrex",
-    0x4D: "Giadrome",
-}
-"""Species id -> name, as observed live."""
+
+def _checked() -> list[tuple[str, int | None]]:
+    """One row per checked name, at its lowest id."""
+    rows: dict[str, int | None] = {}
+    for sid, name in sorted(SPECIES_IDS.items()):
+        rows.setdefault(name, sid)
+    return list(rows.items())
+
 
 PICKER_SPECIES: list[tuple[str, int | None]] = [
-    ("Bullfango", 0x05),
-    ("Vespoid", 0x13),
-    ("Giaprey", 0x23),
-    ("Blango", 0x3D),
-    ("Anteka", 0x45),
-    ("Popo", 0x46),
-    ("Tigrex", 0x4B),
-    ("Giadrome", 0x4D),
-    # species ids not observed yet; the picker binds one by hand
+    *_checked(),
+    # species ids not checked yet; the picker binds one by hand
     ("Velociprey", None),
     ("Velocidrome", None),
     ("Genprey", None),
@@ -80,12 +69,12 @@ def slugify(name: str) -> str:
 
 
 def species_name(species: int) -> str:
-    return TYPE_NAMES.get(species, f"em{species}")
+    return SPECIES_IDS.get(species, f"em{species}")
 
 
 def identify(vtable: int, species: int) -> tuple[str, str | None]:
     """(name, icon slug); no slug for a monster known by neither key."""
-    name = SPECIES_NAMES.get(vtable) or TYPE_NAMES.get(species)
+    name = SPECIES_NAMES.get(vtable) or SPECIES_IDS.get(species)
     if name is None:
         return f"em{species}", None
     return name, slugify(name)

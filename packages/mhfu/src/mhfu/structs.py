@@ -32,6 +32,19 @@ def _named(suffix: str) -> dict[int, str]:
 SPECIES_NAMES = {v: n.replace("_", " ").title() for v, n in _named("_VTABLE").items()}
 """Entity vtable -> name; the vtable tells a species apart better than ENTITY.SPECIES."""
 
+SPECIES_IDS = {
+    0x05: "Bullfango",
+    0x13: "Vespoid",
+    0x23: "Giaprey",
+    0x3D: "Blango",
+    0x45: "Anteka",
+    0x46: "Popo",
+    0x48: "Popo",
+    0x4B: "Tigrex",
+    0x4D: "Giadrome",
+}
+"""ENTITY.SPECIES (the em id) -> name, for the ids checked in the game."""
+
 
 def input_action(value: int, slot: int) -> int:
     """The executor action id in ENTITY.ANIM_INPUT[slot]."""

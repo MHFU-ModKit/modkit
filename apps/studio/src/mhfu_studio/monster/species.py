@@ -18,11 +18,12 @@ from pathlib import Path
 from mhfu import files
 from mhfu.em.intel import HostSummary, SpeciesIntel
 from mhfu.files import Extracted
+from mhfu.structs import SPECIES_IDS
 
 from mhfu_studio.shell import places
 
 #: names checked against the game; any other species shows its id alone
-NAMES = {75: "Tigrex"}
+NAMES = SPECIES_IDS
 
 
 def label(species: int | None) -> str:
