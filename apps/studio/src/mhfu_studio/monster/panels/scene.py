@@ -9,11 +9,12 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QCheckBox, QGridLayout, QLabel, QVBoxLayout, QWidget
 
+from mhfu_studio.monster import species
 from mhfu_studio.monster.render import skeleton
 from mhfu_studio.monster.render.mesh import MODES
 from mhfu_studio.ui import kit, theme
 
-from .widgets import NoScene
+from .widgets import NoScene, base_name
 
 if TYPE_CHECKING:
     from mhfu_studio.monster.render.skeleton import SkeletonOverlay
@@ -40,10 +41,17 @@ ISOLATE = (
     ("hide", "Hide tagged", "Draw everything except what the tagged joints carry"),
 )
 FORK_TIP = (
-    "FORK is the joint where the body splits front from rear; LEAD is the chain from the root"
-    " down to it. A clip's location records must land on the lead chain, or half the animal"
-    " lifts and the waist tears."
+    "The fork is the joint where the body splits front from rear; the lead chain runs from the"
+    " root down to it. A clip's travel must ride the lead chain, or half the animal lifts and"
+    " the waist tears."
 )
+#: a joint's part in the rig, for its row's tip
+ROLES = {
+    "fork": "Where the body splits front from rear (the fork)",
+    "lead": "On the chain from the root to the fork (the lead chain): a clip's travel rides it",
+    "still": "No clip moves it: what hangs on it stays put",
+}
+GAMES = {"mhfu": "MHFU model", "mhp3rd": "MHP3rd model"}
 
 
 def _look(name: str) -> Callable[[MonsterViewport], object]:
@@ -69,21 +77,35 @@ class ScenePanel(kit.Panel):
         self.game = kit.label(role="muted")
         form = kit.Form()
         self.values: dict[str, tuple[QLabel, QLabel]] = {}
-        for key, text, tip in (
-            ("host", "Host", "The MHFU monster this port rides: its AI, moves and hit tables"),
-            ("bones", "Bones", "Joints in the skeleton; clips and hitboxes name them by number"),
-            ("groups", "Mesh groups", "Pieces of the model, each drawn with one texture"),
-            ("vertices", "Vertices", "Points of the model's mesh"),
-            ("textures", "Textures", "Images the model is painted with"),
-            ("clips", "Clips", "Animations in the file, one per slot"),
-        ):
+        detail = kit.Form()
+        for key, text, tip, where in (
+            ("host", "Base monster", "The MHFU monster your port runs on: its AI, actions and"
+             " hit tables", form),
+            ("bones", "Joints", "Joints in the skeleton; clips and hitboxes name them by number",
+             form),
+            ("clips", "Clips", "Animations in the file, one per anim #", form),
+            ("groups", "Mesh groups", "Pieces of the model, each drawn with one texture", detail),
+            ("vertices", "Vertices", "Points of the model's mesh", detail),
+            ("textures", "Textures", "Images the model is painted with", detail),
+        ):  # fmt: skip
             value = kit.label(role="mono", wrap=False)
             value.setToolTip(tip)
-            self.values[key] = (form.row(text, value), value)
+            self.values[key] = (where.row(text, value), value)
         self.notes_box = kit.Section("Notes", tip="What the loader noticed reading the file")
         self.notes = kit.label(role="muted", selectable=True)
         self.notes_box.body.addWidget(self.notes)
-        for w in (self.name, self.game, form, self.notes_box):
+        self.more = kit.More(tip="The mesh's counts, and going back to the saved file")
+        self.revert = kit.button(
+            "Back to the saved file",
+            tip="Throws away every edit since the last save and reads the file again. Undo"
+            " brings them back.",
+            on=studio.act("discard", ws.revert),
+            role="danger",
+            icon="ph.arrow-counter-clockwise",
+        )
+        self.more.body.addWidget(detail)
+        self.more.body.addWidget(kit.row(self.revert, stretch=True))
+        for w in (self.name, self.game, form, self.notes_box, self.more):
             lay.addWidget(w)
         self.pages = kit.Pages(page, NoScene(studio))
         self.body.addWidget(self.pages)
@@ -95,10 +117,10 @@ class ScenePanel(kit.Panel):
         if sc is None:
             return
         self.name.setText(sc.name)
-        self.game.setText(sc.game)
+        self.game.setText(GAMES.get(sc.game, sc.game))
         hs = self.ws.host_species
         for key, value in (
-            ("host", "" if hs is None else f"em{hs:02d}"),
+            ("host", "" if hs is None else base_name(self.ws)),
             ("bones", sc.rig.n),
             ("groups", len(sc.groups)),
             ("vertices", sc.n_vertices),
@@ -111,6 +133,9 @@ class ScenePanel(kit.Panel):
             field.setVisible(value != "")
         self.notes_box.setVisible(bool(sc.notes))
         self.notes.setText("\n".join(f"• {n}" for n in sc.notes))
+        doc = self.ws.doc
+        self.revert.setVisible(doc is not None)
+        self.revert.setEnabled(doc is not None and doc.dirty)
 
 
 class ViewPanel(kit.Panel):
@@ -133,7 +158,7 @@ class ViewPanel(kit.Panel):
             grid.addWidget(b, i // 3, i % 3)
         frame = kit.button(
             "Frame",
-            tip="Fits the camera to what is on screen, the host beside included",
+            tip="Fits the camera to what is on screen, the base monster beside included",
             on=self._vp_act("frame", lambda vp: vp.camera.frame(vp.bounds())),
             icon="ph.frame-corners",
         )
@@ -149,7 +174,6 @@ class ViewPanel(kit.Panel):
         )
         fov = kit.Form()
         fov.row("Field of view", self.fov)
-        cam.body.addWidget(fov)
 
         model = kit.Section("Model", tip="How the monster's mesh is drawn")
         self.shading = kit.Segmented(
@@ -174,7 +198,7 @@ class ViewPanel(kit.Panel):
             "Draws the joints and bones: amber the fork, green the lead chain, red the picked",
         )
         self.xray = self._toggle(
-            "Through the mesh", "skeleton_xray", "Draws the bones on top, even inside the model"
+            "Bones on top", "skeleton_xray", "Draws the bones over the model, even inside it"
         )
         self.ids = kit.check(
             "Joint numbers",
@@ -186,10 +210,10 @@ class ViewPanel(kit.Panel):
 
         around = kit.Section("Around it", tip="What the view draws beside the monster")
         self.host = kit.check(
-            "Host beside",
-            tip="Loads the host species' own model and stands it beside the port, playing the"
-            " clip the selected move would play: what the move really looks like",
-            on=lambda on: studio.act("host beside", lambda: self._host(on))(),
+            "Base monster beside",
+            tip="Loads the base monster's own model and stands it beside yours, playing the clip"
+            " it plays for the picked action: what the action really looks like",
+            on=lambda on: studio.act("base monster beside", lambda: self._host(on))(),
         )
         self.ground = self._toggle("Ground", "show_ground", "Draws a floor grid under the feet")
         self.axes = self._toggle("Axes", "show_axes", "Draws the X, Y and Z axes at the origin")
@@ -200,10 +224,12 @@ class ViewPanel(kit.Panel):
             "Bind points", "show_points", "Draws every vertex where it sits before any clip"
         )
         around.body.addWidget(self.host)
-        around.body.addWidget(kit.row(self.ground, self.axes, stretch=True))
-        around.body.addWidget(kit.row(self.box, self.points, stretch=True))
+        around.body.addWidget(self.ground)
+        self.more = kit.More(tip="The lens, and helpers for checking the model")
+        self.more.body.addWidget(fov)
+        self.more.body.addWidget(kit.row(self.axes, self.box, self.points, stretch=True))
 
-        for w in (cam, model, bones, around):
+        for w in (cam, model, bones, around, self.more):
             lay.addWidget(w)
         self.empty = NoScene(studio)
         self.pages = kit.Pages(page, self.empty)
@@ -250,7 +276,10 @@ class ViewPanel(kit.Panel):
         kit.put(self.ids, ws.show_joint_ids)
         kit.put(self.host, ws.show_host)
         sp = ws.browsing_species
-        self.host.setText("Host beside" if sp is None else f"Host em{sp:02d} beside")
+        name = None if sp is None else species.NAMES.get(sp, species.label(sp))
+        self.host.setText(
+            "Base monster beside" if sp is None or ws.browsing_the_host else f"{name} beside"
+        )
 
 
 class JointsPanel(kit.Panel):
@@ -261,7 +290,7 @@ class JointsPanel(kit.Panel):
         self.ws, self.studio = ws, studio
         self._picked: int | None = None
         page, lay = _page()
-        self.head = kit.label(role="mono")
+        self.head = kit.label(role="mono", selectable=True)
         self.head.setToolTip(FORK_TIP)
         self.undriven = kit.Alert()
         self.isolate = kit.Segmented(
@@ -283,16 +312,20 @@ class JointsPanel(kit.Panel):
             ),
         )
         self.table = kit.Table(
-            ["Tag", "Joint", "Role", "Verts"],
+            ["Tag", "Joint", "Vertices"],
             tip="Every joint. Click one to pick it (red in the view); click its Tag box to paint"
-            " the geometry it carries red, then isolate it above.",
+            " the geometry it carries red, then show or hide it above.",
             swatch_column=1,
         )
         self.table.cellClicked.connect(self._clicked)
         self._tags: tuple[object, frozenset[int]] | None = None
-        for w in (self.head, self.undriven, self.isolate, kit.row(clear, lead, stretch=True)):
+        for w in (self.undriven, self.isolate, kit.row(clear, stretch=True)):
             lay.addWidget(w)
         lay.addWidget(self.table, 1)
+        self.more = kit.More(tip="The fork and the lead chain: where a clip's travel may ride")
+        self.more.body.addWidget(self.head)
+        self.more.body.addWidget(kit.row(lead, stretch=True))
+        lay.addWidget(self.more)
         self.pages = kit.Pages(page, NoScene(studio))
         self.body.addWidget(self.pages)
 
@@ -324,20 +357,21 @@ class JointsPanel(kit.Panel):
         self.pages.show_page(sk is not None)
         if vp is None or sk is None or vp.mesh is None:
             return
-        self.head.setText(f"fork {sk.fork}   lead {', '.join(map(str, sk.lead)) or '-'}")
+        self.head.setText(f"fork {sk.fork}   lead chain {', '.join(map(str, sk.lead)) or '-'}")
         if ws.undriven:
             joints = ", ".join(map(str, sorted(ws.undriven)))
             self.undriven.setText(
-                f"{sum(ws.undriven.values())} vertices hang on joints no clip drives"
-                f" ({joints}): they stay at bind, which is why they sit apart from the animal."
+                f"{sum(ws.undriven.values())} vertices hang on joints no clip moves ({joints}):"
+                " they stay put, which is why they sit apart from the animal."
             )
         self.undriven.setVisible(bool(ws.undriven))
         kit.put(self.isolate, ISOLATE[vp.mesh.isolate][0])
         counts = ws.joint_counts()
         n = len(sk.positions)
-        rows = [("", str(j), role(sk, j), str(counts.get(j, 0) or "")) for j in range(n)]
+        rows = [("", str(j), str(counts.get(j, 0) or "")) for j in range(n)]
         colors = [joint_color(sk, j) for j in range(n)]
-        rebuilt = self.table.set_rows(rows, list(range(n)), colors=colors)
+        tips = [role(sk, j) for j in range(n)]
+        rebuilt = self.table.set_rows(rows, list(range(n)), colors=colors, tips=tips)
         tags = (theme.current(), frozenset(vp.mesh.tagged))
         if rebuilt or tags != self._tags:
             self._tags = tags
@@ -358,15 +392,15 @@ class JointsPanel(kit.Panel):
 
 
 def role(sk: SkeletonOverlay, j: int) -> str:
-    """A joint's part in the rig: fork, lead chain, undriven."""
+    """A joint's part in the rig, in words: fork, lead chain, still."""
     bits = []
     if j == sk.fork:
-        bits.append("FORK")
+        bits.append(ROLES["fork"])
     elif j in sk.lead:
-        bits.append("lead")
+        bits.append(ROLES["lead"])
     if sk.driven is not None and j not in sk.driven:
-        bits.append("undriven")
-    return " ".join(bits)
+        bits.append(ROLES["still"])
+    return ". ".join(bits)
 
 
 def joint_color(sk: SkeletonOverlay, j: int) -> tuple[float, float, float, float]:

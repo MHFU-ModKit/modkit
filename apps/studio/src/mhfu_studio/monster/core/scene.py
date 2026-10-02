@@ -209,8 +209,8 @@ def _fu_clips(port: Port, notes: list[str]) -> list[Clip]:
     partial = [c.slot for c in out if not c.whole_rig]
     if partial:
         notes.append(
-            f"slots {partial} hold a PARTIAL clip, in only some of the {len(live)} skeleton parts: "
-            "they pose the joints they own and leave the rest at bind"
+            f"anims {', '.join(map(str, partial))} are partial: they move the joints of only "
+            f"some of the {len(live)} skeleton parts and leave the rest still"
         )
     return out
 
@@ -224,7 +224,7 @@ def _donor_clips(
         return [], None
     if d.em is None:
         notes.append(
-            f"no em id for this donor, so the record map falls back to offset "
+            f"no em id for the original, so the record map falls back to offset "
             f"{records.DEFAULT_OFFSET} with no skips: very probably WRONG. Pin it with the fork "
             "rule (mhfu_port.records)."
         )
