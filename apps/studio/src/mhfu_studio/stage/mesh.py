@@ -169,6 +169,9 @@ class _Run:
     def apply(self, i: int, op: O.Op) -> None:
         kind, g = op["op"], op["group"]
         self.i = i
+        if why := O.malformed(op):
+            self._say("error", "refused", f"{kind}: {why}")
+            return
         if not 0 <= g < len(self.groups):
             self._say(
                 "error", "refused", f"sub {self.out.sub} has no group {g} ({len(self.groups)})"

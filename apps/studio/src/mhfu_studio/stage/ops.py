@@ -320,6 +320,11 @@ def evidence(stage: StageFile, ops: Sequence[Op], base_dir: Path) -> list[Findin
     return out
 
 
+def malformed(op: Op) -> str:
+    """Why a writer skips `op`: the checks' errors on it, "" when it is well formed."""
+    return "; ".join(m for level, _, m in _check_op(op, None) if level == "error")
+
+
 def _check_op(op: Op, base_dir: Path | None) -> list[_Said]:
     kind = op.get("op")
     if kind in RETIRED:

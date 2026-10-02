@@ -194,3 +194,18 @@ def test_evidence(st: StageFile, assets: Path):
     assert found[0].where == "st001, edit 1"
     assert O.check(ops, base_dir=assets, stage=st, where="Camp")[1].where == "Camp, edit 4"
     assert O.place("", 0) == "Edit 1"
+
+
+def test_writers_refuse_a_malformed_op(st: StageFile, assets: Path):
+    ops = [
+        {"op": "move", "group": 0, "vertices": [0]},
+        {"op": "move", "group": None, "box": [0, 0, 0, 1, 1, 1]},
+        {"op": "texture", "rgb": [1, 2, 3]},
+    ]
+    found = O.evidence(st, ops, assets)
+    assert sorted((f.code, f.target, f.message) for f in found) == [
+        ("refused", (1, 0), "move: move needs `by`"),  # the mesh's and the collision's
+        ("refused", (1, 0), "move: move needs `by`"),
+        ("refused", (1, 1), "move: move needs `by`"),
+        ("refused", (1, 2), "texture: texture needs a `slot`"),
+    ]
