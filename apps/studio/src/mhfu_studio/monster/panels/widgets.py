@@ -1,23 +1,28 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""Qt pieces the monster panels share: a volume's form, the no-scene state, and the save and
-export rows."""
+"""Qt pieces the monster panels share: the source switch, a volume's form, the no-scene state,
+the see-through switch and the Send to game row."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
+from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QAbstractSpinBox,
+    QCheckBox,
     QDoubleSpinBox,
     QGridLayout,
-    QHBoxLayout,
+    QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
+from mhfu_studio.monster import species
+from mhfu_studio.monster.workspace import HOST, PORT
 from mhfu_studio.ui import dialogs, kit
 
 if TYPE_CHECKING:
@@ -30,12 +35,16 @@ if TYPE_CHECKING:
 
 OPEN_HINT = "Open a port manifest (ports/<name>.toml) or a monster PAC to work on it here."
 OPEN_TIP = "Choose a port manifest or a monster PAC; the monster workspace opens it"
+#: the source switch: the base monster's tables, or the ones your port writes over them
+SOURCES = ((HOST, "Base monster (read only)"), (PORT, "Yours"))
 SHAPES = (
     ("sphere", "Sphere", "A ball around one point"),
     ("capsule", "Capsule", "A rounded rod between two points: a tail, a wing edge"),
 )
 #: one capsule end from the other, where a sphere turned capsule starts
 CAPSULE_TO = [0.0, 0.0, 200.0]
+#: the game keeps one table per species: said once where the shared tables are edited
+SHARED = "A native {name} in the same area takes these changes too: the game shares this table."
 
 
 def tiles(*widgets: QWidget, columns: int = 2) -> QWidget:
@@ -49,9 +58,55 @@ def tiles(*widgets: QWidget, columns: int = 2) -> QWidget:
     return w
 
 
-def host_text(ws: MonsterWorkspace) -> str:
-    """The Host source's button: whose tables it shows."""
-    return "No host" if ws.host_species is None else f"Host em{ws.host_species:02d}"
+def base_name(ws: MonsterWorkspace) -> str:
+    """The base monster, `Tigrex (em75)`."""
+    return species.label(ws.host_species)
+
+
+def _fit_bold(b: QAbstractButton) -> None:
+    """A checked segment is bold (the theme): room for that, else its text is cut."""
+    bold = QFont(b.font())
+    bold.setWeight(QFont.Weight.DemiBold)
+    b.setMinimumWidth(QFontMetrics(bold).horizontalAdvance(b.text()) + 24)
+
+
+def source_switch(ws: MonsterWorkspace, what: str, on: Callable[[str], object]) -> kit.Segmented:
+    """Base monster (read only) | Yours, for `what` ("hitboxes")."""
+    box = kit.Segmented(
+        SOURCES,
+        tip=f"Whose {what} to show",
+        tips={
+            HOST: f"The base monster's own {what}, as the game has them: read only",
+            PORT: f"The {what} your port writes over the base monster's: yours to change",
+        },
+        on=on,
+    )
+    for b in box.buttons.values():
+        _fit_bold(b)
+    return box
+
+
+def sync_source(box: kit.Segmented, ws: MonsterWorkspace, current: str) -> None:
+    """The base monster's name in its button's tip; a bare PAC has none."""
+    b = box.buttons[HOST]
+    text = "No base monster" if ws.host_species is None else SOURCES[0][1]
+    if b.text() != text:
+        b.setText(text)
+        _fit_bold(b)
+    b.setToolTip(f"{base_name(ws)}: read only")
+    kit.put(box, current)
+
+
+def shared_note(ws: MonsterWorkspace) -> str:
+    """`SHARED` for the base monster."""
+    return SHARED.format(name=species.NAMES.get(ws.host_species or 0, base_name(ws)))
+
+
+def place(w: QWidget, lay: QVBoxLayout) -> None:
+    """`w` into `lay` unless it is there already: a button that moves between a panel's top
+    and its More as the document changes."""
+    if lay.indexOf(w) < 0:
+        lay.addWidget(w)
 
 
 def narrow(box: QAbstractSpinBox, span: float | None = None) -> None:
@@ -73,89 +128,68 @@ class NoScene(kit.Empty):
         dialogs.open_document(self, self.studio)
 
 
-class SaveRow(QWidget):
-    """Save or discard the manifest's staged edits (each is already an undo step)."""
+def see_through(ws: MonsterWorkspace, studio: Studio) -> QCheckBox:
+    """The one switch drawing hitboxes and hurtboxes over the body; `sync_see_through` it."""
+
+    def run(on: bool) -> None:
+        if ws.vp is not None:
+            ws.vp.hitboxes_xray = on
+
+    return kit.check(
+        "See through the body",
+        tip="Draws hitboxes and hurtboxes over the model, even where the body hides them."
+        " One switch for both panels.",
+        on=lambda on: studio.act("see through", lambda: run(on))(),
+    )
+
+
+def sync_see_through(box: QCheckBox, ws: MonsterWorkspace) -> None:
+    kit.put(box, ws.vp is not None and ws.vp.hitboxes_xray)
+    box.setEnabled(ws.vp is not None)
+
+
+class SendRow(QWidget):
+    """The title bar's Send to game where a panel's task ends, and why it cannot run."""
 
     def __init__(self, ws: MonsterWorkspace, studio: Studio) -> None:
         super().__init__()
-        self.ws = ws
-        self.save = kit.button(
-            "Save",
-            tip="Writes every staged edit into the port manifest on disk. Export and deploy"
-            " read the saved file, so save before you ship.",
-            on=studio.save,
-            role="primary",
-        )
-        self.discard = kit.button(
-            "Discard",
-            tip="Throws away every edit since the last save and goes back to the file on disk."
-            " Undo brings them back.",
-            on=studio.act("discard", ws.revert),
-            role="danger",
-        )
-        self.hint = kit.label("Nothing to save", role="muted", wrap=False)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        for w in (self.save, self.discard, self.hint):
-            lay.addWidget(w)
-        lay.addStretch(1)
-
-    def sync(self) -> None:
-        doc = self.ws.doc
-        self.setVisible(doc is not None)
-        dirty = doc is not None and doc.dirty
-        where = doc.path.name if doc is not None and doc.path is not None else "the manifest"
-        self.save.setText(f"Save to {where}")
-        self.save.setVisible(dirty)
-        self.discard.setVisible(dirty)
-        self.hint.setVisible(not dirty)
-
-
-class ExportRow(QWidget):
-    """The tables as `<name>_hit.lua`, and onto the memory stick (Send to game)."""
-
-    def __init__(self, ws: MonsterWorkspace, studio: Studio) -> None:
-        super().__init__()
-        self.ws = ws
-        self.export = kit.button(
-            "Export",
-            tip="Writes <name>_hit.lua into the folder the studio was started from: the"
-            " hurtboxes, damage grid, hitboxes and attack records as they are now, as the one"
-            " P.hit() call mhfu_port.lua makes in the game, each table written over the host's.",
-            on=studio.act("export", ws.export_hit),
-            icon="ph.export",
-        )
-        self.deploy = kit.button(
-            "Deploy to memstick",
-            tip="Send to game: exports the tables as they are now, saved or not, and copies the"
-            " module to the memory stick's mods folder (and mhfu_port.lua when the stick's is"
-            " older: a stale library silently skips fields it does not know). A running game"
-            " reloads it; a cold one loads it at boot.",
+        self.ws, self.studio = ws, studio
+        self.send = kit.button(
+            "Send to game",
+            tip="Puts your hitboxes, hurtboxes and damage grid on the memory stick, saved or"
+            " not; a running game reloads them. The title bar's button (⌘↩) does the same.",
             on=studio.act("send", studio.send),
-            role="primary",
+            icon="ph.paper-plane-tilt",
         )
         self.hint = kit.label(role="muted")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(kit.row(self.export, self.deploy, stretch=True))
+        lay.addWidget(kit.row(self.send, stretch=True))
         lay.addWidget(self.hint)
 
     def sync(self) -> None:
-        doc = self.ws.doc
-        self.setVisible(doc is not None and doc.path is not None)
-        if doc is None:
-            return
-        why = self.ws.send_blocker()
-        self.export.setEnabled(self.ws.exportable())
-        self.deploy.setEnabled(why is None)
+        st = self.studio
+        why = st.send_blocker() if st.active is self.ws else self.ws.send_blocker()
+        self.send.setEnabled(why is None)
         self.hint.setText(why or "")
         self.hint.setVisible(why is not None)
 
 
-class VolumeForm(QWidget):
-    """A volume's place and size: bone, shape, radius, offset and a capsule's far end.
+def export_button(ws: MonsterWorkspace, studio: Studio) -> QPushButton:
+    """Writes the module to a file without sending it; for a panel's More."""
+    return kit.button(
+        "Export to a file",
+        tip="Writes <name>_hit.lua into the folder the studio was started from, without"
+        " sending it: to copy by hand or to read.",
+        on=studio.act("export", ws.export_hit),
+        icon="ph.export",
+    )
 
-    `stage(**fields)` gets each change; `extra` rows (a part, a set) go after the bone.
+
+class VolumeForm(QWidget):
+    """A volume's place and size: joint, shape, radius, offset and a capsule's far end.
+
+    `stage(**fields)` gets each change; `extra` rows (a part, a hit group) go after the joint.
     """
 
     def __init__(
@@ -178,11 +212,11 @@ class VolumeForm(QWidget):
         self.bone = kit.integer(tip=bone_tip, lo=0, hi=0xFFFF, on=lambda v: stage(bone=v))
         self.joint = kit.button(
             "Picked joint",
-            tip="Moves the volume onto the joint picked in the view or the Joints panel",
+            tip="Moves it onto the joint picked in the view or the Joints panel",
             on=self._to_joint,
             icon="ph.crosshair",
         )
-        form.row("Bone", kit.row(self.bone, self.joint, stretch=True))
+        form.row("Joint", kit.row(self.bone, self.joint, stretch=True))
         for text, w in extra:
             form.row(text, w)
         self.shape = kit.Segmented(
@@ -210,13 +244,13 @@ class VolumeForm(QWidget):
         ]
         form.row("Radius", kit.row(self.radius, *scale, spacing=4))
         self.offset = kit.Vec3(
-            tip="Where its centre sits, from the bone, in the bone's own axes",
+            tip="Where its centre sits, from the joint, in the joint's own axes",
             step=5.0,
             on=lambda v: stage(offset=v),
         )
         form.row("Offset", self.offset)
         self.to = kit.Vec3(
-            tip="The capsule's far end, from the bone", step=5.0, on=lambda v: stage(to=v)
+            tip="The capsule's far end, from the joint", step=5.0, on=lambda v: stage(to=v)
         )
         self.to_label = form.row("Far end", self.to)
         for box in (*self.offset.boxes, *self.to.boxes):
@@ -237,7 +271,8 @@ class VolumeForm(QWidget):
         kit.put(self.to, list(v.to or (0.0, 0.0, 0.0)))
         self.to.setVisible(v.is_capsule)
         self.to_label.setVisible(v.is_capsule)
-        self.flags.setText(f"flags 0x{v.flags:X}" + ("  (shipped as they are)" if v.flags else ""))
+        self.flags.setText(f"flags 0x{v.flags:X} (shipped as they are)")
+        self.flags.setVisible(bool(v.flags))
         self.joint.setEnabled(self._picked() is not None)
 
     def _to_joint(self) -> None:

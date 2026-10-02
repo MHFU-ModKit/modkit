@@ -40,9 +40,9 @@ def test_pick_name_save(workspace: MonsterWorkspace, qtbot: Any) -> None:
     p.label.setText("the head comes down")
     p.apply.click()
     assert ws.doc.dirty and ws.doc.manifest.clips["strike"].slot == 2
-    assert ws.scene.clip(2).names == ("strike",) and p.save.save.isVisibleTo(p)
-    p.save.save.click()
-    assert not ws.doc.dirty and not p.save.save.isVisibleTo(p)
+    assert ws.scene.clip(2).names == ("strike",)
+    p.studio.save()
+    assert not ws.doc.dirty
 
 
 def test_outside_pick_shows(workspace: MonsterWorkspace, qtbot: Any) -> None:
@@ -65,9 +65,14 @@ def test_filler_is_loud(workspace: MonsterWorkspace, qtbot: Any) -> None:
     cov.slots[2] = clips.SlotCoverage(2, clips.FILLER, 6, False)
     ws._coverage, ws._vocab = (cov, []), None
     p = build(ws, qtbot)
-    assert p.filler.isVisibleTo(p) and "FILLER" in p.filler.text()
+    assert p.filler.isVisibleTo(p) and "idle copies" in p.filler.text()
+    assert p.kinds[clips.FILLER][1].text() == "1 idle copy"
+    assert not p.kinds[clips.HOST][1].isVisibleTo(p), "a kind nobody has is not listed"
     item = p.table.item(1, 0)
     assert item is not None and item.foreground().color() == theme.level("warning")
-    assert "COPY OF THE IDLE" in item.toolTip()
+    assert "idle copy" in item.toolTip()
+    p.filter.setText("idle")
+    assert p.table.rowCount() == 1, "the filter reads the kind's words"
+    p.filter.setText("")
     p.table.cellClicked.emit(1, 0)
     assert p.why.property("level") == "warning"

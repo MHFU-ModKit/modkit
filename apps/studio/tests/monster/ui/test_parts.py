@@ -33,8 +33,10 @@ def test_empty(qtbot: Any) -> None:
 def test_host_tables(workspace: MonsterWorkspace, qtbot: Any) -> None:
     p = build(workspace, qtbot)
     assert kit.missing_tips(p) == [] and p.parts.rowCount() == 8
-    assert p.provenance.isVisibleTo(p) and p.to_port.isVisibleTo(p)
-    assert "the HOST's" in p.grid_head.text() and not p.form_box.isVisibleTo(p)
+    assert not p.provenance.isVisibleTo(p) and p.to_port.isVisibleTo(p)
+    p.more.set_open(True)
+    assert p.provenance.isVisibleTo(p) and kit.missing_tips(p) == []
+    assert "base monster's, read only" in p.grid_head.text() and not p.form_box.isVisibleTo(p)
 
 
 def test_edit_volume_and_undo(workspace: MonsterWorkspace, qtbot: Any) -> None:
@@ -59,8 +61,11 @@ def test_orphans_warn(workspace: MonsterWorkspace, qtbot: Any) -> None:
 def test_grid_adopt_and_edit(workspace: MonsterWorkspace, qtbot: Any) -> None:
     ws, p = workspace, build(workspace, qtbot)
     assert ws.doc is not None
+    assert p.adopt_grid.isVisibleTo(p) and not p.shared.isVisibleTo(p)
     p.adopt_grid.click()
     assert ws.parts_source == "port" and len(ws.doc.manifest.hitzones) == 1
+    assert p.shared.isVisibleTo(p) and "native Tigrex" in p.shared.text()
+    assert "again" in p.adopt_grid.text() and not p.adopt_grid.isVisibleTo(p)
     item = p.grid.item(2, 0)
     assert item is not None and item.flags() & Qt.ItemFlag.ItemIsEditable
     item.setText("77")
@@ -99,7 +104,7 @@ def test_no_intel_says_why(workspace: MonsterWorkspace, qtbot: Any) -> None:
     p = build(workspace, qtbot)
     text = p.no_intel.text()
     assert p.no_intel.isVisibleTo(p) and "MHFU_DATA" in text and "survey" not in text
-    assert "This port still takes" in text
+    assert "Your port still takes" in text
 
 
 def test_a_bare_pac_has_no_host(qtbot: Any, synthetic_pac: bytes, gl: Any) -> None:
@@ -109,5 +114,6 @@ def test_a_bare_pac_has_no_host(qtbot: Any, synthetic_pac: bytes, gl: Any) -> No
     ws.setup(gl)
     ws.load(Scene.from_bytes(synthetic_pac, "t"))
     p = build(ws, qtbot)
-    assert p.source.buttons["host"].text() == "No host" and "No host" in p.no_intel.text()
+    assert p.source.buttons["host"].text() == "No base monster"
+    assert "No base monster" in p.no_intel.text()
     ws.close()

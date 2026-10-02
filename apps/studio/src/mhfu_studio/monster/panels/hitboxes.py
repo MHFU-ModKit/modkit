@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Hitboxes panel: where he hits YOU. The Parts panel's mirror, with volume sets for parts:
-a handler spawns an attack by id, the record names a set, the set is the same sphere record."""
+"""The Hitboxes panel: where he hits YOU. The Parts panel's mirror, with hit groups for parts:
+a move spawns an attack by id, the attack names a hit group, the group's spheres are the hitboxes.
+"""
 
 from __future__ import annotations
 
@@ -15,19 +16,26 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from mhfu_studio.monster.attacks import LEVERS
 from mhfu_studio.monster.render.hitboxes import set_color
+from mhfu_studio.monster.workspace import PORT
 from mhfu_studio.shell.findings import Level
 from mhfu_studio.ui import kit
 
 from .common import bone_span
-from .parts import HOST, HOST_BONES, PORT
+from .parts import HOST_BONES
 from .widgets import (
-    ExportRow,
     NoScene,
-    SaveRow,
+    SendRow,
     VolumeForm,
+    base_name,
     describe,
+    export_button,
     fly_to,
-    host_text,
+    place,
+    see_through,
+    shared_note,
+    source_switch,
+    sync_see_through,
+    sync_source,
     tiles,
 )
 
@@ -36,25 +44,15 @@ if TYPE_CHECKING:
     from mhfu_studio.monster.workspace import MonsterWorkspace
     from mhfu_studio.shell.studio import Studio
 
-SOURCE_TIPS = {
-    HOST: "The host monster's own attack volumes and records, as the game has them: read only",
-    PORT: "What this port's manifest writes over the host's: yours to edit",
-}
-SET_TIP = (
-    "A move spawns an attack by number; the attack record names a volume SET, and the set's"
-    " spheres are where the blow lands. Pick a set to light it in the view."
+GROUP_TIP = (
+    "A move spawns an attack, the attack names a hit group, and the group's hitboxes are where"
+    " the blow lands."
 )
-SHARED = (
-    "The sets are SPECIES data: with the port REPLACING its host they are his alone; beside a"
-    " native em{sp:02d} they re-arm the native too. The in-place write and the P.hit() path are"
-    " proven live. Deploy syncs mhfu_port.lua as well: a stale library silently drops these"
-    " tables."
-)
-LEVER_HEADS = ("Attack", "Power", "Element", "Set", "From")
+LEVER_HEADS = ("Attack", "Power", "Element", "Group", "From")
 
 
 def moves_hitting(ws: MonsterWorkspace, set_index: int) -> tuple[list[str], int]:
-    """`(declared moves, other pairs)` whose handler hits with this set."""
+    """`(declared moves, other actions)` whose handler hits with this group."""
     si = ws.host_intel()
     if si is None:
         return [], 0
@@ -72,13 +70,8 @@ def moves_hitting(ws: MonsterWorkspace, set_index: int) -> tuple[list[str], int]
     return names, others
 
 
-def _section(title: str, tip: str) -> tuple[kit.Section, QVBoxLayout]:
-    s = kit.Section(title, tip=tip)
-    return s, s.body
-
-
 class HitboxesPanel(kit.Panel):
-    """Where the monster hits you: pick a set, pick a hitbox, change it, save and deploy."""
+    """Where the monster hits you: show, copy, pick a hit group, a hitbox, change it, send."""
 
     def __init__(self, ws: MonsterWorkspace, studio: Studio) -> None:
         super().__init__()
@@ -89,114 +82,119 @@ class HitboxesPanel(kit.Panel):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
 
-        show, body = _section("Show", "Whose hitboxes, and whether the view draws them")
-        self.source = kit.Segmented(
-            [(HOST, "Host"), (PORT, "This port")],
-            tip="Whose attack volumes and records to show",
-            tips=SOURCE_TIPS,
-            on=lambda k: self._act("hitbox source", lambda: self._source(k)),
+        show = kit.Section("Show", tip="Whose hitboxes, and whether the view draws them")
+        self.source = source_switch(
+            ws, "hitboxes and attacks", lambda k: self._act("hitboxes", lambda: self._source(k))
         )
         self.draw = kit.check(
             "Show in view",
-            tip="Draws the attack volumes on the monster, one colour per set",
+            tip="Draws the hitboxes on the monster, one colour per hit group",
             on=lambda on: self._act("show hitboxes", lambda: self._show(on)),
         )
-        self.xray = kit.check(
-            "Through the mesh",
-            tip="Draws the volumes on top, even where the body hides them",
-            on=lambda on: self._act("x-ray", lambda: self._vp("hitboxes_xray", on)),
-        )
+        self.xray = see_through(ws, studio)
         self.no_intel = kit.Alert(level="info")
-        self.join = kit.Alert(level=None, role="muted")
-        self.offset_note = kit.Alert(level=None, role="muted")
-        for w in (
-            self.source,
-            kit.row(self.draw, self.xray, stretch=True),
-            self.no_intel,
-            self.join,
-            self.offset_note,
-        ):
-            body.addWidget(w)
+        for w in (self.source, kit.row(self.draw, self.xray, stretch=True), self.no_intel):
+            show.body.addWidget(w)
         lay.addWidget(show)
 
-        sets, body = _section("1  Pick a set", SET_TIP)
+        start = kit.Section(
+            "Start from the base monster", tip="Copy the base monster's hitboxes into yours"
+        )
+        self.start_hint = kit.label(
+            "You have no hitboxes yet: pick a hit group below and copy it from the base monster.",
+            role="muted",
+        )
+        self.adopt_pair = kit.button(
+            "Copy the hit groups this action uses",
+            tip="Copies the base monster's hitboxes of every hit group the picked action"
+            " spawns, to move onto the right joints of your skeleton. " + HOST_BONES,
+            on=self._adopt_pair,
+            icon="ph.copy",
+        )
+        start.body.addWidget(self.start_hint)
+        self.start_box, self.start_lay = start, start.body
+        lay.addWidget(start)
+
+        sets = kit.Section("1  Pick a hit group", tip=GROUP_TIP)
         self.move_only = kit.check(
-            "Only the move's sets",
-            tip="Lists and draws only the sets the move picked in Moves or Action hits with",
-            on=lambda on: self._act("move's sets", lambda: self._move_only(on)),
+            "Only this action's hit groups",
+            tip="Lists and draws only the hit groups the action picked in Moves or Action uses",
+            on=lambda on: self._act("action's groups", lambda: self._move_only(on)),
         )
         self.no_attack = kit.label(role="muted")
         self.orphans = kit.Alert(level="error")
         self.sets_head = kit.label(role="muted")
         self.sets = kit.Table(
-            ["Set", "Attacks", "Vols", "Bones", "Moves"],
-            tip=SET_TIP + " Vols reads port/host: how many the port authors, how many fit.",
+            ["Group", "Hitboxes", "Used by", "Attacks"],
+            tip="The hit groups; pick one to light it in the view. Hitboxes reads yours/fit: how"
+            " many you have, how many fit.",
         )
         self.sets.picked.connect(self._pick_set)
         for w in (self.move_only, self.no_attack, self.orphans, self.sets_head, self.sets):
-            body.addWidget(w)
+            sets.body.addWidget(w)
         self.sets_box = sets
         lay.addWidget(sets)
 
-        vols, body = _section(
-            "2  Pick a hitbox", "The port's volumes: pick one here or click it in the view"
-        )
+        vols = kit.Section("2  Pick a hitbox", tip="Pick one here or click it in the view")
         self.vols_box = vols
         self.host_hint = kit.label(role="muted")
         self.to_port = kit.button(
-            "Edit on this port",
-            tip="Switches to the port's own hitboxes, the ones you can change",
-            on=lambda: self._act("hitbox source", lambda: self._source(PORT)),
+            "Edit yours",
+            tip="Switches to your port's hitboxes, the ones you can change",
+            on=lambda: self._act("hitboxes", lambda: self._source(PORT)),
             role="primary",
         )
         self.set_hint = kit.label(role="muted")
         self.adopt_set = kit.button(
-            "Adopt the host's set",
-            tip="Copies the host's volumes of this set into the port, to move. " + HOST_BONES,
+            "Copy the base monster's hit group",
+            tip="Copies the base monster's hitboxes of this hit group into yours, to move. "
+            + HOST_BONES,
             on=self._adopt_set,
-            icon="ph.download-simple",
+            icon="ph.copy",
         )
         self.add = kit.button(
             "Add a sphere",
-            tip="Adds one sphere on bone 1 to the picked set, to move where you want it",
+            tip="Adds one sphere on joint 1 to the picked hit group, to move where you want it",
             on=self._add,
             icon="ph.plus",
         )
         self.vols_head = kit.label(role="muted")
         self.over = kit.Alert(level="error")
         self.vols = kit.Table(
-            ["Vol", "Set", "Bone", "Shape", "Radius", "Offset"],
-            tip="The port's hitboxes, the picked set's or all; * marks one changed since the"
-            " last save. Click one to edit it and light it in the view.",
+            ["#", "Group", "Joint", "Radius"],
+            tip="Your hitboxes, the picked group's or all; * marks one changed since the last"
+            " save. Click one to change it and light it in the view.",
             swatch_column=1,
         )
         self.vols.picked.connect(self._pick_volume)
         self.pick_hint = kit.label(
             "Pick a hitbox, here or in the view, to change it.", role="muted"
         )
+        self.adopt_here = QVBoxLayout()
+        self.adopt_here.addWidget(self.adopt_set)
+        for w in (self.host_hint, self.to_port, self.set_hint):
+            vols.body.addWidget(w)
+        vols.body.addLayout(self.adopt_here)
         for w in (
-            self.host_hint,
-            self.to_port,
-            self.set_hint,
+            self.add,
             self.vols_head,
             self.over,
             self.vols,
             self.pick_hint,
-            tiles(self.adopt_set, self.add, columns=1),
         ):
-            body.addWidget(w)
+            vols.body.addWidget(w)
         lay.addWidget(vols)
 
-        edit, body = _section("3  Change it", "Each change is one undo step and shows at once")
+        edit = kit.Section("3  Change it", tip="Each change is one undo step and shows at once")
         self.edit_box = edit
         self.set_box = kit.integer(
-            tip="Which of the host's volume sets this record ships in: the attack record picks"
-            " the set",
+            tip="Which of the base monster's hit groups this hitbox belongs to: the attack picks"
+            " the group",
             lo=0,
             hi=0,
             on=lambda v: self._stage(set=v),
         )
-        self.set_swatch = kit.Swatch(tip="The set's colour in the view")
+        self.set_swatch = kit.Swatch(tip="The hit group's colour in the view")
         self.label = kit.text_field(
             tip="Your note for this hitbox: 'tail tip', 'left claw'", placeholder="what it is"
         )
@@ -204,78 +202,34 @@ class HitboxesPanel(kit.Panel):
         self.form = VolumeForm(
             self._stage,
             lambda: None if ws.vp is None else ws.vp.selected_joint,
-            bone_tip="A joint number of THIS port's rig; 126 and 127 are the node's own place."
+            bone_tip="A joint of your port's skeleton; 126 and 127 are the attack's own place."
             " Pick a joint in the view to read it.",
             extra=[
-                ("Set", kit.row(self.set_box, self.set_swatch, stretch=True)),
-                ("Label", self.label),
+                ("Hit group", kit.row(self.set_box, self.set_swatch, stretch=True)),
+                ("Note", self.label),
             ],
-        )
-        self.keep = kit.button(
-            "Keep only this",
-            tip="Drops the other volumes of this set: with one left, where the blow lands is"
-            " the whole answer. The other sets are other attacks and stay.",
-            on=self._keep,
         )
         self.copy = kit.button(
             "Duplicate", tip="Adds a copy of this hitbox to move", on=self._copy, icon="ph.copy"
         )
         self.look = kit.button(
-            "Show in view",
+            "Frame it",
             tip="Points the camera at this hitbox",
-            on=self.studio.act("look at hitbox", self._look),
-            icon="ph.eye",
+            on=self.studio.act("frame hitbox", self._look),
+            icon="ph.crosshair",
         )
         self.delete = kit.button(
             "Delete", tip="Removes this hitbox", on=self._delete, role="danger", icon="ph.trash"
         )
-        body.addWidget(self.form)
-        body.addWidget(tiles(self.keep, self.copy, self.look, self.delete))
+        self.shared = kit.Alert()
+        edit.body.addWidget(self.form)
+        edit.body.addWidget(tiles(self.copy, self.look, self.delete, columns=3))
+        edit.body.addWidget(self.shared)
         lay.addWidget(edit)
 
-        rec, body = _section(
-            "Attack records",
-            "What each attack does: power, element and which set it hits with. Only these"
-            " three bytes are decoded.",
-        )
-        self.records_head = kit.label(role="muted")
-        self.records = kit.Grid(
-            LEVER_HEADS,
-            tip="The attack records on the picked set or move. On the port, double-click power,"
-            " element (0x hex is fine) or set to change it; a value equal to the host's says"
-            " nothing.",
-        )
-        self.records.edited.connect(self._lever)
-        self.to_host = kit.button(
-            "Back to the host's bytes",
-            tip="Drops the port's changes to the picked record: the host's stands",
-            on=self._clear_record,
-            icon="ph.arrow-counter-clockwise",
-        )
-        for w in (self.records_head, self.records, self.to_host):
-            body.addWidget(w)
-        self.records_box = rec
-        lay.addWidget(rec)
-
-        adopt, body = _section("Start from the host", "Copy the host's sets into the port")
-        self.adopt_pair = kit.button(
-            "Adopt the move's sets",
-            tip="Copies the host's volumes of every set the picked move spawns, so you can move"
-            " them onto the right joints of THIS rig. " + HOST_BONES,
-            on=self._adopt_pair,
-            icon="ph.download-simple",
-        )
-        self.shared = kit.Alert()
-        body.addWidget(self.adopt_pair)
-        body.addWidget(self.shared)
-        self.adopt_box = adopt
-        lay.addWidget(adopt)
-
-        ship, body = _section("4  Save and deploy", "Write the manifest, then send it to the game")
-        self.save = SaveRow(ws, studio)
-        self.export = ExportRow(ws, studio)
-        body.addWidget(self.save)
-        body.addWidget(self.export)
+        ship = kit.Section("4  Send to game", tip="Your hitboxes onto the memory stick")
+        self.send = SendRow(ws, studio)
+        ship.body.addWidget(self.send)
         self.ship_box = ship
         lay.addWidget(ship)
         self.no_manifest = kit.label(
@@ -283,6 +237,44 @@ class HitboxesPanel(kit.Panel):
             role="muted",
         )
         lay.addWidget(self.no_manifest)
+
+        self.more = kit.More(
+            tip="Attack stats, where the attack table was found, test tools, copying again and"
+            " export"
+        )
+        self.join = kit.Alert(level=None, role="muted")
+        self.offset_note = kit.Alert(level=None, role="muted")
+        self.records_head = kit.label(role="muted")
+        self.records = kit.Grid(
+            LEVER_HEADS,
+            tip="The attacks on the picked hit group or action. On yours, double-click power,"
+            " element (0x hex is fine) or group to change it; a value equal to the base"
+            " monster's changes nothing.",
+        )
+        self.records.edited.connect(self._lever)
+        self.to_host = kit.button(
+            "Back to the base monster's",
+            tip="Drops your changes to the picked attack: the base monster's stands",
+            on=self._clear_record,
+            icon="ph.arrow-counter-clockwise",
+        )
+        self.keep = kit.button(
+            "Keep only the picked hitbox",
+            tip="Drops the other hitboxes of its group, so where the blow lands is the whole"
+            " answer. A test tool; the other groups stay.",
+            on=self._keep,
+        )
+        self.again = QVBoxLayout()
+        self.export = export_button(ws, studio)
+        stats = kit.label("Attack stats", role="caps", wrap=False)
+        stats.setToolTip("Power, element and hit group of each attack: the decoded bytes")
+        for w in (self.join, self.offset_note, stats, self.records_head, self.records):
+            self.more.body.addWidget(w)
+        self.more.body.addWidget(kit.row(self.to_host, stretch=True))
+        self.more.body.addWidget(kit.row(self.keep, stretch=True))
+        self.more.body.addLayout(self.again)
+        self.more.body.addWidget(kit.row(self.export, stretch=True))
+        lay.addWidget(self.more)
 
         self.pages = kit.Pages(page, NoScene(studio))
         self.body.addWidget(self.pages)
@@ -292,10 +284,6 @@ class HitboxesPanel(kit.Panel):
 
     def _act(self, label: str, fn: Callable[[], object]) -> None:
         self.studio.act(label, fn)()
-
-    def _vp(self, attr: str, value: object) -> None:
-        if self.ws.vp is not None:
-            setattr(self.ws.vp, attr, value)
 
     def _source(self, key: str) -> None:
         self.ws.attacks_source = key
@@ -332,7 +320,7 @@ class HitboxesPanel(kit.Panel):
         def run() -> None:
             sess = self._session()
             if i is not None:
-                msg = f"hitbox {i}: {describe(fields)} (unsaved)"
+                msg = f"hitbox {i}: {describe(fields)}"
                 self.ws.edit(msg, lambda: sess.edit_volume(i, **fields))
 
         self._act("edit hitbox", run)
@@ -352,7 +340,7 @@ class HitboxesPanel(kit.Panel):
             if st is None:
                 return
             new = Hitbox(bone=1, radius=150.0, set=st, offset=[0.0, 0.0, 0.0])
-            if self.ws.edit(f"added a sphere to set {st} (unsaved)", lambda: sess.add_volume(new)):
+            if self.ws.edit(f"added a hitbox to group {st}", lambda: sess.add_volume(new)):
                 self.ws.select_attack_volume(len(sess.volumes()) - 1)
 
         self._act("add hitbox", run)
@@ -361,7 +349,7 @@ class HitboxesPanel(kit.Panel):
         hs = host.set(st)
         if hs is None or not hs.spheres:
             return False
-        src = f"em{self.ws.host_species or 0:02d} set {st}"
+        src = f"{base_name(self.ws)} hit group {st}"
         try:
             got = sess.adopt_set(st, hs.spheres, source=src)
         except ValueError as e:
@@ -380,7 +368,7 @@ class HitboxesPanel(kit.Panel):
                 self.ws.sync()
                 self.ws.message = msg
 
-        self._act("adopt set", run)
+        self._act("copy hit group", run)
 
     def _adopt_pair(self) -> None:
         def run() -> None:
@@ -391,12 +379,11 @@ class HitboxesPanel(kit.Panel):
             self.ws.attacks_source = PORT
             self.ws.sync()
             self.ws.message = (
-                f"adopted {done} set(s) from em{self.ws.host_species or 0:02d}: the HOST's bone"
-                " numbers on this rig, a starting point you can see, not a correct answer"
-                " (unsaved)"
+                f"copied {done} hit group(s) from {base_name(self.ws)}: its joint numbers on"
+                " your skeleton, a start you can see, not the answer"
             )
 
-        self._act("adopt the move's sets", run)
+        self._act("copy the action's groups", run)
 
     def _keep(self) -> None:
         i = self.ws.selected_attack_volume
@@ -408,8 +395,8 @@ class HitboxesPanel(kit.Panel):
             st = sess.volumes()[i].set
             gone = len(sess.volumes_of(st)) - 1
             msg = (
-                f"kept hitbox {i}, dropped {gone} from set {st}: the attack lands there or"
-                " nowhere (unsaved)"
+                f"kept hitbox {i}, dropped {gone} from group {st}: the attack lands there or"
+                " nowhere"
             )
             if self.ws.edit(msg, lambda: sess.keep_only(i)):
                 self.ws.select_attack_volume(sess.volumes_of(st)[0][0])
@@ -421,9 +408,7 @@ class HitboxesPanel(kit.Panel):
 
         def run() -> None:
             sess = self._session()
-            if i is not None and self.ws.edit(
-                f"deleted hitbox {i} (unsaved)", lambda: sess.remove_volume(i)
-            ):
+            if i is not None and self.ws.edit(f"deleted hitbox {i}", lambda: sess.remove_volume(i)):
                 self.ws.select_attack_volume(None)
 
         self._act("delete hitbox", run)
@@ -436,7 +421,7 @@ class HitboxesPanel(kit.Panel):
             if i is None:
                 return
             v = sess.volumes()[i]
-            if self.ws.edit(f"hitbox {i} duplicated (unsaved)", lambda: sess.add_volume(v)):
+            if self.ws.edit(f"hitbox {i} duplicated", lambda: sess.add_volume(v)):
                 self.ws.select_attack_volume(len(sess.volumes()) - 1)
 
         self._act("duplicate hitbox", run)
@@ -453,9 +438,9 @@ class HitboxesPanel(kit.Panel):
         def run() -> None:
             sess = self._session()
             host_value = int(getattr(a, key))
-            same = " = the host's, so the block says nothing" if value == host_value else ""
+            same = ", the base monster's, so nothing changes" if value == host_value else ""
             levers = {key: None if value == host_value else value}
-            msg = f"attack {a.id} {key} = {value}{same} (unsaved)"
+            msg = f"attack {a.id} {key} = {value}{same}"
             self.ws.edit(msg, lambda: sess.set_attack(a.id, **levers))
 
         self._act("attack lever", run)
@@ -466,64 +451,73 @@ class HitboxesPanel(kit.Panel):
         def run() -> None:
             sess = self._session()
             if not 0 <= row < len(self._records):
-                self.ws.message = "pick a record first"
+                self.ws.message = "pick an attack first"
                 return
             aid = self._records[row].id
             self.ws.edit(
-                f"attack {aid}: back to the host's bytes (unsaved)",
+                f"attack {aid}: back to the base monster's",
                 lambda: sess.clear_attack(aid),
             )
 
-        self._act("record to host", run)
+        self._act("attack to base", run)
 
     # ---- sync ------------------------------------------------------------------------ #
 
     def sync(self) -> None:
-        ws, vp = self.ws, self.ws.vp
+        ws = self.ws
         self.pages.show_page(ws.scene is not None)
         if ws.scene is None:
             return
         host, sess = ws.host_attacks(), ws.attack_session
-        self.source.buttons[HOST].setText(host_text(ws))
-        kit.put(self.source, ws.attacks_source)
+        sync_source(self.source, ws, ws.attacks_source)
         kit.put(self.draw, ws.show_attacks)
-        kit.put(self.xray, vp is not None and vp.hitboxes_xray)
-        self.xray.setEnabled(vp is not None)
+        sync_see_through(self.xray, ws)
         self.no_intel.setText(ws.intel_gap("attack"))
         self.no_intel.setVisible(host is None)
         port = ws.attacks_source == PORT
         has_doc = sess is not None and ws.manifest is not None
-        for w in (self.sets_box, self.vols_box, self.records_box, self.adopt_box):
+        for w in (self.sets_box, self.vols_box):
             w.setVisible(host is not None)
         if host is None:
-            for x in (self.join, self.offset_note, self.edit_box):
+            for x in (self.join, self.offset_note, self.edit_box, self.start_box):
                 x.setVisible(False)
         else:
             self._provenance(host)
             self._sets(host, sess if port else None)
             self._volumes(host, sess, port)
             self._levers(host, sess if port else None)
-            self.adopt_box.setVisible(has_doc)
-            ps = ws.pair_sets()
-            self.adopt_pair.setVisible(bool(ps) and ws.pair is not None)
-            if ws.pair is not None:
-                self.adopt_pair.setText(f"Adopt the sets ({ws.pair[0]},{ws.pair[1]}) hits with")
-            self.shared.setText(SHARED.format(sp=ws.host_species or 0))
+            self._start(sess if has_doc else None)
+        self.shared.setText(shared_note(ws))
         self.ship_box.setVisible(has_doc)
-        self.save.sync()
-        self.export.sync()
+        self.send.sync()
+        self.export.setEnabled(ws.exportable())
+        self.keep.setEnabled(port and ws.selected_attack_volume is not None)
         self.no_manifest.setVisible(not has_doc)
+
+    def _start(self, sess: AttackSession | None) -> None:
+        """Copying the action's groups: on top while you have no hitboxes, else in More."""
+        ws = self.ws
+        empty = sess is not None and not sess.volumes()
+        place(self.adopt_pair, self.start_lay if empty else self.again)
+        pair = bool(ws.pair_sets()) and ws.pair is not None
+        self.adopt_pair.setVisible(sess is not None and pair)
+        if ws.pair is not None:
+            m, s = ws.pair
+            self.adopt_pair.setText(
+                f"Copy the hit groups ({m},{s}) uses" + ("" if empty else " again")
+            )
+        self.start_box.setVisible(empty)
 
     def _provenance(self, host: AttackIntel) -> None:
         ws = self.ws
         sp = f"0x{host.spawner:08X}" if host.spawner else "?"
         if host.join == "measured":
             n = len(host.primary.attacks) if host.primary else 0
-            self.join.setText(f"Spawner {sp} to the {n}-record table: MEASURED live.")
+            self.join.setText(f"Spawner {sp} to the {n}-attack table: measured in the game.")
         else:
             self.join.setText(
-                f"Spawner {sp} to table: INFERRED ({host.join}). Only em75's join was walked to"
-                " the HP write; here the id range was matched to the biggest table."
+                f"Spawner {sp} to its table: inferred ({host.join}). Only em75's was traced in"
+                " the game; here the id range was matched to the biggest table."
             )
         self.join.set_level(None if host.join == "measured" else "warning")
         self.join.setToolTip(host.join_provenance)
@@ -532,11 +526,11 @@ class HitboxesPanel(kit.Panel):
         off = None if hsp is None else host.id_offset(hsp)
         if off is None:
             self.offset_note.setText(
-                f"Species {hsp} shares this overlay but its id offset is unknown: a move's"
-                " attack ids cannot be resolved to records."
+                f"Species {hsp} shares this overlay but its id offset is unknown: an action's"
+                " attack ids cannot be matched to attacks."
             )
         else:
-            self.offset_note.setText(f"Species {hsp} uses record = handler id + {off}.")
+            self.offset_note.setText(f"Species {hsp} uses attack = handler id + {off}.")
         self.offset_note.set_level("error" if off is None else None)
         self.offset_note.setVisible(off is None or bool(off))
 
@@ -548,14 +542,14 @@ class HitboxesPanel(kit.Panel):
         if on_pair and ws.pair is not None:
             m, s = ws.pair
             self.move_only.setText(
-                f"Only the sets ({m},{s}) hits with: " + ", ".join(map(str, pair_sets))
+                f"Only the groups ({m},{s}) uses: " + ", ".join(map(str, pair_sets))
             )
             kit.put(self.move_only, ws.sets_of_move_only)
         silent = ws.pair is not None and not pair_sets
         if silent and ws.pair is not None:
             self.no_attack.setText(
-                f"({ws.pair[0]},{ws.pair[1]}) spawns no attack the static scan can see: a turn,"
-                " a roar, a walk; or a computed id."
+                f"({ws.pair[0]},{ws.pair[1]}) spawns no attack the code shows: a turn, a roar,"
+                " a walk; or an id worked out while it runs."
             )
         self.no_attack.setVisible(silent)
         only = on_pair and ws.sets_of_move_only
@@ -564,13 +558,13 @@ class HitboxesPanel(kit.Panel):
             listed = sorted(set(listed) | set(sess.sets()))
         lost = ws.attack_orphans
         self.orphans.setText(
-            f"{len(lost)} volume(s) name a bone this rig does not have"
-            f" ({', '.join(str(getattr(o, 'bone', '?')) for o in lost[:6])}) and are drawn"
-            " NOWHERE. Bone numbers belong to the rig that ships them."
+            f"{len(lost)} hitbox(es) name a joint your skeleton does not have"
+            f" ({', '.join(str(getattr(o, 'bone', '?')) for o in lost[:6])}), so they are drawn"
+            " nowhere. Joint numbers belong to the skeleton they were made for."
         )
         self.orphans.setVisible(bool(lost))
         self.sets_head.setText(
-            f"{len(listed)} set(s) listed of {len(host.sets)}; {len(host.attacks)} attack record(s)"
+            f"{len(listed)} of {len(host.sets)} hit groups; {len(host.attacks)} attacks"
         )
         rows, tips, colors = [], [], []
         levels: list[Level | None] = []
@@ -581,7 +575,7 @@ class HitboxesPanel(kit.Panel):
             names, others = moves_hitting(ws, idx)
             moves = ", ".join(names[:1]) + (f" +{len(names) - 1}" if len(names) > 1 else "")
             if others:
-                moves += (" " if moves else "") + f"({others} pair{'' if others == 1 else 's'})"
+                moves += (" " if moves else "") + f"({others} action{'' if others == 1 else 's'})"
             n_host = 0 if st is None else st.capacity
             over = 0
             if sess is not None:
@@ -598,22 +592,22 @@ class HitboxesPanel(kit.Panel):
             rows.append(
                 (
                     str(idx),
-                    ", ".join(f"{a.id}(p{a.power})" for a in atks[:2]) + more,
                     count,
-                    bone_span(bones) if bones else ("node" if unrigged else ""),
                     moves,
+                    ", ".join(f"{a.id}(p{a.power})" for a in atks[:2]) + more,
                 )
             )
-            tip = [f"attack {a.id}: {a.describe()}" for a in atks]
+            tip = [f"joints {bone_span(bones)}"] if bones else []
+            tip += [f"attack {a.id}: {a.describe()}" for a in atks]
             if names:
                 tip.append("moves: " + ", ".join(names))
             if unrigged:
                 tip.append(
-                    "Un-rigged: every record hangs on bone 126/127, the node's own position,"
-                    " projectile-shaped. Nothing here to re-align to a joint."
+                    "On no joint: every hitbox hangs on 126/127, the attack's own place, like a"
+                    " projectile. Nothing here to move onto a joint."
                 )
             if over:
-                tip.append(f"{over} more than fit in place: the runtime truncates")
+                tip.append(f"{over} more than fit: the game drops the rest")
             tips.append("\n".join(tip))
             colors.append(set_color(idx))
             levels.append("error" if over else None)
@@ -627,13 +621,15 @@ class HitboxesPanel(kit.Panel):
     def _volumes(self, host: AttackIntel, sess: AttackSession | None, port: bool) -> None:
         ws = self.ws
         st = ws.selected_set
-        self.vols_box.title.setText("2  Pick a hitbox" + ("" if st is None else f" in set {st}"))
+        self.vols_box.title.setText(
+            "2  Pick a hitbox" + ("" if st is None else f" in hit group {st}")
+        )
         self.host_hint.setVisible(not port)
         self.to_port.setVisible(not port and sess is not None)
         if not port:
             self.host_hint.setText(
-                "These are the host's hitboxes, read only. To change one, edit it on this"
-                " port: adopt the host's set there first."
+                "These are the base monster's hitboxes, read only. To change one, edit yours:"
+                " copy the base monster's hit group there first."
             )
         editing = port and sess is not None
         vols = [] if sess is None else sess.volumes()
@@ -643,18 +639,21 @@ class HitboxesPanel(kit.Panel):
         self.set_hint.setVisible(editing and (empty_set or not vols))
         if empty_set:
             n = 0 if hs is None else hs.capacity
-            self.set_hint.setText(f"Set {st}: nothing authored, the host's {n} record(s) stand.")
-        elif editing and not vols:
             self.set_hint.setText(
-                "No [[hitbox]] yet: pick a set above to adopt the host's, or add a sphere."
+                f"Hit group {st}: none of yours yet, the base monster's {n} hitbox(es) stand."
             )
+        elif editing and not vols:
+            self.set_hint.setText("Pick a hit group above to copy the base monster's.")
         can_adopt = editing and st is not None and hs is not None and bool(hs.spheres)
-        self.adopt_set.setVisible(can_adopt and ws.selected_attack_volume is None)
+        place(self.adopt_set, self.again if rows_of else self.adopt_here)
+        self.adopt_set.setVisible(
+            can_adopt and (bool(rows_of) or ws.selected_attack_volume is None)
+        )
         self.adopt_set.setText(
-            f"{'Re-adopt' if rows_of else 'Adopt'} the host's set {st}" if st is not None else ""
+            f"Copy the base monster's hit group {st}" + (" again" if rows_of else "")
         )
         self.add.setVisible(editing and st is not None and ws.selected_attack_volume is None)
-        self.add.setText(f"Add a sphere to set {st}")
+        self.add.setText(f"Add a sphere to hit group {st}")
         listing = editing and bool(rows_of if st is not None else vols)
         for w in (self.vols_head, self.vols):
             w.setVisible(listing)
@@ -666,39 +665,35 @@ class HitboxesPanel(kit.Panel):
         rows = rows_of if st is not None else list(enumerate(vols))
         if st is not None:
             cap = sess.capacities.get(st)
-            head = f"Set {st}: {len(rows)} hitbox(es)" + ("" if cap is None else f", {cap} fit")
+            head = f"Hit group {st}: {len(rows)} hitbox(es)" + (
+                "" if cap is None else f", {cap} fit"
+            )
             over = sess.over_capacity(st)
         else:
-            head = f"{len(vols)} hitbox(es) over {len(sess.sets())} set(s)"
+            head = f"{len(vols)} hitbox(es) in {len(sess.sets())} hit group(s)"
             over = sum(sess.over_capacity_all().values())
         self.vols_head.setText(head)
-        self.over.setText(f"{over} more than fit in place: the runtime truncates the set")
+        self.over.setText(f"{over} more than fit: the game drops the rest of the group")
         self.over.setVisible(over > 0)
         cells, data, colors, tips = [], [], [], []
         for i, v in rows:
             changed = sess.volume_changed(i)
             o = v.offset or (0.0, 0.0, 0.0)
             if v.is_node_space:
-                bone, tip = "node", f"Bone {v.bone}: the node's own place, the attack's origin."
+                bone, tip = "attack", f"Joint {v.bone}: the attack's own place, its origin."
             elif v.is_marker:
-                bone, tip = "0x7D", "A JOINER the walker hands on, with no geometry. Drawn nowhere."
+                bone, tip = "0x7D", "A marker the game reads past, with no shape. Drawn nowhere."
             else:
                 bone, tip = str(v.bone), ""
-            cells.append(
-                (
-                    f"{i}{' *' if changed else ''}",
-                    str(v.set),
-                    bone,
-                    v.shape,
-                    f"{v.radius:g}",
-                    f"{o[0]:g} {o[1]:g} {o[2]:g}",
-                )
-            )
+            cells.append((f"{i}{' *' if changed else ''}", str(v.set), bone, f"{v.radius:g}"))
             data.append(i)
             colors.append(set_color(v.set))
-            tips.append(
-                " ".join(t for t in ("Changed, not saved yet." if changed else "", tip) if t)
+            bits = (
+                f"{v.shape}, offset {o[0]:g} {o[1]:g} {o[2]:g}",
+                "Changed, not saved yet." if changed else "",
+                tip,
             )
+            tips.append(" ".join(t for t in bits if t))
         self.vols.set_rows(cells, data, colors=colors, tips=tips)
         self.vols.fit(8)
         pick = ws.selected_attack_volume
@@ -711,14 +706,13 @@ class HitboxesPanel(kit.Panel):
         n = 0 if ws.scene is None else ws.scene.rig.n
         self.form.show_volume(f"Hitbox {pick}", v, n)
         self.form.bone.setToolTip(
-            f"A joint number of THIS port's rig ({n} joints); 126 and 127 are the node's own"
+            f"A joint of your port's skeleton ({n} joints); 126 and 127 are the attack's own"
             " place. Pick a joint in the view to read it."
         )
         self.set_box.setMaximum(max(len(host.sets) - 1, v.set))
         kit.put(self.set_box, v.set)
         self.set_swatch.set(set_color(v.set))
         kit.put(self.label, v.label)
-        self.keep.setText(f"Keep only this in set {v.set}")
         self.edit_box.setVisible(True)
 
     def _levers(self, host: AttackIntel, sess: AttackSession | None) -> None:
@@ -726,19 +720,19 @@ class HitboxesPanel(kit.Panel):
         hp = ws.host_pair()
         if ws.selected_set is not None:
             recs = host.attacks_using(ws.selected_set)
-            title = f"Records using set {ws.selected_set}"
+            title = f"Attacks using hit group {ws.selected_set}"
         elif hp is not None and ws.pair is not None:
             recs = host.records_for(hp.attack_ids, ws.host_species)
-            title = f"Records ({ws.pair[0]},{ws.pair[1]}) spawns"
+            title = f"Attacks ({ws.pair[0]},{ws.pair[1]}) spawns"
         else:
             recs, title = [], ""
         self._records = list(recs)
         if not title:
-            self.records_head.setText("Pick a set or a move to see its attack records.")
+            self.records_head.setText("Pick a hit group or an action to see its attacks.")
         elif not recs:
             self.records_head.setText(f"{title}: none.")
         else:
-            self.records_head.setText(f"{title}: power, element, set.")
+            self.records_head.setText(f"{title}: power, element, group.")
         self.records.setVisible(bool(recs))
         self.to_host.setVisible(bool(recs) and sess is not None)
         cells, tips = [], []
@@ -755,11 +749,11 @@ class HitboxesPanel(kit.Panel):
                     str(vals[0]),
                     f"0x{vals[1]:02X}",
                     str(vals[2]),
-                    "port" if tuned else "host",
+                    "yours" if tuned else "base",
                 ]
             )
             tips.append(
-                f"record 0x{a.va:08X}: kind {a.kind}, angle {a.angle}, tag 0x{a.tag:02X};"
+                f"attack 0x{a.va:08X}: kind {a.kind}, angle {a.angle}, tag 0x{a.tag:02X};"
                 " the rest is not decoded"
             )
         editable = [False, True, True, True, False] if sess is not None else False

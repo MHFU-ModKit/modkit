@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from mhfu.em.intel import PairIntel, SpeciesIntel
 from mhfu_port.manifest import Manifest
 
+from mhfu_studio.monster import species
 from mhfu_studio.shell.findings import Finding, Level
 
 GATE = "gate"
@@ -147,8 +148,8 @@ def align_pair(
     a = Alignment(move or f"({main},{sub})", main, sub, clip, slot, clip_frames, impact)
     if intel is None:
         a.headline = (
-            f"no intel for host em{m.port.host_species:02d}, so nothing is known about "
-            f"({main},{sub})."
+            f"no action data for {species.label(m.port.host_species)}, so nothing is known"
+            f" about ({main},{sub})."
         )
         a._add("warning", "INTEL_ABSENT", a.headline)
         _impact_marker(a)
@@ -158,7 +159,7 @@ def align_pair(
     if a.pair is None:
         a.headline = (
             f"({main},{sub}) is in neither the overlay's jump tables nor the census, so there "
-            "is nothing to align to."
+            "is nothing to check the clip against."
         )
         _impact_marker(a)
         _our_effects(a, m, move, rig)
@@ -194,9 +195,9 @@ def _census(a: Alignment, intel: SpeciesIntel, allow_unentered: bool) -> None:
         a._add(
             "warning" if allow_unentered else "error",
             "NEVER_ENTERED",
-            f"the census measured ZERO entries into ({a.main},{a.sub}). Its handler asks for a "
-            "condition nothing created and returns at once: forced, the move survives exactly "
-            "ONE tick and the clip restarts from frame 0 twice a second. 411 of 411 did."
+            f"the game was watched and never enters ({a.main},{a.sub}): its code waits for "
+            "something nothing set up and returns at once, so forced, the move lasts one tick "
+            "and the clip restarts from frame 0 twice a second. 411 of 411 did."
             + ("  (allow_unentered is set, so this is your call.)" if allow_unentered else ""),
         )
         return
@@ -205,7 +206,7 @@ def _census(a: Alignment, intel: SpeciesIntel, allow_unentered: bool) -> None:
         a._add(
             "info",
             "DWELL",
-            f"the engine entered ({a.main},{a.sub}) {p.entered} time(s) on its own and held it "
+            f"the game entered ({a.main},{a.sub}) {p.entered} time(s) on its own and stayed "
             f"{p.dwell_ticks:.1f} tick(s) ({p.dwell_ticks / 2:.1f} s at 2 Hz){travel}",
         )
         if b.code == "SHORT_DWELL":
@@ -213,19 +214,19 @@ def _census(a: Alignment, intel: SpeciesIntel, allow_unentered: bool) -> None:
         return
     if b.code == "NO_HANDLER" and not b.ok:
         a._add("error", "NO_HANDLER", b.reason)
-    why = f" {intel.census_reason}" if intel.census_reason else ""
+    why = f" ({intel.census_reason})" if intel.census_reason else ""
     a._add(
         "warning",
         "UNMEASURED",
-        f"no census covers ({a.main},{a.sub}), so whether the engine ever enters it is UNKNOWN, "
-        f"not zero. Everything below is STATIC: read out of the overlay, true of every run.{why}",
+        f"({a.main},{a.sub}) was never measured in the game{why}, so whether the game ever "
+        "enters it is unknown, not never. Everything here is read from the code.",
     )
 
 
 def _gates(a: Alignment, p: PairIntel) -> None:
     for frames, kind, what in (
-        (p.fixed_event_frames, GATE, "cursor >= {:g}"),
-        (p.fixed_window_frames, WINDOW, "window edge {:g}"),
+        (p.fixed_event_frames, GATE, "hit check: the code waits for frame {:g}"),
+        (p.fixed_window_frames, WINDOW, "a timing window opens or closes at {:g}"),
     ):
         for f in sorted(set(frames)):
             past = a.frames is not None and f > a.frames
@@ -312,7 +313,7 @@ def _effects(a: Alignment, p: PairIntel, rig: PortRig | None) -> None:
         if e.frame is None:
             continue
         past = a.frames is not None and e.frame > a.frames
-        detail = f"the host spawns effect {e.id} at ITS bone {e.bone} on frame {e.frame}"
+        detail = f"the base monster spawns effect {e.id} at its joint {e.bone} on frame {e.frame}"
         a.markers.append(Marker(float(e.frame), EFFECT, f"fx{e.id}", detail, past))
         if past:
             a._add(
@@ -356,7 +357,7 @@ def _our_effects(a: Alignment, m: Manifest, move: str | None, rig: PortRig | Non
             continue
         past = a.frames is not None and e.frame > a.frames
         on = "" if rig is None else f" ({rig.describe(e.bone)})"
-        detail = f"this port spawns effect {e.id} at ITS bone {e.bone} on frame {e.frame}{on}"
+        detail = f"your port spawns effect {e.id} at its joint {e.bone} on frame {e.frame}{on}"
         a.markers.append(Marker(float(e.frame), OURS, f"fx{e.id}*", detail, past))
         if past:
             a._add(
@@ -374,7 +375,7 @@ def _our_effects(a: Alignment, m: Manifest, move: str | None, rig: PortRig | Non
 
 def _impact_marker(a: Alignment) -> None:
     if a.impact is not None:
-        detail = f"where this clip's own contact is (clips.{a.clip}.impact_frame)"
+        detail = f"where your clip's own hit lands (clips.{a.clip}.impact_frame)"
         a.markers.append(Marker(float(a.impact), IMPACT, "impact", detail))
 
 
@@ -388,22 +389,22 @@ def _headline(a: Alignment) -> str:
     s = "s" if len(gates) > 1 else ""
     if a.impact is None:
         if not gates:
-            return f"({a.main},{a.sub}) names no fixed frames, so only the clip's LENGTH matters."
+            return f"({a.main},{a.sub}) checks no fixed frames, so only the clip's length matters."
         return (
-            f"this handler tests frame{s} {_gate_list(gates)}; this clip records no impact frame "
-            "yet: scrub to its contact and set it, and the gap is the answer."
+            f"the base monster's code checks frame{s} {_gate_list(gates)}; your clip has no impact"
+            " frame yet: scrub to where it hits, set it in Timeline, and the gap is the answer."
         )
     if not gates:
         return (
-            f"this clip's impact is at frame {a.impact:g}, and ({a.main},{a.sub}) tests no fixed "
-            "frames: nothing has to line up."
+            f"your clip's impact is at frame {a.impact:g}, and ({a.main},{a.sub}) checks no fixed"
+            " frames: nothing has to line up."
         )
     near = min(gates, key=lambda f: abs(f - (a.impact or 0.0)))
     gap = a.impact - near
-    head = f"this handler tests frame{s} {_gate_list(gates)}; this clip's impact is at frame"
-    head += f" {a.impact:g}"
+    head = f"the base monster's code checks frame{s} {_gate_list(gates)}; your clip's impact is"
+    head += f" at frame {a.impact:g}"
     if abs(gap) <= IMPACT_TOLERANCE:
-        return f"{head}, on the {near:g} test ({gap:+.1f})."
+        return f"{head}, on the {near:g} check ({gap:+.1f})."
     side = "after" if gap > 0 else "before"
     a._add(
         "warning",
@@ -412,4 +413,4 @@ def _headline(a: Alignment) -> str:
         "the handler fires at ITS number, so the hit and the animation part company by that much.",
     )
     when = "late" if gap > 0 else "early"
-    return f"{head}, {abs(gap):.1f} frame(s) {when} (the nearest test is {near:g})."
+    return f"{head}, {abs(gap):.1f} frame(s) {when} (the nearest check is {near:g})."

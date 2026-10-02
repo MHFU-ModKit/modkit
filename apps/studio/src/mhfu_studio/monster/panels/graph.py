@@ -31,11 +31,24 @@ KINDS: dict[str, RGBA] = {
     "plain": (0.40, 0.42, 0.46, 1.0),
 }
 NOTES = {
-    "moves": "[moves] is empty and nothing is selected: pick a pair in Action, or bind one, "
-    "to see its chain",
-    "selected": "select a pair in Action",
-    "attacks": "no pair in this overlay names an attack id",
+    "moves": "you have no moves and no action is picked: pick one in Action, or give one a "
+    "clip, to see where it leads",
+    "selected": "pick an action in Action",
+    "attacks": "no action of this monster spawns an attack the code shows",
 }
+#: what ends an action (`PairIntel.ends_on`), in words: in full, and on a graph node
+ENDS = {
+    "clip": ("with the clip", "clip"),
+    "clip+cursor": ("with the clip", "clip"),
+    "cursor": ("at a clip frame", "clip frame"),
+    "budget": ("on a timer", "timer"),
+}
+
+
+def ends_text(p: PairIntel, short: bool = False) -> str:
+    """`on a timer`; empty when unknown."""
+    words = ENDS["budget"] if p.budget.gated else ENDS.get(p.ends_on, ("", ""))
+    return words[short]
 
 
 @dataclass
@@ -85,14 +98,14 @@ class Layout:
 def _label(p: PairIntel, move: str | None) -> list[str]:
     lines = [f"({p.main},{p.sub})" + (f"  {move}" if move else "")]
     if p.a1:
-        lines.append("a1 " + ",".join(map(str, p.a1[:4])) + ("+" if p.a1_computed else ""))
+        lines.append("anim " + ",".join(map(str, p.a1[:4])) + ("+" if p.a1_computed else ""))
     elif p.a1_computed:
-        lines.append("a1 computed")
+        lines.append("anim worked out live")
     bits = []
     if p.attack_ids:
-        bits.append("atk " + ",".join(map(str, p.attack_ids[:3])))
-    if p.ends_on and p.ends_on != "unknown":
-        bits.append(p.ends_on)
+        bits.append("attack " + ",".join(map(str, p.attack_ids[:3])))
+    if ends_text(p):
+        bits.append("ends: " + ends_text(p, short=True))
     if bits:
         lines.append("  ".join(bits))
     return lines
@@ -165,7 +178,7 @@ def _build(
 ) -> Layout:
     lay = Layout()
     if intel is None or not intel.has_chain:
-        lay.note = "no hand-off intel for this overlay: its species intel has no chain"
+        lay.note = "where the actions lead is not known: this monster's data has no hand-offs"
         return lay
     bound: dict[Pair, str] = {}
     for name in sorted(moves):
@@ -286,16 +299,17 @@ def walk_line(intel: SpeciesIntel, pair: Pair) -> str:
     """Where a pair hands to, on one line."""
     p = intel.pair(*pair)
     if p is None or p.next is None:
-        return f"({pair[0]},{pair[1]}): no hand-off intel"
+        return f"({pair[0]},{pair[1]}): where it goes is not known"
     if not p.next:
         return (
-            f"({p.main},{p.sub}) never ends itself: it stays until the brain or a flinch moves it"
+            f"({p.main},{p.sub}) never ends by itself: it stays until the brain or a flinch"
+            " moves it"
         )
     bits = [
         "/".join(f"({m},{s})" for m, s in e.to) + (f" when {e.reason}" if e.reason else "")
         for e in p.next
     ]
-    return f"({p.main},{p.sub}) ends -> " + "  |  ".join(bits)
+    return f"({p.main},{p.sub}) goes to " + "  |  ".join(bits)
 
 
 def info_lines(
@@ -324,30 +338,30 @@ def info_lines(
     if p.handler:
         bits.append(f"handler 0x{p.handler:08X}")
     if p.a1:
-        bits.append("a1 " + ",".join(map(str, p.a1[:5])) + ("+" if p.a1_computed else ""))
+        bits.append("anim " + ",".join(map(str, p.a1[:5])) + ("+" if p.a1_computed else ""))
     if p.attack_ids:
         bits.append("attack " + ",".join(map(str, p.attack_ids)))
-    if p.ends_on and p.ends_on != "unknown":
-        bits.append("ends on " + p.ends_on)
+    if ends_text(p):
+        bits.append("ends " + ends_text(p))
     if bits:
         lines.append("  " + "   ".join(bits))
     if p.next:
-        lines.append("hands to:")
+        lines.append("goes to:")
         for e in p.next[:10]:
             tgt = "/".join(f"({m},{s})" for m, s in e.to) or "(computed)"
             lines.append(f"  -> {tgt:<12} {e.describe() or 'always'}")
         if len(p.next) > 10:
             lines.append(f"  ... {len(p.next) - 10} more")
     elif p.next is not None:
-        lines.append("hands to: nothing, it never ends by itself")
+        lines.append("goes to: nothing, it never ends by itself")
     if p.prev:
         more = " ..." if len(p.prev) > 10 else ""
-        lines.append("entered from: " + " ".join(f"({m},{s})" for m, s in p.prev[:10]) + more)
+        lines.append("comes from: " + " ".join(f"({m},{s})" for m, s in p.prev[:10]) + more)
     else:
-        lines.append("entered from: the brain (no handler hands here)")
+        lines.append("comes from: the brain (no action leads here)")
     if p.measured:
-        lines.append(f"census: entered {p.entered}, dwell {p.dwell_ticks:.1f} ticks")
-    lines.append("double-click: select it in Action")
+        lines.append(f"measured: entered {p.entered} times, lasts {p.dwell_ticks:.1f} ticks")
+    lines.append("double-click: work on it in Action")
     return lines
 
 

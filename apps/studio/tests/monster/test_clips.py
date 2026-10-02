@@ -54,7 +54,7 @@ def test_coverage(packs):
     assert kinds == {1: C.CARRIED, 2: C.CARRIED, 3: C.FILLER, 4: C.HOST, 5: C.ALTERED, 6: C.CARRIED}
     assert cov.dropped == {7: (90, False)} and cov.slots[2].scriptable
     assert cov.counts()[C.DROPPED] == 1 and "1 donor clip(s) DROPPED" in cov.summary()
-    assert "COPY OF THE IDLE" in cov.slots[3].why()
+    assert "idle copy" in cov.slots[3].why().lower()
 
 
 def test_coverage_without_evidence(packs):

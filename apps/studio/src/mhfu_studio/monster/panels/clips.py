@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Clips panel: every slot, what is really in it (a FILLER slot is a copy of idle, and forcing
-it looks exactly like a failed override), and the names it carries, keyed to this build."""
+"""The Clips panel: every anim, what is really in it (an idle copy plays idle, and forcing it
+looks exactly like a failed override), and the names it carries, keyed to this build."""
 
 from __future__ import annotations
 
@@ -16,28 +16,43 @@ from mhfu_studio.shell.findings import Level
 from mhfu_studio.ui import kit
 
 from .common import COVERAGE
-from .widgets import NoScene, SaveRow
+from .widgets import NoScene
 
 if TYPE_CHECKING:
     from mhfu_studio.monster.workspace import MonsterWorkspace
     from mhfu_studio.shell.studio import Studio
 
 KINDS = (clips.CARRIED, clips.FILLER, clips.HOST, clips.ALTERED)
+#: a kind in words: one, many
+KIND_WORDS = {
+    clips.CARRIED: ("own clip", "own clips"),
+    clips.FILLER: ("idle copy", "idle copies"),
+    clips.HOST: ("base monster's", "base monster's"),
+    clips.ALTERED: ("changed", "changed"),
+    clips.UNKNOWN: ("unknown", "unknown"),
+}
 KIND_TIPS = {
-    clips.CARRIED: "The donor's own clip, intact: forcing this a1 plays the move you ported",
-    clips.FILLER: "A copy of the idle clip where the donor had nothing: forcing it plays"
+    clips.CARRIED: "The original's own clip, intact: forcing this anim plays the move you ported",
+    clips.FILLER: "A copy of the idle clip where the original had nothing: forcing it plays"
     " idle, which looks exactly like an override that never fired",
-    clips.HOST: "The host species' own clip, left in place: the host's motion on your rig",
-    clips.ALTERED: "Matches neither the donor's clip nor the host's",
+    clips.HOST: "The base monster's own clip, left in place: its motion on your skeleton",
+    clips.ALTERED: "Matches neither the original's clip nor the base monster's",
 }
 FILLER_WARNING = (
-    "{n} slot(s) are FILLER, a copy of idle. Forcing one plays idle, which on screen is"
-    " identical to an override that never fired: check the kind before blaming the script."
+    "{n} anims are idle copies. Forcing one plays idle, which looks just like an override that"
+    " never fired: check the kind before blaming the script."
 )
 BUILD_TIP = (
-    "The build a label typed here is keyed to. Clip slots are PER BUILD: rebuild the port and"
-    " they can shift, so every label remembers the build and its clip's length."
+    "The build a name typed here is keyed to. Anim numbers are per build: rebuild the port and"
+    " they can shift, so every name remembers the build and its clip's length."
 )
+#: a name's health in words
+STATUS = {
+    clips.MOVED: "moved",
+    clips.AMBIGUOUS: "unclear",
+    clips.LOST: "gone",
+    clips.UNCHECKABLE: "unchecked",
+}
 
 
 def _page() -> tuple[QWidget, QVBoxLayout]:
@@ -49,7 +64,7 @@ def _page() -> tuple[QWidget, QVBoxLayout]:
 
 
 class ClipsPanel(kit.Panel):
-    """Every animation slot: play one, see what it really holds, and name it."""
+    """Every anim: play one, see what it really holds, and name it."""
 
     def __init__(self, ws: MonsterWorkspace, studio: Studio) -> None:
         super().__init__(scroll=False)
@@ -58,9 +73,7 @@ class ClipsPanel(kit.Panel):
         page, lay = _page()
 
         self.count = kit.label(role="title", wrap=False)
-        self.build = kit.label(role="muted", selectable=True)
-        self.build.setToolTip(BUILD_TIP)
-        lay.addWidget(kit.row(self.count, self.build, stretch=True))
+        lay.addWidget(self.count)
 
         self.kinds: dict[str, tuple[kit.Swatch, kit.Alert]] = {}
         row: list[QWidget] = []
@@ -76,28 +89,28 @@ class ClipsPanel(kit.Panel):
         self.filler.setToolTip(KIND_TIPS[clips.FILLER])
         self.dropped = kit.label(role="muted")
         self.dropped.setToolTip(
-            "The host pack has no slot of that number, so the porter had nowhere to put these"
-            " donor clips: they are not in this build at all."
+            "The base monster has no anim of that number, so the builder had nowhere to put"
+            " these clips of the original: they are not in this build at all."
         )
         self.notes = kit.label(role="muted")
         self.health = kit.Alert()
         self.suspect = kit.Items(
-            tip="Labels that stopped meaning what they say in this build; hover one for why"
+            tip="Names that stopped meaning what they say in this build; hover one for why"
         )
         self.suspect.setMaximumHeight(110)
         for w in (self.filler, self.dropped, self.notes, self.health, self.suspect):
             lay.addWidget(w)
 
         self.filter = kit.text_field(
-            tip="Shows only the clips whose slot, name, kind or label contains this text",
-            placeholder="Filter: slot, name, kind or label",
+            tip="Shows only the clips whose anim #, name, kind or label contains this text",
+            placeholder="Filter: anim #, name, kind or label",
         )
         self.filter.textChanged.connect(self._filter)
         lay.addWidget(self.filter)
         self.table = kit.Table(
-            ["a1", "Kind", "Frames", "Loop", "Travel", "Name"],
-            tip="Every slot in the build. Click one to play it. a1 is the number a script"
-            " passes to force it; Travel is how far the clip carries the body.",
+            ["Anim #", "Kind", "Frames", "Loop", "Travel", "Name"],
+            tip="Every anim in the build; click one to play it from the start. The anim # is what"
+            " a script passes to force it, Travel how far the clip carries the body.",
             swatch_column=1,
         )
         self.table.picked.connect(self._play)
@@ -120,25 +133,29 @@ class ClipsPanel(kit.Panel):
         )
         self.label = kit.text_field(
             tip="What the clip shows, in your words: 'tail sweep', 'roar'",
-            placeholder="what it shows",
+            placeholder="tail sweep",
         )
         for field in (self.name, self.label):
             field.returnPressed.connect(self._apply)
         form.row("Name", self.name)
-        form.row("Label", self.label)
+        form.row("Shows", self.label)
         self.editor.body.addWidget(form)
         self.apply = kit.button(
             "Apply",
-            tip="Writes the name and label into the manifest, keyed to this build. It stays"
-            " unsaved until you save.",
+            tip="Writes the name and label into the manifest, keyed to this build",
             on=self._apply,
             icon="ph.check",
         )
-        self.save = SaveRow(ws, studio)
-        self.editor.body.addWidget(kit.row(self.apply, self.save, stretch=True))
+        self.editor.body.addWidget(kit.row(self.apply, stretch=True))
         self.edit_hint = kit.label(role="muted")
         self.editor.body.addWidget(self.edit_hint)
         lay.addWidget(self.editor)
+
+        self.more = kit.More(tip="Which build the names are keyed to")
+        self.build = kit.label(role="mono", selectable=True)
+        self.build.setToolTip(BUILD_TIP)
+        self.more.body.addWidget(self.build)
+        lay.addWidget(self.more)
 
         self.empty = NoScene(studio)
         self.pages = kit.Pages(page, self.empty)
@@ -149,7 +166,7 @@ class ClipsPanel(kit.Panel):
 
     def _play(self, slot: object) -> None:
         if isinstance(slot, int):
-            self.studio.act(f"play slot {slot}", lambda: self.ws.play_slot(slot))()
+            self.studio.act(f"play anim {slot}", lambda: self.ws.play_slot(slot))()
 
     def _apply(self) -> None:
         def run() -> None:
@@ -168,7 +185,7 @@ class ClipsPanel(kit.Panel):
             return
         vocab = ws.vocabulary()
         self.count.setText(f"{len(sc.clips)} clips, {sum(c.loop for c in sc.clips)} looping")
-        self.build.setText(vocab.build or "")
+        self.build.setText(f"build {vocab.build}" if vocab.build else "build not identified")
         self._coverage(vocab)
         self._table(vocab)
         self._editor(vocab)
@@ -178,25 +195,28 @@ class ClipsPanel(kit.Panel):
         n = cov.counts()
         self.kind_row.setVisible(cov.has_source)
         for kind, (sw, text) in self.kinds.items():
-            text.setText(f"{n[kind]} {kind.lower()}")
+            text.setText(f"{n[kind]} {KIND_WORDS[kind][n[kind] != 1]}")
             text.set_level("warning" if kind == clips.FILLER and n[kind] else None)
-            text.setEnabled(bool(n[kind]))
-            sw.setEnabled(bool(n[kind]))
+            text.setVisible(bool(n[kind]))
+            sw.setVisible(bool(n[kind]))
         self.filler.setText(FILLER_WARNING.format(n=n[clips.FILLER]))
         self.filler.setVisible(cov.has_source and n[clips.FILLER] > 0)
         self.dropped.setText(
-            f"{len(cov.dropped)} donor clip(s) dropped: " + ", ".join(map(str, sorted(cov.dropped)))
+            f"{len(cov.dropped)} of the original's clips are not in this build: "
+            + ", ".join(map(str, sorted(cov.dropped)))
         )
         self.dropped.setVisible(bool(cov.dropped))
         self.notes.setText("\n".join(f"• {n}" for n in vocab.notes))
         self.notes.setVisible(bool(vocab.notes))
         bad = vocab.suspect
-        self.health.setText(f"{len(bad)} label(s) do not match this build")
+        self.health.setText(f"{len(bad)} name(s) do not match this build")
         self.health.setVisible(bool(bad))
         self.suspect.setVisible(bool(bad))
         self.suspect.set_items(
             [
-                kit.Item(f"{t.name} (slot {t.slot}): {t.status}", t.slot, t.message, "warning")
+                kit.Item(
+                    f"{t.name} (anim {t.slot}): {STATUS[t.status]}", t.slot, t.message, "warning"
+                )
                 for t in bad
             ]
         )
@@ -212,7 +232,7 @@ class ClipsPanel(kit.Panel):
             cov = vocab.coverage.slots.get(c.slot)
             found = ws.manifest_clip(c.slot)
             label = found[1].label if found else ""
-            text = f"{c.slot} {' '.join(c.names)} {cov.kind if cov else ''} {label}"
+            text = f"{c.slot} {' '.join(c.names)} {kind_text(cov)} {label}"
             if needle and needle not in text.lower():
                 continue
             net, _ = ws.travel(c.slot)
@@ -228,12 +248,12 @@ class ClipsPanel(kit.Panel):
             )
             data.append(c.slot)
             colors.append(None if cov is None else COVERAGE[cov.kind])
-            tip = [cov.why() if cov else "No coverage verdict"]
+            tip = [cov.why() if cov else "Kind unknown"]
             tip.append(f"{wall_clock(c.frames, speed):.2f} s at speed {speed:.2f}")
             if label:
                 tip.append(label)
             if not c.whole_rig:
-                tip.append("Partial: present in only some joint-partition streams")
+                tip.append("Partial: it moves only some of the joints")
             tips.append("\n".join(tip))
             levels.append(level_of(cov))
         self.table.set_rows(rows, data, colors=colors, tips=tips, levels=levels)
@@ -251,7 +271,6 @@ class ClipsPanel(kit.Panel):
             w.setVisible(editing)
         self.slot_swatch.setVisible(False)
         self.slot_kind.setVisible(editing)
-        self.save.sync()
         if ws.manifest is None:
             self.edit_hint.setText("Names and labels live in a manifest: open a port manifest.")
         elif ws.edit_slot is None:
@@ -260,10 +279,10 @@ class ClipsPanel(kit.Panel):
         if not editing or ws.edit_slot is None:
             return
         cov = vocab.coverage.slots.get(ws.edit_slot)
-        self.slot.setText(f"Slot {ws.edit_slot}")
+        self.slot.setText(f"Anim {ws.edit_slot}")
         self.slot_swatch.set(None if cov is None else COVERAGE[cov.kind])
         self.slot_kind.setText(kind_text(cov))
-        self.why.setText(cov.why() if cov else "No coverage verdict for this slot.")
+        self.why.setText(cov.why() if cov else "Its kind is unknown.")
         self.why.set_level(level_of(cov))
         if ws.edit_slot != self._slot:  # a new pick loads its name; typing is left alone
             self._slot = ws.edit_slot
@@ -272,9 +291,9 @@ class ClipsPanel(kit.Panel):
 
 
 def kind_text(cov: SlotCoverage | None) -> str:
-    return "" if cov is None else cov.kind.lower()
+    return "" if cov is None else KIND_WORDS[cov.kind][0]
 
 
 def level_of(cov: SlotCoverage | None) -> Level | None:
-    """FILLER is the loud one: a forced idle looks like an override that never fired."""
+    """An idle copy is the loud one: a forced idle looks like an override that never fired."""
     return "warning" if cov is not None and cov.kind == clips.FILLER else None
