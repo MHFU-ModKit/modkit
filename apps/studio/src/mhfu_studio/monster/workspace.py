@@ -29,7 +29,7 @@ from mhfu_port.manifest import Manifest, ManifestError
 from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Skeleton
 
-from mhfu_studio.monster import align, clips, inputs, species
+from mhfu_studio.monster import actions, align, clips, inputs, species
 from mhfu_studio.monster.attacks import AttackSession, hitbox_of
 from mhfu_studio.monster.core.scene import MHFU, Scene
 from mhfu_studio.monster.document import PortDocument
@@ -67,6 +67,8 @@ Pair = tuple[int, int]
 PORT, HOST = "port", "host"
 #: the Timeline's height: its title, the transport and the frame strip; the rest scrolls
 TIMELINE_H = 120
+#: the left docks' width: the Actions table's four columns
+ACTIONS_W = 460
 PLAY = Shortcut(("Space",), "Plays the clip, or pauses it")
 STEP = Shortcut(("Left", "Right"), "One game frame back, or on")
 REWIND = Shortcut(("Home",), "Back to the clip's first frame")
@@ -186,6 +188,8 @@ class MonsterWorkspace(Workspace):
         self._travel: dict[int, tuple[float, float]] = {}
         self._counts: dict[int, int] | None = None
         self._labels: clips.LabelSession | None = None
+        #: the Actions rows and what they were made from
+        self._rows: tuple[tuple[object, ...], list[actions.ActionRow]] | None = None
         self._parts: PartSession | None = None
         self._attacks: AttackSession | None = None
 
@@ -319,6 +323,12 @@ class MonsterWorkspace(Workspace):
 
         return (
             Dock(
+                "Actions", "left", build("action", "ActionsPanel"),
+                "Which clip plays for each of the base monster's actions: pick one to watch it,"
+                " give it another clip, check its timing.",
+                size=ACTIONS_W,
+            ),
+            Dock(
                 "Clips", "left", build("clips", "ClipsPanel"),
                 "Every anim, what is really in it, and the name it goes by.",
             ),
@@ -352,18 +362,6 @@ class MonsterWorkspace(Workspace):
                 " checks it.",
                 alone=True,
                 size=TIMELINE_H,
-            ),
-            Dock(
-                "Moves", "bottom", build("moves", "MovesPanel"),
-                "The base monster's actions as a graph of which leads to which. Click one to"
-                " read it; double-click to work on it in Action.",
-                shown=False,
-            ),
-            Dock(
-                "Action", "bottom", build("action", "ActionPanel"),
-                "Which of your clips plays for each of the base monster's actions, and what the"
-                " action expects of it: its frames, effects and hits.",
-                shown=False,
             ),
         )  # fmt: skip
 
@@ -463,11 +461,8 @@ class MonsterWorkspace(Workspace):
             self.play_slot(m.clips[key].slot)
             self.focus("Clips")
         elif section == "moves" and isinstance(key, str) and key in m.moves:
-            mv = m.moves[key]
-            if mv.clip in m.clips:
-                self.play_slot(m.clips[mv.clip].slot)
-            self.select_pair(mv.main, mv.sub, key)
-            self.focus("Action")
+            self.select_action(m.moves[key].main, m.moves[key].sub, key)
+            self.focus("Actions")
         elif section == "hurtbox" and isinstance(key, int) and key < len(m.hurtboxes):
             self.show_parts, self.parts_source = True, PORT
             self.sync_hitboxes()
@@ -506,8 +501,8 @@ class MonsterWorkspace(Workspace):
             if self.vp is not None:
                 self.vp.select_joint(e.bone)
             if e.move in m.moves:
-                self.select_pair(m.moves[e.move].main, m.moves[e.move].sub, e.move)
-            self.focus("Action")
+                self.select_action(m.moves[e.move].main, m.moves[e.move].sub, e.move)
+            self.focus("Actions")
 
     def close(self) -> None:
         if self.vp is not None:
@@ -932,7 +927,47 @@ class MonsterWorkspace(Workspace):
         return align.PortRig(sc.rig.n, driven, self.joint_counts())
 
     def select_pair(self, main: int, sub: int, move: str | None = None) -> None:
+        """The action against the clip on screen, which keeps playing."""
         self.pair, self.move = (int(main), int(sub)), move
+        self.recompute_alignment()
+        self.follow_action()
+
+    def action_rows(self) -> list[actions.ActionRow]:
+        """The Actions rows, made again when the manifest, the intel or the coverage changes."""
+        m, si = self.manifest, self.host_intel()
+        if m is None:
+            return []
+        cov = self.coverage()[0]
+        made = (m, si, cov)
+        if self._rows is None or any(a is not b for a, b in zip(self._rows[0], made, strict=True)):
+            self._rows = made, actions.rows(m, si, cov, self.host_attacks(), self.host_species)
+        return self._rows[1]
+
+    def plays(self, main: int, sub: int, move: str | None = None) -> actions.Plays:
+        """What plays in this port while the game is in the base monster's `(main, sub)`."""
+        si = self.host_intel()
+        p = None if si is None else si.pair(main, sub)
+        return actions.plays_now(self.manifest, p, main, sub, move, self.coverage()[0])
+
+    def select_action(self, main: int, sub: int, move: str | None = None) -> None:
+        """The one way to pick an action (a row, the graph, the table of every action): `move`,
+        else the one bound on it; what plays now from frame 0, the base monster's anim beside."""
+        main, sub = int(main), int(sub)
+        move = move if move is not None else actions.bound_move(self.manifest, main, sub)
+        self.pair, self.move = (main, sub), move
+        self.graph.picked = self.pair
+        now = self.plays(main, sub, move) if self.browsing_the_host else None
+        if now is not None and now.playable and now.slot is not None:
+            self.play_slot(now.slot)
+        elif self.vp is not None and self.vp.clip is not None:
+            self.rewind()
+            if now is not None:
+                self.message = (
+                    f"anim {now.slot} is not in this build: the game finds no clip for"
+                    f" ({main},{sub})"
+                    if now.slot is not None
+                    else f"({main},{sub}) names no anim: the game keeps the clip it was playing"
+                )
         self.recompute_alignment()
         self.follow_action()
 
@@ -965,14 +1000,28 @@ class MonsterWorkspace(Workspace):
         self.markers = self.alignment.markers
 
     def bind_move(self, name: str = "") -> None:
-        """The alignment as `[moves.<name>]`, `move_<main>_<sub>` when unnamed: a move of that
-        name is updated in place, an unnamed clip on screen named."""
+        """The clip on screen for the selected action, as `[moves.<name>]`: by default the
+        selected move, updated in place (its after, hold_max and claim kept), else a new
+        `move_<main>_<sub>`; an unnamed clip gets a name."""
         al, s = self.alignment, self.label_session
         if al is None or s is None:
             return
-        name = name.strip() or f"move_{al.main}_{al.sub}"
+        name = name.strip() or self.move or f"move_{al.main}_{al.sub}"
         if self.edit("", lambda: s.bind_move(name, al.main, al.sub, al.slot)):
             self.select_pair(al.main, al.sub, name)
+
+    def unbind(self) -> None:
+        """Removes the selected move: the action plays the base monster's anim again."""
+        s, name, pair = self.label_session, self.move, self.pair
+        if s is None or name is None or pair is None:
+            return
+        if self.edit("", lambda: s.unbind_move(name)):
+            self.select_action(*pair)
+
+    def rename_move(self, new: str) -> None:
+        s, old = self.label_session, self.move
+        if s is not None and old is not None and self.edit("", lambda: s.rename_move(old, new)):
+            self.move = new.strip()
 
     def host_pair(self) -> PairIntel | None:
         """The selected pair's intel when it is the host's; None while browsing."""
