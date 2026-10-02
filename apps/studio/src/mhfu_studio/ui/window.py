@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 STATE_VERSION = 1
 FINDINGS = "Findings"
 FINDINGS_TIP = "What the checks found in the document: errors, warnings and notes"
+STOP_TIP = "Stops the running Send to game job; nothing runs now"
 AREAS = {
     "left": Qt.DockWidgetArea.LeftDockWidgetArea,
     "right": Qt.DockWidgetArea.RightDockWidgetArea,
@@ -418,14 +419,14 @@ class Window(QMainWindow):
         quit_ = self._action(
             "Quit", "Closes the studio; it asks first about unsaved edits", self.close, k.Quit
         )
-        # its text and tip follow the studio (`_sync_send`); Ctrl is Cmd on macOS
+        # tips and states follow the studio (`_sync_send`); Ctrl is Cmd on macOS
         self.send_action = self._action(
-            "Send to game", chrome.SEND_TIP, self._send_or_stop, QKeySequence("Ctrl+Return")
+            "Send to game", chrome.SEND_TIP, s.send, QKeySequence("Ctrl+Return")
         )
-        self.send_action.setAutoRepeat(False)  # a held key would send, then stop
+        self.stop_action = self._action("Stop", STOP_TIP, s.stop, QKeySequence("Ctrl+."))
         f.addActions([self.open_action, self.save_action, self.save_as_action])
         f.addSeparator()
-        f.addAction(self.send_action)
+        f.addActions([self.send_action, self.stop_action])
         f.addSeparator()
         f.addAction(quit_)
 
@@ -493,25 +494,21 @@ class Window(QMainWindow):
 
     # ---- the game -------------------------------------------------------------------- #
 
-    def _send_or_stop(self) -> None:
-        if self.studio.job is not None:
-            self.studio.stop()
-        else:
-            self.studio.send()
-
     def _sync_send(self) -> None:
-        """Send to game sends, says why it cannot, or stops the running job."""
-        a, job = self.send_action, self.studio.job
-        why = None if job is not None else self.studio.send_blocker()
-        key = a.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
-        tip = f"Stops {job.title}" if job is not None else why or f"{chrome.SEND_TIP} ({key})"
-        a.setText("Stop sending" if job is not None else "Send to game")
-        a.setIconText("Stop" if job is not None else "Send to game")
-        a.setToolTip(tip)
-        a.setStatusTip(tip)
-        a.setEnabled(why is None)
+        """Send only sends, Stop only stops; the title bar's button is Stop while a job runs."""
+        job, why = self.studio.job, self.studio.send_blocker()
+        for a, tip, on in (
+            (self.send_action, why or chrome.SEND_TIP, why is None),
+            (self.stop_action, STOP_TIP if job is None else f"Stops {job.title}", job is not None),
+        ):
+            key = a.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
+            a.setToolTip(f"{tip} ({key})")
+            a.setStatusTip(a.toolTip())
+            a.setEnabled(on)
         b = self.bar.send
-        if b.property("busy") != (job is not None):
+        want = self.stop_action if job is not None else self.send_action
+        if b.defaultAction() is not want:
+            b.setDefaultAction(want)
             b.setProperty("busy", job is not None)
             b.style().unpolish(b)  # the stylesheet's busy rule applies on a re-polish
             b.style().polish(b)
