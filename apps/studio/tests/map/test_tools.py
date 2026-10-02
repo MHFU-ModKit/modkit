@@ -28,6 +28,7 @@ from mhfu_studio.map.workspace import MapWorkspace
 from mhfu_studio.shell.input import Button, Key, Mod, Pointer
 from mhfu_studio.shell.manipulator import ARM_PX, Handle, hit, world_per_px
 from mhfu_studio.shell.overlay import Ink, Recorder
+from mhfu_studio.shell.studio import Studio
 from mhfu_studio.shell.workspace import Gesture, registered
 
 SIZE = (320, 200)
@@ -391,6 +392,19 @@ def test_hud_and_hint(ws: MapWorkspace) -> None:
     assert "Del remove" in ws.hint()
     ws.set_tool(PICK, COLLISION)
     assert ws.hint().startswith("Click a collision triangle to move it")
+
+
+def test_revert_opens_the_file_again(ws: MapWorkspace, doc_dir: Path) -> None:
+    move = {"op": "transform", "sub": 0, "group": 1, "vertices": [0, 1, 2], "by": [0, 9, 0]}
+    d = MapDocument("d", 0, doc_dir)
+    d.ensure_stage(139).ops.append(move)
+    d.save()
+    ws.open(doc_dir)
+    assert ws.session is not None
+    ws.session.push([move])
+    assert ws.doc.dirty
+    Studio([ws]).revert()
+    assert not ws.doc.dirty and ws.session is not None and len(ws.session.ops) == 1
 
 
 def test_open_and_reveal(ws: MapWorkspace, doc_dir: Path) -> None:

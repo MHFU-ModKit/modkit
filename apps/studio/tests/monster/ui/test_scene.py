@@ -40,7 +40,16 @@ def test_scene_counts(workspace: MonsterWorkspace, qtbot: Any) -> None:
     assert p.name.text() == "t" and p.values["bones"][1].text() == "3"
     assert p.values["host"][1].text() == "Tigrex (em75)"
     assert not p.values["vertices"][1].isVisibleTo(p), "the mesh's counts are in More"
-    assert not p.revert.isEnabled(), "nothing to throw away"
+
+
+def test_revert_is_undone(workspace: MonsterWorkspace) -> None:
+    studio, doc = Studio([workspace]), workspace.doc
+    assert doc is not None
+    doc.edit(lambda m: setattr(m.hurtboxes[0], "radius", 1.0))
+    studio.revert()
+    assert not doc.dirty and doc.manifest.hurtboxes[0].radius != 1.0
+    studio.undo()
+    assert doc.manifest.hurtboxes[0].radius == 1.0
 
 
 def test_view_toggles(workspace: MonsterWorkspace, qtbot: Any) -> None:

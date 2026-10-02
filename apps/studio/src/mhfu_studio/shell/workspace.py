@@ -163,6 +163,12 @@ class Workspace(Protocol):
     def refresh(self) -> None:
         """The shell changed the document (undo, redo, save as): re-read what depends on it."""
 
+    def revert(self) -> None:
+        """Drops the unsaved edits: the document as its file has it, opened again."""
+        doc = self.document
+        if doc is not None and doc.path is not None:
+            self.open(doc.path)
+
     def send_blocker(self) -> str | None:
         """Why "Send to game" cannot run now, in words for its tooltip; None when it can."""
         return "nothing here goes to the game"

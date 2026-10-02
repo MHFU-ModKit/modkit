@@ -260,6 +260,28 @@ class Studio:
         self.changed()
         return ok
 
+    def can_revert(self) -> bool:
+        """The active document has unsaved edits and a file to go back to."""
+        doc = self.active.document
+        return doc is not None and doc.path is not None and doc.dirty
+
+    def revert(self) -> None:
+        """The active document back to its file, once `discard_ok` lets its edits go."""
+        ws, doc = self.active, self.active.document
+        if doc is None or not self.can_revert():
+            self.message = "nothing to revert"
+        elif self.discard_ok(ws) and doc.dirty:  # a "save" answer kept the edits in the file
+            name = doc_name(ws)
+            try:
+                ws.revert()
+            except Exception as e:
+                self.message = f"not reverted: {e}"
+            else:
+                self._heard[ws.name] = ws.said  # ours, not what it said while reloading
+                self.findings.stale()
+                self.message = f"back to the saved {name}"
+        self.changed()
+
     # ---- the game ---------------------------------------------------------------- #
     def send_blocker(self) -> str | None:
         """Why "Send to game" cannot run now; None when it can."""

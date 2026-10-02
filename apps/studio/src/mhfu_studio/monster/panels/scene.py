@@ -94,17 +94,8 @@ class ScenePanel(kit.Panel):
         self.notes_box = kit.Section("Notes", tip="What the loader noticed reading the file")
         self.notes = kit.label(role="muted", selectable=True)
         self.notes_box.body.addWidget(self.notes)
-        self.more = kit.More(tip="The mesh's counts, and going back to the saved file")
-        self.revert = kit.button(
-            "Back to the saved file",
-            tip="Throws away every edit since the last save and reads the file again. Undo"
-            " brings them back.",
-            on=studio.act("discard", ws.revert),
-            role="danger",
-            icon="ph.arrow-counter-clockwise",
-        )
+        self.more = kit.More(tip="The mesh's counts")
         self.more.body.addWidget(detail)
-        self.more.body.addWidget(kit.row(self.revert, stretch=True))
         for w in (self.name, self.game, form, self.notes_box, self.more):
             lay.addWidget(w)
         self.pages = kit.Pages(page, NoScene(studio))
@@ -133,9 +124,6 @@ class ScenePanel(kit.Panel):
             field.setVisible(value != "")
         self.notes_box.setVisible(bool(sc.notes))
         self.notes.setText("\n".join(f"• {n}" for n in sc.notes))
-        doc = self.ws.doc
-        self.revert.setVisible(doc is not None)
-        self.revert.setEnabled(doc is not None and doc.dirty)
 
 
 class ViewPanel(kit.Panel):

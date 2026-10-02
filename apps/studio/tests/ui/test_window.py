@@ -320,6 +320,22 @@ def test_open_asks(make_window: Make, asked: list[Any], monkeypatch: Any, tmp_pa
     monkeypatch.setattr(dialogs, "confirm_unsaved", lambda p, n: "discard")  # teardown closes
 
 
+def test_revert_menu(make_window: Make, asked: list[Any], tmp_path: Path) -> None:
+    w = make_window()
+    (tmp_path / "a.toml").write_text("x y")
+    assert w.studio.open(tmp_path / "a.toml")
+    ws = w.studio.active
+    w.sync()
+    assert not w.revert_action.isEnabled()
+    ws.add_item()
+    w.sync()
+    assert w.revert_action.isEnabled()
+    w.revert_action.trigger()
+    w.sync()
+    assert asked == [["a.toml"]] and ws.doc.history.value == ["x", "y"]
+    assert not w.revert_action.isEnabled() and w.message.text() == "back to the saved a.toml"
+
+
 def test_refusals_reach_the_status_bar(make_window: Make) -> None:
     w = make_window()
     ws = w.studio.active

@@ -73,6 +73,32 @@ def test_discard_ok_names_every_dirty_one(studio: Studio, tmp_path: Path) -> Non
     assert not any(w.document is not None and w.document.dirty for w in studio.workspaces)
 
 
+def test_revert(studio: Studio, tmp_path: Path) -> None:
+    ws = dirty(studio, "map", doc_file(tmp_path, "a.toml"))
+    asked = answer(studio, "cancel")
+    studio.revert()
+    assert asked == [["a.toml"]] and ws.doc is not None and ws.doc.dirty
+    answer(studio, "discard")
+    studio.revert()
+    assert ws.doc is not None and ws.doc.history.value == ["a", "b"] and not ws.doc.dirty
+    assert studio.message == "back to the saved a.toml" and not studio.can_revert()
+
+
+def test_revert_save_keeps_edits(studio: Studio, tmp_path: Path) -> None:
+    ws = dirty(studio, "map", doc_file(tmp_path, "a.toml"))
+    doc = ws.doc
+    answer(studio, "save")
+    studio.revert()
+    assert ws.doc is doc and doc is not None and doc.saved_to == [tmp_path / "a.toml"]
+
+
+def test_revert_needs_edits_and_a_file(studio: Studio, tmp_path: Path) -> None:
+    dirty(studio)
+    asked = answer(studio, "discard")
+    studio.revert()
+    assert not studio.can_revert() and studio.message == "nothing to revert" and asked == []
+
+
 def test_save_asks_for_a_path(studio: Studio, tmp_path: Path) -> None:
     ws = dirty(studio)
     studio.ask_path = lambda w: tmp_path / "x.toml"

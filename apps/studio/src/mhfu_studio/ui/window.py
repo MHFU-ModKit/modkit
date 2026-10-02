@@ -492,6 +492,11 @@ class Window(QMainWindow):
             self.save_as,
             k.SaveAs,
         )
+        self.revert_action = self._action(
+            "Revert",
+            "Drops the unsaved edits and goes back to the document as its file has it; asks first",
+            s.revert,
+        )
         quit_ = self._action(
             "Quit", "Closes the studio; it asks first about unsaved edits", self.close, k.Quit
         )
@@ -500,7 +505,7 @@ class Window(QMainWindow):
             "Send to game", chrome.SEND_TIP, s.send, QKeySequence("Ctrl+Return")
         )
         self.stop_action = self._action("Stop", STOP_TIP, s.stop, QKeySequence("Ctrl+."))
-        f.addActions([self.open_action, self.save_action, self.save_as_action])
+        f.addActions([self.open_action, self.save_action, self.save_as_action, self.revert_action])
         f.addSeparator()
         f.addActions([self.send_action, self.stop_action])
         f.addSeparator()
@@ -734,6 +739,7 @@ class Window(QMainWindow):
         self.redo_action.setEnabled(doc is not None and doc.can_redo())
         self.save_action.setEnabled(doc is not None)
         self.save_as_action.setEnabled(doc is not None)
+        self.revert_action.setEnabled(self.studio.can_revert())
         for group, tool, a in self._tool_actions:
             a.setChecked(ws.tool_on(group, tool))
         for a in self.workspace_actions:
