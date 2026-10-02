@@ -319,7 +319,6 @@ def edit(args: argparse.Namespace) -> int:
 def push(args: argparse.Namespace) -> int:
     from mhfu import addresses as a
     from mhfu.memory import Live
-    from ppsspp_debug import Client
 
     from . import live
     from .file import StageFile
@@ -328,7 +327,7 @@ def push(args: argparse.Namespace) -> int:
         sf = StageFile.read(_game(args), args.stage)
         if args.dry:
             return 0
-        with Client.connect(port=args.port) as client:
+        with live.connect(args.port) as client:
             mem = Live(client)
             if args.undo:
                 print(f"undo: {live.undo(mem, args.undo)} writes put back")
@@ -349,7 +348,7 @@ def push(args: argparse.Namespace) -> int:
     catch = live.default_catch(p, print) if args.catch is None else args.catch
     if args.dry:
         return 0
-    with Client.connect(port=args.port) as client:
+    with live.connect(args.port) as client:
         undo = live.undo_path(sf.number)
         live.run(client, Live(client), p, catch_for=catch, hold_for=args.hold, undo_file=undo)
     return 0

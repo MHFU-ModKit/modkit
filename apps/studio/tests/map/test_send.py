@@ -130,3 +130,25 @@ def test_every_route_shares_the_undo(
     assert main(["map", "push", "--stage", "139", "--ops", str(ops), *data]) == 0
     assert undos == [live.undo_path(139)] * 3
     assert undos[0].is_relative_to(tmp_path / "state")
+
+
+def test_no_ppsspp_is_a_plain_refusal(
+    game: Extracted,
+    atlas: Atlas,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ppsspp_debug import Client
+
+    def connect(port: int | None = None) -> None:
+        raise ConnectionError("no PPSSPP debugger")
+
+    monkeypatch.setattr(Client, "connect", staticmethod(connect))
+    ws = loaded(game, atlas)
+    assert ws.session is not None
+    ws.session.ops.append(MOVE)
+    job = ws.send()
+    stdin(monkeypatch, job)
+    assert main(list(job.argv)) == 1
+    assert capsys.readouterr().err.strip() == "studio map: no PPSSPP debugger"
+    assert main(list(ws.push_job(restore=True).argv)) == 1

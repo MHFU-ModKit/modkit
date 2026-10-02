@@ -16,7 +16,8 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -59,6 +60,17 @@ class NotThisStage(ValueError):
 def pac_address(mem: Memory, stage: int) -> int | None:
     slot = S.resident_files(mem).get(files.stage_pac(stage))
     return slot.data if slot else None
+
+
+@contextmanager
+def connect(port: int | None = None) -> Iterator[Client]:
+    """PPSSPP's debugger; none running is a refusal (ValueError), not a traceback."""
+    try:
+        client = Client.connect(port=port)
+    except ConnectionError as e:
+        raise ValueError(str(e)) from None
+    with client as c:
+        yield c
 
 
 def undo_path(stage: int) -> Path:
