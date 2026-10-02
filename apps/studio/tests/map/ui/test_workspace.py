@@ -91,7 +91,7 @@ def panel(w: Window, label: str) -> Any:
 def test_opens_on_the_village(make_window: Callable[..., Window], ws: MapWorkspace) -> None:
     w = open_map(make_window, ws)
     assert ws.scene is not None and ws.scene.stage == 139 and ws.row == 0
-    assert "st139 Pokke village" in w.where.text() and errors(w) == []
+    assert "st139  Pokke village" in w.where.text() and errors(w) == []
     for label in MINE:
         p = panel(w, label)
         p.sync()

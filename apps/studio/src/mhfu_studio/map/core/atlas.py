@@ -61,6 +61,12 @@ def stage_name(stage: int) -> str:
     return STAGE_NAMES.get(stage, f"st{stage:03d}")
 
 
+def stage_title(stage: int) -> str:
+    """`st139  Pokke village`, or `st140` alone for a stage the game gives no name."""
+    name = STAGE_NAMES.get(stage)
+    return f"st{stage:03d}  {name}" if name else f"st{stage:03d}"
+
+
 def row_name(row: int) -> str:
     return ROW_NAMES.get(row, f"row {row}")
 
@@ -192,5 +198,5 @@ class Atlas:
             for s in r.sections:
                 entry = "entry " if s.is_entry else "      "
                 stub = "" if s.present else "(placeholder)"
-                lines.append(f"   [{s.slot:2d}] st{s.stage:03d}  {s.name:<26} {entry}{stub}")
+                lines.append(f"   [{s.slot:2d}] {stage_title(s.stage):<33} {entry}{stub}")
         return "\n".join(lines)

@@ -9,6 +9,7 @@ selections, the last message) lives here.
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable, Hashable, Sequence
 from importlib import import_module
@@ -23,10 +24,12 @@ from mhfu_studio.shell.input import Key as KeyEvent
 from mhfu_studio.shell.input import Pointer
 from mhfu_studio.shell.overlay import Overlay
 from mhfu_studio.shell.text import plain
-from mhfu_studio.shell.workspace import Dock, Gesture, ToolGroup, Workspace, register
+from mhfu_studio.shell.workspace import Dock, Gesture, Job, ToolGroup, Workspace, register
+from mhfu_studio.stage import ops as O
+from mhfu_studio.stage.live import CLIMB, QUEST_CATCH
 
 from .adding import AddForm
-from .core.atlas import Atlas
+from .core.atlas import Atlas, stage_title
 from .core.edit import (
     COLLISION,
     GROUP,
@@ -54,6 +57,16 @@ VILLAGE = 139
 """The section shown first when nothing else asks: Pokke village, row 0."""
 SMALL = 50.0
 """A selection smaller than this is framed as a box this size around its centre."""
+
+
+def climbs(ops: Sequence[Op]) -> bool:
+    """A collision op setting a climbable material: read at area load, so the push holds."""
+    for o in ops:
+        flags = o.get("flags")
+        if o.get("op") == "collision" and isinstance(flags, dict):
+            if flags.get("material") in CLIMB:
+                return True
+    return False
 
 
 class MapWorkspace(Workspace):
@@ -88,6 +101,8 @@ class MapWorkspace(Workspace):
         self.tex_target = 0
         #: an import re-indexes through the slot's shipped palette
         self.tex_keep = False
+        #: seconds a push watches for the area reload (0 in the village); the Game panel's
+        self.catch = QUEST_CATCH
         self._want: int | None = None
         self._seen = -1
         self._assets: dict[int, MapScene | None] = {}
@@ -185,7 +200,7 @@ class MapWorkspace(Workspace):
             Dock(
                 "Textures", "bottom", build("textures", "TexturesPanel"),
                 "The section's texture bank: who uses each slot, and importing a picture into"
-                " one. A texture change shows in the running game at once.",
+                " one. Send to game shows a texture change in the running game.",
             ),
         )  # fmt: skip
 
@@ -195,7 +210,7 @@ class MapWorkspace(Workspace):
         sc = self.scene
         if sc is None:
             return "no section loaded"
-        return f"st{sc.stage:03d} {sc.name}   row {self.row}   loaded in {self.load_time:.2f} s"
+        return f"{stage_title(sc.stage)}   row {self.row}   loaded in {self.load_time:.2f} s"
 
     def close(self) -> None:
         if self.vp is not None:
@@ -207,7 +222,7 @@ class MapWorkspace(Workspace):
 
     def hud(self) -> str:
         sc = self.scene
-        head = f"st{sc.stage:03d}  {sc.name}" if sc else self.data_error or "no section loaded"
+        head = stage_title(sc.stage) if sc else self.data_error or "no section loaded"
         lines = [head]
         if sc is not None:
             lines.append(f"{self.tools.hint()}; F frames, Esc clears")
@@ -288,6 +303,59 @@ class MapWorkspace(Workspace):
         self.message = ""  # it named the edit an undo just took back
         self.tools.reseat()
 
+    # the game
+
+    def send_blocker(self) -> str | None:
+        return self.push_blocker()
+
+    def send(self) -> Job:
+        return self.push_job()
+
+    def push_blocker(self, *, restore: bool = False) -> str | None:
+        """Why the loaded section cannot be pushed (restored) now; None when it can."""
+        if self.game is None:
+            return "no game files" + (f": {self.data_error}" if self.data_error else "")
+        sc, sess = self.scene, self.session
+        if sc is None or sess is None:
+            return "no section loaded"
+        if restore:
+            return None
+        if not sess.ops:
+            return f"no edits to st{sc.stage:03d} yet"
+        bad = [f for f in O.check(sess.ops, base_dir=sess.base_dir) if f.level == "error"]
+        if bad:
+            return f"{bad[0].where} has an error: {bad[0].message}"
+        return None
+
+    def push_job(self, halves: Sequence[str] = (), *, restore: bool = False) -> Job:
+        """`studio map push` of the loaded section's list, unsaved, on stdin: `halves` of it
+        (all when empty), or with `restore` the file's own bytes back. Send and the Game panel
+        both run this."""
+        why = self.push_blocker(restore=restore)
+        if why is not None:
+            raise ValueError(why)
+        sc, sess, game = self.scene, self.session, self.game
+        assert sc is not None and sess is not None and game is not None
+        label = f"st{sc.stage:03d}"
+        argv = ["map", "push", "--stage", str(sc.stage), "--data", str(game.root)]
+        if restore:
+            return Job(f"restore {label} in the game", (*argv, "--restore"))
+        catch = f"{self.catch:g}"
+        argv += ["--ops", "-", "--catch", catch, *(f"--{h}" for h in halves)]
+        if sess.base_dir is not None:
+            argv += ["--base", str(sess.base_dir)]
+        if (not halves or "collision" in halves) and climbs(sess.ops):
+            argv += ["--hold", catch]
+        what = f"{label}'s {' and '.join(halves)}" if halves else label
+        return Job(f"push {what} into the game", tuple(argv), json.dumps(sess.ops).encode())
+
+    def in_village(self) -> bool:
+        """The loaded section is in row 0, whose files the game never re-reads."""
+        sc, atlas = self.scene, self.atlas
+        return (
+            sc is not None and atlas is not None and any(r == 0 for r, _ in atlas.rows_of(sc.stage))
+        )
+
     # sections
 
     def load_stage(self, stage: int, *, row: int | None = None) -> bool:
@@ -308,6 +376,7 @@ class MapWorkspace(Workspace):
         elif self.row is None or self.atlas.row(self.row).slot_of(stage) is None:
             rows = self.atlas.rows_of(stage)
             self.row = rows[0][0] if rows else self.row
+        self.catch = 0.0 if self.in_village() else QUEST_CATCH
         self.selected_group = None
         entry = self.doc.stage(stage)
         ops: list[Op] = entry.ops if entry is not None else []

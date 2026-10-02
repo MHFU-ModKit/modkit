@@ -12,7 +12,18 @@ from mhfu.files import Extracted
 from mhfu_studio.map.core.atlas import Atlas
 from mhfu_studio.map.core.edit import COLLISION, FACE, GROUP, OBJECT, Selection
 from mhfu_studio.map.document import MapDocument
-from mhfu_studio.map.tools import GROUPS, LOCAL, MOVE, OPTIONS, PICK, ROTATE, SCALE, SNAP, TOOL
+from mhfu_studio.map.tools import (
+    GROUPS,
+    LAYER,
+    LOCAL,
+    MOVE,
+    OPTIONS,
+    PICK,
+    ROTATE,
+    SCALE,
+    SNAP,
+    TOOL,
+)
 from mhfu_studio.map.workspace import MapWorkspace
 from mhfu_studio.shell.input import Button, Key, Mod, Pointer
 from mhfu_studio.shell.manipulator import ARM_PX, Handle, hit, world_per_px
@@ -101,7 +112,7 @@ def test_tool_groups(ws: MapWorkspace) -> None:
     assert [g.id for g in ws.tool_groups()] == [TOOL, PICK, OPTIONS]
     tools = [t for g in GROUPS for t in g.tools]
     keys = [t.key for t in tools if t.key]
-    assert keys == ["Q", "W", "E", "R", "1", "2", "3", "4"]
+    assert keys == ["Q", "W", "E", "R", "1", "2", "3", "4", "C"]
     assert all(t.tip and t.icon.startswith("ph.") for t in tools)
     assert ws.tool_on(TOOL, "select") and ws.tool_on(PICK, OBJECT)
     ws.set_tool(TOOL, ROTATE)
@@ -166,6 +177,42 @@ def test_box(ws: MapWorkspace) -> None:
     assert ws.col_sel.tris and ws.col_sel.tris[0][0] == 1
     click(ws, (1.0, 1.0))
     assert ws.col_sel.empty
+
+
+def test_collision_layer(ws: MapWorkspace) -> None:
+    vp = ws.vp
+    assert vp is not None and not vp.show_collision and not ws.tool_on(OPTIONS, LAYER)
+    ws.set_tool(PICK, COLLISION)
+    assert vp.show_collision and ws.tool_on(OPTIONS, LAYER)
+    ws.set_tool(PICK, OBJECT)
+    assert not vp.show_collision  # put back
+    ws.set_tool(OPTIONS, LAYER, True)
+    ws.set_tool(PICK, COLLISION)
+    ws.set_tool(PICK, FACE)
+    assert vp.show_collision
+    ws.set_tool(PICK, COLLISION)
+    ws.set_tool(OPTIONS, LAYER, False)  # chosen in the mode: it outlives the mode
+    ws.set_tool(PICK, OBJECT)
+    assert not vp.show_collision
+
+
+def test_hidden_collision_is_not_picked(ws: MapWorkspace) -> None:
+    ws.set_tool(PICK, COLLISION)
+    click(ws, crate(ws))
+    assert ws.col_sel.tris
+    ws.set_tool(TOOL, MOVE)
+    assert ws.tools.gizmo_visible
+    ws.set_tool(OPTIONS, LAYER, False)
+    assert not ws.tools.gizmo_visible and ws.tools.col_hover is None
+    ws.set_tool(TOOL, "select")
+    click(ws, crate(ws))
+    ws.pointer(ev("move", crate(ws), Button.NONE))
+    assert ws.col_sel.empty and ws.tools.col_hover is None
+    drag(ws, (0.0, 0.0), (float(SIZE[0]), float(SIZE[1])))
+    assert ws.col_sel.empty
+    ws.set_tool(OPTIONS, LAYER, True)
+    click(ws, crate(ws))
+    assert ws.col_sel.tris
 
 
 def test_alt_drag_orbits(ws: MapWorkspace) -> None:

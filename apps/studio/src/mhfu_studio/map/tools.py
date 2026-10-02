@@ -41,7 +41,7 @@ SELECT, MOVE, ROTATE, SCALE = "select", "move", "rotate", "scale"
 TOOLS = (SELECT, MOVE, ROTATE, SCALE)
 OPERATIONS: dict[str, Operation] = {MOVE: "translate", ROTATE: "rotate", SCALE: "scale"}
 VERBS = {MOVE: "move", ROTATE: "turn", SCALE: "resize"}
-SNAP, LOCAL = "snap", "local"
+SNAP, LOCAL, LAYER = "snap", "local", "collision layer"
 TOOL, PICK, OPTIONS = "tool", "pick", "options"
 CLICK_SLOP = 4.0
 """A press and release closer than this is a click, not a box."""
@@ -125,6 +125,11 @@ GROUPS = (
                 " rotations since you picked it, instead of the world's axes. Scaling always"
                 " uses the selection's own axes.",
             ),
+            Tool(
+                LAYER, "Show collision", "C", "ph.eye",
+                "Draws the invisible floors and walls over the mesh, coloured by what they do."
+                " Picking Collision turns it on, and picking something else puts it back.",
+            ),
         ),
         toggles=True,
     ),
@@ -145,6 +150,8 @@ class ViewportTools:
         #: the rubber band being dragged, in view points
         self.box: Box | None = None
         self.manipulator = Manipulator()
+        #: whether the collision showed before Pick > Collision turned it on; None outside it
+        self._layer_was: bool | None = None
         self._press: tuple[float, float] | None = None
         self._pose: Array | None = None
         #: the selection's turn since it was picked: the gizmo's own axes
@@ -157,8 +164,13 @@ class ViewportTools:
         if self.tool == SELECT:
             return False
         if self.kind == COLLISION:
-            return not self.ws.col_sel.empty
+            return self.layer_shown and not self.ws.col_sel.empty
         return not self.ws.selection.empty
+
+    @property
+    def layer_shown(self) -> bool:
+        vp = self.ws.viewport
+        return vp is not None and vp.show_collision
 
     @property
     def dragging(self) -> bool:
@@ -183,7 +195,7 @@ class ViewportTools:
             return self.tool == tool
         if group == PICK:
             return self.kind == tool
-        return {SNAP: self.snap, LOCAL: self.space_local}.get(tool, False)
+        return {SNAP: self.snap, LOCAL: self.space_local, LAYER: self.layer_shown}.get(tool, False)
 
     def choose(self, group: str, tool: str, on: bool = True) -> None:
         if group == TOOL:
@@ -194,6 +206,21 @@ class ViewportTools:
             self.snap = on
         elif tool == LOCAL:
             self.space_local = on
+        elif tool == LAYER:
+            self.show_layer(on)
+
+    def show_layer(self, on: bool) -> None:
+        """The collision layer on or off, for good: picking another kind leaves it so."""
+        self._layer_was = None
+        self._show(on)
+
+    def _show(self, on: bool) -> None:
+        vp = self.ws.viewport
+        if vp is not None:
+            if not on:
+                self.end_gizmo()
+                self._set_col_hover(None)
+            vp.show_collision = on
 
     def set_tool(self, tool: str) -> None:
         if tool in TOOLS and tool != self.tool:
@@ -207,10 +234,13 @@ class ViewportTools:
         self.kind = kind
         if kind == COLLISION:
             # the collision layer is what gets picked; the mesh selection is dropped
-            if self.ws.viewport is not None:
-                self.ws.viewport.show_collision = True
+            self._layer_was = self.layer_shown
+            self._show(True)
             self.ws.set_selection(Selection(OBJECT))
         else:
+            if self._layer_was is not None:
+                self._show(self._layer_was)
+                self._layer_was = None
             self.select_collision(CollisionSelection())
             self.select(Selection(kind))
 
@@ -322,9 +352,12 @@ class ViewportTools:
     # picking
 
     def _visible_chunks(self) -> list[int]:
+        """The chunks a pick may hit: none while the layer is hidden."""
         vp, sc = self.ws.viewport, self.ws.scene
         assert vp is not None and sc is not None
         col = vp.collision
+        if not vp.show_collision:
+            return []
         return [c.index for c in sc.collision if col is None or col.show_chunk.get(c.index, True)]
 
     def _pick_col(self, o: Array, d: Array) -> tuple[int, int] | None:

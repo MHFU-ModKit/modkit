@@ -64,11 +64,10 @@ class CollisionPanel(kit.Panel):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
 
-        shown = kit.Section("What is shown", tip="Which collision the view draws; edits nothing")
-        self.show_layer = kit.check(
-            "Show collision",
-            tip="Draws the invisible collision over the mesh, coloured by what it does",
-            on=self._view(lambda vp, on: setattr(vp, "show_collision", on)),
+        shown = kit.Section(
+            "What is shown",
+            tip="Which collision the view draws while it shows (C, or Show collision on the"
+            " toolbar); edits nothing",
         )
         self.chunk_box = QWidget()
         self.chunk_lay = QVBoxLayout(self.chunk_box)
@@ -100,13 +99,9 @@ class CollisionPanel(kit.Panel):
         looks = kit.Form()
         looks.row("Faces", self.fill)
         looks.row("Edges", self.edge)
-        shown_widgets: list[QWidget] = [
-            self.show_layer,
-            self.chunk_box,
-            *self.classes.values(),
-            looks,
-        ]
-        for w in shown_widgets:
+        #: what draws only while the layer shows
+        self.filters: list[QWidget] = [self.chunk_box, *self.classes.values(), looks]
+        for w in self.filters:
             shown.body.addWidget(w)
         self.climb_text = kit.label()
         self.frame_climb = kit.button(
@@ -364,7 +359,8 @@ class CollisionPanel(kit.Panel):
         if sc is not self._scene:
             self._scene = sc
             self._build_chunks(sc)
-        kit.put(self.show_layer, vp.show_collision)
+        for w in self.filters:
+            w.setEnabled(vp.show_collision)
         for c in sc.collision:
             box = self.chunk_checks[c.index]
             box.setText(

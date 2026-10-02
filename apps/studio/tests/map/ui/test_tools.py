@@ -11,6 +11,7 @@ from mhfu_studio.map.core.atlas import Atlas
 from mhfu_studio.map.core.edit import COLLISION, FACE
 from mhfu_studio.map.tools import MOVE, PICK, SCALE, TOOL
 from mhfu_studio.map.workspace import MapWorkspace
+from mhfu_studio.ui.testing import gl_or_skip
 from mhfu_studio.ui.window import Window
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
@@ -35,7 +36,7 @@ def checked(w: Window) -> list[str]:
 
 def test_toolbar(window: Window) -> None:
     shown = [a.text() for a in window.tools.actions() if not a.isSeparator()]
-    assert shown == [*LABELS, "Snap", "Local"]
+    assert shown == [*LABELS, "Snap", "Local", "Show collision"]
     assert sum(a.isSeparator() for a in window.tools.actions()) == 2
     keys = [action(window, t).shortcut().toString() for t in LABELS]
     assert keys == ["Q", "W", "E", "R", "1", "2", "3", "4"]
@@ -55,6 +56,27 @@ def test_trigger(window: Window) -> None:
     assert ws.tools.snap and checked(window) == ["Scale", "Faces", "Snap"]
     action(window, "Snap").trigger()
     assert not ws.tools.snap
+
+
+def test_collision_key(
+    make_window: Callable[..., Window], game: Extracted, atlas: Atlas, qtbot: Any
+) -> None:
+    gl_or_skip()
+    ws = MapWorkspace(game, atlas)
+    w = make_window(ws)
+    qtbot.waitUntil(lambda: ws.vp is not None, timeout=5000)
+    w.activateWindow()
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is w)
+    w.view.setFocus()
+    assert ws.vp is not None and action(w, "Show collision").shortcut().toString() == "C"
+    qtbot.keyClick(w.view, Qt.Key.Key_C)
+    assert ws.vp.show_collision and "Show collision" in checked(w)
+    qtbot.keyClick(w.view, Qt.Key.Key_C)
+    assert not ws.vp.show_collision
+    qtbot.keyClick(w.view, Qt.Key.Key_4)
+    assert ws.vp.show_collision and checked(w) == ["Select", "Collision", "Show collision"]
+    qtbot.keyClick(w.view, Qt.Key.Key_2)
+    assert not ws.vp.show_collision and checked(w) == ["Select", "Objects"]
 
 
 def test_follows_the_workspace(window: Window) -> None:

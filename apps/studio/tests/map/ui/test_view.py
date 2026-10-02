@@ -5,7 +5,9 @@ from typing import Any
 import pytest
 from mhfu.files import Extracted
 from mhfu_studio.map.core.atlas import Atlas
+from mhfu_studio.map.core.edit import COLLISION, OBJECT
 from mhfu_studio.map.panels.view import ViewPanel
+from mhfu_studio.map.tools import PICK
 from mhfu_studio.map.workspace import MapWorkspace
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.ui import kit
@@ -37,6 +39,12 @@ def test_toggles_and_modes(qtbot: Any, ws: MapWorkspace, studio: Studio) -> None
     collision.click()
     p.sync()
     assert vp.show_collision and all(b.isEnabled() for b in p.collision)
+    ws.set_tool(PICK, COLLISION)
+    collision.click()  # chosen in the mode: it outlives the mode
+    ws.set_tool(PICK, OBJECT)
+    p.sync()
+    assert not vp.show_collision and not collision.isChecked()
+    collision.click()
     p.mode.setCurrentIndex(3)
     p.mode.activated.emit(3)
     p.gain.slider.setValue(500)

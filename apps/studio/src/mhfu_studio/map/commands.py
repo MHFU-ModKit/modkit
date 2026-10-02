@@ -80,7 +80,6 @@ def _game(args: argparse.Namespace) -> Extracted:
 def inject(args: argparse.Namespace) -> int:
     from mhfu import addresses as a
     from mhfu.memory import Live
-    from ppsspp_debug import Client
 
     from mhfu_studio.stage import live
     from mhfu_studio.stage import ops as O
@@ -118,7 +117,7 @@ def inject(args: argparse.Namespace) -> int:
         pushes.append((p, catch or 0.0))
     if args.dry:
         return 0
-    with Client.connect(port=args.port) as client:
+    with live.connect(args.port) as client:
         mem = Live(client)
         for p, catch in pushes:
             label = p.stage.label
@@ -127,7 +126,7 @@ def inject(args: argparse.Namespace) -> int:
             elif args.restore:
                 live.restore(mem, p.stage)
             else:
-                undo = base / ".inject" / f"{label}_collision_undo.json"
+                undo = live.undo_path(p.stage.number)
                 live.run(client, mem, p, catch_for=catch, hold_for=args.hold, undo_file=undo)
     return 0
 

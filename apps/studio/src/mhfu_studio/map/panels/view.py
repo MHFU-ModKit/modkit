@@ -100,9 +100,10 @@ class ViewPanel(kit.Panel):
             self._toggle(
                 "Collision",
                 "The invisible floors and walls the player stands on and bumps into, coloured"
-                " by kind: floor, wall, climbable, sinking, wading",
+                " by kind: floor, wall, climbable, sinking, wading (C)",
                 vp,
                 "show_collision",
+                setter=ws.tools.show_layer,
             )
         )
         self.collision = [
@@ -200,8 +201,23 @@ class ViewPanel(kit.Panel):
         self.gate = Gate(page, "")
         self.body.addWidget(self.gate)
 
-    def _toggle(self, text: str, tip: str, owner: Owner, attr: str) -> QCheckBox:
-        b = kit.check(text, tip=tip, on=lambda on: self._set(owner, attr, on))
+    def _toggle(
+        self,
+        text: str,
+        tip: str,
+        owner: Owner,
+        attr: str,
+        setter: Callable[[bool], object] | None = None,
+    ) -> QCheckBox:
+        """A checkbox showing `owner().attr`; `setter` changes it instead of a plain write."""
+
+        def on(value: bool) -> None:
+            if setter is None:
+                self._set(owner, attr, value)
+            else:
+                self.studio.act(f"view {attr}", lambda: setter(value))()
+
+        b = kit.check(text, tip=tip, on=on)
         self._toggles.append((b, owner, attr))
         return b
 

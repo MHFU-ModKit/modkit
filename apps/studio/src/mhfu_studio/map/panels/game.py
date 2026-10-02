@@ -1,44 +1,36 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Game panel: push the loaded section's edits into the running PPSSPP.
+"""The Game panel: push the loaded section's edits, saved or not, into the running PPSSPP.
 
-It runs `studio map inject` in a QProcess and shows its output as it comes, so the window
-stays responsive while a catch waits for the area reload.
+Each button runs the workspace's `push_job` through the studio, as Send to game does; the log
+is the studio's.
 """
 
 from __future__ import annotations
 
-import sys
-from functools import partial
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QByteArray, QProcess, QProcessEnvironment, QSignalBlocker, QTimer
+from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
-from shiboken6 import isValid
 
+from mhfu_studio.shell.studio import LOG_LINES
 from mhfu_studio.shell.text import plain
-from mhfu_studio.ui import dialogs, kit
+from mhfu_studio.ui import kit
 
-from ...stage.live import CLIMB, QUEST_CATCH
 from .common import Gate
 
 if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
 
-    from ..core.edit import Op
     from ..workspace import MapWorkspace
 
-LOG_LINES = 2000
-KILL_AFTER = 3000
-"""Milliseconds Stop waits for the push to end before killing it."""
-#: the studio's own command line, run by the interpreter running the window
-MAIN = "import sys; from mhfu_studio.cli import main; sys.exit(main())"
 HOW = (
     "Sends the loaded section's edits into the game running in PPSSPP, through its debugger;"
-    " the ISO is never touched. Stand in this section in the game first. Collision and"
-    " textures land at once. The visible mesh lands on the next area load: walk out and back"
-    " in while the catch waits. A climbable wall is read at area load too, so the push holds"
-    " it for the catch's seconds: walk out and in once more."
+    " the ISO is never touched and the document need not be saved. Stand in this section in"
+    " the game first. Collision and textures land at once. The visible mesh lands on the next"
+    " area load: walk out and back in while the catch waits. A climbable wall is read at area"
+    " load too, so the push holds it for the catch's seconds: walk out and in once more."
 )
 CATCH_TIP = (
     "How long the push waits for the game to reload the area, to write the mesh again as it"
@@ -50,78 +42,57 @@ VILLAGE_WARNING = (
     "This is a village section: set the catch to 0. The village never re-reads its files,"
     " so an armed catch only slows the game down."
 )
-#: (label, flags, tip) per push button
-PUSHES = (
-    (
-        "Push all",
-        ["--mesh", "--collision", "--textures"],
-        "Sends the mesh, the collision and the textures together",
-    ),
-    ("Mesh", ["--mesh"], "Sends only the visible mesh; it shows after the next area load"),
-    ("Collision", ["--collision"], "Sends only the floors and walls; they work at once"),
-    ("Textures", ["--textures"], "Sends only the texture bank; it shows at once"),
-    (
-        "Restore",
-        ["--restore"],
-        "Puts the game's own bytes for this section back, undoing every push",
-    ),
+#: (label, halves, tip) per push button; no halves is all of them
+PUSHES: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    ("Push all", (), "Sends the mesh, the collision and the textures together"),
+    ("Mesh", ("mesh",), "Sends only the visible mesh; it shows after the next area load"),
+    ("Collision", ("collision",), "Sends only the floors and walls; they work at once"),
+    ("Textures", ("textures",), "Sends only the texture bank; it shows at once"),
 )
-
-
-def text(data: QByteArray) -> str:
-    return bytes(data.data()).decode("utf-8", "replace")
-
-
-def in_village(ws: MapWorkspace) -> bool:
-    """The loaded section is in row 0, whose files the game never re-reads."""
-    sc, atlas = ws.scene, ws.atlas
-    return sc is not None and atlas is not None and any(r == 0 for r, _ in atlas.rows_of(sc.stage))
-
-
-def climbs(ops: list[Op]) -> bool:
-    """A collision op setting a climbable material: read at area load, so the push holds."""
-    for o in ops:
-        flags = o.get("flags")
-        if o.get("op") == "collision" and isinstance(flags, dict):
-            if flags.get("material") in CLIMB:
-                return True
-    return False
 
 
 class GamePanel(kit.Panel):
     def __init__(self, ws: MapWorkspace, studio: Studio) -> None:
         super().__init__(scroll=False)
         self.ws, self.studio = ws, studio
-        self.proc: QProcess | None = None
-        self.what = ""
-        self._stage: int | None = None
+        self._lines: list[str] = []
         how = kit.label(HOW, role="muted")
-        self.unsaved = kit.Alert(
-            "Save the document first: the push reads the edits from its folder."
+        self.catch = kit.number(
+            tip=CATCH_TIP,
+            value=ws.catch,
+            lo=0,
+            hi=600,
+            suffix=" s",
+            on=studio.act("catch", self._set_catch),
         )
-        self.save_as = kit.button(
-            "Save As…",
-            tip="Picks a folder for the document and saves it there, so the push can read it",
-            on=self._save_as,
-        )
-        self.catch = kit.number(tip=CATCH_TIP, value=QUEST_CATCH, lo=0, hi=600, suffix=" s")
-        self.catch.valueChanged.connect(lambda _v: self._warn())
         form = kit.Form()
         form.row("Catch", self.catch)
         self.village = kit.Alert(VILLAGE_WARNING)
-        self.pushes: list[QPushButton] = []
-        for i, (label, flags, tip) in enumerate(PUSHES):
-            b = kit.button(
+        self.pushes: list[QPushButton] = [
+            kit.button(
                 label,
                 tip=tip,
-                on=studio.act(f"push {label.lower()}", partial(self.run, flags)),
+                on=self._push(label, halves),
                 role="primary" if i == 0 else "normal",
             )
-            self.pushes.append(b)
-        self.stop = kit.button(
-            "Stop", tip="Ends the running push now", on=self._stop, role="danger"
+            for i, (label, halves, tip) in enumerate(PUSHES)
+        ]
+        self.restore = kit.button(
+            "Restore",
+            tip="Puts the game's own bytes for this section back, undoing every push",
+            on=self._push("Restore", (), restore=True),
         )
-        self.clear = kit.button("Clear log", tip="Empties the log below", on=self._clear)
+        self.stop = kit.button(
+            "Stop",
+            tip="Ends the running push now",
+            on=studio.act("stop", studio.stop),
+            role="danger",
+        )
+        self.clear = kit.button(
+            "Clear log",
+            tip="Empties the log below",
+            on=studio.act("clear log", lambda: studio.log.clear()),
+        )
         self.running = kit.label(role="muted", wrap=True)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
@@ -135,125 +106,52 @@ class GamePanel(kit.Panel):
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(how)
-        lay.addWidget(kit.row(self.unsaved, self.save_as))
         lay.addWidget(form)
         lay.addWidget(self.village)
         lay.addWidget(kit.row(*self.pushes[:3], stretch=True))
-        lay.addWidget(kit.row(*self.pushes[3:], self.stop, self.clear, stretch=True))
+        lay.addWidget(kit.row(*self.pushes[3:], self.restore, self.stop, self.clear, stretch=True))
         lay.addWidget(self.running)
         lay.addWidget(self.log, 1)
         self.gate = Gate(page, "push its edits into the game")
         self.body.addWidget(self.gate)
 
-    @property
-    def busy(self) -> bool:
-        p = self.proc
-        return p is not None and isValid(p) and p.state() != QProcess.ProcessState.NotRunning
+    def _push(
+        self, label: str, halves: tuple[str, ...], *, restore: bool = False
+    ) -> Callable[..., None]:
+        def run() -> None:
+            self.studio.start(self.ws.push_job(halves, restore=restore))
 
-    def command(self, flags: list[str]) -> list[str]:
-        """The inject command line for the loaded section, the interpreter first."""
-        ws = self.ws
-        if ws.doc.directory is None or ws.scene is None:
-            raise ValueError("save the document and load a section first")
-        catch = f"{self.catch.value():g}"
-        cmd = [sys.executable, "-c", MAIN, "map", "inject", str(ws.doc.directory)]
-        cmd += ["--stage", str(ws.scene.stage), "--catch", catch]
-        if ws.game is not None:
-            cmd += ["--data", str(ws.game.root)]
-        cmd += flags
-        if "--collision" in flags and ws.session is not None and climbs(ws.session.ops):
-            cmd += ["--hold", catch]
-        return cmd
+        return self.studio.act(f"push {label.lower()}", run)
 
-    def run(self, flags: list[str]) -> None:
-        """Saves the document, then starts the push."""
-        if self.busy or self.ws.session is None:
+    def _set_catch(self) -> None:
+        self.ws.catch = self.catch.value()
+
+    def _show_log(self) -> None:
+        """The studio's log, appended to while it only grew."""
+        log = self.studio.log
+        if log == self._lines:
             return
-        if not self.studio.save():
-            self._say(f"not saved: {self.studio.message}")
-            return
-        cmd = self.command(flags)
-        self.start(cmd[0], cmd[1:])
-
-    def start(self, program: str, args: list[str]) -> None:
-        studio = args[:2] == ["-c", MAIN]
-        self.what = " ".join(["studio", *args[2:]] if studio else [program, *args])
-        self._say("$ " + self.what)
-        if self.proc is not None:
-            self.proc.deleteLater()
-        p = QProcess(self)
-        env = QProcessEnvironment.systemEnvironment()
-        env.insert("PYTHONUNBUFFERED", "1")  # lines as they are printed, not at exit
-        p.setProcessEnvironment(env)
-        p.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        p.readyReadStandardOutput.connect(self._read)
-        p.finished.connect(self._finished)
-        p.errorOccurred.connect(self._failed)
-        self.proc = p
-        p.start(program, args)
-        self.studio.changed()
-
-    def _read(self, *, rest: bool = False) -> None:
-        """Whole lines as they come; with `rest`, what is left after the last one."""
-        p = self.proc
-        if p is None:
-            return
-        while p.canReadLine():
-            self._say(text(p.readLine()).rstrip("\r\n"))
-        if rest and p.bytesAvailable():
-            self._say(text(p.readAll()))
-
-    def _finished(self, code: int, _status: QProcess.ExitStatus) -> None:
-        self._read(rest=True)
-        self._say(f"[exit {code}]")
-        self.studio.message = f"push {'done' if code == 0 else f'failed ({code})'}"
-        self.studio.changed()
-
-    def _failed(self, error: QProcess.ProcessError) -> None:
-        if error == QProcess.ProcessError.FailedToStart:
-            self._say(f"could not start: {self.proc.errorString() if self.proc else error}")
-            self.studio.changed()
-
-    def _say(self, line: str) -> None:
-        self.log.appendPlainText(plain(line))
-
-    def _stop(self) -> None:
-        p = self.proc
-        if p is not None and self.busy:
-            p.terminate()
-            # the process is the timer's context: gone with it, the timer never fires
-            QTimer.singleShot(KILL_AFTER, p, lambda: self._kill(p))
-
-    def _kill(self, p: QProcess) -> None:
-        if p is self.proc and self.busy:
-            p.kill()
-
-    def _clear(self) -> None:
-        self.log.clear()
-
-    def _save_as(self) -> None:
-        path = dialogs.ask_save_as(self, self.ws)
-        if path is not None:
-            self.studio.save(path)
-
-    def _warn(self) -> None:
-        self.village.setVisible(in_village(self.ws) and self.catch.value() > 0)
+        n = len(self._lines)
+        if len(log) > n and log[:n] == self._lines:
+            for line in log[n:]:
+                self.log.appendPlainText(plain(line))
+        else:
+            self.log.setPlainText("\n".join(plain(line) for line in log))
+        self._lines = list(log)
 
     def sync(self) -> None:
-        ws = self.ws
+        self._show_log()
+        ws, studio = self.ws, self.studio
         if not self.gate.check(ws):
             return
-        stage = ws.scene.stage if ws.scene else None
-        if stage != self._stage:  # a section loaded: the catch's default follows it
-            self._stage = stage
-            with QSignalBlocker(self.catch):
-                self.catch.setValue(0.0 if in_village(ws) else QUEST_CATCH)
-        self._warn()
-        saved = ws.doc.directory is not None
-        self.unsaved.setVisible(not saved)
-        self.save_as.setVisible(not saved)
-        busy = self.busy
+        with QSignalBlocker(self.catch):
+            self.catch.setValue(ws.catch)
+        self.village.setVisible(ws.in_village() and ws.catch > 0)
+        job = studio.job
+        why = ws.push_blocker()
         for b in self.pushes:
-            b.setEnabled(saved and not busy and ws.session is not None)
-        self.stop.setEnabled(busy)
-        self.running.setText(f"{plain(self.what)}  (running…)" if busy else plain(self.what))
+            b.setEnabled(job is None and why is None)
+        self.restore.setEnabled(job is None and ws.push_blocker(restore=True) is None)
+        self.stop.setEnabled(job is not None)
+        self.clear.setEnabled(bool(studio.log))
+        self.running.setText(plain(f"{job.title}… (running)" if job else why or ""))

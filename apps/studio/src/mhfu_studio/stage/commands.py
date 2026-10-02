@@ -49,15 +49,26 @@ def register(groups: Groups) -> None:
     c.add_argument("stages", type=int, nargs="*", help="default: every stage")
     c.set_defaults(run=verify)
 
+    def edit_list(c: argparse.ArgumentParser, required: bool) -> None:
+        c.add_argument(
+            "--ops", type=Path, required=required, help="the edit list (JSON); - reads stdin"
+        )
+        c.add_argument(
+            "--base",
+            type=Path,
+            metavar="DIR",
+            help="where its OBJ and PNG files are (default: the list's folder)",
+        )
+
     c = command("edit", "an edit list applied offline: the bytes each half writes")
     c.add_argument("stage", type=int)
-    c.add_argument("--ops", type=Path, required=True, help="the edit list (JSON)")
+    edit_list(c, required=True)
     c.add_argument("--out", type=Path, metavar="DIR", help="write stNNN_subK.bin and the plan")
     c.set_defaults(run=edit)
 
     c = command("push", "push an edit list into the running game (PPSSPP's debugger)")
     c.add_argument("--stage", type=int, required=True)
-    c.add_argument("--ops", type=Path, required=True, help="the edit list (JSON)")
+    edit_list(c, required=False)
     c.add_argument("--port", type=int, help="debugger port (default: PPSSPP's own)")
     for half in ("mesh", "collision", "textures"):
         c.add_argument(f"--{half}", action="store_true", help=f"push the {half} (default: all)")
@@ -226,18 +237,35 @@ def verify(args: argparse.Namespace) -> int:
     return 1 if bad else 0
 
 
-def _load(args: argparse.Namespace) -> tuple[StageFile, list[dict[str, Any]]]:
+def read_list(args: argparse.Namespace) -> tuple[list[dict[str, Any]], Path]:
+    """`--ops` (a file, or stdin for -) and the folder its assets resolve against."""
+    import json
+    import sys
+
+    from . import ops as O
+
+    if args.ops == Path("-"):
+        try:
+            ops = O.parse(json.loads(sys.stdin.read()))
+        except json.JSONDecodeError as e:
+            raise ValueError(f"stdin: {e}") from None
+        return ops, args.base or Path(".")
+    return O.load(args.ops), args.base or args.ops.parent
+
+
+def _load(args: argparse.Namespace) -> tuple[StageFile, list[dict[str, Any]], Path]:
     from . import ops as O
     from .file import StageFile
 
     sf = StageFile.read(_game(args), args.stage)
-    ops = O.load(args.ops)
-    findings = O.check(ops, base_dir=args.ops.parent, where=sf.label)
+    ops, base = read_list(args)
+    findings = O.check(ops, base_dir=base, where=sf.label)
     for f in findings:
         print(f)
     if any(f.level == "error" for f in findings):
-        raise ValueError(f"{args.ops} has errors; nothing written")
-    return sf, ops
+        name = "stdin" if args.ops == Path("-") else args.ops
+        raise ValueError(f"{name} has errors; nothing written")
+    return sf, ops, base
 
 
 def edit(args: argparse.Namespace) -> int:
@@ -247,8 +275,7 @@ def edit(args: argparse.Namespace) -> int:
     from . import ops as O
     from . import textures as T
 
-    sf, ops = _load(args)
-    base = args.ops.parent
+    sf, ops, base = _load(args)
     out: dict[str, bytes] = {}
     worst = 0
     for sub, e in mesh.edits(sf, ops, base).items():
@@ -292,31 +319,36 @@ def edit(args: argparse.Namespace) -> int:
 def push(args: argparse.Namespace) -> int:
     from mhfu import addresses as a
     from mhfu.memory import Live
-    from ppsspp_debug import Client
 
     from . import live
+    from .file import StageFile
 
-    sf, ops = _load(args)
+    if args.restore or args.undo:
+        sf = StageFile.read(_game(args), args.stage)
+        if args.dry:
+            return 0
+        with live.connect(args.port) as client:
+            mem = Live(client)
+            if args.undo:
+                print(f"undo: {live.undo(mem, args.undo)} writes put back")
+            else:
+                live.restore(mem, sf)
+        return 0
+    if args.ops is None:
+        raise ValueError("give --ops, or --restore or --undo")
+    sf, ops, base = _load(args)
     halves = {h: getattr(args, h) for h in ("mesh", "collision", "textures")}
     if not any(halves.values()):
         halves = dict.fromkeys(halves, True)
     scratch = args.scratch or a.STAGE_SCRATCH
     size = args.scratch_size or a.STAGE_SCRATCH.count or 0
-    p = live.prepare(sf, ops, args.ops.parent, scratch=scratch, scratch_size=size, **halves)
+    p = live.prepare(sf, ops, base, scratch=scratch, scratch_size=size, **halves)
     for line in [*p.log, *map(str, p.findings), *live.describe(p)]:
         print(line)
-    catch = args.catch
-    if catch is None and not (args.undo or args.restore):
-        catch = live.default_catch(p, print)
+    catch = live.default_catch(p, print) if args.catch is None else args.catch
     if args.dry:
         return 0
-    with Client.connect(port=args.port) as client:
-        mem = Live(client)
-        if args.undo:
-            print(f"undo: {live.undo(mem, args.undo)} writes put back")
-        elif args.restore:
-            live.restore(mem, sf)
-        else:
-            undo = args.ops.parent / ".inject" / f"{sf.label}_collision_undo.json"
-            live.run(client, mem, p, catch_for=catch or 0.0, hold_for=args.hold, undo_file=undo)
+    with live.connect(args.port) as client:
+        undo = live.undo_path(sf.number)
+        live.run(client, Live(client), p, catch_for=catch, hold_for=args.hold, undo_file=undo)
     return 0
