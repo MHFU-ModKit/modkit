@@ -1,14 +1,24 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The shell's Findings dock: what the checks found in the active workspace's document. A line
-says where and what; its colour is the level, its tooltip the level and the code."""
+says where and what; its colour is the level, its tooltip the level, the code and what to do.
+
+A click reveals the finding's target, and the panel holding its `focus` control lands on it
+(`take`): the dock comes forward, scrolls to the control and gives it the keyboard."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING, Protocol
 
-from PySide6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtCore import QCoreApplication, QEvent, Qt, QTimer
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QScrollArea,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from mhfu_studio.shell.findings import LEVELS, Finding
 from mhfu_studio.shell.text import plain
@@ -28,8 +38,55 @@ def line(f: Finding) -> str:
     return plain(f"{f.where}: {f.message}" if f.where else f.message)
 
 
+#: points kept clear above and below a control scrolled to
+MARGIN = 24
+
+
+class Landing(Protocol):
+    #: the control a revealed finding names, until its panel lands on it
+    landing: str
+
+
 def tip(f: Finding) -> str:
-    return f"{f.level}: {f.code}" + ("\nClick to show it" if f.target is not None else "")
+    head = f"{f.level}: {f.code}"
+    if f.focus:
+        return f"{head}\nClick to go to what fixes it"
+    show = "\nClick to show it" if f.target is not None else ""
+    return f"{head}\n{f.fix}{show}" if f.fix else head + show
+
+
+def take(ws: Landing, controls: Mapping[str, QWidget]) -> None:
+    """Lands on the control `ws.landing` names when it is one of `controls`, once."""
+    w = controls.get(ws.landing)
+    if w is not None:
+        ws.landing = ""
+        land(w)
+
+
+def land(w: QWidget) -> None:
+    """Opens a `kit.More` around `w`, then scrolls its panel to it and gives it the keyboard,
+    once the layout the panel's sync changed has settled."""
+    p = w.parentWidget()
+    while p is not None:
+        if isinstance(p, kit.More):
+            p.set_open(True)
+        p = p.parentWidget()
+    QTimer.singleShot(0, w, lambda: _land(w))
+
+
+def _land(w: QWidget) -> None:
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest.value)
+    p = w.parentWidget()
+    while p is not None and not isinstance(p, QScrollArea):
+        p = p.parentWidget()
+    if p is not None:
+        p.ensureWidgetVisible(w, 0, MARGIN)
+    if isinstance(w, QAbstractItemView) and w.currentIndex().isValid():
+        w.scrollTo(w.currentIndex())
+    keys = [w, *(k for k in w.findChildren(QWidget) if k.isVisibleTo(w))]
+    got = next((k for k in keys if k.focusPolicy() & Qt.FocusPolicy.TabFocus), None)
+    if got is not None:
+        got.setFocus(Qt.FocusReason.OtherFocusReason)
 
 
 class FindingsPanel(kit.Panel):
@@ -76,8 +133,8 @@ class FindingsPanel(kit.Panel):
             "re-check while editing", lambda: setattr(self.studio.findings, "auto", on)
         )()
 
-    def _reveal(self, target: Hashable) -> None:
-        self.studio.act("show finding", lambda: self.studio.active.reveal(target))()
+    def _reveal(self, f: Finding) -> None:
+        self.studio.act("show finding", lambda: self.studio.active.reveal(f.target, f.focus))()
 
     def sync(self) -> None:
         doc = self.studio.active.document
@@ -94,4 +151,6 @@ class FindingsPanel(kit.Panel):
             self.auto.blockSignals(True)
             self.auto.setChecked(self.studio.findings.auto)
             self.auto.blockSignals(False)
-        self.list.set_items([kit.Item(line(f), f.target, tip(f), f.level) for f in found])
+        self.list.set_items(
+            [kit.Item(line(f), f if f.target is not None else None, tip(f), f.level) for f in found]
+        )

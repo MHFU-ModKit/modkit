@@ -17,7 +17,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mhfu import files
+from mhfu import files, hitzone
 from mhfu.em.intel import AttackIntel, HostSummary, PairIntel, PartIntel, SpeciesIntel
 from mhfu.files import Extracted
 from mhfu_port import slots
@@ -345,6 +345,13 @@ class MonsterWorkspace(Workspace):
             self.show_parts, self.parts_source = True, PORT
             self.sync_hitboxes()
             self.select_volume(key)
+            if m.hurtboxes[key].part is not None:
+                self.select_part((m.hurtboxes[key].part or 0) & hitzone.PART_MASK)
+            self.focus("Parts")
+        elif section == "part" and isinstance(key, int):
+            self.show_parts, self.parts_source = True, PORT
+            self.sync_hitboxes()
+            self.select_part(key)
             self.focus("Parts")
         elif section == "hitzone" and isinstance(key, int):
             self.parts_source, self.show_state = PORT, key
@@ -355,9 +362,14 @@ class MonsterWorkspace(Workspace):
             self.sync_attacks()
             self.select_attack_volume(key)
             self.focus("Hitboxes")
+        elif section == "set" and isinstance(key, int):
+            self.edit_set(key)
         elif section == "attack" and isinstance(key, int) and key < len(m.attacks):
-            vol = m.attacks[key].volume
-            self.show_attacks = True
+            a, host = m.attacks[key], self.host_attacks()
+            rec = None if host is None else host.attack(a.id)
+            known = host is not None and a.volume is not None and host.set(a.volume) is not None
+            vol = a.volume if known else None if rec is None else rec.volume
+            self.show_attacks, self.attacks_source = True, PORT
             if vol is not None:
                 self.select_set(vol)
             self.sync_attacks()

@@ -45,7 +45,8 @@ def test_census(make, species, make_pair):
     allowed = make(CLIP + MOVE.format(4, 15) + "allow_unentered = true\n")
     assert found(V.validate(allowed, intel=never), "MOVE_PAIR_NEVER_ENTERED").level == "warning"
     blind = found(V.validate(m, intel=species([make_pair(4, 15)])))
-    assert "MOVE_PAIR_NEVER_ENTERED" not in blind and blind["INTEL_ABSENT"].level == "warning"
+    assert "MOVE_PAIR_NEVER_ENTERED" not in blind
+    assert blind["INTEL_ABSENT"].level == "warning"
     short = species([make_pair(4, 15, measured={"entered": 3, "dwell_ticks": 1.0})], census=True)
     assert "MOVE_PAIR_SHORT_DWELL" in found(V.validate(m, intel=short))
     unseen = found(V.validate(make(CLIP + MOVE.format(1, 1)), intel=short))
@@ -151,8 +152,16 @@ def test_parts(make, species):
     ):
         assert out[code].level == level, code
     assert "HITZONE_SHARED" not in out, "said where the grid is edited, not as a finding"
-    unnamed = make("\n[[hurtbox]]\nbone = 1\nradius = 9.0\npart = 1\n")
-    assert "PARTS_UNNAMED" in found(V.validate(unnamed))
+    assert out["PART_INDEX_DUPLICATE"].target == ("part", 1)
+    assert out["HURTBOX_PART_UNNAMED"].focus == V.PART_NAME
+    over = out["HURTBOX_OVER_CAPACITY"]
+    assert over.target == ("hurtbox", 1) and over.focus == V.HURTBOXES, "the first that falls off"
+    assert all(f.focus or f.fix for f in out.values())
+    unnamed = make(
+        "\n[[hurtbox]]\nbone = 1\nradius = 9.0\n\n[[hurtbox]]\nbone = 1\nradius = 2\npart = 3\n"
+    )
+    f = found(V.validate(unnamed), "PARTS_UNNAMED")
+    assert f.target == ("part", 3) and f.focus == V.PART_NAME
 
 
 def test_attacks(make, species):
@@ -177,6 +186,9 @@ def test_attacks(make, species):
     ):
         assert code in out, code
     assert "HITBOX_SHARED" not in out, "said where hitboxes are edited, not as a finding"
+    assert out["HITBOX_OVER_CAPACITY"].target == ("set", 0)
+    assert out["HITBOX_OVER_CAPACITY"].focus == V.HIT_GROUP
+    assert all(f.focus or f.fix for f in out.values())
     assert "HITBOX_UNCHECKED" in found(V.validate(m))
     assert not [f for f in V.validate(make()) if f.code.startswith(("HITBOX", "ATTACK"))]
 

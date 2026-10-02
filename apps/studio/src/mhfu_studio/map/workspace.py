@@ -139,6 +139,9 @@ class MapWorkspace(Workspace):
         self.add = AddForm(self)
         #: a dock to bring forward, for the window (`take_focus`)
         self._focus: str | None = None
+        #: the op a finding showed, and the control its panel lands on (`land`)
+        self.shown_op: int | None = None
+        self.landing = ""
 
     # the shell's hooks
 
@@ -324,8 +327,9 @@ class MapWorkspace(Workspace):
                 r, g, b, _ = lb.color
                 o.text((float(x) + 6.0, float(y) - 8.0), lb.text, (r, g, b, 0.95))
 
-    def reveal(self, target: Hashable) -> None:
-        """A finding's (stage, op index): load the stage and select what the op names."""
+    def reveal(self, target: Hashable, focus: str = "") -> None:
+        """A finding's (stage, op index): load the stage, select what the op names, and land on
+        `focus` (the edit in Selection's list)."""
         if not isinstance(target, tuple) or len(target) != 2:
             return
         stage, i = target
@@ -340,6 +344,9 @@ class MapWorkspace(Workspace):
             return
         op = sess.ops[i]
         self.message = f"{O.place(stage_title(stage), i)}: {describe_op(op)}"
+        self.shown_op, self.landing = i, focus
+        if focus:
+            self._focus = "Selection"
         g = op.get("group")
         if isinstance(g, int) and op.get("vertices"):
             try:
@@ -353,7 +360,7 @@ class MapWorkspace(Workspace):
         elif op.get("op") == "collision" and "tri" in op:
             self.tools.set_kind(COLLISION)
             self.tools.select_collision(CollisionSelection([(int(op.get("chunk", 1)), op["tri"])]))
-            self._focus = "Collision"
+            self._focus = self._focus or "Collision"
 
     def refresh(self) -> None:
         self.message = ""  # it named the edit an undo just took back

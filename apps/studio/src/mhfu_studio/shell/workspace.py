@@ -157,8 +157,8 @@ class Workspace(Protocol):
         """True while the picture changes without input (the view keeps redrawing)."""
         return False
 
-    def reveal(self, target: Hashable) -> None:
-        """Shows a finding's `target` (select it, frame it)."""
+    def reveal(self, target: Hashable, focus: str = "") -> None:
+        """Shows a finding's `target` (select it, frame it); a panel lands on its `focus`."""
 
     def refresh(self) -> None:
         """The shell changed the document (undo, redo, save as): re-read what depends on it."""

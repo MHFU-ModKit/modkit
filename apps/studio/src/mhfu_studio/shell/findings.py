@@ -14,13 +14,17 @@ LEVELS: tuple[Level, ...] = ("error", "warning", "info")
 
 @dataclass(frozen=True)
 class Finding:
-    """`where` is for people ("clip 12", "st098 group 4"); `target` lets a workspace jump to it."""
+    """`where` is for people ("clip 12", "st098 group 4"); `target` lets a workspace jump to it,
+    and `focus` names the control there that fixes it, a key the workspace's panels land on.
+    `fix` says what to do when no control does."""
 
     level: Level
     code: str
     message: str
     where: str = ""
     target: Hashable | None = None
+    focus: str = ""
+    fix: str = ""
 
     def __str__(self) -> str:
         at = f" {self.where}:" if self.where else ""

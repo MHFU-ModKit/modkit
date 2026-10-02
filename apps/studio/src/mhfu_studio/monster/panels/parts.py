@@ -15,10 +15,11 @@ from mhfu.em.intel import HitSphere, PartIntel
 from mhfu_port.manifest import Hurtbox
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
+from mhfu_studio.monster import validate as V
 from mhfu_studio.monster.render.hitboxes import PART_COLORS
 from mhfu_studio.monster.tools import HURT
 from mhfu_studio.monster.workspace import HOST, PORT
-from mhfu_studio.ui import kit
+from mhfu_studio.ui import findings, kit
 
 from .widgets import (
     NoScene,
@@ -285,6 +286,16 @@ class PartsPanel(kit.Panel):
         self.pages = kit.Pages(page, NoScene(studio))
         self.body.addWidget(self.pages)
         self.body.addStretch(1)
+        #: where a finding lands (`validate.FOCUS`)
+        self.lands = {
+            V.PART_NAME: self.part_name,
+            V.HURT_PART: self.part_box,
+            V.HURT_JOINT: self.form.bone,
+            V.HURT_RADIUS: self.form.radius,
+            V.HURT_END: self.form.to,
+            V.HURTBOXES: self.vols,
+            V.GRID: self.grid,
+        }
 
     # ---- actions --------------------------------------------------------------------- #
 
@@ -473,6 +484,7 @@ class PartsPanel(kit.Panel):
         self.export.setEnabled(ws.exportable())
         self.no_manifest.setVisible(not has_doc)
         self.keep.setEnabled(port and ws.selected_volume is not None)
+        findings.take(ws, self.lands)
 
     def _start(self, host: PartIntel | None, sess: PartSession | None) -> None:
         """A copy of the base monster's tables: on top while yours lacks one, else in More."""

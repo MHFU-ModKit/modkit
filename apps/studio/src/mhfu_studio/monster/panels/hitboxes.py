@@ -14,12 +14,13 @@ from mhfu.em.intel import AttackIntel, AttackRecord
 from mhfu_port.manifest import Hitbox
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
+from mhfu_studio.monster import validate as V
 from mhfu_studio.monster.attacks import LEVERS
 from mhfu_studio.monster.render.hitboxes import set_color
 from mhfu_studio.monster.tools import HIT
 from mhfu_studio.monster.workspace import PORT
 from mhfu_studio.shell.findings import Level
-from mhfu_studio.ui import kit
+from mhfu_studio.ui import findings, kit
 
 from .common import bone_span
 from .parts import HOST_BONES
@@ -278,6 +279,14 @@ class HitboxesPanel(kit.Panel):
         self.pages = kit.Pages(page, NoScene(studio))
         self.body.addWidget(self.pages)
         self.body.addStretch(1)
+        #: where a finding lands (`validate.FOCUS`)
+        self.lands = {
+            V.HIT_JOINT: self.form.bone,
+            V.HIT_RADIUS: self.form.radius,
+            V.HIT_END: self.form.to,
+            V.HIT_GROUP: self.sets,
+            V.ATTACK_STATS: self.records,
+        }
 
     # ---- actions --------------------------------------------------------------------- #
 
@@ -486,6 +495,7 @@ class HitboxesPanel(kit.Panel):
         self.export.setEnabled(ws.exportable())
         self.keep.setEnabled(port and ws.selected_attack_volume is not None)
         self.no_manifest.setVisible(not has_doc)
+        findings.take(ws, self.lands)
 
     def _start(self, sess: AttackSession | None) -> None:
         """Copying the action's groups: on top while you have no hitboxes, else in More."""

@@ -7,11 +7,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from mhfu_studio.shell.text import plain
 from mhfu_studio.stage import ops as O
-from mhfu_studio.ui import kit
+from mhfu_studio.ui import findings, kit
 
 from ..core.edit import COLLISION, count, describe_op
 from ..core.scene import group_name
@@ -191,6 +192,12 @@ class SelectionPanel(kit.Panel):
         if read != self._read:
             self._read = read
             self._read_session()
+        if ws.landing == O.EDIT:  # a finding on an edit: that line, picked
+            for row in range(self.ops.count()):
+                it = self.ops.item(row)
+                if it.data(Qt.ItemDataRole.UserRole) == ws.shown_op:
+                    self.ops.setCurrentItem(it)
+        findings.take(ws, {O.EDIT: self.ops})
 
     def _read_session(self) -> None:
         """The budget, the range check and the edit list: they change only with an edit."""
@@ -207,7 +214,9 @@ class SelectionPanel(kit.Panel):
         n = len(sess.ops)
         self.count.setText(count(n, "edit") if n else "No edits yet")
         newest = reversed(list(enumerate(sess.ops)))
-        self.ops.set_items([kit.Item(f"{O.edit_number(i)}. {describe_op(op)}") for i, op in newest])
+        self.ops.set_items(
+            [kit.Item(f"{O.edit_number(i)}. {describe_op(op)}", i) for i, op in newest]
+        )
         warnings = [plain(w) for w in sess.warnings()[:3]]
         self.warnings.setText("\n".join(warnings))
         self.warnings.setVisible(bool(warnings))
