@@ -23,14 +23,6 @@ if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
 
 KINDS = (clips.CARRIED, clips.FILLER, clips.HOST, clips.ALTERED)
-#: a kind in words: one, many
-KIND_WORDS = {
-    clips.CARRIED: ("own clip", "own clips"),
-    clips.FILLER: ("idle copy", "idle copies"),
-    clips.HOST: ("base monster's", "base monster's"),
-    clips.ALTERED: ("changed", "changed"),
-    clips.UNKNOWN: ("unknown", "unknown"),
-}
 KIND_TIPS = {
     clips.CARRIED: "The original's own clip, intact: forcing this anim plays the move you ported",
     clips.FILLER: "A copy of the idle clip where the original had nothing: forcing it plays"
@@ -196,7 +188,7 @@ class ClipsPanel(kit.Panel):
         n = cov.counts()
         self.kind_row.setVisible(cov.has_source)
         for kind, (sw, text) in self.kinds.items():
-            text.setText(f"{n[kind]} {KIND_WORDS[kind][n[kind] != 1]}")
+            text.setText(f"{n[kind]} {clips.KIND_WORDS[kind][n[kind] != 1]}")
             text.set_level("warning" if kind == clips.FILLER and n[kind] else None)
             text.setVisible(bool(n[kind]))
             sw.setVisible(bool(n[kind]))
@@ -291,7 +283,7 @@ class ClipsPanel(kit.Panel):
 
 
 def kind_text(cov: SlotCoverage | None) -> str:
-    return "" if cov is None else KIND_WORDS[cov.kind][0]
+    return "" if cov is None else clips.KIND_WORDS[cov.kind][0]
 
 
 def level_of(cov: SlotCoverage | None) -> Level | None:

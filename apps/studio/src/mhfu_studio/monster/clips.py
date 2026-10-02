@@ -34,6 +34,17 @@ ALTERED = "ALTERED"
 DROPPED = "DROPPED"
 UNKNOWN = "UNKNOWN"
 """No donor moveset to compare against."""
+MISSING = "MISSING"
+"""An anim the build does not populate: what the game asks for is not there."""
+#: a kind in words: one, many
+KIND_WORDS = {
+    CARRIED: ("own clip", "own clips"),
+    FILLER: ("idle copy", "idle copies"),
+    HOST: ("base monster's", "base monster's"),
+    ALTERED: ("changed", "changed"),
+    UNKNOWN: ("unknown", "unknown"),
+    MISSING: ("missing", "missing"),
+}
 
 CURRENT = "CURRENT"
 STILL_VALID = "STILL_VALID"
@@ -350,6 +361,51 @@ class LabelSession:
 
         self.doc.edit(bind)
         return f"moves.{name} = ({main},{sub})" + (f" on {clip}" if clip else "")
+
+    def unbind_move(self, name: str) -> str:
+        """Drops `[moves.<name>]`; refused while another move, a rule or an effect names it."""
+        if name not in self.doc.manifest.moves:
+            raise ManifestError(f"no move {name!r}")
+        users = move_users(self.doc.manifest, name)
+        if users:
+            raise ManifestError(f"{name} is still used by {', '.join(users)}: change that first")
+
+        def drop(m: Manifest) -> None:
+            del m.moves[name]
+
+        self.doc.edit(drop)
+        return f"moves.{name} removed"
+
+    def rename_move(self, old: str, new: str) -> str:
+        """Renames a move and every `after`, rule and effect that names it."""
+        new = check_name(new)
+        if old not in self.doc.manifest.moves:
+            raise ManifestError(f"no move {old!r}")
+        if new == old:
+            return f"moves.{old}"
+        if new in self.doc.manifest.moves:
+            raise ManifestError(f"moves.{new} already exists")
+
+        def rename(m: Manifest) -> None:
+            m.moves = {new if k == old else k: mv for k, mv in m.moves.items()}
+            for mv in m.moves.values():
+                mv.after = new if mv.after == old else mv.after
+            for r in m.rules:
+                r.play = new if r.play == old else r.play
+                r.from_move = new if r.from_move == old else r.from_move
+            for e in m.effects:
+                e.move = new if e.move == old else e.move
+
+        self.doc.edit(rename)
+        return f"moves.{old} is now moves.{new}"
+
+
+def move_users(m: Manifest, name: str) -> list[str]:
+    """What names move `name`: other moves' `after`, rules and effects."""
+    out = [f"moves.{k} (after)" for k, mv in m.moves.items() if mv.after == name]
+    out += [f"rule {r.label or i}" for i, r in enumerate(m.rules) if name in (r.play, r.from_move)]
+    out += [f"effect {e.id}" for e in m.effects if e.move == name]
+    return out
 
 
 def import_labels(
