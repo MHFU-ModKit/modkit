@@ -38,10 +38,12 @@ def test_grid_picks_the_target(qtbot: Any, game: Extracted, atlas: Atlas) -> Non
     ws = loaded(game, atlas)
     p = panel(qtbot, ws)
     assert kit.missing_tips(p) == [] and p.grid.count() == 2
-    assert not p.grid.item(1).icon().isNull() and "1 group(s)" in p.grid.item(0).text()
+    assert not p.grid.item(1).icon().isNull() and p.grid.item(0).text() == "0\n1 group"
     assert "group 0" in p.grid.item(0).toolTip() and p.grid.currentRow() == 0
     p.grid.itemClicked.emit(p.grid.item(1))
-    assert ws.tex_target == 1 and p.grid.currentRow() == 1 and "32x8" in p.target.text()
+    assert ws.tex_target == 1 and p.grid.currentRow() == 1 and "32 x 8" in p.target.text()
+    more = p.findChild(kit.More)
+    assert more is not None and more.isAncestorOf(p.keep) and more.isAncestorOf(p.copy)
     p.keep.click()
     assert ws.tex_keep
     ws.tex_target = 0
