@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
     QGridLayout,
-    QHBoxLayout,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -171,44 +170,6 @@ def export_button(ws: MonsterWorkspace, studio: Studio) -> QPushButton:
         on=studio.act("export", ws.export_hit),
         icon="ph.export",
     )
-
-
-class SaveRow(QWidget):
-    """Save or discard the manifest's staged edits (each is already an undo step)."""
-
-    def __init__(self, ws: MonsterWorkspace, studio: Studio) -> None:
-        super().__init__()
-        self.ws = ws
-        self.save = kit.button(
-            "Save",
-            tip="Writes every staged edit into the port manifest on disk. Export and deploy"
-            " read the saved file, so save before you ship.",
-            on=studio.save,
-            role="primary",
-        )
-        self.discard = kit.button(
-            "Discard",
-            tip="Throws away every edit since the last save and goes back to the file on disk."
-            " Undo brings them back.",
-            on=studio.act("discard", ws.revert),
-            role="danger",
-        )
-        self.hint = kit.label("Nothing to save", role="muted", wrap=False)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        for w in (self.save, self.discard, self.hint):
-            lay.addWidget(w)
-        lay.addStretch(1)
-
-    def sync(self) -> None:
-        doc = self.ws.doc
-        self.setVisible(doc is not None)
-        dirty = doc is not None and doc.dirty
-        where = doc.path.name if doc is not None and doc.path is not None else "the manifest"
-        self.save.setText(f"Save to {where}")
-        self.save.setVisible(dirty)
-        self.discard.setVisible(dirty)
-        self.hint.setVisible(not dirty)
 
 
 class VolumeForm(QWidget):
