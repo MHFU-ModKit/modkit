@@ -34,7 +34,7 @@ def test_nothing_open() -> None:
     ws.paint(o)
     assert o.calls == [] and not ws.key(Key("Space")) and not ws.animating()
     assert ws.pointer(Pointer("press", 1, 1, (8, 8))) == Gesture.NONE
-    assert ws.document is None and ws.status() == ""
+    assert ws.document is None and ws.status() == "" and "File > Open" in ws.hint()
 
 
 def test_status_names_the_scene(workspace: MonsterWorkspace) -> None:
@@ -47,6 +47,7 @@ def test_keys_drive_the_transport(workspace: MonsterWorkspace) -> None:
     ws.play_slot(1)
     pb = ws.vp.playback
     assert pb.playing and pb.phase == 0.0, "a picked clip plays from its first frame"
+    assert "clip 1 walk \u00b7 Space pause \u00b7 \u2190 / \u2192 step a frame" in ws.hint()
     assert ws.key(Key("Space")) and not pb.playing
     assert ws.key(Key("Right")) and pb.phase == pb.speed and ws.vp.frame == pb.phase
     assert ws.key(Key("Left")) and pb.phase == 0.0
@@ -124,6 +125,7 @@ def test_edit_set_opens_hitboxes(workspace: MonsterWorkspace) -> None:
     ws.edit_set(3)
     assert ws.show_attacks and ws.attacks_source == "host" and ws.selected_set == 3
     assert ws.take_focus() == "Hitboxes"
+    assert ws.hint().endswith("hitbox set 3: pick one of its hitboxes in Hitboxes")
     ws.edit_set(2)
     assert ws.attacks_source == "port", "the port authors set 2"
 

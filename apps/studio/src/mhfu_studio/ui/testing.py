@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QWidget
 from mhfu_studio.shell import testing
 from mhfu_studio.shell.input import Key, Pointer
 from mhfu_studio.shell.overlay import Ink, Overlay
-from mhfu_studio.shell.workspace import Dock, Gesture, Tool, ToolGroup
+from mhfu_studio.shell.workspace import Dock, Gesture, Shortcut, Tool, ToolGroup
 from mhfu_studio.ui import kit
 
 if TYPE_CHECKING:
@@ -141,6 +141,12 @@ class FakeWorkspace(testing.FakeWorkspace):
 
     def hud(self) -> str:
         return f"{self.name}: {self.status()}"
+
+    def hint(self) -> str:
+        return f"{self.tool}: Delete removes"
+
+    def shortcuts(self) -> Sequence[Shortcut]:
+        return (Shortcut(("Delete",), "Removes the picked item"),)
 
     def take_focus(self) -> str | None:
         label, self.focus = self.focus, None

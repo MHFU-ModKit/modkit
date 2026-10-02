@@ -35,7 +35,8 @@ from mhfu_studio.monster.panels.graph import MoveGraph
 from mhfu_studio.monster.parts import PartSession
 from mhfu_studio.shell.input import Button, Key, Mod, Pointer
 from mhfu_studio.shell.overlay import Overlay
-from mhfu_studio.shell.workspace import Dock, Gesture, Workspace, register
+from mhfu_studio.shell.text import keys
+from mhfu_studio.shell.workspace import Dock, Gesture, Shortcut, Workspace, register
 
 if TYPE_CHECKING:
     import moderngl
@@ -51,6 +52,9 @@ PORT, HOST = "port", "host"
 CLICK_SLOP = 4.0
 #: the Timeline's height: its title, the transport and the frame strip
 TIMELINE_H = 124
+PLAY = Shortcut(("Space",), "Plays the clip, or pauses it")
+STEP = Shortcut(("Left", "Right"), "One game frame back, or on")
+REWIND = Shortcut(("Home",), "Back to the clip's first frame")
 
 
 class MonsterWorkspace(Workspace):
@@ -275,18 +279,47 @@ class MonsterWorkspace(Workspace):
         return Gesture.NONE
 
     def key(self, ev: Key) -> bool:
-        """Space plays or pauses the clip, Left and Right step a game frame, Home rewinds."""
-        keys: dict[str, Callable[[], None]] = {
-            "Space": self.play_pause,
-            "Left": lambda: self.step(-1),
-            "Right": lambda: self.step(1),
-            "Home": self.rewind,
+        """`shortcuts` while a clip is on screen."""
+        acts: dict[str, Callable[[], None]] = {
+            PLAY.keys[0]: self.play_pause,
+            STEP.keys[0]: lambda: self.step(-1),
+            STEP.keys[1]: lambda: self.step(1),
+            REWIND.keys[0]: self.rewind,
         }
-        fn = keys.get(ev.name)
+        fn = acts.get(ev.name)
         if fn is None or ev.mods != Mod.NONE or self.vp is None or self.vp.clip is None:
             return False
         fn()
         return True
+
+    def shortcuts(self) -> Sequence[Shortcut]:
+        return (PLAY, STEP, REWIND)
+
+    def hint(self) -> str:
+        sc, vp = self.scene, self.vp
+        if sc is None:
+            return "Open a port manifest (ports/<name>.toml) with File > Open"
+        bits = []
+        clip = None if vp is None else vp.clip
+        if vp is None or clip is None:
+            bits.append("Pick a clip in Clips to play it")
+        else:
+            found = self.manifest_clip(clip.slot)
+            name = f" {found[0]}" if found else ""
+            bits += [
+                f"clip {clip.slot}{name}",
+                f"{keys(PLAY.keys)} {'pause' if vp.playback.playing else 'play'}",
+                f"{keys(STEP.keys)} step a frame",
+                f"{keys(REWIND.keys)} rewind",
+            ]
+        if self.selected_attack_volume is not None and self.attacks_source == PORT:
+            bits.append(
+                f"hitbox {self.selected_attack_volume} of set {self.selected_set}: its size and"
+                " place are in Hitboxes"
+            )
+        elif self.selected_set is not None:
+            bits.append(f"hitbox set {self.selected_set}: pick one of its hitboxes in Hitboxes")
+        return " \u00b7 ".join(bits)
 
     def paint(self, o: Overlay) -> None:
         from mhfu_studio.monster.panels import viewport

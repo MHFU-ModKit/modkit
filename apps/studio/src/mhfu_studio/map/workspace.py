@@ -23,8 +23,16 @@ from mhfu_studio.shell.camera import Bounds
 from mhfu_studio.shell.input import Key as KeyEvent
 from mhfu_studio.shell.input import Pointer
 from mhfu_studio.shell.overlay import Overlay
-from mhfu_studio.shell.text import plain
-from mhfu_studio.shell.workspace import Dock, Gesture, Job, ToolGroup, Workspace, register
+from mhfu_studio.shell.text import keys, plain
+from mhfu_studio.shell.workspace import (
+    Dock,
+    Gesture,
+    Job,
+    Shortcut,
+    ToolGroup,
+    Workspace,
+    register,
+)
 from mhfu_studio.stage import ops as O
 from mhfu_studio.stage.live import CLIMB, QUEST_CATCH
 
@@ -32,6 +40,7 @@ from .adding import AddForm
 from .core.atlas import Atlas, stage_title
 from .core.edit import (
     COLLISION,
+    FACE,
     GROUP,
     OBJECT,
     CollisionSelection,
@@ -44,7 +53,7 @@ from .core.edit import (
 )
 from .core.scene import Key, MapScene, SceneError, open_stage
 from .document import MANIFEST, MapDocument
-from .tools import GROUPS, ViewportTools
+from .tools import GROUPS, MOVE, ROTATE, SCALE, SELECT, VERBS, ViewportTools
 
 if TYPE_CHECKING:
     import moderngl
@@ -57,6 +66,33 @@ VILLAGE = 139
 """The section shown first when nothing else asks: Pokke village, row 0."""
 SMALL = 50.0
 """A selection smaller than this is framed as a box this size around its centre."""
+
+
+CLEAR = Shortcut(("Escape",), "Clears the selection, or drops a drag or a box under way")
+REMOVE = Shortcut(
+    ("Delete", "Backspace"), "Removes the selection (with Collision picked: its triangles)"
+)
+FRAME = Shortcut(("F",), "Frames the selection, or the whole section")
+#: the view's keys; `MapWorkspace.key` passes on no other
+KEYS = (CLEAR, REMOVE, FRAME)
+#: what a click picks, per pick kind
+NOUNS = {
+    GROUP: "a mesh group",
+    OBJECT: "an object",
+    FACE: "a triangle",
+    COLLISION: "a collision triangle",
+}
+TOOLS = {t.id: t for g in GROUPS for t in g.tools}
+TRANSFORMS = (MOVE, ROTATE, SCALE)
+
+
+def count(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
+def group_name(key: Key) -> str:
+    sub, g = key
+    return f"group {g}" + (f" of sub-model {sub}" if sub else "")
 
 
 def climbs(ops: Sequence[Op]) -> bool:
@@ -230,21 +266,40 @@ class MapWorkspace(Workspace):
 
     def hud(self) -> str:
         sc = self.scene
-        head = stage_title(sc.stage) if sc else self.data_error or "no section loaded"
-        lines = [head]
-        if sc is not None:
-            lines.append(f"{self.tools.hint()}; F frames, Esc clears")
-            sel = self.col_sel if self.tools.kind == COLLISION else self.selection
-            hov = ""
-            if self.tools.hover is not None:
-                hov = f"  hover {sc.group(*self.tools.hover.key).label}"
-            elif self.tools.col_hover is not None:
-                c, t = self.tools.col_hover
-                hov = f"  hover chunk {c} tri {t} ({sc.chunk(c).klass[t]})"
-            lines.append(sel.describe(sc) + hov)
-        if self.message:
-            lines.append(plain(self.message))
-        return "\n".join(lines)
+        return stage_title(sc.stage) if sc else plain(self.data_error) or "no section loaded"
+
+    def hint(self) -> str:
+        sc, t = self.scene, self.tools
+        if sc is None:
+            return plain(self.data_error) or "Pick a section in Areas to load it"
+        sel = self.col_sel if t.kind == COLLISION else self.selection
+        if sel.empty:
+            if t.tool == SELECT:
+                return (
+                    f"Click {NOUNS[t.kind]} to select it \u00b7 shift-click adds \u00b7 drag"
+                    " draws a box \u00b7 Alt-drag turns the view \u00b7 right-drag pans"
+                )
+            return (
+                f"Click {NOUNS[t.kind]} to {VERBS[t.tool]} it \u00b7 drag turns the view"
+                " \u00b7 right-drag pans"
+            )
+        acts = [f"drag a handle to {VERBS[t.tool]} it"] if t.gizmo_visible else []
+        acts += [f"{TOOLS[x].key} {TOOLS[x].label.lower()}" for x in TRANSFORMS if x != t.tool]
+        acts += [f"{keys(k.keys[:1])} {w}" for k, w in ((REMOVE, "remove"), (FRAME, "frame"))]
+        acts.append(f"{keys(CLEAR.keys)} deselect")
+        return f"{self.selected()}: " + " \u00b7 ".join(acts)
+
+    def selected(self) -> str:
+        """The selection in words: "2 objects in group 8"."""
+        if self.tools.kind == COLLISION:
+            return count(len(self.col_sel), "collision triangle")
+        sel = self.selection
+        ks = list(sel.vertices)
+        where = group_name(ks[0]) if len(ks) == 1 else count(len(ks), "group")
+        if sel.kind == GROUP:
+            return where
+        n = sum(len(sel.parts.get(k, [])) for k in ks)
+        return f"{count(n, 'object' if sel.kind == OBJECT else 'triangle')} in {where}"
 
     def tool_groups(self) -> Sequence[ToolGroup]:
         return GROUPS
@@ -259,7 +314,10 @@ class MapWorkspace(Workspace):
         return self.tools.pointer(ev)
 
     def key(self, ev: KeyEvent) -> bool:
-        return self.tools.key(ev)
+        return any(ev.name in k.keys for k in KEYS) and self.tools.key(ev)
+
+    def shortcuts(self) -> Sequence[Shortcut]:
+        return KEYS
 
     def paint(self, o: Overlay) -> None:
         self._labels(o)

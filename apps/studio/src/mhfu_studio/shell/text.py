@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""Text as the window shows it: messages and the camera line."""
+"""Text as the window shows it: messages, key names and the camera line."""
 
 from __future__ import annotations
 
@@ -29,6 +29,22 @@ def plain(text: str) -> str:
         if root not in (os.sep, ""):
             text = text.replace(root, short)
     return text
+
+
+#: Qt key names as the studio writes them
+_KEYS = {
+    "Escape": "Esc",
+    "Delete": "Del",
+    "Left": "\u2190",
+    "Right": "\u2192",
+    "Up": "\u2191",
+    "Down": "\u2193",
+}
+
+
+def keys(names: tuple[str, ...]) -> str:
+    """`names` (Qt's: "Escape", "Left") as one label: "Esc", "\u2190 / \u2192"."""
+    return " / ".join(_KEYS.get(n, n) for n in names)
 
 
 def camera_line(cam: OrbitCamera) -> str:

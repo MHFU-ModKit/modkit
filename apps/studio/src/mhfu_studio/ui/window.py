@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from PySide6.QtCore import QByteArray, QPoint, QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
+    QDialog,
     QDockWidget,
     QHBoxLayout,
     QMainWindow,
@@ -29,10 +30,11 @@ from PySide6.QtWidgets import (
 )
 from shiboken6 import getCppPointer
 
+from mhfu_studio.shell.findings import worst
 from mhfu_studio.shell.studio import doc_name
 from mhfu_studio.shell.text import plain
 from mhfu_studio.shell.workspace import Dock, Tool, ToolGroup, Workspace
-from mhfu_studio.ui import chrome, dialogs, kit, theme
+from mhfu_studio.ui import about, chrome, dialogs, kit, theme
 from mhfu_studio.ui.findings import FindingsPanel
 from mhfu_studio.ui.job import JobLog, ProcessRunner
 from mhfu_studio.ui.view import GLView
@@ -45,6 +47,7 @@ STATE_VERSION = 2
 FINDINGS = "Findings"
 FINDINGS_TIP = "What the checks found in the document: errors, warnings and notes"
 STOP_TIP = "Stops the running Send to game job; nothing runs now"
+PROBLEMS_TIP = "Opens Findings: what the checks found wrong in the document, and where"
 AREAS = {
     "left": Qt.DockWidgetArea.LeftDockWidgetArea,
     "right": Qt.DockWidgetArea.RightDockWidgetArea,
@@ -144,6 +147,10 @@ class Window(QMainWindow):
         self.bar.send.setDefaultAction(self.send_action)
         status = self.statusBar()
         status.setSizeGripEnabled(False)
+        #: what is selected and the keys that act on it; clipped, not wrapped, when long
+        self.hint = kit.label(wrap=False)
+        self.hint.setObjectName("Hint")
+        self.hint.setMinimumWidth(1)
         self.log_button = kit.icon_button(
             "ph.terminal-window",
             tip="Shows what Send to game printed, with Stop and Copy",
@@ -151,12 +158,15 @@ class Window(QMainWindow):
         )
         self.message = kit.label(wrap=False)
         self.message.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.where = kit.label(wrap=False)
-        self.renderer = kit.label(wrap=False)
+        self.problems = kit.button("", tip=PROBLEMS_TIP, on=self.show_findings)
+        self.problems.setObjectName("Problems")
+        self.problems.hide()
+        status.addWidget(self.hint)
         status.addWidget(self.log_button)
         status.addWidget(self.message, 1)
-        status.addPermanentWidget(self.where)
-        status.addPermanentWidget(self.renderer)
+        status.addPermanentWidget(self.problems)
+        self._shortcuts: about.Shortcuts | None = None
+        self._about: about.About | None = None
 
         self._pending = QTimer(self)
         self._pending.setSingleShot(True)
@@ -503,6 +513,22 @@ class Window(QMainWindow):
             s.switch,
         )
 
+        h = self._menu("&Help")
+        h.addAction(
+            self._action(
+                "Keyboard shortcuts",
+                "Every key and mouse gesture the studio knows, in one table",
+                self.show_shortcuts,
+            )
+        )
+        h.addAction(
+            self._action(
+                "About MHFU Studio",
+                "What the studio is, its versions, what is open and what draws the 3D view",
+                self.show_about,
+            )
+        )
+
     def _radio(
         self, menu: QMenu, items: list[tuple[str, str, str]], pick: Callable[[str], object]
     ) -> list[QAction]:
@@ -558,6 +584,29 @@ class Window(QMainWindow):
             b.setProperty("busy", job is not None)
             b.style().unpolish(b)  # the stylesheet's busy rule applies on a re-polish
             b.style().polish(b)
+
+    def show_findings(self) -> None:
+        self.findings_dock.show()
+        self._opened(self.findings_dock, True)
+
+    def show_shortcuts(self) -> QDialog:
+        """Help > Keyboard shortcuts, made on first use: the keys do not change after."""
+        if self._shortcuts is None:
+            self._shortcuts = about.Shortcuts(self.studio, self.bar.menus.actions(), self)
+        return self._raise(self._shortcuts.dialog)
+
+    def show_about(self) -> QDialog:
+        if self._about is None:
+            self._about = about.About(self.studio, self)
+        self._about.sync()
+        return self._raise(self._about.dialog)
+
+    @staticmethod
+    def _raise(d: QDialog) -> QDialog:
+        d.show()
+        d.raise_()
+        d.activateWindow()
+        return d
 
     def show_log(self) -> JobLog:
         """The job log window, made on first use and raised."""
@@ -630,8 +679,8 @@ class Window(QMainWindow):
         for d in [*self._docks.get(ws.name, []), self.findings_dock]:
             if d.isVisible():
                 self._sync_panel(d)
-        self.studio.guard("sync", lambda: self._sync_window(ws))()
         self.studio.guard("send to game", self._sync_send)()
+        self.studio.guard("sync", lambda: self._sync_window(ws))()
         if self._log is not None and self._log.isVisible():
             self._log.sync()
         self._retitle()
@@ -660,13 +709,34 @@ class Window(QMainWindow):
         message = plain(self.studio.message)
         self.message.setText(message)
         self.message.setToolTip(message)  # the bar clips it
-        self.where.setText(plain(ws.status()))
-        self.renderer.setText(self.studio.renderer)
+        hint = ws.hint()
+        if hint and self.send_action.isEnabled():  # `_sync_send` asked the workspace
+            hint += f" \u00b7 {about.native(self.send_action.shortcut())} send to game"
+        self.hint.setText(hint)
+        self.hint.setToolTip(hint)
+        self._sync_problems()
+
+    def _sync_problems(self) -> None:
+        """The status bar's count of errors and warnings, in the worst one's colour."""
+        doc = self.studio.active.document
+        found = [] if doc is None else self.studio.findings.get(doc)
+        bad = [f for f in found if f.level != "info"]
+        n = len(bad)
+        self.problems.setText(f"{n} problem{'' if n == 1 else 's'}")
+        self.problems.setVisible(n > 0)
+        level = worst(bad)
+        if self.problems.property("level") != level:
+            self.problems.setProperty("level", level)
+            self.problems.style().unpolish(self.problems)  # the level rule needs a re-polish
+            self.problems.style().polish(self.problems)
 
     def _recheck(self) -> None:
-        """The findings re-check on their own clock."""
+        """The findings re-check on their own clock, never in the middle of a drag."""
+        if self._closed or self.view.held:
+            return
         if self.findings_dock.isVisible():
             self._sync_panel(self.findings_dock)
+        self.studio.guard("findings", self._sync_problems)()
 
     # ---- closing --------------------------------------------------------------------- #
 

@@ -262,7 +262,10 @@ def palette(t: Theme) -> QPalette:
 
 def qss(t: Theme) -> str:
     s0, s1, s2 = t.stops
-    levels = "\n".join(f'QLabel[level="{lv}"] {{ color: {_level(t, lv)}; }}' for lv in LEVELS)
+    levels = "\n".join(
+        f'QLabel[level="{lv}"], #Problems[level="{lv}"] {{ color: {_level(t, lv)}; }}'
+        for lv in LEVELS
+    )
     return f"""
 * {{ color: {t.text}; }}
 QMainWindow {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
@@ -347,6 +350,10 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 QStatusBar {{ background: transparent; color: {t.muted}; }}
 QStatusBar QLabel {{ color: {t.muted}; padding: 0 6px; }}
 QStatusBar::item {{ border: none; }}
+QStatusBar QLabel#Hint {{ color: {t.text}; }}
+QPushButton#Problems {{ background: transparent; border: none; padding: 1px 8px;
+    font-weight: 600; }}
+QPushButton#Problems:hover {{ background: {t.soft}; }}
 QMenuBar {{ background: transparent; }}
 QMenuBar::item {{ background: transparent; padding: 4px 9px; border-radius: 6px; }}
 QMenuBar::item:selected {{ background: {t.soft}; }}

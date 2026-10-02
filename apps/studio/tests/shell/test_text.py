@@ -3,7 +3,7 @@
 import os
 
 from mhfu_studio.shell.camera import OrbitCamera
-from mhfu_studio.shell.text import camera_line, plain
+from mhfu_studio.shell.text import camera_line, keys, plain
 
 
 def test_plain() -> None:
@@ -15,3 +15,7 @@ def test_plain() -> None:
 
 def test_camera_line() -> None:
     assert camera_line(OrbitCamera()).startswith("yaw 40")
+
+
+def test_keys() -> None:
+    assert keys(("Delete", "Backspace")) == "Del / Backspace" and keys(("F",)) == "F"

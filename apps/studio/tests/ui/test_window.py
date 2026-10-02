@@ -9,12 +9,12 @@ from mhfu_studio.shell.findings import Finding
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.shell.testing import FakeDocument
 from mhfu_studio.shell.workspace import Dock
-from mhfu_studio.ui import chrome, dialogs, kit, theme
+from mhfu_studio.ui import about, chrome, dialogs, kit, theme
 from mhfu_studio.ui.testing import FakeWorkspace, elsewhere, gl_or_skip
 from mhfu_studio.ui.window import STATE_VERSION, DockTitle, Window
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QOpenGLContext
-from PySide6.QtWidgets import QApplication, QDockWidget, QMainWindow, QMenu, QTabBar
+from PySide6.QtGui import QAction, QKeySequence, QOpenGLContext
+from PySide6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QMenu, QTabBar
 from shiboken6 import getCppPointer
 
 Make = Callable[..., Window]
@@ -318,6 +318,51 @@ def test_refusals_reach_the_status_bar(make_window: Make) -> None:
     assert w.message.text() == "move refused: no room"
 
 
+def test_status_line(make_window: Make, monkeypatch: Any) -> None:
+    w = make_window()
+    ws = w.studio.active
+    assert w.hint.text() == "select: Delete removes"
+    monkeypatch.setattr(ws, "send_blocker", lambda: None)
+    ws.set_tool("tool", "move")
+    w.sync()
+    send = about.native(QKeySequence("Ctrl+Return"))
+    assert w.hint.text() == f"move: Delete removes \u00b7 {send} send to game"
+
+
+def test_problems(make_window: Make) -> None:
+    w = make_window()
+    ws = w.studio.active
+    ws.doc = FakeDocument()
+    w.sync()
+    assert w.problems.isHidden()
+    ws.doc.found = [Finding("warning", "w", "odd"), Finding("info", "i", "fyi")]
+    w.studio.findings.stale()
+    w.sync()
+    assert w.problems.text() == "1 problem" and w.problems.property("level") == "warning"
+    ws.doc.found.append(Finding("error", "e", "bad"))
+    w.studio.findings.stale()
+    w._recheck()
+    assert w.problems.text() == "2 problems" and w.problems.property("level") == "error"
+    w.problems.click()
+    assert w.findings_dock.isVisible() and w.findings.list.count() == 3
+
+
+def test_help(make_window: Make) -> None:
+    w = make_window()
+    keys = {(k, where): does for k, does, where in about.rows(w.studio, w.bar.menus.actions())}
+    assert keys[about.native(QKeySequence.StandardKey.Save), "File menu"] == "Save"
+    assert keys["W", "Map toolbar"] == "Tool: Move" and ("W", "Monster toolbar") in keys
+    assert keys["Del", "Map view"] == "Removes the picked item"
+    assert ("Wheel", "the view") in keys
+    table = w.show_shortcuts().findChild(kit.Table)
+    assert table is not None and table.rowCount() == len(keys)
+    box = w.show_about()
+    assert "0 items" in [lb.text() for lb in box.findChildren(QLabel)]
+    for d in (box, table.window()):
+        assert kit.missing_tips(d) == []
+        d.close()
+
+
 def test_take_focus(make_window: Make) -> None:
     w = make_window()
     ws = w.studio.active
@@ -411,7 +456,7 @@ def test_draws(make_window: Make, qtbot: Any) -> None:
     assert w.studio.error is None and w.studio.errors == []
     colours = {img.pixel(x, y) for x in range(0, img.width(), 7) for y in range(0, img.height(), 7)}
     assert len(colours) > 20, "the viewport is flat: nothing was drawn"
-    qtbot.waitUntil(lambda: bool(w.renderer.text()))
+    qtbot.waitUntil(lambda: bool(w.studio.renderer))
 
 
 def test_view_follows_resize(make_window: Make, qtbot: Any) -> None:

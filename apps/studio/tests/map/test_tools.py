@@ -159,7 +159,7 @@ def test_click_and_shift(ws: MapWorkspace) -> None:
 
 def test_hover(ws: MapWorkspace) -> None:
     ws.pointer(ev("move", crate(ws), Button.NONE))
-    assert ws.tools.hover is not None and "hover sub0.g1" in ws.hud()
+    assert ws.tools.hover is not None
     ws.pointer(ev("leave", (0.0, 0.0), Button.NONE))
     assert ws.tools.hover is None
 
@@ -245,7 +245,7 @@ def test_move(ws: MapWorkspace) -> None:
     ws.refresh()
     ws.frame(0.0)
     assert not ws.session.ops and np.allclose(ws.selection.centroid(ws.scene), start, atol=1.0)
-    assert "applied" not in ws.hud()
+    assert "applied" not in ws.message
 
 
 def test_snap(ws: MapWorkspace) -> None:
@@ -382,11 +382,14 @@ def test_labels(ws: MapWorkspace, game: Extracted, synth: Any) -> None:
     assert rec.texts() == []
 
 
-def test_hud(ws: MapWorkspace) -> None:
-    assert ws.hud().startswith("st139  Pokke village")
-    assert "drag boxes" in ws.hud()
+def test_hud_and_hint(ws: MapWorkspace) -> None:
+    assert ws.hud() == "st139  Pokke village"
+    assert ws.hint().startswith("Click an object to select it")
     pick_crate(ws, MOVE)
-    assert "drag a handle to move" in ws.hud() and "sub0.g1: 1 object(s)" in ws.hud()
+    assert ws.hint().startswith("1 object in group 1: drag a handle to move it \u00b7 E rotate")
+    assert "Del remove" in ws.hint()
+    ws.set_tool(PICK, COLLISION)
+    assert ws.hint().startswith("Click a collision triangle to move it")
 
 
 def test_open_and_reveal(ws: MapWorkspace, doc_dir: Path) -> None:

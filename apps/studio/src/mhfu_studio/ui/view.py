@@ -32,7 +32,7 @@ from mhfu_studio.shell.context import borrowed
 from mhfu_studio.shell.input import Button, Key, Mod, Pointer
 from mhfu_studio.shell.overlay import Color, Ink, Point
 from mhfu_studio.shell.text import camera_line, plain
-from mhfu_studio.shell.workspace import Gesture
+from mhfu_studio.shell.workspace import Gesture, Shortcut
 from mhfu_studio.ui import theme
 
 if TYPE_CHECKING:
@@ -46,6 +46,12 @@ GL_UNPACK_ALIGNMENT, GL_PACK_ALIGNMENT = 0x0CF5, 0x0D05
 RADIUS = 12
 HUD_AT: Point = (10.0, 8.0)
 PAN_BUTTONS = Button.RIGHT | Button.MIDDLE
+#: the camera's gestures, for Help > Keyboard shortcuts
+MOUSE = (
+    Shortcut(("Left-drag",), "Turns the view (Alt-drag where a drag selects)"),
+    Shortcut(("Right-drag", "Middle-drag"), "Pans the view"),
+    Shortcut(("Wheel",), "Zooms the view"),
+)
 
 _BUTTONS = (
     (Qt.MouseButton.LeftButton, Button.LEFT),
@@ -302,6 +308,11 @@ class GLView(QOpenGLWidget):
         self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
     # ---- input ------------------------------------------------------------------------- #
+
+    @property
+    def held(self) -> bool:
+        """A mouse button is down over the view: a drag may be under way."""
+        return bool(self._held)
 
     def _size(self) -> tuple[int, int]:
         return self.width(), self.height()
