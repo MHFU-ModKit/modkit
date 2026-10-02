@@ -81,7 +81,6 @@ class TitleBar(QWidget):
             tip=SWITCH_TIP,
             on=self._switch,
             current=studio.active.name,
-            tips={n: switch_tip(n) for n in studio.names},
         )
         lay.addWidget(self.switcher)
         #: native on macOS (the global bar while this window is active), inline elsewhere

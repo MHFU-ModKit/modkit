@@ -448,8 +448,11 @@ def menu_actions(actions: list[QAction]) -> list[QAction]:
 def test_tips(make_window: Make, qtbot: Any) -> None:
     w = make_window()
     assert kit.missing_tips(w) == []
-    bare = [a.text() for a in menu_actions(w.bar.menus.actions()) if a.toolTip() == a.text()]
-    assert bare == []
+    menus = menu_actions(w.bar.menus.actions())
+    assert [a.text() for a in menus if a.toolTip() == a.text()] == []
+    assert [a.text() for a in menus if a.statusTip()] == []
+    labels = [lb for t in w.findChildren(DockTitle) for lb in t.findChildren(QLabel)]
+    assert labels and not [lb for lb in labels if lb.toolTip()]
     host = QMainWindow()
     qtbot.addWidget(host)
     bar = chrome.TitleBar(host, Studio([FakeWorkspace()]), native=False)

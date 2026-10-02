@@ -463,8 +463,7 @@ class Window(QMainWindow):
         key: QKeySequence.StandardKey | QKeySequence | None = None,
     ) -> QAction:
         a = QAction(text, self)
-        a.setToolTip(tip)
-        a.setStatusTip(tip)
+        a.setToolTip(tip)  # menus show it; no status tip, which would say it twice
         if key is not None:
             a.setShortcut(QKeySequence(key))
         a.triggered.connect(self.studio.act(text.rstrip("…").lower(), slot))
@@ -574,7 +573,6 @@ class Window(QMainWindow):
             a.setCheckable(True)
             a.setData(cid)
             a.setToolTip(tip)
-            a.setStatusTip(tip)
             a.triggered.connect(self.studio.act(f"pick {text}", partial(pick, cid)))
             group.addAction(a)
             menu.addAction(a)
@@ -610,7 +608,6 @@ class Window(QMainWindow):
         ):
             key = a.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
             a.setToolTip(f"{tip} ({key})")
-            a.setStatusTip(a.toolTip())
             a.setEnabled(on)
         b = self.bar.send
         want = self.stop_action if job is not None else self.send_action

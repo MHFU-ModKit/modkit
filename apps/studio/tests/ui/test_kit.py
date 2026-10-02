@@ -25,6 +25,16 @@ def test_missing_tips_names_bare_controls(qapp: object) -> None:
     assert kit.missing_tips(root) == [bare]
 
 
+def test_a_tip_is_said_once(qapp: object) -> None:
+    form = kit.Form()
+    name = form.row("Far", kit.number(tip="how far"))
+    v = kit.Vec3(tip="by")
+    seg = kit.Segmented([("a", "A"), ("b", "B")], tip="mode", on=print, tips={"b": "only b"})
+    assert name.toolTip() == "" and v.toolTip() == "by"
+    assert [b.toolTip() for b in v.boxes] == ["", "", ""]
+    assert [b.toolTip() for b in seg.buttons.values()] == ["", "only b"]
+
+
 def test_segmented_reports_clicks_not_sets(qtbot: Any) -> None:
     got: list[str] = []
     seg = kit.Segmented([("a", "A"), ("b", "B")], tip="mode", on=got.append)

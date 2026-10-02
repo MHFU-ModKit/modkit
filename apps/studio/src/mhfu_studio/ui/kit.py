@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The controls every panel is made of. Each one that does something takes `tip=`: what it
-does, in words someone new understands; `missing_tips` finds the ones that slipped.
+does, in words someone new understands; `missing_tips` finds the ones that slipped. A tip is
+set once: a label, a part or a menu entry does not repeat its control's.
 
 Panels use these instead of raw Qt widgets so they look alike and the theme reaches them.
 """
@@ -130,7 +131,7 @@ class Segmented(QWidget):
             b = QToolButton()
             b.setText(label)
             b.setCheckable(True)
-            b.setToolTip((tips or {}).get(cid, tip))
+            b.setToolTip((tips or {}).get(cid, ""))  # else the row's
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             self.group.addButton(b, i)
             lay.addWidget(b)
@@ -177,8 +178,17 @@ def number(
     on: Callable[[float], object] | None = None,
 ) -> QDoubleSpinBox:
     """`on` fires when an edit is done (Return, focus out, a step), not on every keystroke."""
-    b = QDoubleSpinBox()
+    b = _double(value=value, step=step, decimals=decimals, lo=lo, hi=hi, suffix=suffix)
     _tip(b, tip)
+    if on is not None:
+        b.valueChanged.connect(on)
+    return b
+
+
+def _double(
+    *, value: float, step: float, decimals: int, lo: float = -1e9, hi: float = 1e9, suffix: str = ""
+) -> QDoubleSpinBox:
+    b = QDoubleSpinBox()
     b.setRange(lo, hi)
     b.setDecimals(decimals)
     b.setSingleStep(step)
@@ -188,8 +198,6 @@ def number(
     b.setAccelerated(True)
     b.setMinimumWidth(MIN_FIELD)  # else the range's widest text sets it, wider than a dock
     _wheel_needs_focus(b)
-    if on is not None:
-        b.valueChanged.connect(on)
     return b
 
 
@@ -216,7 +224,7 @@ def integer(
 
 
 class Vec3(QWidget):
-    """x, y, z fields; `value()` reads them, `reset()` returns to the starting value."""
+    """x, y, z fields under one tip; `value()` reads them, `reset()` returns to the start."""
 
     def __init__(
         self,
@@ -228,13 +236,14 @@ class Vec3(QWidget):
         on: Callable[[list[float]], object] | None = None,
     ) -> None:
         super().__init__()
+        _tip(self, tip)  # a field without its own shows this one
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
         self.default = [float(v) for v in value]
         self.boxes = []
         for axis, v in zip("xyz", self.default, strict=True):
-            b = number(tip=f"{tip} ({axis})", value=v, step=step, decimals=decimals)
+            b = _double(value=v, step=step, decimals=decimals)
             b.setPrefix(f"{axis}  ")
             if on is not None:
                 b.valueChanged.connect(lambda _v: on(self.value()))
@@ -466,7 +475,7 @@ def row(*widgets: QWidget, stretch: bool = False, spacing: int = 6) -> QWidget:
 
 
 class Form(QWidget):
-    """Label: control rows; the label shows the control's tip too."""
+    """Label: control rows."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -478,7 +487,6 @@ class Form(QWidget):
 
     def row(self, text: str, widget: QWidget) -> QLabel:
         lb = label(text, role="muted", wrap=False)
-        lb.setToolTip(widget.toolTip())
         self.layout_.addRow(lb, widget)
         return lb
 
@@ -821,14 +829,14 @@ INTERACTIVE = (QAbstractButton, QAbstractSpinBox, QComboBox, QLineEdit, QSlider,
 
 def missing_tips(root: QWidget) -> list[QWidget]:
     """Controls under `root` (itself included) without a tooltip; a control's own parts
-    (a spin box's line edit, a combo box's list, a tab bar's scroll arrows) do not count."""
+    (a spin box's line edit, a `Vec3`'s fields, a tab bar's scroll arrows) do not count."""
     out: list[QWidget] = []
     for w in [root, *root.findChildren(QWidget)]:
         if not isinstance(w, INTERACTIVE) or w.toolTip().strip():
             continue
         p, inside = w.parentWidget(), False
         while p is not None and p is not root.parentWidget():
-            if isinstance(p, (*INTERACTIVE, Segmented)) or _is_chrome(p):
+            if isinstance(p, (*INTERACTIVE, Segmented, Vec3)) or _is_chrome(p):
                 inside = True
                 break
             p = p.parentWidget()
