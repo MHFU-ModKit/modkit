@@ -57,8 +57,9 @@ def test_empty(qtbot: Any) -> None:
 def test_loaded(panel: ActionPanel) -> None:
     assert kit.missing_tips(panel) == []
     assert panel.pages.currentWidget() is panel.split and not panel.align.isVisible()
-    assert panel.species.currentText() == "em75  (host)" and not panel.browsing.isVisible()
-    assert panel.pairs.rowCount() == 8 and panel.count.text().startswith("8 of 8 pairs")
+    assert panel.species.currentText() == "Tigrex (em75), base" and not panel.browsing.isVisible()
+    assert not panel.species.isVisible() and "Tigrex (em75)" in panel.host_note.text()
+    assert panel.pairs.rowCount() == 8 and panel.count.text().startswith("8 of 8 actions")
     assert panel.moves.rowCount() == 1 and panel.moves.item(0, 0).text() == "charge"
 
 
@@ -70,7 +71,7 @@ def test_a_pair_from_the_table(panel: ActionPanel, workspace: MonsterWorkspace) 
         r for r in range(8) if panel.pairs.item(r, 0).text() == "(1,4)"
     )
     assert "frames 5, 8, 40" in panel.headline.text()
-    button(panel, "All pairs").click()
+    button(panel, "All actions").click()
     assert workspace.pair is None and not panel.align.isVisible()
 
 
@@ -82,7 +83,7 @@ def test_a_move_plays_its_clip(panel: ActionPanel, workspace: MonsterWorkspace) 
 
 
 def test_filter(panel: ActionPanel) -> None:
-    panel.filter.setText("holds")
+    panel.filter.setText("stays")
     assert panel.pairs.rowCount() == 2 and panel.count.text().startswith("2 of 8")
     panel.filter.setText("")
     assert panel.pairs.rowCount() == 8
@@ -121,9 +122,10 @@ def test_browsing_another_host(panel: ActionPanel, workspace: MonsterWorkspace) 
 
 def test_hosts_compared(panel: ActionPanel, workspace: MonsterWorkspace) -> None:
     assert not panel.hosts.isVisible()
+    panel.more.set_open(True)
     panel.compare.click()
     assert panel.hosts.isVisible() and panel.hosts.rowCount() == 1
-    assert panel.hosts.item(0, 0).text() == "em75 (host)" and not panel.poll.isActive()
+    assert panel.hosts.item(0, 0).text() == "Tigrex (em75), base" and not panel.poll.isActive()
     click_row(panel.hosts, 75)
     assert workspace.browse == 75
 
@@ -131,8 +133,11 @@ def test_hosts_compared(panel: ActionPanel, workspace: MonsterWorkspace) -> None
 def test_the_host_beside(panel: ActionPanel, workspace: MonsterWorkspace) -> None:
     workspace.select_pair(1, 4)
     panel.sync()
-    panel.show_host.click()
-    assert workspace.show_host and workspace.vp is not None and workspace.vp.reference is not None
+    panel.to_view.click()
+    assert workspace.take_focus() == "View", "the base monster beside lives in View"
+    workspace.set_show_host(True)
+    panel.sync()
+    assert workspace.vp is not None and workspace.vp.reference is not None
     b = button(panel.host_plays, "1")
     assert "●" in b.text()
     b.click()
@@ -152,8 +157,8 @@ def test_hits_and_the_hand_offs(panel: ActionPanel, workspace: MonsterWorkspace)
 def test_edit_set_in_hitboxes(panel: ActionPanel, workspace: MonsterWorkspace) -> None:
     workspace.select_pair(1, 4)
     panel.sync()
-    assert "attack 6 (power 64, element 0x10) with set 2" in panel.hits_text.text()
-    button(panel.hits, "Edit set 2").click()
+    assert "attack 6 (power 64, element 0x10) using hit group 2" in panel.hits_text.text()
+    button(panel.hits, "Edit hit group 2").click()
     assert workspace.selected_set == 2 and workspace.take_focus() == "Hitboxes"
 
 
@@ -163,6 +168,7 @@ def test_findings_fold(panel: ActionPanel, workspace: MonsterWorkspace) -> None:
     al = workspace.alignment
     assert al is not None and al.findings
     assert panel.show_findings.isChecked() == bool(al.errors)
+    assert not any(f.code in panel.dots.text() for f in al.findings), "codes go in the tips"
     assert panel.findings.isVisible() == bool(al.errors)
     panel.show_findings.click()
     assert panel.findings.isVisible() != bool(al.errors)
@@ -172,6 +178,7 @@ def test_findings_fold(panel: ActionPanel, workspace: MonsterWorkspace) -> None:
 
 def test_species_effects(panel: ActionPanel, workspace: MonsterWorkspace) -> None:
     workspace.select_pair(1, 4)
+    panel.more.set_open(True)
     panel.sync()
     assert panel.show_effects.isVisible() and not panel.effects_box.isVisible()
     panel.show_effects.click()
