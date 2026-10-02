@@ -16,35 +16,42 @@ from typing import TYPE_CHECKING, Any
 from PySide6.QtCore import QByteArray, QPoint, QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
+    QDialog,
     QDockWidget,
     QHBoxLayout,
     QMainWindow,
     QMenu,
     QSizePolicy,
+    QStackedWidget,
     QTabBar,
     QTabWidget,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 from shiboken6 import getCppPointer
 
+from mhfu_studio.shell.findings import worst
 from mhfu_studio.shell.studio import doc_name
 from mhfu_studio.shell.text import plain
-from mhfu_studio.shell.workspace import Dock, Tool, ToolGroup, Workspace
-from mhfu_studio.ui import chrome, dialogs, kit, theme
+from mhfu_studio.shell.workspace import SEND_KEY, Dock, Tool, ToolGroup, Workspace
+from mhfu_studio.ui import about, chrome, dialogs, kit, steps, theme
+from mhfu_studio.ui import settings as saved
 from mhfu_studio.ui.findings import FindingsPanel
 from mhfu_studio.ui.job import JobLog, ProcessRunner
+from mhfu_studio.ui.start import StartPage
 from mhfu_studio.ui.view import GLView
 
 if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
 
 #: bump when the docks change shape, so an old saved layout is not forced onto new docks
-STATE_VERSION = 1
+STATE_VERSION = 3
 FINDINGS = "Findings"
 FINDINGS_TIP = "What the checks found in the document: errors, warnings and notes"
 STOP_TIP = "Stops the running Send to game job; nothing runs now"
+PROBLEMS_TIP = "Opens Findings: what the checks found wrong in the document, and where"
 AREAS = {
     "left": Qt.DockWidgetArea.LeftDockWidgetArea,
     "right": Qt.DockWidgetArea.RightDockWidgetArea,
@@ -64,21 +71,19 @@ MODES: dict[theme.Mode, tuple[str, str]] = {
 
 
 class DockTitle(QWidget):
-    """A dock's title: its name in small caps, which explains the dock, and a close button.
-    Tabbed with others a dock shows only its tab, whose right-click menu hides it."""
+    """A dock's title: its name, which explains the dock, and a close button. Tabbed with
+    others a dock shows only its tab, whose right-click menu hides it."""
 
     def __init__(self, dock: QDockWidget, tip: str) -> None:
         super().__init__()
         name = dock.windowTitle()
         self.setToolTip(tip)
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(14, 6, 6, 2)
-        label = kit.label(name.upper(), role="caps", wrap=False)
-        label.setToolTip(tip)
-        lay.addWidget(label)
+        lay.setContentsMargins(10, 6, 6, 2)
+        lay.addWidget(kit.label(name, role="dock", wrap=False))
         lay.addStretch(1)
         self.hide_button = kit.icon_button(
-            "ph.x", tip=f"Hides {name}; View > {name} brings it back", on=dock.close
+            "ph.x", tip=f"Hides {name}; View > Panels > {name} brings it back", on=dock.close
         )
         self.hide_button.setIconSize(QSize(12, 12))
         lay.addWidget(self.hide_button)
@@ -89,6 +94,8 @@ class Window(QMainWindow):
         super().__init__()
         self.studio = studio
         self.settings = settings if settings is not None else QSettings()
+        saved.install(self.settings)
+        studio.located()  # a place saved there may differ from what the workspaces found
         self._closed = False
         self._theming = False
         #: per dock: its title bar, and the blank one it wears while tabbed
@@ -111,10 +118,18 @@ class Window(QMainWindow):
 
         self.view = GLView(studio)
         studio.gl_current = self.view.current
+        #: in the view's place while there is nothing to show (`Studio.on_start`)
+        self.start_page = StartPage(studio)
+        self.stage = QStackedWidget()
+        self.stage.addWidget(self.view)
+        self.stage.addWidget(self.start_page)
+        self.steps = steps.Steps(studio)
         card = QWidget()
         lay = QVBoxLayout(card)
         lay.setContentsMargins(4, 0, 4, 2)
-        lay.addWidget(self.view)
+        lay.setSpacing(0)
+        lay.addWidget(self.steps)
+        lay.addWidget(self.stage)
         self.setCentralWidget(card)
         self.bar = chrome.TitleBar(self, studio, native)
         self.setMenuWidget(self.bar)
@@ -122,17 +137,20 @@ class Window(QMainWindow):
         self.tools = QToolBar("Tools")
         self.tools.setObjectName("Tools")
         self.tools.setMovable(False)
-        self.tools.setIconSize(QSize(16, 16))
-        self.tools.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(self.tools)
-        #: per workspace: the toolbar's actions, and (group, tool, action) for each tool
-        self._tool_sets: dict[str, tuple[list[QAction], list[tuple[str, str, QAction]]]] = {}
+        #: one row of tools per workspace; a hidden row's keys do nothing
+        self._tool_rows = QStackedWidget()
+        self.tools.addWidget(self._tool_rows)
+        #: per workspace: its row, and (group, tool, action) for each tool
+        self._tool_sets: dict[str, tuple[QWidget, list[tuple[str, str, QAction]]]] = {}
         self._tool_actions: list[tuple[str, str, QAction]] = []
 
         self.findings = FindingsPanel(studio, ask_open=studio.act("open", self.ask_open))
         self.findings_dock = self._dock(FINDINGS, FINDINGS, self.findings, FINDINGS_TIP)
         self._docks: dict[str, list[QDockWidget]] = {}
-        self._specs: dict[QDockWidget, Dock] = {}
+        self._specs: dict[QDockWidget, Dock] = {
+            self.findings_dock: Dock(FINDINGS, "bottom", lambda s: None, FINDINGS_TIP, shown=False)
+        }
         self._panels: dict[QDockWidget, Any] = {self.findings_dock: self.findings}
         self._shown: str | None = None
 
@@ -142,6 +160,10 @@ class Window(QMainWindow):
         self.bar.send.setDefaultAction(self.send_action)
         status = self.statusBar()
         status.setSizeGripEnabled(False)
+        #: what is selected and the keys that act on it; clipped, not wrapped, when long
+        self.hint = kit.label(wrap=False)
+        self.hint.setObjectName("Hint")
+        self.hint.setMinimumWidth(1)
         self.log_button = kit.icon_button(
             "ph.terminal-window",
             tip="Shows what Send to game printed, with Stop and Copy",
@@ -149,12 +171,15 @@ class Window(QMainWindow):
         )
         self.message = kit.label(wrap=False)
         self.message.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.where = kit.label(wrap=False)
-        self.renderer = kit.label(wrap=False)
+        self.problems = kit.button("", tip=PROBLEMS_TIP, on=self.show_findings)
+        self.problems.setObjectName("Problems")
+        self.problems.hide()
+        status.addWidget(self.hint)
         status.addWidget(self.log_button)
         status.addWidget(self.message, 1)
-        status.addPermanentWidget(self.where)
-        status.addPermanentWidget(self.renderer)
+        status.addPermanentWidget(self.problems)
+        self._shortcuts: about.Shortcuts | None = None
+        self._about: about.About | None = None
 
         self._pending = QTimer(self)
         self._pending.setSingleShot(True)
@@ -163,6 +188,7 @@ class Window(QMainWindow):
         self._slow = QTimer(self)
         self._slow.setInterval(250)
         self._slow.timeout.connect(self._recheck)
+        self._slow.timeout.connect(studio.guard("open", studio.poll))
         self._slow.start()
 
         family = str(self.settings.value("theme/family", "Ember"))
@@ -172,7 +198,11 @@ class Window(QMainWindow):
         QGuiApplication.styleHints().colorSchemeChanged.connect(self._scheme_changed)
         self._apply_theme()
 
+        on = self.settings.value("view/camera", False, type=bool)
+        self.camera_action.setChecked(bool(on))
+        self.view.show_camera = bool(on)
         studio.ask_discard = lambda names: dialogs.confirm_unsaved(self, names)
+        studio.ask_revert = lambda name: dialogs.confirm_revert(self, name)
         studio.ask_path = lambda ws: dialogs.ask_save_as(self, ws)
         geo = self.settings.value("geometry")
         if not (isinstance(geo, QByteArray) and self.restoreGeometry(geo)):
@@ -190,7 +220,9 @@ class Window(QMainWindow):
         title = DockTitle(d, tip)
         self._titles[d] = (title, QWidget())
         d.setTitleBarWidget(title)
-        d.toggleViewAction().setToolTip(tip)
+        opener = d.toggleViewAction()
+        opener.setToolTip(tip)
+        opener.triggered.connect(lambda on: self._opened(d, on))
         d.visibilityChanged.connect(partial(self._dock_shown, d))
         d.topLevelChanged.connect(self._retitle_soon)
         d.dockLocationChanged.connect(self._retitle_soon)
@@ -255,54 +287,85 @@ class Window(QMainWindow):
         p.body.addWidget(kit.label(f"{spec.label} could not be built: {self.studio.message}"))
         return p
 
-    def _area(self, d: QDockWidget) -> str:
-        """`d`'s side in the built-in arrangement."""
-        spec = self._specs.get(d)
-        return spec.area if spec is not None else "bottom"
+    def _spec(self, d: QDockWidget) -> Dock:
+        return self._specs[d]
 
     def _arrange(self, name: str) -> None:
-        """The built-in arrangement: each side's docks tabbed together, focus docks in front."""
+        """The default layout: each side's docks tabbed together beside its `alone` ones, the
+        first shown in front; a dock not `shown` stays closed, keeping its place."""
         sides: dict[str, list[QDockWidget]] = {}
         for d in [*self._docks[name], self.findings_dock]:
-            sides.setdefault(self._area(d), []).append(d)
+            sides.setdefault(self._spec(d).area, []).append(d)
         for area, docks in sides.items():
+            alone = [d for d in docks if self._spec(d).alone]
+            tabbed = [d for d in docks if d not in alone]
             for d in docks:
                 d.setFloating(False)
                 self.removeDockWidget(d)
+            for d in [*tabbed[:1], *alone]:
                 self.addDockWidget(AREAS[area], d)
-                if d is not docks[0]:
-                    self.tabifyDockWidget(docks[0], d)
-                d.show()
-            ([d for d in docks if self._focus(d)] or docks)[0].raise_()
-            across = area != "bottom"
-            size = self.width() if across else self.height()
-            self.resizeDocks(
-                [docks[0]],
-                [round(size * SHARES[area])],
-                Qt.Orientation.Horizontal if across else Qt.Orientation.Vertical,
-            )
+                if tabbed and d is not tabbed[0]:  # split before tabbing: a tab takes no split
+                    self.splitDockWidget(tabbed[0], d, Qt.Orientation.Vertical)
+            for d in tabbed[1:]:
+                self.tabifyDockWidget(tabbed[0], d)
+            for d in docks:  # every dock open at once can need more height than the window
+                d.setVisible(self._spec(d).shown)
+            if tabbed:
+                ([d for d in tabbed if self._spec(d).shown] or tabbed)[0].raise_()
+        for area in sides:
+            self._fit(area)
         self._retitle()
 
-    def _focus(self, d: QDockWidget) -> bool:
-        spec = self._specs.get(d)
-        return spec is not None and spec.focus
+    def _docked(self, area: str) -> list[QDockWidget]:
+        """The open docks at `area`, a tab group's front first."""
+        out = [
+            d
+            for d in self._specs
+            if self._spec(d).area == area
+            and not d.isHidden()
+            and not d.isFloating()
+            and self.dockWidgetArea(d) == AREAS[area]
+        ]
+        return sorted(out, key=lambda d: d.visibleRegion().isEmpty())
+
+    def _fit(self, area: str) -> None:
+        """`area`'s open docks to their `size`, else to the area's share of the window."""
+        docked = self._docked(area)
+        alone = [d for d in docked if self._spec(d).alone]
+        docks = [*[d for d in docked if d not in alone][:1], *alone]
+        if not docks:
+            return
+        across = area != "bottom"
+        full = self.width() if across else self.height()
+        sizes = [self._spec(d).size or round(full * SHARES[area]) for d in docks]
+        if across:  # side by side in the window: one width for the area
+            self.resizeDocks(docks[:1], sizes[:1], Qt.Orientation.Horizontal)
+        else:
+            self.resizeDocks(docks, sizes, Qt.Orientation.Vertical)
+
+    def _opened(self, d: QDockWidget, on: bool) -> None:
+        """A dock just opened: in front of its tabs; an area it opens sized."""
+        if not on:
+            return
+        d.raise_()
+        area = self._spec(d).area
+        if not [x for x in self._docked(area) if x is not d and not self._spec(x).alone]:
+            self._fit(area)
 
     def _enter(self, ws: Workspace) -> None:
-        """Shows `ws`'s docks and tools in its saved layout, after saving the last one's."""
+        """Shows `ws`'s docks and tools in its saved layout, after saving the last one's; its
+        last document comes back the first time (`Studio.resume`)."""
+        self.studio.guard("reopen", self.studio.resume)()
         if self._shown is not None:
             self._save_layout(self._shown)
         self._shown = ws.name
         self._hide_others()
-        fresh = ws.name not in self._docks
-        if fresh:
+        if ws.name not in self._docks:
             self._docks[ws.name] = self._build(ws)
-        else:
-            for d in self._docks[ws.name]:
-                d.show()
         # restored or arranged, never both: a replaced layout keeps its tab bars a loop turn
         if self._restore(ws.name):
             self._hide_others()  # in case a saved layout knew them as shown
-        elif fresh:
+        else:
             self._arrange(ws.name)
         self._retitle()
         self._fill_view_menu(ws)
@@ -315,7 +378,8 @@ class Window(QMainWindow):
             return False
         for d in [*self._docks[name], self.findings_dock]:
             if not d.isFloating() and self.dockWidgetArea(d) == Qt.DockWidgetArea.NoDockWidgetArea:
-                self.addDockWidget(AREAS[self._area(d)], d)
+                self.addDockWidget(AREAS[self._spec(d).area], d)
+                d.setVisible(self._spec(d).shown)
         return True
 
     def _hide_others(self) -> None:
@@ -332,11 +396,12 @@ class Window(QMainWindow):
             self._arrange(self._shown)
 
     def _take_focus(self, ws: Workspace) -> None:
+        """The dock `ws` asks for, opened if it was closed."""
         label = ws.take_focus()
         d = self.findChild(QDockWidget, f"{ws.name}/{label}") if label else None
         if d is not None:
             d.show()
-            d.raise_()
+            self._opened(d, True)
 
     # ---- toolbar --------------------------------------------------------------------- #
 
@@ -344,24 +409,34 @@ class Window(QMainWindow):
         """`ws`'s tools on the toolbar; made once and kept, as its docks are."""
         if ws.name not in self._tool_sets:
             self._tool_sets[ws.name] = self._make_tools(ws)
-        shown, self._tool_actions = self._tool_sets[ws.name]
-        self.tools.clear()
-        self.tools.addActions(shown)
-        self.tools.setVisible(bool(shown))
+            self._tool_rows.addWidget(self._tool_sets[ws.name][0])
+        row, self._tool_actions = self._tool_sets[ws.name]
+        self._tool_rows.setCurrentWidget(row)
 
-    def _make_tools(self, ws: Workspace) -> tuple[list[QAction], list[tuple[str, str, QAction]]]:
-        shown: list[QAction] = []
+    def _make_tools(self, ws: Workspace) -> tuple[QWidget, list[tuple[str, str, QAction]]]:
+        """A row of `ws`'s tool groups: one-of tools as a segmented group under their name,
+        on/off toggles as outlined buttons."""
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
         tools: list[tuple[str, str, QAction]] = []
         for i, group in enumerate(ws.tool_groups()):
             if i:
-                sep = QAction(self)
-                sep.setSeparator(True)
-                shown.append(sep)
+                lay.addSpacing(14)
+            box = QWidget()
+            inner = QHBoxLayout(box)
             exclusive = None if group.toggles else QActionGroup(self)
+            if exclusive is not None:
+                lay.addWidget(kit.label(group.label, role="caps", wrap=False))
+                box.setObjectName("Seg")
+                box.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            inner.setContentsMargins(*((0, 0, 0, 0) if group.toggles else (2, 2, 2, 2)))
+            inner.setSpacing(6 if group.toggles else 2)
             for tool in group.tools:
                 a = QAction(tool.label, self)
                 a.setCheckable(True)
-                theme.bind(a, tool.icon)
+                theme.bind(a, tool.icon, outlined=group.toggles)
                 if tool.key:
                     a.setShortcut(QKeySequence(tool.key))
                 a.setToolTip(f"{tool.tip} ({tool.key})" if tool.key else tool.tip)
@@ -369,9 +444,22 @@ class Window(QMainWindow):
                 a.triggered.connect(self.studio.act(f"tool {tool.label}", slot))
                 if exclusive is not None:
                     exclusive.addAction(a)
-                shown.append(a)
+                inner.addWidget(self._tool_button(a, group.toggles))
                 tools.append((group.id, tool.id, a))
-        return shown, tools
+            lay.addWidget(box)
+        lay.addStretch(1)
+        return row, tools
+
+    @staticmethod
+    def _tool_button(a: QAction, toggle: bool) -> QToolButton:
+        b = QToolButton() if toggle else kit.Segment()
+        b.setDefaultAction(a)  # the action's keys work while the button shows
+        b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        b.setIconSize(QSize(16, 16))
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        if toggle:
+            b.setProperty("toggle", True)
+        return b
 
     @staticmethod
     def _set_tool(ws: Workspace, group: ToolGroup, tool: Tool, a: QAction) -> None:
@@ -387,8 +475,7 @@ class Window(QMainWindow):
         key: QKeySequence.StandardKey | QKeySequence | None = None,
     ) -> QAction:
         a = QAction(text, self)
-        a.setToolTip(tip)
-        a.setStatusTip(tip)
+        a.setToolTip(tip)  # menus show it; no status tip, which would say it twice
         if key is not None:
             a.setShortcut(QKeySequence(key))
         a.triggered.connect(self.studio.act(text.rstrip("…").lower(), slot))
@@ -417,15 +504,27 @@ class Window(QMainWindow):
             self.save_as,
             k.SaveAs,
         )
+        self.revert_action = self._action(
+            "Revert",
+            "Drops the unsaved edits and goes back to the saved file; asks first",
+            s.revert,
+        )
         quit_ = self._action(
             "Quit", "Closes the studio; it asks first about unsaved edits", self.close, k.Quit
         )
         # tips and states follow the studio (`_sync_send`); Ctrl is Cmd on macOS
         self.send_action = self._action(
-            "Send to game", chrome.SEND_TIP, s.send, QKeySequence("Ctrl+Return")
+            "Send to game", chrome.SEND_TIP, s.send, QKeySequence(SEND_KEY)
         )
         self.stop_action = self._action("Stop", STOP_TIP, s.stop, QKeySequence("Ctrl+."))
-        f.addActions([self.open_action, self.save_action, self.save_as_action])
+        self.start_action = self._action(
+            "Start page",
+            "Shows the start page: setup, what to open, and the recent documents",
+            lambda: s.show_start(True),
+        )
+        f.addActions([self.start_action, self.open_action])
+        f.addSeparator()
+        f.addActions([self.save_action, self.save_as_action, self.revert_action])
         f.addSeparator()
         f.addActions([self.send_action, self.stop_action])
         f.addSeparator()
@@ -437,6 +536,20 @@ class Window(QMainWindow):
         e.addActions([self.undo_action, self.redo_action])
 
         self.view_menu = self._menu("&View")
+        self.panels_menu = QMenu("Panels", self)
+        self.panels_menu.setToolTipsVisible(True)
+        self.camera_action = self._action(
+            "Show camera readout",
+            "Writes the camera's turn, tilt and distance in the view's corner",
+            self._show_camera,
+        )
+        self.camera_action.setCheckable(True)
+        self.steps_action = self._action(
+            "Next steps",
+            "Shows the steps of the task at hand over the view, each ticked once done",
+            lambda: steps.hide(s.active, not self.steps_action.isChecked()),
+        )
+        self.steps_action.setCheckable(True)
         self.reset_action = self._action(
             "Reset layout",
             "Puts this workspace's panels back where they started",
@@ -463,6 +576,22 @@ class Window(QMainWindow):
             s.switch,
         )
 
+        h = self._menu("&Help")
+        h.addAction(
+            self._action(
+                "Keyboard shortcuts",
+                "Every key and mouse gesture the studio knows, in one table",
+                self.show_shortcuts,
+            )
+        )
+        h.addAction(
+            self._action(
+                "About MHFU Studio",
+                "What the studio is, its versions, what is open and what draws the 3D view",
+                self.show_about,
+            )
+        )
+
     def _radio(
         self, menu: QMenu, items: list[tuple[str, str, str]], pick: Callable[[str], object]
     ) -> list[QAction]:
@@ -474,7 +603,6 @@ class Window(QMainWindow):
             a.setCheckable(True)
             a.setData(cid)
             a.setToolTip(tip)
-            a.setStatusTip(tip)
             a.triggered.connect(self.studio.act(f"pick {text}", partial(pick, cid)))
             group.addAction(a)
             menu.addAction(a)
@@ -482,13 +610,20 @@ class Window(QMainWindow):
         return out
 
     def _fill_view_menu(self, ws: Workspace) -> None:
+        """View > Panels: `ws`'s docks by side, then Findings; a tick is an open one."""
+        p = self.panels_menu
+        p.clear()
+        for area in AREAS:
+            docks = [d for d in self._docks.get(ws.name, []) if self._spec(d).area == area]
+            p.addActions([d.toggleViewAction() for d in docks])
+            if docks:
+                p.addSeparator()
+        p.addAction(self.findings_dock.toggleViewAction())
         m = self.view_menu
         m.clear()
-        docks = self._docks.get(ws.name, [])
-        m.addActions([d.toggleViewAction() for d in docks])
-        if docks:
-            m.addSeparator()
-        m.addAction(self.findings_dock.toggleViewAction())
+        m.addMenu(p)
+        m.addAction(self.steps_action)
+        m.addAction(self.camera_action)
         m.addSeparator()
         m.addAction(self.reset_action)
         m.addMenu(self.theme_menu)
@@ -504,7 +639,6 @@ class Window(QMainWindow):
         ):
             key = a.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
             a.setToolTip(f"{tip} ({key})")
-            a.setStatusTip(a.toolTip())
             a.setEnabled(on)
         b = self.bar.send
         want = self.stop_action if job is not None else self.send_action
@@ -513,6 +647,34 @@ class Window(QMainWindow):
             b.setProperty("busy", job is not None)
             b.style().unpolish(b)  # the stylesheet's busy rule applies on a re-polish
             b.style().polish(b)
+
+    def _show_camera(self) -> None:
+        on = self.camera_action.isChecked()
+        self.view.show_camera = on
+        self.settings.setValue("view/camera", on)
+
+    def show_findings(self) -> None:
+        self.findings_dock.show()
+        self._opened(self.findings_dock, True)
+
+    def show_shortcuts(self) -> QDialog:
+        """Help > Keyboard shortcuts, made on first use: the keys do not change after."""
+        if self._shortcuts is None:
+            self._shortcuts = about.Shortcuts(self.studio, self.bar.menus.actions(), self)
+        return self._raise(self._shortcuts.dialog)
+
+    def show_about(self) -> QDialog:
+        if self._about is None:
+            self._about = about.About(self.studio, self)
+        self._about.sync()
+        return self._raise(self._about.dialog)
+
+    @staticmethod
+    def _raise(d: QDialog) -> QDialog:
+        d.show()
+        d.raise_()
+        d.activateWindow()
+        return d
 
     def show_log(self) -> JobLog:
         """The job log window, made on first use and raised."""
@@ -585,12 +747,27 @@ class Window(QMainWindow):
         for d in [*self._docks.get(ws.name, []), self.findings_dock]:
             if d.isVisible():
                 self._sync_panel(d)
-        self.studio.guard("sync", lambda: self._sync_window(ws))()
         self.studio.guard("send to game", self._sync_send)()
+        self.studio.guard("start page", self._sync_start)()
+        self.studio.guard("sync", lambda: self._sync_window(ws))()
         if self._log is not None and self._log.isVisible():
             self._log.sync()
         self._retitle()
         self.view.update()
+
+    def _sync_start(self) -> None:
+        """The start page or the view; the next steps over the view."""
+        on = self.studio.on_start()
+        want = self.start_page if on else self.view
+        self.tools.setVisible(bool(self._tool_actions) and not on)  # nothing to work on yet
+        if self.stage.currentWidget() is not want:
+            self.stage.setCurrentWidget(want)
+            if not on:
+                self.view.setFocus()
+        if on:
+            self.start_page.sync()
+        self.steps.sync(on)
+        self.steps_action.setChecked(not steps.hidden(self.studio.active))
 
     def _sync_panel(self, d: QDockWidget) -> None:
         sync = getattr(self._panels.get(d), "sync", None)
@@ -603,6 +780,7 @@ class Window(QMainWindow):
         self.redo_action.setEnabled(doc is not None and doc.can_redo())
         self.save_action.setEnabled(doc is not None)
         self.save_as_action.setEnabled(doc is not None)
+        self.revert_action.setEnabled(self.studio.can_revert())
         for group, tool, a in self._tool_actions:
             a.setChecked(ws.tool_on(group, tool))
         for a in self.workspace_actions:
@@ -615,13 +793,34 @@ class Window(QMainWindow):
         message = plain(self.studio.message)
         self.message.setText(message)
         self.message.setToolTip(message)  # the bar clips it
-        self.where.setText(plain(ws.status()))
-        self.renderer.setText(self.studio.renderer)
+        hint = ws.hint()
+        if hint and self.send_action.isEnabled():  # `_sync_send` asked the workspace
+            hint += f" \u00b7 {about.native(self.send_action.shortcut())} send to game"
+        self.hint.setText(hint)
+        self.hint.setToolTip(hint)
+        self._sync_problems()
+
+    def _sync_problems(self) -> None:
+        """The status bar's count of errors and warnings, in the worst one's colour."""
+        doc = self.studio.active.document
+        found = [] if doc is None else self.studio.findings.get(doc)
+        bad = [f for f in found if f.level != "info"]
+        n = len(bad)
+        self.problems.setText(f"{n} problem{'' if n == 1 else 's'}")
+        self.problems.setVisible(n > 0)
+        level = worst(bad)
+        if self.problems.property("level") != level:
+            self.problems.setProperty("level", level)
+            self.problems.style().unpolish(self.problems)  # the level rule needs a re-polish
+            self.problems.style().polish(self.problems)
 
     def _recheck(self) -> None:
-        """The findings re-check on their own clock."""
+        """The findings re-check on their own clock, never in the middle of a drag."""
+        if self._closed or self.view.held:
+            return
         if self.findings_dock.isVisible():
             self._sync_panel(self.findings_dock)
+        self.studio.guard("findings", self._sync_problems)()
 
     # ---- closing --------------------------------------------------------------------- #
 

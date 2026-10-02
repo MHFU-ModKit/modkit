@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer
 from PySide6.QtGui import QFontDatabase, QGuiApplication, QTextCursor
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QPlainTextEdit, QVBoxLayout, QWidget
 
+from mhfu_studio.shell import places
 from mhfu_studio.ui import kit
 
 if TYPE_CHECKING:
@@ -27,9 +28,6 @@ class ProcessRunner(QObject):
         self.studio = studio
         self.proc = QProcess(self)
         self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        env = QProcessEnvironment.systemEnvironment()
-        env.insert("PYTHONUNBUFFERED", "1")  # else a line shows only when the job ends
-        self.proc.setProcessEnvironment(env)
         self.proc.readyReadStandardOutput.connect(self._read)
         self.proc.finished.connect(self._finished)
         self.proc.errorOccurred.connect(self._failed)
@@ -40,7 +38,13 @@ class ProcessRunner(QObject):
         self._rest = b""
 
     def start(self, argv: list[str], stdin: bytes) -> None:
+        """`argv` with the places the window found (`places.environ`) in its environment."""
         self._rest = b""
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert("PYTHONUNBUFFERED", "1")  # else a line shows only when the job ends
+        for k, v in places.environ().items():
+            env.insert(k, v)
+        self.proc.setProcessEnvironment(env)
         self.proc.start(argv[0], argv[1:])
         if stdin:
             self.proc.write(stdin)

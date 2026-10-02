@@ -47,7 +47,9 @@ def test_loaded(panel: TimelinePanel) -> None:
     assert panel.pages.currentWidget() is not panel.empty
     assert panel.frame.text() == "frame 0.0 / 10" and panel.loop.isChecked()
     assert panel.hint.isVisible() and not panel.strip.markers
-    assert "impact" in panel.impact_note.text()
+    assert "impact" in panel.impact_note.text() and not panel.speed.isVisibleTo(panel)
+    panel.more.set_open(True)
+    assert panel.speed.isVisibleTo(panel) and kit.missing_tips(panel) == []
 
 
 def test_transport(panel: TimelinePanel, workspace: MonsterWorkspace) -> None:
@@ -105,7 +107,7 @@ def test_markers_and_the_past_end(panel: TimelinePanel, workspace: MonsterWorksp
     assert s.x_of(10.0) < s.x_of(40.0) <= s.width()
     assert s.marker_at(s.x_of(40.0), 10) is never[0]
     assert s.marker_at(s.x_of(40.0), 40) is None, "the legend row is not a marker"
-    assert "gate" in STRIP_TIP
+    assert "hit check" in STRIP_TIP
     s.grab()  # paints
 
 

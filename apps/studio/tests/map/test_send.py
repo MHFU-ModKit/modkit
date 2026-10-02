@@ -39,12 +39,15 @@ def test_blockers(game: Extracted, atlas: Atlas, monkeypatch: pytest.MonkeyPatch
     monkeypatch.delenv("MHFU_DATA", raising=False)
     assert (MapWorkspace().send_blocker() or "").startswith("no game files: ")
     ws = MapWorkspace(game, atlas)
-    assert ws.send_blocker() == "no section loaded" == ws.push_blocker(restore=True)
+    assert ws.send_blocker() == "no area loaded" == ws.push_blocker(restore=True)
     ws.load_stage(139)
-    assert ws.send_blocker() == "no edits to st139 yet" and ws.push_blocker(restore=True) is None
+    assert (
+        ws.send_blocker() == "no edits to Pokke village yet"
+        and ws.push_blocker(restore=True) is None
+    )
     assert ws.session is not None
     ws.session.ops.append({"op": "bogus"})
-    assert (ws.send_blocker() or "").startswith("op 0 has an error: `bogus` is not an op")
+    assert (ws.send_blocker() or "").startswith("Edit 1 has an error: `bogus` is not an op")
     ws.session.ops[:] = [MOVE]
     assert ws.send_blocker() is None
     studio = Studio([ws])
@@ -63,7 +66,7 @@ def test_job_round_trips(
     ws = loaded(game, atlas)
     assert ws.session is not None and ws.session.push([MOVE]) and ws.doc.directory is None
     job = ws.send()
-    assert job.title == "push st139 into the game" and job.argv[:2] == ("map", "push")
+    assert job.title == "send Pokke village to the game" and job.argv[:2] == ("map", "push")
     args = parser().parse_args(list(job.argv))
     assert (args.stage, args.catch, args.hold, args.base) == (139, 0.0, 0.0, None)
     assert args.data == game.root and not (args.mesh or args.collision or args.textures)
@@ -82,13 +85,13 @@ def test_job_follows_the_section(game: Extracted, doc_dir: Path) -> None:
     assert argv[argv.index("--catch") + 1] == "120" and argv[-2:] == ("--hold", "120")
     ws.catch = 30
     mesh = ws.push_job(("mesh",))
-    assert mesh.title == "push st098's mesh into the game" and "--hold" not in mesh.argv
+    assert mesh.title == "send Snowy base camp's mesh to the game" and "--hold" not in mesh.argv
     assert mesh.argv[mesh.argv.index("--catch") + 1] == "30" and "--mesh" in mesh.argv
     ws.doc.save(doc_dir)
     argv = ws.push_job(("collision",)).argv
     assert argv[argv.index("--base") + 1] == str(doc_dir) and argv[-2:] == ("--hold", "30")
     back = ws.push_job(restore=True)
-    assert back.title == "restore st098 in the game" and back.argv[-1] == "--restore"
+    assert back.title == "restore Snowy base camp in the game" and back.argv[-1] == "--restore"
     assert back.stdin == b"" and "--ops" not in back.argv
     ws.load_stage(139)
     assert ws.catch == 0 and ws.in_village()

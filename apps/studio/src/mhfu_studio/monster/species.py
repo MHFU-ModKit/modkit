@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """Where the studio finds a host species' intel: a directory given, else a cache built on demand
-from the extracted game (`MHFU_DATA`) through `mhfu.em.intel.build`.
+from the extracted game (`places.MHFU`) through `mhfu.em.intel.build`.
 
 The cache is `$XDG_CACHE_HOME/mhfu-studio/species/emNN.json` (`~/.cache` without the variable);
 a cached document is rebuilt when its overlay's sha1 is not the extracted overlay's. Intel with a
@@ -18,6 +18,19 @@ from pathlib import Path
 from mhfu import files
 from mhfu.em.intel import HostSummary, SpeciesIntel
 from mhfu.files import Extracted
+
+from mhfu_studio.shell import places
+
+#: names checked against the game; any other species shows its id alone
+NAMES = {75: "Tigrex"}
+
+
+def label(species: int | None) -> str:
+    """`Tigrex (em75)`; `em07` without a checked name."""
+    if species is None:
+        return "no base monster"
+    name = NAMES.get(species)
+    return f"{name} (em{species:02d})" if name else f"em{species:02d}"
 
 
 def cache_root() -> Path:
@@ -59,7 +72,7 @@ def cached(species: int, game: Extracted, root: Path | None = None) -> SpeciesIn
 
 
 def load(species: int, root: Path | None = None, data: str | Path | None = None) -> SpeciesIntel:
-    """From `root` when given, else the cache over `data` or `MHFU_DATA`; `LookupError` says
+    """From `root` when given, else the cache over `data` or `places.MHFU`; `LookupError` says
     why there is none and what to do."""
     if root is not None:
         path = root / _name(species)
@@ -71,12 +84,9 @@ def load(species: int, root: Path | None = None, data: str | Path | None = None)
             f"em{species:02d} has no overlay in the game: check host_species in the manifest"
         )
     try:
-        game = Extracted.find(data)
+        game = places.extracted(given=data)
     except FileNotFoundError as e:
-        raise LookupError(
-            f"it is built from the extracted game, and there is none ({e}): set MHFU_DATA and"
-            " restart the studio"
-        ) from e
+        raise LookupError(f"it is built from the extracted game, and there is none ({e})") from e
     return cached(species, game)
 
 

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Map panel: every row and its sections in walking order; a click loads a section alone."""
+"""The Areas panel: every map and its areas in walking order; a click loads an area alone."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QHeaderView,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -19,7 +20,7 @@ from PySide6.QtWidgets import (
 from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit, theme
 
-from ..core.atlas import ROW_NAMES, MapRow, Section, stage_title
+from ..core.atlas import STAGE_NAMES, MapRow, Section, stage_id, stage_title
 from .common import Gate, fit
 
 if TYPE_CHECKING:
@@ -30,26 +31,25 @@ if TYPE_CHECKING:
 
 DATA = Qt.ItemDataRole.UserRole
 TREE_TIP = (
-    "The game's areas (rows) and the sections the player walks through in each, entry area"
-    " first. Click a section to load it alone; the loaded one is bold, with a pin. Greyed"
-    " sections are empty stubs the game never loads."
+    "The game's maps and the areas the player walks through in each, entry area first. Click"
+    " an area to load it; the loaded one is bold, with a pin."
 )
 
 
 def row_text(r: MapRow) -> str:
-    named = f"  {r.name}" if r.index in ROW_NAMES else ""
-    return f"row {r.index}{named}  ({len(r.sections)} sections)"
+    return f"{r.name}  ({len(r.sections)} area{'' if len(r.sections) == 1 else 's'})"
 
 
-def section_text(s: Section) -> str:
-    return f"{s.slot}  {stage_title(s.stage)}{'  (entry)' if s.is_entry else ''}"
+def section_text(s: Section) -> tuple[str, str]:
+    """The area's name and, small beside it, its id."""
+    return STAGE_NAMES.get(s.stage, "Area"), stage_id(s.stage)
 
 
-def section_tip(s: Section) -> str:
+def section_tip(s: Section, row: str) -> str:
     if not s.present:
-        return f"st{s.stage:03d} is a placeholder: an empty stub with nothing to load"
-    where = "the entry area" if s.is_entry else f"section {s.slot}"
-    return f"st{s.stage:03d}, {where} of row {s.row}, {s.size:,} bytes. Click to load it."
+        return f"{stage_id(s.stage)} is an empty stub the game never loads"
+    where = "the entry area" if s.is_entry else f"area {s.slot}"
+    return f"{stage_title(s.stage)}: {where} of {row}, {s.size:,} bytes. Click to load it."
 
 
 class BrowserPanel(kit.Panel):
@@ -59,18 +59,23 @@ class BrowserPanel(kit.Panel):
         self.error = kit.Alert(level="error")
         self.tree = QTreeWidget()
         self.tree.setToolTip(TREE_TIP)
+        self.tree.setColumnCount(2)
         self.tree.setHeaderHidden(True)
+        head = self.tree.header()
+        head.setStretchLastSection(False)
+        head.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        head.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.tree.setUniformRowHeights(True)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.tree.itemClicked.connect(self._clicked)
         self.tree.itemActivated.connect(self._clicked)
         self.here = kit.Section(
-            "Loaded section", tip="Where its exits lead and where the player arrives from"
+            "This area", tip="Where its exits lead and where the player arrives from"
         )
         self.title = kit.label(role="title")
         self.exits = kit.Items(
-            tip="Where each exit of this section leads. Click one to load that section, the"
-            " way the player would walk through it.",
+            tip="Where each exit of this area leads. Click one to load that area, the way the"
+            " player would walk through it.",
         )
         self.exits.picked.connect(self._exit)
         self.arrivals = kit.label(role="muted")
@@ -95,10 +100,12 @@ class BrowserPanel(kit.Panel):
             return
         for r in atlas.live_rows():
             top = QTreeWidgetItem([row_text(r)])
-            top.setToolTip(0, f"{r.name}: click to show or hide its sections")
+            top.setToolTip(0, f"{r.name}: click to show or hide its areas")
             for s in r.sections:
-                it = QTreeWidgetItem([section_text(s)])
-                it.setToolTip(0, section_tip(s))
+                it = QTreeWidgetItem(list(section_text(s)))
+                tip = section_tip(s, r.name)
+                for col in (0, 1):
+                    it.setToolTip(col, tip)
                 if s.present:
                     it.setData(0, DATA, (r.index, s.stage))
                 else:
@@ -106,6 +113,7 @@ class BrowserPanel(kit.Panel):
                 top.addChild(it)
                 self._items[(r.index, s.stage)] = it
             self.tree.addTopLevelItem(top)
+            top.setFirstColumnSpanned(True)
 
     def _clicked(self, item: QTreeWidgetItem) -> None:
         got = item.data(0, DATA)
@@ -113,11 +121,11 @@ class BrowserPanel(kit.Panel):
             item.setExpanded(not item.isExpanded())
             return
         row, stage = got
-        self.studio.act(f"load st{stage:03d}", lambda: self.ws.load_stage(stage, row=row))()
+        self.studio.act(f"load {stage_id(stage)}", lambda: self.ws.load_stage(stage, row=row))()
 
     def _exit(self, stage: object) -> None:
         if isinstance(stage, int):
-            self.studio.act(f"load st{stage:03d}", lambda: self.ws.load_stage(stage))()
+            self.studio.act(f"load {stage_id(stage)}", lambda: self.ws.load_stage(stage))()
 
     def sync(self) -> None:
         ws = self.ws
@@ -138,10 +146,9 @@ class BrowserPanel(kit.Panel):
         rebuilt = self.exits.set_items(
             [
                 kit.Item(
-                    f"exit {e.index}  to {stage_title(e.target)}",
+                    f"Exit {e.index} \u2192 {stage_title(e.target)}",
                     e.target,
-                    f"Walking into exit {e.index} takes the player to st{e.target:03d}."
-                    " Click to load it.",
+                    f"Walking into exit {e.index} takes the player there. Click to load it.",
                 )
                 for e in sc.exits
             ]
@@ -151,8 +158,12 @@ class BrowserPanel(kit.Panel):
         self.arrivals.setText(self._arrivals(sc.stage))
 
     def _mark(self, now: tuple[int, int] | None) -> None:
-        """The loaded section bold with a pin, and in view; the last one plain again."""
-        self._theme = theme.current()
+        """The loaded area bold with a pin, and in view; the last one plain again."""
+        if theme.current() is not self._theme:
+            self._theme = theme.current()
+            muted = theme.level("info")  # the muted text colour
+            for item in self._items.values():
+                item.setForeground(1, muted)
         pin = theme.icon("ph.map-pin-fill", accent=True)
         for key in (self._shown, now):
             it = self._items.get(key) if key is not None else None
@@ -172,11 +183,11 @@ class BrowserPanel(kit.Panel):
     def _arrivals(self, stage: int) -> str:
         """Where the player arrives from, read once per stage."""
         if stage not in self._arrived and self.ws.atlas is not None:
-            names = sorted({f"st{n:03d}" for n, _ in self.ws.atlas.arrivals(stage)})
+            names = [stage_title(n) for n in sorted({n for n, _ in self.ws.atlas.arrivals(stage)})]
             self._arrived[stage] = (
                 f"The player arrives here from {', '.join(names)}."
                 if names
-                else "No other section of its row leads here."
+                else "No other area of its map leads here."
             )
         if self.ws.scene is not None and not self.ws.scene.exits:
             return "It has no exits. " + self._arrived.get(stage, "")

@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from mhfu.files import Extracted
 from mhfu_studio.map.core.atlas import Atlas
-from mhfu_studio.map.panels.common import NO_DATA, NO_SECTION, Gate, thumbnail
+from mhfu_studio.map.panels.common import NO_AREA, NO_DATA, Gate, thumbnail
 from mhfu_studio.map.workspace import MapWorkspace
 from PySide6.QtWidgets import QLabel
 
@@ -16,10 +16,10 @@ def test_gate(qtbot: Any, game: Extracted, atlas: Atlas, monkeypatch: pytest.Mon
     gate = Gate(page, "see it")
     qtbot.addWidget(gate)
     assert not gate.check(MapWorkspace())
-    assert gate.empty.title.text() == NO_DATA and "MHFU_DATA" in gate.empty.hint.text()
+    assert gate.empty.title.text() == NO_DATA and "start page" in gate.empty.hint.text()
     ws = MapWorkspace(game, atlas)
     assert gate.check(ws, section=False) and gate.currentWidget() is page
-    assert not gate.check(ws) and gate.empty.title.text() == NO_SECTION
+    assert not gate.check(ws) and gate.empty.title.text() == NO_AREA
     assert "to see it." in gate.empty.hint.text()
     ws.load_stage(139)
     assert gate.check(ws) and gate.currentWidget() is page

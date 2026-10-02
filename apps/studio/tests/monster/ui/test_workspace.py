@@ -17,13 +17,14 @@ from mhfu_studio.ui import kit
 from mhfu_studio.ui.testing import elsewhere, gl_or_skip
 from PySide6.QtWidgets import QDockWidget
 
-DOCKS = ("Timeline", "Moves", "Action", "Scene", "View", "Joints", "Clips", "Parts", "Hitboxes")
+DOCKS = ("Actions", "Clips", "Scene", "View", "Joints", "Hitboxes", "Parts", "Timeline")
 
 
 def test_registers_its_docks() -> None:
     assert "monster" in discover(["monster"])
     ws = MonsterWorkspace()
     assert [d.label for d in ws.docks()] == list(DOCKS)
+    assert [d.label for d in ws.docks() if d.shown] == ["Actions", "Clips", "Hitboxes", "Timeline"]
     assert ws.tool_groups() == ()
 
 
@@ -33,11 +34,11 @@ def test_nothing_open() -> None:
     ws.paint(o)
     assert o.calls == [] and not ws.key(Key("Space")) and not ws.animating()
     assert ws.pointer(Pointer("press", 1, 1, (8, 8))) == Gesture.NONE
-    assert ws.document is None and ws.status() == ""
+    assert ws.document is None and ws.status() == "" and "File > Open" in ws.hint()
 
 
 def test_status_names_the_scene(workspace: MonsterWorkspace) -> None:
-    assert workspace.status() == "t   host em75"
+    assert workspace.status() == "t on Tigrex (em75)"
 
 
 def test_keys_drive_the_transport(workspace: MonsterWorkspace) -> None:
@@ -46,6 +47,7 @@ def test_keys_drive_the_transport(workspace: MonsterWorkspace) -> None:
     ws.play_slot(1)
     pb = ws.vp.playback
     assert pb.playing and pb.phase == 0.0, "a picked clip plays from its first frame"
+    assert "clip 1 walk \u00b7 Space pause \u00b7 \u2190 / \u2192 step a frame" in ws.hint()
     assert ws.key(Key("Space")) and not pb.playing
     assert ws.key(Key("Right")) and pb.phase == pb.speed and ws.vp.frame == pb.phase
     assert ws.key(Key("Left")) and pb.phase == 0.0
@@ -96,12 +98,29 @@ def test_reveal_follows_the_findings(workspace: MonsterWorkspace) -> None:
     ws.reveal(("hitbox", 0))
     assert ws.selected_set == 2 and ws.selected_attack_volume == 0
     ws.reveal(("moves", "charge"))
-    assert ws.pair == (1, 4) and ws.vp.clip is not None and ws.take_focus() == "Action"
+    assert ws.pair == (1, 4) and ws.vp.clip is not None and ws.take_focus() == "Actions"
     ws.reveal(("effect", 0))
     assert ws.vp.selected_joint == 2
     ws.reveal(("clips", "walk"))
     assert ws.edit_slot == 1 and ws.take_focus() == "Clips"
     ws.reveal("nonsense")
+
+
+def test_select_action_plays_from_the_start(workspace: MonsterWorkspace) -> None:
+    ws = workspace
+    assert ws.vp is not None
+    ws.play_slot(2)
+    ws.seek(4.0)
+    ws.select_action(1, 4)
+    pb = ws.vp.playback
+    assert (ws.pair, ws.move, ws.graph.picked) == ((1, 4), "charge", (1, 4))
+    assert ws.vp.clip is not None and ws.vp.clip.slot == 1 and pb.phase == 0.0 and pb.playing
+    ws.seek(5.0)
+    ws.select_action(0, 3)
+    assert ws.move is None and ws.vp.clip.slot == 1 and pb.phase == 0.0
+    assert ws.message == "anim 9 is not in this build: the game finds no clip for (0,3)"
+    assert [r.pair for r in ws.action_rows()][:2] == [(1, 4), (3, 9)]
+    assert ws.action_rows() is ws.action_rows(), "made once per manifest"
 
 
 def test_bind_names_the_move(workspace: MonsterWorkspace) -> None:
@@ -123,6 +142,7 @@ def test_edit_set_opens_hitboxes(workspace: MonsterWorkspace) -> None:
     ws.edit_set(3)
     assert ws.show_attacks and ws.attacks_source == "host" and ws.selected_set == 3
     assert ws.take_focus() == "Hitboxes"
+    assert ws.hint().endswith("hit group 3: pick one of its hitboxes in Hitboxes")
     ws.edit_set(2)
     assert ws.attacks_source == "port", "the port authors set 2"
 
@@ -134,7 +154,7 @@ def test_the_host_beside(workspace: MonsterWorkspace) -> None:
     ws.set_show_host(True)
     assert ws.vp.reference is not None and ws.host_clip == 1
     ws.browse_species(7)
-    assert ws.vp.reference is None and "no host PAC for em07" in ws.message
+    assert ws.vp.reference is None and "no model for em07" in ws.message
     ws.set_show_host(False)
     assert ws.vp.reference is None
 
@@ -170,8 +190,7 @@ def test_window_builds_the_docks(
 ) -> None:
     """The real window: GL from Qt, every dock of this agent's built from its panel."""
     gl_or_skip()
-    from mhfu_studio.monster.panels.action import ActionPanel
-    from mhfu_studio.monster.panels.moves import MovesPanel
+    from mhfu_studio.monster.panels.action import ActionsPanel
     from mhfu_studio.monster.panels.timeline import TimelinePanel
 
     ws = MonsterWorkspace()
@@ -181,16 +200,18 @@ def test_window_builds_the_docks(
     )
     ws.load(scene, port_doc)
     w = make_window(ws)
-    for label, cls in (("Timeline", TimelinePanel), ("Moves", MovesPanel), ("Action", ActionPanel)):
+    for label, cls in (("Timeline", TimelinePanel), ("Actions", ActionsPanel)):
         d = w.findChild(QDockWidget, f"monster/{label}")
         assert d is not None and isinstance(d.widget(), cls)
         assert kit.missing_tips(d.widget()) == []
-    ws.select_pair(1, 4)
-    ws.focus("Moves")
+    actions = w.findChild(QDockWidget, "monster/Actions")
+    assert actions is not None and actions.isVisible(), "in front of Clips"
+    clips = w.findChild(QDockWidget, "monster/Clips")
+    assert clips is not None and w.tabifiedDockWidgets(actions) == [clips]
+    ws.focus("Clips")
     w.studio.changed()
     w.sync()
-    moves = w.findChild(QDockWidget, "monster/Moves")
-    assert moves is not None and moves.isVisible()
+    assert clips.isVisible()
 
 
 def test_window_shows_the_host(

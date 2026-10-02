@@ -5,8 +5,16 @@ from typing import Any
 import pytest
 from mhfu_studio.ui import kit, theme
 from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QWheelEvent
+from PySide6.QtWidgets import (
+    QAbstractSpinBox,
+    QApplication,
+    QPushButton,
+    QScrollArea,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 def test_a_control_needs_a_tip(qapp: object) -> None:
@@ -25,6 +33,16 @@ def test_missing_tips_names_bare_controls(qapp: object) -> None:
     assert kit.missing_tips(root) == [bare]
 
 
+def test_a_tip_is_said_once(qapp: object) -> None:
+    form = kit.Form()
+    name = form.row("Far", kit.number(tip="how far"))
+    v = kit.Vec3(tip="by")
+    seg = kit.Segmented([("a", "A"), ("b", "B")], tip="mode", on=print, tips={"b": "only b"})
+    assert name.toolTip() == "" and v.toolTip() == "by"
+    assert [b.toolTip() for b in v.boxes] == ["", "", ""]
+    assert [b.toolTip() for b in seg.buttons.values()] == ["", "only b"]
+
+
 def test_segmented_reports_clicks_not_sets(qtbot: Any) -> None:
     got: list[str] = []
     seg = kit.Segmented([("a", "A"), ("b", "B")], tip="mode", on=got.append)
@@ -33,6 +51,23 @@ def test_segmented_reports_clicks_not_sets(qtbot: Any) -> None:
     assert seg.value == "b" and not got
     qtbot.mouseClick(seg.buttons["a"], Qt.MouseButton.LeftButton)
     assert got == ["a"] and seg.value == "a"
+
+
+def test_segments_fit_bold(qtbot: Any) -> None:
+    theme.apply(theme.theme("Ember", True))
+    seg = kit.Segmented([("a", "Base monster (read only)"), ("b", "Yours")], tip="m", on=print)
+    qtbot.addWidget(seg)
+    seg.show()
+    for b in seg.buttons.values():
+        plain = QToolButton(seg)
+        plain.setText(b.text())
+        plain.ensurePolished()
+        bold = QFont(b.font())
+        bold.setWeight(QFont.Weight.DemiBold)
+        more = QFontMetrics(bold).horizontalAdvance(b.text()) - b.fontMetrics().horizontalAdvance(
+            b.text()
+        )
+        assert more > 0 and b.width() >= plain.sizeHint().width() + more
 
 
 def test_items_rebuild_on_change_only(qtbot: Any) -> None:
@@ -187,6 +222,23 @@ def test_pages_show_one(qtbot: Any) -> None:
     assert pages.currentWidget() is page and pages.minimumSizeHint().height() >= 300
 
 
+def test_hidden_page_takes_no_height(qtbot: Any) -> None:
+    page = QWidget()
+    QVBoxLayout(page).addWidget(kit.label("words that wrap " * 200))
+    pages = kit.Pages(page, kit.Empty("Nothing", "Open something"))
+    p = kit.Panel()
+    p.body.addWidget(pages)
+    qtbot.addWidget(p)
+    p.resize(300, 300)
+    p.show()
+    bar = p.findChild(QScrollArea).verticalScrollBar()
+    qtbot.waitUntil(lambda: bar.maximum() > 0)
+    pages.show_page(False)
+    qtbot.waitUntil(lambda: bar.maximum() == 0)
+    pages.show_page(True)
+    qtbot.waitUntil(lambda: bar.maximum() > 0)
+
+
 def test_numbers_use_a_point(qtbot: Any) -> None:
     b = kit.number(tip="n", value=9.0, decimals=1)
     qtbot.addWidget(b)
@@ -234,3 +286,25 @@ def test_wheel_needs_focus(qtbot: Any) -> None:
         assert roll(f)[1] == before
         f.setFocus()
         assert roll(f)[1] != before, type(f).__name__
+
+
+def test_more_opens(qtbot: Any) -> None:
+    m = kit.More(tip="expert controls")
+    qtbot.addWidget(m)
+    m.body.addWidget(kit.button("x", tip="x", on=lambda: None))
+    m.show()
+    assert not m.inner.isVisible() and not kit.missing_tips(m)
+    qtbot.mouseClick(m.toggle, Qt.MouseButton.LeftButton)
+    assert m.inner.isVisible()
+
+
+def test_open_more_is_not_filled(qtbot: Any) -> None:
+    theme.apply(theme.theme("Ember", True))
+    m = kit.More(tip="expert controls")
+    qtbot.addWidget(m)
+    m.show()
+    m.set_open(True)
+    img = m.toggle.grab().toImage()
+    accent = QColor(theme.current().accent)
+    px = {img.pixelColor(x, y).rgb() for x in range(img.width()) for y in range(img.height())}
+    assert m.toggle.isChecked() and accent.rgb() not in px

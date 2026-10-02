@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The Textures panel: the bank as thumbnails with who wears each slot, and the import that
-spends a slot (a PNG copied into the document's assets/, another stage's slot, a flat
-colour). A texture edit reaches the game when it is sent, and shows there next frame."""
+spends a slot (a PNG copied into the document's assets/, a flat colour; another stage's slot,
+the palette and the thumbnail size under More). A texture edit reaches the game when it is
+sent, and shows there next frame."""
 
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from mhfu_studio.ui import kit, theme
 
+from ..core.edit import count
 from ..core.shapes import next_asset_name
 from .common import Gate, thumbnail
 
@@ -43,8 +45,8 @@ SIDE, SPIN = 330, 72
 """The import form's width beside the grid, a number field's least width."""
 QWIDGETSIZE_MAX = (1 << 24) - 1
 GRID_TIP = (
-    "The section's texture bank: every picture its surfaces wear, one per slot, with how many"
-    " mesh groups wear it. Click a slot to make it the one an import replaces."
+    "The area's textures, one picture per slot, with how many groups wear it. Click a slot to"
+    " make it the one Picture or Flat colour replaces."
 )
 
 
@@ -59,7 +61,7 @@ def wearers(sc: MapScene) -> dict[int, list[str]]:
 
 def describe(t: TextureImage) -> str:
     colours = f"{t.colours} colours" if t.colours else "direct colour"
-    return f"{t.width}x{t.height}, {colours}"
+    return f"{t.width} x {t.height}, {colours}"
 
 
 class TexturesPanel(kit.Panel):
@@ -72,10 +74,11 @@ class TexturesPanel(kit.Panel):
         self._stage: int | None = None
 
         self.target = kit.label(role="title")
+        self.worn = kit.label(role="muted")
         self.picture = kit.button(
             "Picture…",
-            tip="Replaces the slot with a PNG you pick. It is copied into the document's"
-            " assets/ folder and turned into the slot's size and colour count.",
+            tip="Replaces the slot with a PNG you pick, fitted to the slot's size and colours;"
+            " a copy goes into the document's assets/ folder",
             on=self._png,
             icon="ph.image",
         )
@@ -93,19 +96,20 @@ class TexturesPanel(kit.Panel):
             on=lambda on: studio.act("keep palette", lambda: setattr(ws, "tex_keep", on))(),
         )
         self.from_stage = kit.integer(
-            tip="The stage (stNNN) to take a slot from. The Assets panel shows the row's"
-            " sections and their slots as pictures.",
+            tip="The area, by its stNNN number, to take a slot from. The Assets panel shows the"
+            " map's areas and their slots as pictures.",
             lo=min(files.STAGES),
             hi=max(files.STAGES),
         )
-        self.from_slot = kit.integer(tip="The slot of that stage to copy", lo=0, hi=255)
+        self.from_slot = kit.integer(tip="The slot of that area to copy", lo=0, hi=255)
         self.copy = kit.button(
             "Copy that slot here",
-            tip="Replaces the slot with that stage's slot",
+            tip="Replaces the slot with that area's slot",
             on=studio.act("copy slot", self.copy_slot),
         )
         self.unsaved = kit.Alert(
-            "Save the document first to import a picture: it is copied into its assets/ folder."
+            "Save the document first (File > Save) to import a picture: it is copied into its"
+            " assets/ folder."
         )
         self.info = kit.label(role="muted")
         self.zoom = kit.Slider(
@@ -118,18 +122,20 @@ class TexturesPanel(kit.Panel):
             box.setMinimumWidth(SPIN)
         form = kit.Form()
         slot = kit.label("slot", role="muted", wrap=False)
-        form.row("From stage", kit.row(self.from_stage, slot, self.from_slot, stretch=True))
+        form.row("From area", kit.row(self.from_stage, slot, self.from_slot, stretch=True))
         form.row("", self.copy)
         form.row("Thumbnails", self.zoom)
+        more = kit.More(tip="The palette, copying a slot by number, the thumbnails' size")
+        for w in (self.keep, form, self.info):
+            more.body.addWidget(w)
         side = QWidget()
         lay = QVBoxLayout(side)
         lay.setContentsMargins(0, 0, 8, 0)
         lay.addWidget(self.target)
+        lay.addWidget(self.worn)
         lay.addWidget(kit.row(self.picture, self.flat, stretch=True))
-        lay.addWidget(self.keep)
-        lay.addWidget(form)
         lay.addWidget(self.unsaved)
-        lay.addWidget(self.info)
+        lay.addWidget(more)
         lay.addStretch(1)
         self.side = QScrollArea()
         self.side.setWidgetResizable(True)
@@ -138,7 +144,7 @@ class TexturesPanel(kit.Panel):
         self.side.setMinimumWidth(SIDE)
         self.side.setMaximumWidth(SIDE + 60)
 
-        self.grid = kit.Items(tip=GRID_TIP, empty="This section has no textures.")
+        self.grid = kit.Items(tip=GRID_TIP, empty="This area has no textures.")
         self.grid.setViewMode(QListView.ViewMode.IconMode)
         self.grid.setResizeMode(QListView.ResizeMode.Adjust)
         self.grid.setMovement(QListView.Movement.Static)
@@ -238,13 +244,16 @@ class TexturesPanel(kit.Panel):
         if self._worn is None or self._worn[0] is not sc.groups:
             self._worn = (sc.groups, wearers(sc))
         worn = self._worn[1]
+        self.worn.setText(
+            f"Worn by {count(len(worn[slot]), 'group')}." if slot in worn else "Nothing wears it."
+        )
         rebuilt = self.grid.set_items(
             [
                 kit.Item(
-                    f"{x.index}  {x.width}x{x.height}\n"
-                    + (f"{len(worn[x.index])} group(s)" if x.index in worn else "unused"),
+                    f"{x.index}\n"
+                    + (count(len(worn[x.index]), "group") if x.index in worn else "unused"),
                     x.index,
-                    f"Slot {x.index}: {describe(x)}, mode {x.mode}\n"
+                    f"Slot {x.index}: {describe(x)}\n"
                     f"Worn by: {', '.join(worn.get(x.index, ['nothing']))}\n"
                     "Click to make it the slot an import replaces.",
                 )

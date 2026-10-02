@@ -53,10 +53,10 @@ def test_info_and_walk_lines(intel75: SpeciesIntel) -> None:
     lines = graph.info_lines(intel75, (1, 4), lay, MOVES)
     assert lines[0].startswith("(1,4)  lunge -> clip c  (after = lunge_stop)")
     assert any("-> (0,3)" in t and "run budget spent" in t for t in lines)
-    assert any(t.startswith("entered from: the brain") for t in lines)
+    assert any(t.startswith("comes from: the brain") for t in lines)
     assert any("never ends by itself" in t for t in graph.info_lines(intel75, (0, 1), lay, MOVES))
-    assert graph.walk_line(intel75, (1, 4)).startswith("(1,4) ends -> (0,3) when")
-    assert "never ends itself" in graph.walk_line(intel75, (0, 1))
+    assert graph.walk_line(intel75, (1, 4)).startswith("(1,4) goes to (0,3) when")
+    assert "never ends by itself" in graph.walk_line(intel75, (0, 1))
 
 
 def test_attacks_scope_groups_alike_pairs(intel75: SpeciesIntel) -> None:
@@ -67,12 +67,12 @@ def test_attacks_scope_groups_alike_pairs(intel75: SpeciesIntel) -> None:
 
 
 def test_no_intel_and_no_roots_are_said(intel75: SpeciesIntel, species: Any) -> None:
-    assert graph.build(None, MOVES, None).note.startswith("no hand-off intel")
+    assert graph.build(None, MOVES, None).note.startswith("where the actions lead is not known")
     plain = species([{"main": 1, "sub": 4, "measured": None}])
     assert graph.build(plain, MOVES, None).empty
     lay = graph.build(intel75, {}, None, "moves")
-    assert lay.empty and "[moves] is empty" in lay.note
-    assert "select a pair" in graph.build(intel75, {}, None, "selected").note
+    assert lay.empty and "you have no moves" in lay.note
+    assert "pick an action" in graph.build(intel75, {}, None, "selected").note
 
 
 def test_em75_lays_the_zinogre_chain_out(em75: SpeciesIntel, ports: Any) -> None:

@@ -54,7 +54,7 @@ def test_coverage(packs):
     assert kinds == {1: C.CARRIED, 2: C.CARRIED, 3: C.FILLER, 4: C.HOST, 5: C.ALTERED, 6: C.CARRIED}
     assert cov.dropped == {7: (90, False)} and cov.slots[2].scriptable
     assert cov.counts()[C.DROPPED] == 1 and "1 donor clip(s) DROPPED" in cov.summary()
-    assert "COPY OF THE IDLE" in cov.slots[3].why()
+    assert "idle copy" in cov.slots[3].why().lower()
 
 
 def test_coverage_without_evidence(packs):
@@ -142,6 +142,27 @@ def test_rebind_keeps_the_move(doc):
     assert d.manifest.clips["clip_05"].frames == 30, "the unnamed slot is named"
     d.undo()
     assert "clip_05" not in d.manifest.clips and d.manifest.moves["charge"].main == 2
+
+
+def test_unbind_and_rename(doc):
+    d = doc(REBIND + '\n[[rule]]\nplay = "stop"\nfrom = "charge"\n')
+    s = C.LabelSession(d, {61: (382, False)})
+    with pytest.raises(ManifestError, match="stop is still used by moves.charge .after., rule 0"):
+        s.unbind_move("stop")
+    assert s.rename_move("stop", "skid") == "moves.stop is now moves.skid"
+    m = d.manifest
+    assert m.moves["charge"].after == "skid" and m.rules[0].play == "skid" and "stop" not in m.moves
+    assert s.rename_move("charge", "rush") and m is not d.manifest
+    assert d.manifest.rules[0].from_move == "rush"
+    with pytest.raises(ManifestError, match="already exists"):
+        s.rename_move("rush", "skid")
+    d.undo()
+    d.undo()
+    d.edit(lambda m: setattr(m, "rules", []))
+    d.edit(lambda m: setattr(m.moves["charge"], "after", None))
+    assert s.unbind_move("stop") == "moves.stop removed" and list(d.manifest.moves) == ["charge"]
+    with pytest.raises(ManifestError, match="no move"):
+        s.unbind_move("stop")
 
 
 def test_import(doc, packs):

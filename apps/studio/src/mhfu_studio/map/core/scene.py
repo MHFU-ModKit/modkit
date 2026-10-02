@@ -49,10 +49,18 @@ TURN = 0x10000
 
 FLOOR, WALL, CLIMB, SINK, WADE = "floor", "wall", "climb", "sink", "wade"
 CLASSES = (FLOOR, WALL, CLIMB, SINK, WADE)
+#: a class as the panels name it
+CLASS_NAMES = {FLOOR: "floor", WALL: "wall", CLIMB: "climbable", SINK: "sinking", WADE: "wading"}
 
 
 class SceneError(RuntimeError):
     """The stage cannot be made into a scene at all."""
+
+
+def group_name(key: Key) -> str:
+    """`group 8`; one of the props model (sub 2) is `group 8 (second model)`."""
+    sub, g = key
+    return f"group {g}" + (" (second model)" if sub else "")
 
 
 @dataclass
@@ -111,7 +119,7 @@ class MeshGroup:
 
     @property
     def label(self) -> str:
-        return f"sub{self.sub}.g{self.vg_rec}"
+        return group_name(self.key)
 
     @property
     def budget(self) -> Budget:

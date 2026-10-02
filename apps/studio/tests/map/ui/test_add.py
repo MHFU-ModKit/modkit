@@ -9,7 +9,7 @@ from mhfu_studio.map.adding import KINDS, PLACES
 from mhfu_studio.map.core.atlas import Atlas
 from mhfu_studio.map.core.edit import OBJECT, Selection
 from mhfu_studio.map.panels.add import AddPanel
-from mhfu_studio.map.panels.common import NO_DATA, NO_SECTION
+from mhfu_studio.map.panels.common import NO_AREA, NO_DATA
 from mhfu_studio.map.workspace import MapWorkspace
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.ui import kit
@@ -34,7 +34,7 @@ def press(panel: AddPanel, text: str) -> None:
 
 def test_empty(qtbot: Any, game: Extracted, atlas: Atlas, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MHFU_DATA", raising=False)
-    for w, title in ((MapWorkspace(), NO_DATA), (MapWorkspace(game, atlas), NO_SECTION)):
+    for w, title in ((MapWorkspace(), NO_DATA), (MapWorkspace(game, atlas), NO_AREA)):
         p = AddPanel(w, Studio([w]))
         qtbot.addWidget(p)
         p.sync()
@@ -44,6 +44,9 @@ def test_empty(qtbot: Any, game: Extracted, atlas: Atlas, monkeypatch: pytest.Mo
 def test_tips(panel: AddPanel) -> None:
     assert panel.gate.currentWidget() is panel.gate.page
     assert kit.missing_tips(panel) == []
+    more = panel.findChild(kit.More)
+    assert more is not None and more.isAncestorOf(panel.group) and more.isAncestorOf(panel.replace)
+    assert "room for" in panel.fits.text() and not more.isAncestorOf(panel.fits)
 
 
 def test_rows_follow_the_shape(panel: AddPanel, ws: MapWorkspace) -> None:
@@ -95,7 +98,7 @@ def test_add_and_remove(panel: AddPanel, ws: MapWorkspace, doc_dir: Path) -> Non
     ws.document.save(doc_dir)
     ws.tools.select(Selection.object(ws.scene, (0, 1), 1))
     panel.sync()
-    assert panel.group.currentText() == "sub0.g1"
+    assert panel.group.currentText() == "group 1"
     press(panel, "Add")
     assert ws.session.ops[-1]["op"] == "pack" and (doc_dir / "assets" / "box_1.obj").is_file()
     assert "added box_1.obj" in panel.message.text()

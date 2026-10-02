@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -37,6 +38,8 @@ SUBS = (0, 2)
 UV_MODES = ("keep", "obj", "planar")
 FLAG_LIMITS = {"surface": 0xFF, "material": 0xFF, "exclude": 0xFFFF}
 SELECTORS = ("vertices", "sphere", "box")
+#: the control a finding on an op lands on: the edit in the Selection panel's list
+EDIT = "edit"
 COLLISION_ONLY = ("move", "clear")
 """Mesh kinds whose `group` may be null: they then move or unlink collision only."""
 
@@ -262,6 +265,17 @@ def touches_textures(op: Op) -> bool:
     return op.get("op") in TEXTURE
 
 
+def edit_number(index: int) -> int:
+    """Op `index` as an edit list numbers it: from 1."""
+    return index + 1
+
+
+def place(area: str, index: int) -> str:
+    """Where op `index` is: `Pokke village (st139), edit 2`, or `Edit 2` with no `area`."""
+    n = edit_number(index)
+    return f"{area}, edit {n}" if area else f"Edit {n}"
+
+
 def check(
     ops: Sequence[Op],
     *,
@@ -270,16 +284,24 @@ def check(
     where: str = "",
 ) -> list[Finding]:
     """Grade an edit list. With `base_dir` the files it names must exist; with `stage` the
-    writers run over it and report what they would refuse or could not fit."""
-    label = where or (stage.label if stage else "")
+    writers run over it and report what they would refuse or could not fit. `where` names
+    the area in every finding's place, the writers' too."""
+    area = where or (stage.label if stage else "")
     out: list[Finding] = []
     for i, op in enumerate(ops):
-        at = f"{label} op {i}".strip()
-        target = (stage.number if stage else None, i)
-        out += [Finding(lv, code, msg, at, target) for lv, code, msg in _check_op(op, base_dir)]
+        at, target = place(area, i), (stage.number if stage else None, i)
+        out += [Finding(lv, code, m, at, target, EDIT) for lv, code, m in _check_op(op, base_dir)]
     if stage is not None and not any(f.level == "error" for f in out):
-        out += evidence(stage, ops, base_dir or Path("."))
+        out += [_placed(f, area) for f in evidence(stage, ops, base_dir or Path("."))]
     return out
+
+
+def _placed(f: Finding, area: str) -> Finding:
+    """A writer's finding on an op, its place named for `area`, landing on the edit."""
+    t = f.target
+    if isinstance(t, tuple) and len(t) == 2 and isinstance(t[1], int):
+        return replace(f, where=place(area, t[1]), focus=EDIT)
+    return f
 
 
 def evidence(stage: StageFile, ops: Sequence[Op], base_dir: Path) -> list[Finding]:
@@ -296,6 +318,11 @@ def evidence(stage: StageFile, ops: Sequence[Op], base_dir: Path) -> list[Findin
     if any(touches_textures(o) for o in ops):
         out += build(stage, ops, base_dir).findings
     return out
+
+
+def malformed(op: Op) -> str:
+    """Why a writer skips `op`: the checks' errors on it, "" when it is well formed."""
+    return "; ".join(m for level, _, m in _check_op(op, None) if level == "error")
 
 
 def _check_op(op: Op, base_dir: Path | None) -> list[_Said]:

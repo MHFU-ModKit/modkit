@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""Over the viewport: click-to-select (a shown port volume wins over a joint) and joint indices,
-projected with the frame's own camera so they cannot drift from their joints."""
+"""Joint indices over the viewport, projected with the frame's own camera so they cannot drift
+from their joints; picking and the gizmo are `monster.tools`."""
 
 from __future__ import annotations
 
@@ -12,29 +12,6 @@ from mhfu_studio.shell.overlay import Ink, Overlay
 
 if TYPE_CHECKING:
     from mhfu_studio.monster.workspace import MonsterWorkspace
-
-
-def pick(ws: MonsterWorkspace, x: float, y: float, size: tuple[int, int]) -> None:
-    """Selects the port's volume under `(x, y)`, else the joint; a second click deselects."""
-    vp = ws.vp
-    if vp is None or vp.skeleton is None:
-        return
-    cam = vp.camera
-    if ws.show_attacks and ws.attacks_source == "port" and vp.attacks is not None:
-        v = vp.attacks.pick(cam, size, x, y)
-        i = None if v is None else vp.attacks.index_of(v)
-        if i is not None:
-            ws.select_attack_volume(None if ws.selected_attack_volume == i else i)
-            return
-    if ws.show_parts and ws.parts_source == "port" and vp.hitboxes is not None:
-        v = vp.hitboxes.pick(cam, size, x, y)
-        i = None if v is None else vp.hitboxes.index_of(v)
-        if i is not None:
-            ws.select_volume(None if ws.selected_volume == i else i)
-            return
-    hit = vp.skeleton.pick(cam, size, x, y)
-    if hit is not None:
-        vp.select_joint(None if vp.selected_joint == hit else hit)
 
 
 def joint_labels(ws: MonsterWorkspace, o: Overlay) -> None:

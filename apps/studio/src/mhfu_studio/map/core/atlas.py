@@ -2,9 +2,10 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The map table as rows of sections, entry area first; the village is row 0.
 
-Names come only from the game: three rows and the snowy bank are labelled, everything else
-is `row N` / `stNNN`. Day/night twins share their collision bytes, paired by hash, not by an
-offset that holds for one map only.
+On screen a row is a "map" and a section an "area" (`row_name`, `stage_title`). Names come
+only from the game: three maps and the snowy areas are named, everything else is `Map N` /
+`Area stNNN`. Day/night twins share their collision bytes, paired by hash, not by an offset
+that holds for one map only.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ ROW_NAMES: dict[int, str] = {
 
 STAGE_NAMES: dict[int, str] = {
     139: "Pokke village",
-    66: "Pokke village (twin of st139)",
+    66: "Pokke village twin",
     98: "Snowy base camp",
     99: "Snowy area 1",
     95: "Snowy area 2",
@@ -41,34 +42,40 @@ STAGE_NAMES: dict[int, str] = {
     96: "Snowy area 7",
     97: "Snowy area 8",
     6: "Snowy secret area",
-    107: "Snowy base camp (night)",
-    108: "Snowy area 1 (night)",
-    104: "Snowy area 2 (night)",
-    103: "Snowy area 3 (night)",
-    101: "Snowy area 4 (night)",
-    102: "Snowy area 5 (night)",
-    109: "Snowy area 6 (night)",
-    105: "Snowy area 7 (night)",
-    106: "Snowy area 8 (night)",
-    15: "Snowy secret area (night)",
+    107: "Snowy base camp at night",
+    108: "Snowy area 1 at night",
+    104: "Snowy area 2 at night",
+    103: "Snowy area 3 at night",
+    101: "Snowy area 4 at night",
+    102: "Snowy area 5 at night",
+    109: "Snowy area 6 at night",
+    105: "Snowy area 7 at night",
+    106: "Snowy area 8 at night",
+    15: "Snowy secret area at night",
 }
 
 ORPHAN_STAGES = (126, 198, 199, 200)
 """Complete maps no row references: a cut section and three unconnected arenas."""
 
 
+def stage_id(stage: int) -> str:
+    return f"st{stage:03d}"
+
+
 def stage_name(stage: int) -> str:
-    return STAGE_NAMES.get(stage, f"st{stage:03d}")
+    """`Pokke village`, or `Area st140` for a stage the game gives no name."""
+    return STAGE_NAMES.get(stage, f"Area {stage_id(stage)}")
 
 
 def stage_title(stage: int) -> str:
-    """`st139  Pokke village`, or `st140` alone for a stage the game gives no name."""
+    """`Pokke village (st139)`; `Area st140`, its id once, for a stage with no name."""
     name = STAGE_NAMES.get(stage)
-    return f"st{stage:03d}  {name}" if name else f"st{stage:03d}"
+    return f"{name} ({stage_id(stage)})" if name else stage_name(stage)
 
 
 def row_name(row: int) -> str:
-    return ROW_NAMES.get(row, f"row {row}")
+    """A row as the map it is: `Snowy Mountains (day)`, or `Map 7`."""
+    return ROW_NAMES.get(row, f"Map {row}")
 
 
 @dataclass

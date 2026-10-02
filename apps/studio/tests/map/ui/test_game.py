@@ -45,7 +45,7 @@ def edited(game: Extracted, atlas: Atlas) -> MapWorkspace:
 
 def test_nothing_loaded(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
     p, _, _ = panel(qtbot, MapWorkspace(game, atlas))
-    assert "Load a section" in p.gate.empty.hint.text() and kit.missing_tips(p) == []
+    assert "Pick an area" in p.gate.empty.hint.text() and kit.missing_tips(p) == []
 
 
 def test_no_edits(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
@@ -53,25 +53,28 @@ def test_no_edits(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
     ws.load_stage(139, row=0)
     p, _, _ = panel(qtbot, ws)
     assert kit.missing_tips(p) == [] and not any(b.isEnabled() for b in p.pushes)
-    assert p.restore.isEnabled() and p.running.text() == "no edits to st139 yet"
+    assert p.restore.isEnabled() and p.running.text() == "no edits to Pokke village yet"
 
 
 def test_unsaved_pushes(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
     ws = edited(game, atlas)
     p, studio, runner = panel(qtbot, ws)
     assert ws.doc.directory is None and all(b.isEnabled() for b in p.pushes)
-    p.pushes[1].click()
+    assert [b.text() for b in p.pushes] == ["Mesh", "Collision", "Textures"]  # Send is the bar's
+    more = p.findChild(kit.More)
+    assert more is not None and all(more.isAncestorOf(b) for b in [*p.pushes, p.catch, p.clear])
+    p.pushes[0].click()
     argv, stdin = runner.started[0]
     assert argv[1:3] == ["-c", MAIN] and argv[3:] == list(ws.push_job(("mesh",)).argv)
     assert json.loads(stdin) == [MOVE] and studio.job is not None
-    assert not any(b.isEnabled() for b in [*p.pushes, p.restore]) and p.stop.isEnabled()
-    assert p.running.text() == "push st139's mesh into the game… (running)"
-    p.stop.click()
+    assert not any(b.isEnabled() for b in [*p.pushes, p.restore])
+    assert p.running.text() == "send Pokke village's mesh to the game… (running)"
+    studio.stop()  # the toolbar's
     assert runner.stopped == 1
     studio.heard("line one")
     studio.ended(0)
     assert p.log.toPlainText().splitlines()[1:] == ["line one", "[exit 0]"]
-    assert p.pushes[0].isEnabled() and not p.stop.isEnabled()
+    assert p.pushes[0].isEnabled()
     p.restore.click()
     assert runner.started[1][0][-1] == "--restore" and runner.started[1][1] == b""
     p.clear.click()
@@ -80,10 +83,10 @@ def test_unsaved_pushes(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
 
 def test_village_catch(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
     ws = edited(game, atlas)
-    p, _, runner = panel(qtbot, ws)
+    p, studio, runner = panel(qtbot, ws)
     assert p.catch.value() == 0 == ws.catch and p.village.isHidden()
     p.catch.setValue(30)
     assert ws.catch == 30 and not p.village.isHidden()
-    p.pushes[0].click()
+    studio.send()  # Send to game
     argv = runner.started[0][0]
     assert argv[argv.index("--catch") + 1] == "30"

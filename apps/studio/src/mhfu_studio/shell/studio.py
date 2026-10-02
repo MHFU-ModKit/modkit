@@ -9,18 +9,23 @@ save?) go through hooks the window installs; without them the studio goes on una
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Hashable, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import wait as wait_for
 from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from mhfu_studio.shell import places, settings
 from mhfu_studio.shell.context import ContextError, attached, describe
 from mhfu_studio.shell.findings import Finding
-from mhfu_studio.shell.workspace import Job, Workspace, pick
+from mhfu_studio.shell.workspace import Choice, Job, Warmup, Workspace, pick
 
 if TYPE_CHECKING:
     import moderngl
@@ -65,6 +70,23 @@ class Findings:
 #: the studio's own command line, run by the interpreter running the window
 MAIN = "import sys; from mhfu_studio.cli import main; sys.exit(main())"
 LOG_LINES = 2000
+#: recent documents kept per workspace
+RECENT = 8
+
+
+def said(e: Exception) -> str:
+    """`e` for the window: a missing place in words."""
+    return e.words if isinstance(e, places.Missing) else str(e)
+
+
+@dataclass(frozen=True)
+class Opening:
+    """A document waiting for its workspace's warm-up (`Studio.open_later`)."""
+
+    ws: Workspace
+    path: Path
+    warmup: Warmup
+    future: Future[object]
 
 
 def command(job: Job) -> list[str]:
@@ -111,6 +133,8 @@ class Studio:
         self.findings = Findings()
         #: "save", "discard" or "cancel" for the named documents' unsaved edits
         self.ask_discard: Callable[[list[str]], str] | None = None
+        #: whether to drop the named document's unsaved edits and go back to its file
+        self.ask_revert: Callable[[str], bool] | None = None
         #: where to save a document that has no file yet; None is a cancel
         self.ask_path: Callable[[Workspace], Path | None] | None = None
         #: runs a `Job` in the background (the window's); without one a job runs inline
@@ -129,6 +153,13 @@ class Studio:
         self._listeners: list[Callable[[], None]] = []
         #: each workspace's `said` when we last looked
         self._heard = {w.name: w.said for w in self.workspaces}
+        #: per workspace, what it showed when the start page was asked for over it
+        self._start: dict[str, Hashable | None] = {}
+        #: workspaces whose last document was reopened, or tried, this run
+        self._resumed: set[str] = set()
+        #: a document waiting for its warm-up
+        self.opening: Opening | None = None
+        self._pool: ThreadPoolExecutor | None = None
 
     @property
     def message(self) -> str:
@@ -209,15 +240,154 @@ class Studio:
             return False
         before = ws.said
         try:
-            ws.open(path)
+            with self.gl_current():
+                ws.open(path)
         except Exception as e:
-            self.message = f"could not open {path.name}: {e}"
+            if isinstance(e, places.Missing):  # the start page's checklist says what to do
+                self.active = ws
+                self._start[ws.name] = ws.shown()
+                self.findings.stale()
+            self.message = f"could not open {path.name}: {said(e)}"
             self.changed()
             return False
         self._messages[ws.name] = f"opened {path}"
         self._heard[ws.name] = before  # what it said while opening shows instead
+        self._record(ws, f"open:{path.resolve()}", path)
+        self._start.pop(ws.name, None)
         self.switch(ws.name)
         return True
+
+    def open_later(self, path: Path | str) -> bool:
+        """`open(path)` once its workspace's `warmup` ran in the background (`poll` ends it);
+        at once without one. True when it opened now."""
+        path = Path(path)
+        if self.opening is not None:
+            self.message = f"busy: opening {self.opening.path.name}"
+            self.changed()
+            return False
+        ws = pick(self.workspaces, path)
+        warm = None if ws is None else ws.warmup(path)
+        if ws is None or warm is None:
+            return self.open(path)
+        self._pool = self._pool or ThreadPoolExecutor(1, thread_name_prefix="warmup")
+        self.opening = Opening(ws, path, warm, self._pool.submit(warm.run))
+        self._messages[ws.name] = f"{warm.what}\u2026"
+        self._heard[ws.name] = ws.said
+        self.switch(ws.name)
+        return False
+
+    def poll(self) -> None:
+        """Opens the document `open_later` waits for, once its warm-up is done."""
+        o = self.opening
+        if o is None or not o.future.done():
+            return
+        self.opening = None
+        try:
+            got = o.future.result()
+        except Exception as e:
+            self._messages[o.ws.name] = f"could not open {o.path.name}: {said(e)}"
+            self.changed()
+            return
+        done = o.warmup.done
+        if done is not None:
+            self.guard("warm-up", lambda: done(got))()
+        self.open(o.path)
+
+    def wait(self, timeout: float = 120.0) -> None:
+        """Blocks until the warm-up `opening` waits for is done, then `poll`s."""
+        if self.opening is not None:
+            wait_for([self.opening.future], timeout)
+        self.poll()
+
+    # ---- the start page ----------------------------------------------------------- #
+    def on_start(self) -> bool:
+        """The window shows the start page in the view's place: nothing worth showing, a
+        document opening, or `show_start` and the view unchanged since."""
+        ws = self.active
+        if self.opening is not None and self.opening.ws is ws:
+            return True
+        shown = ws.shown()
+        if shown is None:
+            return True
+        if ws.name in self._start and self._start[ws.name] != shown:
+            del self._start[ws.name]  # something else came up: the page has done its job
+        return ws.name in self._start
+
+    def show_start(self, on: bool = True) -> None:
+        """The start page over the active workspace's view, or back to the view."""
+        if on:
+            self._start[self.active.name] = self.active.shown()
+        else:
+            self._start.pop(self.active.name, None)
+        self.changed()
+
+    def choose(self, choice: Choice) -> bool:
+        """A start-page entry: its document (`open_later`), or its key in the active
+        workspace (`Workspace.choose`)."""
+        if choice.path is not None:
+            return self.open_later(choice.path)
+        ws = self.active
+        try:
+            with self.gl_current():
+                ws.choose(choice.key)
+        except Exception as e:
+            self.message = f"could not open {choice.label}: {said(e)}"
+            self.changed()
+            return False
+        self._record(ws, f"choose:{choice.key}")
+        self._start.pop(ws.name, None)
+        self.findings.stale()
+        self.changed()
+        return True
+
+    def recent(self, ws: Workspace | None = None) -> list[Path]:
+        """`ws`'s (the active one's) documents, newest first, those still there."""
+        ws = self.active if ws is None else ws
+        got = settings.store.get(f"recent/{ws.name}") or ""
+        return [p for p in map(Path, got.splitlines()) if p.exists()]
+
+    def _record(self, ws: Workspace, last: str, path: Path | None = None) -> None:
+        """What `resume` reopens next run; `path` heads the recent documents."""
+        if path is not None:
+            path = path.resolve()
+            keep = [path, *(p for p in self.recent(ws) if p != path)][:RECENT]
+            settings.store.put(f"recent/{ws.name}", "\n".join(map(str, keep)))
+        settings.store.put(f"last/{ws.name}", last)
+
+    def resume(self) -> None:
+        """The active workspace's last document or choice, once a run, while it shows
+        nothing: a first run (nothing recorded) stays on the start page."""
+        ws = self.active
+        if ws.name in self._resumed:
+            return
+        self._resumed.add(ws.name)
+        if ws.shown() is not None:
+            return
+        kind, _, what = (settings.store.get(f"last/{ws.name}") or "").partition(":")
+        if kind == "open" and Path(what).exists():
+            self.open_later(what)
+        elif kind == "choose" and what:
+            self.choose(Choice(what, "", key=what))
+
+    def remember(self, place: places.Place, path: Path | str | None) -> bool:
+        """`place` is `path` from now on (None: found again); every workspace looks again.
+        False, the reason in `message`, when `path` is not one."""
+        try:
+            found = places.remember(place, path)
+        except (OSError, ValueError) as e:
+            self.message = f"not used: {e}"
+            self.changed()
+            return False
+        self.message = f"{place.name}: {found.says()}"
+        self.located()
+        return True
+
+    def located(self) -> None:
+        """Every workspace finds its files again (`Workspace.locate`)."""
+        for w in self.workspaces:
+            self.guard(f"find {w.name} files", w.locate)()
+        self.findings.stale()
+        self.changed()
 
     def discard_ok(self, *workspaces: Workspace) -> bool:
         """Whether their documents may be dropped: no unsaved edits, or `ask_discard` said to
@@ -254,11 +424,36 @@ class Studio:
             else:
                 if path is not None:
                     ws.refresh()
+                    self._record(ws, f"open:{Path(where).resolve()}", Path(where))
                 self.findings.stale()
                 self.message = f"saved {where}"
                 ok = True
         self.changed()
         return ok
+
+    def can_revert(self) -> bool:
+        """The active document has unsaved edits and a file to go back to."""
+        doc = self.active.document
+        return doc is not None and doc.path is not None and doc.dirty
+
+    def revert(self) -> None:
+        """The active document back to its file, once `ask_revert` lets its edits go."""
+        ws = self.active
+        name = doc_name(ws)
+        if not self.can_revert():
+            self.message = "nothing to revert"
+        elif self.ask_revert is not None and not self.ask_revert(name):
+            self.message = ""
+        else:
+            try:
+                ws.revert()
+            except Exception as e:
+                self.message = f"not reverted: {e}"
+            else:
+                self._heard[ws.name] = ws.said  # ours, not what it said while reloading
+                self.findings.stale()
+                self.message = f"back to the saved {name}"
+        self.changed()
 
     # ---- the game ---------------------------------------------------------------- #
     def send_blocker(self) -> str | None:
@@ -292,7 +487,10 @@ class Studio:
         if self.runner is not None:
             self.runner.start(command(job), job.stdin)
             return
-        done = subprocess.run(command(job), input=job.stdin, capture_output=True, check=False)
+        env = {**os.environ, **places.environ()}
+        done = subprocess.run(
+            command(job), input=job.stdin, capture_output=True, check=False, env=env
+        )
         for line in (done.stdout + done.stderr).decode(errors="replace").splitlines():
             self.heard(line)
         self.ended(done.returncode)
@@ -315,6 +513,9 @@ class Studio:
     def _ended(self, code: int) -> None:
         job, self.job = self.job, None
         self.heard(f"[exit {code}]")
+        if job is not None:
+            ws, ok = self.workspace(self._sender), code == 0 and not self._stopped
+            self.guard("job ended", lambda: ws.ended(job, ok))()
         title = job.title if job is not None else "job"
         how = (
             "stopped" if self._stopped else "done" if code == 0 else f"failed ({code}), see the log"
@@ -364,6 +565,8 @@ class Studio:
         if self._closed:
             return
         self._closed = True
+        if self._pool is not None:
+            self._pool.shutdown(wait=False, cancel_futures=True)
         for w in self.workspaces:
             w.close()
         self.ctx = None

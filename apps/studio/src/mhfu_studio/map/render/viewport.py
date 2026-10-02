@@ -160,11 +160,11 @@ class MapViewport(Viewport):
         out = []
         for e in sc.exits:
             cx, cy, cz = e.trigger
-            text = f"-> {stage_title(e.target)}"
+            text = f"\u2192 {stage_title(e.target)}"
             out.append(Label(np.array((cx, cy + e.height, cz)), text, EXIT_COLOR, "exit"))
         for frm, x in self.arrivals:
             pos = np.array((x.dest[0], x.dest[1] + 220.0, x.dest[2]))
-            out.append(Label(pos, f"from st{frm:03d}", ARRIVAL_COLOR, "arrival"))
+            out.append(Label(pos, f"from {stage_title(frm)}", ARRIVAL_COLOR, "arrival"))
         for s in sc.spheres:
             pos = np.array((s.pos[0], s.pos[1] + s.radius, s.pos[2]))
             out.append(Label(pos, f"sphere {s.id}", SPHERE_COLOR, "sphere"))

@@ -7,7 +7,7 @@ from mhfu.files import Extracted
 from mhfu_studio.map.core.atlas import Atlas
 from mhfu_studio.map.core.edit import COLLISION, CollisionSelection, Selection
 from mhfu_studio.map.panels.collision import CollisionPanel
-from mhfu_studio.map.panels.common import NO_DATA, NO_SECTION
+from mhfu_studio.map.panels.common import NO_AREA, NO_DATA
 from mhfu_studio.map.workspace import MapWorkspace
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.ui import kit
@@ -37,7 +37,7 @@ def pick(ws: MapWorkspace, *tris: tuple[int, int]) -> None:
 
 def test_empty(qtbot: Any, game: Extracted, atlas: Atlas, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MHFU_DATA", raising=False)
-    for w, title in ((MapWorkspace(), NO_DATA), (MapWorkspace(game, atlas), NO_SECTION)):
+    for w, title in ((MapWorkspace(), NO_DATA), (MapWorkspace(game, atlas), NO_AREA)):
         p = CollisionPanel(w, Studio([w]))
         qtbot.addWidget(p)
         p.sync()
@@ -50,9 +50,12 @@ def test_shows(panel: CollisionPanel, ws: MapWorkspace) -> None:
     assert sorted(panel.chunk_checks) == [0, 1] and "4 triangles" in panel.chunk_checks[1].text()
     assert "grid of 5 x 5 cells" in panel.chunk_checks[1].toolTip()
     assert (
-        panel.classes["climb"].text() == "climb  (1)" and not panel.classes["climb"].icon().isNull()
+        panel.classes["climb"].text() == "climbable  (1)"
+        and not panel.classes["climb"].icon().isNull()
     )
-    assert "1 climbable" in panel.climb_text.text() and panel.surface.isHidden()
+    assert panel.climb_text.text() == "1 climbable triangle" and panel.surface.isHidden()
+    more = panel.findChild(kit.More)
+    assert more is not None and all(more.isAncestorOf(w) for w in (panel.chunk_box, *panel.flags))
     assert not panel.hint.isHidden() and panel.edit.isHidden()
     assert not any(w.isEnabled() for w in panel.filters)  # drawn only while shown
     ws.tools.show_layer(True)
@@ -63,6 +66,10 @@ def test_shows(panel: CollisionPanel, ws: MapWorkspace) -> None:
     panel.fill.slider.setValue(1000)
     assert not ws.vp.collision.show_class["floor"] and not ws.vp.collision.show_chunk[0]
     assert ws.vp.collision.fill_alpha == 1.0
+    xray, edges = ws.vp.collision_xray, ws.vp.collision_edges
+    panel.xray.click()
+    panel.edge_on.click()
+    assert ws.vp.collision_xray != xray and ws.vp.collision_edges != edges
 
 
 def test_climbable(panel: CollisionPanel, ws: MapWorkspace) -> None:
@@ -79,7 +86,10 @@ def test_one_triangle(panel: CollisionPanel, ws: MapWorkspace) -> None:
     pick(ws, (0, 1))
     panel.sync()
     assert panel.hint.isHidden() and not panel.one.isHidden()
-    assert "Chunk 0 triangle 1: wall" in panel.info.text()
+    assert (
+        "wall triangle 1: wall" in panel.info.text()
+        and panel.what.text() == "1 collision triangle: wall"
+    )
     assert panel.verts[0].value() == pytest.approx([1500.0, 0.0, 300.0])
     press(panel, "Climbable")
     assert (0, 1) in ws.scene.climbable() and panel.flags[1].value() == 10
@@ -100,12 +110,12 @@ def test_flags_on_many(panel: CollisionPanel, ws: MapWorkspace) -> None:
     pick(ws, (1, 0), (1, 1))
     panel.sync()
     assert panel.one.isHidden() and "2 triangles; materials [3]" in panel.info.text()
-    assert "not near-vertical" in panel.warn.text()
+    assert "too flat to climb" in panel.warn.text()
     panel.flags[1].setValue(7)
     press(panel, "Apply flags")
     assert ws.scene.chunk(1).material[0] == 7 and ws.scene.chunk(1).material[1] == 7
     press(panel, "Rock wall")
-    assert "not near-vertical" in ws.message
+    assert "too flat to climb" in ws.message
 
 
 def test_new_collision(panel: CollisionPanel, ws: MapWorkspace) -> None:
@@ -113,7 +123,7 @@ def test_new_collision(panel: CollisionPanel, ws: MapWorkspace) -> None:
     assert not panel.box.isEnabled()
     ws.tools.select(Selection.face(ws.scene, (0, 1), 0))
     panel.add_flags[1].setValue(10)
-    press(panel, "Turn 1 selected faces into collision")
+    press(panel, "Turn 1 selected face into collision")
     op = ws.session.ops[-1]
     assert op["op"] == "collision" and len(op["add"]) == 1 and op["flags"]["material"] == 10
     panel.add_chunk.setCurrentIndex(panel.add_chunk.findData("1"))

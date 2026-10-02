@@ -32,7 +32,7 @@ from mhfu_studio.shell.context import borrowed
 from mhfu_studio.shell.input import Button, Key, Mod, Pointer
 from mhfu_studio.shell.overlay import Color, Ink, Point
 from mhfu_studio.shell.text import camera_line, plain
-from mhfu_studio.shell.workspace import Gesture
+from mhfu_studio.shell.workspace import Gesture, Shortcut
 from mhfu_studio.ui import theme
 
 if TYPE_CHECKING:
@@ -43,9 +43,15 @@ if TYPE_CHECKING:
 #: moderngl leaves the pixel store at 1 and QPainter's glyph uploads then shear
 GL_UNPACK_ALIGNMENT, GL_PACK_ALIGNMENT = 0x0CF5, 0x0D05
 #: the card's corner radius, the theme's #Card one
-RADIUS = 12
+RADIUS = 8
 HUD_AT: Point = (10.0, 8.0)
 PAN_BUTTONS = Button.RIGHT | Button.MIDDLE
+#: the camera's gestures, for Help > Keyboard shortcuts
+MOUSE = (
+    Shortcut(("Left-drag",), "Turns the view (Alt-drag where a drag selects)"),
+    Shortcut(("Right-drag", "Middle-drag"), "Pans the view"),
+    Shortcut(("Wheel",), "Zooms the view"),
+)
 
 _BUTTONS = (
     (Qt.MouseButton.LeftButton, Button.LEFT),
@@ -203,6 +209,8 @@ class GLView(QOpenGLWidget):
         #: the gestures each held button's press consumed, until that button's release
         self._held: dict[Button, Gesture] = {}
         self._last: tuple[float, float] | None = None
+        #: the camera's yaw, pitch and distance under the HUD (View > Show camera readout)
+        self.show_camera = False
 
     # ---- GL ---------------------------------------------------------------------------- #
 
@@ -265,7 +273,8 @@ class GLView(QOpenGLWidget):
         try:
             o = QtOverlay(p, self.font(), (self.width(), self.height()))
             ws.paint(o)
-            hud = "\n".join(t for t in (ws.hud(), camera_line(vp.camera)) if t)
+            camera = camera_line(vp.camera) if self.show_camera else ""
+            hud = "\n".join(t for t in (ws.hud(), camera) if t)
             o.text(HUD_AT, plain(hud))
         finally:
             p.end()
@@ -302,6 +311,11 @@ class GLView(QOpenGLWidget):
         self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
     # ---- input ------------------------------------------------------------------------- #
+
+    @property
+    def held(self) -> bool:
+        """A mouse button is down over the view: a drag may be under way."""
+        return bool(self._held)
 
     def _size(self) -> tuple[int, int]:
         return self.width(), self.height()

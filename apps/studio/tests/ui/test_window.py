@@ -9,16 +9,26 @@ from mhfu_studio.shell.findings import Finding
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.shell.testing import FakeDocument
 from mhfu_studio.shell.workspace import Dock
-from mhfu_studio.ui import chrome, dialogs, kit, theme
+from mhfu_studio.ui import about, chrome, dialogs, kit, theme
 from mhfu_studio.ui.testing import FakeWorkspace, elsewhere, gl_or_skip
-from mhfu_studio.ui.window import DockTitle, Window
+from mhfu_studio.ui.window import STATE_VERSION, DockTitle, Window
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QOpenGLContext
-from PySide6.QtWidgets import QApplication, QDockWidget, QMainWindow, QMenu, QTabBar
+from PySide6.QtGui import QAction, QKeySequence, QOpenGLContext
+from PySide6.QtWidgets import (
+    QApplication,
+    QDockWidget,
+    QLabel,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QTabBar,
+    QWidget,
+)
 from shiboken6 import getCppPointer
 
 Make = Callable[..., Window]
 LEFT, RIGHT = Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea
+BOTTOM = Qt.DockWidgetArea.BottomDockWidgetArea
 
 
 def dock(w: Window, name: str) -> QDockWidget:
@@ -43,7 +53,7 @@ def test_layout_per_workspace(make_window: Make) -> None:
     assert w.dockWidgetArea(dock(w, "monster/Items")) == LEFT
     switch(w, "map")
     assert items.isVisible() and w.dockWidgetArea(items) == RIGHT and not notes.isVisible()
-    assert not dock(w, "monster/Items").isVisible() and dock(w, "Findings").isVisible()
+    assert not dock(w, "monster/Items").isVisible() and not dock(w, "Findings").isVisible()
 
 
 def test_layout_persists(make_window: Make) -> None:
@@ -93,6 +103,79 @@ def test_arranged_once(make_window: Make, qtbot: Any, monkeypatch: Any) -> None:
     assert arranged[-1] == "map" and stray_tabs(again) == []
 
 
+class Closed(FakeWorkspace):
+    """Items and Notes open; Extra closed on the right; Strip alone at the bottom, More closed."""
+
+    def docks(self) -> tuple[Dock, ...]:
+        def blank(s: Studio) -> kit.Panel:
+            return kit.Panel()
+
+        return (
+            *super().docks(),
+            Dock("Extra", "right", blank, "A closed panel", shown=False),
+            Dock("Strip", "bottom", blank, "A panel never tabbed", alone=True, size=90),
+            Dock("More", "bottom", blank, "Another closed panel", shown=False),
+        )
+
+
+def test_closed_docks_open_in_place(make_window: Make, qtbot: Any) -> None:
+    w = make_window(Closed("map"), Closed("monster"))
+    extra, more, strip = dock(w, "map/Extra"), dock(w, "map/More"), dock(w, "map/Strip")
+    assert strip.isVisible() and not extra.isVisible() and not more.isVisible()
+    assert extra.toggleViewAction() in w.panels_menu.actions()
+    extra.toggleViewAction().trigger()
+    more.toggleViewAction().trigger()
+    dock(w, "Findings").toggleViewAction().trigger()
+    qtbot.wait(20)
+    assert w.dockWidgetArea(extra) == RIGHT and w.tabifiedDockWidgets(extra) == [
+        dock(w, "map/Notes")
+    ]
+    assert not extra.visibleRegion().isEmpty()
+    assert w.dockWidgetArea(more) == BOTTOM and w.tabifiedDockWidgets(strip) == []
+    assert dock(w, "Findings") in w.tabifiedDockWidgets(more)
+    assert more.geometry().bottom() < strip.geometry().top() and abs(strip.height() - 90) < 12
+
+
+class Tall(Closed):
+    """Closed's docks, More taller than the window."""
+
+    def docks(self) -> tuple[Dock, ...]:
+        def tall(s: Studio) -> QWidget:
+            p = QWidget()
+            p.setMinimumHeight(2000)
+            return p
+
+        own = super().docks()
+        return (*own[:-1], Dock("More", "bottom", tall, "A tall closed panel", shown=False))
+
+
+def test_closed_docks_do_not_grow_the_window(make_window: Make) -> None:
+    w = make_window(Closed("map"), Tall("monster"))
+    h = w.height()
+    switch(w, "monster")
+    assert w.height() == h and not dock(w, "monster/More").isVisible()
+
+
+def test_take_focus_opens_a_closed_dock(make_window: Make, qtbot: Any) -> None:
+    w = make_window(Closed("map"), Closed("monster"))
+    more, strip = dock(w, "map/More"), dock(w, "map/Strip")
+    w.studio.active.focus = "More"
+    w.studio.changed()
+    w.sync()
+    qtbot.wait(20)
+    assert more.isVisible() and more.height() > 2 * strip.height()
+
+
+def test_old_layouts_are_dropped(make_window: Make) -> None:
+    w = make_window()
+    w.addDockWidget(RIGHT, dock(w, "map/Items"))
+    old = w.saveState(STATE_VERSION - 1)
+    w.close()
+    w.settings.setValue("layout/map", old)
+    again = make_window()
+    assert again.dockWidgetArea(dock(again, "map/Items")) == LEFT
+
+
 def test_restore_places_new_docks(make_window: Make) -> None:
     make_window().close()
     w = make_window(Tabbed("map"), Tabbed("monster"))
@@ -104,10 +187,10 @@ def test_reset_layout(make_window: Make) -> None:
     items, notes = dock(w, "map/Items"), dock(w, "map/Notes")
     w.addDockWidget(RIGHT, items)
     notes.close()
-    dock(w, "Findings").close()
+    dock(w, "Findings").show()
     w.reset_action.trigger()
     assert w.dockWidgetArea(items) == LEFT and w.dockWidgetArea(notes) == RIGHT
-    assert notes.isVisible() and dock(w, "Findings").isVisible()
+    assert notes.isVisible() and not dock(w, "Findings").isVisible()
 
 
 def test_tabbed_docks_show_only_their_tab(make_window: Make, qtbot: Any) -> None:
@@ -149,7 +232,7 @@ def test_tab_menu(make_window: Make, qtbot: Any) -> None:
     m.actions()[0].trigger()
     m.close()
     assert notes.isHidden() and not notes.toggleViewAction().isChecked()
-    assert notes.toggleViewAction() in w.view_menu.actions()
+    assert notes.toggleViewAction() in w.panels_menu.actions()
     notes.show()
     w.addDockWidget(RIGHT, items)
     w.addDockWidget(RIGHT, notes)
@@ -175,6 +258,7 @@ def test_default_shares(make_window: Make) -> None:
     w = make_window()
     w.resize(1200, 800)
     w.reset_layout()
+    dock(w, "Findings").toggleViewAction().trigger()
     QApplication.processEvents()
     side, bottom = dock(w, "map/Items").width(), dock(w, "Findings").height()
     assert 0.18 < side / w.width() < 0.26 and 0.28 < bottom / w.height() < 0.36
@@ -265,12 +349,92 @@ def test_open_asks(make_window: Make, asked: list[Any], monkeypatch: Any, tmp_pa
     monkeypatch.setattr(dialogs, "confirm_unsaved", lambda p, n: "discard")  # teardown closes
 
 
+def test_revert_menu(make_window: Make, asked: list[Any], tmp_path: Path) -> None:
+    w = make_window()
+    (tmp_path / "a.toml").write_text("x y")
+    assert w.studio.open(tmp_path / "a.toml")
+    ws = w.studio.active
+    w.sync()
+    assert not w.revert_action.isEnabled()
+    ws.add_item()
+    w.sync()
+    assert w.revert_action.isEnabled()
+    w.revert_action.trigger()
+    w.sync()
+    assert asked == ["a.toml"] and ws.doc.history.value == ["x", "y"]
+    assert not w.revert_action.isEnabled() and w.message.text() == "back to the saved a.toml"
+
+
+def test_revert_question(qtbot: Any) -> None:
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    box = dialogs.revert_box(parent, "a.toml")
+    roles = {box.buttonRole(b): b.text() for b in box.buttons()}
+    cancel = box.button(QMessageBox.StandardButton.Cancel)
+    assert box.defaultButton() is cancel and box.escapeButton() is cancel
+    assert roles[QMessageBox.ButtonRole.DestructiveRole] == "Revert" and "a.toml" in box.text()
+
+
 def test_refusals_reach_the_status_bar(make_window: Make) -> None:
     w = make_window()
     ws = w.studio.active
     w.studio.act("move", lambda: setattr(ws, "message", "move refused: no room"))()
     w.sync()
     assert w.message.text() == "move refused: no room"
+
+
+def test_status_line(make_window: Make, monkeypatch: Any) -> None:
+    w = make_window()
+    ws = w.studio.active
+    assert w.hint.text() == "select: Delete removes"
+    monkeypatch.setattr(ws, "send_blocker", lambda: None)
+    ws.set_tool("tool", "move")
+    w.sync()
+    send = about.native(QKeySequence("Ctrl+Return"))
+    assert w.hint.text() == f"move: Delete removes \u00b7 {send} send to game"
+
+
+def test_problems(make_window: Make) -> None:
+    w = make_window()
+    ws = w.studio.active
+    ws.doc = FakeDocument()
+    w.sync()
+    assert w.problems.isHidden()
+    ws.doc.found = [Finding("warning", "w", "odd"), Finding("info", "i", "fyi")]
+    w.studio.findings.stale()
+    w.sync()
+    assert w.problems.text() == "1 problem" and w.problems.property("level") == "warning"
+    ws.doc.found.append(Finding("error", "e", "bad"))
+    w.studio.findings.stale()
+    w._recheck()
+    assert w.problems.text() == "2 problems" and w.problems.property("level") == "error"
+    w.problems.click()
+    assert w.findings_dock.isVisible() and w.findings.list.count() == 3
+
+
+def test_help(make_window: Make) -> None:
+    w = make_window()
+    keys = {(where, k): does for where, k, does in about.rows(w.studio, w.bar.menus.actions())}
+    assert keys["File menu", about.native(QKeySequence.StandardKey.Save)] == "Save"
+    assert keys["Map toolbar", "W"] == "Tool: Move" and ("Monster toolbar", "W") in keys
+    assert keys["Map view", "Del"] == "Removes the picked item"
+    assert ("The view", "Wheel") in keys
+    table = w.show_shortcuts().findChild(kit.Table)
+    assert table is not None and table.rowCount() == len(keys)
+    box = w.show_about()
+    assert "0 items" in [lb.text() for lb in box.findChildren(QLabel)]
+    for d in (box, table.window()):
+        assert kit.missing_tips(d) == []
+        d.close()
+
+
+def test_camera_readout(make_window: Make) -> None:
+    w = make_window()
+    assert not w.view.show_camera and not w.camera_action.isChecked()
+    w.camera_action.trigger()
+    assert w.view.show_camera
+    w.close()
+    assert make_window().view.show_camera
 
 
 def test_take_focus(make_window: Make) -> None:
@@ -303,9 +467,12 @@ def test_findings(make_window: Make) -> None:
     ws.doc = FakeDocument()
     ws.doc.found = [Finding("error", "x", "bad", target=3), Finding("info", "y", "fyi")]
     w.studio.findings.stale()
+    w.findings_dock.show()
     w.sync()
     panel = w.findings
     assert panel.list.count() == 2 and panel.pills["error"].text() == "1 error"
+    first = panel.list.item(0)
+    assert first.text() == "bad" and first.toolTip().startswith("error: x")
     assert panel.pills["warning"].isHidden()
     w.set_theme(family="Moss", mode="light")
     assert panel.list.item(0).foreground().color() == theme.level("error")
@@ -348,8 +515,11 @@ def menu_actions(actions: list[QAction]) -> list[QAction]:
 def test_tips(make_window: Make, qtbot: Any) -> None:
     w = make_window()
     assert kit.missing_tips(w) == []
-    bare = [a.text() for a in menu_actions(w.bar.menus.actions()) if a.toolTip() == a.text()]
-    assert bare == []
+    menus = menu_actions(w.bar.menus.actions())
+    assert [a.text() for a in menus if a.toolTip() == a.text()] == []
+    assert [a.text() for a in menus if a.statusTip()] == []
+    labels = [lb for t in w.findChildren(DockTitle) for lb in t.findChildren(QLabel)]
+    assert labels and not [lb for lb in labels if lb.toolTip()]
     host = QMainWindow()
     qtbot.addWidget(host)
     bar = chrome.TitleBar(host, Studio([FakeWorkspace()]), native=False)
@@ -365,7 +535,7 @@ def test_draws(make_window: Make, qtbot: Any) -> None:
     assert w.studio.error is None and w.studio.errors == []
     colours = {img.pixel(x, y) for x in range(0, img.width(), 7) for y in range(0, img.height(), 7)}
     assert len(colours) > 20, "the viewport is flat: nothing was drawn"
-    qtbot.waitUntil(lambda: bool(w.renderer.text()))
+    qtbot.waitUntil(lambda: bool(w.studio.renderer))
 
 
 def test_view_follows_resize(make_window: Make, qtbot: Any) -> None:

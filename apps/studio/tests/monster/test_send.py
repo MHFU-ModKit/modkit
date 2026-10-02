@@ -81,17 +81,19 @@ def test_blockers(
 
     ws.doc.edit(empty)
     why = ws.send_blocker() or ""
-    assert "nothing to send" in why and "Adopt the host's" in why
+    assert "nothing to send" in why and "Copy the base monster's" in why
     ws.doc.undo()
     ws.intel_cache[75], intel = None, ws.intel_cache[75]
     ws.intel_errors[75] = "set MHFU_DATA"
     why = ws.send_blocker() or ""
-    assert why == "cannot send hitboxes or attacks. No attack intel for em75: set MHFU_DATA."
+    assert (
+        why == "cannot send hitboxes or attacks. No attack data for Tigrex (em75): set MHFU_DATA."
+    )
     ws.intel_cache[75] = intel
     gone = Path(inject.MEMSTICK_ROOTS[0]).parent / "nowhere"
     monkeypatch.setattr(inject, "MEMSTICK_ROOTS", (str(gone),))
     why = ws.send_blocker() or ""
-    assert why.startswith("no memory stick to send to") and str(gone) in why
+    assert why.startswith("no memory stick to send to") and "start page" in why
 
 
 def test_send_failure_is_a_message(ws: MonsterWorkspace, mods: Path) -> None:

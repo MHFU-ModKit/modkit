@@ -10,14 +10,16 @@ manifest is a different object, so an edit, an undo and a save-as all land the s
 
 from __future__ import annotations
 
+import dataclasses
 import tomllib
 from collections.abc import Callable, Hashable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mhfu import files
+from mhfu import files, hitzone
 from mhfu.em.intel import AttackIntel, HostSummary, PairIntel, PartIntel, SpeciesIntel
 from mhfu.files import Extracted
 from mhfu_port import slots
@@ -27,15 +29,30 @@ from mhfu_port.manifest import Manifest, ManifestError
 from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Skeleton
 
-from mhfu_studio.monster import align, clips, inputs, species
-from mhfu_studio.monster.attacks import AttackSession
+from mhfu_studio.monster import actions, align, clips, inputs, species
+from mhfu_studio.monster.attacks import AttackSession, hitbox_of
 from mhfu_studio.monster.core.scene import MHFU, Scene
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.panels.graph import MoveGraph
 from mhfu_studio.monster.parts import PartSession
-from mhfu_studio.shell.input import Button, Key, Mod, Pointer
+from mhfu_studio.monster.tools import HIT, HURT, NOUN, VolumeTools, describe
+from mhfu_studio.monster.tools import KEYS as VOLUME_KEYS
+from mhfu_studio.shell import places
+from mhfu_studio.shell.input import Key, Mod, Pointer
 from mhfu_studio.shell.overlay import Overlay
-from mhfu_studio.shell.workspace import Dock, Gesture, Workspace, register
+from mhfu_studio.shell.text import keys
+from mhfu_studio.shell.workspace import (
+    SEND_KEY,
+    Choice,
+    Dock,
+    Gesture,
+    Shelf,
+    Shortcut,
+    Step,
+    Warmup,
+    Workspace,
+    register,
+)
 
 if TYPE_CHECKING:
     import moderngl
@@ -46,9 +63,55 @@ if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
 
 Pair = tuple[int, int]
+#: a table's source: the base monster's, or the port's own (the panels' switch)
 PORT, HOST = "port", "host"
-#: points a click may travel and still pick, not orbit
-CLICK_SLOP = 4.0
+#: the Timeline's height: its title, the transport and the frame strip; the rest scrolls
+TIMELINE_H = 120
+#: the left docks' width: the Actions table's four columns
+ACTIONS_W = 460
+PLAY = Shortcut(("Space",), "Plays the clip, or pauses it")
+STEP = Shortcut(("Left", "Right"), "One game frame back, or on")
+REWIND = Shortcut(("Home",), "Back to the clip's first frame")
+#: `intel_gap`'s subjects in words
+WORDS = {"part": "hurtbox", "attack": "attack", "action": "action"}
+OPEN_TIP = "Choose a port manifest (.toml) or a monster PAC; the monster workspace opens it"
+
+
+def port_files() -> list[Path]:
+    """modkit's `ports/*.toml`, beside the working directory or the studio's own source."""
+    here = Path(__file__).resolve().parents
+    roots = [Path.cwd() / "ports", Path.cwd() / "modkit" / "ports"]
+    roots += [here[5] / "ports"] if len(here) > 5 else []  # modkit/apps/studio/src/...
+    found: dict[Path, None] = {}
+    for root in roots:
+        for f in sorted(root.glob("*.toml")) if root.is_dir() else []:
+            found.setdefault(f.resolve())
+    return list(found)
+
+
+def port_choice(path: Path) -> Choice:
+    """A port manifest as the start page lists it: its name, on its base monster."""
+    try:
+        port = tomllib.loads(path.read_text(encoding="utf-8")).get("port", {})
+    except (OSError, tomllib.TOMLDecodeError):
+        port = {}
+    name = " ".join(w.capitalize() for w in str(port.get("name", path.stem)).split("_"))
+    host = port.get("host_species")
+    base = species.label(host if isinstance(host, int) else None)
+    return Choice(
+        name, f"Opens {path.name}: {name}, built on {base}", path=path, detail=f"on {base}"
+    )
+
+
+@dataclass(frozen=True)
+class _Warm:
+    """What `warmup` read for `open`."""
+
+    path: Path
+    doc: PortDocument
+    scene: Scene
+    species: int | None
+    intel: SpeciesIntel | None
 
 
 class MonsterWorkspace(Workspace):
@@ -57,6 +120,13 @@ class MonsterWorkspace(Workspace):
 
     def __init__(self, data: Data | None = None, intel_root: Path | None = None) -> None:
         self._data = data
+        #: games handed in stay; else `locate` drops them when `places` finds others
+        self._handed = data is not None
+        self._found = _roots()
+        #: what the last `warmup` read, for `open` to take
+        self._warm: _Warm | None = None
+        #: the manifest as the last Send to game sent it
+        self._sent: Manifest | None = None
         #: species intel from this directory instead of the cache built from the game
         self.intel_root = intel_root
         self.intel_cache: dict[int, SpeciesIntel | None] = {}
@@ -68,8 +138,9 @@ class MonsterWorkspace(Workspace):
         self.message = ""
         #: a dock to bring forward, for the window (`take_focus`)
         self._focus: str | None = None
-        #: where the left button went down over the view, until it comes up
-        self._press: tuple[float, float] | None = None
+        #: a finding's control for its panel to land on (`land`)
+        self.landing = ""
+        self.tools = VolumeTools(self)
         self._seen: Manifest | None = None
         #: every overlay summarised, once surveyed
         self.hosts: list[HostSummary] | None = None
@@ -79,6 +150,7 @@ class MonsterWorkspace(Workspace):
 
     def _reset(self) -> None:
         """Per-document view state."""
+        self.tools.reset()
         self.show_joint_ids = False
         self.undriven: dict[int, int] = {}
         self.markers: list[align.Marker] = []
@@ -116,6 +188,8 @@ class MonsterWorkspace(Workspace):
         self._travel: dict[int, tuple[float, float]] = {}
         self._counts: dict[int, int] | None = None
         self._labels: clips.LabelSession | None = None
+        #: the Actions rows and what they were made from
+        self._rows: tuple[tuple[object, ...], list[actions.ActionRow]] | None = None
         self._parts: PartSession | None = None
         self._attacks: AttackSession | None = None
 
@@ -141,8 +215,12 @@ class MonsterWorkspace(Workspace):
             return False
 
     def open(self, path: Path) -> None:
-        """A manifest is built in memory from the extracted games; a PAC is read as it is."""
-        if path.suffix == ".toml":
+        """A manifest is built in memory from the extracted games, or comes from `warmup`; a PAC
+        is read as it is."""
+        warm, self._warm = self._warm, None
+        if warm is not None and warm.path == path:
+            self.load(warm.scene, warm.doc)
+        elif path.suffix == ".toml":
             doc = PortDocument.open(path)
             self.load(Scene.from_manifest(doc.manifest, None, "port", self.games()), doc)
         else:
@@ -155,6 +233,7 @@ class MonsterWorkspace(Workspace):
 
         self.scene, self.doc = scene, doc
         self._reset()
+        self._sent = None
         self.undriven = undriven_geometry(scene)
         if doc is not None:
             doc.pac = scene.pac
@@ -172,6 +251,69 @@ class MonsterWorkspace(Workspace):
             self.sync()
         return self.vp
 
+    def shown(self) -> Hashable | None:
+        sc = self.scene
+        return None if sc is None else (None if self.doc is None else self.doc.path, sc.name)
+
+    def start(self) -> Sequence[Shelf]:
+        ports = tuple(port_choice(p) for p in port_files())
+        note = "" if ports else "No ports next to the studio (modkit's ports folder)."
+        needs = (places.MHFU, places.MHP3RD)
+        return (Shelf("Ports", ports, note, ("Open\u2026", OPEN_TIP), needs),)
+
+    def warmup(self, path: Path) -> Warmup | None:
+        """A port's manifest, its build and its base monster's data, read off the GUI thread."""
+        if path.suffix != ".toml":
+            return None
+        try:
+            games = self.games()
+        except places.Missing:
+            return None  # `open` says what is missing
+        intel_root, known = self.intel_root, set(self.intel_cache)
+
+        def run() -> _Warm:
+            doc = PortDocument.open(path)
+            scene = Scene.from_manifest(doc.manifest, None, "port", games)
+            sp = doc.manifest.port.host_species
+            root = None if intel_root is not None else games.fu.root
+            si = None if sp is None or sp in known else species.find(sp, intel_root, root)
+            return _Warm(path, doc, scene, sp, si)
+
+        def done(got: object) -> None:
+            if isinstance(got, _Warm):
+                self._warm = got
+                if got.species is not None and got.intel is not None:
+                    self.intel_cache.setdefault(got.species, got.intel)
+
+        return Warmup(
+            f"Opening {path.name}: building it, and its base monster's data the first time"
+            " (about ten seconds)",
+            run,
+            done,
+        )
+
+    def next_steps(self) -> Sequence[Step]:
+        m = self.manifest
+        if self.scene is None or m is None:
+            return ()
+        return (
+            Step("Pick an action", self.pair is not None),
+            Step("Copy the base monster's hitboxes", bool(m.hitboxes)),
+            Step("Change one", self._hitboxes_changed(m)),
+            Step("Send to game", self._sent is m, SEND_KEY),
+        )
+
+    def _hitboxes_changed(self, m: Manifest) -> bool:
+        """One of the port's hitboxes is not a copy of the base monster's."""
+        host = self.host_attacks()
+        if host is None:
+            return False
+        own = {
+            st.index: [dataclasses.replace(hitbox_of(sp, st.index), label="") for sp in st.spheres]
+            for st in host.sets
+        }
+        return any(dataclasses.replace(h, label="") not in own.get(h.set, []) for h in m.hitboxes)
+
     def docks(self) -> Sequence[Dock]:
         def build(module: str, panel: str) -> Callable[[Studio], Any]:
             """The panel class imported when its dock is first built (Qt loads only then)."""
@@ -181,44 +323,45 @@ class MonsterWorkspace(Workspace):
 
         return (
             Dock(
-                "Timeline", "bottom", build("timeline", "TimelinePanel"),
-                "Play the clip at the game's own speed, and see where the host move's events"
-                " fall on it.",
-                focus=True,
+                "Actions", "left", build("action", "ActionsPanel"),
+                "Which clip plays for each of the base monster's actions: pick one to watch it,"
+                " give it another clip, check its timing.",
+                size=ACTIONS_W,
             ),
             Dock(
-                "Moves", "bottom", build("moves", "MovesPanel"),
-                "The host monster's moves as a graph of which move hands over to which. Click"
-                " one to read it; double-click to work on it in Action.",
-            ),
-            Dock(
-                "Action", "bottom", build("action", "ActionPanel"),
-                "What the host monster's move expects of the clip on screen: its frames, its"
-                " effects and its hits.",
+                "Clips", "left", build("clips", "ClipsPanel"),
+                "Every anim, what is really in it, and the name it goes by.",
             ),
             Dock(
                 "Scene", "left", build("scene", "ScenePanel"),
                 "What the opened port holds: the model, its skeleton, clips and textures.",
+                shown=False,
             ),
             Dock(
                 "View", "left", build("scene", "ViewPanel"),
                 "What the view shows and how. Changes nothing in the port.",
+                shown=False,
             ),
             Dock(
                 "Joints", "left", build("scene", "JointsPanel"),
                 "The skeleton's bones; pick one to find it on the model.",
-            ),
-            Dock(
-                "Clips", "right", build("clips", "ClipsPanel"),
-                "Every animation slot, what is really in it, and the name it goes by.",
-            ),
-            Dock(
-                "Parts", "right", build("parts", "PartsPanel"),
-                "Where the monster can be hit, and how much each spot takes.",
+                shown=False,
             ),
             Dock(
                 "Hitboxes", "right", build("hitboxes", "HitboxesPanel"),
                 "Where the monster hits you: its attack spheres and their sizes, to tweak.",
+            ),
+            Dock(
+                "Parts", "right", build("parts", "PartsPanel"),
+                "Where the monster can be hit, and how much each spot takes.",
+                shown=False,
+            ),
+            Dock(
+                "Timeline", "bottom", build("timeline", "TimelinePanel"),
+                "Play the clip at the game's own speed, and see where the base monster's action"
+                " checks it.",
+                alone=True,
+                size=TIMELINE_H,
             ),
         )  # fmt: skip
 
@@ -227,7 +370,7 @@ class MonsterWorkspace(Workspace):
         sc, sp = self.scene, self.host_species
         if sc is None:
             return ""
-        return sc.name if sp is None else f"{sc.name}   host em{sp:02d}"
+        return sc.name if sp is None else f"{sc.name} on {species.label(sp)}"
 
     def frame(self, dt: float) -> None:
         if self.doc is not None and self.doc.manifest is not self._seen:
@@ -243,6 +386,7 @@ class MonsterWorkspace(Workspace):
         return vp.actor.playback.playing or (ref is not None and ref.playback.playing)
 
     def refresh(self) -> None:
+        self.tools.cancel()  # an undo under a drag: the drag's start is gone
         self.sync()
 
     def take_focus(self) -> str | None:
@@ -254,55 +398,82 @@ class MonsterWorkspace(Workspace):
         self._focus = dock
 
     def pointer(self, ev: Pointer) -> Gesture:
-        """A left click that does not travel picks (`viewport.pick`); a drag stays the camera's."""
-        if ev.kind == "press" and ev.button == Button.LEFT:
-            self._press = ev.pos
-        elif ev.kind == "release" and ev.button == Button.LEFT and self._press is not None:
-            (x, y), self._press = self._press, None
-            if abs(ev.x - x) + abs(ev.y - y) <= CLICK_SLOP:
-                from mhfu_studio.monster.panels import viewport
-
-                viewport.pick(self, ev.x, ev.y, ev.size)
-        return Gesture.NONE
+        """Picking and the gizmo (`tools`); a drag off a handle stays the camera's."""
+        return self.tools.pointer(ev)
 
     def key(self, ev: Key) -> bool:
-        """Space plays or pauses the clip, Left and Right step a game frame, Home rewinds."""
-        keys: dict[str, Callable[[], None]] = {
-            "Space": self.play_pause,
-            "Left": lambda: self.step(-1),
-            "Right": lambda: self.step(1),
-            "Home": self.rewind,
+        """The picked volume's keys, then the transport's while a clip is on screen."""
+        if self.tools.key(ev):
+            return True
+        acts: dict[str, Callable[[], None]] = {
+            PLAY.keys[0]: self.play_pause,
+            STEP.keys[0]: lambda: self.step(-1),
+            STEP.keys[1]: lambda: self.step(1),
+            REWIND.keys[0]: self.rewind,
         }
-        fn = keys.get(ev.name)
+        fn = acts.get(ev.name)
         if fn is None or ev.mods != Mod.NONE or self.vp is None or self.vp.clip is None:
             return False
         fn()
         return True
 
+    def shortcuts(self) -> Sequence[Shortcut]:
+        return (PLAY, STEP, REWIND, *VOLUME_KEYS)
+
+    def hint(self) -> str:
+        sc, vp = self.scene, self.vp
+        if sc is None:
+            return "Pick a port on the start page, or open one with File > Open"
+        bits = []
+        clip = None if vp is None else vp.clip
+        if vp is None or clip is None:
+            bits.append("Pick an action in Actions, or a clip in Clips, to play it")
+        else:
+            found = self.manifest_clip(clip.slot)
+            name = f" {found[0]}" if found else ""
+            bits += [
+                f"clip {clip.slot}{name}",
+                f"{keys(PLAY.keys)} {'pause' if vp.playback.playing else 'play'}",
+                f"{keys(STEP.keys)} step a frame",
+                f"{keys(REWIND.keys)} rewind",
+            ]
+        picked = self.tools.hint()
+        if picked:
+            bits.append(picked)
+        elif self.selected_set is not None:
+            bits.append(f"hit group {self.selected_set}: pick one of its hitboxes in Hitboxes")
+        return " \u00b7 ".join(bits)
+
     def paint(self, o: Overlay) -> None:
         from mhfu_studio.monster.panels import viewport
 
         viewport.joint_labels(self, o)
+        self.tools.paint(o)
 
-    def reveal(self, target: Hashable) -> None:
-        """A finding's `(section, key)`: select it and bring its panel forward."""
+    def reveal(self, target: Hashable, focus: str = "") -> None:
+        """A finding's `(section, key)`: select it, bring its panel forward and land on `focus`."""
         if not isinstance(target, tuple) or len(target) != 2 or self.manifest is None:
             return
+        self.landing = focus
         section, key = target
         m = self.manifest
         if section == "clips" and isinstance(key, str) and key in m.clips:
             self.play_slot(m.clips[key].slot)
             self.focus("Clips")
         elif section == "moves" and isinstance(key, str) and key in m.moves:
-            mv = m.moves[key]
-            if mv.clip in m.clips:
-                self.play_slot(m.clips[mv.clip].slot)
-            self.select_pair(mv.main, mv.sub, key)
-            self.focus("Action")
+            self.select_action(m.moves[key].main, m.moves[key].sub, key)
+            self.focus("Actions")
         elif section == "hurtbox" and isinstance(key, int) and key < len(m.hurtboxes):
             self.show_parts, self.parts_source = True, PORT
             self.sync_hitboxes()
             self.select_volume(key)
+            if m.hurtboxes[key].part:  # 0 is nobody
+                self.select_part((m.hurtboxes[key].part or 0) & hitzone.PART_MASK)
+            self.focus("Parts")
+        elif section == "part" and isinstance(key, int):
+            self.show_parts, self.parts_source = True, PORT
+            self.sync_hitboxes()
+            self.select_part(key)
             self.focus("Parts")
         elif section == "hitzone" and isinstance(key, int):
             self.parts_source, self.show_state = PORT, key
@@ -313,9 +484,14 @@ class MonsterWorkspace(Workspace):
             self.sync_attacks()
             self.select_attack_volume(key)
             self.focus("Hitboxes")
+        elif section == "set" and isinstance(key, int):
+            self.edit_set(key)
         elif section == "attack" and isinstance(key, int) and key < len(m.attacks):
-            vol = m.attacks[key].volume
-            self.show_attacks = True
+            a, host = m.attacks[key], self.host_attacks()
+            rec = None if host is None else host.attack(a.id)
+            known = host is not None and a.volume is not None and host.set(a.volume) is not None
+            vol = a.volume if known else None if rec is None else rec.volume
+            self.show_attacks, self.attacks_source = True, PORT
             if vol is not None:
                 self.select_set(vol)
             self.sync_attacks()
@@ -325,8 +501,8 @@ class MonsterWorkspace(Workspace):
             if self.vp is not None:
                 self.vp.select_joint(e.bone)
             if e.move in m.moves:
-                self.select_pair(m.moves[e.move].main, m.moves[e.move].sub, e.move)
-            self.focus("Action")
+                self.select_action(m.moves[e.move].main, m.moves[e.move].sub, e.move)
+            self.focus("Actions")
 
     def close(self) -> None:
         if self.vp is not None:
@@ -364,6 +540,16 @@ class MonsterWorkspace(Workspace):
         self.sync()
         self.message = got if isinstance(got, str) and not what else what
         return True
+
+    def edit_volume(self, which: str, index: int, **fields: Any) -> bool:
+        """Fields of volume `index` of `which` (`HURT`, `HIT`), one undo step: the forms' and the
+        gizmo's one way in."""
+        sess = self.part_session if which == HURT else self.attack_session
+        if sess is None:
+            self.message = "no manifest to write to"
+            return False
+        msg = f"{NOUN[which]} {index}: {describe(fields)}"
+        return self.edit(msg, lambda: sess.edit_volume(index, **fields))
 
     def save(self) -> None:
         if self.doc is None:
@@ -414,6 +600,7 @@ class MonsterWorkspace(Workspace):
         m, cap, tables, source = self._module()
         out = runtime.cache_dir() / runtime.module_name(m)
         dep = runtime.ship(m, out, cap, tables, mods_dir=self.mods_dir(), source=source)
+        self._sent = m
         lib = "" if dep.library is None else f" and {runtime.LIB_SUBDIR}/{runtime.LIBRARY}"
         self.message = (
             f"sent {dep.module.name}{lib} to {_home(dep.module.parent)}; it applies when a mod"
@@ -423,10 +610,8 @@ class MonsterWorkspace(Workspace):
 
     @staticmethod
     def mods_dir() -> Path:
-        """The memory stick's mods folder; FileNotFoundError says where it looked."""
-        from mhfu import inject
-
-        return inject.default_mods_dir()
+        """The memory stick's mods folder; FileNotFoundError says why there is none."""
+        return places.mods_dir()
 
     def send_blocker(self) -> str | None:
         from mhfu_studio.monster import runtime
@@ -438,8 +623,8 @@ class MonsterWorkspace(Workspace):
             return "a bare PAC has no hit tables: open its port manifest (.toml) instead"
         if not runtime.has_tables(m):
             return (
-                "nothing to send: this port has no hit tables yet. Start from the host's in"
-                " Parts or Hitboxes (This port, then Adopt the host's ...)"
+                "nothing to send yet: your port has no hitboxes, hurtboxes or damage grid. Copy"
+                " the base monster's in Hitboxes or Parts first."
             )
         try:
             runtime.check(m, runtime.host_attack_tables(self.host_intel()))
@@ -448,8 +633,10 @@ class MonsterWorkspace(Workspace):
             return f"cannot send hitboxes or attacks. {gap}" if gap else f"cannot send: {e}"
         try:
             self.mods_dir()
+        except places.Missing as e:
+            return f"no memory stick to send to: {e.words}"
         except FileNotFoundError as e:
-            return f"no memory stick to send to: {e}"
+            return f"the framework is not on the memory stick ({e}): install it there first"
         return None
 
     def send(self) -> None:
@@ -462,46 +649,65 @@ class MonsterWorkspace(Workspace):
     # the games and the intel
 
     def games(self) -> Data:
+        """Both extracted games; `places.Missing` says which is not there."""
         if self._data is None:
-            self._data = Data.find()
+            self._data = places.games()
         return self._data
 
     def fu(self) -> Extracted:
-        return self._data.fu if self._data is not None else Extracted.find()
+        return self._data.fu if self._data is not None else places.extracted()
+
+    def locate(self) -> None:
+        """Other games from `places`: what was read from the old ones goes."""
+        found = _roots()
+        if self._handed or found == self._found:
+            return
+        self._found, self._data = found, None
+        self.intel_cache.clear()
+        self.intel_errors.clear()
+        self.host_scenes.clear()
+        self.hosts, self._survey = None, None
+        self._coverage = self._vocab = None
+        if self.doc is not None:
+            self.doc.intel = self.host_intel()
 
     def intel_of(self, sp: int | None) -> SpeciesIntel | None:
         if sp is None:
             return None
         if sp not in self.intel_cache:
-            root = self._data.fu.root if self._data is not None else None
             try:
+                root = None if self.intel_root is not None else self.fu().root
                 self.intel_cache[sp] = species.load(sp, self.intel_root, root)
+            except places.Missing as e:
+                self.intel_errors[sp] = e.words
+                self.intel_cache[sp] = None
             except LookupError as e:
                 self.intel_errors[sp] = str(e)
                 self.intel_cache[sp] = None
             except (OSError, ValueError) as e:
                 self.intel_errors[sp] = f"reading or building it failed ({e})"
-                self.message = f"no intel for em{sp:02d}: {self.intel_errors[sp]}"
+                self.message = f"no data for {species.label(sp)}: {self.intel_errors[sp]}"
                 self.intel_cache[sp] = None
         return self.intel_cache[sp]
 
     def intel_gap(self, what: str, sp: int | None = None) -> str:
-        """Why `sp`'s (the host's by default) `what` intel ("part", "attack", "action") is
-        missing, and what to do; empty when it is there."""
+        """Why `sp`'s (the base monster's by default) `what` intel ("part", "attack",
+        "action") is missing, and what to do; empty when it is there."""
         sp = self.host_species if sp is None else sp
         if sp is None:
-            return "No host: a bare PAC names none. Open its port manifest (.toml) instead."
+            return "No base monster: a bare PAC names none. Open its port manifest (.toml) instead."
         si = self.intel_of(sp)
         if si is None:
             why = self.intel_errors.get(sp, "it was not loaded")
-            return f"No {what} intel for em{sp:02d}: {why}."
+            return f"No {WORDS[what]} data for {species.label(sp)}: {why}."
         if what == "part" and not si.parts.present:
             why = si.parts.grid_reason
         elif what == "attack" and not si.attacks.present:
             why = si.attacks.reason
         else:
             return ""
-        return f"No {what} intel for em{sp:02d}: its overlay has none the analyser reads ({why})."
+        name = species.label(sp)
+        return f"No {WORDS[what]} data for {name}: its code has none the studio reads ({why})."
 
     @property
     def host_species(self) -> int | None:
@@ -530,7 +736,7 @@ class MonsterWorkspace(Workspace):
 
     @property
     def intel(self) -> SpeciesIntel | None:
-        """The overlay the Action panel shows: the host's unless browsing another."""
+        """The overlay the Actions panel shows: the host's unless browsing another."""
         return self.intel_of(self.browsing_species)
 
     def browse_species(self, sp: int) -> None:
@@ -546,15 +752,20 @@ class MonsterWorkspace(Workspace):
         if self.hosts is not None:
             return self.hosts
         if self._survey is None:
+            try:
+                root = None if self.intel_root is not None else self.fu().root
+            except places.Missing as e:
+                self.message = f"could not compare the monsters: {e.words}"
+                self.hosts = []
+                return self.hosts
             self._pool = self._pool or ThreadPoolExecutor(1)
-            root = self._data.fu.root if self._data is not None else None
             self._survey = self._pool.submit(species.survey, self.intel_root, root)
         if not self._survey.done():
             return None
         try:
             self.hosts = self._survey.result()
         except (OSError, ValueError) as e:
-            self.message = f"no overlay survey: {e}"
+            self.message = f"could not compare the monsters: {e}"
             self.hosts = []
         return self.hosts
 
@@ -606,12 +817,12 @@ class MonsterWorkspace(Workspace):
             cov = clips.Coverage()
             for c in [] if sc is None else sc.clips:
                 cov.slots[c.slot] = clips.SlotCoverage(c.slot, clips.UNKNOWN, c.frames, c.loop)
-            notes.append("this is the DONOR pack: coverage describes a built port")
+            notes.append("this is the original's pack: the kinds describe a built port")
             return cov, notes
         port = slots.anim_of(sc.pac)
         if m is None:
             notes.append(
-                "no manifest: slots cannot be classified, and a label typed here would have "
+                "no manifest: anims cannot be sorted into kinds, and a name typed here has "
                 "nowhere to go"
             )
             return clips.coverage(port), notes
@@ -619,15 +830,18 @@ class MonsterWorkspace(Workspace):
         try:
             games = self.games()
         except FileNotFoundError as e:
-            notes.append(f"no host pack and no donor moveset: {e}")
+            notes.append(f"no base monster's pack and no original moveset: {e}")
             return clips.coverage(port), notes
-        for what, read in (("host pack", inputs.host_anim), ("donor moveset", inputs.donor_anim)):
+        for what, read in (
+            ("base monster's pack", inputs.host_anim),
+            ("original moveset", inputs.donor_anim),
+        ):
             try:
                 got = read(m, games)
             except (OSError, ValueError) as e:
                 notes.append(f"{what} unreadable ({e})")
                 continue
-            if what == "host pack":
+            if read is inputs.host_anim:
                 host = got
             else:
                 donor = got
@@ -658,7 +872,7 @@ class MonsterWorkspace(Workspace):
         try:
             self.vp.play_clip(self.scene.clip(slot))
         except KeyError:
-            self.message = f"slot {slot} is not in this PAC"
+            self.message = f"anim {slot} is not in this PAC"
             return
         self.vp.playback.play()
         self.pick_clip(slot)
@@ -713,7 +927,47 @@ class MonsterWorkspace(Workspace):
         return align.PortRig(sc.rig.n, driven, self.joint_counts())
 
     def select_pair(self, main: int, sub: int, move: str | None = None) -> None:
+        """The action against the clip on screen, which keeps playing."""
         self.pair, self.move = (int(main), int(sub)), move
+        self.recompute_alignment()
+        self.follow_action()
+
+    def action_rows(self) -> list[actions.ActionRow]:
+        """The Actions rows, made again when the manifest, the intel or the coverage changes."""
+        m, si = self.manifest, self.host_intel()
+        if m is None:
+            return []
+        cov = self.coverage()[0]
+        made = (m, si, cov)
+        if self._rows is None or any(a is not b for a, b in zip(self._rows[0], made, strict=True)):
+            self._rows = made, actions.rows(m, si, cov, self.host_attacks(), self.host_species)
+        return self._rows[1]
+
+    def plays(self, main: int, sub: int, move: str | None = None) -> actions.Plays:
+        """What plays in this port while the game is in the base monster's `(main, sub)`."""
+        si = self.host_intel()
+        p = None if si is None else si.pair(main, sub)
+        return actions.plays_now(self.manifest, p, main, sub, move, self.coverage()[0])
+
+    def select_action(self, main: int, sub: int, move: str | None = None) -> None:
+        """The one way to pick an action (a row, the graph, the table of every action): `move`,
+        else the one bound on it; what plays now from frame 0, the base monster's anim beside."""
+        main, sub = int(main), int(sub)
+        move = move if move is not None else actions.bound_move(self.manifest, main, sub)
+        self.pair, self.move = (main, sub), move
+        self.graph.picked = self.pair
+        now = self.plays(main, sub, move) if self.browsing_the_host else None
+        if now is not None and now.playable and now.slot is not None:
+            self.play_slot(now.slot)
+        elif self.vp is not None and self.vp.clip is not None:
+            self.rewind()
+            if now is not None:
+                self.message = (
+                    f"anim {now.slot} is not in this build: the game finds no clip for"
+                    f" ({main},{sub})"
+                    if now.slot is not None
+                    else f"({main},{sub}) names no anim: the game keeps the clip it was playing"
+                )
         self.recompute_alignment()
         self.follow_action()
 
@@ -746,14 +1000,28 @@ class MonsterWorkspace(Workspace):
         self.markers = self.alignment.markers
 
     def bind_move(self, name: str = "") -> None:
-        """The alignment as `[moves.<name>]`, `move_<main>_<sub>` when unnamed: a move of that
-        name is updated in place, an unnamed clip on screen named."""
+        """The clip on screen for the selected action, as `[moves.<name>]`: by default the
+        selected move, updated in place (its after, hold_max and claim kept), else a new
+        `move_<main>_<sub>`; an unnamed clip gets a name."""
         al, s = self.alignment, self.label_session
         if al is None or s is None:
             return
-        name = name.strip() or f"move_{al.main}_{al.sub}"
+        name = name.strip() or self.move or f"move_{al.main}_{al.sub}"
         if self.edit("", lambda: s.bind_move(name, al.main, al.sub, al.slot)):
             self.select_pair(al.main, al.sub, name)
+
+    def unbind(self) -> None:
+        """Removes the selected move: the action plays the base monster's anim again."""
+        s, name, pair = self.label_session, self.move, self.pair
+        if s is None or name is None or pair is None:
+            return
+        if self.edit("", lambda: s.unbind_move(name)):
+            self.select_action(*pair)
+
+    def rename_move(self, new: str) -> None:
+        s, old = self.label_session, self.move
+        if s is not None and old is not None and self.edit("", lambda: s.rename_move(old, new)):
+            self.move = new.strip()
 
     def host_pair(self) -> PairIntel | None:
         """The selected pair's intel when it is the host's; None while browsing."""
@@ -803,7 +1071,7 @@ class MonsterWorkspace(Workspace):
                 data = self.fu().read(files.monster_pac(sp))
                 scene = Scene.from_bytes(data, f"em{sp:02d}")
             except (OSError, ValueError) as e:
-                self.message = f"no host PAC for em{sp:02d}: {e}"
+                self.message = f"no model for {species.label(sp)}: {e}"
             self.host_scenes[sp] = scene
         return self.host_scenes[sp]
 
@@ -877,14 +1145,16 @@ class MonsterWorkspace(Workspace):
         self.part_orphans = () if ov is None else ov.orphans
         if ov is not None:
             ov.set_selected_group(self.selected_part)
-            ov.set_selected_volume(self.selected_volume if self.parts_source == PORT else None)
+            ov.set_selected_volume(self.selected_volume)
         vp.set_reference_hitboxes(volumes(host.spheres()) if host is not None else [])
 
     def select_volume(self, index: int | None) -> None:
+        """Hurtbox `index` of the source shown; the base monster's too, to look at."""
         self.selected_volume = index
-        ov = self._overlay("hitboxes")
+        self.tools.last = HURT
+        ov = self._overlay(HURT)
         if ov is not None:
-            ov.set_selected_volume(index if self.parts_source == PORT else None)
+            ov.set_selected_volume(index)
 
     def select_part(self, part: int | None) -> None:
         self.selected_part = part
@@ -926,9 +1196,7 @@ class MonsterWorkspace(Workspace):
         if ov is not None:
             ov.set_visible(self.visible_sets())
             ov.set_selected_group(self.selected_set)
-            ov.set_selected_volume(
-                self.selected_attack_volume if self.attacks_source == PORT else None
-            )
+            ov.set_selected_volume(self.selected_attack_volume)
         vp.set_reference_attacks(attack_volumes(host.sets) if host is not None else [])
         vp.sync_focus("attacks")
 
@@ -952,14 +1220,21 @@ class MonsterWorkspace(Workspace):
         self.focus("Hitboxes")
 
     def select_attack_volume(self, index: int | None) -> None:
+        """Hitbox `index` of the source shown; the base monster's too, to look at."""
         self.selected_attack_volume = index
-        ov = self._overlay("attacks")
+        self.tools.last = HIT
+        ov = self._overlay(HIT)
         if ov is not None:
-            ov.set_selected_volume(index if self.attacks_source == PORT else None)
+            ov.set_selected_volume(index)
 
     def _overlay(self, which: str) -> HitboxOverlay | None:
         vp = self.vp
         return None if vp is None else vp.hitboxes if which == "hitboxes" else vp.attacks
+
+
+def _roots() -> tuple[Path | None, ...]:
+    """Where the two games are now."""
+    return tuple(places.find(p).path for p in (places.MHFU, places.MHP3RD))
 
 
 def _home(path: Path) -> str:
