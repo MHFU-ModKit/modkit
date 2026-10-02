@@ -1,97 +1,92 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-import sys
-from pathlib import Path
+import json
 from typing import Any
 
-import pytest
 from mhfu.files import Extracted
 from mhfu_studio.map.core.atlas import Atlas
-from mhfu_studio.map.panels.game import MAIN, GamePanel
+from mhfu_studio.map.panels.game import GamePanel
 from mhfu_studio.map.workspace import MapWorkspace
-from mhfu_studio.shell.studio import Studio
-from mhfu_studio.stage.live import QUEST_CATCH
+from mhfu_studio.shell.studio import MAIN, Studio
 from mhfu_studio.ui import kit
 
-CLIMB = {"op": "collision", "group": None, "chunk": 0, "tri": 0, "flags": {"material": 9}}
+MOVE = {"op": "move", "sub": 0, "group": 0, "vertices": [0, 1, 2], "by": [0, 40, 0]}
 
 
-def panel(qtbot: Any, ws: MapWorkspace) -> GamePanel:
+class Runner:
+    def __init__(self) -> None:
+        self.started: list[tuple[list[str], bytes]] = []
+        self.stopped = 0
+
+    def start(self, argv: list[str], stdin: bytes) -> None:
+        self.started.append((argv, stdin))
+
+    def stop(self) -> None:
+        self.stopped += 1
+
+
+def panel(qtbot: Any, ws: MapWorkspace) -> tuple[GamePanel, Studio, Runner]:
     studio = Studio([ws])
+    studio.runner = runner = Runner()
     p = GamePanel(ws, studio)
     qtbot.addWidget(p)
     studio.listen(p.sync)
     p.sync()
-    return p
+    return p, studio, runner
+
+
+def edited(game: Extracted, atlas: Atlas) -> MapWorkspace:
+    ws = MapWorkspace(game, atlas)
+    ws.load_stage(139, row=0)
+    assert ws.session is not None
+    ws.session.ops.append(dict(MOVE))
+    return ws
 
 
 def test_nothing_loaded(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
-    p = panel(qtbot, MapWorkspace(game, atlas))
-    assert "Load a section" in p.gate.empty.hint.text() and kit.missing_tips(p) == []
+    p, _, _ = panel(qtbot, MapWorkspace(game, atlas))
+    assert "Pick an area" in p.gate.empty.hint.text() and kit.missing_tips(p) == []
 
 
-def test_unsaved(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
+def test_no_edits(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
     ws = MapWorkspace(game, atlas)
     ws.load_stage(139, row=0)
-    p = panel(qtbot, ws)
-    assert kit.missing_tips(p) == [] and not p.unsaved.isHidden()
-    assert not any(b.isEnabled() for b in p.pushes)
+    p, _, _ = panel(qtbot, ws)
+    assert kit.missing_tips(p) == [] and not any(b.isEnabled() for b in p.pushes)
+    assert p.restore.isEnabled() and p.running.text() == "no edits to Pokke village yet"
 
 
-def test_village_catch(qtbot: Any, game: Extracted, atlas: Atlas, doc_dir: Path) -> None:
-    ws = MapWorkspace(game, atlas)
-    ws.load_stage(139, row=0)
-    ws.doc.save(doc_dir)
-    p = panel(qtbot, ws)
-    assert p.catch.value() == 0 and p.village.isHidden() and all(b.isEnabled() for b in p.pushes)
-    p.catch.setValue(30)
-    assert not p.village.isHidden()
-
-
-def test_command(qtbot: Any, game: Extracted, doc_dir: Path) -> None:
-    ws = MapWorkspace(game, Atlas(game, [(139,), (98,)]))
-    ws.load_stage(98)
-    ws.doc.save(doc_dir)
-    p = panel(qtbot, ws)
-    assert p.catch.value() == QUEST_CATCH and p.village.isHidden()
-    cmd = p.command(["--mesh"])
-    assert cmd[:3] == [sys.executable, "-c", MAIN] and cmd[3:6] == ["map", "inject", str(doc_dir)]
-    assert cmd[cmd.index("--stage") + 1] == "98" and cmd[cmd.index("--catch") + 1] == "120"
-    assert cmd[-1] == "--mesh" and cmd[cmd.index("--data") + 1] == str(game.root)
-    assert ws.session is not None
-    ws.session.ops.append(dict(CLIMB))
-    assert p.command(["--collision"])[-2:] == ["--hold", "120"]
-
-
-def test_runs_and_logs(
-    qtbot: Any, game: Extracted, atlas: Atlas, doc_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    ws = MapWorkspace(game, atlas)
-    ws.load_stage(139, row=0)
-    ws.doc.save(doc_dir)
-    p = panel(qtbot, ws)
-    stub = [sys.executable, "-c", "print('line one'); print('tail', end='')"]
-    monkeypatch.setattr(p, "command", lambda flags: stub)
+def test_unsaved_pushes(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
+    ws = edited(game, atlas)
+    p, studio, runner = panel(qtbot, ws)
+    assert ws.doc.directory is None and all(b.isEnabled() for b in p.pushes)
+    assert [b.text() for b in p.pushes] == ["Mesh", "Collision", "Textures"]  # Send is the bar's
+    more = p.findChild(kit.More)
+    assert more is not None and all(more.isAncestorOf(b) for b in [*p.pushes, p.catch, p.clear])
     p.pushes[0].click()
-    assert p.busy and not p.pushes[0].isEnabled() and p.stop.isEnabled()
-    qtbot.waitUntil(lambda: "[exit 0]" in p.log.toPlainText(), timeout=10_000)
-    assert p.log.toPlainText().splitlines()[1:] == ["line one", "tail", "[exit 0]"]
-    assert not p.busy and p.pushes[0].isEnabled()
+    argv, stdin = runner.started[0]
+    assert argv[1:3] == ["-c", MAIN] and argv[3:] == list(ws.push_job(("mesh",)).argv)
+    assert json.loads(stdin) == [MOVE] and studio.job is not None
+    assert not any(b.isEnabled() for b in [*p.pushes, p.restore])
+    assert p.running.text() == "send Pokke village's mesh to the game… (running)"
+    studio.stop()  # the toolbar's
+    assert runner.stopped == 1
+    studio.heard("line one")
+    studio.ended(0)
+    assert p.log.toPlainText().splitlines()[1:] == ["line one", "[exit 0]"]
+    assert p.pushes[0].isEnabled()
+    p.restore.click()
+    assert runner.started[1][0][-1] == "--restore" and runner.started[1][1] == b""
     p.clear.click()
-    assert p.log.toPlainText() == ""
+    assert p.log.toPlainText() == "" and studio.log == []
 
 
-def test_stop(
-    qtbot: Any, game: Extracted, atlas: Atlas, doc_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    ws = MapWorkspace(game, atlas)
-    ws.load_stage(139, row=0)
-    ws.doc.save(doc_dir)
-    p = panel(qtbot, ws)
-    stub = [sys.executable, "-c", "import time; time.sleep(30)"]
-    monkeypatch.setattr(p, "command", lambda flags: stub)
-    p.pushes[0].click()
-    qtbot.waitUntil(lambda: p.proc is not None and p.proc.processId() > 0, timeout=5_000)
-    p.stop.click()
-    qtbot.waitUntil(lambda: not p.busy, timeout=10_000)
-    assert "[exit" in p.log.toPlainText()
+def test_village_catch(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
+    ws = edited(game, atlas)
+    p, studio, runner = panel(qtbot, ws)
+    assert p.catch.value() == 0 == ws.catch and p.village.isHidden()
+    p.catch.setValue(30)
+    assert ws.catch == 30 and not p.village.isHidden()
+    studio.send()  # Send to game
+    argv = runner.started[0][0]
+    assert argv[argv.index("--catch") + 1] == "30"

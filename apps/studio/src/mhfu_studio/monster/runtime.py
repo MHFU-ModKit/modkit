@@ -17,9 +17,11 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from mhfu import hitzone, inject
+from mhfu import hitzone
 from mhfu.em.intel import SpeciesIntel
 from mhfu_port.manifest import ROWS, Hitbox, Hurtbox, Manifest, ManifestError
+
+from mhfu_studio.shell import places
 
 LIBRARY = "mhfu_port.lua"
 """The library the module requires; a stale copy on the memory stick drops fields it does not
@@ -114,9 +116,25 @@ def content_id(m: Manifest) -> str:
     return h.hexdigest()[:8]
 
 
-def _check(m: Manifest, source: str, attacks: AttackTables | None) -> None:
+def has_tables(m: Manifest) -> bool:
+    """`m` authors something the module ships."""
+    return bool(m.hurtboxes or m.hitzones or m.hitboxes or m.attacks)
+
+
+def module_name(m: Manifest) -> str:
+    return f"{m.port.name}_hit.lua"
+
+
+def source_of(m: Manifest) -> str:
+    """The manifest as the module's header names it."""
+    return f"ports/{m.path.name if m.path is not None else m.port.name + '.toml'}"
+
+
+def check(m: Manifest, attacks: AttackTables | None, source: str = "") -> None:
+    """Raises `ManifestError` with why `m` cannot be exported against `attacks`."""
+    source = source or source_of(m)
     host = f"host em{m.port.host_species:02d}"
-    if not (m.hurtboxes or m.hitzones or m.hitboxes or m.attacks):
+    if not has_tables(m):
         raise ManifestError(f"{source} authors no hurtbox, hitzone, hitbox or attack to ship")
     if (m.hitboxes or m.attacks) and attacks is None:
         raise ManifestError(
@@ -159,8 +177,8 @@ def lua_hit_module(
     """The module's text; `capacity` is the host hurtbox set's count, `attacks` where the host
     keeps its attack tables (required once the port authors a hitbox or an attack)."""
     name = m.port.name
-    source = source or f"ports/{name}.toml"
-    _check(m, source, attacks)
+    source = source or source_of(m)
+    check(m, attacks, source)
     sets = sets_of(m)
     mod = f"{name}_hit"
     out = [
@@ -258,10 +276,10 @@ def export(
     out: Path | None = None,
     capacity: int | None = None,
     attacks: AttackTables | None = None,
+    source: str = "",
 ) -> Path:
-    """Write the module to `out`, by default `<name>_hit.lua` here."""
-    path = out or Path(f"{m.port.name}_hit.lua")
-    source = f"ports/{m.path.name}" if m.path is not None else ""
+    """Write the module to `out`, by default `module_name` here."""
+    path = out or Path(module_name(m))
     text = lua_hit_module(m, capacity, source, attacks)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -297,10 +315,31 @@ def deploy(
 ) -> Deployment:
     """Copy the module beside the other mods on the memory stick, and the library when the
     memory stick's is behind. A running game hot-reloads both."""
-    mods = mods_dir if mods_dir is not None else inject.default_mods_dir()
+    mods = mods_dir if mods_dir is not None else places.mods_dir()
     if not mods.is_dir():
         raise FileNotFoundError(f"no mods directory at {mods}")
     lib = library_path or library()
     dst = mods / path.name
     shutil.copyfile(path, dst)
     return Deployment(dst, sync_library(mods, lib))
+
+
+def cache_dir() -> Path:
+    """Where the studio exports a module on its way to the memory stick."""
+    from mhfu_studio.monster.species import cache_root
+
+    return cache_root() / "hit"
+
+
+def ship(
+    m: Manifest,
+    out: Path,
+    capacity: int | None = None,
+    attacks: AttackTables | None = None,
+    *,
+    mods_dir: Path | None = None,
+    library_path: Path | None = None,
+    source: str = "",
+) -> Deployment:
+    """`m` as it is now, exported to `out` and deployed: the one way a module reaches the game."""
+    return deploy(export(m, out, capacity, attacks, source), mods_dir, library_path)

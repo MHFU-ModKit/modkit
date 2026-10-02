@@ -4,6 +4,7 @@
 game does, and a fake PPSSPP for the watchpoint the catch waits on."""
 
 import asyncio
+import io
 import json
 import struct
 import threading
@@ -309,26 +310,38 @@ def test_catch_stops_once_on_another_file(ppsspp, st: StageFile, push: live.Push
     assert not push.mesh[0].verify(mem, PAC)
 
 
-def test_push_command(ppsspp, st: StageFile, game: Extracted, assets: Path, capsys):
+def test_push_command(
+    ppsspp, st: StageFile, game: Extracted, assets: Path, capsys, monkeypatch: pytest.MonkeyPatch
+):
     fake_game, client, mem = ppsspp
     ops = assets / "st001.json"
     ops.write_text(json.dumps(OPS))
-    base = ["map", "push", "--stage", "1", "--ops", str(ops), "--data", str(game.root)]
+    base = ["map", "push", "--stage", "1", "--data", str(game.root)]
     port = ["--port", str(fake_game.fake.port)]
     pristine = mem.read(PAC, len(st.data))
-    assert main([*base, "--catch", "0", "--dry"]) == 0
+    assert main([*base, "--ops", str(ops), "--catch", "0", "--dry"]) == 0
     assert mem.read(PAC, len(st.data)) == pristine and "runs" in capsys.readouterr().out
-    assert main([*base, *port, "--catch", "0"]) == 0
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(OPS)))
+    assert main([*base, "--ops", "-", "--base", str(assets), *port, "--catch", "0"]) == 0
     out = capsys.readouterr().out
-    assert "verified True" in out and "undo in" in out
+    undo = live.undo_path(1)
+    assert "verified True" in out and f"undo in {undo}" in out and undo.is_file()
     p = live.prepare(st, OPS, assets)
     assert all(b.verify(mem, PAC) for b in [*p.mesh, p.textures])
     assert walk(mem, st) == offline(p.collision.plan)
-    undo = assets / ".inject" / "st001_collision_undo.json"
     assert main([*base, *port, "--undo", str(undo)]) == 0
     assert walk(mem, st) == walk(Image(pristine, PAC), st)
     assert main([*base, *port, "--restore"]) == 0
     assert mem.read(PAC, len(st.data)) == pristine
+    assert main(base) == 1 and "--ops" in capsys.readouterr().err
+
+
+def test_push_reads_stdin(game: Extracted, capsys, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("sys.stdin", io.StringIO('[{"op": "bogus"}]'))
+    argv = ["map", "push", "--stage", "1", "--ops", "-", "--data", str(game.root), "--dry"]
+    assert main(argv) == 1 and "stdin has errors" in capsys.readouterr().err
+    monkeypatch.setattr("sys.stdin", io.StringIO("[{"))
+    assert main(argv) == 1 and "stdin:" in capsys.readouterr().err
 
 
 def test_edit_command(game: Extracted, assets: Path, capsys):

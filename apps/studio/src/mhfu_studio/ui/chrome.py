@@ -30,6 +30,7 @@ HEIGHT = 40
 #: the frameless window's resize border
 GRIP = 5
 
+SEND_TIP = "Sends this workspace's edits into the running game"
 SWITCH_TIP = (
     "The workspace: which kind of document you edit. Each keeps its own document, panels,"
     " tools and layout."
@@ -54,9 +55,15 @@ def frame(win: QMainWindow, native: bool = MAC) -> None:
         Grips(win)
 
 
+def title(doc: str, app: str, native: bool = MAC) -> str:
+    """The window system's title: none on macOS, where AppKit draws it over `TitleBar`, which
+    names the document already."""
+    return "" if native else f"{doc}[*] - {app}"
+
+
 class TitleBar(QWidget):
-    """The app's name, the workspace switcher, the document and its unsaved chip; the menus
-    and window buttons too where the platform does not draw them."""
+    """The app's name, the workspace switcher, the document and its unsaved chip, Send to game;
+    the menus and window buttons too where the platform does not draw them."""
 
     def __init__(self, win: QMainWindow, studio: Studio, native: bool = MAC) -> None:
         super().__init__(win)
@@ -74,7 +81,6 @@ class TitleBar(QWidget):
             tip=SWITCH_TIP,
             on=self._switch,
             current=studio.active.name,
-            tips={n: switch_tip(n) for n in studio.names},
         )
         lay.addWidget(self.switcher)
         #: native on macOS (the global bar while this window is active), inline elsewhere
@@ -88,6 +94,13 @@ class TitleBar(QWidget):
         lay.addWidget(self.doc)
         lay.addWidget(self.chip)
         lay.addStretch(1)
+        #: the window gives it its action (`setDefaultAction`)
+        self.send = QToolButton()
+        self.send.setObjectName("Send")
+        self.send.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.send.setToolTip(SEND_TIP)
+        self.send.setCursor(Qt.CursorShape.PointingHandCursor)
+        lay.addWidget(self.send)
         self.buttons: list[QToolButton] = []
         if not native:
             for icon, tip, on in (

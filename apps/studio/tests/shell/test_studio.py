@@ -1,10 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from mhfu_studio.shell import places
 from mhfu_studio.shell.studio import Studio, doc_name
 from mhfu_studio.shell.testing import FakeDocument, FakeWorkspace
+from mhfu_studio.shell.workspace import Job
 
 
 @pytest.fixture
@@ -72,6 +77,34 @@ def test_discard_ok_names_every_dirty_one(studio: Studio, tmp_path: Path) -> Non
     assert not any(w.document is not None and w.document.dirty for w in studio.workspaces)
 
 
+def test_revert(studio: Studio, tmp_path: Path) -> None:
+    ws = dirty(studio, "map", doc_file(tmp_path, "a.toml"))
+    asked: list[str] = []
+    studio.ask_revert = lambda name: asked.append(name) or False
+    studio.revert()
+    assert asked == ["a.toml"] and ws.doc is not None and ws.doc.dirty
+    assert ws.doc.saved_to == [] and studio.message == ""
+    studio.ask_revert = lambda name: True
+    studio.revert()
+    assert ws.doc is not None and ws.doc.history.value == ["a", "b"] and not ws.doc.dirty
+    assert studio.message == "back to the saved a.toml" and not studio.can_revert()
+
+
+def test_revert_unasked(studio: Studio, tmp_path: Path) -> None:
+    ws = dirty(studio, "map", doc_file(tmp_path, "a.toml"))
+    discard = answer(studio, "save")
+    studio.revert()
+    assert ws.doc is not None and not ws.doc.dirty and discard == []
+
+
+def test_revert_needs_edits_and_a_file(studio: Studio) -> None:
+    dirty(studio)
+    asked: list[str] = []
+    studio.ask_revert = lambda name: asked.append(name) or True
+    studio.revert()
+    assert not studio.can_revert() and studio.message == "nothing to revert" and asked == []
+
+
 def test_save_asks_for_a_path(studio: Studio, tmp_path: Path) -> None:
     ws = dirty(studio)
     studio.ask_path = lambda w: tmp_path / "x.toml"
@@ -93,6 +126,25 @@ def test_workspace_message(studio: Studio) -> None:
     assert studio.message == "saved"
     studio.switch("monster")
     assert studio.message == "elsewhere"
+    studio.switch("map")
+    assert studio.message == "saved"
+
+
+class Noisy(FakeWorkspace):
+    def open(self, path: Path) -> None:
+        super().open(path)
+        self.message = "no intel for em75"
+
+
+def test_open_message(tmp_path: Path) -> None:
+    studio = Studio([FakeWorkspace("map", ".toml"), Noisy("monster", ".pac")])
+    studio.open(doc_file(tmp_path, "a.toml"))
+    assert studio.message == f"opened {tmp_path / 'a.toml'}"
+    studio.workspace("monster").message = "stale"
+    studio.open(doc_file(tmp_path, "b.pac"))
+    assert studio.message == "no intel for em75"
+    studio.switch("map")
+    assert studio.message.startswith("opened")
 
 
 def test_repeated_refusal_shows(studio: Studio) -> None:
@@ -103,3 +155,100 @@ def test_repeated_refusal_shows(studio: Studio) -> None:
     assert studio.message == "nothing to save"
     refuse()
     assert studio.message == "move refused: too far" and ws.said == 2
+
+
+class Sender(FakeWorkspace):
+    def __init__(self, job: Job | None, why: str | None = None) -> None:
+        super().__init__("map")
+        self.job, self.why = job, why
+
+    def send_blocker(self) -> str | None:
+        return self.why
+
+    def send(self) -> Job | None:
+        if self.job is None:
+            self.message = "sent"
+        return self.job
+
+
+class Runner:
+    def __init__(self) -> None:
+        self.started: list[tuple[list[str], bytes]] = []
+
+    def start(self, argv: list[str], stdin: bytes) -> None:
+        self.started.append((argv, stdin))
+
+    def stop(self) -> None:
+        pass
+
+
+def test_send_blocked() -> None:
+    s = Studio([Sender(None, why="no section")])
+    s.send()
+    assert s.message == "no section"
+
+
+def test_send_in_process() -> None:
+    s = Studio([Sender(None)])
+    s.send()
+    assert s.message == "sent"
+
+
+def test_send_job_runs_through_the_runner() -> None:
+    s = Studio([Sender(Job("push st139", ("map", "push"), b"[]"))])
+    s.runner = r = Runner()
+    s.send()
+    assert r.started[0][0][-2:] == ["map", "push"] and r.started[0][1] == b"[]"
+    assert s.send_blocker() == "busy: push st139"
+    s.heard("ok")
+    s.ended(0)
+    assert s.job is None and s.message == "push st139: done" and "ok" in s.log
+
+
+def test_send_job_inline() -> None:
+    s = Studio([Sender(Job("help", ("--help",)))])
+    s.send()
+    assert s.job is None and s.message == "help: done" and s.log[-1] == "[exit 0]"
+
+
+def test_job_outcome_goes_to_its_workspace() -> None:
+    s = Studio([Sender(Job("push st139", ("map", "push"))), FakeWorkspace("monster")])
+    s.runner = Runner()
+    s.send()
+    s.switch("monster")
+    s.stop()
+    s.ended(-1)
+    assert s.message == ""
+    s.switch("map")
+    assert s.message == "push st139: stopped"
+
+
+def test_remember_looks_again(
+    studio: Studio, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MHFU_DATA", raising=False)
+    looked: list[str] = []
+    for w in studio.workspaces:
+        monkeypatch.setattr(w, "locate", lambda w=w: looked.append(w.name))
+    (tmp_path / "g" / "data_files").mkdir(parents=True)
+    assert studio.remember(places.MHFU, tmp_path / "g") and looked == ["map", "monster"]
+    assert studio.message.startswith("MHFU extraction:") and "(chosen)" in studio.message
+    assert not studio.remember(places.MHFU, tmp_path / "nope")
+    assert studio.message.startswith("not used:") and looked == ["map", "monster"]
+
+
+def test_jobs_get_the_places(
+    studio: Studio, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    got: dict[str, str] = {}
+
+    def run(argv: list[str], **kw: Any) -> Any:
+        got.update(kw["env"])
+        return SimpleNamespace(stdout=b"", stderr=b"", returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.delenv("MHFU_DATA", raising=False)
+    (tmp_path / "g" / "data_files").mkdir(parents=True)
+    places.remember(places.MHFU, tmp_path / "g")
+    studio.start(Job("x", ("map", "x")))
+    assert got["MHFU_DATA"] == str(tmp_path / "g")

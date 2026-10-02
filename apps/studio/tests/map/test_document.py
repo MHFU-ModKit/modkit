@@ -107,7 +107,7 @@ def test_findings_without_evidence(tmp_path: Path):
         "no-evidence",
     } <= codes
     bogus = next(f for f in found if f.code == "unknown-op")
-    assert bogus.where == "st098 op 1" and bogus.target == (None, 1)
+    assert bogus.where == "Snowy base camp (st098), edit 2" and bogus.target == (None, 1)
     empty = MapDocument("e", None, tmp_path / "e")
     assert [f.code for f in empty.findings()] == ["no-stages"]
     assert MapDocument.untitled().findings() == []

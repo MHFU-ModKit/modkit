@@ -86,8 +86,7 @@ def test_inject_live(game: Extracted, doc: Path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(live, "restore", lambda mem, sf: calls.append(("restore", sf.number)))
     data = str(game.root)
     assert run("map", "inject", str(doc), "--data", data, "--catch", "5", "--port", "9") == 0
-    undo = doc / ".inject" / "st139_collision_undo.json"
-    assert calls == [("connect", 9), ("run", 139, 5.0, 0.0, undo)]
+    assert calls == [("connect", 9), ("run", 139, 5.0, 0.0, live.undo_path(139))]
     calls.clear()
     assert run("map", "inject", str(doc), "--stage", "98", "--data", data, "--hold", "3") == 0
     assert calls[1][:4] == ("run", 98, 0.0, 3.0)  # no mesh edit: no catch

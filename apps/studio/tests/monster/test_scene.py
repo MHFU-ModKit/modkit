@@ -28,7 +28,7 @@ def test_synthetic(scene):
     assert scene.clip_table() == {1: (10, True), 2: (6, False)}
     walk, head = scene.clips
     assert walk.whole_rig and walk.driven == (0, 1, 2) and walk.tracks == 3
-    assert not head.whole_rig and head.driven == (2,) and "PARTIAL" in scene.summary()
+    assert not head.whole_rig and head.driven == (2,) and "are partial" in scene.summary()
 
 
 def test_pose(scene):

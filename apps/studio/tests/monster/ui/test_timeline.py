@@ -28,7 +28,8 @@ def make(qtbot: Any, ws: MonsterWorkspace) -> TimelinePanel:
 
 @pytest.fixture
 def panel(qtbot: Any, workspace: MonsterWorkspace) -> TimelinePanel:
-    workspace.play_slot(1, 0.0)
+    workspace.play_slot(1)
+    workspace.play_pause()
     return make(qtbot, workspace)
 
 
@@ -46,7 +47,9 @@ def test_loaded(panel: TimelinePanel) -> None:
     assert panel.pages.currentWidget() is not panel.empty
     assert panel.frame.text() == "frame 0.0 / 10" and panel.loop.isChecked()
     assert panel.hint.isVisible() and not panel.strip.markers
-    assert "impact" in panel.impact_note.text()
+    assert "impact" in panel.impact_note.text() and not panel.speed.isVisibleTo(panel)
+    panel.more.set_open(True)
+    assert panel.speed.isVisibleTo(panel) and kit.missing_tips(panel) == []
 
 
 def test_transport(panel: TimelinePanel, workspace: MonsterWorkspace) -> None:
@@ -104,7 +107,7 @@ def test_markers_and_the_past_end(panel: TimelinePanel, workspace: MonsterWorksp
     assert s.x_of(10.0) < s.x_of(40.0) <= s.width()
     assert s.marker_at(s.x_of(40.0), 10) is never[0]
     assert s.marker_at(s.x_of(40.0), 40) is None, "the legend row is not a marker"
-    assert "gate" in STRIP_TIP
+    assert "hit check" in STRIP_TIP
     s.grab()  # paints
 
 
@@ -128,7 +131,8 @@ def test_sync_shows_an_outside_change(panel: TimelinePanel, workspace: MonsterWo
 def test_labels_read_in_a_light_theme(qtbot: Any, workspace: MonsterWorkspace) -> None:
     theme.apply(theme.theme("Moss", False))
     try:
-        workspace.play_slot(1, 0.0)
+        workspace.play_slot(1)
+        workspace.play_pause()
         workspace.select_pair(1, 4)
         p = make(qtbot, workspace)
         s = p.strip

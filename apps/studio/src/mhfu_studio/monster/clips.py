@@ -34,6 +34,17 @@ ALTERED = "ALTERED"
 DROPPED = "DROPPED"
 UNKNOWN = "UNKNOWN"
 """No donor moveset to compare against."""
+MISSING = "MISSING"
+"""An anim the build does not populate: what the game asks for is not there."""
+#: a kind in words: one, many
+KIND_WORDS = {
+    CARRIED: ("own clip", "own clips"),
+    FILLER: ("idle copy", "idle copies"),
+    HOST: ("base monster's", "base monster's"),
+    ALTERED: ("changed", "changed"),
+    UNKNOWN: ("unknown", "unknown"),
+    MISSING: ("missing", "missing"),
+}
 
 CURRENT = "CURRENT"
 STILL_VALID = "STILL_VALID"
@@ -101,15 +112,17 @@ class SlotCoverage:
         return self.kind == CARRIED
 
     def why(self) -> str:
-        fp = f"{self.frames}f, loop={self.loop}"
+        """In words, for the Clips panel."""
+        fp = f"{self.frames} frames" + (", loops" if self.loop else "")
         return {
-            CARRIED: f"the donor's own clip {self.slot}, intact ({fp})",
-            FILLER: f"a COPY OF THE IDLE clip ({fp}). Forcing this a1 plays idle, which on "
-            "screen is identical to the override never firing.",
-            HOST: f"the HOST species' own clip ({fp}): this a1 plays the host animal's motion "
-            "on your rig.",
-            ALTERED: f"{fp}: matches neither the donor's clip {self.slot} nor the host's.",
-            UNKNOWN: f"{fp}. No donor moveset to compare against.",
+            CARRIED: f"The original's own clip {self.slot}, intact ({fp}).",
+            FILLER: f"An idle copy ({fp}). Forcing this anim plays idle, which on screen looks"
+            " just like an override that never fired.",
+            HOST: f"The base monster's own clip ({fp}): this anim plays its motion on your"
+            " skeleton.",
+            ALTERED: f"{fp}: matches neither the original's clip {self.slot} nor the base"
+            " monster's.",
+            UNKNOWN: f"{fp}. No original moveset to compare against.",
         }[self.kind]
 
 
@@ -214,7 +227,7 @@ def track_labels(
     for name, c in sorted(m.clips.items()):
         lb = c.labelled_build
         if c.frames is None:
-            msg = f"no `frames` recorded; whatever is in slot {c.slot} now wears this name."
+            msg = f"no `frames` recorded; whatever is in anim {c.slot} now wears this name."
             out.append(LabelTrack(name, c.slot, UNCHECKABLE, msg, c.label, labelled_build=lb))
             continue
         loop = c.loop
@@ -231,18 +244,18 @@ def track_labels(
             else:
                 why = " (no build recorded for the label: this rests on the fingerprint alone)"
             status = CURRENT if same else STILL_VALID
-            msg = f"slot {c.slot} still holds a {want} clip{why}"
+            msg = f"anim {c.slot} still holds a {want} clip{why}"
             out.append(LabelTrack(name, c.slot, status, msg, c.label, labelled_build=lb))
         elif len(matches) == 1:
             msg = (
-                f"the {want} clip this name was written for is now at slot {matches[0]}, not "
-                f"{c.slot}. Re-point it: a1 IS the slot index."
+                f"the {want} clip this name was written for is now anim {matches[0]}, not "
+                f"{c.slot}. Name it again there."
             )
             out.append(LabelTrack(name, c.slot, MOVED, msg, c.label, matches[0], matches, lb))
         elif matches:
             msg = (
-                f"slot {c.slot} does not hold it any more and {len(matches)} slots share its "
-                f"fingerprint ({', '.join(map(str, matches))})."
+                f"anim {c.slot} does not hold it any more and {len(matches)} anims match its "
+                f"length and loop ({', '.join(map(str, matches))})."
             )
             out.append(LabelTrack(name, c.slot, AMBIGUOUS, msg, c.label, None, matches, lb))
         else:
@@ -257,7 +270,7 @@ def unlabelled_slots(m: Manifest, table: Mapping[int, Fingerprint]) -> list[int]
 
 
 def clip_key(slot: int) -> str:
-    """The default name for a slot's clip."""
+    """An unnamed slot's clip name, in the manifest and on screen alike."""
     return f"clip_{slot:02d}"
 
 
@@ -310,26 +323,89 @@ class LabelSession:
     def label(self, slot: int, name: str, label: str = "", impact_frame: int | None = None) -> str:
         """Name `slot`'s clip, renaming its old name and every move that plays it."""
         name = check_name(name)
+        fp = self._fingerprint(slot, name)
+        self.doc.edit(lambda m: _label(m, slot, name, fp, label, self.build, impact_frame))
+        return f"clips.{name} = slot {slot}"
+
+    def _fingerprint(self, slot: int, name: str) -> Fingerprint:
+        """`slot`'s fingerprint, refusing a slot this build lacks or a name another slot has."""
         clash = self.doc.manifest.clips.get(name)
         if clash is not None and clash.slot != slot:
             raise ManifestError(f"clips.{name} already exists, on slot {clash.slot}")
         fp = self.table.get(slot)
         if fp is None:
             raise ManifestError(f"slot {slot} is not populated in this build")
-        self.doc.edit(lambda m: _label(m, slot, name, fp, label, self.build, impact_frame))
-        return f"clips.{name} = slot {slot}"
+        return fp
 
-    def bind_move(self, name: str, main: int, sub: int, clip: str | None = None) -> str:
-        """Write a `[moves.<name>]`: a host pair and the clip it paints."""
+    def bind_move(self, name: str, main: int, sub: int, slot: int | None = None) -> str:
+        """`[moves.<name>]` on the pair, painting `slot`'s clip (named `clip_key` when it has no
+        name). A move of that name keeps its other fields; its clip replaces any raw `anim`."""
         name = check_name(name)
-        if clip is not None and clip not in self.doc.manifest.clips:
-            raise ManifestError(f"clip {clip!r} is not named in this manifest yet")
+        clip, new = None, None
+        if slot is not None:
+            found = self.entry(slot)
+            clip = found[0] if found else clip_key(slot)
+            if found is None:
+                new = (slot, clip, self._fingerprint(slot, clip))
 
         def bind(m: Manifest) -> None:
-            m.moves[name] = Move(main, sub, clip=clip)
+            if new is not None:
+                _label(m, *new, None, self.build)
+            mv = m.moves.get(name)
+            if mv is None:
+                m.moves[name] = Move(main, sub, clip=clip)
+                return
+            mv.main, mv.sub = main, sub
+            if clip is not None:
+                mv.clip, mv.anim = clip, None
 
         self.doc.edit(bind)
         return f"moves.{name} = ({main},{sub})" + (f" on {clip}" if clip else "")
+
+    def unbind_move(self, name: str) -> str:
+        """Drops `[moves.<name>]`; refused while another move, a rule or an effect names it."""
+        if name not in self.doc.manifest.moves:
+            raise ManifestError(f"no move {name!r}")
+        users = move_users(self.doc.manifest, name)
+        if users:
+            raise ManifestError(f"{name} is still used by {', '.join(users)}: change that first")
+
+        def drop(m: Manifest) -> None:
+            del m.moves[name]
+
+        self.doc.edit(drop)
+        return f"moves.{name} removed"
+
+    def rename_move(self, old: str, new: str) -> str:
+        """Renames a move and every `after`, rule and effect that names it."""
+        new = check_name(new)
+        if old not in self.doc.manifest.moves:
+            raise ManifestError(f"no move {old!r}")
+        if new == old:
+            return f"moves.{old}"
+        if new in self.doc.manifest.moves:
+            raise ManifestError(f"moves.{new} already exists")
+
+        def rename(m: Manifest) -> None:
+            m.moves = {new if k == old else k: mv for k, mv in m.moves.items()}
+            for mv in m.moves.values():
+                mv.after = new if mv.after == old else mv.after
+            for r in m.rules:
+                r.play = new if r.play == old else r.play
+                r.from_move = new if r.from_move == old else r.from_move
+            for e in m.effects:
+                e.move = new if e.move == old else e.move
+
+        self.doc.edit(rename)
+        return f"moves.{old} is now moves.{new}"
+
+
+def move_users(m: Manifest, name: str) -> list[str]:
+    """What names move `name`: other moves' `after`, rules and effects."""
+    out = [f"moves.{k} (after)" for k, mv in m.moves.items() if mv.after == name]
+    out += [f"rule {r.label or i}" for i, r in enumerate(m.rules) if name in (r.play, r.from_move)]
+    out += [f"effect {e.id}" for e in m.effects if e.move == name]
+    return out
 
 
 def import_labels(

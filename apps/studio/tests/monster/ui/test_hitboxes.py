@@ -39,7 +39,9 @@ def test_host_sets(workspace: MonsterWorkspace, qtbot: Any) -> None:
     p = build(workspace, qtbot)
     assert kit.missing_tips(p) == [] and p.sets.rowCount() == 4
     assert p.to_port.isVisibleTo(p) and not p.edit_box.isVisibleTo(p)
-    assert "MEASURED" in p.join.text()
+    assert "measured" in p.join.text() and not p.join.isVisibleTo(p)
+    p.more.set_open(True)
+    assert p.join.isVisibleTo(p) and kit.missing_tips(p) == []
 
 
 def test_edit_hitbox_and_undo(workspace: MonsterWorkspace, qtbot: Any) -> None:
@@ -49,6 +51,7 @@ def test_edit_hitbox_and_undo(workspace: MonsterWorkspace, qtbot: Any) -> None:
     assert p.vols.rowCount() == 1
     p.vols.cellClicked.emit(0, 0)
     assert workspace.selected_attack_volume == 0 and p.edit_box.isVisibleTo(p)
+    assert p.shared.isVisibleTo(p) and "native Tigrex" in p.shared.text()
     p.form.radius.setValue(60.0)
     assert workspace.doc.dirty and workspace.doc.manifest.hitboxes[0].radius == 60.0
     assert workspace.vp.attacks.volumes[0].radius == 60.0 and p.vols.item(0, 0).text() == "0 *"
@@ -60,7 +63,7 @@ def test_edit_hitbox_and_undo(workspace: MonsterWorkspace, qtbot: Any) -> None:
     p.sync()
     p.form.joint.click()
     assert workspace.doc.manifest.hitboxes[0].bone == 1
-    p.save.save.click()
+    p.studio.save()
     assert not workspace.doc.dirty
 
 
@@ -78,7 +81,8 @@ def test_offset_and_capsule(workspace: MonsterWorkspace, qtbot: Any) -> None:
 def test_adopt_an_empty_set(workspace: MonsterWorkspace, qtbot: Any) -> None:
     p = on_port(workspace, qtbot, 3)
     assert workspace.doc is not None
-    assert p.set_hint.isVisibleTo(p) and "nothing authored" in p.set_hint.text()
+    assert p.set_hint.isVisibleTo(p) and "none of yours yet" in p.set_hint.text()
+    assert p.adopt_set.isVisibleTo(p)
     p.adopt_set.click()
     assert [h.set for h in workspace.doc.manifest.hitboxes] == [2, 3] and p.vols.rowCount() == 1
 
@@ -99,7 +103,10 @@ def test_levers(workspace: MonsterWorkspace, qtbot: Any) -> None:
 def test_move_sets_and_keep_only(workspace: MonsterWorkspace, qtbot: Any) -> None:
     workspace.select_pair(1, 4)
     p = on_port(workspace, qtbot)
-    assert workspace.doc is not None and p.move_only.isVisibleTo(p) and p.adopt_pair.isVisibleTo(p)
+    assert workspace.doc is not None and p.move_only.isVisibleTo(p)
+    assert not p.adopt_pair.isVisibleTo(p), "yours has hitboxes: copying again is in More"
+    p.more.set_open(True)
+    assert p.adopt_pair.isVisibleTo(p)
     p.sets.picked.emit(2)  # unpick
     p.adopt_pair.click()
     assert [h.set for h in workspace.doc.manifest.hitboxes] == [2, 2]
@@ -120,7 +127,26 @@ def test_export_and_deploy(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(MonsterWorkspace, "mods_dir", staticmethod(lambda: mods))
     p.sync()
-    assert p.export.deploy.isEnabled()
-    p.export.deploy.click()
-    assert (tmp_path / "t_hit.lua").is_file() and (mods / "t_hit.lua").is_file()
-    assert "deployed" in workspace.message
+    assert p.send.send.isEnabled() and not p.send.hint.isVisibleTo(p)
+    p.send.send.click()
+    assert (mods / "t_hit.lua").is_file() and not (tmp_path / "t_hit.lua").exists()
+    assert workspace.message.startswith("sent t_hit.lua")
+
+
+def test_no_intel_says_why(workspace: MonsterWorkspace, qtbot: Any) -> None:
+    workspace.intel_cache.pop(75)
+    p = build(workspace, qtbot)
+    text = p.no_intel.text()
+    assert text.startswith("No attack data for Tigrex (em75): no MHFU extraction found")
+    assert "survey" not in text
+
+
+def test_start_from_the_base(workspace: MonsterWorkspace, qtbot: Any) -> None:
+    assert workspace.doc is not None
+    workspace.select_pair(1, 4)
+    workspace.doc.edit(lambda m: setattr(m, "hitboxes", []))
+    p = build(workspace, qtbot)
+    assert p.start_box.isVisibleTo(p) and p.adopt_pair.isVisibleTo(p)
+    p.adopt_pair.click()
+    assert [h.set for h in workspace.doc.manifest.hitboxes] == [2, 2]
+    assert not p.start_box.isVisibleTo(p)

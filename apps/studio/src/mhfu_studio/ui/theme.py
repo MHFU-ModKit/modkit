@@ -147,7 +147,9 @@ def resolve(family: str, mode: Mode) -> Theme:
 # ---- the current theme ------------------------------------------------------------------- #
 
 _current = theme("Ember", True)
-_bound: weakref.WeakKeyDictionary[QAbstractButton | QAction, str] = weakref.WeakKeyDictionary()
+_bound: weakref.WeakKeyDictionary[QAbstractButton | QAction, tuple[str, bool]] = (
+    weakref.WeakKeyDictionary()
+)
 _listeners: list[Callable[[Theme], None]] = []
 
 
@@ -187,9 +189,9 @@ def apply(t: Theme) -> None:
         QGuiApplication.styleHints().setColorScheme(
             Qt.ColorScheme.Dark if t.dark else Qt.ColorScheme.Light  # native dialogs, title bar
         )
-    for target, name in list(_bound.items()):
+    for target, (name, outlined) in list(_bound.items()):
         if isValid(target):  # a deleted widget's wrapper lingers until Python collects it
-            target.setIcon(icon(name))
+            target.setIcon(icon(name, outlined=outlined))
     for fn in list(_listeners):
         fn(t)
 
@@ -198,27 +200,41 @@ def on_change(fn: Callable[[Theme], None]) -> None:
     _listeners.append(fn)
 
 
-def icon(name: str, *, accent: bool = False) -> QIcon:
-    """A qtawesome icon in the theme's colours; checked buttons get the on-accent colour."""
+def icon(name: str, *, accent: bool = False, outlined: bool = False) -> QIcon:
+    """A qtawesome icon in the theme's colours. Checked, it takes the on-accent colour of a
+    filled button, or the accent of an `outlined` one."""
     import qtawesome as qta
 
     t = _current
     base = t.accent if accent else t.muted
+    on = t.accent if outlined else t.on_accent
     got: QIcon = qta.icon(
         name,
         color=base,
         color_active=t.text,
         color_disabled=t.line,
-        color_on=t.on_accent,
-        color_on_active=t.on_accent,
+        color_on=on,
+        color_on_active=on,
     )
     return got
 
 
-def bind(target: QAbstractButton | QAction, name: str) -> None:
+def status_icon(ok: bool) -> QIcon:
+    """A found place's tick in the accent, a missing one's mark in the warning colour."""
+    import qtawesome as qta
+
+    t = _current
+    got: QIcon = qta.icon(
+        "ph.check-circle-fill" if ok else "ph.warning-circle-fill",
+        color=t.accent if ok else t.warning,
+    )
+    return got
+
+
+def bind(target: QAbstractButton | QAction, name: str, *, outlined: bool = False) -> None:
     """Gives `target` the icon `name` now and again after every theme change."""
-    _bound[target] = name
-    target.setIcon(icon(name))
+    _bound[target] = (name, outlined)
+    target.setIcon(icon(name, outlined=outlined))
 
 
 def color(c: Color) -> QColor:
@@ -262,7 +278,10 @@ def palette(t: Theme) -> QPalette:
 
 def qss(t: Theme) -> str:
     s0, s1, s2 = t.stops
-    levels = "\n".join(f'QLabel[level="{lv}"] {{ color: {_level(t, lv)}; }}' for lv in LEVELS)
+    levels = "\n".join(
+        f'QLabel[level="{lv}"], #Problems[level="{lv}"] {{ color: {_level(t, lv)}; }}'
+        for lv in LEVELS
+    )
     return f"""
 * {{ color: {t.text}; }}
 QMainWindow {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
@@ -270,25 +289,42 @@ QMainWindow {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
 QMainWindow::separator {{ background: transparent; width: 8px; height: 8px; }}
 QLabel[role="muted"], QLabel[role="hint"] {{ color: {t.muted}; }}
 QLabel[role="title"] {{ font-weight: 600; }}
+QLabel[role="heading"] {{ font-size: 20px; font-weight: 600; }}
+QLabel[role="next"] {{ color: {t.accent}; font-weight: 600; }}
+QLabel[role="dock"] {{ font-size: 13px; font-weight: 600; }}
 QLabel[role="caps"] {{ color: {t.muted}; font-size: 11px; font-weight: 600; }}
 QLabel[role="chip"] {{ color: {t.second}; }}
 QLabel[role="mono"] {{ font-family: "Menlo", "DejaVu Sans Mono", monospace; }}
 {levels}
-#Card {{ background: {t.card}; border: 1px solid {t.line}; border-radius: 12px; }}
+#Card {{ background: {t.card}; border: none; border-radius: 8px; }}
+#Start {{ background: transparent; }}
+QPushButton#Tile {{ padding: 0; }}
+QPushButton#Tile:disabled QLabel {{ color: {t.muted}; }}
+QProgressBar {{ background: {t.entry}; border: none; border-radius: 3px; }}
+QProgressBar::chunk {{ background: {t.accent}; border-radius: 3px; }}
 #Body, QScrollArea {{ background: transparent; border: none; }}
-#Section {{ border: 1px solid {t.line}; border-radius: 10px; }}
-#Seg {{ background: {t.entry}; border: 1px solid {t.line}; border-radius: 9px; }}
-#Seg QToolButton {{ border: none; border-radius: 7px; padding: 3px 11px; color: {t.muted}; }}
+#Seg {{ background: {t.entry}; border: 1px solid {t.line}; border-radius: 7px; }}
+#Seg QToolButton {{ border: none; border-radius: 5px; padding: 3px 10px; color: {t.muted}; }}
 #Seg QToolButton:checked {{ background: {t.accent}; color: {t.on_accent}; font-weight: 600; }}
 #Seg QToolButton:hover:!checked {{ color: {t.text}; background: {t.soft}; }}
-QToolBar {{ background: transparent; border: none; spacing: 3px; padding: 2px 10px 6px 10px; }}
+QToolBar {{ background: transparent; border: none; spacing: 3px; padding: 0 8px 4px 8px; }}
 QToolBar::separator {{ width: 1px; background: {t.line}; margin: 7px 8px; }}
-QToolButton {{ background: transparent; border: none; border-radius: 8px; padding: 5px 9px;
+QToolButton {{ background: transparent; border: none; border-radius: 6px; padding: 4px 8px;
     color: {t.muted}; }}
 QToolButton:hover {{ background: {t.soft}; color: {t.text}; }}
 QToolButton:checked {{ background: {t.accent}; color: {t.on_accent}; font-weight: 600; }}
-QPushButton {{ background: {t.entry}; border: 1px solid {t.line}; border-radius: 8px;
-    padding: 5px 12px; }}
+QToolButton#More {{ padding: 2px 0; }}
+QToolButton#More:checked {{ background: transparent; color: {t.text}; font-weight: normal; }}
+QToolButton#More:hover, QToolButton#More:focus {{ background: transparent; color: {t.accent}; }}
+QToolButton[toggle="true"] {{ border: 1px solid {t.line}; padding: 3px 9px; }}
+QToolButton[toggle="true"]:checked {{ background: {t.soft}; color: {t.accent};
+    border-color: {t.accent}; font-weight: normal; }}
+#Send {{ background: {t.accent}; color: {t.on_accent}; font-weight: 600; padding: 4px 12px; }}
+#Send:hover {{ background: {t.accent_hover}; }}
+#Send:disabled {{ background: {t.soft}; color: {t.muted}; }}
+#Send[busy="true"] {{ background: {t.soft}; color: {t.text}; }}
+QPushButton {{ background: {t.entry}; border: 1px solid {t.line}; border-radius: 6px;
+    padding: 4px 10px; }}
 QPushButton:hover {{ border-color: {t.accent}; }}
 QPushButton:pressed {{ background: {t.soft}; }}
 QPushButton:disabled {{ color: {t.muted}; background: transparent; }}
@@ -299,7 +335,7 @@ QPushButton[role="primary"]:disabled {{ background: {t.soft}; color: {t.muted}; 
 QPushButton[role="danger"] {{ color: {t.danger}; }}
 QPushButton[role="danger"]:hover {{ border-color: {t.danger}; }}
 QAbstractSpinBox, QLineEdit, QComboBox, QPlainTextEdit {{ background: {t.entry};
-    border: 1px solid {t.line}; border-radius: 7px; padding: 3px 6px;
+    border: 1px solid {t.line}; border-radius: 6px; padding: 2px 6px;
     selection-background-color: {t.accent}; selection-color: {t.on_accent}; }}
 QAbstractSpinBox:focus, QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {{
     border-color: {t.accent}; }}
@@ -313,8 +349,8 @@ QSlider::sub-page:horizontal {{ background: {t.accent}; border-radius: 2px; }}
 QSlider::handle:horizontal {{ background: {t.accent}; width: 14px; height: 14px;
     margin: -5px 0; border-radius: 7px; }}
 QCheckBox, QRadioButton {{ spacing: 7px; }}
-QCheckBox::indicator, QAbstractItemView::indicator {{ width: 15px; height: 15px;
-    border-radius: 5px; border: 1px solid {t.line}; background: {t.entry}; }}
+QCheckBox::indicator, QAbstractItemView::indicator {{ width: 14px; height: 14px;
+    border-radius: 4px; border: 1px solid {t.line}; background: {t.entry}; }}
 QCheckBox::indicator:checked, QAbstractItemView::indicator:checked {{ background: {t.accent};
     border-color: {t.accent}; }}
 QRadioButton::indicator {{ width: 14px; height: 14px; border-radius: 7px;
@@ -323,7 +359,7 @@ QRadioButton::indicator:checked {{ background: {t.accent}; border-color: {t.acce
 QAbstractItemView {{ background: transparent; border: none; outline: none;
     alternate-background-color: {t.card}; selection-background-color: {t.soft};
     selection-color: {t.text}; }}
-QAbstractItemView::item {{ padding: 4px 6px; border-radius: 6px; }}
+QAbstractItemView::item {{ padding: 3px 6px; border-radius: 4px; }}
 QAbstractItemView::item:hover, QAbstractItemView::item:selected {{ background: {t.soft};
     color: {t.text}; }}
 QHeaderView::section {{ background: transparent; color: {t.muted}; border: none;
@@ -343,6 +379,10 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 QStatusBar {{ background: transparent; color: {t.muted}; }}
 QStatusBar QLabel {{ color: {t.muted}; padding: 0 6px; }}
 QStatusBar::item {{ border: none; }}
+QStatusBar QLabel#Hint {{ color: {t.text}; }}
+QPushButton#Problems {{ background: transparent; border: none; padding: 1px 8px;
+    font-weight: 600; }}
+QPushButton#Problems:hover {{ background: {t.soft}; }}
 QMenuBar {{ background: transparent; }}
 QMenuBar::item {{ background: transparent; padding: 4px 9px; border-radius: 6px; }}
 QMenuBar::item:selected {{ background: {t.soft}; }}

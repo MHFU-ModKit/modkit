@@ -63,16 +63,16 @@ class VolumeAdoption:
 
     def describe(self) -> str:
         if not self.adopted:
-            return "nothing to adopt"
+            return "nothing to copy"
         if self.clean:
             return (
-                f"{self.adopted} volume(s) from {self.source}. Every bone index exists on this "
-                "rig, which is not the same as pointing at the right joint."
+                f"copied {self.adopted} from {self.source}. Every joint number exists on your "
+                "skeleton, which is not the same as the right joint."
             )
         bones = ", ".join(map(str, self.off_rig[:8]))
         return (
-            f"{self.adopted} volume(s) from {self.source}, and {len(self.off_rig)} name a bone "
-            f"this rig does not have ({bones}): they index the HOST's skeleton."
+            f"copied {self.adopted} from {self.source}; {len(self.off_rig)} name a joint your "
+            f"skeleton does not have ({bones}): they are the base monster's numbers."
         )
 
 

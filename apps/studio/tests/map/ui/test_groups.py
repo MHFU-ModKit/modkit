@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from mhfu.files import Extracted
 from mhfu_studio.map.core.atlas import Atlas
-from mhfu_studio.map.panels.common import NO_DATA, NO_SECTION
+from mhfu_studio.map.panels.common import NO_AREA, NO_DATA
 from mhfu_studio.map.panels.groups import GroupsPanel
 from mhfu_studio.map.workspace import MapWorkspace
 from mhfu_studio.shell.studio import Studio
@@ -35,7 +35,7 @@ def row_of(panel: GroupsPanel, label: str) -> int:
 
 def test_empty(qtbot: Any, game: Extracted, atlas: Atlas, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MHFU_DATA", raising=False)
-    for w, title in ((MapWorkspace(), NO_DATA), (MapWorkspace(game, atlas), NO_SECTION)):
+    for w, title in ((MapWorkspace(), NO_DATA), (MapWorkspace(game, atlas), NO_AREA)):
         p = GroupsPanel(w, Studio([w]))
         qtbot.addWidget(p)
         p.sync()
@@ -46,8 +46,10 @@ def test_lists_groups(panel: GroupsPanel, ws: MapWorkspace) -> None:
     assert ws.scene is not None
     assert kit.missing_tips(panel) == []
     assert panel.table.rowCount() == len(ws.scene.groups)
-    assert "Terrain: 4 groups" in panel.summary.text()
-    assert panel.table.item(row_of(panel, "sub0.g1"), 3).text() == "1"
+    assert panel.summary.text().startswith("Model: 4 groups")
+    more = panel.findChild(kit.More)
+    assert more is not None and more.isAncestorOf(panel.backdrop) and more.inner.isHidden()
+    assert panel.table.item(row_of(panel, "group 1"), 1).text() == "1"
     assert any("(far)" in panel.table.item(r, 0).text() for r in range(panel.table.rowCount()))
     panel.backdrop.setChecked(False)
     panel.sync()
@@ -57,17 +59,18 @@ def test_lists_groups(panel: GroupsPanel, ws: MapWorkspace) -> None:
 
 def test_pick_and_frame(panel: GroupsPanel, ws: MapWorkspace) -> None:
     assert ws.vp is not None
-    panel.table.cellClicked.emit(row_of(panel, "sub0.g1"), 0)
+    panel.table.cellClicked.emit(row_of(panel, "group 1"), 0)
     panel.sync()
-    assert ws.selected_group == (0, 1) and "sub0.g1: material 1" in panel.details.text()
+    assert ws.selected_group == (0, 1) and "group 1: material 1" in panel.details.text()
+    assert panel.hint.isHidden() and not panel.material.isHidden()
     target = ws.vp.camera.target.copy()
     press(panel, "Frame")
     assert (ws.vp.camera.target != target).any()
-    panel.table.cellClicked.emit(row_of(panel, "sub0.g1"), 0)
+    panel.table.cellClicked.emit(row_of(panel, "group 1"), 0)
     panel.sync()
     assert ws.selected_group is None and ws.selection.empty
     target = ws.vp.camera.target.copy()
-    panel.table.cellDoubleClicked.emit(row_of(panel, "sub0.g0"), 0)
+    panel.table.cellDoubleClicked.emit(row_of(panel, "group 0"), 0)
     assert (ws.vp.camera.target != target).any()
 
 
@@ -76,7 +79,7 @@ def test_hide_and_show(panel: GroupsPanel, ws: MapWorkspace) -> None:
     ws.select_group((0, 1))
     press(panel, "Hide")
     assert ws.vp.mesh.is_hidden((0, 1)) and panel.hide_button.text() == "Show"
-    assert panel.table.item(row_of(panel, "sub0.g1 (hidden)"), 0) is not None
+    assert panel.table.item(row_of(panel, "group 1 (hidden)"), 0) is not None
     press(panel, "Show all")
     assert not ws.vp.mesh.is_hidden((0, 1)) and not panel.show_all.isEnabled()
 

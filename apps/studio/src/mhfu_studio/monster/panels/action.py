@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Action dock: what the HOST action expects, against the clip on screen.
+"""The Actions dock: for each of the base monster's actions, the clip your port plays, what it
+hits with and whether the timing fits (`actions.rows`). Pick one to watch it, give it another
+clip, and copy the moves into your mod's Lua, which is how they reach the game.
 
 A ported monster has no AI of its own: the engine runs the one MHFU overlay `port.host_species`
-names, so every `(main, sub)` here is that host's, with the port's animation painted on it."""
+names, so every `(main, sub)` here is that base monster's, with the port's animation on it."""
 
 from __future__ import annotations
 
@@ -13,19 +15,16 @@ from typing import TYPE_CHECKING
 
 from mhfu import files
 from mhfu.em.intel import PairIntel, SpeciesIntel
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QResizeEvent
-from PySide6.QtWidgets import (
-    QFrame,
-    QHBoxLayout,
-    QScrollArea,
-    QSplitter,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import QHBoxLayout, QHeaderView, QVBoxLayout, QWidget
 
-from mhfu_studio.monster import species
+from mhfu_studio.monster import actions, clips, species
+from mhfu_studio.monster.actions import ActionRow
 from mhfu_studio.monster.align import Alignment
+from mhfu_studio.monster.panels import graph
+from mhfu_studio.monster.panels.common import COVERAGE
+from mhfu_studio.monster.panels.moves import HandOffs
 from mhfu_studio.monster.panels.widgets import NoScene
 from mhfu_studio.shell.findings import Level, worst
 from mhfu_studio.shell.text import plain
@@ -35,10 +34,22 @@ if TYPE_CHECKING:
     from mhfu_studio.monster.workspace import MonsterWorkspace
     from mhfu_studio.shell.studio import Studio
 
-#: wider than this, the pair table sits beside the rest; narrower, under it
-SIDE_BY_SIDE = 760
 #: the background survey is looked at this often (ms) until it is done
 POLL = 250
+#: rows the tables show before they scroll
+ROWS, CLIP_ROWS = 10, 8
+#: said once for every action without a census, so not on the picked one's line
+EVERYWHERE = {"UNMEASURED"}
+LUA_NOTE = (
+    "The game reads moves from your mod's Lua file, not from this file. Copy them into the"
+    " mod's P.define{…}; Send to game carries only the hitboxes."
+)
+ROWS_TIP = (
+    "Every action worth a clip: your moves, then the base monster's attacks, then what the game"
+    " goes into by itself (read from its code). Plays now is the clip on screen while the game"
+    " is in it; Hits, its hit group; Timing, your clip's impact against the frame the code"
+    " checks. Click one to watch it from the start."
+)
 
 
 class Strip(QWidget):
@@ -69,271 +80,341 @@ def species_choices(ws: MonsterWorkspace) -> list[int]:
 
 
 def pair_row(p: PairIntel) -> list[str]:
-    """pair, ends on, tests, fx, after: "holds" never ends itself, "?" has no hand-off intel."""
+    """action, ends, checks, effects, then: "stays" never ends itself, "?" is not known."""
     gates = ", ".join(f"{f:g}" for f in p.tested_frames[:4]) or "·"
     nxt = " ".join(f"({m},{s})" for m, s in p.successors[:4])
-    after = "?" if p.next is None else "holds" if not p.next else nxt
+    after = "?" if p.next is None else "stays" if not p.next else nxt
     if len(p.successors) > 4:
         after += " +"
-    ends = "budget" if p.budget.gated else p.ends_on or "?"
+    ends = graph.ends_text(p) or "?"
     return [f"({p.main},{p.sub})", ends, gates, str(len(p.effects)) if p.effects else "", after]
 
 
-class ActionPanel(kit.Panel):
+def row_level(r: ActionRow) -> Level | None:
+    """An idle copy is loud on every row (forced, it looks like an override that never fired);
+    a missing clip or a bad timing only on your own moves."""
+    mine = r.group == actions.MOVE
+    if mine and (r.timing.level == "error" or r.plays.kind == clips.MISSING):
+        return "error"
+    if r.plays.kind == clips.FILLER or (mine and r.timing.level == "warning"):
+        return "warning"
+    return None
+
+
+def stretch(t: kit.Table, column: int) -> None:
+    """`column`, a clip's name, takes the width the dock has left, eliding."""
+    head = t.horizontalHeader()
+    head.setStretchLastSection(False)
+    head.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
+
+
+def matches(r: ActionRow, needle: str) -> bool:
+    words = [*r.cells(), r.plays.name, f"anim {r.plays.slot}", r.label]
+    words += [f"({m},{s})" for m, s in r.alike]
+    return needle in " ".join(words).lower()
+
+
+class ActionsPanel(kit.Panel):
     def __init__(self, ws: MonsterWorkspace, studio: Studio) -> None:
-        super().__init__(scroll=False)
+        super().__init__()
         self.ws, self.studio = ws, studio
         act = studio.act
-        self._rows: tuple[object, ...] | None = None
+        self._picker_for: object = None
+        self._name_for: object = None
 
-        # the host
-        self.species = kit.choice(
-            [],
-            tip="Whose action table to read. The host is the monster whose code runs your port;"
-            " another one is for comparing, not binding.",
-            on=lambda sp: act("browse", lambda: ws.browse_species(int(sp)))(),
+        # the base monster, and its model beside yours
+        self.host_note = kit.label(role="muted", wrap=False)
+        self.beside = kit.check(
+            "Base monster beside",
+            tip="Stands the base monster's own model beside yours, playing its own anim for the"
+            " picked action from the same frame: what the action really looks like",
+            on=lambda on: act("base monster beside", lambda: ws.set_show_host(on))(),
         )
-        self._species_key: object = None
-        self._choices = species_choices(ws)
-        self.host_note = kit.label(role="muted")
-        self.browsing = kit.Alert()
-        self.show_host = kit.check(
-            "Show the host beside the port",
-            tip="Loads the host's own model and plays the clip its code picks for this action,"
-            " beside your port. Both run at the same rate; each loops at its own end.",
-            on=lambda on: act("show host", lambda: ws.set_show_host(on))(),
-        )
-        self.compare = kit.check(
-            "Compare the hosts",
-            tip="Every MHFU monster's action table side by side: which host gives your port the"
-            " most to work with",
-            on=lambda on: self._compare(on),
-        )
-        self.hosts_note = kit.label(
-            "Every host runs the same action tick: 8 mains, each fanning into sub-states. What"
-            " differs is how much you inherit. Timed pairs wait for fixed clip frames your"
-            " animation has to hit; budget ones end on a frame countdown instead of your clip.",
-            role="hint",
-        )
-        self.hosts_wait = kit.label("Surveying the hosts (once, then cached)…", role="muted")
-        self.hosts = kit.Table(
-            ["host", "pairs", "timed", "budget", "fx", "hidden"],
-            tip="Click a host to read its action table. Hidden: mains whose sub-states the scan"
-            " cannot see, which is not the same as none.",
-        )
-        self.hosts.picked.connect(lambda sp: act("browse", lambda: ws.browse_species(sp))())
-        host = kit.Section("Host", tip="The monster whose code runs this port")
-        w: QWidget
-        for w in (
-            self.species,
-            self.host_note,
-            self.browsing,
-            self.show_host,
-            self.compare,
-            self.hosts_note,
-            self.hosts_wait,
-            self.hosts,
-        ):
-            host.body.addWidget(w)
-        self.no_intel = kit.label(role="muted")
+        self.no_intel = kit.Alert()
 
-        # the port's moves
-        self.no_moves = kit.label(
-            "[moves] is empty: pick a pair to try it against the clip on screen, and bind it"
-            " when it fits.",
-            role="hint",
-        )
-        self.moves = kit.Table(
-            ["move", "pair", "clip"],
-            tip="The moves this port binds; click one to play its clip and read its pair",
-        )
-        self.moves.picked.connect(lambda name: act("move", lambda: self._play_move(name))())
-        moves = kit.Section("Moves", tip="The [moves] of the manifest: a host pair and a clip each")
-        moves.body.addWidget(self.no_moves)
-        moves.body.addWidget(self.moves)
-
-        # the alignment
-        self.back = kit.button(
-            "All pairs",
-            tip="Lets go of this pair, back to the list of every pair",
-            on=act("all pairs", ws.clear_pair),
-            icon="ph.arrow-left",
-        )
-        self.title = kit.label(role="title", wrap=False)
-        self.clip = kit.label(role="muted")
-        self.headline = kit.label()
-        self.host_plays = Strip()
-        self.host_none = kit.Alert()
-        self.hits = Strip(column=True)
-        self.hits_text = kit.label(selectable=True)
-        self.then = Strip(column=True)
-        self.declared = kit.label(role="muted")
-        self.in_moves = kit.button(
-            "Show in Moves",
-            tip="Brings the Moves graph forward with this pair picked, to read where it leads",
-            on=act("show in moves", self._show_in_moves),
-            icon="ph.flow-arrow",
-        )
-        self.then_warn = kit.Alert()
-        self.show_findings = kit.check(
-            "Show the findings",
-            tip="Every check on this pair against the clip, with what it means",
-            on=lambda on: self._fold(on),
-        )
-        self.dots = kit.Alert()
-        self.findings = QWidget()
-        self.findings_lay = QVBoxLayout(self.findings)
-        self.findings_lay.setContentsMargins(0, 0, 0, 0)
-        self._findings_key: object = None
-        self._findings_pair: object = None
-        self.handler = kit.label(role="mono", selectable=True)
-        self.show_effects = kit.check(
-            "Species-wide effects",
-            tip="The host's framed effect spawns. No pair is known to fire them, so they are"
-            " listed for the species, where their timing at least is legible.",
-            on=lambda on: self.effects_box.setVisible(on),
-        )
-        self.effects_note = kit.label(
-            "Not tied to any pair: they hang off a switch no pair's code calls, so which action"
-            " fires them cannot be decided offline. Bones are the host's.",
-            role="hint",
-        )
-        self.effects = kit.Table(
-            ["effect", "bone", "frame"],
-            tip="Hover a row: what that bone is on your rig",
-        )
-        self.effects_box = QWidget()
-        lay = QVBoxLayout(self.effects_box)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(self.effects_note)
-        lay.addWidget(self.effects)
-        self.effects_box.setVisible(False)
-
-        # binding
-        self.bind_name = kit.text_field(
-            tip="The name the move gets in [moves]; empty gives move_<main>_<sub>",
-            placeholder="move name",
-        )
-        self.bind = kit.button(
-            "Bind as move",
-            tip="Writes this pair and the clip on screen into the manifest as a move: the port"
-            " plays that clip whenever the host enters this pair",
-            on=act("bind", lambda: ws.bind_move(self.bind_name.text())),
-            role="primary",
-            icon="ph.link",
-        )
-        self.bind_note = kit.label(role="muted")
-        self.bind_row = kit.row(self.bind_name, self.bind, stretch=True)
-
-        align = kit.Section("This pair", tip="The selected pair against the clip on screen")
-        for w in (
-            kit.row(self.back, self.title, stretch=True),
-            self.clip,
-            self.headline,
-            self.host_plays,
-            self.host_none,
-            self.hits_text,
-            self.hits,
-            self.then,
-            self.then_warn,
-            kit.row(self.declared, self.in_moves, stretch=True),
-            self.show_findings,
-            self.dots,
-            self.findings,
-            self.handler,
-            self.bind_row,
-            self.bind_note,
-            self.show_effects,
-            self.effects_box,
-        ):
-            align.body.addWidget(w)
-        self.align = align
-
-        # every pair
+        # every action worth a clip
         self.filter = kit.text_field(
-            tip="Shows only the pairs whose row has this text: a pair like 1,4, a frame, a"
-            " hand-off, or 'budget'",
-            placeholder="filter pairs",
+            tip="Shows only the rows with this text: a move or clip name, an anim like 'anim 17',"
+            " an action like (1,4), or a kind like 'idle'",
+            placeholder="Filter: name, anim, (1,4) or kind",
         )
         self.filter.textChanged.connect(lambda _t: self.sync())
         self.count = kit.label(role="muted", wrap=False)
-        self.pairs = kit.Table(
-            ["pair", "ends on", "tests", "fx", "after"],
-            tip="Every pair the host's code dispatches. Click one to try it against the clip on"
-            " screen. Ends on: what finishes it (the clip, or a frame budget). Tests: clip"
-            " frames its code waits for. After: the pairs it hands to.",
+        self.table = kit.Table(
+            ["Action", "Plays now", "Hits", "Timing"], tip=ROWS_TIP, swatch_column=1
         )
-        self.pairs.picked.connect(lambda pr: act("pair", lambda: ws.select_pair(*pr))())
-        table = QWidget()
-        tl = QVBoxLayout(table)
-        tl.setContentsMargins(0, 0, 0, 0)
-        tl.addWidget(kit.row(self.filter, self.count))
-        tl.addWidget(self.pairs, 1)
+        stretch(self.table, 1)
+        self.table.picked.connect(self._pick)
 
-        left = QWidget()
-        ll = QVBoxLayout(left)
-        ll.setContentsMargins(0, 0, 4, 0)
-        for w in (host, self.no_intel, moves, align):
-            ll.addWidget(w)
-        ll.addStretch(1)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setWidget(left)
-        self.split = QSplitter()
-        self.split.addWidget(scroll)
-        self.split.addWidget(table)
-        self.split.setChildrenCollapsible(False)
-        self.table_side = table
+        # the picked action
+        self.title = kit.label(role="title", wrap=False)
+        self.plays = kit.label()
+        self.headline = kit.label(role="muted")
+        self.preview = kit.Alert(level="info")
+        self.change = kit.button(
+            "Change clip…",
+            tip="Lists your clips: click one to watch it on this action, then use it",
+            on=lambda: self._open_picker(not self.picker.isVisible()),
+            icon="ph.film-strip",
+        )
+        self.unbind = kit.button(
+            "Remove the move",
+            tip="Deletes this move from the manifest: the action plays the base monster's anim"
+            " in your port again",
+            on=act("remove move", ws.unbind),
+            icon="ph.link-break",
+        )
+        self.name = kit.text_field(
+            tip="The move's name: your mod's Lua plays it by this name (m:play(\"lunge\"))",
+            placeholder="move name",
+        )
+        self.name.editingFinished.connect(self._rename)
+        self.name_form = kit.Form()
+        self.name_form.row("Name", self.name)
 
+        # the clip picker
+        self.clip_filter = kit.text_field(
+            tip="Shows only the clips whose anim #, name, kind or label has this text",
+            placeholder="Filter clips",
+        )
+        self.clip_filter.textChanged.connect(lambda _t: self.sync())
+        self.clips = kit.Table(
+            ["Anim", "Clip", "Kind", "Frames"],
+            tip="Your clips; click one to watch it on this action from its first frame",
+            swatch_column=2,
+        )
+        stretch(self.clips, 1)
+        self.clips.picked.connect(self._preview)
+        self.use = kit.button(
+            "Use this clip",
+            tip="Writes the clip on screen into the manifest as this action's move: the move keeps"
+            " its other settings, and an unnamed clip gets a name",
+            on=self._use,
+            role="primary",
+            icon="ph.link",
+        )
+        self.cancel = kit.button(
+            "Close",
+            tip="Closes the list; the clip stays as it is in the manifest",
+            on=lambda: self._open_picker(False),
+        )
+        self.picker = QWidget()
+        lay = QVBoxLayout(self.picker)
+        lay.setContentsMargins(0, 0, 0, 0)
+        for w in (self.clip_filter, self.clips, kit.row(self.use, self.cancel, stretch=True)):
+            lay.addWidget(w)
+        self.picker.setVisible(False)
+        self.refused = kit.Alert(role="muted")
+
+        self.hits_text = kit.label(selectable=True)
+        self.hits = Strip(column=True)
+        self.holds = kit.Alert()
+        self.dots = kit.Alert()
+
+        picked = kit.Section("This action", tip="The picked action, and the clip it plays")
+        for w in (
+            self.title,
+            self.plays,
+            self.headline,
+            self.preview,
+            kit.row(self.change, self.unbind, stretch=True),
+            self.picker,
+            self.name_form,
+            self.refused,
+            self.hits_text,
+            self.hits,
+            self.holds,
+            self.dots,
+        ):
+            picked.body.addWidget(w)
+        self.picked = picked
+
+        # how moves reach the game
+        self.lua_note = kit.label(LUA_NOTE, role="muted")
+        self.copy = kit.button(
+            "Copy Lua",
+            tip="Copies your moves as the clips = {…} and moves = {…} lines of a mod's"
+            " P.define{…}, to paste over the old ones",
+            on=act("copy lua", self._copy),
+            icon="ph.copy",
+        )
+        self.lua = kit.label(role="mono", selectable=True)
+        self.lua.setToolTip("What Copy Lua copies: paste it into your mod's P.define{…}")
+        game = kit.Section(
+            "How this reaches the game", tip="Moves live in your mod's Lua, not in the manifest"
+        )
+        for w in (self.lua_note, kit.row(self.copy, stretch=True), self.lua):
+            game.body.addWidget(w)
+
+        # expert: every action, the hand-off graph, the code, another monster's actions
+        self.more = kit.More(
+            tip="Every action of the base monster as a graph and a table, the code behind the"
+            " picked one, and another monster's actions to compare"
+        )
+        self.more.toggle.toggled.connect(lambda _on: self.sync())
+        self._build_more()
+
+        page = QWidget()
+        pl = QVBoxLayout(page)
+        pl.setContentsMargins(0, 0, 0, 0)
+        pl.setSpacing(10)
+        for w in (
+            kit.row(self.host_note, self.beside, stretch=True),
+            self.no_intel,
+            kit.row(self.filter, self.count),
+            self.table,
+            picked,
+            game,
+            self.more,
+        ):
+            pl.addWidget(w)
+        pl.addStretch(1)
         self.no_scene = NoScene(studio)
         self.no_scene.say(
             "No port manifest",
-            "An action binds a host behaviour pair to one of the port's clips, so it needs a"
+            "An action plays one of your clips when the base monster enters it, so it needs a"
             " port manifest. Open one (ports/<name>.toml).",
         )
-        self.pages = kit.Pages(self.split, self.no_scene)
+        self.pages = kit.Pages(page, self.no_scene)
         self.body.addWidget(self.pages)
         self.poll = QTimer(self)
         self.poll.setInterval(POLL)
         self.poll.timeout.connect(self.sync)
-        self._compare(False)
-        self._fold(False)
+
+    def _build_more(self) -> None:
+        ws, act = self.ws, self.studio.act
+        self.species = kit.choice(
+            [],
+            tip="Whose actions the graph and the table read. Your base monster's are the ones"
+            " the game runs for your port; another one is for comparing, not for moves.",
+            on=lambda sp: act("browse", lambda: ws.browse_species(int(sp)))(),
+        )
+        self._species_key: object = None
+        self._choices = species_choices(ws)
+        self.browsing = kit.Alert()
+        self.compare = kit.check(
+            "Compare the monsters",
+            tip="Every MHFU monster's actions side by side: which base monster gives your port"
+            " the most to work with",
+            on=lambda on: self.sync(),
+        )
+        self.hosts_wait = kit.label(
+            "Reading every monster's actions (once, then kept)…", role="muted"
+        )
+        self.hosts = kit.Table(
+            ["Monster", "Actions", "Timed", "Timer", "Effects", "Hidden"],
+            tip="Click a monster to read its actions. Timed actions wait for clip frames; timer"
+            " ones end on a countdown. Hidden: groups whose actions the studio cannot list.",
+        )
+        self.hosts.picked.connect(lambda sp: act("browse", lambda: ws.browse_species(sp))())
+        self.graph = HandOffs(ws, self.studio)
+        self.pairs_filter = kit.text_field(
+            tip="Shows only the actions whose row has this text: an action like 1,4, a frame,"
+            " where it goes, or 'timer'",
+            placeholder="filter actions",
+        )
+        self.pairs_filter.textChanged.connect(lambda _t: self.sync())
+        self.pairs_count = kit.label(role="muted", wrap=False)
+        self.pairs = kit.Table(
+            ["Action", "Ends", "Checks", "Effects", "Then"],
+            tip="Every action the base monster's code runs; click one to pick it. Ends: what"
+            " finishes it; Checks: frames its code waits for; Then: where it goes next.",
+        )
+        self._pairs_key: object = None
+        self.pairs.picked.connect(lambda pr: act("pick action", lambda: ws.select_action(*pr))())
+        self.handler = kit.label(role="mono", selectable=True)
+        self.handler.setToolTip("Where the action's code is in the game, and the anims it names")
+        self.then = Strip(column=True)
+        self.declared = kit.label(role="muted")
+        self.show_findings = kit.check(
+            "Every finding",
+            tip="Every check on the picked action against its clip, with what it means",
+            on=lambda on: self.sync(),
+        )
+        self.findings = QWidget()
+        self.findings_lay = QVBoxLayout(self.findings)
+        self.findings_lay.setContentsMargins(0, 0, 0, 0)
+        self._findings_key: object = None
+        self.show_effects = kit.check(
+            "Effects of no action",
+            tip="The base monster's timed effects that no action is known to fire; joints are"
+            " the base monster's",
+            on=lambda on: self.sync(),
+        )
+        self.effects = kit.Table(
+            ["Effect", "Joint", "Frame"], tip="Hover a row: what that joint is on your skeleton"
+        )
+        browse = kit.Form()
+        browse.row("Actions of", self.species)
+        for w in (
+            browse,
+            self.browsing,
+            self.compare,
+            self.hosts_wait,
+            self.hosts,
+            kit.label("Where each action goes when it ends", role="caps"),
+            self.graph,
+            kit.label("Every action", role="caps"),
+            kit.row(self.pairs_filter, self.pairs_count),
+            self.pairs,
+            self.handler,
+            self.then,
+            self.declared,
+            self.show_findings,
+            self.findings,
+            self.show_effects,
+            self.effects,
+        ):
+            self.more.body.addWidget(w)
 
     # ---- actions ----------------------------------------------------------------------- #
 
-    def _compare(self, on: bool) -> None:
-        for w in (self.hosts_note, self.hosts_wait, self.hosts):
-            w.setVisible(on)
+    def _pick(self, key: object) -> None:
+        """A row: back on the base monster's actions if another's were browsed."""
+        if not isinstance(key, tuple):
+            return
+        main, sub, move = key
+        ws = self.ws
+
+        def run() -> None:
+            if not ws.browsing_the_host and ws.host_species is not None:
+                ws.browse_species(ws.host_species)
+            ws.select_action(main, sub, move)
+
+        self.studio.act("pick action", run)()
+
+    def _preview(self, slot: object) -> None:
+        if isinstance(slot, int):
+            self.studio.act(f"try anim {slot}", lambda: self.ws.play_slot(slot))()
+
+    def _use(self) -> None:
+        """Binds the clip on screen; the list closes once it is in the manifest."""
+        before = self.ws.manifest
+        self.studio.act("use clip", lambda: self.ws.bind_move())()
+        if self.ws.manifest is not before:
+            self._open_picker(False)
+
+    def _open_picker(self, on: bool) -> None:
+        self.picker.setVisible(on)
         if on:
             self.sync()
 
-    def _fold(self, on: bool) -> None:
-        """The findings open, or folded to one line of their codes."""
-        self.findings.setVisible(on)
-        self.handler.setVisible(on and bool(self.handler.text()))
-        self.dots.setVisible(not on and not self.show_findings.isHidden())
+    def _rename(self) -> None:
+        new = self.name.text().strip()
+        if new and new != self.ws.move:
+            self.studio.act("rename move", lambda: self.ws.rename_move(new))()
 
-    def _play_move(self, name: str) -> None:
+    def _copy(self) -> None:
         m = self.ws.manifest
-        if m is None or name not in m.moves:
+        text = "" if m is None else actions.lua_moves(m)
+        if not text:
+            self.ws.message = "no moves to copy yet: use a clip for an action first"
             return
-        mv = m.moves[name]
-        if mv.clip in m.clips:
-            self.ws.play_slot(m.clips[mv.clip].slot)
-        self.ws.select_pair(mv.main, mv.sub, name)
-
-    def _show_in_moves(self) -> None:
-        self.ws.graph.picked = self.ws.pair
-        self.ws.focus("Moves")
-
-    def resizeEvent(self, e: QResizeEvent) -> None:  # noqa: N802
-        super().resizeEvent(e)
-        wide = e.size().width() >= SIDE_BY_SIDE
-        o = Qt.Orientation.Horizontal if wide else Qt.Orientation.Vertical
-        if self.split.orientation() != o:
-            self.split.setOrientation(o)
+        QGuiApplication.clipboard().setText(text + "\n")
+        self.ws.message = (
+            f"copied {len(m.moves) if m else 0} moves as Lua: paste them into your mod's"
+            " P.define{…}"
+        )
 
     # ---- sync -------------------------------------------------------------------------- #
 
@@ -344,48 +425,245 @@ class ActionPanel(kit.Panel):
         if m is None:
             self.poll.stop()
             return
-        self._sync_host()
-        intel = ws.intel
-        self.no_intel.setVisible(intel is None)
-        self.no_intel.setText(f"No action intel for em{ws.browsing_species or 0:02d}.")
-        self.table_side.setVisible(intel is not None)
-        al = ws.alignment if intel is not None else None
-        self.align.setVisible(al is not None)
-        self._sync_moves()
-        if intel is None:
-            return
-        if al is not None:
-            self._sync_alignment(al)
-        self._sync_pairs(intel)
+        self.host_note.setText(f"Base monster: {species.label(ws.host_species)}")
+        kit.put(self.beside, ws.show_host)
+        gap = ws.intel_gap("action")
+        self.no_intel.setText(gap)
+        self.no_intel.setVisible(bool(gap))
+        self._sync_rows()
+        self._sync_picked()
+        lua = actions.lua_moves(m)
+        self.lua.setText(lua or "No moves yet: use a clip for an action and its Lua shows here.")
+        self.copy.setEnabled(bool(lua))
+        if self.more.toggle.isChecked():
+            self._sync_more()
+        else:
+            self.poll.stop()
 
-    def _sync_host(self) -> None:
+    def _sync_rows(self) -> None:
+        ws = self.ws
+        rows = ws.action_rows()
+        needle = self.filter.text().strip().lower()
+        shown = [r for r in rows if not needle or matches(r, needle)]
+        self.table.set_rows(
+            [r.cells() for r in shown],
+            [r.key for r in shown],
+            colors=[COVERAGE.get(r.plays.kind or "") for r in shown],
+            tips=[r.tip() for r in shown],
+            levels=[row_level(r) for r in shown],
+        )
+        self.table.fit(ROWS)
+        self.count.setText(f"{len(shown)} of {len(rows)}")
+        self.table.select_data(self._selected_key(shown))
+
+    def _selected_key(self, rows: list[ActionRow]) -> object:
+        """The row of the picked action: its own, or the one it is listed alike under."""
+        ws = self.ws
+        if ws.pair is None:
+            return None
+        for r in rows:
+            if r.move == ws.move and (r.pair == ws.pair or ws.pair in r.alike):
+                return r.key
+        return None
+
+    def _sync_picked(self) -> None:
+        ws, m, pair = self.ws, self.ws.manifest, self.ws.pair
+        self.picked.setVisible(pair is not None)
+        if pair is None or m is None:
+            self.picker.setVisible(False)
+            return
+        if (pair, ws.move) != self._picker_for:  # another action closes the list
+            self._picker_for = (pair, ws.move)
+            self.picker.setVisible(False)
+        host = ws.browsing_the_host
+        bound = ws.move is not None and ws.move in m.moves
+        now = ws.plays(*pair, ws.move)
+        name = f"({pair[0]},{pair[1]})"
+        self.title.setText(f"{ws.move} {name}" if bound else name)
+        frames = "" if now.frames is None else f", {now.frames} frames"
+        anim = "" if now.slot is None or not now.name else f" (anim {now.slot})"
+        self.plays.setText(f"Plays {now.text()}{anim}{frames}" if host else "")
+        self.plays.setToolTip(now.why)
+        self.plays.setVisible(host)
+        al = ws.alignment
+        self.headline.setText("" if al is None else plain(al.headline))
+        self.headline.setVisible(al is not None)
+        vp = ws.vp
+        on_screen = None if vp is None or vp.clip is None else vp.clip.slot
+        trying = host and on_screen is not None and on_screen != now.slot
+        self.preview.setVisible(trying)
+        if trying:
+            found = ws.manifest_clip(on_screen) if on_screen is not None else None
+            label = f" {found[0]}" if found else ""
+            self.preview.setText(
+                f"On screen: anim {on_screen}{label}, not what plays now. Use this clip keeps it."
+            )
+        refusal = self._refusal(al)
+        self.refused.setText(refusal)
+        self.refused.setVisible(bool(refusal))
+        can = not refusal and ws.label_session is not None
+        self.change.setVisible(can)
+        self.unbind.setVisible(bound and host)
+        self.name_form.setVisible(bound and host)
+        if bound and (pair, ws.move) != self._name_for:
+            self._name_for = (pair, ws.move)
+            kit.put(self.name, ws.move or "")
+        if not can:
+            self.picker.setVisible(False)
+        if self.picker.isVisible():
+            self._sync_picker(on_screen, now.slot, bound and not now.claimed)
+        self._hits(al)
+        self._holds(al)
+        self._dots(al)
+
+    def _refusal(self, al: Alignment | None) -> str:
+        """Why no clip can be used here: another monster's action, or one the game never
+        enters (`allow_unentered` belongs in the file, beside the reason)."""
+        ws = self.ws
+        if not ws.browsing_the_host:
+            return (
+                f"These are {species.label(ws.browsing_species)}'s actions, for comparing: the"
+                f" game runs {species.label(ws.host_species)}'s for your port."
+            )
+        if al is not None and any(f.code == "NEVER_ENTERED" for f in al.errors):
+            return "No clip here: the game was watched and never enters this action."
+        return ""
+
+    def _sync_picker(self, on_screen: int | None, plays: int | None, bound: bool) -> None:
+        ws, sc = self.ws, self.ws.scene
+        if sc is None:
+            return
+        cov = ws.vocabulary().coverage
+        needle = self.clip_filter.text().strip().lower()
+        rows, data, colors = [], [], []
+        for c in sc.clips:
+            sl = cov.slots.get(c.slot)
+            found = ws.manifest_clip(c.slot)
+            name = found[0] if found else ""
+            kind = "" if sl is None else clips.KIND_WORDS[sl.kind][0]
+            label = found[1].label if found else ""
+            cells = [str(c.slot), name, kind, f"{c.frames} loop" if c.loop else str(c.frames)]
+            if needle and needle not in " ".join([*cells, label]).lower():
+                continue
+            rows.append(cells)
+            data.append(c.slot)
+            colors.append(None if sl is None else COVERAGE[sl.kind])
+        self.clips.set_rows(rows, data, colors=colors)
+        self.clips.fit(CLIP_ROWS)
+        self.clips.select_data(on_screen)
+        same = on_screen is not None and on_screen == plays and bound
+        self.use.setEnabled(on_screen is not None and not same)
+
+    def _hits(self, al: Alignment | None) -> None:
+        """What the action hits with: the attack records its code spawns, and their groups."""
+        ws = self.ws
+        p = None if al is None else al.pair
+        host = ws.host_attacks()
+        recs = [] if host is None or p is None else host.records_for(p.attack_ids, ws.host_species)
+        text = ""
+        if host is not None and p is not None and ws.browsing_the_host and p.attack_ids:
+            if recs:
+                text = "Hits with " + "; ".join(
+                    f"attack {a.id} (power {a.power}) using hit group {a.volume}" for a in recs
+                )
+            else:
+                text = (
+                    f"Hits with attack {', '.join(map(str, p.attack_ids))}, whose hit group"
+                    f" cannot be matched for {species.label(ws.host_species)}."
+                )
+        self.hits_text.setText(plain(text))
+        self.hits_text.setVisible(bool(text))
+        sets = sorted({a.volume for a in recs}) if ws.browsing_the_host else []
+        act = self.studio.act
+        self.hits.setVisible(bool(sets))
+        self.hits.fill(
+            tuple(sets),
+            lambda: [
+                kit.button(
+                    f"Edit hit group {s} in Hitboxes",
+                    tip=f"Opens hit group {s} in Hitboxes: yours when you have it, else the"
+                    " base monster's to copy",
+                    on=act("edit set", partial(ws.edit_set, s)),
+                    icon="ph.arrow-square-out",
+                )
+                for s in sets
+            ],
+        )
+
+    def _holds(self, al: Alignment | None) -> None:
+        p = None if al is None else al.pair
+        holds = p is not None and p.next is not None and not p.next
+        self.holds.setVisible(holds)
+        if p is not None:
+            self.holds.setText(
+                f"({p.main},{p.sub}) never ends by itself: played from your mod, the monster stays"
+                " in it. Its move needs an after = in the manifest."
+            )
+
+    def _dots(self, al: Alignment | None) -> None:
+        """The worst finding on one line; every one in More, codes in the tips."""
+        found = [] if al is None else al.findings
+        bad = [f for f in found if f.level != "info" and f.code not in EVERYWHERE]
+        first = max(bad, key=lambda f: f.level == "error", default=None)
+        self.dots.setVisible(first is not None)
+        if first is not None and al is not None:
+            self.dots.setText(plain(first.message))
+            self.dots.setToolTip(" · ".join(f.code for f in bad))
+            self.dots.set_level(worst(bad))
+
+    def _sync_more(self) -> None:
+        ws = self.ws
+        self._sync_species()
+        intel = ws.intel
+        self.graph.sync()
+        self.pairs.setVisible(intel is not None)
+        if intel is not None:
+            self._sync_pairs(intel)
+        al = ws.alignment
+        p = None if al is None else al.pair
+        a1 = "" if p is None else ",".join(map(str, p.a1)) or "-"
+        self.handler.setText(
+            f"code at 0x{p.handler:08X}   anims {a1}" if p is not None and p.handler else ""
+        )
+        self.handler.setVisible(bool(self.handler.text()))
+        self._then(al)
+        self._findings(al)
+        fx = [] if intel is None else intel.framed_effects()
+        self.show_effects.setVisible(bool(fx))
+        self.show_effects.setText(f"Effects of no action ({len(fx)})")
+        self.effects.setVisible(bool(fx) and self.show_effects.isChecked())
+        if fx and self.effects.isVisible():
+            rig = ws.port_rig()
+            self.effects.set_rows(
+                [[str(e.id), "?" if e.bone is None else str(e.bone), str(e.frame)] for e in fx],
+                tips=[
+                    "" if rig is None or e.bone is None else f"on your rig: {rig.describe(e.bone)}"
+                    for e in fx
+                ],
+            )
+            self.effects.fit(6)
+
+    def _sync_species(self) -> None:
         ws = self.ws
         ids, cur, hs = self._choices, ws.browsing_species, ws.host_species
-        key = (tuple(ids), hs)
-        if key != self._species_key:
-            self._species_key = key
+        if (tuple(ids), hs) != self._species_key:
+            self._species_key = (tuple(ids), hs)
             self.species.blockSignals(True)
             self.species.clear()
             for s in ids:
-                self.species.addItem(f"em{s:02d}" + ("  (host)" if s == hs else ""), s)
+                self.species.addItem(species.label(s) + (", base" if s == hs else ""), s)
             self.species.blockSignals(False)
         kit.put(self.species, cur)
-        self.host_note.setText(
-            f"the host this port rides (host_species = {hs})" if ws.browsing_the_host else ""
-        )
         self.browsing.setVisible(not ws.browsing_the_host)
         self.browsing.setText(
-            f"Browsing em{cur or 0:02d}: this port rides em{hs or 0:02d}, so these pairs are not"
-            " the ones its engine dispatches. This compares hosts; it does not re-host. The"
-            " host also picks the frame PAC the porter files clips into, so changing it means a"
-            " rebuild."
+            f"Reading the actions of {species.label(cur)}: the game runs {species.label(hs)}'s"
+            " for your port, not these. This compares; changing the base monster is a rebuild."
         )
-        self.show_host.setText(f"Show em{cur or 0:02d} beside the port")
-        kit.put(self.show_host, ws.show_host)
-        hosts = ws.host_options() if self.compare.isChecked() else None
-        waiting = self.compare.isChecked() and hosts is None
+        on = self.compare.isChecked()
+        hosts = ws.host_options() if on else None
+        waiting = on and hosts is None
         self.hosts_wait.setVisible(waiting)
-        self.hosts.setVisible(self.compare.isChecked() and not waiting)
+        self.hosts.setVisible(on and not waiting)
         if waiting:
             self.poll.start()
         else:
@@ -394,7 +672,7 @@ class ActionPanel(kit.Panel):
             self.hosts.set_rows(
                 [
                     [
-                        f"em{h.species:02d}" + (" (host)" if h.species == hs else ""),
+                        species.label(h.species) + (", base" if h.species == hs else ""),
                         str(h.pairs),
                         str(h.timed),
                         str(h.budget),
@@ -408,24 +686,10 @@ class ActionPanel(kit.Panel):
             self.hosts.fit()
             self.hosts.select_data(cur)
 
-    def _sync_moves(self) -> None:
-        m = self.ws.manifest
-        assert m is not None
-        names = sorted(m.moves)
-        self.no_moves.setVisible(not names)
-        self.moves.setVisible(bool(names))
-        self.moves.set_rows(
-            [[n, f"({m.moves[n].main},{m.moves[n].sub})", m.moves[n].clip or "·"] for n in names],
-            names,
-        )
-        self.moves.fit(5)
-        self.moves.select_data(self.ws.move)
-
     def _sync_pairs(self, intel: SpeciesIntel) -> None:
-        needle = self.filter.text().strip().lower()
-        key = (id(intel), needle)
-        if key != self._rows:
-            self._rows = key
+        needle = self.pairs_filter.text().strip().lower()
+        if (id(intel), needle) != self._pairs_key:
+            self._pairs_key = (id(intel), needle)
             shown = [p for p in intel if not needle or needle in " ".join(pair_row(p)).lower()]
             self.pairs.set_rows(
                 [pair_row(p) for p in shown],
@@ -433,225 +697,58 @@ class ActionPanel(kit.Panel):
                 tips=["\n".join(map(str, p.next or ())) for p in shown],
                 levels=["warning" if p.budget.gated else None for p in shown],
             )
-            self.count.setText(
-                f"{len(shown)} of {len(intel)} pairs em{self.ws.browsing_species or 0:02d}"
-                " dispatches"
+            self.pairs_count.setText(
+                f"{len(shown)} of {len(intel)} actions of {species.label(self.ws.browsing_species)}"
             )
+        self.pairs.fit(ROWS)
         self.pairs.select_data(self.ws.pair)
 
-    def _sync_alignment(self, al: Alignment) -> None:
-        ws = self.ws
-        self.title.setText(f"{al.move}  →  ({al.main},{al.sub})")
-        self.clip.setText(
-            f"clip {al.clip}" + (f", {al.frames} frames" if al.frames else "") if al.clip else ""
-        )
-        self.headline.setText(plain(al.headline))
-        self._host_clips(al)
-        self._hits(al)
-        self._then(al)
-        self._findings(al)
-        self._bind(al)
-        fx = [] if ws.intel is None else ws.intel.framed_effects()
-        self.show_effects.setVisible(bool(fx))
-        self.show_effects.setText(f"Species-wide effects ({len(fx)})")
-        if fx and self.effects_box.isVisible():
-            rig = ws.port_rig()
-            self.effects.set_rows(
-                [[str(e.id), "?" if e.bone is None else str(e.bone), str(e.frame)] for e in fx],
-                tips=[
-                    "" if rig is None or e.bone is None else f"on your rig: {rig.describe(e.bone)}"
-                    for e in fx
-                ],
-            )
-            self.effects.fit(6)
-
-    def _host_clips(self, al: Alignment) -> None:
-        """Which clip the host plays for this action. An a1 its pack lacks says so rather than
-        falling through to another a1: the wrong animal doing the wrong thing."""
-        ws, p, act = self.ws, al.pair, self.studio.act
-        a1s = () if p is None else tuple(p.a1)
-        table = ws.host_clip_table() if ws.show_host and a1s else {}
-        sp = ws.browsing_species or 0
-
-        def build() -> list[QWidget]:
-            out: list[QWidget] = [kit.label("The host plays clip", role="muted", wrap=False)]
-            for a1 in a1s:
-                if not ws.show_host:
-                    out.append(kit.label(str(a1), wrap=False))
-                elif a1 not in table:
-                    lb = kit.label(f"{a1}?", role="muted", wrap=False)
-                    lb.setToolTip(
-                        f"The host's code names clip {a1} and em{sp:02d}'s pack has no such"
-                        " slot: either the action is unreachable, or its clip comes from"
-                        " somewhere this tool cannot see."
-                    )
-                    out.append(lb)
-                else:
-                    frames, loop = table[a1]
-                    b = kit.button(
-                        f"{a1}" + (" ●" if ws.host_clip == a1 else ""),
-                        tip=f"Plays the host's clip {a1} ({frames} frames"
-                        + (", loops" if loop else "")
-                        + f"). Which of the {len(a1s)} runs depends on the game's state.",
-                        on=act("host clip", partial(ws.play_host_clip, a1)),
-                    )
-                    out.append(b)
-            return out
-
-        self.host_plays.setVisible(bool(a1s))
-        self.host_plays.fill((a1s, ws.show_host, tuple(table), ws.host_clip), build)
-        none = ws.show_host and bool(table) and not any(a in table for a in a1s)
-        self.host_none.setVisible(none)
-        self.host_none.setText(
-            f"None of this action's clips is in em{sp:02d}'s pack, so the host beside you shows"
-            " its default pose, not this action."
-        )
-
-    def _hits(self, al: Alignment) -> None:
-        """What this action hits with: the attack records its code spawns, and their sets."""
-        ws, p = self.ws, al.pair
-        host = ws.host_attacks()
-        recs = [] if host is None or p is None else host.records_for(p.attack_ids, ws.host_species)
-        if host is None or p is None or not ws.browsing_the_host:
-            text = ""
-        elif not p.attack_ids:
-            n = p.attack_sites_computed
-            more = f" ({n} computed id{'' if n == 1 else 's'})" if n else ""
-            text = f"Hits with: nothing the static scan can see{more}."
-        elif not recs:
-            ids = ",".join(map(str, p.attack_ids))
-            text = (
-                f"Hits with attack id {ids}, which cannot be resolved for species"
-                f" {ws.host_species} (no id offset is known)."
-            )
-        else:
-            bits = []
-            for a in recs:
-                st = host.set(a.volume)
-                desc = "" if st is None else st.describe()
-                desc = "" if not desc else f" [{desc[:60]}{'...' if len(desc) > 60 else ''}]"
-                bits.append(
-                    f"attack {a.id} (power {a.power}, element 0x{a.element:02X}) with set"
-                    f" {a.volume}{desc}"
-                )
-            text = "Hits with " + "; ".join(bits)
-        self.hits_text.setText(plain(text))
-        self.hits_text.setVisible(bool(text))
-        sets = sorted({a.volume for a in recs}) if ws.browsing_the_host else []
-        act = self.studio.act
-        self.hits.setVisible(bool(sets))
-        self.hits.fill(
-            tuple(sets),
-            lambda: [
-                kit.button(
-                    f"Edit set {s} in Hitboxes",
-                    tip=f"Opens attack set {s} in Hitboxes: your port's copy when it has one,"
-                    " else the host's to adopt",
-                    on=act("edit set", partial(ws.edit_set, s)),
-                    icon="ph.arrow-square-out",
-                )
-                for s in sets
-            ],
-        )
-
-    def _then(self, al: Alignment) -> None:
-        """What the ENGINE does after this pair, beside what the move DECLARES."""
-        ws, p, act = self.ws, al.pair, self.studio.act
+    def _then(self, al: Alignment | None) -> None:
+        """Where the GAME goes after this action, beside what the move DECLARES."""
+        ws, act = self.ws, self.studio.act
+        p = None if al is None else al.pair
         nxt = () if p is None or not p.next else tuple(p.next)
 
         def build() -> list[QWidget]:
-            out: list[QWidget] = [kit.label("When it ends, the engine goes to", role="muted")]
+            out: list[QWidget] = [kit.label("When it ends, the game goes to", role="muted")]
             for e in nxt:
                 tgt = "/".join(f"({m},{s})" for m, s in e.to) or "?"
                 b = kit.button(
                     tgt,
-                    tip=plain(f"Selects {tgt}, the pair this one hands to: {e}"),
-                    on=act("then", partial(ws.select_pair, *e.to[0]) if e.to else lambda: None),
+                    tip=plain(f"Picks {tgt}, the action this one goes to: {e}"),
+                    on=act("then", partial(ws.select_action, *e.to[0]) if e.to else lambda: None),
                 )
                 why = kit.label(f"when {e.reason}" if e.reason else "always", role="muted")
-                row = QWidget()
-                lay = QHBoxLayout(row)
-                lay.setContentsMargins(0, 0, 0, 0)
-                lay.addWidget(b)
-                lay.addWidget(why, 1)  # the reason takes the width, not a wrap
-                out.append(row)
+                out.append(kit.row(b, why, stretch=True))
             return out
 
         self.then.setVisible(bool(nxt))
         self.then.fill(tuple(str(e) for e in nxt), build)
-        holds = p is not None and p.next is not None and not p.next
-        self.then_warn.setVisible(holds)
-        if p is not None:
-            self.then_warn.setText(
-                f"({p.main},{p.sub}) never ends by itself: forced, it stays until something else"
-                " moves the monster. A move here needs `after =`."
-            )
         m = ws.manifest
-        mv = None if m is None or not al.move else m.moves.get(al.move)
+        mv = None if m is None or al is None or not al.move else m.moves.get(al.move)
         text = ""
         if m is not None and mv is not None and mv.after:
             nm = m.moves.get(mv.after)
-            text = f"declared after = {mv.after}" + (
+            text = f"your move goes on to {mv.after}" + (
                 f" ({nm.main},{nm.sub})" if nm else " (no such move!)"
             )
         self.declared.setText(text)
         self.declared.setVisible(bool(text))
 
-    def _findings(self, al: Alignment) -> None:
-        """Folded to a line of codes unless something is wrong."""
-        key = (al.move, al.main, al.sub, al.clip, tuple(al.findings))
-        if key != self._findings_key:
-            self._findings_key = key
-            while (it := self.findings_lay.takeAt(0)) is not None:
-                if (w := it.widget()) is not None:
-                    w.deleteLater()
-            marks = {"error": "x", "warning": "!", "info": "·"}
-            for f in al.findings:
-                lb = kit.Alert(plain(f"{marks.get(f.level, '·')}  {f.message}"), f.level)
-                self.findings_lay.addWidget(lb)
-            n_err, n_warn = len(al.errors), len(al.warnings)
-            s = "" if len(al.findings) == 1 else "s"
-            counts = f": {n_err} error, {n_warn} warning" if n_err or n_warn else ""
-            self.show_findings.setText(f"Show the {len(al.findings)} finding{s}{counts}")
-            if (al.main, al.sub) != self._findings_pair:  # a new pair opens on its errors
-                self._findings_pair = (al.main, al.sub)
-                kit.put(self.show_findings, bool(al.errors))
-            bits: list[tuple[str, Level]] = [
-                (f.code.replace("_", " ").lower(), f.level)
-                for f in al.findings
-                if f.level != "info"
-            ]
-
-            self.dots.setText("  ·  ".join(code for code, _ in bits) or "nothing to flag")
-            self.dots.set_level(worst(al.findings) if bits else "info")
-        p = al.pair
-        a1 = "" if p is None else ",".join(map(str, p.a1)) or "-"
-        self.handler.setText(
-            f"handler 0x{p.handler:08X}   a1 {a1}" if p is not None and p.handler else ""
-        )
-        self.show_findings.setVisible(bool(al.findings))
-        self._fold(bool(al.findings) and self.show_findings.isChecked())
-
-    def _bind(self, al: Alignment) -> None:
-        """Refused while browsing another host, and for a pair the census measured as never
-        entered (`allow_unentered` belongs in the file, beside the reason)."""
-        ws = self.ws
-        can = ws.label_session is not None
-        note = ""
-        if not can:
-            pass
-        elif not ws.browsing_the_host:
-            note = (
-                f"Cannot bind: this pair is em{ws.browsing_species or 0:02d}'s, and the engine"
-                f" runs em{ws.host_species or 0:02d}'s for this port."
-            )
-        elif any(f.code == "NEVER_ENTERED" for f in al.errors):
-            note = "Cannot bind: the game was watched and never enters this pair."
-        else:
-            clip = f" with clip {al.clip}" if al.clip else ""
-            note = f"Writes [moves] on ({al.main},{al.sub}){clip}."
-            self.bind_name.setPlaceholderText(f"move_{al.main}_{al.sub}")
-        ok = can and note.startswith("Writes")
-        self.bind_row.setVisible(ok)
-        self.bind_note.setVisible(bool(note))
-        self.bind_note.setText(note)
+    def _findings(self, al: Alignment | None) -> None:
+        found = [] if al is None else al.findings
+        self.show_findings.setVisible(bool(found))
+        self.show_findings.setText(f"Every finding ({len(found)})")
+        self.findings.setVisible(bool(found) and self.show_findings.isChecked())
+        key = None if al is None else (al.move, al.main, al.sub, al.clip, tuple(found))
+        if key == self._findings_key:
+            return
+        self._findings_key = key
+        while (it := self.findings_lay.takeAt(0)) is not None:
+            if (w := it.widget()) is not None:
+                w.deleteLater()
+        marks = {"error": "x", "warning": "!", "info": "·"}
+        for f in found:
+            lb = kit.Alert(plain(f"{marks.get(f.level, '·')}  {f.message}"), f.level)
+            lb.setToolTip(f.code)
+            self.findings_lay.addWidget(lb)

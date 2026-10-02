@@ -14,16 +14,17 @@ from mhfu_studio.shell.input import Key, Mod, Pointer
 from mhfu_studio.shell.overlay import Recorder
 from mhfu_studio.shell.workspace import Gesture, discover
 from mhfu_studio.ui import kit
-from mhfu_studio.ui.testing import gl_or_skip
+from mhfu_studio.ui.testing import elsewhere, gl_or_skip
 from PySide6.QtWidgets import QDockWidget
 
-DOCKS = ("Timeline", "Moves", "Action", "Scene", "View", "Joints", "Clips", "Parts", "Hitboxes")
+DOCKS = ("Actions", "Clips", "Scene", "View", "Joints", "Hitboxes", "Parts", "Timeline")
 
 
 def test_registers_its_docks() -> None:
     assert "monster" in discover(["monster"])
     ws = MonsterWorkspace()
     assert [d.label for d in ws.docks()] == list(DOCKS)
+    assert [d.label for d in ws.docks() if d.shown] == ["Actions", "Clips", "Hitboxes", "Timeline"]
     assert ws.tool_groups() == ()
 
 
@@ -33,19 +34,20 @@ def test_nothing_open() -> None:
     ws.paint(o)
     assert o.calls == [] and not ws.key(Key("Space")) and not ws.animating()
     assert ws.pointer(Pointer("press", 1, 1, (8, 8))) == Gesture.NONE
-    assert ws.document is None and ws.status() == ""
+    assert ws.document is None and ws.status() == "" and "File > Open" in ws.hint()
 
 
 def test_status_names_the_scene(workspace: MonsterWorkspace) -> None:
-    assert workspace.status() == "t   host em75"
+    assert workspace.status() == "t on Tigrex (em75)"
 
 
 def test_keys_drive_the_transport(workspace: MonsterWorkspace) -> None:
     ws = workspace
     assert ws.vp is not None
-    ws.play_slot(1, 0.0)
+    ws.play_slot(1)
     pb = ws.vp.playback
-    assert ws.key(Key("Space")) and pb.playing
+    assert pb.playing and pb.phase == 0.0, "a picked clip plays from its first frame"
+    assert "clip 1 walk \u00b7 Space pause \u00b7 \u2190 / \u2192 step a frame" in ws.hint()
     assert ws.key(Key("Space")) and not pb.playing
     assert ws.key(Key("Right")) and pb.phase == pb.speed and ws.vp.frame == pb.phase
     assert ws.key(Key("Left")) and pb.phase == 0.0
@@ -57,13 +59,30 @@ def test_keys_drive_the_transport(workspace: MonsterWorkspace) -> None:
 def test_playback_animates(workspace: MonsterWorkspace) -> None:
     ws = workspace
     assert ws.vp is not None
-    ws.play_slot(1, 0.0)
-    assert not ws.animating()
-    ws.play_pause()
+    ws.play_slot(1)
     assert ws.animating()
     for _ in range(4):
         ws.frame(1 / 30)
     assert ws.vp.frame > 0
+
+
+def test_the_host_restarts_with_the_port(workspace: MonsterWorkspace) -> None:
+    ws = workspace
+    assert ws.vp is not None
+    ws.select_pair(1, 4)
+    ws.set_show_host(True)
+    ref = ws.vp.reference
+    assert ref is not None
+    ws.play_slot(2)  # a one-shot of 6 frames
+    for _ in range(5):
+        ws.frame(1 / 30)
+    pb = ws.vp.playback
+    assert pb.at_end and not pb.playing and ref.playback.phase > 0
+    ws.play_pause()
+    assert pb.playing and pb.phase == 0.0 and ref.playback.phase == 0.0 and ref.frame == 0.0
+    ws.frame(1 / 30)
+    ws.play_slot(1)
+    assert pb.phase == 0.0 and ref.playback.phase == 0.0
 
 
 def test_reveal_follows_the_findings(workspace: MonsterWorkspace) -> None:
@@ -79,12 +98,29 @@ def test_reveal_follows_the_findings(workspace: MonsterWorkspace) -> None:
     ws.reveal(("hitbox", 0))
     assert ws.selected_set == 2 and ws.selected_attack_volume == 0
     ws.reveal(("moves", "charge"))
-    assert ws.pair == (1, 4) and ws.vp.clip is not None and ws.take_focus() == "Action"
+    assert ws.pair == (1, 4) and ws.vp.clip is not None and ws.take_focus() == "Actions"
     ws.reveal(("effect", 0))
     assert ws.vp.selected_joint == 2
     ws.reveal(("clips", "walk"))
     assert ws.edit_slot == 1 and ws.take_focus() == "Clips"
     ws.reveal("nonsense")
+
+
+def test_select_action_plays_from_the_start(workspace: MonsterWorkspace) -> None:
+    ws = workspace
+    assert ws.vp is not None
+    ws.play_slot(2)
+    ws.seek(4.0)
+    ws.select_action(1, 4)
+    pb = ws.vp.playback
+    assert (ws.pair, ws.move, ws.graph.picked) == ((1, 4), "charge", (1, 4))
+    assert ws.vp.clip is not None and ws.vp.clip.slot == 1 and pb.phase == 0.0 and pb.playing
+    ws.seek(5.0)
+    ws.select_action(0, 3)
+    assert ws.move is None and ws.vp.clip.slot == 1 and pb.phase == 0.0
+    assert ws.message == "anim 9 is not in this build: the game finds no clip for (0,3)"
+    assert [r.pair for r in ws.action_rows()][:2] == [(1, 4), (3, 9)]
+    assert ws.action_rows() is ws.action_rows(), "made once per manifest"
 
 
 def test_bind_names_the_move(workspace: MonsterWorkspace) -> None:
@@ -96,6 +132,9 @@ def test_bind_names_the_move(workspace: MonsterWorkspace) -> None:
     ws.select_pair(0, 3)
     ws.bind_move()
     assert "move_0_3" in ws.manifest.moves and ws.move == "move_0_3"
+    ws.play_slot(2)
+    ws.bind_move("stop")
+    assert ws.manifest.moves["stop"].clip == "clip_02" and ws.manifest.clips["clip_02"].slot == 2
 
 
 def test_edit_set_opens_hitboxes(workspace: MonsterWorkspace) -> None:
@@ -103,6 +142,7 @@ def test_edit_set_opens_hitboxes(workspace: MonsterWorkspace) -> None:
     ws.edit_set(3)
     assert ws.show_attacks and ws.attacks_source == "host" and ws.selected_set == 3
     assert ws.take_focus() == "Hitboxes"
+    assert ws.hint().endswith("hit group 3: pick one of its hitboxes in Hitboxes")
     ws.edit_set(2)
     assert ws.attacks_source == "port", "the port authors set 2"
 
@@ -114,7 +154,7 @@ def test_the_host_beside(workspace: MonsterWorkspace) -> None:
     ws.set_show_host(True)
     assert ws.vp.reference is not None and ws.host_clip == 1
     ws.browse_species(7)
-    assert ws.vp.reference is None and "no host PAC for em07" in ws.message
+    assert ws.vp.reference is None and "no model for em07" in ws.message
     ws.set_show_host(False)
     assert ws.vp.reference is None
 
@@ -150,8 +190,7 @@ def test_window_builds_the_docks(
 ) -> None:
     """The real window: GL from Qt, every dock of this agent's built from its panel."""
     gl_or_skip()
-    from mhfu_studio.monster.panels.action import ActionPanel
-    from mhfu_studio.monster.panels.moves import MovesPanel
+    from mhfu_studio.monster.panels.action import ActionsPanel
     from mhfu_studio.monster.panels.timeline import TimelinePanel
 
     ws = MonsterWorkspace()
@@ -161,20 +200,51 @@ def test_window_builds_the_docks(
     )
     ws.load(scene, port_doc)
     w = make_window(ws)
-    for label, cls in (("Timeline", TimelinePanel), ("Moves", MovesPanel), ("Action", ActionPanel)):
+    for label, cls in (("Timeline", TimelinePanel), ("Actions", ActionsPanel)):
         d = w.findChild(QDockWidget, f"monster/{label}")
         assert d is not None and isinstance(d.widget(), cls)
         assert kit.missing_tips(d.widget()) == []
-    ws.select_pair(1, 4)
-    ws.focus("Moves")
+    actions = w.findChild(QDockWidget, "monster/Actions")
+    assert actions is not None and actions.isVisible(), "in front of Clips"
+    clips = w.findChild(QDockWidget, "monster/Clips")
+    assert clips is not None and w.tabifiedDockWidgets(actions) == [clips]
+    ws.focus("Clips")
     w.studio.changed()
     w.sync()
-    moves = w.findChild(QDockWidget, "monster/Moves")
-    assert moves is not None and moves.isVisible()
+    assert clips.isVisible()
+
+
+def test_window_shows_the_host(
+    make_window: Callable[..., Any],
+    port_doc: PortDocument,
+    synthetic_pac: bytes,
+    intel75: Any,
+    tmp_path: Path,
+) -> None:
+    """Show the host beside through an action, as its tick box does, then paint."""
+    gl_or_skip()
+    ws = MonsterWorkspace()
+    ws.intel_cache[75] = intel75
+    scene = Scene.from_bytes(
+        synthetic_pac, "t", manifest=port_doc.manifest, path=tmp_path / "t.bin"
+    )
+    ws.load(scene, port_doc)
+    ws.host_scenes[75] = Scene.from_bytes(synthetic_pac, "em75")
+    w = make_window(ws)
+    w.view.grabFramebuffer()
+    assert ws.vp is not None
+    w.studio.act("pick", lambda: ws.select_pair(1, 4))()
+    with elsewhere():
+        w.studio.act("show host", lambda: ws.set_show_host(True))()
+    w.view.grabFramebuffer()
+    assert ws.vp.reference is not None and w.studio.errors == []
 
 
 def test_deploy_needs_a_stick(workspace: MonsterWorkspace, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(MonsterWorkspace, "mods_dir", staticmethod(lambda: None))
+    def none() -> Path:
+        raise FileNotFoundError("no PPSSPP memory stick in ~/x")
+
+    monkeypatch.setattr(MonsterWorkspace, "mods_dir", staticmethod(none))
     assert workspace.exportable() and not MonsterWorkspace().exportable()
     with pytest.raises(FileNotFoundError, match="memory stick"):
         workspace.deploy_hit()
@@ -190,4 +260,4 @@ def test_attacks_resolve_and_export(
     assert workspace.pair_sets() == [2]
     monkeypatch.chdir(tmp_path)
     workspace.export_hit()
-    assert (tmp_path / "t_hit.lua").is_file() and "wrote t_hit.lua" in workspace.message
+    assert (tmp_path / "t_hit.lua").is_file() and "t_hit.lua (id " in workspace.message

@@ -11,6 +11,7 @@ from mhfu_studio.shell.camera import OrbitCamera
 from mhfu_studio.shell.input import Button, Pointer
 from mhfu_studio.shell.manipulator import (
     ARM_PX,
+    MIN_SCALE,
     VIEW_RING,
     Handle,
     Manipulation,
@@ -228,13 +229,30 @@ def test_scale_axis() -> None:
     assert np.allclose(got.matrix, pose(linear=np.diag([1.5, 1.0, 1.0])))
 
 
+def boxes(rec: Recorder) -> dict[Ink, np.ndarray]:
+    """Each scale arm's box centre by its ink."""
+    return {c[4]: (np.add(c[1], c[2])) / 2 for c in rec.calls if c[0] == "rect"}
+
+
+def test_scale_handle_follows() -> None:
+    rec = Recorder()
+    drag(Manipulator(), "scale", px(ARM * X), px(1.5 * ARM * X), rec=rec)
+    got = boxes(rec)
+    assert np.allclose(got[Ink.HOT], px(1.5 * ARM * X), atol=1e-6)
+    assert np.allclose(got[Ink.AXIS_Y], px(ARM * Y), atol=1e-6)
+
+
 def test_uniform_scale() -> None:
-    start = pose((1.0, 0.0, 0.0))
+    start, rec = pose((1.0, 0.0, 0.0)), Recorder()
     c = px(start[:3, 3])
-    *_, got = drag(Manipulator(), "scale", c, (c[0] + 100.0, c[1] + 30.0), start)
+    *_, got = drag(Manipulator(), "scale", c, (c[0] + ARM_PX, c[1] + 30.0), start, rec=rec)
     assert np.allclose(got.matrix, pose((1.0, 0.0, 0.0), 2.0 * np.eye(3)))
-    *_, got = drag(Manipulator(), "scale", c, (c[0] + 60.0, c[1]), start, snap=0.25)
-    assert np.allclose(got.matrix[:3, :3], 1.5 * np.eye(3))
+    a = arm(start[:3, 3])
+    assert np.allclose(boxes(rec)[Ink.AXIS_Z], px(start[:3, 3] + 2.0 * a * Z), atol=1e-6)
+    *_, got = drag(Manipulator(), "scale", c, (c[0] - 0.4 * ARM_PX, c[1]), start, snap=0.25)
+    assert np.allclose(got.matrix[:3, :3], 0.5 * np.eye(3))
+    *_, got = drag(Manipulator(), "scale", c, (c[0] - 2 * ARM_PX, c[1]), start)
+    assert np.allclose(got.matrix[:3, :3], MIN_SCALE * np.eye(3))
 
 
 def test_local_axes() -> None:

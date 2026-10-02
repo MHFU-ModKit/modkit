@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,7 +17,7 @@ from PySide6.QtWidgets import QWidget
 from mhfu_studio.shell import testing
 from mhfu_studio.shell.input import Key, Pointer
 from mhfu_studio.shell.overlay import Ink, Overlay
-from mhfu_studio.shell.workspace import Dock, Gesture, Tool, ToolGroup
+from mhfu_studio.shell.workspace import Dock, Gesture, Shortcut, Tool, ToolGroup
 from mhfu_studio.ui import kit
 
 if TYPE_CHECKING:
@@ -103,7 +104,7 @@ class FakeWorkspace(testing.FakeWorkspace):
     def docks(self) -> Sequence[Dock]:
         return (
             Dock("Items", "left", self._make_items, tip="The document's items, one per row"),
-            Dock("Notes", "right", self._make_notes, tip="Fields to type into", focus=True),
+            Dock("Notes", "right", self._make_notes, tip="Fields to type into"),
         )
 
     def _make_items(self, studio: Studio) -> QWidget:
@@ -141,6 +142,12 @@ class FakeWorkspace(testing.FakeWorkspace):
     def hud(self) -> str:
         return f"{self.name}: {self.status()}"
 
+    def hint(self) -> str:
+        return f"{self.tool}: Delete removes"
+
+    def shortcuts(self) -> Sequence[Shortcut]:
+        return (Shortcut(("Delete",), "Removes the picked item"),)
+
     def take_focus(self) -> str | None:
         label, self.focus = self.focus, None
         return label
@@ -169,6 +176,27 @@ def gl_or_skip() -> None:
     ctx.doneCurrent()
     if not ok:
         pytest.skip(f"GL {ctx.format().version()} is older than 3.3")
+
+
+@contextmanager
+def elsewhere() -> Iterator[None]:
+    """Another GL context current inside, in the window's share group, as Qt's own is once it
+    has composed the window: what an action meets when a click runs it."""
+    from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
+
+    from mhfu_studio.ui.app import surface_format
+
+    ctx, surface = QOpenGLContext(), QOffscreenSurface()
+    ctx.setFormat(surface_format())
+    ctx.setShareContext(QOpenGLContext.globalShareContext())
+    surface.setFormat(surface_format())
+    surface.create()
+    if not (ctx.create() and ctx.makeCurrent(surface)):
+        raise RuntimeError("no second GL context")
+    try:
+        yield
+    finally:
+        ctx.doneCurrent()
 
 
 def no_gl_or_skip() -> None:

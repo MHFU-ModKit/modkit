@@ -7,7 +7,8 @@ its overlay and the HUD through QPainter. Input reaches the workspace as `shell.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Literal
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
@@ -15,6 +16,7 @@ from PySide6.QtGui import (
     QFont,
     QKeyEvent,
     QMouseEvent,
+    QOpenGLContext,
     QPainter,
     QPainterPath,
     QPen,
@@ -26,10 +28,11 @@ from PySide6.QtGui import (
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QWidget
 
+from mhfu_studio.shell.context import borrowed
 from mhfu_studio.shell.input import Button, Key, Mod, Pointer
 from mhfu_studio.shell.overlay import Color, Ink, Point
 from mhfu_studio.shell.text import camera_line, plain
-from mhfu_studio.shell.workspace import Gesture
+from mhfu_studio.shell.workspace import Gesture, Shortcut
 from mhfu_studio.ui import theme
 
 if TYPE_CHECKING:
@@ -40,9 +43,15 @@ if TYPE_CHECKING:
 #: moderngl leaves the pixel store at 1 and QPainter's glyph uploads then shear
 GL_UNPACK_ALIGNMENT, GL_PACK_ALIGNMENT = 0x0CF5, 0x0D05
 #: the card's corner radius, the theme's #Card one
-RADIUS = 12
+RADIUS = 8
 HUD_AT: Point = (10.0, 8.0)
 PAN_BUTTONS = Button.RIGHT | Button.MIDDLE
+#: the camera's gestures, for Help > Keyboard shortcuts
+MOUSE = (
+    Shortcut(("Left-drag",), "Turns the view (Alt-drag where a drag selects)"),
+    Shortcut(("Right-drag", "Middle-drag"), "Pans the view"),
+    Shortcut(("Wheel",), "Zooms the view"),
+)
 
 _BUTTONS = (
     (Qt.MouseButton.LeftButton, Button.LEFT),
@@ -197,10 +206,11 @@ class GLView(QOpenGLWidget):
         self.setMouseTracking(True)
         self.setMinimumSize(320, 240)
         self._clock = time.monotonic()
-        self._screen: tuple[int, moderngl.Framebuffer] | None = None
         #: the gestures each held button's press consumed, until that button's release
         self._held: dict[Button, Gesture] = {}
         self._last: tuple[float, float] | None = None
+        #: the camera's yaw, pitch and distance under the HUD (View > Show camera readout)
+        self.show_camera = False
 
     # ---- GL ---------------------------------------------------------------------------- #
 
@@ -220,6 +230,21 @@ class GLView(QOpenGLWidget):
             ctx.release()
         if live:
             self.doneCurrent()
+
+    @contextmanager
+    def current(self) -> Iterator[None]:
+        """This view's GL context current inside (`Studio.gl_current`), none after; nothing to
+        do before the view has a context, or while it is current (a paint)."""
+        ctx = self.context()
+        if ctx is None or not self.isValid() or QOpenGLContext.currentContext() is ctx:
+            yield
+            return
+        with borrowed():
+            self.makeCurrent()
+            try:
+                yield
+            finally:
+                self.doneCurrent()
 
     def paintGL(self) -> None:  # noqa: N802
         self.studio.guard("draw", self._draw)()
@@ -248,7 +273,8 @@ class GLView(QOpenGLWidget):
         try:
             o = QtOverlay(p, self.font(), (self.width(), self.height()))
             ws.paint(o)
-            hud = "\n".join(t for t in (ws.hud(), camera_line(vp.camera)) if t)
+            camera = camera_line(vp.camera) if self.show_camera else ""
+            hud = "\n".join(t for t in (ws.hud(), camera) if t)
             o.text(HUD_AT, plain(hud))
         finally:
             p.end()
@@ -256,11 +282,9 @@ class GLView(QOpenGLWidget):
             self.update()
 
     def _screen_fbo(self, ctx: moderngl.Context) -> moderngl.Framebuffer:
-        """The widget's own framebuffer; Qt makes a new one on every resize. Never released."""
-        glo = int(self.defaultFramebufferObject())
-        if self._screen is None or self._screen[0] != glo:
-            self._screen = (glo, ctx.detect_framebuffer(glo))
-        return self._screen[1]
+        """The widget's own framebuffer, asked for every frame: a resize makes a new one, which
+        may reuse the old one's name. A reference: never released."""
+        return ctx.detect_framebuffer(int(self.defaultFramebufferObject()))
 
     def _pixel_store(self) -> None:
         ctx = self.context()
@@ -287,6 +311,11 @@ class GLView(QOpenGLWidget):
         self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
     # ---- input ------------------------------------------------------------------------- #
+
+    @property
+    def held(self) -> bool:
+        """A mouse button is down over the view: a drag may be under way."""
+        return bool(self._held)
 
     def _size(self) -> tuple[int, int]:
         return self.width(), self.height()

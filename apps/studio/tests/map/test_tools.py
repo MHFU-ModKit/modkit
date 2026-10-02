@@ -12,11 +12,23 @@ from mhfu.files import Extracted
 from mhfu_studio.map.core.atlas import Atlas
 from mhfu_studio.map.core.edit import COLLISION, FACE, GROUP, OBJECT, Selection
 from mhfu_studio.map.document import MapDocument
-from mhfu_studio.map.tools import GROUPS, LOCAL, MOVE, OPTIONS, PICK, ROTATE, SCALE, SNAP, TOOL
+from mhfu_studio.map.tools import (
+    GROUPS,
+    LAYER,
+    LOCAL,
+    MOVE,
+    OPTIONS,
+    PICK,
+    ROTATE,
+    SCALE,
+    SNAP,
+    TOOL,
+)
 from mhfu_studio.map.workspace import MapWorkspace
 from mhfu_studio.shell.input import Button, Key, Mod, Pointer
 from mhfu_studio.shell.manipulator import ARM_PX, Handle, hit, world_per_px
 from mhfu_studio.shell.overlay import Ink, Recorder
+from mhfu_studio.shell.studio import Studio
 from mhfu_studio.shell.workspace import Gesture, registered
 
 SIZE = (320, 200)
@@ -90,7 +102,7 @@ def test_registered() -> None:
 def test_without_data(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MHFU_DATA", raising=False)
     w = MapWorkspace()
-    assert w.atlas is None and "MHFU_DATA" in w.status() and "MHFU_DATA" in w.hud()
+    assert w.atlas is None and "start page" in w.status() and "start page" in w.hud()
     assert w.pointer(ev("press", (5.0, 5.0))) == Gesture.NONE and not w.key(Key("F"))
     rec = Recorder(SIZE)
     w.paint(rec)
@@ -101,7 +113,7 @@ def test_tool_groups(ws: MapWorkspace) -> None:
     assert [g.id for g in ws.tool_groups()] == [TOOL, PICK, OPTIONS]
     tools = [t for g in GROUPS for t in g.tools]
     keys = [t.key for t in tools if t.key]
-    assert keys == ["Q", "W", "E", "R", "1", "2", "3", "4"]
+    assert keys == ["Q", "W", "E", "R", "1", "2", "3", "4", "C"]
     assert all(t.tip and t.icon.startswith("ph.") for t in tools)
     assert ws.tool_on(TOOL, "select") and ws.tool_on(PICK, OBJECT)
     ws.set_tool(TOOL, ROTATE)
@@ -148,7 +160,7 @@ def test_click_and_shift(ws: MapWorkspace) -> None:
 
 def test_hover(ws: MapWorkspace) -> None:
     ws.pointer(ev("move", crate(ws), Button.NONE))
-    assert ws.tools.hover is not None and "hover sub0.g1" in ws.hud()
+    assert ws.tools.hover is not None
     ws.pointer(ev("leave", (0.0, 0.0), Button.NONE))
     assert ws.tools.hover is None
 
@@ -166,6 +178,42 @@ def test_box(ws: MapWorkspace) -> None:
     assert ws.col_sel.tris and ws.col_sel.tris[0][0] == 1
     click(ws, (1.0, 1.0))
     assert ws.col_sel.empty
+
+
+def test_collision_layer(ws: MapWorkspace) -> None:
+    vp = ws.vp
+    assert vp is not None and not vp.show_collision and not ws.tool_on(OPTIONS, LAYER)
+    ws.set_tool(PICK, COLLISION)
+    assert vp.show_collision and ws.tool_on(OPTIONS, LAYER)
+    ws.set_tool(PICK, OBJECT)
+    assert not vp.show_collision  # put back
+    ws.set_tool(OPTIONS, LAYER, True)
+    ws.set_tool(PICK, COLLISION)
+    ws.set_tool(PICK, FACE)
+    assert vp.show_collision
+    ws.set_tool(PICK, COLLISION)
+    ws.set_tool(OPTIONS, LAYER, False)  # chosen in the mode: it outlives the mode
+    ws.set_tool(PICK, OBJECT)
+    assert not vp.show_collision
+
+
+def test_hidden_collision_is_not_picked(ws: MapWorkspace) -> None:
+    ws.set_tool(PICK, COLLISION)
+    click(ws, crate(ws))
+    assert ws.col_sel.tris
+    ws.set_tool(TOOL, MOVE)
+    assert ws.tools.gizmo_visible
+    ws.set_tool(OPTIONS, LAYER, False)
+    assert not ws.tools.gizmo_visible and ws.tools.col_hover is None
+    ws.set_tool(TOOL, "select")
+    click(ws, crate(ws))
+    ws.pointer(ev("move", crate(ws), Button.NONE))
+    assert ws.col_sel.empty and ws.tools.col_hover is None
+    drag(ws, (0.0, 0.0), (float(SIZE[0]), float(SIZE[1])))
+    assert ws.col_sel.empty
+    ws.set_tool(OPTIONS, LAYER, True)
+    click(ws, crate(ws))
+    assert ws.col_sel.tris
 
 
 def test_alt_drag_orbits(ws: MapWorkspace) -> None:
@@ -192,13 +240,13 @@ def test_move(ws: MapWorkspace) -> None:
     moved = ws.selection.centroid(ws.scene) - start
     assert moved[0] > 100.0 and abs(moved[1]) < 1.0 and abs(moved[2]) < 1.0
     assert ws.session.ops[0]["by"][0] == pytest.approx(moved[0], abs=1.0)
-    assert "applied: transform" in ws.message and ws.document.dirty
+    assert "applied: group 1: moved by" in ws.message and ws.document.dirty
     assert np.allclose(ws.tools.pose()[:3, 3], ws.selection.centroid(ws.scene))
     ws.document.undo()
     ws.refresh()
     ws.frame(0.0)
     assert not ws.session.ops and np.allclose(ws.selection.centroid(ws.scene), start, atol=1.0)
-    assert "applied" not in ws.hud()
+    assert "applied" not in ws.message
 
 
 def test_snap(ws: MapWorkspace) -> None:
@@ -326,8 +374,9 @@ def test_labels(ws: MapWorkspace, game: Extracted, synth: Any) -> None:
     rec = Recorder(SIZE)
     ws.paint(rec)
     texts = [c for c in rec.calls if c[0] == "text"]
-    assert any("-> st098" in c[2] for c in texts) and any("sphere 24" in c[2] for c in texts)
-    exit_label = next(c for c in texts if "-> st098" in c[2])
+    assert any("\u2192 Snowy base camp (st098)" in c[2] for c in texts)
+    assert any("sphere 24" in c[2] for c in texts)
+    exit_label = next(c for c in texts if "(st098)" in c[2])
     assert exit_label[3][:3] == pytest.approx((1.0, 0.55, 0.15))
     ws.vp.show_labels = False
     rec = Recorder(SIZE)
@@ -335,11 +384,27 @@ def test_labels(ws: MapWorkspace, game: Extracted, synth: Any) -> None:
     assert rec.texts() == []
 
 
-def test_hud(ws: MapWorkspace) -> None:
-    assert ws.hud().startswith("st139  Pokke village")
-    assert "drag boxes" in ws.hud()
+def test_hud_and_hint(ws: MapWorkspace) -> None:
+    assert ws.hud() == "Pokke village (st139)"
+    assert ws.hint().startswith("Click an object to select it")
     pick_crate(ws, MOVE)
-    assert "drag a handle to move" in ws.hud() and "sub0.g1: 1 object(s)" in ws.hud()
+    assert ws.hint().startswith("1 object in group 1: drag a handle to move it \u00b7 E rotate")
+    assert "Del remove" in ws.hint()
+    ws.set_tool(PICK, COLLISION)
+    assert ws.hint().startswith("Click a collision triangle to move it")
+
+
+def test_revert_opens_the_file_again(ws: MapWorkspace, doc_dir: Path) -> None:
+    move = {"op": "transform", "sub": 0, "group": 1, "vertices": [0, 1, 2], "by": [0, 9, 0]}
+    d = MapDocument("d", 0, doc_dir)
+    d.ensure_stage(139).ops.append(move)
+    d.save()
+    ws.open(doc_dir)
+    assert ws.session is not None
+    ws.session.push([move])
+    assert ws.doc.dirty
+    Studio([ws]).revert()
+    assert not ws.doc.dirty and ws.session is not None and len(ws.session.ops) == 1
 
 
 def test_open_and_reveal(ws: MapWorkspace, doc_dir: Path) -> None:
@@ -355,8 +420,11 @@ def test_open_and_reveal(ws: MapWorkspace, doc_dir: Path) -> None:
     assert ws.document.directory == doc_dir and ws.scene is not None and ws.scene.stage == 139
     assert ws.can_open(doc_dir / "map.toml") and not ws.can_open(doc_dir / "a.pac")
     ws.reveal((98, 0))
-    assert ws.scene.stage == 98 and ws.selection.n_vertices == 3 and "op 0" in ws.message
+    assert ws.scene.stage == 98 and ws.selection.n_vertices == 3
+    assert ws.message.startswith("Snowy base camp (st098), edit 1: ")
+    assert ws.take_focus() == "Selection" and ws.take_focus() is None
     ws.reveal((98, 1))
     assert ws.col_sel.tris == [(0, 1)] and ws.tools.kind == COLLISION
+    assert ws.take_focus() == "Collision"
     ws.reveal("nothing")
     assert ws.scene.stage == 98

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """Where the studio finds a host species' intel: a directory given, else a cache built on demand
-from the extracted game (`MHFU_DATA`) through `mhfu.em.intel.build`.
+from the extracted game (`places.MHFU`) through `mhfu.em.intel.build`.
 
 The cache is `$XDG_CACHE_HOME/mhfu-studio/species/emNN.json` (`~/.cache` without the variable);
 a cached document is rebuilt when its overlay's sha1 is not the extracted overlay's. Intel with a
@@ -19,10 +19,28 @@ from mhfu import files
 from mhfu.em.intel import HostSummary, SpeciesIntel
 from mhfu.files import Extracted
 
+from mhfu_studio.shell import places
+
+#: names checked against the game; any other species shows its id alone
+NAMES = {75: "Tigrex"}
+
+
+def label(species: int | None) -> str:
+    """`Tigrex (em75)`; `em07` without a checked name."""
+    if species is None:
+        return "no base monster"
+    name = NAMES.get(species)
+    return f"{name} (em{species:02d})" if name else f"em{species:02d}"
+
+
+def cache_root() -> Path:
+    """The studio's per-user cache."""
+    base = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
+    return Path(base) / "mhfu-studio"
+
 
 def cache_dir() -> Path:
-    base = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
-    return Path(base) / "mhfu-studio" / "species"
+    return cache_root() / "species"
 
 
 def _name(species: int) -> str:
@@ -53,21 +71,33 @@ def cached(species: int, game: Extracted, root: Path | None = None) -> SpeciesIn
     return SpeciesIntel(doc, str(path))
 
 
+def load(species: int, root: Path | None = None, data: str | Path | None = None) -> SpeciesIntel:
+    """From `root` when given, else the cache over `data` or `places.MHFU`; `LookupError` says
+    why there is none and what to do."""
+    if root is not None:
+        path = root / _name(species)
+        if not path.is_file():
+            raise LookupError(f"{root} has no {path.name}: write it with `mhfu intel`")
+        return SpeciesIntel.load(path)
+    if species not in files.EM_SPECIES:
+        raise LookupError(
+            f"em{species:02d} has no overlay in the game: check host_species in the manifest"
+        )
+    try:
+        game = places.extracted(given=data)
+    except FileNotFoundError as e:
+        raise LookupError(f"it is built from the extracted game, and there is none ({e})") from e
+    return cached(species, game)
+
+
 def find(
     species: int, root: Path | None = None, data: str | Path | None = None
 ) -> SpeciesIntel | None:
-    """From `root` when given (None when it has no file for the species), else the cache over
-    `data` or `MHFU_DATA`; None when neither is there or the species has no overlay."""
-    if root is not None:
-        path = root / _name(species)
-        return SpeciesIntel.load(path) if path.is_file() else None
-    if species not in files.EM_SPECIES:
-        return None
+    """`load`, None where it would say why."""
     try:
-        game = Extracted.find(data)
-    except FileNotFoundError:
+        return load(species, root, data)
+    except LookupError:
         return None
-    return cached(species, game)
 
 
 def survey(root: Path | None = None, data: str | Path | None = None) -> list[HostSummary]:

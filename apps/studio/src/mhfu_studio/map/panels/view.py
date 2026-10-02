@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The View panel: draw mode, the layers, camera presets, the colour gain. Nothing here
-changes the map."""
+"""The View panel: how the area is drawn, its layers and camera presets; the expert layers
+and the colour gain under More. Nothing here changes the map. Collision shows from the
+toolbar and looks as the Collision panel says."""
 
 from __future__ import annotations
 
@@ -23,13 +24,14 @@ if TYPE_CHECKING:
     from ..render.viewport import MapViewport
     from ..workspace import MapWorkspace
 
-MODE_TIPS = (
-    "textured: texture times vertex colour, as the game draws it",
-    "vertex colour: the baked lighting alone, to judge the shading",
-    "texture only: the textures without lighting, to see what a slot looks like",
-    "by group: each mesh group its own colour, to see where one ends",
-    "flat: one colour, to read the shape alone",
-)
+#: each of `MODES` by its name in the list
+MODE_NAMES = {
+    "textured": "As in the game",
+    "vertex colour": "Lighting only",
+    "texture only": "Textures only",
+    "by group": "A colour per group",
+    "flat": "One flat colour",
+}
 VIEW_TIPS = {
     "iso": "From above at an angle: the overview",
     "top": "Straight down, like a map",
@@ -39,6 +41,10 @@ VIEW_TIPS = {
     "low": "Close to the ground, looking across",
 }
 Owner = Callable[[], object | None]
+
+
+def modes() -> list[tuple[str, str]]:
+    return [(str(i), MODE_NAMES[m]) for i, m in enumerate(MODES)]
 
 
 class ViewPanel(kit.Panel):
@@ -56,95 +62,43 @@ class ViewPanel(kit.Panel):
         def lens() -> object | None:
             return ws.vp.camera if ws.vp is not None else None
 
-        draw = kit.Section("Draw", tip="How the section's surfaces are drawn")
+        draw = kit.Section("Draw", tip="How the area's surfaces are drawn")
         self.mode = kit.choice(
-            [(str(i), m) for i, m in enumerate(MODES)],
-            tip="What colours the surfaces.\n" + "\n".join(MODE_TIPS),
+            modes(),
+            tip="What colours the surfaces: as the game draws them, the lighting or the textures"
+            " alone, a colour per group, or one flat colour",
             on=lambda m: self._set(mesh, "mode", int(m)),
-        )
-        self.gain = kit.Slider(
-            0.5,
-            2.5,
-            1.0,
-            tip="Brightness: texture times vertex colour times this. 1.0 is a plain multiply;"
-            " the PSP's 'double' mode would be 2.0. Not yet checked against a screenshot.",
-            on=lambda v: self._set(mesh, "gain", v),
         )
         form = kit.Form()
         form.row("Colours", self.mode)
-        form.row("Gain", self.gain)
         draw.body.addWidget(form)
-        for text, tip, owner, attr in (
-            (
+        draw.body.addWidget(
+            self._toggle(
                 "Backdrop (sky, far terrain)",
                 "Shows the sky dome and the far scenery around the playable area",
                 mesh,
                 "show_backdrop",
-            ),
-            ("Wireframe", "Draws the triangle edges over the surfaces", vp, "wireframe"),
-            (
-                "Fog colour as background",
-                "Fills the empty background with the section's own fog colour, as in the"
-                " game; off, it is a neutral grey",
-                vp,
-                "use_fog_background",
-            ),
-        ):
-            draw.body.addWidget(self._toggle(text, tip, owner, attr))
-
-        layers = kit.Section("Layers", tip="What is drawn besides the section itself")
-        layers.body.addWidget(
-            self._toggle("Mesh", "The visible scenery: what the player sees", vp, "show_mesh")
-        )
-        layers.body.addWidget(
-            self._toggle(
-                "Collision",
-                "The invisible floors and walls the player stands on and bumps into, coloured"
-                " by kind: floor, wall, climbable, sinking, wading",
-                vp,
-                "show_collision",
             )
         )
-        self.collision = [
-            self._toggle("Fill", "Draws the collision triangles filled", vp, "collision_fill"),
-            self._toggle("Edges", "Draws the collision triangles' edges", vp, "collision_edges"),
-            self._toggle(
-                "X-ray",
-                "Shows the collision through the scenery, so walls behind a hill show too",
-                vp,
-                "collision_xray",
-            ),
-        ]
-        sub = kit.row(*self.collision, stretch=True, spacing=12)
-        sub.setContentsMargins(22, 0, 0, 0)
-        layers.body.addWidget(sub)
+        draw.body.addWidget(
+            self._toggle("Wireframe", "Draws the triangle edges over the surfaces", vp, "wireframe")
+        )
+
+        layers = kit.Section("Layers", tip="What is drawn besides the area itself")
         for text, tip, attr in (
-            (
-                "Broadphase lattice",
-                "The grid the game uses to find nearby collision quickly; a triangle is only"
-                " solid where its cells list it",
-                "show_lattice",
-            ),
-            (
-                "Exits",
-                "The invisible cylinders that take the player to another section",
-                "show_exits",
-            ),
-            (
-                "Arrivals",
-                "Where the player lands when coming in from another section",
-                "show_arrivals",
-            ),
-            (
-                "Overlay spheres",
-                "Spots the section's code places, such as the supply box's prompt",
-                "show_spheres",
-            ),
-            ("Bounds", "The box around the section's playable area", "show_bounds"),
-            ("Axes", "The world's x, y and z axes at the origin", "show_axes"),
-            ("Labels", "Names over the exits, arrivals and spheres", "show_labels"),
+            ("Mesh", "The visible scenery: what the player sees", "show_mesh"),
+            ("Exits", "The invisible cylinders that take the player to another area", "show_exits"),
+            ("Arrivals", "Where the player lands coming in from another area", "show_arrivals"),
+            ("Labels", "Names over the exits, arrivals and marker spheres", "show_labels"),
         ):
             layers.body.addWidget(self._toggle(text, tip, vp, attr))
+        layers.body.addWidget(
+            kit.label(
+                "Collision: Show collision on the toolbar (C); the Collision panel sets how it"
+                " looks.",
+                role="muted",
+            )
+        )
 
         camera = kit.Section("Camera", tip="Where the view looks from")
         names = list(LENS.views)
@@ -166,14 +120,14 @@ class ViewPanel(kit.Panel):
         camera.body.addWidget(
             kit.row(
                 kit.button(
-                    "Frame section",
-                    tip="Fits the whole section into the view (F in the view)",
-                    on=self._camera("frame section", lambda v: v.frame_all()),
+                    "Frame area",
+                    tip="Fits the whole area into the view (F in the view)",
+                    on=self._camera("frame area", lambda v: v.frame_all()),
                 ),
                 kit.button(
                     "Hunter's eye",
-                    tip="Stands the camera where the player arrives, at eye height, facing the"
-                    " way the exit table says (0 is assumed to face +Z; unverified)",
+                    tip="Stands the camera where the player arrives, at eye height (which way"
+                    " it faces is a guess)",
                     on=self._camera("hunter's eye", lambda v: v.stand_at_entry()),
                 ),
                 stretch=True,
@@ -191,17 +145,55 @@ class ViewPanel(kit.Panel):
         fov.row("Field of view", self.fov)
         camera.body.addWidget(fov)
 
+        more = kit.More(tip="Brightness, and the layers for checking the game's own data")
+        self.gain = kit.Slider(
+            0.5,
+            2.5,
+            1.0,
+            tip="Texture times vertex colour times this; 1.0 is a plain multiply. Not yet"
+            " checked against the game.",
+            on=lambda v: self._set(mesh, "gain", v),
+        )
+        gain = kit.Form()
+        gain.row("Brightness", self.gain)
+        more.body.addWidget(gain)
+        for text, tip, owner, attr in (
+            (
+                "Fog colour as background",
+                "Fills the empty background with the area's fog colour, as the game does",
+                vp,
+                "use_fog_background",
+            ),
+            (
+                "Collision grid",
+                "The grid the game looks collision up in; a triangle is solid only where its"
+                " cells list it",
+                vp,
+                "show_lattice",
+            ),
+            (
+                "Marker spheres",
+                "Spots the area's code places, such as the supply box's prompt",
+                vp,
+                "show_spheres",
+            ),
+            ("Play area box", "The box around the area's playable part", vp, "show_bounds"),
+            ("Axes", "The world's x, y and z axes at the origin", vp, "show_axes"),
+        ):
+            more.body.addWidget(self._toggle(text, tip, owner, attr))
+
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
-        for s in (draw, layers, camera):
+        for s in (draw, layers, camera, more):
             lay.addWidget(s)
         lay.addStretch(1)
         self.gate = Gate(page, "")
         self.body.addWidget(self.gate)
 
     def _toggle(self, text: str, tip: str, owner: Owner, attr: str) -> QCheckBox:
-        b = kit.check(text, tip=tip, on=lambda on: self._set(owner, attr, on))
+        """A checkbox showing `owner().attr`."""
+        b = kit.check(text, tip=tip, on=lambda v: self._set(owner, attr, v))
         self._toggles.append((b, owner, attr))
         return b
 
@@ -242,12 +234,10 @@ class ViewPanel(kit.Panel):
             if o is not None:
                 with QSignalBlocker(b):
                     b.setChecked(bool(getattr(o, attr)))
-        for b in self.collision:
-            b.setEnabled(vp.show_collision)
         mesh = vp.mesh
         self.mode.setEnabled(mesh is not None)
         self.gain.setEnabled(mesh is not None)
         if mesh is not None:
-            kit.refill(self.mode, [(str(i), m) for i, m in enumerate(MODES)], str(mesh.mode))
+            kit.refill(self.mode, modes(), str(mesh.mode))
             self.gain.set(mesh.gain)
         self.fov.set(vp.camera.fov)

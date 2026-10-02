@@ -3,6 +3,7 @@
 import shutil
 
 import pytest
+from mhfu import inject
 from mhfu_port import manifest
 from mhfu_studio.cli import main
 
@@ -46,7 +47,7 @@ def test_scene(synthetic_pac, tmp_path, capsys):
     pac.write_bytes(synthetic_pac)
     assert main(["port", "scene", str(pac), "--clips", "--groups", "--slot", "1"]) == 0
     out = capsys.readouterr().out
-    assert "3 bones" in out and "[partial]" in out and "clip slot_01  frame 5/10" in out
+    assert "3 bones" in out and "[partial]" in out and "clip clip_01  frame 5/10" in out
 
 
 def test_check(offline, synthetic_pac, capsys):
@@ -72,6 +73,13 @@ def test_hit(offline, tmp_path, capsys, monkeypatch):
     assert 'P.hit("t", {' in capsys.readouterr().out
     assert main(["port", "hit", str(offline), "--capacity", "0"]) == 0
     assert (tmp_path / "t_hit.lua").is_file() and "truncated" in capsys.readouterr().out
+    stick = tmp_path / "PSP"
+    (stick / inject.MODS_SUBDIR).mkdir(parents=True)
+    monkeypatch.setattr(inject, "MEMSTICK_ROOTS", (str(stick),))
+    out = tmp_path / "o.lua"
+    assert main(["port", "hit", str(offline), "-o", str(out), "--deploy"]) == 0
+    assert (stick / inject.MODS_SUBDIR / "o.lua").read_text() == out.read_text()
+    assert "deployed o.lua + lib/" in capsys.readouterr().out
 
 
 def test_clips(games, ports, tmp_path, capsys):

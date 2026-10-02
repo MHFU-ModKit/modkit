@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Assets panel: the row's other sections, their objects and texture slots, to copy here."""
+"""The Assets panel: the map's other areas, their objects and texture slots, to copy here;
+the group that draws a copy under More."""
 
 from __future__ import annotations
 
@@ -14,7 +15,8 @@ from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit
 
 from ..core import shapes
-from ..core.edit import OBJECT, EditError, Selection
+from ..core.atlas import stage_name, stage_title
+from ..core.edit import OBJECT, EditError, Selection, count
 from .common import Gate, thumbnail
 
 if TYPE_CHECKING:
@@ -33,8 +35,8 @@ def object_label(g: MeshGroup, c: int) -> str:
     ids = g.component_vertices(c)
     size = g.positions[ids].max(0) - g.positions[ids].min(0)
     return (
-        f"object {c}  {len(ids)} v  {len(g.component_faces(c))} f"
-        f"  {size[0]:.0f}x{size[1]:.0f}x{size[2]:.0f}"
+        f"object {c}: {count(len(g.component_faces(c)), 'triangle')},"
+        f" {size[0]:.0f} x {size[1]:.0f} x {size[2]:.0f}"
     )
 
 
@@ -71,50 +73,42 @@ class AssetsPanel(kit.Panel):
 
         self.section = kit.choice(
             [],
-            tip="The section to copy from: any section of the loaded one's row, itself too",
+            tip="The area to copy from: any area of the loaded one's map, itself too",
             on=lambda v: self._pick("src", int(v)),
         )
-        self.counts = kit.label(role="muted")
         head = kit.Form()
         head.row("From", self.section)
 
         obj = kit.Section(
-            "Copy an object",
-            tip="A piece of scenery from that section, drawn by a group of this one",
+            "Copy an object", tip="A piece of scenery from that area, drawn by a group of this one"
         )
         self.group = kit.choice(
             [],
-            tip="The mesh group to take an object from. A group draws all its triangles with"
-            " one texture; each line shows its faces, its texture slot and its objects.",
+            tip="The group to take an object from: a group draws all its triangles with one"
+            " texture",
             on=lambda v: self._pick("gid", v),
         )
         self.object = kit.choice(
             [],
             tip="An object of that group: one connected piece of mesh, largest first, with its"
-            " vertices (v), faces (f) and size",
+            " triangles and size",
             on=lambda v: self._pick("obj", v),
-        )
-        self.target = kit.choice(
-            [],
-            tip="The group here that draws the copy. A group can only draw as many triangles as"
-            " its free drawing slots hold (its budget); objects of it you select in the view"
-            " give their slots up to the copy.",
-            on=lambda v: self._pick("into", v),
         )
         form = kit.Form()
         form.row("Group", self.group)
         form.row("Object", self.object)
-        form.row("Into group", self.target)
         self.need = kit.Alert(level="info")
         self.mismatch = kit.Alert()
         self.where = kit.label(role="muted")
+        self.where.setToolTip(
+            "Where the Add panel puts a new shape: the selection, the last click or a typed point"
+        )
         self.unsaved = kit.Alert(
-            "Save the document first: the copy is written into its assets/ folder."
+            "Save the document first (File > Save): the copy is written into its assets/ folder."
         )
         self.copy_button = kit.button(
             "Copy the object here",
-            tip="Copies the object into the chosen group here, where the Add panel puts a new"
-            " shape (the selection, the last click or a typed point) and turned by its"
+            tip="Copies the object here, where the Add panel puts a new shape and turned by its"
             " rotation. The copy is saved as an OBJ file in the document's assets/ folder.",
             on=studio.act("copy object", self.copy),
             role="primary",
@@ -124,12 +118,11 @@ class AssetsPanel(kit.Panel):
             obj.body.addWidget(w)
 
         tex = kit.Section(
-            "Copy a texture",
-            tip="A picture from that section's texture bank, into a slot of this one",
+            "Copy a texture", tip="A picture from that area's textures, into a slot of this one"
         )
         self.slot_box = kit.choice(
             [],
-            tip="A slot of that section's texture bank: one numbered picture, with its size",
+            tip="A slot of that area's textures: one numbered picture, with its size",
             on=lambda v: self._pick("slot", v),
         )
         self.thumb = QLabel()
@@ -137,8 +130,8 @@ class AssetsPanel(kit.Panel):
         self.goes = kit.label(role="muted")
         self.copy_tex = kit.button(
             "Copy the texture",
-            tip="Replaces a slot of this section with that picture: everything here wearing the"
-            " slot wears the new one. The running game shows a texture change at once.",
+            tip="Replaces a slot of this area with that picture: everything here wearing the"
+            " slot wears the new one. Send to game shows it in the running game.",
             on=studio.act("copy texture", self.copy_texture),
         )
         slots = kit.Form()
@@ -146,10 +139,23 @@ class AssetsPanel(kit.Panel):
         for w in (slots, self.thumb, self.goes, self.copy_tex):
             tex.body.addWidget(w)
 
+        more = kit.More(tip="The group here that draws a copied object, and what the area holds")
+        self.target = kit.choice(
+            [],
+            tip="The group here that draws the copy, in its free drawing slots or those of its"
+            " objects you select. Picking something in the view picks its group.",
+            on=lambda v: self._pick("into", v),
+        )
+        into = kit.Form()
+        into.row("Into group", self.target)
+        self.counts = kit.label(role="muted")
+        more.body.addWidget(into)
+        more.body.addWidget(self.counts)
+
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
-        for part in (head, self.counts, obj, tex):
+        for part in (head, obj, tex, more):
             lay.addWidget(part)
         lay.addStretch(1)
         self.obj_section, self.tex_section = obj, tex
@@ -211,7 +217,7 @@ class AssetsPanel(kit.Panel):
         if sess is None or src is None or tg is None or self.src is None:
             return
         if sess.base_dir is None:
-            ws.message = "save the document first: the copy is written into its assets/ folder"
+            ws.message = "save the document first (File > Save): the copy goes into its assets/"
             return
         g, cid = src
         other = self.other()
@@ -259,7 +265,7 @@ class AssetsPanel(kit.Panel):
         assert sc is not None and atlas is not None
         secs = [x for x in atlas.row(ws.row).sections if x.present] if ws.row is not None else []
         if not secs:
-            self.gate.need("Nothing to copy from", "The loaded section's row has no section.")
+            self.gate.need("Nothing to copy from", "The loaded area's map has no other area.")
             return
         if self.src not in [x.stage for x in secs]:
             self.src = secs[0].stage
@@ -268,7 +274,7 @@ class AssetsPanel(kit.Panel):
             [
                 (
                     str(x.stage),
-                    f"st{x.stage:03d}  {x.name}{'  (loaded)' if x.stage == sc.stage else ''}",
+                    f"{stage_title(x.stage)}{'  (this one)' if x.stage == sc.stage else ''}",
                 )
                 for x in secs
             ],
@@ -278,11 +284,12 @@ class AssetsPanel(kit.Panel):
         self.obj_section.setVisible(other is not None)
         self.tex_section.setVisible(other is not None)
         if other is None:
-            self.counts.setText(f"st{self.src:03d} could not be loaded.")
+            self.counts.setText(f"{stage_title(self.src)} could not be loaded.")
             return
         self.counts.setText(
-            f"{len(other.groups)} groups, {sum(g.n_components for g in other.groups)} objects,"
-            f" {len(other.textures)} textures"
+            f"{stage_name(self.src)} holds {count(len(other.groups), 'group')},"
+            f" {count(sum(g.n_components for g in other.groups), 'object')} and"
+            f" {count(len(other.textures), 'texture')}."
         )
         self._sync_object(sc, other)
         self._sync_texture(other)
@@ -299,8 +306,8 @@ class AssetsPanel(kit.Panel):
             [
                 (
                     group_id(g.key),
-                    f"{g.label}  {g.n_faces} faces  tex {'-' if g.untextured else g.texture}"
-                    f"  {g.n_components} obj",
+                    f"{g.label}: {count(g.n_components, 'object')}, "
+                    + ("no texture" if g.untextured else f"texture slot {g.texture}"),
                 )
                 for g in groups
             ],
@@ -331,11 +338,11 @@ class AssetsPanel(kit.Panel):
         cap = self._memo("capacity", (tg, sess.revision, sac), lambda: sess.capacity(tg.key, sac))
         tris = self._memo("faces", (g, cid), lambda: len(g.component_faces(cid)))
         note = " (replacing the selection)" if sac else ""
-        self.need.setText(f"Needs {tris} triangles; {cap} free in {tg.label}{note}.")
+        self.need.setText(f"Needs {tris} triangles; room for {cap} in {tg.label}{note}.")
         self.need.set_level("error" if tris > cap else "info")
         self.mismatch.setText(
-            f"It wears slot {g.texture} of st{self.src:03d}, which differs from this section's"
-            f" slot {g.texture}: copy that texture too (below), or it wears {tg.label}'s."
+            f"It wears texture slot {g.texture}, which holds another picture here: copy that"
+            f" texture too (below), or it wears {tg.label}'s."
         )
         differs = self._memo("mismatch", (g, sc.textures), lambda: _differs(g, sc, other))
         self.mismatch.setVisible(differs)
@@ -346,7 +353,7 @@ class AssetsPanel(kit.Panel):
 
     def _sync_texture(self, other: MapScene) -> None:
         ws = self.ws
-        slots = [(str(t.index), f"{t.index}  {t.width}x{t.height}") for t in other.textures]
+        slots = [(str(t.index), f"slot {t.index} ({t.width} x {t.height})") for t in other.textures]
         if self.slot not in [s for s, _ in slots]:
             self.slot = slots[0][0] if slots else None
         kit.refill(self.slot_box, slots, self.slot)

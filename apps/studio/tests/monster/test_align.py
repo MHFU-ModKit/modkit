@@ -31,20 +31,33 @@ def codes(a):
 def test_headline(make, species, make_pair):
     m = make(MOVE)
     a = AL.align(m, "lunge", species([make_pair(1, 4, event_frames=[40.0, 60.0])]))
-    assert "tests frames 40, 60" in a.headline and "on the 40 test (+1.0)" in a.headline
+    assert "checks frames 40, 60" in a.headline and "on the 40 check (+1.0)" in a.headline
     a = AL.align(m, "lunge", species([make_pair(1, 4, event_frames=[50.0])]))
     assert "9.0 frame(s) early" in a.headline and codes(a)["IMPACT_OFF_GATE"] == "warning"
     a = AL.align(m, "lunge", species([make_pair(1, 4)]))
-    assert "only the clip's LENGTH" not in a.headline and "nothing has to line up" in a.headline
+    assert "only the clip's length" not in a.headline and "nothing has to line up" in a.headline
     assert codes(a)["NO_FIXED_FRAMES"] == "info" and codes(a)["ENDS_ON_CLIP"] == "info"
+
+
+def test_timing_words():
+    assert AL.timing([], 30, 100).text == "–" and AL.timing([], 30, 100).level is None
+    assert AL.timing([40], None, 100).text == "check 40"
+    assert AL.timing([40, 70, 90], None, 100).text == "check 40…"
+    assert "checks frame 40, 70, 90." in AL.timing([40, 70, 90], None, 100).detail
+    assert AL.timing([40], 41, 100).text == "on time"
+    assert AL.timing([40], 47, 100).text == "7 late"
+    early = AL.timing([40, 70], 32, 100)
+    assert early.level == "warning" and "8 frames early for the 40 check" in early.detail
+    late = AL.timing([40, 120], 41, 100)
+    assert (late.text, late.level) == ("clip too short", "error")
 
 
 def test_no_impact(make, species, make_pair):
     m = make(MOVE.replace("impact_frame = 41\n", ""))
     a = AL.align(m, "lunge", species([make_pair(1, 4, event_frames=[40.0])]))
-    assert "records no impact frame yet" in a.headline
+    assert "has no impact frame yet" in a.headline
     a = AL.align(m, "lunge", species([make_pair(1, 4)]))
-    assert "only the clip's LENGTH matters" in a.headline
+    assert "only the clip's length matters" in a.headline
 
 
 def test_gates(make, species, make_pair):

@@ -30,9 +30,10 @@ from mhp_formats.skeleton import P3RD_MAGIC, Skeleton
 from mhp_formats.tmh import Tmh
 from numpy.typing import NDArray
 
-from mhfu_studio.monster.clips import build_id
+from mhfu_studio.monster.clips import build_id, clip_key
 from mhfu_studio.monster.core.pose import Pose
 from mhfu_studio.monster.inputs import built
+from mhfu_studio.shell import places
 
 MHFU = "mhfu"
 MHP3RD = "mhp3rd"
@@ -96,7 +97,7 @@ class Clip:
 
     @property
     def name(self) -> str:
-        return self.names[0] if self.names else f"slot_{self.slot:02d}"
+        return self.names[0] if self.names else clip_key(self.slot)
 
 
 def _array(rows: Sequence[Sequence[float]], width: int) -> fk.Floats | None:
@@ -209,8 +210,8 @@ def _fu_clips(port: Port, notes: list[str]) -> list[Clip]:
     partial = [c.slot for c in out if not c.whole_rig]
     if partial:
         notes.append(
-            f"slots {partial} hold a PARTIAL clip, in only some of the {len(live)} skeleton parts: "
-            "they pose the joints they own and leave the rest at bind"
+            f"anims {', '.join(map(str, partial))} are partial: they move the joints of only "
+            f"some of the {len(live)} skeleton parts and leave the rest still"
         )
     return out
 
@@ -224,7 +225,7 @@ def _donor_clips(
         return [], None
     if d.em is None:
         notes.append(
-            f"no em id for this donor, so the record map falls back to offset "
+            f"no em id for the original, so the record map falls back to offset "
             f"{records.DEFAULT_OFFSET} with no skips: very probably WRONG. Pin it with the fork "
             "rule (mhfu_port.records)."
         )
@@ -403,7 +404,7 @@ class Scene:
         """The port: its built PAC at `pac`, else built in memory from the extracted games; or
         its donor (`side="source"`) through the porter's own reading."""
         if side == "source":
-            games = data or Data.find()
+            games = data or places.games()
             em = build.em_of(m)
             return cls.from_bytes(
                 games.p3rd.read(m.source.model),

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
+from mhfu_studio.shell import places
 from mhfu_studio.shell.studio import doc_name
 from mhfu_studio.shell.text import plain
 
@@ -51,10 +52,21 @@ def ask_open(parent: QWidget, studio: Studio) -> Path | None:
 
 
 def open_document(parent: QWidget, studio: Studio) -> None:
-    """Asks for a document and opens it; says why when it did not open (a cancel is silent)."""
+    """Asks for a document and opens it (`Studio.open_later`); says why when it did not open
+    (a cancel is silent, a wait shows on the start page)."""
     path = ask_open(parent, studio)
-    if path is not None and not studio.open(path) and studio.message:
-        warn(parent, "Not opened", plain(studio.message))
+    if path is not None and not studio.open_later(path) and studio.opening is None:
+        if studio.message:
+            warn(parent, "Not opened", plain(studio.message))
+
+
+def ask_folder(parent: QWidget, place: places.Place) -> Path | None:
+    """A folder for `place`, the dialog starting where it is now."""
+    now = places.find(place).path
+    got = QFileDialog.getExistingDirectory(
+        parent, f"Choose the {place.name}", str(now if now is not None else Path.home())
+    )
+    return Path(got) if got else None
 
 
 def ask_save_as(parent: QWidget, ws: Workspace) -> Path | None:
@@ -75,6 +87,30 @@ def confirm_unsaved(parent: QWidget, names: Sequence[str]) -> Answer:
         b.Save,
     )
     return "save" if got == b.Save else "discard" if got == b.Discard else "cancel"
+
+
+def revert_box(parent: QWidget, name: str) -> QMessageBox:
+    """Revert or Cancel for `name`; Cancel is the default, so Enter never discards."""
+    b = QMessageBox.StandardButton
+    box = QMessageBox(
+        QMessageBox.Icon.Question,
+        "Revert",
+        f"Discard the unsaved edits to {name} and go back to the saved file?",
+        b.Cancel,
+        parent,
+    )
+    box.addButton("Revert", QMessageBox.ButtonRole.DestructiveRole)
+    box.setDefaultButton(b.Cancel)
+    box.setEscapeButton(b.Cancel)
+    return box
+
+
+def confirm_revert(parent: QWidget, name: str) -> bool:
+    box = revert_box(parent, name)
+    box.exec()
+    got = box.clickedButton()
+    box.deleteLater()
+    return got is not None and box.buttonRole(got) == QMessageBox.ButtonRole.DestructiveRole
 
 
 def warn(parent: QWidget, title: str, text: str) -> None:

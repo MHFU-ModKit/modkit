@@ -38,7 +38,18 @@ def test_loaded(cls: Any, workspace: MonsterWorkspace, qtbot: Any) -> None:
 def test_scene_counts(workspace: MonsterWorkspace, qtbot: Any) -> None:
     p = build(ScenePanel, workspace, qtbot)
     assert p.name.text() == "t" and p.values["bones"][1].text() == "3"
-    assert p.values["host"][1].text() == "em75"
+    assert p.values["host"][1].text() == "Tigrex (em75)"
+    assert not p.values["vertices"][1].isVisibleTo(p), "the mesh's counts are in More"
+
+
+def test_revert_is_undone(workspace: MonsterWorkspace) -> None:
+    studio, doc = Studio([workspace]), workspace.doc
+    assert doc is not None
+    doc.edit(lambda m: setattr(m.hurtboxes[0], "radius", 1.0))
+    studio.revert()
+    assert not doc.dirty and doc.manifest.hurtboxes[0].radius != 1.0
+    studio.undo()
+    assert doc.manifest.hurtboxes[0].radius == 1.0
 
 
 def test_view_toggles(workspace: MonsterWorkspace, qtbot: Any) -> None:
@@ -54,7 +65,10 @@ def test_view_toggles(workspace: MonsterWorkspace, qtbot: Any) -> None:
     assert workspace.show_host and vp.reference is not None
     vp.show_ground = False
     p.sync()
-    assert not p.ground.isChecked()
+    assert not p.ground.isChecked() and p.host.text() == "Base monster beside"
+    assert not p.axes.isVisibleTo(p)
+    p.more.set_open(True)
+    assert p.axes.isVisibleTo(p) and p.fov.isVisibleTo(p)
 
 
 def test_joints_pick_and_tag(workspace: MonsterWorkspace, qtbot: Any) -> None:
@@ -66,6 +80,9 @@ def test_joints_pick_and_tag(workspace: MonsterWorkspace, qtbot: Any) -> None:
     assert vp.selected_joint is None
     p.table.cellClicked.emit(1, 0)
     assert vp.mesh.tagged == (1,) and vp.selected_joint is None
+    assert vp.skeleton is not None and vp.skeleton.fork is not None
+    assert "(the fork)" in p.table.item(vp.skeleton.fork, 1).toolTip()
+    assert p.head.text().startswith(f"fork {vp.skeleton.fork}")
     qtbot.mouseClick(p.isolate.buttons["only"], Qt.MouseButton.LeftButton)
     assert vp.mesh.isolate == 1
     vp.select_joint(0)

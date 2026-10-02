@@ -32,11 +32,12 @@ def test_toggles_and_modes(qtbot: Any, ws: MapWorkspace, studio: Studio) -> None
     p = panel(qtbot, ws, studio)
     vp = ws.vp
     assert vp is not None and vp.mesh is not None and kit.missing_tips(p) == []
-    assert all(not b.isEnabled() for b in p.collision)
-    collision = next(b for b, _, attr in p._toggles if attr == "show_collision")
-    collision.click()
-    p.sync()
-    assert vp.show_collision and all(b.isEnabled() for b in p.collision)
+    assert "show_collision" not in [attr for _, _, attr in p._toggles]  # the toolbar's
+    more = p.findChild(kit.More)
+    lattice = next(b for b, _, attr in p._toggles if attr == "show_lattice")
+    assert more is not None and more.isAncestorOf(lattice) and more.isAncestorOf(p.gain)
+    lattice.click()
+    assert vp.show_lattice
     p.mode.setCurrentIndex(3)
     p.mode.activated.emit(3)
     p.gain.slider.setValue(500)

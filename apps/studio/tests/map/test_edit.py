@@ -78,7 +78,7 @@ def test_selection_algebra(scene: MapScene):
     b = Selection.object(scene, (0, 1), 1)
     ab = a.add(b)
     assert ab.n_vertices == 98 and ab.parts[(0, 1)] == [0, 1] and ab.straddling(scene) == 0
-    assert ab.n_faces(scene) == 144 and "2 object(s)" in ab.describe(scene)
+    assert ab.n_faces(scene) == 144 and ab.describe() == "2 objects in group 1"
     back = ab.toggle(scene, b)
     assert back.n_vertices == 49 and back.parts[(0, 1)] == [0]
     assert back.toggle(scene, a).empty
@@ -92,7 +92,7 @@ def test_selection_algebra(scene: MapScene):
     assert Selection.from_pick(scene, OBJECT, (0, 1), 100).parts == {(0, 1): [1]}
     lo, hi = b.bounds(scene)
     assert np.allclose(hi - lo, (300, 0, 300), atol=1)
-    assert Selection().describe(scene) == "nothing selected"
+    assert Selection().describe() == "nothing selected" and g.describe() == "group 0"
 
 
 def test_session_preview_commit_undo(scene: MapScene):
@@ -121,7 +121,8 @@ def test_session_preview_commit_undo(scene: MapScene):
     b = sess.budget()
     assert b["spent"] == 0 and b["total"] == 128 + 144 + 2 + 8 + 8 and b["free"] == 0
     assert sess.range_check() == {}
-    assert "transform" in describe_op(ops[0])
+    said = describe_op(ops[0])
+    assert said.startswith("group 1: moved by") and said.endswith("turned 0, 45, 0\N{DEGREE SIGN}")
 
 
 def test_two_transforms_compose(scene: MapScene):

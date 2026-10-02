@@ -33,6 +33,19 @@ def test_one_shot_stops() -> None:
     assert pb.phase == 8.0 and not pb.playing
 
 
+def test_play_at_the_end_rewinds() -> None:
+    pb = Playback(end=8.0, speed=2.0)
+    pb.play()
+    pb.advance(10.0)
+    assert pb.at_end and not pb.playing
+    pb.toggle()
+    assert pb.playing and pb.phase == 0.0
+    loop = Playback(end=8.0, speed=2.0, loop=True)
+    loop.seek(8.0)
+    loop.play()
+    assert loop.phase == 8.0 and not loop.at_end
+
+
 def test_loop_keeps_the_overshoot() -> None:
     pb = Playback(end=10.0, speed=3.0, loop=True)
     pb.play()

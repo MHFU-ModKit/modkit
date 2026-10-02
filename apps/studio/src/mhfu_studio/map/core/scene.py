@@ -26,7 +26,7 @@ from mhfu_studio.stage.collision import Plan
 from mhfu_studio.stage.file import MESHES, TEXTURES, StageFile
 from mhfu_studio.stage.textures import UNTEXTURED
 
-from .atlas import stage_name
+from .atlas import stage_name, stage_title
 
 Array = npt.NDArray[Any]
 Point = Sequence[float] | Array
@@ -49,10 +49,18 @@ TURN = 0x10000
 
 FLOOR, WALL, CLIMB, SINK, WADE = "floor", "wall", "climb", "sink", "wade"
 CLASSES = (FLOOR, WALL, CLIMB, SINK, WADE)
+#: a class as the panels name it
+CLASS_NAMES = {FLOOR: "floor", WALL: "wall", CLIMB: "climbable", SINK: "sinking", WADE: "wading"}
 
 
 class SceneError(RuntimeError):
     """The stage cannot be made into a scene at all."""
+
+
+def group_name(key: Key) -> str:
+    """`group 8`; one of the props model (sub 2) is `group 8 (second model)`."""
+    sub, g = key
+    return f"group {g}" + (" (second model)" if sub else "")
 
 
 @dataclass
@@ -111,7 +119,7 @@ class MeshGroup:
 
     @property
     def label(self) -> str:
-        return f"sub{self.sub}.g{self.vg_rec}"
+        return group_name(self.key)
 
     @property
     def budget(self) -> Budget:
@@ -354,7 +362,7 @@ class MapScene:
 
     def summary(self) -> str:
         lines = [
-            f"st{self.stage:03d}  {self.name}",
+            stage_title(self.stage),
             f"  fog {self.fog_rgba}   subs {self.sub_sizes}",
         ]
         for sub, label in ((0, "terrain"), (2, "props")):
@@ -371,7 +379,7 @@ class MapScene:
             lines.append(f"  collision chunk {c.index}: {c.n_triangles} triangles  {kinds}")
         lines.append(f"  textures: {len(self.textures)}")
         for e in self.exits:
-            lines.append(f"  exit {e.index} -> st{e.target:03d} {e.target_name}")
+            lines.append(f"  exit {e.index} -> {stage_title(e.target)}")
         lines += [f"  note: {n}" for n in self.notes]
         return "\n".join(lines)
 

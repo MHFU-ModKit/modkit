@@ -45,7 +45,8 @@ def test_census(make, species, make_pair):
     allowed = make(CLIP + MOVE.format(4, 15) + "allow_unentered = true\n")
     assert found(V.validate(allowed, intel=never), "MOVE_PAIR_NEVER_ENTERED").level == "warning"
     blind = found(V.validate(m, intel=species([make_pair(4, 15)])))
-    assert "MOVE_PAIR_NEVER_ENTERED" not in blind and blind["INTEL_ABSENT"].level == "warning"
+    assert "MOVE_PAIR_NEVER_ENTERED" not in blind
+    assert blind["INTEL_ABSENT"].level == "info", "no census is everyone's, not a problem"
     short = species([make_pair(4, 15, measured={"entered": 3, "dwell_ticks": 1.0})], census=True)
     assert "MOVE_PAIR_SHORT_DWELL" in found(V.validate(m, intel=short))
     unseen = found(V.validate(make(CLIP + MOVE.format(1, 1)), intel=short))
@@ -70,10 +71,7 @@ def test_chain(make, species, make_pair):
     out = found(V.validate(m, intel=si))
     assert {"MOVE_PAIR_PARKS", "MOVE_BUDGET_ROOT_MOTION"} <= set(out)
     parks = species([make_pair(1, 4, next=[])])
-    assert (
-        "never ends the action itself"
-        in found(V.validate(m, intel=parks), "MOVE_PAIR_PARKS").message
-    )
+    assert "never ends by itself" in found(V.validate(m, intel=parks), "MOVE_PAIR_PARKS").message
     chained = make(
         CLIP + MOVE.format(1, 4) + 'after = "stop"\n\n[moves.stop]\nmain = 0\nsub = 6\nanim = 3\n'
         '\n[[rule]]\nplay = "stop"\nfrom = "m"\nmin_frames = 30\n'
@@ -150,12 +148,23 @@ def test_parts(make, species):
         ("HITZONE_ALL_ZERO", "warning"),
         ("HITZONE_STATE_DUPLICATE", "error"),
         ("HITZONE_STATE_COUNT", "warning"),
-        ("HITZONE_SHARED", "warning"),
         ("HURTBOX_OVER_CAPACITY", "warning"),
     ):
         assert out[code].level == level, code
-    unnamed = make("\n[[hurtbox]]\nbone = 1\nradius = 9.0\npart = 1\n")
-    assert "PARTS_UNNAMED" in found(V.validate(unnamed))
+    assert "HITZONE_SHARED" not in out, "said where the grid is edited, not as a finding"
+    assert out["PART_INDEX_DUPLICATE"].target == ("part", 1)
+    assert out["HURTBOX_PART_UNNAMED"].focus == V.PART_NAME
+    over = out["HURTBOX_OVER_CAPACITY"]
+    assert over.target == ("hurtbox", 1) and over.focus == V.HURTBOXES, "the first that falls off"
+    assert all(f.focus or f.fix for f in out.values())
+    unnamed = make(
+        "\n[[hurtbox]]\nbone = 1\nradius = 9.0\n\n[[hurtbox]]\nbone = 1\nradius = 2\npart = 3\n"
+    )
+    f = found(V.validate(unnamed), "PARTS_UNNAMED")
+    assert f.target == ("part", 3) and f.focus == V.PART_NAME
+    nobody = found(V.validate(make("\n[[hurtbox]]\nbone = 1\nradius = 9.0\npart = 0\n")))
+    assert nobody["PARTS_UNNAMED"].target == ("hurtbox", 0), "part 0 is nobody: give it one"
+    assert nobody["PARTS_UNNAMED"].focus == V.HURT_PART
 
 
 def test_attacks(make, species):
@@ -177,9 +186,17 @@ def test_attacks(make, species):
         "ATTACK_RECORD_UNKNOWN",
         "ATTACK_VOLUME_UNKNOWN",
         "ATTACK_JOIN_INFERRED",
-        "HITBOX_SHARED",
     ):
         assert code in out, code
+    assert "HITBOX_SHARED" not in out, "said where hitboxes are edited, not as a finding"
+    assert out["HITBOX_OVER_CAPACITY"].target == ("set", 0)
+    assert out["HITBOX_OVER_CAPACITY"].focus == V.HIT_GROUP
+    assert out["ATTACK_JOIN_INFERRED"].level == out["HITBOX_SET_UNRIGGED"].level == "info"
+    assert all(f.focus or f.fix for f in out.values())
+    pointed = make(
+        "\n[[hitbox]]\nbone = 1\nradius = 1.0\nset = 1\n\n[[attack]]\nid = 1\nvolume = 1\n"
+    )
+    assert "HITBOX_SET_UNUSED" not in found(V.validate(pointed, intel=species([], attacks=ATTACKS)))
     assert "HITBOX_UNCHECKED" in found(V.validate(m))
     assert not [f for f in V.validate(make()) if f.code.startswith(("HITBOX", "ATTACK"))]
 

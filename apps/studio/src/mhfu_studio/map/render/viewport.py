@@ -22,6 +22,7 @@ from mhfu_studio.shell.lines import Lines, axes_geometry, bounds_geometry, conca
 from mhfu_studio.shell.target import CLEAR, RGBA, SAMPLES
 from mhfu_studio.shell.viewport import Viewport, depth_write_off
 
+from ..core.atlas import stage_title
 from ..core.scene import TURN, Array, MapScene
 from .overlays import (
     ARRIVAL_COLOR,
@@ -159,11 +160,11 @@ class MapViewport(Viewport):
         out = []
         for e in sc.exits:
             cx, cy, cz = e.trigger
-            text = f"-> st{e.target:03d} {e.target_name}"
+            text = f"\u2192 {stage_title(e.target)}"
             out.append(Label(np.array((cx, cy + e.height, cz)), text, EXIT_COLOR, "exit"))
         for frm, x in self.arrivals:
             pos = np.array((x.dest[0], x.dest[1] + 220.0, x.dest[2]))
-            out.append(Label(pos, f"from st{frm:03d}", ARRIVAL_COLOR, "arrival"))
+            out.append(Label(pos, f"from {stage_title(frm)}", ARRIVAL_COLOR, "arrival"))
         for s in sc.spheres:
             pos = np.array((s.pos[0], s.pos[1] + s.radius, s.pos[2]))
             out.append(Label(pos, f"sphere {s.id}", SPHERE_COLOR, "sphere"))

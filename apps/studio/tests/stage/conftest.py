@@ -132,6 +132,12 @@ def stage_bytes(shade: int = 0) -> bytes:
     ).to_bytes()
 
 
+@pytest.fixture(autouse=True)
+def _state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A push's undo goes to the test's folder, never the user's."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+
 @pytest.fixture
 def game(tmp_path: Path) -> Extracted:
     """An extraction holding st001 and st002 (whose bank differs in colour)."""
