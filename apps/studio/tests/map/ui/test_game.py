@@ -45,7 +45,7 @@ def edited(game: Extracted, atlas: Atlas) -> MapWorkspace:
 
 def test_nothing_loaded(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
     p, _, _ = panel(qtbot, MapWorkspace(game, atlas))
-    assert "Load a section" in p.gate.empty.hint.text() and kit.missing_tips(p) == []
+    assert "Pick an area" in p.gate.empty.hint.text() and kit.missing_tips(p) == []
 
 
 def test_no_edits(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
@@ -53,7 +53,7 @@ def test_no_edits(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
     ws.load_stage(139, row=0)
     p, _, _ = panel(qtbot, ws)
     assert kit.missing_tips(p) == [] and not any(b.isEnabled() for b in p.pushes)
-    assert p.restore.isEnabled() and p.running.text() == "no edits to st139 yet"
+    assert p.restore.isEnabled() and p.running.text() == "no edits to Pokke village yet"
 
 
 def test_unsaved_pushes(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
@@ -65,7 +65,7 @@ def test_unsaved_pushes(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
     assert argv[1:3] == ["-c", MAIN] and argv[3:] == list(ws.push_job(("mesh",)).argv)
     assert json.loads(stdin) == [MOVE] and studio.job is not None
     assert not any(b.isEnabled() for b in [*p.pushes, p.restore]) and p.stop.isEnabled()
-    assert p.running.text() == "push st139's mesh into the game… (running)"
+    assert p.running.text() == "send Pokke village's mesh to the game… (running)"
     p.stop.click()
     assert runner.stopped == 1
     studio.heard("line one")

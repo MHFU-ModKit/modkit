@@ -373,8 +373,9 @@ def test_labels(ws: MapWorkspace, game: Extracted, synth: Any) -> None:
     rec = Recorder(SIZE)
     ws.paint(rec)
     texts = [c for c in rec.calls if c[0] == "text"]
-    assert any("-> st098" in c[2] for c in texts) and any("sphere 24" in c[2] for c in texts)
-    exit_label = next(c for c in texts if "-> st098" in c[2])
+    assert any("\u2192 Snowy base camp (st098)" in c[2] for c in texts)
+    assert any("sphere 24" in c[2] for c in texts)
+    exit_label = next(c for c in texts if "(st098)" in c[2])
     assert exit_label[3][:3] == pytest.approx((1.0, 0.55, 0.15))
     ws.vp.show_labels = False
     rec = Recorder(SIZE)
@@ -383,7 +384,7 @@ def test_labels(ws: MapWorkspace, game: Extracted, synth: Any) -> None:
 
 
 def test_hud_and_hint(ws: MapWorkspace) -> None:
-    assert ws.hud() == "st139  Pokke village"
+    assert ws.hud() == "Pokke village (st139)"
     assert ws.hint().startswith("Click an object to select it")
     pick_crate(ws, MOVE)
     assert ws.hint().startswith("1 object in group 1: drag a handle to move it \u00b7 E rotate")

@@ -55,6 +55,12 @@ class SceneError(RuntimeError):
     """The stage cannot be made into a scene at all."""
 
 
+def group_name(key: Key) -> str:
+    """`group 8`; one of the props model (sub 2) is `group 8 (second model)`."""
+    sub, g = key
+    return f"group {g}" + (" (second model)" if sub else "")
+
+
 @dataclass
 class TextureImage:
     """One slot of the bank; `rgba` is (h, w, 4) uint8, row 0 the top."""
@@ -111,7 +117,7 @@ class MeshGroup:
 
     @property
     def label(self) -> str:
-        return f"sub{self.sub}.g{self.vg_rec}"
+        return group_name(self.key)
 
     @property
     def budget(self) -> Budget:

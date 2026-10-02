@@ -23,7 +23,7 @@ DATA_HINT = (
     "The map editor reads the game's own files. Extract the game with mhp-formats extract,"
     " set MHFU_DATA to its data_files folder and start the studio again."
 )
-NO_SECTION = "No section loaded"
+NO_AREA = "No area loaded"
 
 
 class Gate(kit.Pages):
@@ -32,18 +32,18 @@ class Gate(kit.Pages):
     empty: kit.Empty
 
     def __init__(self, page: QWidget, what: str) -> None:
-        """`what` ends "Load a section in the Map panel to …", say "see its textures"."""
-        super().__init__(page, kit.Empty(NO_SECTION, ""))
+        """`what` ends "Pick an area in the Areas panel to …", say "see its textures"."""
+        super().__init__(page, kit.Empty(NO_AREA, ""))
         self.what = what
 
     def check(self, ws: MapWorkspace, *, section: bool = True) -> bool:
-        """The page when the game files are there and, with `section`, a section is loaded;
+        """The page when the game files are there and, with `section`, an area is loaded;
         else the empty state naming what is missing. True when the page shows."""
         if ws.atlas is None:
             why = "" if "MHFU_DATA" in ws.data_error else f"{plain(ws.data_error)}. "
             return self.need(NO_DATA, why + DATA_HINT)
         if section and (ws.scene is None or ws.session is None):
-            return self.need(NO_SECTION, f"Load a section in the Map panel to {self.what}.")
+            return self.need(NO_AREA, f"Pick an area in the Areas panel to {self.what}.")
         return self.ready()
 
     def need(self, title: str, hint: str) -> bool:

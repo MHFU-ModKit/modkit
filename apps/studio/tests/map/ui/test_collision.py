@@ -7,7 +7,7 @@ from mhfu.files import Extracted
 from mhfu_studio.map.core.atlas import Atlas
 from mhfu_studio.map.core.edit import COLLISION, CollisionSelection, Selection
 from mhfu_studio.map.panels.collision import CollisionPanel
-from mhfu_studio.map.panels.common import NO_DATA, NO_SECTION
+from mhfu_studio.map.panels.common import NO_AREA, NO_DATA
 from mhfu_studio.map.workspace import MapWorkspace
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.ui import kit
@@ -37,7 +37,7 @@ def pick(ws: MapWorkspace, *tris: tuple[int, int]) -> None:
 
 def test_empty(qtbot: Any, game: Extracted, atlas: Atlas, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MHFU_DATA", raising=False)
-    for w, title in ((MapWorkspace(), NO_DATA), (MapWorkspace(game, atlas), NO_SECTION)):
+    for w, title in ((MapWorkspace(), NO_DATA), (MapWorkspace(game, atlas), NO_AREA)):
         p = CollisionPanel(w, Studio([w]))
         qtbot.addWidget(p)
         p.sync()

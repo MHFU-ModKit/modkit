@@ -2,9 +2,10 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The map workspace: one section at a time, its edit session, and the map document.
 
-Selecting a section loads it alone, the way the player walks through them; its list in the
-document replays into a fresh session. Everything a panel shares (the scene, the session, the
-selections, the last message) lives here.
+On screen a row is a "map" and a section an "area" (`core.atlas`). Selecting a section loads it
+alone, the way the player walks through them; its list in the document replays into a fresh
+session. Everything a panel shares (the scene, the session, the selections, the last message)
+lives here.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ from mhfu_studio.stage import ops as O
 from mhfu_studio.stage.live import CLIMB, QUEST_CATCH
 
 from .adding import AddForm
-from .core.atlas import Atlas, stage_title
+from .core.atlas import Atlas, row_name, stage_name, stage_title
 from .core.edit import (
     COLLISION,
     FACE,
@@ -51,7 +52,7 @@ from .core.edit import (
     compose,
     describe_op,
 )
-from .core.scene import Key, MapScene, SceneError, open_stage
+from .core.scene import Key, MapScene, SceneError, group_name, open_stage
 from .document import MANIFEST, MapDocument
 from .tools import GROUPS, MOVE, ROTATE, SCALE, SELECT, VERBS, ViewportTools
 
@@ -72,12 +73,12 @@ CLEAR = Shortcut(("Escape",), "Clears the selection, or drops a drag or a box un
 REMOVE = Shortcut(
     ("Delete", "Backspace"), "Removes the selection (with Collision picked: its triangles)"
 )
-FRAME = Shortcut(("F",), "Frames the selection, or the whole section")
+FRAME = Shortcut(("F",), "Frames the selection, or the whole area")
 #: the view's keys; `MapWorkspace.key` passes on no other
 KEYS = (CLEAR, REMOVE, FRAME)
 #: what a click picks, per pick kind
 NOUNS = {
-    GROUP: "a mesh group",
+    GROUP: "a group",
     OBJECT: "an object",
     FACE: "a triangle",
     COLLISION: "a collision triangle",
@@ -88,11 +89,6 @@ TRANSFORMS = (MOVE, ROTATE, SCALE)
 
 def count(n: int, noun: str) -> str:
     return f"{n} {noun}{'' if n == 1 else 's'}"
-
-
-def group_name(key: Key) -> str:
-    sub, g = key
-    return f"group {g}" + (f" of sub-model {sub}" if sub else "")
 
 
 def climbs(ops: Sequence[Op]) -> bool:
@@ -165,7 +161,8 @@ class MapWorkspace(Workspace):
         doc.game = self.game
         self.doc = doc
         self._seen = -1
-        self.message = f"opened {doc.path}: {doc.name}, row {doc.row}, {len(doc.stages)} stage(s)"
+        n = len(doc.stages)
+        self.message = f"opened {doc.name} ({doc.path}): edits in {count(n, 'area')}"
         if self.scene is not None:
             self.load_stage(self.scene.stage, row=self.row)
         elif doc.stages:
@@ -191,59 +188,58 @@ class MapWorkspace(Workspace):
         return (
             Dock(
                 "Areas", "left", build("browser", "BrowserPanel"),
-                "Every area of the game and its sections, in walking order. Pick a section to"
-                " load it alone, the way the player walks through them.",
+                "Every map of the game and its areas, in walking order. Click an area to load"
+                " it alone, the way the player walks through them.",
             ),
             Dock(
                 "View", "left", build("view", "ViewPanel"),
-                "How the section is drawn: textures or flat colours, which layers show, camera"
-                " presets and brightness. Changes nothing in the map.",
+                "How the area is drawn: its colours, which layers show, and camera presets."
+                " Changes nothing in the map.",
                 shown=False,
             ),
             Dock(
                 "Document", "left", build("document", "DocumentPanel"),
-                "Your map edits as one file: start a new one, open, save, check it for problems"
-                " and export it.",
+                "Your map edits as one document: its name, its folder and the areas it changes."
+                " Open and Save are in the File menu.",
                 shown=False,
             ),
             Dock(
                 "Game", "left", build("game", "GamePanel"),
-                "Send this section's edits into the game running in PPSSPP, without touching"
-                " the ISO.",
+                "What Send to game does, putting the game's own area back, and what the last"
+                " send printed.",
                 shown=False,
             ),
             Dock(
                 "Selection", "right", build("selection", "SelectionPanel"),
                 "What you clicked in the view: move, rotate or scale it by typed amounts, remove"
-                " it, and see how much of the section's drawing budget is left.",
+                " it, and this area's edits.",
             ),
             Dock(
                 "Add", "right", build("add", "AddPanel"),
-                "Put a new shape, or a copy of the selection, into the section. It reuses free"
-                " drawing slots, so the budget decides what fits.",
+                "Put a new shape, or a copy of the selection, into the area. It reuses free"
+                " drawing slots, so the space left decides what fits.",
                 shown=False,
             ),
             Dock(
                 "Assets", "right", build("assets", "AssetsPanel"),
-                "Objects and textures from the area's other sections, to copy into this one.",
+                "Objects and textures from the map's other areas, to copy into this one.",
                 shown=False,
             ),
             Dock(
                 "Groups", "right", build("groups", "GroupsPanel"),
-                "Every mesh group of the section, and the material settings of the one you"
-                " pick.",
+                "Every group of the area, and the texture and colour of the one you pick.",
                 shown=False,
             ),
             Dock(
                 "Collision", "right", build("collision", "CollisionPanel"),
                 "The invisible floors and walls the player stands on and bumps into: what is"
-                " where, what is climbable, and the selected triangles' settings.",
+                " climbable, and changing the triangles you select.",
                 shown=False,
             ),
             Dock(
                 "Textures", "bottom", build("textures", "TexturesPanel"),
-                "The section's texture bank: who uses each slot, and importing a picture into"
-                " one. Send to game shows a texture change in the running game.",
+                "The area's textures: who wears each slot, and replacing one with a picture or a"
+                " flat colour. Send to game shows the change in the running game.",
                 shown=False,
             ),
         )  # fmt: skip
@@ -253,8 +249,9 @@ class MapWorkspace(Workspace):
             return self.data_error
         sc = self.scene
         if sc is None:
-            return "no section loaded"
-        return f"{stage_title(sc.stage)}   row {self.row}   loaded in {self.load_time:.2f} s"
+            return "no area loaded"
+        where = "" if self.row is None else f" in {row_name(self.row)}"
+        return f"{stage_title(sc.stage)}{where}, loaded in {self.load_time:.2f} s"
 
     def close(self) -> None:
         if self.vp is not None:
@@ -266,12 +263,12 @@ class MapWorkspace(Workspace):
 
     def hud(self) -> str:
         sc = self.scene
-        return stage_title(sc.stage) if sc else plain(self.data_error) or "no section loaded"
+        return stage_title(sc.stage) if sc else plain(self.data_error) or "no area loaded"
 
     def hint(self) -> str:
         sc, t = self.scene, self.tools
         if sc is None:
-            return plain(self.data_error) or "Pick a section in Areas to load it"
+            return plain(self.data_error) or "Click an area in Areas to load it"
         sel = self.col_sel if t.kind == COLLISION else self.selection
         if sel.empty:
             if t.tool == SELECT:
@@ -384,16 +381,16 @@ class MapWorkspace(Workspace):
         return self.push_job()
 
     def push_blocker(self, *, restore: bool = False) -> str | None:
-        """Why the loaded section cannot be pushed (restored) now; None when it can."""
+        """Why the loaded section cannot be sent (restored) now; None when it can."""
         if self.game is None:
             return "no game files" + (f": {self.data_error}" if self.data_error else "")
         sc, sess = self.scene, self.session
         if sc is None or sess is None:
-            return "no section loaded"
+            return "no area loaded"
         if restore:
             return None
         if not sess.ops:
-            return f"no edits to st{sc.stage:03d} yet"
+            return f"no edits to {stage_name(sc.stage)} yet"
         bad = [f for f in O.check(sess.ops, base_dir=sess.base_dir) if f.level == "error"]
         if bad:
             return f"{bad[0].where} has an error: {bad[0].message}"
@@ -408,7 +405,7 @@ class MapWorkspace(Workspace):
             raise ValueError(why)
         sc, sess, game = self.scene, self.session, self.game
         assert sc is not None and sess is not None and game is not None
-        label = f"st{sc.stage:03d}"
+        label = stage_name(sc.stage)
         argv = ["map", "push", "--stage", str(sc.stage), "--data", str(game.root)]
         if restore:
             return Job(f"restore {label} in the game", (*argv, "--restore"))
@@ -419,10 +416,10 @@ class MapWorkspace(Workspace):
         if (not halves or "collision" in halves) and climbs(sess.ops):
             argv += ["--hold", catch]
         what = f"{label}'s {' and '.join(halves)}" if halves else label
-        return Job(f"push {what} into the game", tuple(argv), json.dumps(sess.ops).encode())
+        return Job(f"send {what} to the game", tuple(argv), json.dumps(sess.ops).encode())
 
     def in_village(self) -> bool:
-        """The loaded section is in row 0, whose files the game never re-reads."""
+        """The loaded section is in row 0 (the village), whose files the game never re-reads."""
         sc, atlas = self.scene, self.atlas
         return (
             sc is not None and atlas is not None and any(r == 0 for r, _ in atlas.rows_of(sc.stage))
@@ -457,7 +454,7 @@ class MapWorkspace(Workspace):
         self._seen = self.session.revision
         if ops:
             refused = [f for f in self.session.findings if f.level == "error"]
-            self.message = f"st{stage:03d}: {len(ops)} op(s) replayed" + (
+            self.message = f"{stage_name(stage)}: {count(len(ops), 'edit')} applied" + (
                 f", {len(refused)} refused: {refused[0].message}" if refused else ""
             )
         self.selection = Selection(self.tools.kind if self.tools.kind != COLLISION else OBJECT)
@@ -603,8 +600,10 @@ class MapWorkspace(Workspace):
     def _check_range(self) -> None:
         bad = self.session.range_check() if self.session else {}
         if bad:
-            where = ", ".join(f"sub{k[0]}.g{k[1]}: {n}" for k, n in bad.items())
-            self.message += f"   [!] {where} vertices outside the PMO's range: they clamp on export"
+            where = ", ".join(f"{group_name(k)}: {n}" for k, n in bad.items())
+            self.message += (
+                f"   [!] vertices past what the model can store ({where}): export pulls them back"
+            )
 
     def frame_selection(self) -> None:
         """The camera on the selection of the current pick kind, else on the whole section."""

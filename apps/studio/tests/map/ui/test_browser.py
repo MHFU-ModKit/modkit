@@ -26,7 +26,7 @@ def test_no_data(qtbot: Any, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_unnamed_section() -> None:
-    assert section_text(Section(140, 3, 0, stage_name(140), False)) == "3  st140"
+    assert section_text(Section(140, 3, 0, stage_name(140), False)) == ("Area", "st140")
 
 
 def test_click_loads(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
@@ -38,7 +38,7 @@ def test_click_loads(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
     assert ws.scene is not None and (ws.scene.stage, ws.row) == (98, 0)
     p.sync()
     assert p._items[(0, 98)].font(0).bold() and not p.here.isHidden()
-    assert "st098" in p.title.text() and "no exits" in p.arrivals.text()
+    assert p.title.text() == "Snowy base camp (st098)" and "no exits" in p.arrivals.text()
 
 
 def test_follows_the_workspace(qtbot: Any, game: Extracted, atlas: Atlas) -> None:

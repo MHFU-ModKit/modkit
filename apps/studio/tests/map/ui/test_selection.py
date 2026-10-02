@@ -6,7 +6,7 @@ import pytest
 from mhfu.files import Extracted
 from mhfu_studio.map.core.atlas import Atlas
 from mhfu_studio.map.core.edit import COLLISION, CollisionSelection, Selection
-from mhfu_studio.map.panels.common import NO_DATA, NO_SECTION
+from mhfu_studio.map.panels.common import NO_AREA, NO_DATA
 from mhfu_studio.map.panels.selection import SelectionPanel
 from mhfu_studio.map.workspace import MapWorkspace
 from mhfu_studio.shell.studio import Studio
@@ -24,7 +24,7 @@ def panel(qtbot: Any, ws: MapWorkspace, studio: Studio) -> SelectionPanel:
 
 def test_empty(qtbot: Any, game: Extracted, atlas: Atlas, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MHFU_DATA", raising=False)
-    for w, title in ((MapWorkspace(), NO_DATA), (MapWorkspace(game, atlas), NO_SECTION)):
+    for w, title in ((MapWorkspace(), NO_DATA), (MapWorkspace(game, atlas), NO_AREA)):
         p = SelectionPanel(w, Studio([w]))
         qtbot.addWidget(p)
         p.sync()
@@ -48,8 +48,8 @@ def test_transform(panel: SelectionPanel, ws: MapWorkspace) -> None:
     assert ws.scene is not None and ws.session is not None
     ws.tools.select(Selection.object(ws.scene, (0, 1), 1))
     panel.sync()
-    assert "sub0.g1: 1 object(s)" in panel.what.text() and "centre (" in panel.stats.text()
-    assert "sub0.g1: material 1" in panel.groups.text() and panel.remove.isEnabled()
+    assert "group 1: 1 object(s)" in panel.what.text() and "centre (" in panel.stats.text()
+    assert "group 1: material 1" in panel.groups.text() and panel.remove.isEnabled()
     panel.by.boxes[0].setValue(100.0)
     panel.factor.boxes[1].setValue(2.0)
     press(panel, "Apply")

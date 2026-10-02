@@ -5,12 +5,12 @@ from mhfu_studio.map.core.atlas import ORPHAN_STAGES, Atlas, row_name, stage_nam
 
 
 def test_names_are_not_guessed():
-    assert row_name(0) == "Pokke village & town" and row_name(7) == "row 7"
-    assert stage_name(98) == "Snowy base camp" and stage_name(200) == "st200"
+    assert row_name(0) == "Pokke village & town" and row_name(7) == "Map 7"
+    assert stage_name(98) == "Snowy base camp" and stage_name(200) == "Area st200"
 
 
 def test_an_unnamed_stage_says_its_id_once():
-    assert stage_title(139) == "st139  Pokke village" and stage_title(140) == "st140"
+    assert stage_title(139) == "Pokke village (st139)" and stage_title(140) == "Area st140"
 
 
 def test_synthetic(atlas: Atlas, game: Extracted):
