@@ -9,6 +9,7 @@ from mhfu_studio.map.core.atlas import Atlas
 from mhfu_studio.map.panels.document import DocumentPanel
 from mhfu_studio.map.workspace import MapWorkspace
 from mhfu_studio.shell.studio import Studio
+from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import dialogs, kit
 from PySide6.QtWidgets import QFileDialog, QPushButton
 
@@ -69,7 +70,7 @@ def test_save_as_and_open(
     studio.save()
     p.sync()
     assert (tmp_path / "a" / "st139.json").is_file() and p.name.text() == "a"
-    assert str(tmp_path / "a") in p.where.text()
+    assert p.where.text() == plain(str(tmp_path / "a"))
     monkeypatch.setattr(dialogs, "ask_open", lambda *a: tmp_path / "a")
     ws.load_stage(98)
     dialogs.open_document(p, studio)
