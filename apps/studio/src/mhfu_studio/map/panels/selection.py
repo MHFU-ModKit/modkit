@@ -27,6 +27,10 @@ REMOVE_TIP = (
     "Clears the selected objects: they stop drawing, and their drawing slots are free for the"
     " Add panel to fill."
 )
+HINT = (
+    "Click something in the view to select it. Shift-click adds; in the Select tool a drag takes"
+    " everything in a box."
+)
 BUDGET_TIP = (
     "An area draws only what its drawing slots already hold; removing an object frees slots,"
     " adding fills them. Moving, turning and scaling cost nothing."
@@ -42,11 +46,7 @@ class SelectionPanel(kit.Panel):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
         self.what = kit.label(role="title")
-        self.hint = kit.label(
-            "Click something in the view to select it. Shift-click adds; in the Select tool a"
-            " drag takes everything in a box.",
-            role="muted",
-        )
+        self.hint = kit.label(role="muted")
         self.frame = kit.button(
             "Frame",
             tip="Points the camera at the selection (F in the view)",
@@ -153,6 +153,8 @@ class SelectionPanel(kit.Panel):
         sel: Any = ws.col_sel if col else ws.selection
         said = ws.selected()
         self.what.setText("Nothing selected" if sel.empty else said[:1].upper() + said[1:])
+        # set here, not when built: the empty state is as tall as any page's wrapped text
+        self.hint.setText(HINT if sel.empty else "")
         self.hint.setVisible(sel.empty)
         lines, groups = [], []
         if not sel.empty:
