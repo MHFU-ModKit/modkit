@@ -159,7 +159,7 @@ def align_pair(
     if a.pair is None:
         a.headline = (
             f"({main},{sub}) is in neither the overlay's jump tables nor the census, so there "
-            "is nothing to align to."
+            "is nothing to check the clip against."
         )
         _impact_marker(a)
         _our_effects(a, m, move, rig)
@@ -195,9 +195,9 @@ def _census(a: Alignment, intel: SpeciesIntel, allow_unentered: bool) -> None:
         a._add(
             "warning" if allow_unentered else "error",
             "NEVER_ENTERED",
-            f"the census measured ZERO entries into ({a.main},{a.sub}). Its handler asks for a "
-            "condition nothing created and returns at once: forced, the move survives exactly "
-            "ONE tick and the clip restarts from frame 0 twice a second. 411 of 411 did."
+            f"the game was watched and never enters ({a.main},{a.sub}): its code waits for "
+            "something nothing set up and returns at once, so forced, the move lasts one tick "
+            "and the clip restarts from frame 0 twice a second. 411 of 411 did."
             + ("  (allow_unentered is set, so this is your call.)" if allow_unentered else ""),
         )
         return
@@ -206,7 +206,7 @@ def _census(a: Alignment, intel: SpeciesIntel, allow_unentered: bool) -> None:
         a._add(
             "info",
             "DWELL",
-            f"the engine entered ({a.main},{a.sub}) {p.entered} time(s) on its own and held it "
+            f"the game entered ({a.main},{a.sub}) {p.entered} time(s) on its own and stayed "
             f"{p.dwell_ticks:.1f} tick(s) ({p.dwell_ticks / 2:.1f} s at 2 Hz){travel}",
         )
         if b.code == "SHORT_DWELL":
@@ -214,12 +214,12 @@ def _census(a: Alignment, intel: SpeciesIntel, allow_unentered: bool) -> None:
         return
     if b.code == "NO_HANDLER" and not b.ok:
         a._add("error", "NO_HANDLER", b.reason)
-    why = f" {intel.census_reason}" if intel.census_reason else ""
+    why = f" ({intel.census_reason})" if intel.census_reason else ""
     a._add(
         "warning",
         "UNMEASURED",
-        f"no census covers ({a.main},{a.sub}), so whether the engine ever enters it is UNKNOWN, "
-        f"not zero. Everything below is STATIC: read out of the overlay, true of every run.{why}",
+        f"({a.main},{a.sub}) was never measured in the game{why}, so whether the game ever "
+        "enters it is unknown, not never. Everything here is read from the code.",
     )
 
 
