@@ -174,6 +174,10 @@ P.act_set = act_set
 local Port = {}
 Port.__index = Port
 
+-- What a redefine keeps: the spawn event that bound `ent` will not fire again (ent = 0 would stop
+-- the brain), and the hit tables in the game belong to the entity, not to the declaration.
+local KEEP = { "ent", "_hit_id", "_hit_last", "_hit_cap", "_atk_caps" }
+
 --- Declare a ported monster.
 --
 --   name    identifier, also the hot-reload key
@@ -190,8 +194,6 @@ Port.__index = Port
 --
 -- Returns a port handle. Safe to call again (hot reload): the injector is armed once per boot.
 function P.define(spec)
-  -- a redefine keeps the bound entity: the spawn event that bound it will not fire again, and
-  -- ent = 0 would stop the brain. The rest of the state resets.
   local prev = P.ports[spec.name]
   local self = setmetatable({
     name    = spec.name,
@@ -199,7 +201,7 @@ function P.define(spec)
     clips   = spec.clips or {},
     moves   = spec.moves or {},
     replace = spec.replace or {},
-    ent     = prev and prev.ent or 0,
+    ent     = 0,
     clip    = nil,      -- currently latched executor a1, nil = hands off
     move    = nil,      -- currently scripted move name
     pinned  = nil,      -- {x, y, z} while the coordinate lock is on
@@ -214,6 +216,7 @@ function P.define(spec)
     _native_armed = false,
     _req    = nil,      -- a play() issued through the seam, until it lands
   }, Port)
+  if prev then for _, k in ipairs(KEEP) do self[k] = prev[k] end end
   -- declared pairs the engine enters on its own get the port's clip too (the action hook paints
   -- them), so the mapping holds whoever picked the move; first name wins for a pair declared twice
   local names = {}
@@ -823,6 +826,7 @@ P._once.events = true
 mhfu.on_quest_targets_building(function(quest)
   if quest == 0 then return end
   for name, port in pairs(P.ports) do
+    port._hit_last = nil        -- the quest's first hit apply logs as first contact
     for _, victim in ipairs(port.replace) do
       if mhfu.quest_has(quest, victim) then
         local ok = mhfu.quest_replace_monster(quest, victim, port.species)

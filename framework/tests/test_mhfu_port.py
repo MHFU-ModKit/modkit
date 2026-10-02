@@ -358,19 +358,27 @@ def test_native_seam(lua: Any) -> None:
 
 
 HIT_RELOAD = """
+local QUEST
+mhfu.on_quest_targets_building = function(fn) QUEST = fn end
 local P = require("mhfu_port")
 local HV = mhfu.addr.HIT_VOLUME
-local SET = ENT + 0x4000
+-- a host hurtbox set of 3 records and one attack set of 2, each sentinel-terminated
+local SET, VT, ASET = ENT + 0x4000, ENT + 0x5000, ENT + 0x6000
 local row = mhfu.addr.SPECIES_TABLE + 75 * mhfu.addr.SPECIES.STRIDE
 mhfu.write_u32(row + mhfu.addr.SPECIES.HURTBOX_SET, SET)
+mhfu.write_u32(VT, ASET)
 for i = 0, 2 do mhfu.write_u16(SET + i * HV.SIZE, 1) end
 mhfu.write_u16(SET + 3 * HV.SIZE, 0xFFFF)
+for i = 0, 1 do mhfu.write_u16(ASET + i * HV.SIZE, 1) end
+mhfu.write_u16(ASET + 2 * HV.SIZE, 0xFFFF)
 local zin = P.define{ name = "zinogre", species = 75 }
 zin.ent = ENT
--- a hot-reloaded <name>_hit.lua re-runs this
+-- a hot-reloaded <name>_hit.lua re-runs this; 4 volumes over a cap of 3 are truncated
 local function export(id, radius)
-  P.hit("zinogre", { species = 75, id = id, volumes = { { 2, 0, 0, 1, 0, radius,
-                                                          0, 0, 0, 0, 0, 0 } } })
+  local v = { 2, 0, 0, 1, 0, radius, 0, 0, 0, 0, 0, 0 }
+  P.hit("zinogre", { species = 75, id = id, volumes = { v, v, v, v },
+                     attack_tables = { volumes = VT, n_sets = 1 },
+                     attack_sets = { [0] = { cap = 2, volumes = { v } } } })
 end
 local function radius() return mhfu.read_f32(SET + HV.RADIUS) end
 
@@ -385,6 +393,20 @@ assert(count("APPLIED %(new export%).*id=599b6933") == 1 and radius() == 100.0)
 mhfu.write_f32(SET + HV.RADIUS, 5.0); ticks(1)
 assert(count("APPLIED %(live table changed under us%)") == 1 and radius() == 100.0)
 assert(count("first contact") == 1)
+
+-- a brain-mod reload redefines the port: what is in place stays in place
+local before = zin
+zin = P.define{ name = "zinogre", species = 75 }
+for _, k in ipairs({ "ent", "_hit_id", "_hit_last", "_hit_cap", "_atk_caps" }) do
+  assert(zin[k] ~= nil and zin[k] == before[k], k)
+end
+ticks(2)
+assert(count("APPLIED") == 4, "not re-applied after a redefine")
+
+-- the next quest loads the overlay afresh: its first apply is first contact again
+QUEST(1)
+mhfu.write_f32(SET + HV.RADIUS, 5.0); ticks(1)
+assert(count("APPLIED %(first contact%).*id=599b6933") == 2 and radius() == 100.0)
 """
 
 
