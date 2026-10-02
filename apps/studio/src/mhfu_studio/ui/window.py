@@ -292,7 +292,7 @@ class Window(QMainWindow):
 
     def _arrange(self, name: str) -> None:
         """The default layout: each side's docks tabbed together beside its `alone` ones, the
-        first shown in front; then every dock not `shown` closes, keeping its place."""
+        first shown in front; a dock not `shown` stays closed, keeping its place."""
         sides: dict[str, list[QDockWidget]] = {}
         for d in [*self._docks[name], self.findings_dock]:
             sides.setdefault(self._spec(d).area, []).append(d)
@@ -308,13 +308,10 @@ class Window(QMainWindow):
                     self.splitDockWidget(tabbed[0], d, Qt.Orientation.Vertical)
             for d in tabbed[1:]:
                 self.tabifyDockWidget(tabbed[0], d)
-            for d in docks:
-                d.show()
+            for d in docks:  # every dock open at once can need more height than the window
+                d.setVisible(self._spec(d).shown)
             if tabbed:
                 ([d for d in tabbed if self._spec(d).shown] or tabbed)[0].raise_()
-        for d in [*self._docks[name], self.findings_dock]:
-            if not self._spec(d).shown:
-                d.hide()
         for area in sides:
             self._fit(area)
         self._retitle()

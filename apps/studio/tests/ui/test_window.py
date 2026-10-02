@@ -136,6 +136,26 @@ def test_closed_docks_open_in_place(make_window: Make, qtbot: Any) -> None:
     assert more.geometry().bottom() < strip.geometry().top() and abs(strip.height() - 90) < 12
 
 
+class Tall(Closed):
+    """Closed's docks, More taller than the window."""
+
+    def docks(self) -> tuple[Dock, ...]:
+        def tall(s: Studio) -> QWidget:
+            p = QWidget()
+            p.setMinimumHeight(2000)
+            return p
+
+        own = super().docks()
+        return (*own[:-1], Dock("More", "bottom", tall, "A tall closed panel", shown=False))
+
+
+def test_closed_docks_do_not_grow_the_window(make_window: Make) -> None:
+    w = make_window(Closed("map"), Tall("monster"))
+    h = w.height()
+    switch(w, "monster")
+    assert w.height() == h and not dock(w, "monster/More").isVisible()
+
+
 def test_take_focus_opens_a_closed_dock(make_window: Make, qtbot: Any) -> None:
     w = make_window(Closed("map"), Closed("monster"))
     more, strip = dock(w, "map/More"), dock(w, "map/Strip")
