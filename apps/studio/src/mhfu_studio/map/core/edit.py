@@ -24,7 +24,7 @@ from mhfu_studio.shell.findings import Finding
 from mhfu_studio.stage import collision, mesh, textures
 from mhfu_studio.stage import ops as O
 
-from .scene import CLIMB_MAX_UP, Array, Key, MapScene, Point
+from .scene import CLIMB_MATERIALS, Array, Key, MapScene, Point, group_name
 
 GROUP, OBJECT, FACE, COLLISION = "group", "object", "face", "collision"
 KINDS = (GROUP, OBJECT, FACE, COLLISION)
@@ -34,6 +34,8 @@ Pair = tuple[int, int]
 SHORT_WALL = 100.0
 """A climbable triangle shorter than this is worth a warning."""
 KEEPS = ("did-not-fit",)
+#: a collision chunk in words: 1 holds the floor, 0 the walls and ceilings
+CHUNK_WORDS = {0: "wall", 1: "floor"}
 """Error codes a commit keeps (a partial pack still draws), shown as warnings."""
 
 
@@ -241,15 +243,16 @@ class Selection:
                 out.parts[k] = [int(f) for f in np.nonzero(np.isin(g.triangles, ids).all(1))[0]]
         return out
 
-    def describe(self, scene: MapScene) -> str:
+    def describe(self) -> str:
+        """In words: "2 objects in group 8", "group 8", "3 triangles in 2 groups"."""
         if self.empty:
             return "nothing selected"
-        bits = []
-        for k, ids in self.vertices.items():
-            n = len(self.parts.get(k, []))
-            what = {GROUP: "the whole group", OBJECT: f"{n} object(s)", FACE: f"{n} face(s)"}
-            bits.append(f"{scene.group(*k).label}: {what[self.kind]}, {len(ids)} vertices")
-        return "; ".join(bits)
+        ks = list(self.vertices)
+        where = group_name(ks[0]) if len(ks) == 1 else count(len(ks), "group")
+        if self.kind == GROUP:
+            return where
+        n = sum(len(self.parts.get(k, [])) for k in ks)
+        return f"{count(n, 'object' if self.kind == OBJECT else 'triangle')} in {where}"
 
 
 @dataclass
@@ -293,10 +296,24 @@ class CollisionSelection:
         return out
 
     def describe(self, scene: MapScene) -> str:
+        """In words, with the kinds: "3 collision triangles: 2 wall, 1 climb"."""
         if self.empty:
             return "no collision triangle selected"
-        by = sorted(self.by_chunk().items())
-        return "collision: " + ", ".join(f"chunk {c} x{len(t)}" for c, t in by)
+        kinds: dict[str, int] = {}
+        for c, t in self.tris:
+            k = str(scene.chunk(c).klass[t])
+            kinds[k] = kinds.get(k, 0) + 1
+        what = ", ".join(f"{n} {k}" for k, n in kinds.items())
+        return f"{count(len(self), 'collision triangle')}: {what}"
+
+
+def count(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
+def triangle_name(chunk: int, tri: int) -> str:
+    """`wall triangle 12`: a collision triangle as a person points at it."""
+    return f"{CHUNK_WORDS.get(chunk, f'chunk {chunk}')} triangle {tri}"
 
 
 def by_chunk(tris: Iterable[Pair]) -> dict[int, list[int]]:
@@ -340,55 +357,68 @@ def op_key(op: Mapping[str, Any]) -> Key | None:
 
 
 def describe_op(op: Mapping[str, Any]) -> str:
-    """One line per op, in the user's terms."""
+    """One line per op, in plain words: "group 8: moved by 0, 100, 0"."""
     k = str(op.get("op"))
     key = op_key(op)
-    where = f"sub{key[0]}.g{key[1]}" if key else "collision"
-    if k == "transform":
-        by = [round(v) for v in op.get("by", (0, 0, 0))]
-        rot = [round(v) for v in op.get("rotate", (0, 0, 0))]
-        sc = [round(v, 2) for v in op.get("scale", (1, 1, 1))]
-        n = len(op.get("vertices", []))
-        return f"{k:<9} {where:<9} {n:4d} v  by {by} rot {rot} scale {sc}"
-    if k == "move":
-        return f"{k:<9} {where:<9} by {op.get('by')}"
+    where = group_name(key) if key else "collision"
+    if k in ("transform", "move"):
+        by, rot = op.get("by", (0, 0, 0)), op.get("rotate", (0, 0, 0))
+        sc = op.get("scale", (1, 1, 1))
+        bits = [f"moved by {_xyz(by)}"] if any(round(v) for v in by) else []
+        if any(round(v) for v in rot):
+            bits.append(f"turned {_xyz(rot)}\N{DEGREE SIGN}")
+        if any(round(v, 2) != 1 for v in sc):
+            bits.append(f"scaled \N{MULTIPLICATION SIGN}{_xyz(sc, 2)}")
+        return f"{where}: {'; '.join(bits) or 'no change'}"
     if k == "pack":
-        solid = " +collider" if op.get("solid") else ""
-        n = len(op.get("prims") or [])
-        return f"{k:<9} {where:<9} {Path(str(op.get('obj', '?'))).name} into {n} prims{solid}"
+        name = Path(str(op.get("obj", "?"))).name
+        return f"added {name} into {where}" + (", solid" if op.get("solid") else "")
     if k == "clear":
-        what = f"{len(op['prims'])} prims" if op.get("prims") else "whole group"
-        return f"{k:<9} {where:<9} {what}"
+        n = len(op.get("prims") or [])
+        return f"removed from {where} ({count(n, 'drawing slot')})" if n else f"removed {where}"
     if k == "material":
-        bits = [f"texture {op['texture']}"] if "texture" in op else []
+        bits = [f"texture slot {op['texture']}"] if "texture" in op else []
         if "rgba" in op:
-            bits.append(f"rgba {tuple(op['rgba'])}")
-        return f"{k:<9} {where:<9} {', '.join(bits) or '?'}"
+            bits.append(f"colour {_xyz(op['rgba'])}")
+        return f"{where}: {', '.join(bits) or 'material'}"
     if k == "texture":
         if "png" in op:
-            src = str(op["png"])
+            src = Path(str(op["png"])).name
         elif "from" in op:
-            src = f"st{op['from']['stage']:03d} slot {op['from']['slot']}"
+            src = f"slot {op['from']['slot']} of st{op['from']['stage']:03d}"
         else:
-            src = f"rgb {tuple(op.get('rgb', ()))}"
-        return f"{k:<9} slot {op.get('slot')!s:<4} <- {src}"
+            src = f"flat colour {_xyz(op.get('rgb', ()))}"
+        return f"texture slot {op.get('slot')}: {src}"
     if k == "collision":
         if "solid_box" in op:
-            return "collision  box collider"
+            return "added a box collider"
         if op.get("add"):
-            chunk = "auto" if op.get("chunk") is None else op["chunk"]
-            return f"collision  chunk {chunk} +{len(op['add'])} triangle(s){_flags_text(op)}"
+            return f"added {count(len(op['add']), 'collision triangle')}{_flags_text(op)}"
         n = ("tri" in op) + len(op.get("tris", []))
-        what = "delete" if op.get("delete") else ("move" if "verts" in op else "flags")
-        return f"collision  chunk {op.get('chunk', 1)} {what} x{n}{_flags_text(op)}"
-    return f"{k:<9} {where}"
+        tris = count(n, f"{CHUNK_WORDS.get(op.get('chunk', 1), 'collision')} triangle")
+        if op.get("delete"):
+            return f"deleted {tris}"
+        if "verts" in op:
+            return f"moved {tris}"
+        return f"changed {tris}{_flags_text(op)}"
+    return f"{k} {where}"
+
+
+def _xyz(v: Sequence[float], digits: int = 0) -> str:
+    return ", ".join(f"{round(float(x), digits):g}" for x in v)
 
 
 def _flags_text(op: Mapping[str, Any]) -> str:
+    """The flags an op sets, climbing named."""
     fl = op.get("flags") or {}
     if not isinstance(fl, Mapping) or not fl:
         return ""
-    return "  " + " ".join(f"{k}={v}" for k, v in fl.items())
+    if set(fl) == {"material"}:
+        if fl["material"] in CLIMB_MATERIALS:
+            return ": climbable"
+        if fl["material"] == 0:
+            return ": not climbable"
+    return ": " + ", ".join(f"{k} {v}" for k, v in fl.items())
 
 
 class EditSession:
@@ -817,17 +847,13 @@ class EditSession:
         for c, t in tris:
             ch = self.scene.chunk(c)
             if not ch.vertical(t):
-                ny = abs(float(ch.normals[t][1]))
-                out.append(
-                    f"chunk {c} tri {t} is not near-vertical (|n.y| = {ny:.2f} >="
-                    f" {CLIMB_MAX_UP:.2f}): the material will not make it climbable"
-                )
+                out.append(f"{triangle_name(c, t)} is too flat to climb: only a steep wall is")
             h = float(ch.verts[t][:, 1].max() - ch.verts[t][:, 1].min())
             if h < SHORT_WALL:
-                out.append(f"chunk {c} tri {t} is only {h:.0f} units tall")
+                out.append(f"{triangle_name(c, t)} is only {h:.0f} units tall")
             mats.add(int(ch.material[t]))
         if len(mats) > 1:
-            out.append(f"the patch mixes materials {sorted(mats)}")
+            out.append(f"the selected triangles mix materials {sorted(mats)}")
         return out
 
     # checks

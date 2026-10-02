@@ -38,41 +38,42 @@ def test_tips(panel: SelectionPanel) -> None:
 
 
 def test_nothing_selected(panel: SelectionPanel) -> None:
-    assert panel.what.text() == "nothing selected" and "Click something" in panel.stats.text()
+    assert panel.what.text() == "Nothing selected" and not panel.hint.isHidden()
     assert not panel.frame.isEnabled() and not panel.transform.isEnabled()
-    assert "triangles drawn" in panel.budget.text() and not panel.undo.isEnabled()
-    assert panel.count.text() == "No edits yet"
+    assert "Space left to draw" in panel.budget.text() and panel.count.text() == "No edits yet"
+    more = panel.findChild(kit.More)
+    assert more is not None and more.inner.isHidden() and more.isAncestorOf(panel.budget)
 
 
 def test_transform(panel: SelectionPanel, ws: MapWorkspace) -> None:
     assert ws.scene is not None and ws.session is not None
     ws.tools.select(Selection.object(ws.scene, (0, 1), 1))
     panel.sync()
-    assert "group 1: 1 object(s)" in panel.what.text() and "centre (" in panel.stats.text()
-    assert "group 1: material 1" in panel.groups.text() and panel.remove.isEnabled()
+    assert panel.what.text() == "1 object in group 1" and "centre " in panel.stats.text()
+    assert "group 1: texture slot" in panel.groups.text() and panel.remove.isEnabled()
     panel.by.boxes[0].setValue(100.0)
     panel.factor.boxes[1].setValue(2.0)
     press(panel, "Apply")
     op = ws.session.ops[0]
     assert op["by"][0] == pytest.approx(100.0) and op["scale"][1] == pytest.approx(2.0)
-    assert panel.count.text() == "1 edit in 1 step" and "transform" in panel.ops.item(0).text()
-    assert panel.undo.isEnabled()
+    assert panel.count.text() == "1 edit"
+    assert panel.ops.item(0).text() == "1. group 1: moved by 100, 0, 0; scaled \u00d71, 2, 1"
     press(panel, "Reset fields")
     assert panel.by.value() == [0.0, 0.0, 0.0] and panel.factor.value() == [1.0, 1.0, 1.0]
 
 
-def test_undo_redo(panel: SelectionPanel, ws: MapWorkspace) -> None:
+def test_edits_follow_undo(panel: SelectionPanel, ws: MapWorkspace, studio: Studio) -> None:
     assert ws.scene is not None and ws.session is not None
     ws.tools.select(Selection.object(ws.scene, (0, 1), 1))
     ws.apply_numeric([0.0, 50.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0])
     panel.sync()  # an edit from elsewhere shows
     assert panel.ops.count() == 1
-    press(panel, "Undo")
-    assert (
-        not ws.session.ops and panel.redo.isEnabled() and panel.ops.item(0).text().startswith("No")
-    )
-    press(panel, "Redo")
-    assert len(ws.session.ops) == 1
+    studio.undo()  # the Edit menu's
+    panel.sync()
+    assert not ws.session.ops and panel.ops.item(0).text().startswith("No")
+    studio.redo()
+    panel.sync()
+    assert len(ws.session.ops) == 1 and panel.ops.count() == 1
 
 
 def test_frame_clear_remove(panel: SelectionPanel, ws: MapWorkspace) -> None:
@@ -97,7 +98,7 @@ def test_collision_kind(panel: SelectionPanel, ws: MapWorkspace) -> None:
     ws.tools.set_kind(COLLISION)
     ws.tools.select_collision(CollisionSelection([(1, 0)]))
     panel.sync()
-    assert panel.what.text().startswith("collision:") and "Collision panel" in panel.stats.text()
+    assert panel.what.text() == "1 collision triangle" and "Collision panel" in panel.stats.text()
     assert not panel.remove.isEnabled() and panel.transform.isEnabled()
     panel.by.boxes[2].setValue(30.0)
     press(panel, "Apply")

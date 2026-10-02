@@ -111,7 +111,7 @@ def test_click_drag_undo(make_window: Callable[..., Window], ws: MapWorkspace) -
     g = ws.scene.group(0, 1)
     click(w, at(w, g.positions[g.component_vertices(1)].mean(0)))
     assert ws.selection.parts == {(0, 1): [1]}
-    assert "group 1: 1 object(s)" in panel(w, "Selection").what.text()
+    assert panel(w, "Selection").what.text() == "1 object in group 1"
     ws.set_tool(TOOL, MOVE)
     start = ws.selection.centroid(ws.scene)
     yaw = ws.vp.camera.yaw

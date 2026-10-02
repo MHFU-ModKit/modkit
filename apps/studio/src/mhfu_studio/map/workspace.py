@@ -50,6 +50,7 @@ from .core.edit import (
     Op,
     Selection,
     compose,
+    count,
     describe_op,
 )
 from .core.scene import Key, MapScene, SceneError, group_name, open_stage
@@ -85,10 +86,6 @@ NOUNS = {
 }
 TOOLS = {t.id: t for g in GROUPS for t in g.tools}
 TRANSFORMS = (MOVE, ROTATE, SCALE)
-
-
-def count(n: int, noun: str) -> str:
-    return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
 def climbs(ops: Sequence[Op]) -> bool:
@@ -290,13 +287,7 @@ class MapWorkspace(Workspace):
         """The selection in words: "2 objects in group 8"."""
         if self.tools.kind == COLLISION:
             return count(len(self.col_sel), "collision triangle")
-        sel = self.selection
-        ks = list(sel.vertices)
-        where = group_name(ks[0]) if len(ks) == 1 else count(len(ks), "group")
-        if sel.kind == GROUP:
-            return where
-        n = sum(len(sel.parts.get(k, [])) for k in ks)
-        return f"{count(n, 'object' if sel.kind == OBJECT else 'triangle')} in {where}"
+        return self.selection.describe()
 
     def tool_groups(self) -> Sequence[ToolGroup]:
         return GROUPS

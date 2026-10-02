@@ -239,7 +239,7 @@ def test_move(ws: MapWorkspace) -> None:
     moved = ws.selection.centroid(ws.scene) - start
     assert moved[0] > 100.0 and abs(moved[1]) < 1.0 and abs(moved[2]) < 1.0
     assert ws.session.ops[0]["by"][0] == pytest.approx(moved[0], abs=1.0)
-    assert "applied: transform" in ws.message and ws.document.dirty
+    assert "applied: group 1: moved by" in ws.message and ws.document.dirty
     assert np.allclose(ws.tools.pose()[:3, 3], ws.selection.centroid(ws.scene))
     ws.document.undo()
     ws.refresh()

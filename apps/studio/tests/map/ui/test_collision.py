@@ -100,12 +100,12 @@ def test_flags_on_many(panel: CollisionPanel, ws: MapWorkspace) -> None:
     pick(ws, (1, 0), (1, 1))
     panel.sync()
     assert panel.one.isHidden() and "2 triangles; materials [3]" in panel.info.text()
-    assert "not near-vertical" in panel.warn.text()
+    assert "too flat to climb" in panel.warn.text()
     panel.flags[1].setValue(7)
     press(panel, "Apply flags")
     assert ws.scene.chunk(1).material[0] == 7 and ws.scene.chunk(1).material[1] == 7
     press(panel, "Rock wall")
-    assert "not near-vertical" in ws.message
+    assert "too flat to climb" in ws.message
 
 
 def test_new_collision(panel: CollisionPanel, ws: MapWorkspace) -> None:

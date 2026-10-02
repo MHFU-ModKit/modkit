@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Selection panel: what is selected, a typed transform, the budget and the edits."""
+"""The Selection panel: what is selected, a typed transform, remove, and the area's edits;
+sizes, groups and the space left to draw under More. Undo and Redo are the Edit menu's."""
 
 from __future__ import annotations
 
@@ -11,7 +12,8 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit
 
-from ..core.edit import COLLISION, describe_op
+from ..core.edit import COLLISION, count, describe_op
+from ..core.scene import group_name
 from .common import Gate
 
 if TYPE_CHECKING:
@@ -22,13 +24,12 @@ if TYPE_CHECKING:
 #: the selected groups listed by name before "and N more"
 SHOWN_GROUPS = 6
 REMOVE_TIP = (
-    "Clears the selected objects: their triangles stop drawing, and what they held becomes free"
-    " budget that the Add panel can fill with something new."
+    "Clears the selected objects: they stop drawing, and their drawing slots are free for the"
+    " Add panel to fill."
 )
 BUDGET_TIP = (
-    "A section can only draw what its primitives already hold; a new primitive never draws."
-    " Removing an object frees its primitives, adding fills free ones. Moving, turning and"
-    " scaling spend nothing."
+    "An area draws only what its drawing slots already hold; removing an object frees slots,"
+    " adding fills them. Moving, turning and scaling cost nothing."
 )
 
 
@@ -41,8 +42,11 @@ class SelectionPanel(kit.Panel):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
         self.what = kit.label(role="title")
-        self.stats = kit.label(role="muted", selectable=True)
-        self.groups = kit.label(role="muted", selectable=True)
+        self.hint = kit.label(
+            "Click something in the view to select it. Shift-click adds; in the Select tool a"
+            " drag takes everything in a box.",
+            role="muted",
+        )
         self.frame = kit.button(
             "Frame",
             tip="Points the camera at the selection (F in the view)",
@@ -55,24 +59,9 @@ class SelectionPanel(kit.Panel):
             on=studio.act("clear selection", ws.tools.clear),
             icon="ph.selection-slash",
         )
-        self.remove = kit.button(
-            "Remove",
-            tip=f"{REMOVE_TIP} (Delete in the view)",
-            on=studio.act("remove", lambda: ws.remove_selected(solid=False)),
-            role="danger",
-            icon="ph.trash",
-        )
-        self.remove_solid = kit.button(
-            "Remove + collision",
-            tip=f"{REMOVE_TIP} The invisible collision inside the objects' box goes too, so the"
-            " hunter can walk where they stood.",
-            on=studio.act("remove with collision", lambda: ws.remove_selected(solid=True)),
-            role="danger",
-        )
-        for w in (self.what, self.stats, self.groups):
+        for w in (self.what, self.hint):
             lay.addWidget(w)
         lay.addWidget(kit.row(self.frame, self.clear, stretch=True))
-        lay.addWidget(kit.row(self.remove, self.remove_solid, stretch=True))
 
         self.transform = kit.Section(
             "Move, rotate or scale",
@@ -92,8 +81,7 @@ class SelectionPanel(kit.Panel):
         form.row("Scale", self.factor)
         apply = kit.button(
             "Apply",
-            tip="Moves, turns and scales the selection by these amounts as one edit; Undo takes"
-            " it back",
+            tip="Moves, turns and scales the selection by these amounts as one edit",
             on=studio.act("transform", self._apply),
             role="primary",
         )
@@ -102,39 +90,46 @@ class SelectionPanel(kit.Panel):
         self.transform.body.addWidget(kit.row(apply, reset, stretch=True))
         lay.addWidget(self.transform)
 
-        budget = kit.Section("Drawing budget", tip=BUDGET_TIP)
-        self.budget = kit.label()
-        self.budget.setToolTip(BUDGET_TIP)
+        self.remove = kit.button(
+            "Remove",
+            tip=f"{REMOVE_TIP} (Delete in the view)",
+            on=studio.act("remove", lambda: ws.remove_selected(solid=False)),
+            role="danger",
+            icon="ph.trash",
+        )
+        self.remove_solid = kit.button(
+            "Remove + collision",
+            tip="Removes the objects and the invisible collision inside their box, so the"
+            " hunter can walk where they stood.",
+            on=studio.act("remove with collision", lambda: ws.remove_selected(solid=True)),
+            role="danger",
+        )
+        lay.addWidget(kit.row(self.remove, self.remove_solid, stretch=True))
         self.range = kit.Alert()
-        budget.body.addWidget(self.budget)
-        budget.body.addWidget(self.range)
-        lay.addWidget(budget)
+        lay.addWidget(self.range)
 
-        edits = kit.Section("Edits", tip="This section's edits, newest first")
+        edits = kit.Section(
+            "Edits", tip="This area's edits, newest first. Undo and Redo are in the Edit menu."
+        )
         self.count = kit.label(role="muted")
-        self.undo = kit.button(
-            "Undo",
-            tip="Takes back the last edit",
-            on=studio.act("undo", studio.undo),
-            icon="ph.arrow-u-up-left",
-        )
-        self.redo = kit.button(
-            "Redo",
-            tip="Puts back what Undo took back",
-            on=studio.act("redo", studio.redo),
-            icon="ph.arrow-u-up-right",
-        )
         self.ops = kit.Items(
-            tip="Every edit to this section, newest first; Undo takes back the top one",
-            empty="No edits to this section yet",
+            tip="Every edit to this area, newest first; Undo takes back the top one",
+            empty="No edits to this area yet",
         )
         self.ops.setMinimumHeight(140)
         self.warnings = kit.Alert()
-        edits.body.addWidget(self.count)
-        edits.body.addWidget(kit.row(self.undo, self.redo, stretch=True))
-        edits.body.addWidget(self.ops)
-        edits.body.addWidget(self.warnings)
+        for part in (self.count, self.ops, self.warnings):
+            edits.body.addWidget(part)
         lay.addWidget(edits)
+
+        more = kit.More(tip="The selection's size and groups, and the area's space left to draw")
+        self.stats = kit.label(role="muted", selectable=True)
+        self.groups = kit.label(role="muted", selectable=True)
+        self.budget = kit.label(role="muted")
+        self.budget.setToolTip(BUDGET_TIP)
+        for w in (self.stats, self.groups, self.budget):
+            more.body.addWidget(w)
+        lay.addWidget(more)
         lay.addStretch(1)
         self.gate = Gate(page, "select things and edit them")
         self.body.addWidget(self.gate)
@@ -156,37 +151,34 @@ class SelectionPanel(kit.Panel):
         assert sc is not None and sess is not None
         col = ws.tools.kind == COLLISION
         sel: Any = ws.col_sel if col else ws.selection
-        self.what.setText(sel.describe(sc))
+        said = ws.selected()
+        self.what.setText("Nothing selected" if sel.empty else said[:1].upper() + said[1:])
+        self.hint.setVisible(sel.empty)
         lines, groups = [], []
-        if sel.empty:
-            lines.append(
-                "Click something in the view to select it. Shift-click adds, and a drag in the"
-                " Select tool takes everything in a box."
-            )
-        else:
+        if not sel.empty:
             lo, hi = sel.bounds(sc)
             c, size = (lo + hi) * 0.5, hi - lo
             if col:
-                lines.append("The Collision panel edits these triangles' settings.")
+                lines.append("The Collision panel changes these triangles.")
             else:
                 s = ws.selection
+                spans = s.straddling(sc)
                 lines.append(
-                    f"{s.n_vertices} vertices, {s.n_faces(sc)} faces, {s.straddling(sc)} straddling"
+                    f"{s.n_vertices} vertices, {count(s.n_faces(sc), 'face')}"
+                    + (f", {spans} spanning two groups" if spans else "")
                 )
                 for k in list(s.vertices)[:SHOWN_GROUPS]:
                     g = sc.group(*k)
-                    tex = "none" if g.untextured else g.texture
-                    groups.append(
-                        f"{g.label}: material {g.material}, texture {tex},"
-                        f" budget {g.budget.triangles}, {g.n_components} objects"
-                    )
+                    tex = "no texture" if g.untextured else f"texture slot {g.texture}"
+                    groups.append(f"{g.label}: {tex}, {count(g.n_components, 'object')}")
                 if len(s.vertices) > SHOWN_GROUPS:
                     groups.append(f"and {len(s.vertices) - SHOWN_GROUPS} more groups")
             lines.append(
-                f"centre ({c[0]:.0f}, {c[1]:.0f}, {c[2]:.0f})"
+                f"centre {c[0]:.0f}, {c[1]:.0f}, {c[2]:.0f}"
                 f"   size {size[0]:.0f} x {size[1]:.0f} x {size[2]:.0f}"
             )
         self.stats.setText("\n".join(lines))
+        self.stats.setVisible(bool(lines))
         self.groups.setText("\n".join(groups))
         self.groups.setVisible(bool(groups))
         self.frame.setEnabled(not sel.empty)
@@ -194,8 +186,6 @@ class SelectionPanel(kit.Panel):
         self.remove.setEnabled(not sel.empty and not col)
         self.remove_solid.setEnabled(not sel.empty and not col)
         self.transform.setEnabled(not sel.empty)
-        self.undo.setEnabled(ws.document.can_undo())
-        self.redo.setEnabled(ws.document.can_redo())
         read = (sess, sess.revision)
         if read != self._read:
             self._read = read
@@ -207,18 +197,16 @@ class SelectionPanel(kit.Panel):
         assert sess is not None
         b = sess.budget()
         self.budget.setText(
-            f"{b['drawn']} of {b['total']} triangles drawn; {b['free']} free in cleared primitives"
+            f"Space left to draw: {b['free']} triangles free, {b['drawn']} of {b['total']} drawn"
         )
         bad = sess.range_check()
-        where = ", ".join(f"sub{k[0]}.g{k[1]} x{n}" for k, n in bad.items())
-        self.range.setText(f"Vertices past what the model can store: {where}" if bad else "")
+        where = ", ".join(f"{group_name(k)}: {n}" for k, n in bad.items())
+        self.range.setText(f"Vertices past what the model can store ({where})" if bad else "")
         self.range.setVisible(bool(bad))
-        n, steps = len(sess.ops), sess.n_steps
-        self.count.setText(
-            f"{n} edit{'s' * (n != 1)} in {steps} step{'s' * (steps != 1)}" if n else "No edits yet"
-        )
+        n = len(sess.ops)
+        self.count.setText(count(n, "edit") if n else "No edits yet")
         newest = reversed(list(enumerate(sess.ops, 1)))
-        self.ops.set_items([kit.Item(f"{i:3d}  {describe_op(op)}") for i, op in newest])
+        self.ops.set_items([kit.Item(f"{i}. {describe_op(op)}") for i, op in newest])
         warnings = [plain(w) for w in sess.warnings()[:3]]
         self.warnings.setText("\n".join(warnings))
         self.warnings.setVisible(bool(warnings))
