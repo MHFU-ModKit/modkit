@@ -130,5 +130,5 @@ def test_no_intel_says_why(workspace: MonsterWorkspace, qtbot: Any) -> None:
     workspace.intel_cache.pop(75)
     p = build(workspace, qtbot)
     text = p.no_intel.text()
-    assert text.startswith("No attack intel for em75: it is built from the extracted game")
+    assert text.startswith("No attack data for Tigrex (em75): it is built from the extracted game")
     assert "survey" not in text

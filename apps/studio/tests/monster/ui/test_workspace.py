@@ -38,7 +38,7 @@ def test_nothing_open() -> None:
 
 
 def test_status_names_the_scene(workspace: MonsterWorkspace) -> None:
-    assert workspace.status() == "t   host em75"
+    assert workspace.status() == "t on Tigrex (em75)"
 
 
 def test_keys_drive_the_transport(workspace: MonsterWorkspace) -> None:
@@ -125,7 +125,7 @@ def test_edit_set_opens_hitboxes(workspace: MonsterWorkspace) -> None:
     ws.edit_set(3)
     assert ws.show_attacks and ws.attacks_source == "host" and ws.selected_set == 3
     assert ws.take_focus() == "Hitboxes"
-    assert ws.hint().endswith("hitbox set 3: pick one of its hitboxes in Hitboxes")
+    assert ws.hint().endswith("hit group 3: pick one of its hitboxes in Hitboxes")
     ws.edit_set(2)
     assert ws.attacks_source == "port", "the port authors set 2"
 
@@ -137,7 +137,7 @@ def test_the_host_beside(workspace: MonsterWorkspace) -> None:
     ws.set_show_host(True)
     assert ws.vp.reference is not None and ws.host_clip == 1
     ws.browse_species(7)
-    assert ws.vp.reference is None and "no host PAC for em07" in ws.message
+    assert ws.vp.reference is None and "no model for em07" in ws.message
     ws.set_show_host(False)
     assert ws.vp.reference is None
 

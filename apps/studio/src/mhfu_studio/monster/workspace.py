@@ -55,6 +55,8 @@ TIMELINE_H = 120
 PLAY = Shortcut(("Space",), "Plays the clip, or pauses it")
 STEP = Shortcut(("Left", "Right"), "One game frame back, or on")
 REWIND = Shortcut(("Home",), "Back to the clip's first frame")
+#: `intel_gap`'s subjects in words
+WORDS = {"part": "hurtbox", "attack": "attack", "action": "action"}
 
 
 class MonsterWorkspace(Workspace):
@@ -216,21 +218,21 @@ class MonsterWorkspace(Workspace):
             ),
             Dock(
                 "Timeline", "bottom", build("timeline", "TimelinePanel"),
-                "Play the clip at the game's own speed, and see where the host move's events"
-                " fall on it.",
+                "Play the clip at the game's own speed, and see where the base monster's action"
+                " checks it.",
                 alone=True,
                 size=TIMELINE_H,
             ),
             Dock(
                 "Moves", "bottom", build("moves", "MovesPanel"),
-                "The host monster's moves as a graph of which move hands over to which. Click"
-                " one to read it; double-click to work on it in Action.",
+                "The base monster's actions as a graph of which leads to which. Click one to"
+                " read it; double-click to work on it in Action.",
                 shown=False,
             ),
             Dock(
                 "Action", "bottom", build("action", "ActionPanel"),
-                "What the host monster's move expects of the clip on screen: its frames, its"
-                " effects and its hits.",
+                "Which of your clips plays for each of the base monster's actions, and what the"
+                " action expects of it: its frames, effects and hits.",
                 shown=False,
             ),
         )  # fmt: skip
@@ -240,7 +242,7 @@ class MonsterWorkspace(Workspace):
         sc, sp = self.scene, self.host_species
         if sc is None:
             return ""
-        return sc.name if sp is None else f"{sc.name}   host em{sp:02d}"
+        return sc.name if sp is None else f"{sc.name} on {species.label(sp)}"
 
     def frame(self, dt: float) -> None:
         if self.doc is not None and self.doc.manifest is not self._seen:
@@ -314,11 +316,11 @@ class MonsterWorkspace(Workspace):
             ]
         if self.selected_attack_volume is not None and self.attacks_source == PORT:
             bits.append(
-                f"hitbox {self.selected_attack_volume} of set {self.selected_set}: its size and"
-                " place are in Hitboxes"
+                f"hitbox {self.selected_attack_volume} of hit group {self.selected_set}: change it"
+                " in Hitboxes"
             )
         elif self.selected_set is not None:
-            bits.append(f"hitbox set {self.selected_set}: pick one of its hitboxes in Hitboxes")
+            bits.append(f"hit group {self.selected_set}: pick one of its hitboxes in Hitboxes")
         return " \u00b7 ".join(bits)
 
     def paint(self, o: Overlay) -> None:
@@ -480,8 +482,8 @@ class MonsterWorkspace(Workspace):
             return "a bare PAC has no hit tables: open its port manifest (.toml) instead"
         if not runtime.has_tables(m):
             return (
-                "nothing to send: this port has no hit tables yet. Start from the host's in"
-                " Parts or Hitboxes (This port, then Adopt the host's ...)"
+                "nothing to send yet: your port has no hitboxes, hurtboxes or damage grid. Copy"
+                " the base monster's in Hitboxes or Parts first."
             )
         try:
             runtime.check(m, runtime.host_attack_tables(self.host_intel()))
@@ -523,27 +525,28 @@ class MonsterWorkspace(Workspace):
                 self.intel_cache[sp] = None
             except (OSError, ValueError) as e:
                 self.intel_errors[sp] = f"reading or building it failed ({e})"
-                self.message = f"no intel for em{sp:02d}: {self.intel_errors[sp]}"
+                self.message = f"no data for {species.label(sp)}: {self.intel_errors[sp]}"
                 self.intel_cache[sp] = None
         return self.intel_cache[sp]
 
     def intel_gap(self, what: str, sp: int | None = None) -> str:
-        """Why `sp`'s (the host's by default) `what` intel ("part", "attack", "action") is
-        missing, and what to do; empty when it is there."""
+        """Why `sp`'s (the base monster's by default) `what` intel ("part", "attack",
+        "action") is missing, and what to do; empty when it is there."""
         sp = self.host_species if sp is None else sp
         if sp is None:
-            return "No host: a bare PAC names none. Open its port manifest (.toml) instead."
+            return "No base monster: a bare PAC names none. Open its port manifest (.toml) instead."
         si = self.intel_of(sp)
         if si is None:
             why = self.intel_errors.get(sp, "it was not loaded")
-            return f"No {what} intel for em{sp:02d}: {why}."
+            return f"No {WORDS[what]} data for {species.label(sp)}: {why}."
         if what == "part" and not si.parts.present:
             why = si.parts.grid_reason
         elif what == "attack" and not si.attacks.present:
             why = si.attacks.reason
         else:
             return ""
-        return f"No {what} intel for em{sp:02d}: its overlay has none the analyser reads ({why})."
+        name = species.label(sp)
+        return f"No {WORDS[what]} data for {name}: its code has none the studio reads ({why})."
 
     @property
     def host_species(self) -> int | None:
@@ -596,7 +599,7 @@ class MonsterWorkspace(Workspace):
         try:
             self.hosts = self._survey.result()
         except (OSError, ValueError) as e:
-            self.message = f"no overlay survey: {e}"
+            self.message = f"could not compare the monsters: {e}"
             self.hosts = []
         return self.hosts
 
@@ -648,12 +651,12 @@ class MonsterWorkspace(Workspace):
             cov = clips.Coverage()
             for c in [] if sc is None else sc.clips:
                 cov.slots[c.slot] = clips.SlotCoverage(c.slot, clips.UNKNOWN, c.frames, c.loop)
-            notes.append("this is the DONOR pack: coverage describes a built port")
+            notes.append("this is the original's pack: the kinds describe a built port")
             return cov, notes
         port = slots.anim_of(sc.pac)
         if m is None:
             notes.append(
-                "no manifest: slots cannot be classified, and a label typed here would have "
+                "no manifest: anims cannot be sorted into kinds, and a name typed here has "
                 "nowhere to go"
             )
             return clips.coverage(port), notes
@@ -661,15 +664,18 @@ class MonsterWorkspace(Workspace):
         try:
             games = self.games()
         except FileNotFoundError as e:
-            notes.append(f"no host pack and no donor moveset: {e}")
+            notes.append(f"no base monster's pack and no original moveset: {e}")
             return clips.coverage(port), notes
-        for what, read in (("host pack", inputs.host_anim), ("donor moveset", inputs.donor_anim)):
+        for what, read in (
+            ("base monster's pack", inputs.host_anim),
+            ("original moveset", inputs.donor_anim),
+        ):
             try:
                 got = read(m, games)
             except (OSError, ValueError) as e:
                 notes.append(f"{what} unreadable ({e})")
                 continue
-            if what == "host pack":
+            if read is inputs.host_anim:
                 host = got
             else:
                 donor = got
@@ -700,7 +706,7 @@ class MonsterWorkspace(Workspace):
         try:
             self.vp.play_clip(self.scene.clip(slot))
         except KeyError:
-            self.message = f"slot {slot} is not in this PAC"
+            self.message = f"anim {slot} is not in this PAC"
             return
         self.vp.playback.play()
         self.pick_clip(slot)
@@ -845,7 +851,7 @@ class MonsterWorkspace(Workspace):
                 data = self.fu().read(files.monster_pac(sp))
                 scene = Scene.from_bytes(data, f"em{sp:02d}")
             except (OSError, ValueError) as e:
-                self.message = f"no host PAC for em{sp:02d}: {e}"
+                self.message = f"no model for {species.label(sp)}: {e}"
             self.host_scenes[sp] = scene
         return self.host_scenes[sp]
 

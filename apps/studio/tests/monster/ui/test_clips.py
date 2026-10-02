@@ -68,6 +68,6 @@ def test_filler_is_loud(workspace: MonsterWorkspace, qtbot: Any) -> None:
     assert p.filler.isVisibleTo(p) and "FILLER" in p.filler.text()
     item = p.table.item(1, 0)
     assert item is not None and item.foreground().color() == theme.level("warning")
-    assert "COPY OF THE IDLE" in item.toolTip()
+    assert "idle copy" in item.toolTip()
     p.table.cellClicked.emit(1, 0)
     assert p.why.property("level") == "warning"

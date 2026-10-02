@@ -101,15 +101,17 @@ class SlotCoverage:
         return self.kind == CARRIED
 
     def why(self) -> str:
-        fp = f"{self.frames}f, loop={self.loop}"
+        """In words, for the Clips panel."""
+        fp = f"{self.frames} frames" + (", loops" if self.loop else "")
         return {
-            CARRIED: f"the donor's own clip {self.slot}, intact ({fp})",
-            FILLER: f"a COPY OF THE IDLE clip ({fp}). Forcing this a1 plays idle, which on "
-            "screen is identical to the override never firing.",
-            HOST: f"the HOST species' own clip ({fp}): this a1 plays the host animal's motion "
-            "on your rig.",
-            ALTERED: f"{fp}: matches neither the donor's clip {self.slot} nor the host's.",
-            UNKNOWN: f"{fp}. No donor moveset to compare against.",
+            CARRIED: f"The original's own clip {self.slot}, intact ({fp}).",
+            FILLER: f"An idle copy ({fp}). Forcing this anim plays idle, which on screen looks"
+            " just like an override that never fired.",
+            HOST: f"The base monster's own clip ({fp}): this anim plays its motion on your"
+            " skeleton.",
+            ALTERED: f"{fp}: matches neither the original's clip {self.slot} nor the base"
+            " monster's.",
+            UNKNOWN: f"{fp}. No original moveset to compare against.",
         }[self.kind]
 
 
@@ -214,7 +216,7 @@ def track_labels(
     for name, c in sorted(m.clips.items()):
         lb = c.labelled_build
         if c.frames is None:
-            msg = f"no `frames` recorded; whatever is in slot {c.slot} now wears this name."
+            msg = f"no `frames` recorded; whatever is in anim {c.slot} now wears this name."
             out.append(LabelTrack(name, c.slot, UNCHECKABLE, msg, c.label, labelled_build=lb))
             continue
         loop = c.loop
@@ -231,18 +233,18 @@ def track_labels(
             else:
                 why = " (no build recorded for the label: this rests on the fingerprint alone)"
             status = CURRENT if same else STILL_VALID
-            msg = f"slot {c.slot} still holds a {want} clip{why}"
+            msg = f"anim {c.slot} still holds a {want} clip{why}"
             out.append(LabelTrack(name, c.slot, status, msg, c.label, labelled_build=lb))
         elif len(matches) == 1:
             msg = (
-                f"the {want} clip this name was written for is now at slot {matches[0]}, not "
-                f"{c.slot}. Re-point it: a1 IS the slot index."
+                f"the {want} clip this name was written for is now anim {matches[0]}, not "
+                f"{c.slot}. Name it again there."
             )
             out.append(LabelTrack(name, c.slot, MOVED, msg, c.label, matches[0], matches, lb))
         elif matches:
             msg = (
-                f"slot {c.slot} does not hold it any more and {len(matches)} slots share its "
-                f"fingerprint ({', '.join(map(str, matches))})."
+                f"anim {c.slot} does not hold it any more and {len(matches)} anims match its "
+                f"length and loop ({', '.join(map(str, matches))})."
             )
             out.append(LabelTrack(name, c.slot, AMBIGUOUS, msg, c.label, None, matches, lb))
         else:

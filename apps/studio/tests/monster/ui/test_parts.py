@@ -109,5 +109,6 @@ def test_a_bare_pac_has_no_host(qtbot: Any, synthetic_pac: bytes, gl: Any) -> No
     ws.setup(gl)
     ws.load(Scene.from_bytes(synthetic_pac, "t"))
     p = build(ws, qtbot)
-    assert p.source.buttons["host"].text() == "No host" and "No host" in p.no_intel.text()
+    assert p.source.buttons["host"].text() == "No host"
+    assert "No base monster" in p.no_intel.text()
     ws.close()
