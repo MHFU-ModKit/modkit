@@ -184,6 +184,9 @@ class Window(QMainWindow):
         QGuiApplication.styleHints().colorSchemeChanged.connect(self._scheme_changed)
         self._apply_theme()
 
+        on = self.settings.value("view/camera", False, type=bool)
+        self.camera_action.setChecked(bool(on))
+        self.view.show_camera = bool(on)
         studio.ask_discard = lambda names: dialogs.confirm_unsaved(self, names)
         studio.ask_path = lambda ws: dialogs.ask_save_as(self, ws)
         geo = self.settings.value("geometry")
@@ -487,6 +490,12 @@ class Window(QMainWindow):
         self.view_menu = self._menu("&View")
         self.panels_menu = QMenu("Panels", self)
         self.panels_menu.setToolTipsVisible(True)
+        self.camera_action = self._action(
+            "Show camera readout",
+            "Writes the camera's turn, tilt and distance in the view's corner",
+            self._show_camera,
+        )
+        self.camera_action.setCheckable(True)
         self.reset_action = self._action(
             "Reset layout",
             "Puts this workspace's panels back where they started",
@@ -560,6 +569,7 @@ class Window(QMainWindow):
         m = self.view_menu
         m.clear()
         m.addMenu(p)
+        m.addAction(self.camera_action)
         m.addSeparator()
         m.addAction(self.reset_action)
         m.addMenu(self.theme_menu)
@@ -584,6 +594,11 @@ class Window(QMainWindow):
             b.setProperty("busy", job is not None)
             b.style().unpolish(b)  # the stylesheet's busy rule applies on a re-polish
             b.style().polish(b)
+
+    def _show_camera(self) -> None:
+        on = self.camera_action.isChecked()
+        self.view.show_camera = on
+        self.settings.setValue("view/camera", on)
 
     def show_findings(self) -> None:
         self.findings_dock.show()

@@ -363,6 +363,15 @@ def test_help(make_window: Make) -> None:
         d.close()
 
 
+def test_camera_readout(make_window: Make) -> None:
+    w = make_window()
+    assert not w.view.show_camera and not w.camera_action.isChecked()
+    w.camera_action.trigger()
+    assert w.view.show_camera
+    w.close()
+    assert make_window().view.show_camera
+
+
 def test_take_focus(make_window: Make) -> None:
     w = make_window()
     ws = w.studio.active

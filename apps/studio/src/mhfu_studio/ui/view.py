@@ -209,6 +209,8 @@ class GLView(QOpenGLWidget):
         #: the gestures each held button's press consumed, until that button's release
         self._held: dict[Button, Gesture] = {}
         self._last: tuple[float, float] | None = None
+        #: the camera's yaw, pitch and distance under the HUD (View > Show camera readout)
+        self.show_camera = False
 
     # ---- GL ---------------------------------------------------------------------------- #
 
@@ -271,7 +273,8 @@ class GLView(QOpenGLWidget):
         try:
             o = QtOverlay(p, self.font(), (self.width(), self.height()))
             ws.paint(o)
-            hud = "\n".join(t for t in (ws.hud(), camera_line(vp.camera)) if t)
+            camera = camera_line(vp.camera) if self.show_camera else ""
+            hud = "\n".join(t for t in (ws.hud(), camera) if t)
             o.text(HUD_AT, plain(hud))
         finally:
             p.end()
