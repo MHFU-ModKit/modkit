@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Game panel: push the loaded section's edits, saved or not, into the running PPSSPP.
+"""The Game panel: what Send to game does, Restore, and the log; sending one part alone and
+the reload wait under More. Send and Stop are the toolbar's (and the File menu's).
 
 Each button runs the workspace's `push_job` through the studio, as Send to game does; the log
 is the studio's.
@@ -26,28 +27,26 @@ if TYPE_CHECKING:
     from ..workspace import MapWorkspace
 
 HOW = (
-    "Sends the loaded section's edits into the game running in PPSSPP, through its debugger;"
-    " the ISO is never touched and the document need not be saved. Stand in this section in"
-    " the game first. Collision and textures land at once. The visible mesh lands on the next"
-    " area load: walk out and back in while the catch waits. A climbable wall is read at area"
-    " load too, so the push holds it for the catch's seconds: walk out and in once more."
+    "Send to game (top right) puts this area's edits into the game running in PPSSPP; nothing"
+    " on disk changes and you need not save. Stand in this area in the game first. Collision"
+    " and textures show at once; the scenery and new climbable walls after the area loads"
+    " again: walk out and back in."
 )
 CATCH_TIP = (
-    "How long the push waits for the game to reload the area, to write the mesh again as it"
-    " loads. A quest area re-reads its files on entry and needs it; the village never does,"
-    " so there it is 0 and the mesh shows after you step into a house and out. While the"
-    " catch waits, a debugger breakpoint is armed and the game runs slower."
+    "How long a send waits for the game to load the area again, to write the scenery as it"
+    " loads. A quest area needs it; the village never reloads its files, so there it is 0 and"
+    " the scenery shows after you step into a house and out. While it waits the game runs"
+    " slower."
 )
 VILLAGE_WARNING = (
-    "This is a village section: set the catch to 0. The village never re-reads its files,"
-    " so an armed catch only slows the game down."
+    "This is the village: set the wait to 0. The village never reloads its files, so waiting"
+    " only slows the game down."
 )
-#: (label, halves, tip) per push button; no halves is all of them
-PUSHES: tuple[tuple[str, tuple[str, ...], str], ...] = (
-    ("Push all", (), "Sends the mesh, the collision and the textures together"),
-    ("Mesh", ("mesh",), "Sends only the visible mesh; it shows after the next area load"),
-    ("Collision", ("collision",), "Sends only the floors and walls; they work at once"),
-    ("Textures", ("textures",), "Sends only the texture bank; it shows at once"),
+#: (label, part, tip) per button that sends one part alone
+PARTS: tuple[tuple[str, str, str], ...] = (
+    ("Mesh", "mesh", "Sends only the visible scenery; it shows after the area loads again"),
+    ("Collision", "collision", "Sends only the floors and walls; they work at once"),
+    ("Textures", "textures", "Sends only the textures; they show at once"),
 )
 
 
@@ -57,6 +56,22 @@ class GamePanel(kit.Panel):
         self.ws, self.studio = ws, studio
         self._lines: list[str] = []
         how = kit.label(HOW, role="muted")
+        self.running = kit.label(role="muted", wrap=True)
+        self.restore = kit.button(
+            "Restore",
+            tip="Puts the game's own bytes for this area back, undoing every send",
+            on=self._push("Restore", (), restore=True),
+        )
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumBlockCount(LOG_LINES)
+        self.log.setToolTip("What the last send printed: what it planned, wrote and how it ended")
+        self.log.setPlaceholderText("Nothing sent yet. What a send prints shows here.")
+
+        more = kit.More(tip="Sending one part alone, and how long a send waits for a reload")
+        self.pushes: list[QPushButton] = [
+            kit.button(label, tip=tip, on=self._push(label, (part,))) for label, part, tip in PARTS
+        ]
         self.catch = kit.number(
             tip=CATCH_TIP,
             value=ws.catch,
@@ -66,53 +81,26 @@ class GamePanel(kit.Panel):
             on=studio.act("catch", self._set_catch),
         )
         form = kit.Form()
-        form.row("Catch", self.catch)
+        form.row("Send only", kit.row(*self.pushes, stretch=True))
+        form.row("Wait for reload", self.catch)
         self.village = kit.Alert(VILLAGE_WARNING)
-        self.pushes: list[QPushButton] = [
-            kit.button(
-                label,
-                tip=tip,
-                on=self._push(label, halves),
-                role="primary" if i == 0 else "normal",
-            )
-            for i, (label, halves, tip) in enumerate(PUSHES)
-        ]
-        self.restore = kit.button(
-            "Restore",
-            tip="Puts the game's own bytes for this section back, undoing every push",
-            on=self._push("Restore", (), restore=True),
-        )
-        self.stop = kit.button(
-            "Stop",
-            tip="Ends the running push now",
-            on=studio.act("stop", studio.stop),
-            role="danger",
-        )
         self.clear = kit.button(
             "Clear log",
-            tip="Empties the log below",
+            tip="Empties the log",
             on=studio.act("clear log", lambda: studio.log.clear()),
         )
-        self.running = kit.label(role="muted", wrap=True)
-        self.log = QPlainTextEdit()
-        self.log.setReadOnly(True)
-        self.log.setMaximumBlockCount(LOG_LINES)
-        self.log.setToolTip(
-            "What the push printed: the command, what it planned and wrote, and how it ended"
-        )
-        self.log.setPlaceholderText("Nothing pushed yet. What a push prints shows here.")
+        for w in (form, self.village, kit.row(self.clear, stretch=True)):
+            more.body.addWidget(w)
 
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(how)
-        lay.addWidget(form)
-        lay.addWidget(self.village)
-        lay.addWidget(kit.row(*self.pushes[:3], stretch=True))
-        lay.addWidget(kit.row(*self.pushes[3:], self.restore, self.stop, self.clear, stretch=True))
         lay.addWidget(self.running)
+        lay.addWidget(kit.row(self.restore, stretch=True))
         lay.addWidget(self.log, 1)
-        self.gate = Gate(page, "push its edits into the game")
+        lay.addWidget(more)
+        self.gate = Gate(page, "send its edits to the game")
         self.body.addWidget(self.gate)
 
     def _push(
@@ -121,7 +109,7 @@ class GamePanel(kit.Panel):
         def run() -> None:
             self.studio.start(self.ws.push_job(halves, restore=restore))
 
-        return self.studio.act(f"push {label.lower()}", run)
+        return self.studio.act(f"send {label.lower()}", run)
 
     def _set_catch(self) -> None:
         self.ws.catch = self.catch.value()
@@ -152,6 +140,6 @@ class GamePanel(kit.Panel):
         for b in self.pushes:
             b.setEnabled(job is None and why is None)
         self.restore.setEnabled(job is None and ws.push_blocker(restore=True) is None)
-        self.stop.setEnabled(job is not None)
         self.clear.setEnabled(bool(studio.log))
         self.running.setText(plain(f"{job.title}… (running)" if job else why or ""))
+        self.running.setVisible(bool(self.running.text()))
