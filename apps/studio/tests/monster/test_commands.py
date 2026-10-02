@@ -3,6 +3,7 @@
 import shutil
 
 import pytest
+from mhfu import inject
 from mhfu_port import manifest
 from mhfu_studio.cli import main
 
@@ -72,6 +73,13 @@ def test_hit(offline, tmp_path, capsys, monkeypatch):
     assert 'P.hit("t", {' in capsys.readouterr().out
     assert main(["port", "hit", str(offline), "--capacity", "0"]) == 0
     assert (tmp_path / "t_hit.lua").is_file() and "truncated" in capsys.readouterr().out
+    stick = tmp_path / "PSP"
+    (stick / inject.MODS_SUBDIR).mkdir(parents=True)
+    monkeypatch.setattr(inject, "MEMSTICK_ROOTS", (str(stick),))
+    out = tmp_path / "o.lua"
+    assert main(["port", "hit", str(offline), "-o", str(out), "--deploy"]) == 0
+    assert (stick / inject.MODS_SUBDIR / "o.lua").read_text() == out.read_text()
+    assert "deployed o.lua + lib/" in capsys.readouterr().out
 
 
 def test_clips(games, ports, tmp_path, capsys):

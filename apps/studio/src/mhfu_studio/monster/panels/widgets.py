@@ -107,25 +107,26 @@ class SaveRow(QWidget):
 
 
 class ExportRow(QWidget):
-    """The SAVED manifest's tables as `<name>_hit.lua`, and onto the memory stick."""
+    """The tables as `<name>_hit.lua`, and onto the memory stick (Send to game)."""
 
     def __init__(self, ws: MonsterWorkspace, studio: Studio) -> None:
         super().__init__()
         self.ws = ws
         self.export = kit.button(
             "Export",
-            tip="Writes <name>_hit.lua beside you: the SAVED hurtboxes, damage grid, hitboxes"
-            " and attack records as the one P.hit() call mhfu_port.lua makes in the game, each"
-            " table written over the host's.",
+            tip="Writes <name>_hit.lua into the folder the studio was started from: the"
+            " hurtboxes, damage grid, hitboxes and attack records as they are now, as the one"
+            " P.hit() call mhfu_port.lua makes in the game, each table written over the host's.",
             on=studio.act("export", ws.export_hit),
             icon="ph.export",
         )
         self.deploy = kit.button(
             "Deploy to memstick",
-            tip="Exports, then copies the module to the memory stick's mods folder (and"
-            " mhfu_port.lua when the stick's is older: a stale library silently skips fields it"
-            " does not know). A running game reloads it; a cold one loads it at boot.",
-            on=studio.act("deploy", ws.deploy_hit),
+            tip="Send to game: exports the tables as they are now, saved or not, and copies the"
+            " module to the memory stick's mods folder (and mhfu_port.lua when the stick's is"
+            " older: a stale library silently skips fields it does not know). A running game"
+            " reloads it; a cold one loads it at boot.",
+            on=studio.act("send", studio.send),
             role="primary",
         )
         self.hint = kit.label(role="muted")
@@ -139,19 +140,11 @@ class ExportRow(QWidget):
         self.setVisible(doc is not None and doc.path is not None)
         if doc is None:
             return
-        ok, mods = self.ws.exportable(), self.ws.mods_dir()
-        self.export.setEnabled(ok)
-        self.deploy.setEnabled(ok and mods is not None)
-        if not ok:
-            text = "Nothing to export yet: save volumes, a grid, a hitbox set or a record first."
-        elif mods is None:
-            text = "No memory stick found to deploy to; Export still writes the module."
-        elif doc.dirty:
-            text = "Exports the SAVED file: save first, or your latest edits stay behind."
-        else:
-            text = ""
-        self.hint.setText(text)
-        self.hint.setVisible(bool(text))
+        why = self.ws.send_blocker()
+        self.export.setEnabled(self.ws.exportable())
+        self.deploy.setEnabled(why is None)
+        self.hint.setText(why or "")
+        self.hint.setVisible(why is not None)
 
 
 class VolumeForm(QWidget):

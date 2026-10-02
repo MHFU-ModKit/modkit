@@ -122,5 +122,5 @@ def test_export_and_deploy(
     p.sync()
     assert p.export.deploy.isEnabled()
     p.export.deploy.click()
-    assert (tmp_path / "t_hit.lua").is_file() and (mods / "t_hit.lua").is_file()
-    assert "deployed" in workspace.message
+    assert (mods / "t_hit.lua").is_file() and not (tmp_path / "t_hit.lua").exists()
+    assert workspace.message.startswith("sent t_hit.lua")

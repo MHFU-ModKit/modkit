@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 
     from mhfu_studio.monster.render.hitboxes import HitboxOverlay
     from mhfu_studio.monster.render.viewport import MonsterViewport
+    from mhfu_studio.monster.runtime import AttackTables
     from mhfu_studio.shell.studio import Studio
 
 Pair = tuple[int, int]
@@ -97,7 +98,6 @@ class MonsterWorkspace(Workspace):
         self.grid_state = 0
         #: a grid state to bring forward next frame (a finding was revealed)
         self.show_state: int | None = None
-        self.hit_export: Path | None = None
         self.show_attacks = False
         self.attacks_source = HOST
         self.selected_set: int | None = None
@@ -378,54 +378,83 @@ class MonsterWorkspace(Workspace):
             self.sync()
             self.message = "back to the file on disk"
 
-    # the runtime module
+    # the runtime module: the manifest as it is now, saved or not (its header says which)
 
     def exportable(self) -> bool:
-        """The saved manifest has tables the runtime module carries."""
-        doc = self.doc
-        if doc is None or doc.path is None:
-            return False
-        s = doc.saved_manifest
-        return bool(s.hurtboxes or s.hitzones or s.hitboxes or s.attacks)
+        """The manifest has tables the runtime module carries."""
+        from mhfu_studio.monster import runtime
 
-    def export_hit(self) -> None:
-        """The SAVED manifest's tables as `./<name>_hit.lua`: the module names its source and
-        content, so an unsaved edit would disagree without a trace."""
+        return self.manifest is not None and runtime.has_tables(self.manifest)
+
+    def _module(self) -> tuple[Manifest, int | None, AttackTables | None, str]:
+        """What `runtime.export` takes for the document as it is now."""
         from mhfu_studio.monster import runtime
 
         if self.doc is None:
-            raise ValueError("no manifest to export")
-        saved, intel = self.doc.saved_manifest, self.host_intel()
-        cap = runtime.host_capacity(intel)
-        self.hit_export = runtime.export(saved, None, cap, runtime.host_attack_tables(intel))
-        self.message = f"wrote {self.hit_export.name} (id {runtime.content_id(saved)})"
+            raise ValueError("no port manifest open")
+        m, intel = self.doc.manifest, self.host_intel()
+        source = f"{runtime.source_of(m)}, unsaved edits" if self.doc.dirty else ""
+        return m, runtime.host_capacity(intel), runtime.host_attack_tables(intel), source
 
-    def deploy_hit(self, mods: Path | None = None) -> None:
-        """Exports when nothing is exported yet, then copies the module (and a stale
-        `mhfu_port.lua`) to `mods`, the memory stick's mods folder by default."""
+    def export_hit(self) -> None:
+        """`<name>_hit.lua` in the working directory."""
         from mhfu_studio.monster import runtime
 
-        mods = mods if mods is not None else self.mods_dir()
-        if mods is None:
-            raise FileNotFoundError("no memory stick with the framework's mods folder")
-        if self.hit_export is None:
-            self.export_hit()
-        if self.hit_export is not None:
-            dep = runtime.deploy(self.hit_export, mods)
-            self.message = (
-                f"deployed {dep.describe()}. A running game hot-reloads it; a cold one loads it"
-                " at boot"
-            )
+        m, cap, tables, source = self._module()
+        path = runtime.export(m, None, cap, tables, source).resolve()
+        self.message = f"wrote {path} (id {runtime.content_id(m)})"
+
+    def deploy_hit(self) -> None:
+        """Exported fresh into the studio's cache, then copied with a stale `mhfu_port.lua`
+        to the memory stick's mods folder."""
+        from mhfu_studio.monster import runtime
+
+        m, cap, tables, source = self._module()
+        out = runtime.cache_dir() / runtime.module_name(m)
+        dep = runtime.ship(m, out, cap, tables, mods_dir=self.mods_dir(), source=source)
+        lib = "" if dep.library is None else f" and {runtime.LIB_SUBDIR}/{runtime.LIBRARY}"
+        self.message = (
+            f"sent {dep.module.name}{lib} to {_home(dep.module.parent)}; it applies when a mod"
+            f" defines the port '{m.port.name}' and the monster is in the area (id"
+            f" {runtime.content_id(m)})"
+        )
 
     @staticmethod
-    def mods_dir() -> Path | None:
-        """The memory stick's mods folder, when there is one."""
+    def mods_dir() -> Path:
+        """The memory stick's mods folder; FileNotFoundError says where it looked."""
         from mhfu import inject
 
+        return inject.default_mods_dir()
+
+    def send_blocker(self) -> str | None:
+        from mhfu_studio.monster import runtime
+
+        m = self.manifest
+        if m is None:
+            if self.scene is None:
+                return "no port open: open a port manifest (ports/<name>.toml)"
+            return "a bare PAC has no hit tables: open its port manifest (.toml) instead"
+        if not runtime.has_tables(m):
+            return (
+                "nothing to send: this port has no hit tables yet. Start from the host's in"
+                " Parts or Hitboxes (This port, then Adopt the host's ...)"
+            )
         try:
-            return inject.default_mods_dir()
-        except FileNotFoundError:
-            return None
+            runtime.check(m, runtime.host_attack_tables(self.host_intel()))
+        except ManifestError as e:
+            return f"cannot send: {e}"
+        try:
+            self.mods_dir()
+        except FileNotFoundError as e:
+            return f"no memory stick to send to: {e}"
+        return None
+
+    def send(self) -> None:
+        """The hit tables onto the memory stick (`deploy_hit`), no save needed."""
+        try:
+            self.deploy_hit()
+        except (OSError, ValueError) as e:  # ManifestError is a ValueError
+            self.message = f"send failed: {e}"
 
     # the games and the intel
 
@@ -906,6 +935,14 @@ class MonsterWorkspace(Workspace):
     def _overlay(self, which: str) -> HitboxOverlay | None:
         vp = self.vp
         return None if vp is None else vp.hitboxes if which == "hitboxes" else vp.attacks
+
+
+def _home(path: Path) -> str:
+    """`path` with the home directory as `~`."""
+    try:
+        return str(Path("~") / path.relative_to(Path.home()))
+    except ValueError:
+        return str(path)
 
 
 register("monster", MonsterWorkspace)

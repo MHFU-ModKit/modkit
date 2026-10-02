@@ -20,9 +20,14 @@ from mhfu.em.intel import HostSummary, SpeciesIntel
 from mhfu.files import Extracted
 
 
-def cache_dir() -> Path:
+def cache_root() -> Path:
+    """The studio's per-user cache."""
     base = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
-    return Path(base) / "mhfu-studio" / "species"
+    return Path(base) / "mhfu-studio"
+
+
+def cache_dir() -> Path:
+    return cache_root() / "species"
 
 
 def _name(species: int) -> str:

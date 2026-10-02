@@ -194,7 +194,10 @@ def test_window_builds_the_docks(
 
 
 def test_deploy_needs_a_stick(workspace: MonsterWorkspace, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(MonsterWorkspace, "mods_dir", staticmethod(lambda: None))
+    def none() -> Path:
+        raise FileNotFoundError("no PPSSPP memory stick in ~/x")
+
+    monkeypatch.setattr(MonsterWorkspace, "mods_dir", staticmethod(none))
     assert workspace.exportable() and not MonsterWorkspace().exportable()
     with pytest.raises(FileNotFoundError, match="memory stick"):
         workspace.deploy_hit()
@@ -210,4 +213,4 @@ def test_attacks_resolve_and_export(
     assert workspace.pair_sets() == [2]
     monkeypatch.chdir(tmp_path)
     workspace.export_hit()
-    assert (tmp_path / "t_hit.lua").is_file() and "wrote t_hit.lua" in workspace.message
+    assert (tmp_path / "t_hit.lua").is_file() and "t_hit.lua (id " in workspace.message
