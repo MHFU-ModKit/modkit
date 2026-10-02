@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from mhfu_studio.shell import places
 from mhfu_studio.shell.studio import Studio, doc_name
 from mhfu_studio.shell.testing import FakeDocument, FakeWorkspace
 from mhfu_studio.shell.workspace import Job
@@ -217,3 +221,34 @@ def test_job_outcome_goes_to_its_workspace() -> None:
     assert s.message == ""
     s.switch("map")
     assert s.message == "push st139: stopped"
+
+
+def test_remember_looks_again(
+    studio: Studio, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MHFU_DATA", raising=False)
+    looked: list[str] = []
+    for w in studio.workspaces:
+        monkeypatch.setattr(w, "locate", lambda w=w: looked.append(w.name))
+    (tmp_path / "g" / "data_files").mkdir(parents=True)
+    assert studio.remember(places.MHFU, tmp_path / "g") and looked == ["map", "monster"]
+    assert studio.message.startswith("MHFU extraction:") and "(chosen)" in studio.message
+    assert not studio.remember(places.MHFU, tmp_path / "nope")
+    assert studio.message.startswith("not used:") and looked == ["map", "monster"]
+
+
+def test_jobs_get_the_places(
+    studio: Studio, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    got: dict[str, str] = {}
+
+    def run(argv: list[str], **kw: Any) -> Any:
+        got.update(kw["env"])
+        return SimpleNamespace(stdout=b"", stderr=b"", returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.delenv("MHFU_DATA", raising=False)
+    (tmp_path / "g" / "data_files").mkdir(parents=True)
+    places.remember(places.MHFU, tmp_path / "g")
+    studio.start(Job("x", ("map", "x")))
+    assert got["MHFU_DATA"] == str(tmp_path / "g")

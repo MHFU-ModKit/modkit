@@ -37,6 +37,7 @@ from mhfu_studio.shell.studio import doc_name
 from mhfu_studio.shell.text import plain
 from mhfu_studio.shell.workspace import Dock, Tool, ToolGroup, Workspace
 from mhfu_studio.ui import about, chrome, dialogs, kit, theme
+from mhfu_studio.ui import settings as saved
 from mhfu_studio.ui.findings import FindingsPanel
 from mhfu_studio.ui.job import JobLog, ProcessRunner
 from mhfu_studio.ui.view import GLView
@@ -92,6 +93,8 @@ class Window(QMainWindow):
         super().__init__()
         self.studio = studio
         self.settings = settings if settings is not None else QSettings()
+        saved.install(self.settings)
+        studio.located()  # a place saved there may differ from what the workspaces found
         self._closed = False
         self._theming = False
         #: per dock: its title bar, and the blank one it wears while tabbed

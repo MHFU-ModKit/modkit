@@ -163,6 +163,9 @@ class Workspace(Protocol):
     def refresh(self) -> None:
         """The shell changed the document (undo, redo, save as): re-read what depends on it."""
 
+    def locate(self) -> None:
+        """A place changed (`shell.places`): find the game files again."""
+
     def revert(self) -> None:
         """Drops the unsaved edits: the document as its file has it, opened again."""
         doc = self.document

@@ -103,7 +103,7 @@ def test_no_intel_says_why(workspace: MonsterWorkspace, qtbot: Any) -> None:
     workspace.intel_cache.pop(75)
     p = build(workspace, qtbot)
     text = p.no_intel.text()
-    assert p.no_intel.isVisibleTo(p) and "MHFU_DATA" in text and "survey" not in text
+    assert p.no_intel.isVisibleTo(p) and "start page" in text and "survey" not in text
     assert "Your port still takes" in text
 
 

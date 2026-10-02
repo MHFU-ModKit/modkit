@@ -40,6 +40,17 @@ else:
     collect_ignore_glob = ["ui/*", "*/ui/*"]
 
 
+@pytest.fixture(autouse=True)
+def _places(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No saved setting, guess or memory-stick variable of the user's reaches a test."""
+    from mhfu import inject
+    from mhfu_studio.shell import places, settings
+
+    monkeypatch.setattr(settings, "store", settings.Memory())
+    monkeypatch.setattr(places, "GUESS_FROM", tmp_path / "guess")
+    monkeypatch.delenv(inject.MEMSTICK_ENV, raising=False)
+
+
 @pytest.fixture(scope="session")
 def gl() -> Iterator[Any]:
     """A headless moderngl context, or a skip that says why there is none."""

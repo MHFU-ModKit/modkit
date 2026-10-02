@@ -58,8 +58,11 @@ def build(
     from mhfu_studio.cli import AREAS
     from mhfu_studio.shell.studio import Studio
     from mhfu_studio.shell.workspace import discover
+    from mhfu_studio.ui import settings as saved
     from mhfu_studio.ui.window import Window
 
+    settings = settings if settings is not None else QSettings()
+    saved.install(settings)  # before the workspaces look for the games
     studio = Studio([make() for make in discover(AREAS).values()])
     if workspace is not None:
         try:

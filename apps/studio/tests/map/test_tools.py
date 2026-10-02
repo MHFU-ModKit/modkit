@@ -102,7 +102,7 @@ def test_registered() -> None:
 def test_without_data(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MHFU_DATA", raising=False)
     w = MapWorkspace()
-    assert w.atlas is None and "MHFU_DATA" in w.status() and "MHFU_DATA" in w.hud()
+    assert w.atlas is None and "start page" in w.status() and "start page" in w.hud()
     assert w.pointer(ev("press", (5.0, 5.0))) == Gesture.NONE and not w.key(Key("F"))
     rec = Recorder(SIZE)
     w.paint(rec)

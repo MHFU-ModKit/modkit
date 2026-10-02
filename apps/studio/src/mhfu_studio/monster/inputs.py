@@ -13,6 +13,7 @@ from mhfu_port.manifest import Manifest
 from mhp_formats import fu, p3rd
 
 from mhfu_studio.monster.clips import build_id
+from mhfu_studio.shell import places
 
 
 @dataclass(frozen=True)
@@ -31,7 +32,7 @@ def built(m: Manifest, pac: Path | None = None, data: Data | None = None) -> Bui
     """The PAC at `pac`, else the port built in memory from the extracted games."""
     if pac is not None:
         return Built(pac.read_bytes(), pac.name)
-    return Built(build.build(m, data or Data.find()).pac, m.port.pac)
+    return Built(build.build(m, data or places.games()).pac, m.port.pac)
 
 
 def host_anim(m: Manifest, data: Data) -> fu.Anim:

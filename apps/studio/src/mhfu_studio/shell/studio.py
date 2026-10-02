@@ -9,6 +9,7 @@ save?) go through hooks the window installs; without them the studio goes on una
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -18,6 +19,7 @@ from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from mhfu_studio.shell import places
 from mhfu_studio.shell.context import ContextError, attached, describe
 from mhfu_studio.shell.findings import Finding
 from mhfu_studio.shell.workspace import Job, Workspace, pick
@@ -221,6 +223,26 @@ class Studio:
         self.switch(ws.name)
         return True
 
+    def remember(self, place: places.Place, path: Path | str | None) -> bool:
+        """`place` is `path` from now on (None: found again); every workspace looks again.
+        False, the reason in `message`, when `path` is not one."""
+        try:
+            found = places.remember(place, path)
+        except (OSError, ValueError) as e:
+            self.message = f"not used: {e}"
+            self.changed()
+            return False
+        self.message = f"{place.name}: {found.says()}"
+        self.located()
+        return True
+
+    def located(self) -> None:
+        """Every workspace finds its files again (`Workspace.locate`)."""
+        for w in self.workspaces:
+            self.guard(f"find {w.name} files", w.locate)()
+        self.findings.stale()
+        self.changed()
+
     def discard_ok(self, *workspaces: Workspace) -> bool:
         """Whether their documents may be dropped: no unsaved edits, or `ask_discard` said to
         discard them, or to save them and they saved. A cancel clears the message."""
@@ -318,7 +340,10 @@ class Studio:
         if self.runner is not None:
             self.runner.start(command(job), job.stdin)
             return
-        done = subprocess.run(command(job), input=job.stdin, capture_output=True, check=False)
+        env = {**os.environ, **places.environ()}
+        done = subprocess.run(
+            command(job), input=job.stdin, capture_output=True, check=False, env=env
+        )
         for line in (done.stdout + done.stderr).decode(errors="replace").splitlines():
             self.heard(line)
         self.ended(done.returncode)

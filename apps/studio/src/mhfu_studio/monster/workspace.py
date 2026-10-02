@@ -33,6 +33,7 @@ from mhfu_studio.monster.core.scene import MHFU, Scene
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.panels.graph import MoveGraph
 from mhfu_studio.monster.parts import PartSession
+from mhfu_studio.shell import places
 from mhfu_studio.shell.input import Button, Key, Mod, Pointer
 from mhfu_studio.shell.overlay import Overlay
 from mhfu_studio.shell.text import keys
@@ -66,6 +67,9 @@ class MonsterWorkspace(Workspace):
 
     def __init__(self, data: Data | None = None, intel_root: Path | None = None) -> None:
         self._data = data
+        #: games handed in stay; else `locate` drops them when `places` finds others
+        self._handed = data is not None
+        self._found = _roots()
         #: species intel from this directory instead of the cache built from the game
         self.intel_root = intel_root
         self.intel_cache: dict[int, SpeciesIntel | None] = {}
@@ -468,10 +472,8 @@ class MonsterWorkspace(Workspace):
 
     @staticmethod
     def mods_dir() -> Path:
-        """The memory stick's mods folder; FileNotFoundError says where it looked."""
-        from mhfu import inject
-
-        return inject.default_mods_dir()
+        """The memory stick's mods folder; FileNotFoundError says why there is none."""
+        return places.mods_dir()
 
     def send_blocker(self) -> str | None:
         from mhfu_studio.monster import runtime
@@ -493,8 +495,10 @@ class MonsterWorkspace(Workspace):
             return f"cannot send hitboxes or attacks. {gap}" if gap else f"cannot send: {e}"
         try:
             self.mods_dir()
+        except places.Missing as e:
+            return f"no memory stick to send to: {e.words}"
         except FileNotFoundError as e:
-            return f"no memory stick to send to: {e}"
+            return f"the framework is not on the memory stick ({e}): install it there first"
         return None
 
     def send(self) -> None:
@@ -507,20 +511,38 @@ class MonsterWorkspace(Workspace):
     # the games and the intel
 
     def games(self) -> Data:
+        """Both extracted games; `places.Missing` says which is not there."""
         if self._data is None:
-            self._data = Data.find()
+            self._data = places.games()
         return self._data
 
     def fu(self) -> Extracted:
-        return self._data.fu if self._data is not None else Extracted.find()
+        return self._data.fu if self._data is not None else places.extracted()
+
+    def locate(self) -> None:
+        """Other games from `places`: what was read from the old ones goes."""
+        found = _roots()
+        if self._handed or found == self._found:
+            return
+        self._found, self._data = found, None
+        self.intel_cache.clear()
+        self.intel_errors.clear()
+        self.host_scenes.clear()
+        self.hosts, self._survey = None, None
+        self._coverage = self._vocab = None
+        if self.doc is not None:
+            self.doc.intel = self.host_intel()
 
     def intel_of(self, sp: int | None) -> SpeciesIntel | None:
         if sp is None:
             return None
         if sp not in self.intel_cache:
-            root = self._data.fu.root if self._data is not None else None
             try:
+                root = None if self.intel_root is not None else self.fu().root
                 self.intel_cache[sp] = species.load(sp, self.intel_root, root)
+            except places.Missing as e:
+                self.intel_errors[sp] = e.words
+                self.intel_cache[sp] = None
             except LookupError as e:
                 self.intel_errors[sp] = str(e)
                 self.intel_cache[sp] = None
@@ -592,8 +614,13 @@ class MonsterWorkspace(Workspace):
         if self.hosts is not None:
             return self.hosts
         if self._survey is None:
+            try:
+                root = None if self.intel_root is not None else self.fu().root
+            except places.Missing as e:
+                self.message = f"could not compare the monsters: {e.words}"
+                self.hosts = []
+                return self.hosts
             self._pool = self._pool or ThreadPoolExecutor(1)
-            root = self._data.fu.root if self._data is not None else None
             self._survey = self._pool.submit(species.survey, self.intel_root, root)
         if not self._survey.done():
             return None
@@ -1009,6 +1036,11 @@ class MonsterWorkspace(Workspace):
     def _overlay(self, which: str) -> HitboxOverlay | None:
         vp = self.vp
         return None if vp is None else vp.hitboxes if which == "hitboxes" else vp.attacks
+
+
+def _roots() -> tuple[Path | None, ...]:
+    """Where the two games are now."""
+    return tuple(places.find(p).path for p in (places.MHFU, places.MHP3RD))
 
 
 def _home(path: Path) -> str:

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from mhfu.files import Extracted
 
+from mhfu_studio.shell import places
 from mhfu_studio.shell.camera import Bounds
 from mhfu_studio.shell.input import Key as KeyEvent
 from mhfu_studio.shell.input import Pointer
@@ -103,16 +104,12 @@ class MapWorkspace(Workspace):
     filters = ("Map document", MANIFEST)
 
     def __init__(self, game: Extracted | None = None, atlas: Atlas | None = None) -> None:
+        #: why there is no game, in words
         self.data_error = ""
-        if game is None:
-            try:
-                game = Extracted.find()
-            except FileNotFoundError as e:
-                self.data_error = str(e)
+        #: a game handed in stays; else `locate` finds it through `places`
+        self._handed = game is not None
         self.game = game
-        if atlas is None and game is not None:
-            atlas = Atlas(game)
-        self.atlas = atlas
+        self.atlas = atlas if atlas is not None or game is None else Atlas(game)
         self.doc = MapDocument.untitled()
         self.doc.game = game
         self.vp: MapViewport | None = None
@@ -139,8 +136,30 @@ class MapWorkspace(Workspace):
         self.add = AddForm(self)
         #: a dock to bring forward, for the window (`take_focus`)
         self._focus: str | None = None
+        self.locate()
 
     # the shell's hooks
+
+    def locate(self) -> None:
+        """The game from `places` again; a different one reloads the atlas and the area."""
+        if self._handed:
+            return
+        try:
+            game: Extracted | None = places.extracted(places.MHFU)
+            atlas = Atlas(game) if game is not None else None
+        except places.Missing as e:
+            game, atlas, self.data_error = None, None, e.words
+        except (OSError, ValueError) as e:
+            game, atlas = None, None
+            self.data_error = f"the MHFU extraction does not read as the game ({e})"
+        else:
+            self.data_error = ""
+        if (game and game.root) == (self.game and self.game.root):
+            return
+        self.game, self.atlas, self.doc.game = game, atlas, game
+        self._assets.clear()
+        if self.scene is not None and game is not None:
+            self.load_stage(self.scene.stage, row=self.row)
 
     @property
     def document(self) -> MapDocument:

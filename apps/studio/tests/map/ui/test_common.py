@@ -16,7 +16,7 @@ def test_gate(qtbot: Any, game: Extracted, atlas: Atlas, monkeypatch: pytest.Mon
     gate = Gate(page, "see it")
     qtbot.addWidget(gate)
     assert not gate.check(MapWorkspace())
-    assert gate.empty.title.text() == NO_DATA and "MHFU_DATA" in gate.empty.hint.text()
+    assert gate.empty.title.text() == NO_DATA and "start page" in gate.empty.hint.text()
     ws = MapWorkspace(game, atlas)
     assert gate.check(ws, section=False) and gate.currentWidget() is page
     assert not gate.check(ws) and gate.empty.title.text() == NO_AREA

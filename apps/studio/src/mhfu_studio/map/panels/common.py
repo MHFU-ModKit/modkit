@@ -20,8 +20,8 @@ if TYPE_CHECKING:
 
 NO_DATA = "No game files"
 DATA_HINT = (
-    "The map editor reads the game's own files. Extract the game with mhp-formats extract,"
-    " set MHFU_DATA to its data_files folder and start the studio again."
+    "The map editor reads the game's own files: choose your MHFU extraction under Setup on the"
+    " start page."
 )
 NO_AREA = "No area loaded"
 
@@ -40,8 +40,8 @@ class Gate(kit.Pages):
         """The page when the game files are there and, with `section`, an area is loaded;
         else the empty state naming what is missing. True when the page shows."""
         if ws.atlas is None:
-            why = "" if "MHFU_DATA" in ws.data_error else f"{plain(ws.data_error)}. "
-            return self.need(NO_DATA, why + DATA_HINT)
+            why = plain(ws.data_error) or DATA_HINT
+            return self.need(NO_DATA, why[:1].upper() + why[1:])
         if section and (ws.scene is None or ws.session is None):
             return self.need(NO_AREA, f"Pick an area in the Areas panel to {self.what}.")
         return self.ready()

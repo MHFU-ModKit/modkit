@@ -17,9 +17,11 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from mhfu import hitzone, inject
+from mhfu import hitzone
 from mhfu.em.intel import SpeciesIntel
 from mhfu_port.manifest import ROWS, Hitbox, Hurtbox, Manifest, ManifestError
+
+from mhfu_studio.shell import places
 
 LIBRARY = "mhfu_port.lua"
 """The library the module requires; a stale copy on the memory stick drops fields it does not
@@ -313,7 +315,7 @@ def deploy(
 ) -> Deployment:
     """Copy the module beside the other mods on the memory stick, and the library when the
     memory stick's is behind. A running game hot-reloads both."""
-    mods = mods_dir if mods_dir is not None else inject.default_mods_dir()
+    mods = mods_dir if mods_dir is not None else places.mods_dir()
     if not mods.is_dir():
         raise FileNotFoundError(f"no mods directory at {mods}")
     lib = library_path or library()
