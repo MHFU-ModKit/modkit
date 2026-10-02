@@ -34,6 +34,7 @@ from mhfu_studio.shell.text import plain
 from mhfu_studio.shell.workspace import Dock, Tool, ToolGroup, Workspace
 from mhfu_studio.ui import chrome, dialogs, kit, theme
 from mhfu_studio.ui.findings import FindingsPanel
+from mhfu_studio.ui.job import JobLog, ProcessRunner
 from mhfu_studio.ui.view import GLView
 
 if TYPE_CHECKING:
@@ -133,13 +134,22 @@ class Window(QMainWindow):
         self._panels: dict[QDockWidget, Any] = {self.findings_dock: self.findings}
         self._shown: str | None = None
 
+        studio.runner = self.runner = ProcessRunner(studio, self)
+        self._log: JobLog | None = None
         self._menus()
+        self.bar.send.setDefaultAction(self.send_action)
         status = self.statusBar()
         status.setSizeGripEnabled(False)
+        self.log_button = kit.icon_button(
+            "ph.terminal-window",
+            tip="Shows what Send to game printed, with Stop and Copy",
+            on=self.show_log,
+        )
         self.message = kit.label(wrap=False)
         self.message.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.where = kit.label(wrap=False)
         self.renderer = kit.label(wrap=False)
+        status.addWidget(self.log_button)
         status.addWidget(self.message, 1)
         status.addPermanentWidget(self.where)
         status.addPermanentWidget(self.renderer)
@@ -372,7 +382,7 @@ class Window(QMainWindow):
         text: str,
         tip: str,
         slot: Callable[[], object],
-        key: QKeySequence.StandardKey | None = None,
+        key: QKeySequence.StandardKey | QKeySequence | None = None,
     ) -> QAction:
         a = QAction(text, self)
         a.setToolTip(tip)
@@ -408,7 +418,14 @@ class Window(QMainWindow):
         quit_ = self._action(
             "Quit", "Closes the studio; it asks first about unsaved edits", self.close, k.Quit
         )
+        # its text and tip follow the studio (`_sync_send`); Ctrl is Cmd on macOS
+        self.send_action = self._action(
+            "Send to game", chrome.SEND_TIP, self._send_or_stop, QKeySequence("Ctrl+Return")
+        )
+        self.send_action.setAutoRepeat(False)  # a held key would send, then stop
         f.addActions([self.open_action, self.save_action, self.save_as_action])
+        f.addSeparator()
+        f.addAction(self.send_action)
         f.addSeparator()
         f.addAction(quit_)
 
@@ -474,6 +491,41 @@ class Window(QMainWindow):
         m.addAction(self.reset_action)
         m.addMenu(self.theme_menu)
 
+    # ---- the game -------------------------------------------------------------------- #
+
+    def _send_or_stop(self) -> None:
+        if self.studio.job is not None:
+            self.studio.stop()
+        else:
+            self.studio.send()
+
+    def _sync_send(self) -> None:
+        """Send to game sends, says why it cannot, or stops the running job."""
+        a, job = self.send_action, self.studio.job
+        why = None if job is not None else self.studio.send_blocker()
+        key = a.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
+        tip = f"Stops {job.title}" if job is not None else why or f"{chrome.SEND_TIP} ({key})"
+        a.setText("Stop sending" if job is not None else "Send to game")
+        a.setIconText("Stop" if job is not None else "Send to game")
+        a.setToolTip(tip)
+        a.setStatusTip(tip)
+        a.setEnabled(why is None)
+        b = self.bar.send
+        if b.property("busy") != (job is not None):
+            b.setProperty("busy", job is not None)
+            b.style().unpolish(b)  # the stylesheet's busy rule applies on a re-polish
+            b.style().polish(b)
+
+    def show_log(self) -> JobLog:
+        """The job log window, made on first use and raised."""
+        if self._log is None:
+            self._log = JobLog(self.studio, self)
+        self._log.sync()
+        self._log.show()
+        self._log.raise_()
+        self._log.activateWindow()
+        return self._log
+
     # ---- theme ----------------------------------------------------------------------- #
 
     def set_theme(self, family: str | None = None, mode: str | None = None) -> None:
@@ -532,6 +584,9 @@ class Window(QMainWindow):
             if d.isVisible():
                 self._sync_panel(d)
         self.studio.guard("sync", lambda: self._sync_window(ws))()
+        self.studio.guard("send to game", self._sync_send)()
+        if self._log is not None and self._log.isVisible():
+            self._log.sync()
         self._retitle()
         self.view.update()
 
@@ -555,7 +610,9 @@ class Window(QMainWindow):
         self.setWindowTitle(title)
         if title or QGuiApplication.platformName() == "cocoa":  # cocoa: a dot in the close button
             self.setWindowModified(doc is not None and doc.dirty)
-        self.message.setText(plain(self.studio.message))
+        message = plain(self.studio.message)
+        self.message.setText(message)
+        self.message.setToolTip(message)  # the bar clips it
         self.where.setText(plain(ws.status()))
         self.renderer.setText(self.studio.renderer)
 
@@ -578,5 +635,6 @@ class Window(QMainWindow):
             self._save_layout(self._shown)
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.sync()
+        self.runner.close()
         self.view.release()
         e.accept()

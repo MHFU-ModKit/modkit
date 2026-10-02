@@ -287,6 +287,10 @@ QToolButton {{ background: transparent; border: none; border-radius: 8px; paddin
     color: {t.muted}; }}
 QToolButton:hover {{ background: {t.soft}; color: {t.text}; }}
 QToolButton:checked {{ background: {t.accent}; color: {t.on_accent}; font-weight: 600; }}
+#Send {{ background: {t.accent}; color: {t.on_accent}; font-weight: 600; padding: 4px 12px; }}
+#Send:hover {{ background: {t.accent_hover}; }}
+#Send:disabled {{ background: {t.soft}; color: {t.muted}; }}
+#Send[busy="true"] {{ background: {t.soft}; color: {t.text}; }}
 QPushButton {{ background: {t.entry}; border: 1px solid {t.line}; border-radius: 8px;
     padding: 5px 12px; }}
 QPushButton:hover {{ border-color: {t.accent}; }}

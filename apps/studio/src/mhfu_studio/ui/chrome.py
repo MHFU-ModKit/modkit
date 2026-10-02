@@ -30,6 +30,7 @@ HEIGHT = 40
 #: the frameless window's resize border
 GRIP = 5
 
+SEND_TIP = "Sends this workspace's edits into the running game"
 SWITCH_TIP = (
     "The workspace: which kind of document you edit. Each keeps its own document, panels,"
     " tools and layout."
@@ -61,8 +62,8 @@ def title(doc: str, app: str, native: bool = MAC) -> str:
 
 
 class TitleBar(QWidget):
-    """The app's name, the workspace switcher, the document and its unsaved chip; the menus
-    and window buttons too where the platform does not draw them."""
+    """The app's name, the workspace switcher, the document and its unsaved chip, Send to game;
+    the menus and window buttons too where the platform does not draw them."""
 
     def __init__(self, win: QMainWindow, studio: Studio, native: bool = MAC) -> None:
         super().__init__(win)
@@ -94,6 +95,13 @@ class TitleBar(QWidget):
         lay.addWidget(self.doc)
         lay.addWidget(self.chip)
         lay.addStretch(1)
+        #: the window gives it its action (`setDefaultAction`)
+        self.send = QToolButton()
+        self.send.setObjectName("Send")
+        self.send.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.send.setToolTip(SEND_TIP)
+        self.send.setCursor(Qt.CursorShape.PointingHandCursor)
+        lay.addWidget(self.send)
         self.buttons: list[QToolButton] = []
         if not native:
             for icon, tip, on in (
