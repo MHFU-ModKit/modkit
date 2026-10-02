@@ -8,7 +8,8 @@ from mhfu import hitbox, hitzone
 from mhfu.cli import main
 from mhfu.live import Session, shell_anim
 from mhfu.live import shell as shell_module
-from mhfu.live.shell import ACTION_INPUT_BASE, FREEZE_BITS, Shell
+from mhfu.live.shell import FREEZE_BITS, Shell
+from mhfu.structs import ACTION_INPUT_BASE
 
 MON = a.RAM.start + 0x90_0000  # entities, hurtbox set and grids inside the fake's memory
 MON2 = MON + 0x1_0000

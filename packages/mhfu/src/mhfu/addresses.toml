@@ -228,7 +228,6 @@ NPC_HALL_FELYNE = { eu = 0x090D6E30, type = "bytes", doc = "NPC slot: the felyne
 
 # --- framework regions ---
 MAIN_RAM = { eu = 0x08000000, type = "bytes", doc = "start of main RAM (kernel partition below USER_RAM); the lower bound of the framework's pointer checks" }
-AI_PUBLISH = { eu = 0x08AE2000, type = "bytes", doc = "framework-owned scratch the ai_publish mod writes and the HUD reads: 0x18 header + 21 x 0x14" }
 PRX_STACK_GUARD = { eu = 0x09D88000, type = "bytes", doc = "framework-owned 16 KB block reserved when the PRX image cannot be: where the engine's construction-thread stack meets the PRX" }
 CLI_BRIDGE_BLOCK = { eu = 0x0A7F0000, type = "bytes", doc = "framework-owned command block (struct CLI_BRIDGE) the debug CLI writes; needs memory=64" }
 CLONE_POOL = { eu = 0x0A800000, type = "bytes", doc = "framework-owned entity-clone pool in the extra-RAM window, up to EXTRA_RAM_END" }

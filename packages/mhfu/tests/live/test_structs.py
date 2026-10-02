@@ -18,6 +18,20 @@ def test_entity(ram):
     assert math.degrees(e.facing) == pytest.approx(45)
 
 
+def test_slot_actions(ram):
+    e = Entity(ram, MONSTER)
+    e.anim_input = (0x413, 0x4DB, 0x5A3)
+    assert e.slot_actions is None  # not a known executor species
+    e.vtable = a.TIGREX_VTABLE
+    assert (e.name, e.action, e.slot_actions) == ("Tigrex", 0x2B, (0x2B, 0x2B, 0x2B))
+
+
+def test_resize(ram):
+    e = Entity(ram, MONSTER)
+    e.resize(1.5)
+    assert (e.size_scale, e.render_scale, e.size_radius) == (1.5, (1.5, 1.5, 1.5), 1.5)
+
+
 def test_player(ram):
     g = Game(ram)
     assert not g.player.loaded
@@ -64,6 +78,8 @@ def test_quest(ram):
     assert q.timer == 36000
     assert (second.em_id, second.count) == (0x4B, 2)
     assert first.base + a.QUEST_TARGET.size == second.base
+    first.em_id = 0x14D  # an empty group does not count
+    assert q.target_species == {0x4B}
 
 
 def test_quest_records(ram):

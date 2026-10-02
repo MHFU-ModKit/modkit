@@ -20,8 +20,6 @@ QUEST_FPS = 30
 PAINT = 0xFF
 PAINT_PERIOD = 0.5
 """MAP_PAINT has to be rewritten at 2 Hz or faster."""
-EM_ID_SPECIES = 0xFF
-"""QUEST_TARGET.EM_ID holds the species in its low byte."""
 
 
 def register(shell: Shell) -> None:
@@ -182,7 +180,7 @@ def ls_mon(shell: Shell, args: argparse.Namespace) -> str:
 
 
 def ls_bigmon(shell: Shell, args: argparse.Namespace) -> str:
-    targets = {t.em_id & EM_ID_SPECIES for t in shell.game.quest.targets if t.count}
+    targets = shell.game.quest.target_species
     return _rows({k: m for k, m in shell.monsters().items() if m.species in targets})
 
 
@@ -213,8 +211,7 @@ def set_mon(shell: Shell, args: argparse.Namespace) -> str:
         return f"mon {args.slot} hp -> {m.hp}"
     if args.field == "size":
         v = args.values[0]
-        # SIZE_SCALE alone is re-derived every frame; the framework's size setter writes all three
-        m.size_scale, m.render_scale, m.size_radius = v, (v, v, v), v
+        m.resize(v)
         return f"mon {args.slot} size -> {v:.3f}"
     x, y, z = args.values
     m.position = (x, y, z)

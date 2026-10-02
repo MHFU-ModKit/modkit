@@ -31,6 +31,7 @@ from ..files import Extracted
 from ..memory import Space
 from ..mips import Code
 from ..overlay import Overlay
+from ..structs import ACTION_INPUT_BASE
 from . import attacks as atk
 from . import census as cs
 from . import chain as ch
@@ -698,8 +699,6 @@ class Budget:
         )
 
 
-_ANIM_INPUT_BASE = 0x3E8
-"""ENTITY.ANIM_INPUT holds the executor's a1 plus this (see its doc)."""
 _CELLS = {
     0x280: "reaction pending",
     a.ENTITY.ACTION_BUDGET: "frame budget",
@@ -729,8 +728,8 @@ def describe_guard(g: str) -> str:
     if not m:
         return g
     off, op, val = int(m[2], 16), m[3], int(m[4])
-    if off == a.ENTITY.ANIM_INPUT and op in ("==", "!=") and 0 <= val - _ANIM_INPUT_BASE < 200:
-        return f"{'not ' if op == '!=' else ''}playing a1 {val - _ANIM_INPUT_BASE}"
+    if off == a.ENTITY.ANIM_INPUT and op in ("==", "!=") and 0 <= val - ACTION_INPUT_BASE < 200:
+        return f"{'not ' if op == '!=' else ''}playing a1 {val - ACTION_INPUT_BASE}"
     if off == a.ENTITY.ACTION_BUDGET and val == 0 and op in ("<=", ">"):
         return "frame budget spent" if op == "<=" else "frame budget left"
     name = _CELLS.get(off)
