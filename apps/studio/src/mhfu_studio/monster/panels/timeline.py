@@ -229,7 +229,7 @@ class TimelinePanel(kit.Panel):
         ]
         self.strip = FrameStrip(lambda f: act("scrub", lambda: ws.seek(f))())
         self.hint = kit.label(
-            "No marks yet: pick an action in Action and the base monster's own frames appear here.",
+            "No marks yet: pick an action in Actions to see the base monster's frames here.",
             role="hint",
         )
         self.timing = kit.label(role="muted")
@@ -242,7 +242,7 @@ class TimelinePanel(kit.Panel):
         self.impact = kit.button(
             "Set impact here",
             tip="Records the frame on screen as this clip's impact frame in the manifest: where"
-            " its hit lands. Action checks it against the base monster's hit checks.",
+            " its hit lands. Actions checks it against the base monster's hit checks.",
             on=act("set impact", ws.set_impact_here),
             icon="ph.target",
         )
@@ -271,7 +271,7 @@ class TimelinePanel(kit.Panel):
         lay.addStretch(1)
         self.no_scene = NoScene(studio)
         self.no_clip = kit.Empty(
-            "No clip playing", "Pick a clip in Clips, or an action in Action, and it plays here."
+            "No clip playing", "Pick an action in Actions, or a clip in Clips, and it plays here."
         )
         self.empty = QStackedWidget()
         self.empty.addWidget(self.no_scene)

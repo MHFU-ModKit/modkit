@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Moves dock: the base monster's actions as a graph of hand-offs (`graph.build`), on a
-QGraphicsView.
+"""The hand-off graph in the Actions panel's More: the base monster's actions as a graph of
+which leads to which (`graph.build`), on a QGraphicsView.
 
-Click a node to read its hand-offs, double-click to select it in Action; drag a node to move it,
-the canvas to pan (any button); the wheel zooms. Edge labels show only for the focused node's
-edges: all at once, a five-node chain is unreadable."""
+Click a node to pick that action, as a row of the table does; drag a node to move it, the canvas
+to pan (any button); the wheel zooms. Edge labels show only for the focused node's edges: all at
+once, a five-node chain is unreadable."""
 
 from __future__ import annotations
 
@@ -36,7 +36,6 @@ from PySide6.QtWidgets import (
     QGraphicsScene,
     QGraphicsSceneHoverEvent,
     QGraphicsView,
-    QStackedWidget,
     QStyleOptionGraphicsItem,
     QVBoxLayout,
     QWidget,
@@ -45,7 +44,6 @@ from PySide6.QtWidgets import (
 from mhfu_studio.monster import species
 from mhfu_studio.monster.panels import graph
 from mhfu_studio.monster.panels.graph import KINDS, NODE_H, NODE_W, Arrow, Layout, Node, Pair
-from mhfu_studio.monster.panels.widgets import NoScene
 from mhfu_studio.shell.overlay import Color, Ink
 from mhfu_studio.ui import kit, theme
 
@@ -62,19 +60,21 @@ STEP = 1.12
 MARGIN = 10000.0
 PAD = 18.0
 SCOPES = (
-    ("moves", "From your moves"),
-    ("selected", "From the picked action"),
-    ("attacks", "Every attack"),
+    ("moves", "Your moves"),
+    ("selected", "Picked action"),
+    ("attacks", "All attacks"),
 )
 SCOPE_TIPS = {
     "moves": "Starts at the actions your moves use, and follows where each goes",
-    "selected": "Starts at the action picked in Action, with the actions that lead into it",
+    "selected": "Starts at the picked action, with the actions that lead into it",
     "attacks": "Every action that hits with an attack; actions that act alike are drawn once",
 }
 CANVAS_TIP = (
-    "The base monster's actions; an arrow is where one goes when it ends. Click a box to read"
-    " it, double-click to work on it in Action; drag to move or pan, wheel to zoom."
+    "The base monster's actions; an arrow is where one goes when it ends. Click a box to pick"
+    " that action and read where it goes; drag to move or pan, wheel to zoom."
 )
+#: the canvas's height inside the panel
+CANVAS_H = 340
 WALK_TIP = (
     "Read from the base monster's code, not watched in the game. An action with no arrow out"
     " never ends by itself: the game enters it only its own way, which sets it up."
@@ -84,7 +84,6 @@ LEGEND: tuple[tuple[str, Color], ...] = (
     ("attacks", KINDS["attacks"]),
     ("brain picks", KINDS["hub"]),
     ("picked", Ink.SELECTION),
-    ("in Action", Ink.HOT),
 )
 
 
@@ -270,7 +269,7 @@ class EdgeItem(QGraphicsItem):
 class GraphView(QGraphicsView):
     """The canvas: nodes, arrows, the info box and the legend."""
 
-    def __init__(self, panel: MovesPanel) -> None:
+    def __init__(self, panel: HandOffs) -> None:
         super().__init__()
         self.panel = panel
         self.setScene(QGraphicsScene(self))
@@ -430,14 +429,6 @@ class GraphView(QGraphicsView):
             if (e.position() - at).manhattanLength() < QApplication.startDragDistance():
                 self.panel.pick(pair)
 
-    def mouseDoubleClickEvent(self, e: QMouseEvent) -> None:  # noqa: N802
-        pair = self.node_at(e.position())
-        if pair is not None and e.button() == Qt.MouseButton.LeftButton:
-            self.panel.select(pair)
-            e.accept()
-            return
-        super().mouseDoubleClickEvent(e)
-
     def resizeEvent(self, e: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(e)
         self._fit_if_sized()
@@ -463,7 +454,7 @@ class GraphView(QGraphicsView):
         """The focused node's hand-offs, or how to get them; and whether they are the hint."""
         pair, lay = self.focus, self.lay
         if self.info is None or lay is None or pair is None or self.info[0].pair(*pair) is None:
-            return ["click a box to read where it goes, double-click to work on it"], True
+            return ["click a box to pick it and read where it goes"], True
         intel, moves = self.info
         return graph.info_lines(intel, pair, lay, moves), False
 
@@ -481,7 +472,7 @@ class GraphView(QGraphicsView):
         p.drawRoundedRect(box, 6, 6)
         text = self.palette().color(QPalette.ColorRole.Text)
         for i, t in enumerate(lines):
-            if hint or t.startswith("double-click"):
+            if hint:
                 p.setPen(self.dim())
             elif t.startswith("  ->"):
                 p.setPen(theme.color(Ink.HOT))
@@ -502,9 +493,11 @@ class GraphView(QGraphicsView):
             x += 14 + fm.horizontalAdvance(name) + 12
 
 
-class MovesPanel(kit.Panel):
+class HandOffs(QWidget):
+    """The graph with its scope and view buttons; `sync()` re-reads the workspace."""
+
     def __init__(self, ws: MonsterWorkspace, studio: Studio) -> None:
-        super().__init__(scroll=False)
+        super().__init__()
         self.ws, self.studio = ws, studio
         act = studio.act
         self.scope = kit.Segmented(
@@ -524,60 +517,40 @@ class MovesPanel(kit.Panel):
         self.walk = kit.label(role="muted")
         self.walk.setToolTip(WALK_TIP)
         self.canvas = GraphView(self)
-        self.no_scene = NoScene(studio)
-        self.no_scene.say(
-            "No port manifest",
-            "The graph is the base monster's actions, and the port manifest names the base"
-            " monster. Open one (ports/<name>.toml).",
-        )
         self.note = kit.Empty("Nothing to draw", "")
-        self.empty = QStackedWidget()
-        self.empty.addWidget(self.no_scene)
-        self.empty.addWidget(self.note)
-        self.pages = kit.Pages(self.canvas, self.empty)
+        self.pages = kit.Pages(self.canvas, self.note)
+        self.pages.setFixedHeight(CANVAS_H)
         self.tools = kit.row(self.scope, self.fit, self.relayout, stretch=True)
-        top = QWidget()
-        lay = QVBoxLayout(top)
+        lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(self.tools)
-        lay.addWidget(self.walk)
-        self.body.addWidget(top)
-        self.body.addWidget(self.pages, 1)
+        for w in (self.tools, self.walk, self.pages):
+            lay.addWidget(w)
 
     def pick(self, pair: Pair | None) -> None:
-        """A click: the node's hand-offs in the info box; empty canvas clears it."""
-        self.studio.act("pick node", lambda: setattr(self.ws.graph, "picked", pair))()
-
-    def select(self, pair: Pair) -> None:
-        """A double-click: the pair goes to Action, which comes to the front."""
-
-        def run() -> None:
-            self.ws.graph.picked = pair
-            self.ws.select_pair(*pair)
-            self.ws.focus("Action")
-
-        self.studio.act("select pair", run)()
+        """A click on a node picks its action (`select_action`); on empty canvas, only the
+        info box lets go."""
+        if pair is None:
+            self.studio.act("let go of node", lambda: setattr(self.ws.graph, "picked", None))()
+        else:
+            self.studio.act("pick action", lambda: self.ws.select_action(*pair))()
 
     def sync(self) -> None:
         ws = self.ws
         m, intel = ws.manifest, ws.intel
-        self.tools.setVisible(m is not None)
-        self.walk.setVisible(m is not None)
         if m is None:
-            self._empty(self.no_scene)
             return
         kit.put(self.scope, ws.graph.scope)
         self.walk.setText(self._walk_line(intel))
         sp = ws.browsing_species or 0
         if intel is None:
             self.note.say("No action data", f"There is no action data for {species.label(sp)}.")
-            self._empty(self.note)
+            self.pages.show_page(False)
             return
         moves = dict(m.moves)
         lay = ws.graph.layout(intel, moves, ws.pair)
         if lay.empty:
             self.note.say("Nothing to draw", lay.note)
-            self._empty(self.note)
+            self.pages.show_page(False)
             return
         self.pages.show_page(True)
         self.canvas.info = (intel, moves)
@@ -585,10 +558,6 @@ class MovesPanel(kit.Panel):
         ws.graph.fresh = False
         self.canvas.set_state(ws.pair, ws.graph.picked)
         self.canvas.viewport().update()
-
-    def _empty(self, which: QWidget) -> None:
-        self.empty.setCurrentWidget(which)
-        self.pages.show_page(False)
 
     def _walk_line(self, intel: SpeciesIntel | None) -> str:
         name, sel = species.label(self.ws.browsing_species or 0), self.ws.pair

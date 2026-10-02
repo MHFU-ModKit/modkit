@@ -48,7 +48,7 @@ def test_rows(intel: SpeciesIntel, port_doc: PortDocument) -> None:
         (A.ENTERED, (4, 1), None),
     ], "(1,3) is entered by nothing known, (4,2) never"
     assert rs[1].alike == ((3, 10),) and rs[2].alike == ((0, 2),)
-    assert rs[0].cells() == ["charge  (1,4)", "walk · own clip", "group 2", "check 40 past the end"]
+    assert rs[0].cells() == ["charge (1,4)", "walk", "group 2", "clip too short"]
     assert rs[1].cells() == ["(3,9) +1", "anim 14 · missing", "group 3", "–"]
     assert rs[5].cells()[1] == "anim 2 · idle copy" and rs[6].cells()[1] == "picked while it runs"
     assert "Same code and anim as (3,10)" in rs[1].tip() and "Your move charge" in rs[0].tip()
@@ -88,7 +88,7 @@ def test_timing_in_the_row(make: Any, intel: SpeciesIntel) -> None:
         '[clips.walk]\nslot = 1\nimpact_frame = 7\n[moves.c]\nmain = 1\nsub = 4\nclip = "walk"'
     )
     r = rows(m, intel)[0]
-    assert r.timing.text == "check 40 past the end" and r.timing.level == "error"
+    assert r.timing.text == "clip too short" and r.timing.level == "error"
     m.moves["c"].sub = 3
     assert rows(m, intel)[0].timing.text == "–"
 
@@ -175,7 +175,7 @@ def test_lua_round_trips(make: Any) -> None:
 def test_lua_of_the_zinogre(ports: Path) -> None:
     m = manifest.load(ports / "zinogre.toml")
     text = A.lua_moves(m)
-    assert text.startswith("-- from zinogre.toml") and "anim numbers as in build" in text
+    assert text.startswith("-- from zinogre.toml") and "-- anims of build zinogre_v10" in text
     clips, moves = back(define(text))
     assert clips == {n: m.clips[n].slot for n in ("lunge_forward", "dash_forward_stop")}
     assert moves == {n: lua_fields(mv) for n, mv in m.moves.items()}

@@ -405,16 +405,17 @@ def timing(gates: Sequence[float], impact: float | None, frames: int | None) -> 
     late = [f for f in gates if frames is not None and f > frames]
     if late:
         return Timing(
-            f"check {late[0]:g} past the end",
+            "clip too short",
             "error",
             f"The code checks frame {_gate_list(late)}, past the clip's last frame ({frames}):"
             " that branch never runs. Use a longer clip.",
         )
     if impact is None:
         return Timing(
-            "checks " + _gate_list(gates, 2),
+            f"check {gates[0]:g}" + ("…" if len(gates) > 1 else ""),
             None,
-            "No impact frame yet: scrub to where the clip hits and Set impact in Timeline.",
+            f"The code checks frame {_gate_list(gates)}. No impact frame yet: scrub to where the"
+            " clip hits and Set impact in Timeline.",
         )
     near, gap = nearest(gates, impact)
     if abs(gap) <= IMPACT_TOLERANCE:

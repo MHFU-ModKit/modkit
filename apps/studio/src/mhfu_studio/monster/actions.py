@@ -51,12 +51,13 @@ class Plays:
     def playable(self) -> bool:
         return self.slot is not None and self.kind != clips.MISSING
 
-    def text(self) -> str:
-        """`lunge_forward · own clip`, `anim 17 · idle copy`."""
+    def text(self, cell: bool = False) -> str:
+        """`lunge_forward · own clip`, `anim 17 · idle copy`; a `cell` leaves the expected
+        kind, an own clip, to its swatch."""
         if self.slot is None:
             return "picked while it runs" if self.computed else "keeps the last clip"
         what = (self.name or f"anim {self.slot}") + (f" (via {self.move})" if self.claimed else "")
-        if self.kind in (None, clips.UNKNOWN):
+        if self.kind in (None, clips.UNKNOWN) or (cell and self.kind == clips.CARRIED):
             return what
         return f"{what} · {clips.KIND_WORDS[self.kind][0]}"
 
@@ -88,8 +89,8 @@ class ActionRow:
         """Action, Plays now, Hits, Timing."""
         name = f"({self.main},{self.sub})" + (f" +{len(self.alike)}" if self.alike else "")
         return [
-            f"{self.move}  {name}" if self.move else name,
-            self.plays.text(),
+            f"{self.move} {name}" if self.move else name,
+            self.plays.text(cell=True),
             self.hits(),
             self.timing.text,
         ]
@@ -308,9 +309,9 @@ def lua_moves(m: Manifest) -> str:
     used = [n for n in m.clips if any(mv.clip == n for mv in m.moves.values())]
     builds = {m.clips[n].labelled_build for n in used} - {None}
     source = m.path.name if m.path is not None else m.port.name
-    head = [f"-- from {source}: the clips and moves of your mod's P.define{{ ... }}"]
+    head = [f"-- from {source}, for your mod's P.define{{ ... }}"]
     if len(builds) == 1:
-        head.append(f"-- anim numbers as in build {builds.pop()}")
+        head.append(f"-- anims of build {builds.pop()}")
     return "\n".join(
         [
             *head,

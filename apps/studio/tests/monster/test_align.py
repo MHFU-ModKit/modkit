@@ -41,14 +41,15 @@ def test_headline(make, species, make_pair):
 
 def test_timing_words():
     assert AL.timing([], 30, 100).text == "–" and AL.timing([], 30, 100).level is None
-    assert AL.timing([40, 70], None, 100).text == "checks 40, 70"
-    assert AL.timing([40, 70, 90], None, 100).text == "checks 40, 70 ..."
+    assert AL.timing([40], None, 100).text == "check 40"
+    assert AL.timing([40, 70, 90], None, 100).text == "check 40…"
+    assert "checks frame 40, 70, 90." in AL.timing([40, 70, 90], None, 100).detail
     assert AL.timing([40], 41, 100).text == "on time"
     assert AL.timing([40], 47, 100).text == "7 late"
     early = AL.timing([40, 70], 32, 100)
     assert early.level == "warning" and "8 frames early for the 40 check" in early.detail
     late = AL.timing([40, 120], 41, 100)
-    assert (late.text, late.level) == ("check 120 past the end", "error")
+    assert (late.text, late.level) == ("clip too short", "error")
 
 
 def test_no_impact(make, species, make_pair):
