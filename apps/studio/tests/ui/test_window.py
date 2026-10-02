@@ -127,6 +127,16 @@ def test_closed_docks_open_in_place(make_window: Make, qtbot: Any) -> None:
     assert more.geometry().bottom() < strip.geometry().top() and abs(strip.height() - 90) < 12
 
 
+def test_take_focus_opens_a_closed_dock(make_window: Make, qtbot: Any) -> None:
+    w = make_window(Closed("map"), Closed("monster"))
+    more, strip = dock(w, "map/More"), dock(w, "map/Strip")
+    w.studio.active.focus = "More"
+    w.studio.changed()
+    w.sync()
+    qtbot.wait(20)
+    assert more.isVisible() and more.height() > 2 * strip.height()
+
+
 def test_old_layouts_are_dropped(make_window: Make) -> None:
     w = make_window()
     w.addDockWidget(RIGHT, dock(w, "map/Items"))

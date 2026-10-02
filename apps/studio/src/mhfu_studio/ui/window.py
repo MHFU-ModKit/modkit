@@ -334,7 +334,7 @@ class Window(QMainWindow):
             self.resizeDocks(docks, sizes, Qt.Orientation.Vertical)
 
     def _opened(self, d: QDockWidget, on: bool) -> None:
-        """A dock opened from View > Panels: in front of its tabs; an area it opens sized."""
+        """A dock just opened: in front of its tabs; an area it opens sized."""
         if not on:
             return
         d.raise_()
@@ -384,11 +384,12 @@ class Window(QMainWindow):
             self._arrange(self._shown)
 
     def _take_focus(self, ws: Workspace) -> None:
+        """The dock `ws` asks for, opened if it was closed."""
         label = ws.take_focus()
         d = self.findChild(QDockWidget, f"{ws.name}/{label}") if label else None
         if d is not None:
             d.show()
-            d.raise_()
+            self._opened(d, True)
 
     # ---- toolbar --------------------------------------------------------------------- #
 
