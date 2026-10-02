@@ -54,8 +54,10 @@ def test_shows(panel: CollisionPanel, ws: MapWorkspace) -> None:
     )
     assert "1 climbable" in panel.climb_text.text() and panel.surface.isHidden()
     assert not panel.hint.isHidden() and panel.edit.isHidden()
-    panel.show_layer.setChecked(True)
-    assert ws.vp.show_collision
+    assert not any(w.isEnabled() for w in panel.filters)  # drawn only while shown
+    ws.tools.show_layer(True)
+    panel.sync()
+    assert all(w.isEnabled() for w in panel.filters)
     panel.classes["floor"].setChecked(False)
     panel.chunk_checks[0].setChecked(False)
     panel.fill.slider.setValue(1000)
