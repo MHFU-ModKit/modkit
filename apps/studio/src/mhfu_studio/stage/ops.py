@@ -38,6 +38,8 @@ SUBS = (0, 2)
 UV_MODES = ("keep", "obj", "planar")
 FLAG_LIMITS = {"surface": 0xFF, "material": 0xFF, "exclude": 0xFFFF}
 SELECTORS = ("vertices", "sphere", "box")
+#: the control a finding on an op lands on: the edit in the Selection panel's list
+EDIT = "edit"
 COLLISION_ONLY = ("move", "clear")
 """Mesh kinds whose `group` may be null: they then move or unlink collision only."""
 
@@ -288,17 +290,17 @@ def check(
     out: list[Finding] = []
     for i, op in enumerate(ops):
         at, target = place(area, i), (stage.number if stage else None, i)
-        out += [Finding(lv, code, msg, at, target) for lv, code, msg in _check_op(op, base_dir)]
+        out += [Finding(lv, code, m, at, target, EDIT) for lv, code, m in _check_op(op, base_dir)]
     if stage is not None and not any(f.level == "error" for f in out):
         out += [_placed(f, area) for f in evidence(stage, ops, base_dir or Path("."))]
     return out
 
 
 def _placed(f: Finding, area: str) -> Finding:
-    """A writer's finding on an op, its place named for `area`."""
+    """A writer's finding on an op, its place named for `area`, landing on the edit."""
     t = f.target
     if isinstance(t, tuple) and len(t) == 2 and isinstance(t[1], int):
-        return replace(f, where=place(area, t[1]))
+        return replace(f, where=place(area, t[1]), focus=EDIT)
     return f
 
 

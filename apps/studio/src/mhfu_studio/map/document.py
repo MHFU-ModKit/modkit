@@ -263,17 +263,20 @@ class MapDocument:
         and the document's own."""
         out: list[Finding] = []
         if not self.stages and self.directory is not None:
-            out.append(Finding("warning", "no-stages", "the document names no stage"))
+            fix = "Open an area in Areas and edit it: the document names it then."
+            out.append(Finding("warning", "no-stages", "the document names no stage", fix=fix))
         for file, users in self.shared_lists().items():
             if len(users) > 1:
                 names = ", ".join(f"st{n:03d}" for n in users)
-                out.append(Finding("info", "shared-list", f"{file} is used by {names}", file))
+                msg, fix = f"{file} is used by {names}", "Nothing to change if you meant it."
+                out.append(Finding("info", "shared-list", msg, file, fix=fix))
         if self.stages and self.game is None:
             out.append(
                 Finding(
                     "warning",
                     "no-evidence",
                     "no extracted game: the checks that need a stage were skipped",
+                    fix="Set MHFU_DATA to the extracted game and start the studio again.",
                 )
             )
         for s in self.stages:
@@ -282,7 +285,10 @@ class MapDocument:
                 try:
                     sf = self.file(s.number)
                 except (OSError, ValueError) as e:
-                    out.append(Finding("error", "no-stage", str(e), area, (s.number, None)))
+                    fix = "Check the area's number in map.toml, or extract the game again."
+                    out.append(
+                        Finding("error", "no-stage", str(e), area, (s.number, None), fix=fix)
+                    )
             out += O.check(s.ops, base_dir=self.directory, stage=sf, where=area)
         return out
 

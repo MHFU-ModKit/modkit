@@ -5,9 +5,13 @@
 The loader refuses anything structural. What is left: an anim the build does not hold (the
 builder drops an original clip with no base monster's slot, and fills a third of the slots with
 idle), a move on an action the census saw never entered (it lasts one tick), and joint numbers
-off the skeleton the port ships. Missing evidence warns; it never passes silently. The damage
-grid and the hit groups being shared with a native base monster is said where they are edited,
-not here.
+off the skeleton the port ships. Missing evidence is said, never passed silently; a standing
+condition nobody fixes in a port (no census, a guessed attack table) is info, so the problem
+count holds only problems. The damage grid and the hit groups being shared with a native base
+monster is said where they are edited, not here.
+
+A finding names the control that fixes it (`FOCUS`, a key the Parts and Hitboxes panels land
+on), or says what to do (`FIX`).
 """
 
 from __future__ import annotations
@@ -23,6 +27,76 @@ from mhp_formats.skeleton import Skeleton
 from mhfu_studio.monster import clips, species
 from mhfu_studio.shell.findings import Finding, Level
 
+#: the controls a finding lands on
+PART_NAME, HURT_PART, HURT_JOINT, HURT_RADIUS, HURT_END, HURTBOXES, GRID = (
+    "part name",
+    "hurtbox part",
+    "hurtbox joint",
+    "hurtbox radius",
+    "hurtbox far end",
+    "hurtboxes",
+    "damage grid",
+)
+HIT_JOINT, HIT_RADIUS, HIT_END, HIT_GROUP, ATTACK_STATS = (
+    "hitbox joint",
+    "hitbox radius",
+    "hitbox far end",
+    "hit group",
+    "attack stats",
+)
+#: the Clips panel's
+CLIP_NAME = "clip name"
+FOCUS = {
+    "CLIP_SLOT_MISSING": CLIP_NAME,
+    "CLIP_FRAMES_MISMATCH": CLIP_NAME,
+    "CLIP_LOOP_MISMATCH": CLIP_NAME,
+    "CLIP_IS_FILLER": CLIP_NAME,
+    "LABEL_UNKEYED": CLIP_NAME,
+    "HURTBOX_BONE_RANGE": HURT_JOINT,
+    "HURTBOX_RADIUS": HURT_RADIUS,
+    "HURTBOX_CAPSULE_NO_END": HURT_END,
+    "HURTBOX_NO_PART": HURT_PART,
+    "HURTBOX_PART_UNNAMED": PART_NAME,
+    "HURTBOX_OVER_CAPACITY": HURTBOXES,
+    "PART_INDEX_DUPLICATE": PART_NAME,
+    "PARTS_UNNAMED": PART_NAME,
+    "HITZONE_ALL_ZERO": GRID,
+    "HITBOX_BONE_RANGE": HIT_JOINT,
+    "HITBOX_RADIUS": HIT_RADIUS,
+    "HITBOX_CAPSULE_NO_END": HIT_END,
+    "HITBOX_SET_UNKNOWN": HIT_GROUP,
+    "HITBOX_OVER_CAPACITY": HIT_GROUP,
+    "HITBOX_SET_UNUSED": HIT_GROUP,
+    "HITBOX_SET_UNRIGGED": HIT_GROUP,
+    "ATTACK_EMPTY": ATTACK_STATS,
+}
+MANIFEST = "In the manifest file (ports/<name>.toml): "
+BUILD = "Build the port again: mhfu-port build ports/<name>.toml."
+FIX = {
+    "SOURCE_FILES_UNEXPECTED": MANIFEST + "fix geo and anim in [source], or leave them out.",
+    "SKIN_SOURCE_WITHOUT_RIG": MANIFEST + "set source_skeleton = true in [build].",
+    "BONE_OFFSET_OVERRIDE": MANIFEST + "delete bone_offset from [build].",
+    "PAC_ABSENT": BUILD,
+    "PAC_UNREADABLE": BUILD,
+    "EFFECT_BONE_RANGE": MANIFEST + "give the [[effect]] a joint of your skeleton.",
+    "INTEL_ABSENT": "Nothing to change: measure the game with mhfu intel --log to check them.",
+    "INTEL_WRONG_SPECIES": "Open the studio with your base monster's data (--intel).",
+    "MOVE_PAIR_NO_HANDLER": "Pick another action for the move in Action.",
+    "MOVE_PAIR_UNOBSERVED": "Nothing to change: only a census says whether it is entered.",
+    "MOVE_PAIR_NEVER_ENTERED": "Pick another action in Action, or allow_unentered = true.",
+    "MOVE_PAIR_SHORT_DWELL": "Pick another action in Action.",
+    "MOVE_PAIR_BUDGET_GATED": "Keep your clip within the action's timer, or hook the seam.",
+    "MOVE_PAIR_PARKS": MANIFEST + "give the move after or hold_max in [moves].",
+    "MOVE_BUDGET_ROOT_MOTION": MANIFEST + "add a [[rule]] from the move with min_frames.",
+    "MOVE_AFTER_ENGINE": "Nothing to change if you meant it.",
+    "HITZONE_STATE_DUPLICATE": MANIFEST + "rename one [[hitzone]] state.",
+    "HITZONE_STATE_COUNT": "Copy the base monster's damage grid again (Parts, More).",
+    "HITBOX_UNCHECKED": "Nothing to change in your port: the base monster's data has no attacks.",
+    "ATTACK_RECORD_UNKNOWN": MANIFEST + "delete this [[attack]].",
+    "ATTACK_VOLUME_UNKNOWN": MANIFEST + "give the [[attack]] a hit group the base monster has.",
+    "ATTACK_JOIN_INFERRED": "Nothing to change: only em75's attack table was measured.",
+}
+
 
 def bone_count(pac: bytes) -> int:
     """Joints of the skeleton the built PAC ships."""
@@ -33,17 +107,25 @@ def bone_count(pac: bytes) -> int:
     return len(Skeleton.from_bytes(skeleton).bones)
 
 
-def _f(level: Level, code: str, where: str, message: str) -> Finding:
-    """`where` is `section` or `section.key` / `section[i]`; `target` is that as a tuple."""
-    if "[" in where:
+def _f(
+    level: Level,
+    code: str,
+    where: str,
+    message: str,
+    at: tuple[str, int] | None = None,
+    focus: str | None = None,
+) -> Finding:
+    """`where` is `section` or `section.key` / `section[i]`; `target` is that as a tuple, or
+    `at`; the control `focus`, else `FOCUS`'s, else what to do from `FIX`."""
+    target: tuple[str, str | int] | None = at
+    if at is None and "[" in where:
         section, i = where.rstrip("]").split("[")
-        target: tuple[str, str | int] | None = (section, int(i))
-    elif "." in where:
+        target = (section, int(i))
+    elif at is None and "." in where:
         section, key = where.split(".", 1)
         target = (section, key)
-    else:
-        target = None
-    return Finding(level, code, message, where, target)
+    focus = FOCUS.get(code, "") if focus is None else focus
+    return Finding(level, code, message, where, target, focus, FIX.get(code, ""))
 
 
 def validate(
@@ -250,7 +332,7 @@ def _moves(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
     host = m.port.host_species
     if intel is None:
         msg = f"no action data for {species.label(host)}: {len(m.moves)} move(s) not checked."
-        return [_f("warning", "INTEL_ABSENT", "moves", msg)]
+        return [_f("warning", "INTEL_ABSENT", "moves", msg)]  # no data at all, not only no census
     if intel.host_species != host:
         msg = (
             f"the action data is for {species.label(intel.host_species)}, but your base monster"
@@ -262,7 +344,7 @@ def _moves(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
         why = intel.census_reason or "no census was attached"
         out.append(
             _f(
-                "warning",
+                "info",
                 "INTEL_ABSENT",
                 "moves",
                 f"nothing was measured in the game ({why}), so whether it ever enters these "
@@ -422,6 +504,7 @@ def _parts(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
                     "parts",
                     f"{', '.join(map(repr, names))} all name breakable part {idx}: two parts that "
                     "are secretly one.",
+                    ("part", idx),
                 )
             )
     named = {part.index for part in m.parts.values()}
@@ -460,10 +543,13 @@ def _parts(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
             f"{len(m.hurtboxes)} hurtboxes but the base monster's table holds {cap}: the game "
             "drops the rest."
         )
-        out.append(_f("warning", "HURTBOX_OVER_CAPACITY", "hurtbox", msg))
+        out.append(_f("warning", "HURTBOX_OVER_CAPACITY", "hurtbox", msg, ("hurtbox", cap)))
     if m.hurtboxes and not m.parts:
         msg = f"{len(m.hurtboxes)} hurtbox(es) and no [parts] naming their parts."
-        out.append(_f("warning", "PARTS_UNNAMED", "parts", msg))
+        used = sorted({h.part for h in m.hurtboxes if h.part})
+        # part 0 is nobody: with no other, a hurtbox needs a part before a name helps
+        at, focus = (("part", used[0]), PART_NAME) if used else (("hurtbox", 0), HURT_PART)
+        out.append(_f("warning", "PARTS_UNNAMED", "parts", msg, at, focus))
     return out
 
 
@@ -480,20 +566,22 @@ def _attacks(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
         if a.is_empty:
             msg = f"attack {a.id} changes no stat, so it does nothing."
             out.append(_f("warning", "ATTACK_EMPTY", f"attack[{i}]", msg))
-    at = intel.attacks if intel is not None else None
-    if at is None or not at.present:
+    attacks = intel.attacks if intel is not None else None
+    if attacks is None or not attacks.present:
         msg = (
             f"no attack data for {species.label(host)}: hit groups, attack ids and sizes are "
             "not checked, and Send to game refuses until there is."
         )
         out.append(_f("warning", "HITBOX_UNCHECKED", "hitbox", msg))
         return out
-    n_sets, n_records = len(at.sets), len(at.primary.attacks) if at.primary else 0
+    n_sets = len(attacks.sets)
+    n_records = len(attacks.primary.attacks) if attacks.primary else 0
     for st in sorted({h.set for h in m.hitboxes}):
-        hs = at.set(st)
+        hs = attacks.set(st)
+        at = ("set", st)
         if hs is None:
             msg = f"hit group {st}: {species.label(host)} has {n_sets}."
-            out.append(_f("error", "HITBOX_SET_UNKNOWN", "hitbox", msg))
+            out.append(_f("error", "HITBOX_SET_UNKNOWN", "hitbox", msg, at))
             continue
         mine = sum(h.set == st for h in m.hitboxes)
         if mine > hs.capacity:
@@ -501,29 +589,29 @@ def _attacks(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
                 f"hit group {st}: {mine} hitboxes but the base monster's holds {hs.capacity}; "
                 "the game drops the rest."
             )
-            out.append(_f("warning", "HITBOX_OVER_CAPACITY", "hitbox", msg))
+            out.append(_f("warning", "HITBOX_OVER_CAPACITY", "hitbox", msg, at))
         if not hs.rigged:
             msg = (
                 f"hit group {st} is on no joint in the base monster (the attack's own place): a "
                 "joint here changes nothing."
             )
-            out.append(_f("warning", "HITBOX_SET_UNRIGGED", "hitbox", msg))
-        if not at.attacks_using(st):
-            msg = f"no attack uses hit group {st}, unless an [[attack]] points one at it."
-            out.append(_f("warning", "HITBOX_SET_UNUSED", "hitbox", msg))
+            out.append(_f("info", "HITBOX_SET_UNRIGGED", "hitbox", msg, at))
+        if not attacks.attacks_using(st) and not any(a.volume == st for a in m.attacks):
+            msg = f"no attack uses hit group {st}: an [[attack]] can point one at it."
+            out.append(_f("warning", "HITBOX_SET_UNUSED", "hitbox", msg, at))
     for i, a in enumerate(m.attacks):
-        if at.attack(a.id) is None:
+        if attacks.attack(a.id) is None:
             msg = f"attack {a.id}: {species.label(host)} has {n_records}."
             out.append(_f("error", "ATTACK_RECORD_UNKNOWN", f"attack[{i}]", msg))
-        if a.volume is not None and at.set(a.volume) is None:
+        if a.volume is not None and attacks.set(a.volume) is None:
             msg = f"hit group {a.volume}: {species.label(host)} has {n_sets}."
             out.append(_f("error", "ATTACK_VOLUME_UNKNOWN", f"attack[{i}]", msg))
-    if at.join != "measured":
+    if attacks.join != "measured":
         msg = (
-            f"for {species.label(host)} the link from code to attack table is {at.join}, not "
-            "measured: which hit group an action uses is a guess here."
+            f"for {species.label(host)} the link from code to attack table is {attacks.join}, not"
+            " measured: which hit group an action uses is a guess here."
         )
-        out.append(_f("warning", "ATTACK_JOIN_INFERRED", "hitbox", msg))
+        out.append(_f("info", "ATTACK_JOIN_INFERRED", "hitbox", msg))
     return out
 
 

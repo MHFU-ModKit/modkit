@@ -19,7 +19,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mhfu import files
+from mhfu import files, hitzone
 from mhfu.em.intel import AttackIntel, HostSummary, PairIntel, PartIntel, SpeciesIntel
 from mhfu.files import Extracted
 from mhfu_port import slots
@@ -35,8 +35,10 @@ from mhfu_studio.monster.core.scene import MHFU, Scene
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.panels.graph import MoveGraph
 from mhfu_studio.monster.parts import PartSession
+from mhfu_studio.monster.tools import HIT, HURT, NOUN, VolumeTools, describe
+from mhfu_studio.monster.tools import KEYS as VOLUME_KEYS
 from mhfu_studio.shell import places
-from mhfu_studio.shell.input import Button, Key, Mod, Pointer
+from mhfu_studio.shell.input import Key, Mod, Pointer
 from mhfu_studio.shell.overlay import Overlay
 from mhfu_studio.shell.text import keys
 from mhfu_studio.shell.workspace import (
@@ -63,8 +65,6 @@ if TYPE_CHECKING:
 Pair = tuple[int, int]
 #: a table's source: the base monster's, or the port's own (the panels' switch)
 PORT, HOST = "port", "host"
-#: points a click may travel and still pick, not orbit
-CLICK_SLOP = 4.0
 #: the Timeline's height: its title, the transport and the frame strip; the rest scrolls
 TIMELINE_H = 120
 PLAY = Shortcut(("Space",), "Plays the clip, or pauses it")
@@ -136,8 +136,9 @@ class MonsterWorkspace(Workspace):
         self.message = ""
         #: a dock to bring forward, for the window (`take_focus`)
         self._focus: str | None = None
-        #: where the left button went down over the view, until it comes up
-        self._press: tuple[float, float] | None = None
+        #: a finding's control for its panel to land on (`land`)
+        self.landing = ""
+        self.tools = VolumeTools(self)
         self._seen: Manifest | None = None
         #: every overlay summarised, once surveyed
         self.hosts: list[HostSummary] | None = None
@@ -147,6 +148,7 @@ class MonsterWorkspace(Workspace):
 
     def _reset(self) -> None:
         """Per-document view state."""
+        self.tools.reset()
         self.show_joint_ids = False
         self.undriven: dict[int, int] = {}
         self.markers: list[align.Marker] = []
@@ -386,6 +388,7 @@ class MonsterWorkspace(Workspace):
         return vp.actor.playback.playing or (ref is not None and ref.playback.playing)
 
     def refresh(self) -> None:
+        self.tools.cancel()  # an undo under a drag: the drag's start is gone
         self.sync()
 
     def take_focus(self) -> str | None:
@@ -397,19 +400,13 @@ class MonsterWorkspace(Workspace):
         self._focus = dock
 
     def pointer(self, ev: Pointer) -> Gesture:
-        """A left click that does not travel picks (`viewport.pick`); a drag stays the camera's."""
-        if ev.kind == "press" and ev.button == Button.LEFT:
-            self._press = ev.pos
-        elif ev.kind == "release" and ev.button == Button.LEFT and self._press is not None:
-            (x, y), self._press = self._press, None
-            if abs(ev.x - x) + abs(ev.y - y) <= CLICK_SLOP:
-                from mhfu_studio.monster.panels import viewport
-
-                viewport.pick(self, ev.x, ev.y, ev.size)
-        return Gesture.NONE
+        """Picking and the gizmo (`tools`); a drag off a handle stays the camera's."""
+        return self.tools.pointer(ev)
 
     def key(self, ev: Key) -> bool:
-        """`shortcuts` while a clip is on screen."""
+        """The picked volume's keys, then the transport's while a clip is on screen."""
+        if self.tools.key(ev):
+            return True
         acts: dict[str, Callable[[], None]] = {
             PLAY.keys[0]: self.play_pause,
             STEP.keys[0]: lambda: self.step(-1),
@@ -423,7 +420,7 @@ class MonsterWorkspace(Workspace):
         return True
 
     def shortcuts(self) -> Sequence[Shortcut]:
-        return (PLAY, STEP, REWIND)
+        return (PLAY, STEP, REWIND, *VOLUME_KEYS)
 
     def hint(self) -> str:
         sc, vp = self.scene, self.vp
@@ -442,11 +439,9 @@ class MonsterWorkspace(Workspace):
                 f"{keys(STEP.keys)} step a frame",
                 f"{keys(REWIND.keys)} rewind",
             ]
-        if self.selected_attack_volume is not None and self.attacks_source == PORT:
-            bits.append(
-                f"hitbox {self.selected_attack_volume} of hit group {self.selected_set}: change it"
-                " in Hitboxes"
-            )
+        picked = self.tools.hint()
+        if picked:
+            bits.append(picked)
         elif self.selected_set is not None:
             bits.append(f"hit group {self.selected_set}: pick one of its hitboxes in Hitboxes")
         return " \u00b7 ".join(bits)
@@ -455,11 +450,13 @@ class MonsterWorkspace(Workspace):
         from mhfu_studio.monster.panels import viewport
 
         viewport.joint_labels(self, o)
+        self.tools.paint(o)
 
-    def reveal(self, target: Hashable) -> None:
-        """A finding's `(section, key)`: select it and bring its panel forward."""
+    def reveal(self, target: Hashable, focus: str = "") -> None:
+        """A finding's `(section, key)`: select it, bring its panel forward and land on `focus`."""
         if not isinstance(target, tuple) or len(target) != 2 or self.manifest is None:
             return
+        self.landing = focus
         section, key = target
         m = self.manifest
         if section == "clips" and isinstance(key, str) and key in m.clips:
@@ -475,6 +472,13 @@ class MonsterWorkspace(Workspace):
             self.show_parts, self.parts_source = True, PORT
             self.sync_hitboxes()
             self.select_volume(key)
+            if m.hurtboxes[key].part:  # 0 is nobody
+                self.select_part((m.hurtboxes[key].part or 0) & hitzone.PART_MASK)
+            self.focus("Parts")
+        elif section == "part" and isinstance(key, int):
+            self.show_parts, self.parts_source = True, PORT
+            self.sync_hitboxes()
+            self.select_part(key)
             self.focus("Parts")
         elif section == "hitzone" and isinstance(key, int):
             self.parts_source, self.show_state = PORT, key
@@ -485,9 +489,14 @@ class MonsterWorkspace(Workspace):
             self.sync_attacks()
             self.select_attack_volume(key)
             self.focus("Hitboxes")
+        elif section == "set" and isinstance(key, int):
+            self.edit_set(key)
         elif section == "attack" and isinstance(key, int) and key < len(m.attacks):
-            vol = m.attacks[key].volume
-            self.show_attacks = True
+            a, host = m.attacks[key], self.host_attacks()
+            rec = None if host is None else host.attack(a.id)
+            known = host is not None and a.volume is not None and host.set(a.volume) is not None
+            vol = a.volume if known else None if rec is None else rec.volume
+            self.show_attacks, self.attacks_source = True, PORT
             if vol is not None:
                 self.select_set(vol)
             self.sync_attacks()
@@ -536,6 +545,16 @@ class MonsterWorkspace(Workspace):
         self.sync()
         self.message = got if isinstance(got, str) and not what else what
         return True
+
+    def edit_volume(self, which: str, index: int, **fields: Any) -> bool:
+        """Fields of volume `index` of `which` (`HURT`, `HIT`), one undo step: the forms' and the
+        gizmo's one way in."""
+        sess = self.part_session if which == HURT else self.attack_session
+        if sess is None:
+            self.message = "no manifest to write to"
+            return False
+        msg = f"{NOUN[which]} {index}: {describe(fields)}"
+        return self.edit(msg, lambda: sess.edit_volume(index, **fields))
 
     def save(self) -> None:
         if self.doc is None:
@@ -1077,14 +1096,16 @@ class MonsterWorkspace(Workspace):
         self.part_orphans = () if ov is None else ov.orphans
         if ov is not None:
             ov.set_selected_group(self.selected_part)
-            ov.set_selected_volume(self.selected_volume if self.parts_source == PORT else None)
+            ov.set_selected_volume(self.selected_volume)
         vp.set_reference_hitboxes(volumes(host.spheres()) if host is not None else [])
 
     def select_volume(self, index: int | None) -> None:
+        """Hurtbox `index` of the source shown; the base monster's too, to look at."""
         self.selected_volume = index
-        ov = self._overlay("hitboxes")
+        self.tools.last = HURT
+        ov = self._overlay(HURT)
         if ov is not None:
-            ov.set_selected_volume(index if self.parts_source == PORT else None)
+            ov.set_selected_volume(index)
 
     def select_part(self, part: int | None) -> None:
         self.selected_part = part
@@ -1126,9 +1147,7 @@ class MonsterWorkspace(Workspace):
         if ov is not None:
             ov.set_visible(self.visible_sets())
             ov.set_selected_group(self.selected_set)
-            ov.set_selected_volume(
-                self.selected_attack_volume if self.attacks_source == PORT else None
-            )
+            ov.set_selected_volume(self.selected_attack_volume)
         vp.set_reference_attacks(attack_volumes(host.sets) if host is not None else [])
         vp.sync_focus("attacks")
 
@@ -1152,10 +1171,12 @@ class MonsterWorkspace(Workspace):
         self.focus("Hitboxes")
 
     def select_attack_volume(self, index: int | None) -> None:
+        """Hitbox `index` of the source shown; the base monster's too, to look at."""
         self.selected_attack_volume = index
-        ov = self._overlay("attacks")
+        self.tools.last = HIT
+        ov = self._overlay(HIT)
         if ov is not None:
-            ov.set_selected_volume(index if self.attacks_source == PORT else None)
+            ov.set_selected_volume(index)
 
     def _overlay(self, which: str) -> HitboxOverlay | None:
         vp = self.vp
