@@ -13,8 +13,8 @@ from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from PySide6.QtCore import QEvent, QObject, QSignalBlocker, Qt, Signal
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QSize, Qt, Signal
+from PySide6.QtGui import QFont, QFontMetrics, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
@@ -105,6 +105,17 @@ def check(text: str, *, tip: str, on: Callable[[bool], object], checked: bool = 
     return b
 
 
+class Segment(QToolButton):
+    """A button the theme draws bold when checked: as wide as its text in bold, else cut."""
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        s, text = super().sizeHint(), self.text()
+        bold = QFont(self.font())
+        bold.setWeight(QFont.Weight.DemiBold)  # the theme's 600
+        w = QFontMetrics(bold).horizontalAdvance(text) - self.fontMetrics().horizontalAdvance(text)
+        return QSize(s.width() + max(w, 0), s.height())
+
+
 class Segmented(QWidget):
     """A pill row of exclusive choices; `on(id)` fires on a click, not on `set`."""
 
@@ -128,7 +139,7 @@ class Segmented(QWidget):
         self.ids = [c for c, _ in choices]
         self.buttons: dict[str, QToolButton] = {}
         for i, (cid, label) in enumerate(choices):
-            b = QToolButton()
+            b = Segment()
             b.setText(label)
             b.setCheckable(True)
             b.setToolTip((tips or {}).get(cid, ""))  # else the row's

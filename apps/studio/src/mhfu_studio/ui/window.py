@@ -440,7 +440,7 @@ class Window(QMainWindow):
 
     @staticmethod
     def _tool_button(a: QAction, toggle: bool) -> QToolButton:
-        b = QToolButton()
+        b = QToolButton() if toggle else kit.Segment()
         b.setDefaultAction(a)  # the action's keys work while the button shows
         b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         b.setIconSize(QSize(16, 16))

@@ -5,8 +5,15 @@ from typing import Any
 import pytest
 from mhfu_studio.ui import kit, theme
 from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QFont, QFontMetrics, QWheelEvent
+from PySide6.QtWidgets import (
+    QAbstractSpinBox,
+    QApplication,
+    QPushButton,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 def test_a_control_needs_a_tip(qapp: object) -> None:
@@ -43,6 +50,23 @@ def test_segmented_reports_clicks_not_sets(qtbot: Any) -> None:
     assert seg.value == "b" and not got
     qtbot.mouseClick(seg.buttons["a"], Qt.MouseButton.LeftButton)
     assert got == ["a"] and seg.value == "a"
+
+
+def test_segments_fit_bold(qtbot: Any) -> None:
+    theme.apply(theme.theme("Ember", True))
+    seg = kit.Segmented([("a", "Base monster (read only)"), ("b", "Yours")], tip="m", on=print)
+    qtbot.addWidget(seg)
+    seg.show()
+    for b in seg.buttons.values():
+        plain = QToolButton(seg)
+        plain.setText(b.text())
+        plain.ensurePolished()
+        bold = QFont(b.font())
+        bold.setWeight(QFont.Weight.DemiBold)
+        more = QFontMetrics(bold).horizontalAdvance(b.text()) - b.fontMetrics().horizontalAdvance(
+            b.text()
+        )
+        assert more > 0 and b.width() >= plain.sizeHint().width() + more
 
 
 def test_items_rebuild_on_change_only(qtbot: Any) -> None:

@@ -8,9 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import (
-    QAbstractButton,
     QAbstractSpinBox,
     QCheckBox,
     QDoubleSpinBox,
@@ -63,16 +61,9 @@ def base_name(ws: MonsterWorkspace) -> str:
     return species.label(ws.host_species)
 
 
-def _fit_bold(b: QAbstractButton) -> None:
-    """A checked segment is bold (the theme): room for that, else its text is cut."""
-    bold = QFont(b.font())
-    bold.setWeight(QFont.Weight.DemiBold)
-    b.setMinimumWidth(QFontMetrics(bold).horizontalAdvance(b.text()) + 24)
-
-
 def source_switch(ws: MonsterWorkspace, what: str, on: Callable[[str], object]) -> kit.Segmented:
     """Base monster (read only) | Yours, for `what` ("hitboxes")."""
-    box = kit.Segmented(
+    return kit.Segmented(
         SOURCES,
         tip=f"Whose {what} to show",
         tips={
@@ -81,9 +72,6 @@ def source_switch(ws: MonsterWorkspace, what: str, on: Callable[[str], object]) 
         },
         on=on,
     )
-    for b in box.buttons.values():
-        _fit_bold(b)
-    return box
 
 
 def sync_source(box: kit.Segmented, ws: MonsterWorkspace, current: str) -> None:
@@ -92,7 +80,6 @@ def sync_source(box: kit.Segmented, ws: MonsterWorkspace, current: str) -> None:
     text = "No base monster" if ws.host_species is None else SOURCES[0][1]
     if b.text() != text:
         b.setText(text)
-        _fit_bold(b)
     b.setToolTip(f"{base_name(ws)}: read only")
     kit.put(box, current)
 
