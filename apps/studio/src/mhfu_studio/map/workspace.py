@@ -339,7 +339,7 @@ class MapWorkspace(Workspace):
         if sess is None or sc is None or not isinstance(i, int) or not 0 <= i < len(sess.ops):
             return
         op = sess.ops[i]
-        self.message = f"op {i}: {describe_op(op)}"
+        self.message = f"{O.place(stage_title(stage), i)}: {describe_op(op)}"
         g = op.get("group")
         if isinstance(g, int) and op.get("vertices"):
             try:

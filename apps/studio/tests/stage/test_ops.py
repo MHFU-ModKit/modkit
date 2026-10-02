@@ -116,7 +116,8 @@ def test_faults(op: dict, code: str):
 
 def test_levels_and_where():
     (f,) = O.check([{"op": "material", "group": 0}], where="st098")
-    assert (f.level, f.code, f.where, f.target) == ("warning", "no-change", "st098 op 0", (None, 0))
+    assert (f.level, f.code, f.target) == ("warning", "no-change", (None, 0))
+    assert f.where == "st098, edit 1"
     assert O.check([{"op": "move", "group": 0, "box": [0] * 6, "by": [0] * 3, "huh": 1}])[
         0
     ].level == ("warning")
@@ -190,3 +191,6 @@ def test_evidence(st: StageFile, assets: Path):
         ("refused", (1, 2)),
     ]
     assert _codes([{"op": "warp"}, *ops], stage=st) == ["unknown-op"]
+    assert found[0].where == "st001, edit 1"
+    assert O.check(ops, base_dir=assets, stage=st, where="Camp")[1].where == "Camp, edit 4"
+    assert O.place("", 0) == "Edit 1"

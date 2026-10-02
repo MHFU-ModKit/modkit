@@ -70,7 +70,7 @@ def build(stage: StageFile, ops: Sequence[O.Op], base_dir: Path) -> TextureEdit:
     for i, op in enumerate(ops):
         if not O.touches_textures(op):
             continue
-        where, target = f"{stage.label} op {i}", (stage.number, i)
+        where, target = O.place(stage.label, i), (stage.number, i)
         slot = op["slot"]
         try:
             if not 0 <= slot < len(bank.images):

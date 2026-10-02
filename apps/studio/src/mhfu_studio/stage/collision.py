@@ -218,11 +218,11 @@ class _Planner:
         return self.out
 
     def say(self, level: Level, code: str, message: str) -> None:
-        where, target = f"{self.stage.label} op {self.i}", (self.stage.number, self.i)
+        where, target = O.place(self.stage.label, self.i), (self.stage.number, self.i)
         self.out.findings.append(Finding(level, code, message, where, target))
 
     def log(self, line: str) -> None:
-        self.out.log.append(f"{self.stage.label} op {self.i}: {line}")
+        self.out.log.append(f"{O.place(self.stage.label, self.i)}: {line}")
 
     # cell bookkeeping
 

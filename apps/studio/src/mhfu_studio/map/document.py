@@ -32,6 +32,8 @@ from mhfu_studio.stage import collision, mesh, textures
 from mhfu_studio.stage import ops as O
 from mhfu_studio.stage.file import StageFile
 
+from .core.atlas import stage_title
+
 if TYPE_CHECKING:
     from .core.edit import EditSession
 
@@ -275,13 +277,13 @@ class MapDocument:
                 )
             )
         for s in self.stages:
-            sf = None
+            sf, area = None, stage_title(s.number)
             if self.game is not None:
                 try:
                     sf = self.file(s.number)
                 except (OSError, ValueError) as e:
-                    out.append(Finding("error", "no-stage", str(e), s.label, (s.number, None)))
-            out += O.check(s.ops, base_dir=self.directory, stage=sf, where=s.label)
+                    out.append(Finding("error", "no-stage", str(e), area, (s.number, None)))
+            out += O.check(s.ops, base_dir=self.directory, stage=sf, where=area)
         return out
 
     def export(self, out_dir: Path) -> dict[str, Any]:

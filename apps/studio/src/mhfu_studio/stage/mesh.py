@@ -184,10 +184,10 @@ class _Run:
             self._say("error", "refused", f"{kind} g{g}: {e}")
             return
         self.out.applied += 1
-        self.out.log.append(f"{self.stage.label} op {i}: {line}")
+        self.out.log.append(f"{O.place(self.stage.label, i)}: {line}")
 
     def _say(self, level: Level, code: str, message: str) -> None:
-        where, target = f"{self.stage.label} op {self.i}", (self.stage.number, self.i)
+        where, target = O.place(self.stage.label, self.i), (self.stage.number, self.i)
         self.out.findings.append(Finding(level, code, message, where, target))
 
     @property

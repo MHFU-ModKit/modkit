@@ -47,7 +47,7 @@ def test_blockers(game: Extracted, atlas: Atlas, monkeypatch: pytest.MonkeyPatch
     )
     assert ws.session is not None
     ws.session.ops.append({"op": "bogus"})
-    assert (ws.send_blocker() or "").startswith("op 0 has an error: `bogus` is not an op")
+    assert (ws.send_blocker() or "").startswith("Edit 1 has an error: `bogus` is not an op")
     ws.session.ops[:] = [MOVE]
     assert ws.send_blocker() is None
     studio = Studio([ws])

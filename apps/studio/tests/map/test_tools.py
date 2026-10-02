@@ -420,7 +420,8 @@ def test_open_and_reveal(ws: MapWorkspace, doc_dir: Path) -> None:
     assert ws.document.directory == doc_dir and ws.scene is not None and ws.scene.stage == 139
     assert ws.can_open(doc_dir / "map.toml") and not ws.can_open(doc_dir / "a.pac")
     ws.reveal((98, 0))
-    assert ws.scene.stage == 98 and ws.selection.n_vertices == 3 and "op 0" in ws.message
+    assert ws.scene.stage == 98 and ws.selection.n_vertices == 3
+    assert ws.message.startswith("Snowy base camp (st098), edit 1: ")
     assert ws.take_focus() == "Selection" and ws.take_focus() is None
     ws.reveal((98, 1))
     assert ws.col_sel.tris == [(0, 1)] and ws.tools.kind == COLLISION

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from mhfu_studio.shell.text import plain
+from mhfu_studio.stage import ops as O
 from mhfu_studio.ui import kit
 
 from ..core.edit import COLLISION, count, describe_op
@@ -205,8 +206,8 @@ class SelectionPanel(kit.Panel):
         self.range.setVisible(bool(bad))
         n = len(sess.ops)
         self.count.setText(count(n, "edit") if n else "No edits yet")
-        newest = reversed(list(enumerate(sess.ops, 1)))
-        self.ops.set_items([kit.Item(f"{i}. {describe_op(op)}") for i, op in newest])
+        newest = reversed(list(enumerate(sess.ops)))
+        self.ops.set_items([kit.Item(f"{O.edit_number(i)}. {describe_op(op)}") for i, op in newest])
         warnings = [plain(w) for w in sess.warnings()[:3]]
         self.warnings.setText("\n".join(warnings))
         self.warnings.setVisible(bool(warnings))
