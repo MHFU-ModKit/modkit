@@ -33,6 +33,7 @@ from numpy.typing import NDArray
 from mhfu_studio.monster.clips import build_id, clip_key
 from mhfu_studio.monster.core.pose import Pose
 from mhfu_studio.monster.inputs import built
+from mhfu_studio.shell import places
 
 MHFU = "mhfu"
 MHP3RD = "mhp3rd"
@@ -403,7 +404,7 @@ class Scene:
         """The port: its built PAC at `pac`, else built in memory from the extracted games; or
         its donor (`side="source"`) through the porter's own reading."""
         if side == "source":
-            games = data or Data.find()
+            games = data or places.games()
             em = build.em_of(m)
             return cls.from_bytes(
                 games.p3rd.read(m.source.model),

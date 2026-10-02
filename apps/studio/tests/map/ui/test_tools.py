@@ -65,6 +65,7 @@ def test_collision_key(
 ) -> None:
     gl_or_skip()
     ws = MapWorkspace(game, atlas)
+    ws.load_stage(139)  # with nothing loaded the start page shows, and no view
     w = make_window(ws)
     qtbot.waitUntil(lambda: ws.vp is not None, timeout=5000)
     w.activateWindow()
@@ -92,6 +93,7 @@ def test_shortcuts(
     make_window: Callable[..., Window], game: Extracted, atlas: Atlas, qtbot: Any
 ) -> None:
     ws = MapWorkspace(game, atlas)
+    ws.load_stage(139)  # with nothing loaded the start page shows, and no tools
     w = make_window(ws)
     w.activateWindow()
     qtbot.waitUntil(lambda: QApplication.activeWindow() is w)

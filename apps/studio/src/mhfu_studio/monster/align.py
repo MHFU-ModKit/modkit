@@ -383,6 +383,52 @@ def _gate_list(gates: Sequence[float], cap: int = 6) -> str:
     return ", ".join(f"{f:g}" for f in gates[:cap]) + (" ..." if len(gates) > cap else "")
 
 
+def nearest(gates: Sequence[float], impact: float) -> tuple[float, float]:
+    """The checked frame closest to `impact`, and how far after it the impact lands."""
+    near = min(gates, key=lambda f: abs(f - impact))
+    return near, impact - near
+
+
+@dataclass(frozen=True)
+class Timing:
+    """An impact against the checked frames, in a table cell's words."""
+
+    text: str
+    level: Level | None = None
+    detail: str = ""
+
+
+def timing(gates: Sequence[float], impact: float | None, frames: int | None) -> Timing:
+    """`on time`, `6 late`, `checks 40, 70`; a check past the clip's last frame is the error."""
+    if not gates:
+        return Timing("–", None, "The code checks no fixed frame: the clip's timing is yours.")
+    late = [f for f in gates if frames is not None and f > frames]
+    if late:
+        return Timing(
+            "clip too short",
+            "error",
+            f"The code checks frame {_gate_list(late)}, past the clip's last frame ({frames}):"
+            " that branch never runs. Use a longer clip.",
+        )
+    if impact is None:
+        return Timing(
+            f"check {gates[0]:g}" + ("…" if len(gates) > 1 else ""),
+            None,
+            f"The code checks frame {_gate_list(gates)}. No impact frame yet: scrub to where the"
+            " clip hits and Set impact in Timeline.",
+        )
+    near, gap = nearest(gates, impact)
+    if abs(gap) <= IMPACT_TOLERANCE:
+        return Timing("on time", None, f"The impact ({impact:g}) is on the {near:g} check.")
+    word = "late" if gap > 0 else "early"
+    return Timing(
+        f"{abs(gap):.0f} {word}",
+        "warning",
+        f"The impact ({impact:g}) lands {abs(gap):.0f} frames {word} for the {near:g} check: the"
+        " hit and the animation part company by that much.",
+    )
+
+
 def _headline(a: Alignment) -> str:
     """The handler's frames against the clip's impact, in one sentence."""
     gates = a.gates
@@ -399,8 +445,7 @@ def _headline(a: Alignment) -> str:
             f"your clip's impact is at frame {a.impact:g}, and ({a.main},{a.sub}) checks no fixed"
             " frames: nothing has to line up."
         )
-    near = min(gates, key=lambda f: abs(f - (a.impact or 0.0)))
-    gap = a.impact - near
+    near, gap = nearest(gates, a.impact)
     head = f"the base monster's code checks frame{s} {_gate_list(gates)}; your clip's impact is"
     head += f" at frame {a.impact:g}"
     if abs(gap) <= IMPACT_TOLERANCE:

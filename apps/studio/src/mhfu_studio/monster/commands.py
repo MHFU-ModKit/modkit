@@ -12,9 +12,11 @@ from mhfu_port import data
 
 from mhfu_studio.cli import Groups
 from mhfu_studio.harness import flags
+from mhfu_studio.shell import places
 
 if TYPE_CHECKING:
     from mhfu.em.intel import SpeciesIntel
+    from mhfu_port.data import Data
     from mhfu_port.manifest import Manifest
 
     from mhfu_studio.monster.inputs import Built
@@ -141,7 +143,7 @@ def run_render(args: argparse.Namespace) -> int:
         clip = int(clip)
     frames = (args.frame,) if args.frame is not None else args.frames
     if args.target.suffix == ".toml":
-        games = None if args.pac and args.side == "port" else data.from_arguments(args)
+        games = None if args.pac and args.side == "port" else _games(args)
         sc = Scene.from_manifest(_manifest(args.target), args.pac, args.side, games)
     else:
         sc = Scene.from_path(args.target, args.em_id)
@@ -171,6 +173,11 @@ def _intel(args: argparse.Namespace, species: int) -> SpeciesIntel | None:
     return sp.find(species, args.intel, args.data)
 
 
+def _games(args: argparse.Namespace) -> Data:
+    """--data and --p3rd-data over the places."""
+    return places.games(args.data, args.p3rd_data)
+
+
 def _manifest(path: Path) -> Manifest:
     from mhfu_port import manifest
 
@@ -180,7 +187,7 @@ def _manifest(path: Path) -> Manifest:
 def _built(args: argparse.Namespace, m: Manifest) -> Built:
     from mhfu_studio.monster.inputs import built
 
-    return built(m, args.pac, None if args.pac else data.from_arguments(args))
+    return built(m, args.pac, None if args.pac else _games(args))
 
 
 def run_scene(args: argparse.Namespace) -> int:
@@ -189,7 +196,7 @@ def run_scene(args: argparse.Namespace) -> int:
     from mhfu_studio.monster.core.scene import Scene
 
     if args.target.suffix == ".toml":
-        games = None if args.pac and args.side == "port" else data.from_arguments(args)
+        games = None if args.pac and args.side == "port" else _games(args)
         sc = Scene.from_manifest(_manifest(args.target), args.pac, args.side, games)
     else:
         sc = Scene.from_path(args.target, args.em_id)
@@ -235,7 +242,7 @@ def run_clips(args: argparse.Namespace) -> int:
 
     doc = PortDocument.open(args.manifest)
     m = doc.manifest
-    games = data.from_arguments(args)
+    games = _games(args)
     b = _built(args, m)
     port = slots.anim_of(b.pac)
     table = clips.clip_table(port)

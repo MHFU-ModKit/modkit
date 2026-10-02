@@ -48,5 +48,5 @@ def test_load_says_why(tmp_path, monkeypatch):
     with pytest.raises(LookupError, match="em99 has no overlay"):
         sp.load(99)
     monkeypatch.delenv("MHFU_DATA", raising=False)
-    with pytest.raises(LookupError, match="set MHFU_DATA and restart the studio"):
+    with pytest.raises(LookupError, match="there is none .no MHFU extraction found"):
         sp.load(75)

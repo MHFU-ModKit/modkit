@@ -190,6 +190,9 @@ class _Planner:
                 self.say("error", "no-collision", f"{self.stage.label} has no collision")
                 break
             kind = op["op"]
+            if why := O.malformed(op):
+                self.say("error", "refused", f"{kind}: {why}")
+                continue
             try:
                 if kind == "collision":
                     self.collision(op)

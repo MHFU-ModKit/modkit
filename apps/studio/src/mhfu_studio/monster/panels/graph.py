@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The behaviour pairs as a layered graph: nodes are `(main, sub)`, arrows the hand-offs a handler
-makes when its action ends (`PairIntel.next`). No toolkit: the Moves panel draws it.
+makes when its action ends (`PairIntel.next`). No toolkit: the Actions panel's graph draws it.
 
 The engine walks a sequence (the Tigrex charge `(1,4)` hands to the skid `(0,3)`, which hands to
 `(0,1)`/`(0,2)` where the brain picks again), so the layout is a DAG from roots (the manifest's
@@ -31,9 +31,9 @@ KINDS: dict[str, RGBA] = {
     "plain": (0.40, 0.42, 0.46, 1.0),
 }
 NOTES = {
-    "moves": "you have no moves and no action is picked: pick one in Action, or give one a "
+    "moves": "you have no moves and no action is picked: pick one in the table, or give one a "
     "clip, to see where it leads",
-    "selected": "pick an action in Action",
+    "selected": "pick an action in the table",
     "attacks": "no action of this monster spawns an attack the code shows",
 }
 #: what ends an action (`PairIntel.ends_on`), in words: in full, and on a graph node
@@ -361,7 +361,6 @@ def info_lines(
         lines.append("comes from: the brain (no action leads here)")
     if p.measured:
         lines.append(f"measured: entered {p.entered} times, lasts {p.dwell_ticks:.1f} ticks")
-    lines.append("double-click: work on it in Action")
     return lines
 
 

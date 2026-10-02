@@ -93,7 +93,7 @@ def test_blockers(
     gone = Path(inject.MEMSTICK_ROOTS[0]).parent / "nowhere"
     monkeypatch.setattr(inject, "MEMSTICK_ROOTS", (str(gone),))
     why = ws.send_blocker() or ""
-    assert why.startswith("no memory stick to send to") and str(gone) in why
+    assert why.startswith("no memory stick to send to") and "start page" in why
 
 
 def test_send_failure_is_a_message(ws: MonsterWorkspace, mods: Path) -> None:

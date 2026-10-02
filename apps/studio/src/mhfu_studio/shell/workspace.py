@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from mhfu_studio.shell import places
 from mhfu_studio.shell.document import Document
 from mhfu_studio.shell.input import Key, Pointer
 from mhfu_studio.shell.overlay import Overlay
@@ -82,6 +83,58 @@ class Job:
     #: the command line after `studio`: ("map", "push", ...)
     argv: tuple[str, ...]
     stdin: bytes = b""
+
+
+#: Send to game's key, as Qt names it
+SEND_KEY = "Ctrl+Return"
+
+
+@dataclass(frozen=True)
+class Choice:
+    """A start-page entry: `path` opens as a document, else `key` goes to `Workspace.choose`."""
+
+    label: str
+    tip: str
+    key: str = ""
+    path: Path | None = None
+    #: small, after the label: an id, a folder
+    detail: str = ""
+    #: the heading it sits under in its shelf
+    group: str = ""
+
+
+@dataclass(frozen=True)
+class Shelf:
+    """A list on the start page."""
+
+    title: str
+    choices: tuple[Choice, ...] = ()
+    #: said under the list, or in its place when it is empty
+    note: str = ""
+    #: a button after the list that asks for a document: (label, tip)
+    browse: tuple[str, str] | None = None
+    #: the places its choices read: they wait while one is missing
+    needs: tuple[places.Place, ...] = ()
+
+
+@dataclass(frozen=True)
+class Step:
+    """A step of the next-steps line; `key` as Qt names it ("W"), shown the system's way."""
+
+    text: str
+    done: bool = False
+    key: str = ""
+
+
+@dataclass(frozen=True)
+class Warmup:
+    """What `open` would do slowly, run off the GUI thread first: no GL, no change to the
+    workspace. `done` takes `run`'s result back on the GUI thread, before `open`."""
+
+    #: what it is doing, for the start page while it runs
+    what: str
+    run: Callable[[], object]
+    done: Callable[[object], None] | None = None
 
 
 class Gesture(enum.Flag):
@@ -157,11 +210,14 @@ class Workspace(Protocol):
         """True while the picture changes without input (the view keeps redrawing)."""
         return False
 
-    def reveal(self, target: Hashable) -> None:
-        """Shows a finding's `target` (select it, frame it)."""
+    def reveal(self, target: Hashable, focus: str = "") -> None:
+        """Shows a finding's `target` (select it, frame it); a panel lands on its `focus`."""
 
     def refresh(self) -> None:
         """The shell changed the document (undo, redo, save as): re-read what depends on it."""
+
+    def locate(self) -> None:
+        """A place changed (`shell.places`): find the game files again."""
 
     def revert(self) -> None:
         """Drops the unsaved edits: the document as its file has it, opened again."""
@@ -177,6 +233,32 @@ class Workspace(Protocol):
         """Sends the edits to the game: a `Job` for the window to run, or None when it is done
         already (the outcome in `message`). Called only while `send_blocker()` is None."""
         return None
+
+    def ended(self, job: Job, ok: bool) -> None:
+        """A job this workspace started has ended; `ok` when it exited 0 unstopped."""
+
+    # ---- the start page ----------------------------------------------------------------- #
+    def shown(self) -> Hashable | None:
+        """What the view shows, compared between changes; None while there is nothing worth
+        showing, when the window shows the start page in its place."""
+        return self.name
+
+    def start(self) -> Sequence[Shelf]:
+        """The start page's lists: what to open here."""
+        return ()
+
+    def choose(self, key: str) -> None:
+        """Opens what a `Choice.key` names, keeping the document's edits; raises with a
+        message."""
+        raise ValueError(f"nothing here is {key!r}")
+
+    def warmup(self, path: Path) -> Warmup | None:
+        """The slow part of `open(path)`, for the window to run in the background first."""
+        return None
+
+    def next_steps(self) -> Sequence[Step]:
+        """The task on screen in steps, each ticked once the workspace's state shows it done."""
+        return ()
 
     # ---- the Qt shell ------------------------------------------------------------------- #
     def docks(self) -> Sequence[Dock]:

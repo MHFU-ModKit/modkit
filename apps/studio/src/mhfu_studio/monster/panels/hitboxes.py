@@ -14,11 +14,13 @@ from mhfu.em.intel import AttackIntel, AttackRecord
 from mhfu_port.manifest import Hitbox
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
+from mhfu_studio.monster import validate as V
 from mhfu_studio.monster.attacks import LEVERS
 from mhfu_studio.monster.render.hitboxes import set_color
+from mhfu_studio.monster.tools import HIT
 from mhfu_studio.monster.workspace import PORT
 from mhfu_studio.shell.findings import Level
-from mhfu_studio.ui import kit
+from mhfu_studio.ui import findings, kit
 
 from .common import bone_span
 from .parts import HOST_BONES
@@ -27,9 +29,7 @@ from .widgets import (
     SendRow,
     VolumeForm,
     base_name,
-    describe,
     export_button,
-    fly_to,
     place,
     see_through,
     shared_note,
@@ -118,7 +118,7 @@ class HitboxesPanel(kit.Panel):
         sets = kit.Section("1  Pick a hit group", tip=GROUP_TIP)
         self.move_only = kit.check(
             "Only this action's hit groups",
-            tip="Lists and draws only the hit groups the action picked in Moves or Action uses",
+            tip="Lists and draws only the hit groups the action picked in Actions uses",
             on=lambda on: self._act("action's groups", lambda: self._move_only(on)),
         )
         self.no_attack = kit.label(role="muted")
@@ -279,6 +279,14 @@ class HitboxesPanel(kit.Panel):
         self.pages = kit.Pages(page, NoScene(studio))
         self.body.addWidget(self.pages)
         self.body.addStretch(1)
+        #: where a finding lands (`validate.FOCUS`)
+        self.lands = {
+            V.HIT_JOINT: self.form.bone,
+            V.HIT_RADIUS: self.form.radius,
+            V.HIT_END: self.form.to,
+            V.HIT_GROUP: self.sets,
+            V.ATTACK_STATS: self.records,
+        }
 
     # ---- actions --------------------------------------------------------------------- #
 
@@ -317,13 +325,8 @@ class HitboxesPanel(kit.Panel):
     def _stage(self, **fields: Any) -> None:
         i = self.ws.selected_attack_volume
 
-        def run() -> None:
-            sess = self._session()
-            if i is not None:
-                msg = f"hitbox {i}: {describe(fields)}"
-                self.ws.edit(msg, lambda: sess.edit_volume(i, **fields))
-
-        self._act("edit hitbox", run)
+        if i is not None:
+            self._act("edit hitbox", lambda: self.ws.edit_volume(HIT, i, **fields))
 
     def _label(self) -> None:
         sess, i = self.ws.attack_session, self.ws.selected_attack_volume
@@ -427,8 +430,7 @@ class HitboxesPanel(kit.Panel):
         self._act("duplicate hitbox", run)
 
     def _look(self) -> None:
-        vp = self.ws.vp
-        fly_to(vp, None if vp is None else vp.attacks, self.ws.selected_attack_volume)
+        self.ws.tools.frame(HIT, self.ws.selected_attack_volume)
 
     def _lever(self, row: int, column: int, value: int) -> None:
         if not 0 <= row < len(self._records) or not 1 <= column <= len(LEVERS):
@@ -493,6 +495,7 @@ class HitboxesPanel(kit.Panel):
         self.export.setEnabled(ws.exportable())
         self.keep.setEnabled(port and ws.selected_attack_volume is not None)
         self.no_manifest.setVisible(not has_doc)
+        findings.take(ws, self.lands)
 
     def _start(self, sess: AttackSession | None) -> None:
         """Copying the action's groups: on top while you have no hitboxes, else in More."""

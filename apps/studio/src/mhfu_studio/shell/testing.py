@@ -106,7 +106,7 @@ class FakeWorkspace(Workspace):
     def status(self) -> str:
         return f"{0 if self.doc is None else len(self.doc.history.value)} items"
 
-    def reveal(self, target: Hashable) -> None:
+    def reveal(self, target: Hashable, focus: str = "") -> None:
         self.log.append(("reveal", target))
 
     def refresh(self) -> None:

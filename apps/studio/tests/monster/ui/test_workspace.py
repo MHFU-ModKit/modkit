@@ -17,14 +17,14 @@ from mhfu_studio.ui import kit
 from mhfu_studio.ui.testing import elsewhere, gl_or_skip
 from PySide6.QtWidgets import QDockWidget
 
-DOCKS = ("Clips", "Scene", "View", "Joints", "Hitboxes", "Parts", "Timeline", "Moves", "Action")
+DOCKS = ("Actions", "Clips", "Scene", "View", "Joints", "Hitboxes", "Parts", "Timeline")
 
 
 def test_registers_its_docks() -> None:
     assert "monster" in discover(["monster"])
     ws = MonsterWorkspace()
     assert [d.label for d in ws.docks()] == list(DOCKS)
-    assert [d.label for d in ws.docks() if d.shown] == ["Clips", "Hitboxes", "Timeline"]
+    assert [d.label for d in ws.docks() if d.shown] == ["Actions", "Clips", "Hitboxes", "Timeline"]
     assert ws.tool_groups() == ()
 
 
@@ -98,12 +98,29 @@ def test_reveal_follows_the_findings(workspace: MonsterWorkspace) -> None:
     ws.reveal(("hitbox", 0))
     assert ws.selected_set == 2 and ws.selected_attack_volume == 0
     ws.reveal(("moves", "charge"))
-    assert ws.pair == (1, 4) and ws.vp.clip is not None and ws.take_focus() == "Action"
+    assert ws.pair == (1, 4) and ws.vp.clip is not None and ws.take_focus() == "Actions"
     ws.reveal(("effect", 0))
     assert ws.vp.selected_joint == 2
     ws.reveal(("clips", "walk"))
     assert ws.edit_slot == 1 and ws.take_focus() == "Clips"
     ws.reveal("nonsense")
+
+
+def test_select_action_plays_from_the_start(workspace: MonsterWorkspace) -> None:
+    ws = workspace
+    assert ws.vp is not None
+    ws.play_slot(2)
+    ws.seek(4.0)
+    ws.select_action(1, 4)
+    pb = ws.vp.playback
+    assert (ws.pair, ws.move, ws.graph.picked) == ((1, 4), "charge", (1, 4))
+    assert ws.vp.clip is not None and ws.vp.clip.slot == 1 and pb.phase == 0.0 and pb.playing
+    ws.seek(5.0)
+    ws.select_action(0, 3)
+    assert ws.move is None and ws.vp.clip.slot == 1 and pb.phase == 0.0
+    assert ws.message == "anim 9 is not in this build: the game finds no clip for (0,3)"
+    assert [r.pair for r in ws.action_rows()][:2] == [(1, 4), (3, 9)]
+    assert ws.action_rows() is ws.action_rows(), "made once per manifest"
 
 
 def test_bind_names_the_move(workspace: MonsterWorkspace) -> None:
@@ -173,8 +190,7 @@ def test_window_builds_the_docks(
 ) -> None:
     """The real window: GL from Qt, every dock of this agent's built from its panel."""
     gl_or_skip()
-    from mhfu_studio.monster.panels.action import ActionPanel
-    from mhfu_studio.monster.panels.moves import MovesPanel
+    from mhfu_studio.monster.panels.action import ActionsPanel
     from mhfu_studio.monster.panels.timeline import TimelinePanel
 
     ws = MonsterWorkspace()
@@ -184,16 +200,18 @@ def test_window_builds_the_docks(
     )
     ws.load(scene, port_doc)
     w = make_window(ws)
-    for label, cls in (("Timeline", TimelinePanel), ("Moves", MovesPanel), ("Action", ActionPanel)):
+    for label, cls in (("Timeline", TimelinePanel), ("Actions", ActionsPanel)):
         d = w.findChild(QDockWidget, f"monster/{label}")
         assert d is not None and isinstance(d.widget(), cls)
         assert kit.missing_tips(d.widget()) == []
-    ws.select_pair(1, 4)
-    ws.focus("Moves")
+    actions = w.findChild(QDockWidget, "monster/Actions")
+    assert actions is not None and actions.isVisible(), "in front of Clips"
+    clips = w.findChild(QDockWidget, "monster/Clips")
+    assert clips is not None and w.tabifiedDockWidgets(actions) == [clips]
+    ws.focus("Clips")
     w.studio.changed()
     w.sync()
-    moves = w.findChild(QDockWidget, "monster/Moves")
-    assert moves is not None and moves.isVisible()
+    assert clips.isVisible()
 
 
 def test_window_shows_the_host(

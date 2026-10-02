@@ -72,9 +72,9 @@ def register(groups: Groups) -> None:
 
 
 def _game(args: argparse.Namespace) -> Extracted:
-    from mhfu.files import Extracted
+    from mhfu_studio.shell import places
 
-    return Extracted.find(args.data)
+    return places.extracted(given=args.data)
 
 
 def inject(args: argparse.Namespace) -> int:

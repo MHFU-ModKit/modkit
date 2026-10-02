@@ -219,6 +219,18 @@ def icon(name: str, *, accent: bool = False, outlined: bool = False) -> QIcon:
     return got
 
 
+def status_icon(ok: bool) -> QIcon:
+    """A found place's tick in the accent, a missing one's mark in the warning colour."""
+    import qtawesome as qta
+
+    t = _current
+    got: QIcon = qta.icon(
+        "ph.check-circle-fill" if ok else "ph.warning-circle-fill",
+        color=t.accent if ok else t.warning,
+    )
+    return got
+
+
 def bind(target: QAbstractButton | QAction, name: str, *, outlined: bool = False) -> None:
     """Gives `target` the icon `name` now and again after every theme change."""
     _bound[target] = (name, outlined)
@@ -277,12 +289,19 @@ QMainWindow {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
 QMainWindow::separator {{ background: transparent; width: 8px; height: 8px; }}
 QLabel[role="muted"], QLabel[role="hint"] {{ color: {t.muted}; }}
 QLabel[role="title"] {{ font-weight: 600; }}
+QLabel[role="heading"] {{ font-size: 20px; font-weight: 600; }}
+QLabel[role="next"] {{ color: {t.accent}; font-weight: 600; }}
 QLabel[role="dock"] {{ font-size: 13px; font-weight: 600; }}
 QLabel[role="caps"] {{ color: {t.muted}; font-size: 11px; font-weight: 600; }}
 QLabel[role="chip"] {{ color: {t.second}; }}
 QLabel[role="mono"] {{ font-family: "Menlo", "DejaVu Sans Mono", monospace; }}
 {levels}
 #Card {{ background: {t.card}; border: none; border-radius: 8px; }}
+#Start {{ background: transparent; }}
+QPushButton#Tile {{ padding: 0; }}
+QPushButton#Tile:disabled QLabel {{ color: {t.muted}; }}
+QProgressBar {{ background: {t.entry}; border: none; border-radius: 3px; }}
+QProgressBar::chunk {{ background: {t.accent}; border-radius: 3px; }}
 #Body, QScrollArea {{ background: transparent; border: none; }}
 #Seg {{ background: {t.entry}; border: 1px solid {t.line}; border-radius: 7px; }}
 #Seg QToolButton {{ border: none; border-radius: 5px; padding: 3px 10px; color: {t.muted}; }}

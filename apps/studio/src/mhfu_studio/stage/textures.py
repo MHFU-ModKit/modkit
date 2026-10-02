@@ -71,6 +71,9 @@ def build(stage: StageFile, ops: Sequence[O.Op], base_dir: Path) -> TextureEdit:
         if not O.touches_textures(op):
             continue
         where, target = O.place(stage.label, i), (stage.number, i)
+        if why := O.malformed(op):
+            out.findings.append(Finding("error", "refused", f"texture: {why}", where, target))
+            continue
         slot = op["slot"]
         try:
             if not 0 <= slot < len(bank.images):

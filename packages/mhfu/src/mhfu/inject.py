@@ -19,6 +19,8 @@ MEMSTICK_ROOTS = (
     "~/Library/Application Support/PPSSPP/PSP",
 )
 """PPSSPP memory-stick roots, most likely first; the PRX sees them as ms0:/PSP."""
+MEMSTICK_ENV = "MHFU_MEMSTICK"
+"""Names the memory stick's PSP folder, over `MEMSTICK_ROOTS`."""
 INJECT_SUBDIR = "PLUGINS/mhfu_framework/inject"
 MODS_SUBDIR = "PLUGINS/mhfu_framework/mods"
 """Where the framework loads Lua mods from; `require` reads its `lib/`."""
@@ -27,26 +29,44 @@ ORIG = ".orig"
 _NAME = re.compile(r"file_(\d{4,6})\b")
 
 
-def memstick() -> Path:
-    """The first memory-stick root that exists."""
+def detect() -> Path | None:
+    """The first of `MEMSTICK_ROOTS` that exists."""
     for root in MEMSTICK_ROOTS:
         base = Path(root).expanduser()
         if base.is_dir():
             return base
-    raise FileNotFoundError(f"no PPSSPP memory stick in {', '.join(MEMSTICK_ROOTS)}")
+    return None
 
 
-def default_inject_dir(create: bool = True) -> str:
-    """The inject directory on the memory stick, created unless `create` is off."""
-    d = memstick() / INJECT_SUBDIR
+def memstick(root: str | os.PathLike[str] | None = None) -> Path:
+    """`root`, else `$MHFU_MEMSTICK`, else `detect`; a folder holding `PSP` means that one."""
+    given = root if root is not None else os.environ.get(MEMSTICK_ENV)
+    if not given:
+        found = detect()
+        if found is None:
+            raise FileNotFoundError(f"no PPSSPP memory stick in {', '.join(MEMSTICK_ROOTS)}")
+        return found
+    base = Path(given).expanduser()
+    if (base / "PSP").is_dir():
+        base = base / "PSP"
+    if not base.is_dir():
+        raise FileNotFoundError(f"no memory stick at {base}")
+    return base
+
+
+def default_inject_dir(create: bool = True, root: str | os.PathLike[str] | None = None) -> str:
+    """The inject directory on the memory stick (`memstick(root)`), created unless `create` is
+    off."""
+    d = memstick(root) / INJECT_SUBDIR
     if create:
         d.mkdir(parents=True, exist_ok=True)
     return str(d)
 
 
-def default_mods_dir() -> Path:
-    """The framework's Lua mods directory on the memory stick; FileNotFoundError without one."""
-    d = memstick() / MODS_SUBDIR
+def default_mods_dir(root: str | os.PathLike[str] | None = None) -> Path:
+    """The framework's Lua mods directory on the memory stick (`memstick(root)`);
+    FileNotFoundError without one."""
+    d = memstick(root) / MODS_SUBDIR
     if not d.is_dir():
         raise FileNotFoundError(f"no framework mods directory at {d}")
     return d
