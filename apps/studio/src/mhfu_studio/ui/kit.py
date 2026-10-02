@@ -33,7 +33,6 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QSlider,
     QSpinBox,
     QStackedWidget,
@@ -552,28 +551,22 @@ class More(QFrame):
 
 class Pages(QStackedWidget):
     """A panel's page, or its empty state (a `Empty`, or a stack of them); only the one shown
-    takes room."""
+    takes room. The other leaves the stack, whose height for a width is its tallest member's,
+    hidden ones too."""
 
     def __init__(self, page: QWidget, empty: QWidget) -> None:
         super().__init__()
         self.page, self.empty = page, empty
-        self._own = [QSizePolicy(page.sizePolicy()), QSizePolicy(empty.sizePolicy())]
+        empty.setParent(self)
+        empty.hide()
         self.addWidget(page)
-        self.addWidget(empty)
-        self.show_page(True)
 
     def show_page(self, on: bool) -> None:
-        cur = self.page if on else self.empty
-        hidden = QSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
-        changed = self.currentWidget() is not cur
-        for w, own in zip((self.page, self.empty), self._own, strict=True):
-            want = own if w is cur else hidden
-            if w.sizePolicy() != want:
-                w.setSizePolicy(want)
-                changed = True
-        if changed:
+        cur, other = (self.page, self.empty) if on else (self.empty, self.page)
+        if self.currentWidget() is not cur:
+            self.addWidget(cur)
             self.setCurrentWidget(cur)
-            self.updateGeometry()
+            self.removeWidget(other)  # it stays our child, hidden
 
 
 class Empty(QWidget):

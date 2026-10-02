@@ -46,7 +46,7 @@ class SelectionPanel(kit.Panel):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
         self.what = kit.label(role="title")
-        self.hint = kit.label(role="muted")
+        self.hint = kit.label(HINT, role="muted")
         self.frame = kit.button(
             "Frame",
             tip="Points the camera at the selection (F in the view)",
@@ -153,8 +153,6 @@ class SelectionPanel(kit.Panel):
         sel: Any = ws.col_sel if col else ws.selection
         said = ws.selected()
         self.what.setText("Nothing selected" if sel.empty else said[:1].upper() + said[1:])
-        # set here, not when built: the empty state is as tall as any page's wrapped text
-        self.hint.setText(HINT if sel.empty else "")
         self.hint.setVisible(sel.empty)
         lines, groups = [], []
         if not sel.empty:

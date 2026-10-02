@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
     QPushButton,
+    QScrollArea,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -219,6 +220,23 @@ def test_pages_show_one(qtbot: Any) -> None:
     assert pages.currentWidget() is empty and pages.minimumSizeHint().height() < 300
     pages.show_page(True)
     assert pages.currentWidget() is page and pages.minimumSizeHint().height() >= 300
+
+
+def test_hidden_page_takes_no_height(qtbot: Any) -> None:
+    page = QWidget()
+    QVBoxLayout(page).addWidget(kit.label("words that wrap " * 200))
+    pages = kit.Pages(page, kit.Empty("Nothing", "Open something"))
+    p = kit.Panel()
+    p.body.addWidget(pages)
+    qtbot.addWidget(p)
+    p.resize(300, 300)
+    p.show()
+    bar = p.findChild(QScrollArea).verticalScrollBar()
+    qtbot.waitUntil(lambda: bar.maximum() > 0)
+    pages.show_page(False)
+    qtbot.waitUntil(lambda: bar.maximum() == 0)
+    pages.show_page(True)
+    qtbot.waitUntil(lambda: bar.maximum() > 0)
 
 
 def test_numbers_use_a_point(qtbot: Any) -> None:
