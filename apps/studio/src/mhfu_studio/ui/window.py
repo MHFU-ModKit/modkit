@@ -319,10 +319,9 @@ class Window(QMainWindow):
 
     def _fit(self, area: str) -> None:
         """`area`'s open docks to their `size`, else to the area's share of the window."""
-        docks = self._docked(area)
-        groups = [d for d in docks if self._spec(d).alone]
-        tabbed = [d for d in docks if not self._spec(d).alone]
-        docks = [*tabbed[:1], *groups]
+        docked = self._docked(area)
+        alone = [d for d in docked if self._spec(d).alone]
+        docks = [*[d for d in docked if d not in alone][:1], *alone]
         if not docks:
             return
         across = area != "bottom"
