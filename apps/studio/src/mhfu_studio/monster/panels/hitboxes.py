@@ -27,6 +27,7 @@ from .widgets import (
     VolumeForm,
     describe,
     fly_to,
+    host_text,
     tiles,
 )
 
@@ -483,13 +484,12 @@ class HitboxesPanel(kit.Panel):
         if ws.scene is None:
             return
         host, sess = ws.host_attacks(), ws.attack_session
-        hs = f"em{ws.host_species or 0:02d}"
-        self.source.buttons[HOST].setText(f"Host {hs}")
+        self.source.buttons[HOST].setText(host_text(ws))
         kit.put(self.source, ws.attacks_source)
         kit.put(self.draw, ws.show_attacks)
         kit.put(self.xray, vp is not None and vp.hitboxes_xray)
         self.xray.setEnabled(vp is not None)
-        self.no_intel.setText(f"No attack intel for {hs}: survey the host first.")
+        self.no_intel.setText(ws.intel_gap("attack"))
         self.no_intel.setVisible(host is None)
         port = ws.attacks_source == PORT
         has_doc = sess is not None and ws.manifest is not None

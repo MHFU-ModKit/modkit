@@ -49,6 +49,11 @@ def tiles(*widgets: QWidget, columns: int = 2) -> QWidget:
     return w
 
 
+def host_text(ws: MonsterWorkspace) -> str:
+    """The Host source's button: whose tables it shows."""
+    return "No host" if ws.host_species is None else f"Host em{ws.host_species:02d}"
+
+
 def narrow(box: QAbstractSpinBox, span: float | None = None) -> None:
     """Lets a number box shrink to a dock's width; `span` caps a range made for a sentinel."""
     if span is not None and isinstance(box, QDoubleSpinBox):

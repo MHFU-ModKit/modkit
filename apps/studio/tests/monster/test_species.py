@@ -3,6 +3,7 @@
 import hashlib
 import json
 
+import pytest
 from mhfu import files
 from mhfu.em import intel
 from mhfu_studio.monster import species as sp
@@ -39,3 +40,13 @@ def test_cache(tmp_path, monkeypatch):
     assert sp.find(76, data=game) is None
     monkeypatch.delenv("MHFU_DATA", raising=False)
     assert sp.find(75) is None
+
+
+def test_load_says_why(tmp_path, monkeypatch):
+    with pytest.raises(LookupError, match="has no em07.json: write it with `mhfu intel`"):
+        sp.load(7, tmp_path)
+    with pytest.raises(LookupError, match="em99 has no overlay"):
+        sp.load(99)
+    monkeypatch.delenv("MHFU_DATA", raising=False)
+    with pytest.raises(LookupError, match="set MHFU_DATA and restart the studio"):
+        sp.load(75)

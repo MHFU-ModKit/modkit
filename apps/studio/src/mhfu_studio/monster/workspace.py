@@ -60,6 +60,8 @@ class MonsterWorkspace(Workspace):
         #: species intel from this directory instead of the cache built from the game
         self.intel_root = intel_root
         self.intel_cache: dict[int, SpeciesIntel | None] = {}
+        #: why a species' intel is None in the cache
+        self.intel_errors: dict[int, str] = {}
         self.doc: PortDocument | None = None
         self.scene: Scene | None = None
         self.vp: MonsterViewport | None = None
@@ -442,7 +444,8 @@ class MonsterWorkspace(Workspace):
         try:
             runtime.check(m, runtime.host_attack_tables(self.host_intel()))
         except ManifestError as e:
-            return f"cannot send: {e}"
+            gap = self.intel_gap("attack")
+            return f"cannot send hitboxes or attacks. {gap}" if gap else f"cannot send: {e}"
         try:
             self.mods_dir()
         except FileNotFoundError as e:
@@ -472,11 +475,33 @@ class MonsterWorkspace(Workspace):
         if sp not in self.intel_cache:
             root = self._data.fu.root if self._data is not None else None
             try:
-                self.intel_cache[sp] = species.find(sp, self.intel_root, root)
+                self.intel_cache[sp] = species.load(sp, self.intel_root, root)
+            except LookupError as e:
+                self.intel_errors[sp] = str(e)
+                self.intel_cache[sp] = None
             except (OSError, ValueError) as e:
-                self.message = f"no intel for em{sp:02d}: {e}"
+                self.intel_errors[sp] = f"reading or building it failed ({e})"
+                self.message = f"no intel for em{sp:02d}: {self.intel_errors[sp]}"
                 self.intel_cache[sp] = None
         return self.intel_cache[sp]
+
+    def intel_gap(self, what: str, sp: int | None = None) -> str:
+        """Why `sp`'s (the host's by default) `what` intel ("part", "attack", "action") is
+        missing, and what to do; empty when it is there."""
+        sp = self.host_species if sp is None else sp
+        if sp is None:
+            return "No host: a bare PAC names none. Open its port manifest (.toml) instead."
+        si = self.intel_of(sp)
+        if si is None:
+            why = self.intel_errors.get(sp, "it was not loaded")
+            return f"No {what} intel for em{sp:02d}: {why}."
+        if what == "part" and not si.parts.present:
+            why = si.parts.grid_reason
+        elif what == "attack" and not si.attacks.present:
+            why = si.attacks.reason
+        else:
+            return ""
+        return f"No {what} intel for em{sp:02d}: its overlay has none the analyser reads ({why})."
 
     @property
     def host_species(self) -> int | None:

@@ -349,7 +349,7 @@ class ActionPanel(kit.Panel):
         self._sync_host()
         intel = ws.intel
         self.no_intel.setVisible(intel is None)
-        self.no_intel.setText(f"No action intel for em{ws.browsing_species or 0:02d}.")
+        self.no_intel.setText(ws.intel_gap("action", ws.browsing_species))
         self.table_side.setVisible(intel is not None)
         al = ws.alignment if intel is not None else None
         self.align.setVisible(al is not None)

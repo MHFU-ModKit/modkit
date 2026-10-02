@@ -19,7 +19,7 @@ from mhfu_studio.monster.render.hitboxes import PART_COLORS
 from mhfu_studio.ui import kit
 
 from .common import bone_span
-from .widgets import ExportRow, NoScene, SaveRow, VolumeForm, describe, fly_to, tiles
+from .widgets import ExportRow, NoScene, SaveRow, VolumeForm, describe, fly_to, host_text, tiles
 
 if TYPE_CHECKING:
     from mhfu_studio.monster.parts import PartSession
@@ -459,15 +459,17 @@ class PartsPanel(kit.Panel):
         if ws.scene is None:
             return
         host, sess = ws.host_parts(), ws.part_session
-        hs = f"em{ws.host_species or 0:02d}"
-        self.source.buttons[HOST].setText(f"Host {hs}")
+        self.source.buttons[HOST].setText(host_text(ws))
         kit.put(self.source, ws.parts_source)
         kit.put(self.draw, ws.show_parts)
         kit.put(self.xray, vp is not None and vp.hitboxes_xray)
         self.xray.setEnabled(vp is not None)
         port = ws.parts_source == PORT
         missing = not port and host is None
-        self.no_intel.setText(f"No part intel for {hs}: switch to This port, or survey the host.")
+        gap = ws.intel_gap("part")
+        if gap and ws.manifest is not None:
+            gap += " This port still takes volumes of its own."
+        self.no_intel.setText(gap)
         self.no_intel.setVisible(missing)
         vols = self.volumes_now()
         self._parts(vols, host, sess, missing)
