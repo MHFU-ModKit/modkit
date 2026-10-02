@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Document panel: new, open, save, check and export a map document.
+"""The Document panel: the map document's name, folder and the areas it changes, and New.
 
-Open and save are the studio's own (the File menu's); the findings list is the Findings dock.
-Without game files it still opens and saves; nothing can load.
+Open, Save and Save As are the File menu's; Check is the Findings panel's; Export is under
+More. Without game files it still opens and saves; nothing can load.
 """
 
 from __future__ import annotations
@@ -14,10 +14,11 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import QFileDialog, QVBoxLayout, QWidget
 
-from mhfu_studio.shell.findings import LEVELS
 from mhfu_studio.shell.text import plain
-from mhfu_studio.ui import dialogs, kit
+from mhfu_studio.ui import kit
 
+from ..core.atlas import stage_title
+from ..core.edit import count
 from ..document import MapDocument
 from .common import DATA_HINT, NO_DATA, fit
 
@@ -27,24 +28,26 @@ if TYPE_CHECKING:
     from ..workspace import MapWorkspace
 
 DOC_TIP = (
-    "A map mod is a folder: map.toml names the stages it changes, and each stage keeps its"
-    " edits as a list in a .json file beside it, with the OBJ and PNG files they use in assets/."
+    "A map document is a folder: map.toml names the areas it changes, and each area keeps its"
+    " edits in a .json file beside it, with the OBJ and PNG files they use in assets/."
 )
 
 
 def summary(manifest: dict[str, object]) -> str:
-    """One line per exported stage: each mesh half safe or not, collision, textures."""
+    """One line per exported area: each model fits or is left out, collision, textures."""
     parts = []
     stages = manifest.get("stages")
     for rec in stages if isinstance(stages, list) else []:
-        bits = [f"st{rec['stage']:03d}:"]
-        bits += [f"sub{s} {'ok' if m['safe'] else 'UNSAFE'}" for s, m in rec["mesh"].items()]
+        bits = []
+        for sub, m in rec["mesh"].items():
+            model = "second model" if int(sub) else "model"
+            bits.append(model if m["safe"] else f"{model} left out: it does not fit")
         if rec["collision"]:
             c = rec["collision"]
-            bits.append(f"collision +{c['added']}/~{c['moved']}")
+            bits.append(f"collision ({c['added']} added, {c['moved']} moved)")
         if rec["texture"]:
             bits.append("textures")
-        parts.append(" ".join(bits))
+        parts.append(f"{stage_title(rec['stage'])}: {', '.join(bits) or 'nothing'}")
     return "\n".join(parts) or "nothing to export"
 
 
@@ -58,94 +61,53 @@ class DocumentPanel(kit.Panel):
             on=self._rename,
         )
         self.dirty = kit.label("unsaved", role="chip", wrap=False)
-        self.dirty.setToolTip("The document has edits that are not saved yet")
+        self.dirty.setToolTip("The document has edits that are not saved yet (File > Save)")
         self.where = kit.label(role="muted", selectable=True)
         self.where.setToolTip(DOC_TIP)
         head = kit.Form()
         head.row("Name", kit.row(self.name, self.dirty))
         head.row("Folder", self.where)
         self.stages = kit.Items(
-            tip="The stages (sections) the document changes and how many edits each holds."
-            " Click one to load it.",
-            empty="No stage yet: edit a section and it joins.",
+            tip="The areas the document changes and how many edits each holds. Click one to"
+            " load it.",
+            empty="No area yet: edit one and it joins.",
         )
         self.stages.picked.connect(self._load)
+        new = kit.button(
+            "New…",
+            tip="Starts a new document in a folder you pick, holding the loaded area's edits."
+            " The old document's other areas are left behind, so save it first.",
+            on=self._new,
+            icon="ph.file-plus",
+        )
 
-        files = kit.Section("File", tip=DOC_TIP)
-        files.body.addWidget(
-            kit.row(
-                kit.button(
-                    "New…",
-                    tip="Starts a new document in a folder you pick, holding the loaded section's"
-                    " edits. The old document's other sections are left behind, so save it first.",
-                    on=self._new,
-                    icon="ph.file-plus",
-                ),
-                kit.button(
-                    "Open…",
-                    tip="Opens a map document (its map.toml), as File > Open does",
-                    on=self._open,
-                    icon="ph.folder-open",
-                ),
-                stretch=True,
-            )
+        more = kit.More(tip="Export: the bytes a release of this map mod ships")
+        export = kit.button(
+            "Export…",
+            tip="Writes, into a folder you pick, the changed bytes of every area and an"
+            " export.json describing them. A model that would not fit is left out.",
+            on=self._export,
+            icon="ph.export",
         )
-        files.body.addWidget(
-            kit.row(
-                kit.button(
-                    "Save",
-                    tip="Writes map.toml and the edit lists into the document's folder; asks for"
-                    " a folder the first time",
-                    on=studio.save,
-                    role="primary",
-                    icon="ph.floppy-disk",
-                ),
-                kit.button(
-                    "Save As…",
-                    tip="Writes the document into another folder and goes on with that one",
-                    on=self._save_as,
-                ),
-                stretch=True,
-            )
-        )
-        checks = kit.Section(
-            "Check and export",
-            tip="Find problems before the game does, then write the bytes a release ships",
-        )
-        checks.body.addWidget(
-            kit.row(
-                kit.button(
-                    "Check",
-                    tip="Runs every check on the document now: missing files, edits the game"
-                    " would refuse, values out of range. The list is in the Findings panel.",
-                    on=studio.act("check", self._check),
-                    icon="ph.check-circle",
-                ),
-                kit.button(
-                    "Export…",
-                    tip="Writes, into a folder you pick, the changed bytes of every stage and an"
-                    " export.json describing them: what a release of this map mod ships. A mesh"
-                    " that would not fit in place is left out and marked UNSAFE.",
-                    on=self._export,
-                    icon="ph.export",
-                ),
-                stretch=True,
-            )
-        )
+        more.body.addWidget(kit.row(export, stretch=True))
         self.note = kit.label(role="muted", selectable=True)
-        checks.body.addWidget(self.note)
+        more.body.addWidget(self.note)
 
-        self.nodata = kit.Alert(f"{NO_DATA}: no section can load. {DATA_HINT}")
+        self.nodata = kit.Alert(f"{NO_DATA}: no area can load. {DATA_HINT}")
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
-        self.intro = kit.label(DOC_TIP, role="muted")
+        self.intro = kit.label(
+            "Your edits, area by area. File > Save writes them into a folder you pick.",
+            role="muted",
+        )
+        self.intro.setToolTip(DOC_TIP)
         lay.addWidget(self.nodata)
         lay.addWidget(self.intro)
         lay.addWidget(head)
         lay.addWidget(self.stages)
-        lay.addWidget(files)
-        lay.addWidget(checks)
+        lay.addWidget(kit.row(new, stretch=True))
+        lay.addWidget(more)
         lay.addStretch(1)
         self.body.addWidget(page)
 
@@ -162,7 +124,7 @@ class DocumentPanel(kit.Panel):
             ws.session.base_dir = directory
         ws.doc = doc
         self.studio.findings.stale()
-        self.note.setText(f"New document {doc.name}: not saved yet.")
+        self.studio.message = f"new document {doc.name}: not saved yet"
 
     def _new(self) -> None:
         if not self.studio.discard_ok(self.ws):
@@ -170,14 +132,6 @@ class DocumentPanel(kit.Panel):
         got = QFileDialog.getExistingDirectory(self, "A folder for the new map document")
         if got:
             self.studio.act("new document", lambda: self.new(Path(got)))()
-
-    def _open(self) -> None:
-        dialogs.open_document(self, self.studio)
-
-    def _save_as(self) -> None:
-        path = dialogs.ask_save_as(self, self.ws)
-        if path is not None:
-            self.studio.save(path)
 
     def _rename(self, name: str) -> None:
         doc = self.ws.doc
@@ -192,17 +146,6 @@ class DocumentPanel(kit.Panel):
     def _load(self, stage: object) -> None:
         if isinstance(stage, int):
             self.studio.act(f"load st{stage:03d}", lambda: self.ws.load_stage(stage))()
-
-    def check(self) -> str:
-        """Runs the findings now; their counts."""
-        f = self.studio.findings
-        f.stale()
-        found = f.get(self.ws.doc)
-        counts = ", ".join(f"{sum(x.level == lv for x in found)} {lv}" for lv in LEVELS)
-        return f"{len(found)} finding(s): {counts}. The list is in the Findings panel."
-
-    def _check(self) -> None:
-        self.note.setText(self.check())
 
     def export(self, out: Path) -> str:
         doc = self.ws.doc
@@ -230,18 +173,15 @@ class DocumentPanel(kit.Panel):
             with QSignalBlocker(self.name):
                 self.name.setText(doc.name)
         self.dirty.setVisible(doc.dirty)
-        row = f"row {doc.row}" if doc.row is not None else "no row"
-        self.where.setText(
-            f"{plain(str(doc.directory))}  ({row})" if doc.directory else f"not saved yet ({row})"
-        )
+        self.where.setText(plain(str(doc.directory)) if doc.directory else "not saved yet")
         loaded = sc.stage if sc is not None else None
         rebuilt = self.stages.set_items(
             [
                 kit.Item(
-                    f"{s.label}  {s.ops_file}  {len(s.ops)} edit(s)"
+                    f"{stage_title(s.number)}: {count(len(s.ops), 'edit')}"
                     + ("  (loaded)" if s.number == loaded else ""),
                     s.number,
-                    f"{s.label}'s edits live in {s.ops_file}. Click to load it."
+                    f"Its edits are saved in {s.ops_file}. Click to load it."
                     + ("" if s.ops else " With no edit left it is not saved."),
                 )
                 for s in doc.stages
