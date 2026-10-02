@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
 
 Pair = tuple[int, int]
+#: a table's source: the base monster's, or the port's own (the panels' switch)
 PORT, HOST = "port", "host"
 #: points a click may travel and still pick, not orbit
 CLICK_SLOP = 4.0

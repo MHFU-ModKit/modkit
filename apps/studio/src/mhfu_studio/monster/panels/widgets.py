@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from mhfu_studio.monster import species
+from mhfu_studio.monster.workspace import HOST, PORT
 from mhfu_studio.ui import dialogs, kit
 
 if TYPE_CHECKING:
@@ -34,7 +35,6 @@ if TYPE_CHECKING:
 
 OPEN_HINT = "Open a port manifest (ports/<name>.toml) or a monster PAC to work on it here."
 OPEN_TIP = "Choose a port manifest or a monster PAC; the monster workspace opens it"
-HOST, PORT = "host", "port"
 #: the source switch: the base monster's tables, or the ones your port writes over them
 SOURCES = ((HOST, "Base monster (read only)"), (PORT, "Yours"))
 SHAPES = (

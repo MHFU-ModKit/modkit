@@ -16,13 +16,13 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from mhfu_studio.monster.attacks import LEVERS
 from mhfu_studio.monster.render.hitboxes import set_color
+from mhfu_studio.monster.workspace import PORT
 from mhfu_studio.shell.findings import Level
 from mhfu_studio.ui import kit
 
 from .common import bone_span
 from .parts import HOST_BONES
 from .widgets import (
-    PORT,
     NoScene,
     SendRow,
     VolumeForm,

@@ -16,11 +16,10 @@ from mhfu_port.manifest import Hurtbox
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from mhfu_studio.monster.render.hitboxes import PART_COLORS
+from mhfu_studio.monster.workspace import HOST, PORT
 from mhfu_studio.ui import kit
 
 from .widgets import (
-    HOST,
-    PORT,
     NoScene,
     SendRow,
     VolumeForm,
