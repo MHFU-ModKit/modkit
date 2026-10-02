@@ -92,10 +92,22 @@ def test_bind(panel: ActionPanel, workspace: MonsterWorkspace) -> None:
     workspace.select_pair(1, 3)
     panel.sync()
     assert panel.bind_row.isVisible() and panel.bind_name.placeholderText() == "move_1_3"
+    assert panel.bind_name.text() == ""
     panel.bind_name.setText("stop")
     panel.bind.click()
     assert workspace.manifest is not None and workspace.manifest.moves["stop"].sub == 3
-    assert panel.moves.rowCount() == 2
+    assert panel.moves.rowCount() == 2 and panel.bind_name.text() == "stop"
+
+
+def test_rebind_in_place(panel: ActionPanel, workspace: MonsterWorkspace) -> None:
+    click_row(panel.moves, "charge")
+    assert panel.bind_name.text() == "charge"
+    workspace.play_slot(2)
+    panel.sync()
+    assert "clip_02" in panel.bind_note.text()
+    panel.bind.click()
+    m = workspace.manifest
+    assert m is not None and list(m.moves) == ["charge"] and m.moves["charge"].clip == "clip_02"
 
 
 def test_browsing_another_host(panel: ActionPanel, workspace: MonsterWorkspace) -> None:

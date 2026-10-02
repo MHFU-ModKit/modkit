@@ -224,6 +224,8 @@ class ActionPanel(kit.Panel):
         )
         self.bind_note = kit.label(role="muted")
         self.bind_row = kit.row(self.bind_name, self.bind, stretch=True)
+        #: the (pair, move) the name field was last filled for
+        self._bind_for: object = None
 
         align = kit.Section("This pair", tip="The selected pair against the clip on screen")
         for w in (
@@ -649,8 +651,14 @@ class ActionPanel(kit.Panel):
             note = "Cannot bind: the game was watched and never enters this pair."
         else:
             clip = f" with clip {al.clip}" if al.clip else ""
-            note = f"Writes [moves] on ({al.main},{al.sub}){clip}."
+            note = (
+                f"Writes [moves] on ({al.main},{al.sub}){clip}; a move of that name keeps its"
+                " other settings."
+            )
             self.bind_name.setPlaceholderText(f"move_{al.main}_{al.sub}")
+            if (ws.pair, ws.move) != self._bind_for:
+                self._bind_for = (ws.pair, ws.move)
+                self.bind_name.setText(ws.move or "")
         ok = can and note.startswith("Writes")
         self.bind_row.setVisible(ok)
         self.bind_note.setVisible(bool(note))

@@ -107,13 +107,41 @@ def test_label(doc):
         s.label(7, "nothing")
 
 
+REBIND = (
+    LABELS
+    + """hold_max = 40
+latch = 3
+label = "the rush"
+anim = 9
+after = "stop"
+
+[moves.stop]
+main = 0
+sub = 3
+clip = "charge"
+"""
+)
+
+
 def test_bind_move(doc):
     d = doc(LABELS)
     s = C.LabelSession(d, {61: (382, False)})
-    assert s.bind_move("rush", 1, 4, "charge") == "moves.rush = (1,4) on charge"
+    assert s.bind_move("rush", 1, 4, 61) == "moves.rush = (1,4) on charge"
     assert d.manifest.moves["rush"].main == 1
-    with pytest.raises(ManifestError, match="not named"):
-        s.bind_move("x", 1, 4, "nope")
+    with pytest.raises(ManifestError, match="not populated"):
+        s.bind_move("x", 1, 4, 7)
+
+
+def test_rebind_keeps_the_move(doc):
+    d = doc(REBIND)
+    s = C.LabelSession(d, {61: (382, False), 5: (30, False)})
+    assert s.bind_move("charge", 1, 4, 5) == "moves.charge = (1,4) on clip_05"
+    mv = d.manifest.moves["charge"]
+    assert (mv.main, mv.sub, mv.clip, mv.anim) == (1, 4, "clip_05", None)
+    assert (mv.hold_max, mv.latch, mv.label, mv.after) == (40, 3, "the rush", "stop")
+    assert d.manifest.clips["clip_05"].frames == 30, "the unnamed slot is named"
+    d.undo()
+    assert "clip_05" not in d.manifest.clips and d.manifest.moves["charge"].main == 2
 
 
 def test_import(doc, packs):

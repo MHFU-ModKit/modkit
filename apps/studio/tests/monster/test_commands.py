@@ -46,7 +46,7 @@ def test_scene(synthetic_pac, tmp_path, capsys):
     pac.write_bytes(synthetic_pac)
     assert main(["port", "scene", str(pac), "--clips", "--groups", "--slot", "1"]) == 0
     out = capsys.readouterr().out
-    assert "3 bones" in out and "[partial]" in out and "clip slot_01  frame 5/10" in out
+    assert "3 bones" in out and "[partial]" in out and "clip clip_01  frame 5/10" in out
 
 
 def test_check(offline, synthetic_pac, capsys):

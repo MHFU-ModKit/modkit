@@ -692,12 +692,13 @@ class MonsterWorkspace(Workspace):
         self.markers = self.alignment.markers
 
     def bind_move(self, name: str = "") -> None:
-        """The alignment as `[moves.<name>]`, `move_<main>_<sub>` when unnamed."""
+        """The alignment as `[moves.<name>]`, `move_<main>_<sub>` when unnamed: a move of that
+        name is updated in place, an unnamed clip on screen named."""
         al, s = self.alignment, self.label_session
         if al is None or s is None:
             return
         name = name.strip() or f"move_{al.main}_{al.sub}"
-        if self.edit("", lambda: s.bind_move(name, al.main, al.sub, al.clip)):
+        if self.edit("", lambda: s.bind_move(name, al.main, al.sub, al.slot)):
             self.select_pair(al.main, al.sub, name)
 
     def host_pair(self) -> PairIntel | None:

@@ -257,7 +257,7 @@ def unlabelled_slots(m: Manifest, table: Mapping[int, Fingerprint]) -> list[int]
 
 
 def clip_key(slot: int) -> str:
-    """The default name for a slot's clip."""
+    """An unnamed slot's clip name, in the manifest and on screen alike."""
     return f"clip_{slot:02d}"
 
 
@@ -310,23 +310,41 @@ class LabelSession:
     def label(self, slot: int, name: str, label: str = "", impact_frame: int | None = None) -> str:
         """Name `slot`'s clip, renaming its old name and every move that plays it."""
         name = check_name(name)
+        fp = self._print(slot, name)
+        self.doc.edit(lambda m: _label(m, slot, name, fp, label, self.build, impact_frame))
+        return f"clips.{name} = slot {slot}"
+
+    def _print(self, slot: int, name: str) -> Fingerprint:
+        """`slot`'s fingerprint, refusing a slot this build lacks or a name another slot has."""
         clash = self.doc.manifest.clips.get(name)
         if clash is not None and clash.slot != slot:
             raise ManifestError(f"clips.{name} already exists, on slot {clash.slot}")
         fp = self.table.get(slot)
         if fp is None:
             raise ManifestError(f"slot {slot} is not populated in this build")
-        self.doc.edit(lambda m: _label(m, slot, name, fp, label, self.build, impact_frame))
-        return f"clips.{name} = slot {slot}"
+        return fp
 
-    def bind_move(self, name: str, main: int, sub: int, clip: str | None = None) -> str:
-        """Write a `[moves.<name>]`: a host pair and the clip it paints."""
+    def bind_move(self, name: str, main: int, sub: int, slot: int | None = None) -> str:
+        """`[moves.<name>]` on the pair, painting `slot`'s clip (named `clip_key` when it has no
+        name). A move of that name keeps its other fields; its clip replaces any raw `anim`."""
         name = check_name(name)
-        if clip is not None and clip not in self.doc.manifest.clips:
-            raise ManifestError(f"clip {clip!r} is not named in this manifest yet")
+        clip, new = None, None
+        if slot is not None:
+            found = self.entry(slot)
+            clip = found[0] if found else clip_key(slot)
+            if found is None:
+                new = (slot, clip, self._print(slot, clip))
 
         def bind(m: Manifest) -> None:
-            m.moves[name] = Move(main, sub, clip=clip)
+            if new is not None:
+                _label(m, *new, None, self.build)
+            mv = m.moves.get(name)
+            if mv is None:
+                m.moves[name] = Move(main, sub, clip=clip)
+                return
+            mv.main, mv.sub = main, sub
+            if clip is not None:
+                mv.clip, mv.anim = clip, None
 
         self.doc.edit(bind)
         return f"moves.{name} = ({main},{sub})" + (f" on {clip}" if clip else "")

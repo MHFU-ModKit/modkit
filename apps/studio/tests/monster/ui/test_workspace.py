@@ -113,6 +113,9 @@ def test_bind_names_the_move(workspace: MonsterWorkspace) -> None:
     ws.select_pair(0, 3)
     ws.bind_move()
     assert "move_0_3" in ws.manifest.moves and ws.move == "move_0_3"
+    ws.play_slot(2)
+    ws.bind_move("stop")
+    assert ws.manifest.moves["stop"].clip == "clip_02" and ws.manifest.clips["clip_02"].slot == 2
 
 
 def test_edit_set_opens_hitboxes(workspace: MonsterWorkspace) -> None:
