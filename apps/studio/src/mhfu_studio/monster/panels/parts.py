@@ -16,6 +16,7 @@ from mhfu_port.manifest import Hurtbox
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from mhfu_studio.monster.render.hitboxes import PART_COLORS
+from mhfu_studio.monster.tools import HURT
 from mhfu_studio.monster.workspace import HOST, PORT
 from mhfu_studio.ui import kit
 
@@ -24,9 +25,7 @@ from .widgets import (
     SendRow,
     VolumeForm,
     base_name,
-    describe,
     export_button,
-    fly_to,
     place,
     see_through,
     shared_note,
@@ -297,6 +296,7 @@ class PartsPanel(kit.Panel):
 
     def _source(self, key: str) -> None:
         self.ws.parts_source = key
+        self.ws.selected_volume = None  # an index into the other source's list
         self.ws.sync_hitboxes()
 
     def _show(self, on: bool) -> None:
@@ -332,13 +332,8 @@ class PartsPanel(kit.Panel):
     def _stage(self, **fields: Any) -> None:
         i = self.ws.selected_volume
 
-        def run() -> None:
-            sess = self._session()
-            if i is not None:
-                msg = f"hurtbox {i}: {describe(fields)}"
-                self.ws.edit(msg, lambda: sess.edit_volume(i, **fields))
-
-        self._act("edit volume", run)
+        if i is not None:
+            self._act("edit volume", lambda: self.ws.edit_volume(HURT, i, **fields))
 
     def _add(self) -> None:
         def run() -> None:
@@ -389,8 +384,7 @@ class PartsPanel(kit.Panel):
         self._act("duplicate volume", run)
 
     def _look(self) -> None:
-        vp = self.ws.vp
-        fly_to(vp, None if vp is None else vp.hitboxes, self.ws.selected_volume)
+        self.ws.tools.frame(HURT, self.ws.selected_volume)
 
     def _grid_edit(self, row: int, column: int, value: int) -> None:
         state = self.ws.grid_state

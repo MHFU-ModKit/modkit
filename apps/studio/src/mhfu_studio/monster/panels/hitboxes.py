@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from mhfu_studio.monster.attacks import LEVERS
 from mhfu_studio.monster.render.hitboxes import set_color
+from mhfu_studio.monster.tools import HIT
 from mhfu_studio.monster.workspace import PORT
 from mhfu_studio.shell.findings import Level
 from mhfu_studio.ui import kit
@@ -27,9 +28,7 @@ from .widgets import (
     SendRow,
     VolumeForm,
     base_name,
-    describe,
     export_button,
-    fly_to,
     place,
     see_through,
     shared_note,
@@ -317,13 +316,8 @@ class HitboxesPanel(kit.Panel):
     def _stage(self, **fields: Any) -> None:
         i = self.ws.selected_attack_volume
 
-        def run() -> None:
-            sess = self._session()
-            if i is not None:
-                msg = f"hitbox {i}: {describe(fields)}"
-                self.ws.edit(msg, lambda: sess.edit_volume(i, **fields))
-
-        self._act("edit hitbox", run)
+        if i is not None:
+            self._act("edit hitbox", lambda: self.ws.edit_volume(HIT, i, **fields))
 
     def _label(self) -> None:
         sess, i = self.ws.attack_session, self.ws.selected_attack_volume
@@ -427,8 +421,7 @@ class HitboxesPanel(kit.Panel):
         self._act("duplicate hitbox", run)
 
     def _look(self) -> None:
-        vp = self.ws.vp
-        fly_to(vp, None if vp is None else vp.attacks, self.ws.selected_attack_volume)
+        self.ws.tools.frame(HIT, self.ws.selected_attack_volume)
 
     def _lever(self, row: int, column: int, value: int) -> None:
         if not 0 <= row < len(self._records) or not 1 <= column <= len(LEVERS):

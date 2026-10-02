@@ -207,6 +207,8 @@ class HitboxOverlay:
     ) -> None:
         self.ctx = ctx
         self.volumes = list(vols)
+        #: as given: `preview` puts one back from here
+        self._given = list(vols)
         self.n_bones = int(n_bones)
         self.palette: Palette = palette
         self.visible: frozenset[int] | None = None
@@ -247,28 +249,41 @@ class HitboxOverlay:
     def index_of(self, v: Volume) -> int | None:
         return next((i for i, x in enumerate(self.volumes) if x is v), None)
 
+    def preview(self, index: int, v: Volume | None) -> None:
+        """Draws `v` in place of volume `index`, a drag under way; None puts it back."""
+        self.volumes[index] = self._given[index] if v is None else v
+        self._dirty = True
+
     def drawable(self, v: Volume) -> bool:
         return 0 <= v.bone < self.n_bones or v.is_node_space
 
+    def shows(self, index: int) -> bool:
+        """Volume `index` is drawn: on the rig and in a visible group."""
+        if not 0 <= index < len(self.volumes):
+            return False
+        v = self.volumes[index]
+        return self.drawable(v) and (self.visible is None or v.group in self.visible)
+
     def shown(self) -> list[Volume]:
-        return [
-            v
-            for v in self.volumes
-            if self.drawable(v) and (self.visible is None or v.group in self.visible)
-        ]
+        return [v for i, v in enumerate(self.volumes) if self.shows(i)]
 
     def groups(self) -> list[int]:
         return sorted({v.group for v in self.volumes})
 
+    def frame(self, v: Volume) -> Mat:
+        """Its bone's world matrix under the current pose; the identity for the attack's own
+        place, which draws at the actor's origin."""
+        if v.is_node_space or self._world is None or not 0 <= v.bone < len(self._world):
+            return np.eye(4)
+        out: Mat = self._world[v.bone]
+        return out
+
     def place(self, v: Volume) -> tuple[Floats, Floats | None]:
         """Its end points in world space under the current pose."""
-        a = np.asarray(v.a, np.float64)
-        b = None if v.b is None else np.asarray(v.b, np.float64)
-        if v.is_node_space or self._world is None or not 0 <= v.bone < len(self._world):
-            return a, b
-        m = self._world[v.bone]
+        m = self.frame(v)
         rot, t = m[:3, :3], m[:3, 3]
-        return rot @ a + t, None if b is None else rot @ b + t
+        a = rot @ np.asarray(v.a, np.float64) + t
+        return a, None if v.b is None else rot @ np.asarray(v.b, np.float64) + t
 
     def world_centres(self) -> Floats:
         """One point per shown volume."""

@@ -6,7 +6,7 @@ the see-through switch and the Send to game row."""
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -26,8 +26,6 @@ from mhfu_studio.ui import dialogs, kit
 if TYPE_CHECKING:
     from mhfu_port.manifest import Hitbox, Hurtbox
 
-    from mhfu_studio.monster.render.hitboxes import HitboxOverlay
-    from mhfu_studio.monster.render.viewport import MonsterViewport
     from mhfu_studio.monster.workspace import MonsterWorkspace
     from mhfu_studio.shell.studio import Studio
 
@@ -195,6 +193,7 @@ class VolumeForm(QWidget):
         lay.setSpacing(6)
         self.title = kit.label(role="title")
         lay.addWidget(self.title)
+        lay.addWidget(kit.label("Or drag it in the view: W moves it, R resizes it.", role="muted"))
         form = kit.Form()
         self.bone = kit.integer(tip=bone_tip, lo=0, hi=0xFFFF, on=lambda v: stage(bone=v))
         self.joint = kit.button(
@@ -277,16 +276,3 @@ class VolumeForm(QWidget):
             return
         to = (list(v.to) if v.to else list(CAPSULE_TO)) if shape == "capsule" else v.to
         self._stage(shape=shape, to=to)
-
-
-def describe(fields: dict[str, Any]) -> str:
-    """`radius=300.0, bone=4`: an edit for the status line."""
-    return ", ".join(f"{k}={v}" for k, v in fields.items())
-
-
-def fly_to(vp: MonsterViewport | None, ov: HitboxOverlay | None, index: int | None) -> None:
-    """Points the camera at volume `index` of `ov`, as the current pose places it."""
-    if vp is None or ov is None or index is None or not 0 <= index < len(ov.volumes):
-        return
-    a, b = ov.place(ov.volumes[index])
-    vp.camera.fly_to(a if b is None else (a + b) * 0.5)
