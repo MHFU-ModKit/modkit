@@ -1,7 +1,7 @@
 """The pygame window: main loop, tab and layout switching, letterboxed scaling.
 
-Layouts draw on a fixed canvas (CANVAS_W x CANVAS_H) that the window scales to fit; the window
-never shrinks below it.
+Layouts draw on a fixed body (CANVAS_W x CANVAS_H) under a status row; the window scales both to
+fit and never shrinks below them.
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ from . import widgets as W
 from .assets import AssetLibrary
 from .calibration import Calibration
 from .layouts import AIModLayout, QuestLayout, QuestPrepLayout, VillageLayout
-from .layouts.base import Layout, Reader
+from .layouts.base import Layout, Reader, Writer
 from .reader import QUEST_MAP
 from .state import Context, GameSnapshot
-from .theme import CANVAS_H, CANVAS_W, C
+from .theme import CANVAS_H, CANVAS_W, STATUS_H, C, font
 
 WINDOW_TITLE = "MHFU Live HUD"
 GAMEPLAY = {Context.VILLAGE, Context.QUEST}
@@ -38,17 +38,16 @@ _HELP = [
     ("", ""),
     ("B", "toggle bag panel (quest)"),
     ("] / [", "select next / previous monster (quest)"),
-    ("+ / -", "live edit selected monster size (+-0.05)"),
-    ("PgUp / PgDn", "live edit selected monster species id (+-1)"),
     ("ENTER", "open / close monster detail page"),
     ("TAB", "in monster detail: cycle STATS -> AI"),
     ("M", "cycle map image (quest)"),
     ("", ""),
     ("arrows", "navigate quest-prep panels + rows"),
     ("+ / -", "adjust selected staged edit"),
+    ("T", "staged edit kind: size / species / HP"),
     ("ENTER", "stage / toggle edit"),
     ("X / DEL", "remove staged edit"),
-    ("M", "master enable auto-apply"),
+    ("M", "master switch for writing the edits"),
     ("", ""),
     ("] / [", "AI-MOD: next / previous monster"),
     ("up / down", "AI-MOD: scroll the cells"),
@@ -68,18 +67,23 @@ class HUDApp:
         reader: Reader,
         calib: Calibration | None = None,
         *,
+        writer: Writer | None = None,
         assets: Path | None = None,
         fullscreen: bool = False,
     ) -> None:
+        """`writer` None is `--read-only`: QUEST_PREP's edits are off."""
         self.reader = reader
+        self.writer = writer
         # not pygame.init(): its joystick subsystem races PPSSPP for the gamepad on macOS
         pygame.display.init()
         pygame.font.init()
         pygame.display.set_caption(WINDOW_TITLE)
-        self._windowed_size = (CANVAS_W, CANVAS_H)
+        self._windowed_size = (CANVAS_W, STATUS_H + CANVAS_H)
         self.fullscreen = fullscreen
         self.screen = self._make_window(self._windowed_size, fullscreen)
-        self.canvas = pygame.Surface((CANVAS_W, CANVAS_H)).convert()
+        self.canvas = pygame.Surface((CANVAS_W, STATUS_H + CANVAS_H)).convert()
+        self.body = self.canvas.subsurface((0, STATUS_H, CANVAS_W, CANVAS_H))
+        """What the layouts draw on."""
         self.clock = pygame.time.Clock()
         self.assets = AssetLibrary(assets)
         self.calib = calib or Calibration()
@@ -87,7 +91,7 @@ class HUDApp:
             Context.VILLAGE: VillageLayout(self.assets, self.calib),
             Context.QUEST: QuestLayout(self.assets, self.calib, reader=reader),
         }
-        self.quest_prep = QuestPrepLayout(self.assets, self.calib, reader=reader)
+        self.quest_prep = QuestPrepLayout(self.assets, self.calib, writer=writer)
         self.ai_mod = AIModLayout(self.assets, self.calib)
         self.forced: Context | None = None
         self.tab = TAB_LIVE
@@ -103,7 +107,7 @@ class HUDApp:
     def _make_window(self, size: tuple[int, int], fullscreen: bool) -> pygame.Surface:
         if fullscreen:
             return pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-        w, h = max(CANVAS_W, size[0]), max(CANVAS_H, size[1])
+        w, h = max(CANVAS_W, size[0]), max(STATUS_H + CANVAS_H, size[1])
         return pygame.display.set_mode((w, h), pygame.RESIZABLE)
 
     def _toggle_fullscreen(self) -> None:
@@ -215,50 +219,54 @@ class HUDApp:
     def _render(self, snap: GameSnapshot) -> None:
         ctx = self._context(snap)
         if self.tab == TAB_AI_MOD:
-            self.ai_mod.render(self.canvas, snap)
+            self.ai_mod.render(self.body, snap)
         elif self.tab == TAB_QUEST_PREP:
-            self.quest_prep.render(self.canvas, snap)
+            self.quest_prep.render(self.body, snap)
         else:
             layout = self.layouts.get(ctx)
             if layout is not None and (
                 self.forced is not None or (snap.connected and ctx in GAMEPLAY)
             ):
-                layout.render(self.canvas, snap)
+                layout.render(self.body, snap)
             else:
-                panels.draw_status_screen(self.canvas, snap)
-        self._status_pill(snap, ctx)
+                panels.draw_status_screen(self.body, snap)
+        self._status_row(snap, ctx)
         if self.show_help:
             self._draw_help()
         self._present()
 
-    def _status_pill(self, snap: GameSnapshot, ctx: Context) -> None:
-        dot = C.OK if snap.connected else C.ERR
-        pygame.draw.circle(self.canvas, dot, (CANVAS_W // 2 - 142, 9), 5)
+    def _status_row(self, snap: GameSnapshot, ctx: Context) -> None:
+        """Connection, context, tab and rates; a badge while edits would be written."""
+        self.canvas.fill(C.BG, (0, 0, CANVAS_W, STATUS_H))
+        mid = STATUS_H // 2
+        pygame.draw.circle(self.canvas, C.OK if snap.connected else C.ERR, (14, mid), 5)
         tab = {TAB_AI_MOD: "[AI-MOD]", TAB_QUEST_PREP: "[PREP]"}.get(self.tab, "[LIVE]")
         parts = [ctx.value.upper(), tab]
         if self.forced is not None:
             parts.append("[FORCED]")
-        parts += [
-            f"{self.clock.get_fps():.0f}fps",
-            f"poll {snap.poll_latency_ms:.0f}ms",
-            "F1 help",
-        ]
-        W.text(
-            self.canvas,
-            "  ·  ".join(parts),
-            (CANVAS_W // 2 - 128, 2),
-            size=12,
-            color=C.TEXT_DIM,
-        )
+        parts += [f"{self.clock.get_fps():.0f}fps", f"poll {snap.poll_latency_ms:.0f}ms"]
+        W.text(self.canvas, "  ·  ".join(parts), (26, mid - 8), size=12, color=C.TEXT_DIM)
+        help_at = (CANVAS_W - 10, mid - 8)
+        right = W.text(self.canvas, "F1 help", help_at, 12, C.TEXT_DIM, align="right")
+        status = self.writer.status if self.writer else None
+        if status is not None and status.active:
+            n = sum(1 for st in status.staged if st.edit.enabled)
+            label = f"WRITES ON · {n} edit{'s' * (n != 1)}"
+            w, h = font(12, True).size(label)
+            badge = pygame.Rect(0, 1, w + 12, STATUS_H - 2)
+            badge.right = right.x - 14
+            pygame.draw.rect(self.canvas, C.WARN, badge, border_radius=4)
+            at = (badge.centerx, badge.y + (badge.h - h) // 2)
+            W.text(self.canvas, label, at, 12, C.BG, bold=True, align="center", shadow=False)
 
     def _draw_help(self) -> None:
         veil = pygame.Surface((CANVAS_W, CANVAS_H), pygame.SRCALPHA)
         veil.fill((0, 0, 0, 200))
-        self.canvas.blit(veil, (0, 0))
+        self.body.blit(veil, (0, 0))
         box = pygame.Rect(CANVAS_W // 2 - 300, 40, 600, 464)
-        W.panel(self.canvas, box, fill=C.PANEL_HI, border=C.ACCENT)
+        W.panel(self.body, box, fill=C.PANEL_HI, border=C.ACCENT)
         W.text(
-            self.canvas,
+            self.body,
             "MHFU LIVE HUD — CONTROLS",
             (box.x + 20, box.y + 16),
             size=18,
@@ -268,12 +276,12 @@ class HUDApp:
         y = box.y + 48
         for keys, desc in _HELP:
             if keys:
-                W.text(self.canvas, keys, (box.x + 24, y), size=13, color=C.SELECT, bold=True)
-                W.text(self.canvas, desc, (box.x + 180, y), size=13, color=C.TEXT)
+                W.text(self.body, keys, (box.x + 24, y), size=13, color=C.SELECT, bold=True)
+                W.text(self.body, desc, (box.x + 180, y), size=13, color=C.TEXT)
             y += 14 if keys else 6
         W.text(
-            self.canvas,
-            "QUEST-PREP edits and the LIVE size keys write game memory; the rest only reads",
+            self.body,
+            "only QUEST-PREP's staged edits write game memory (none with --read-only)",
             (box.x + 20, box.bottom - 24),
             size=11,
             color=C.TEXT_FAINT,
@@ -281,14 +289,16 @@ class HUDApp:
 
     def _present(self) -> None:
         ww, wh = self.screen.get_size()
-        self._blit_scale = min(ww / CANVAS_W, wh / CANVAS_H)
-        sw, sh = int(CANVAS_W * self._blit_scale), int(CANVAS_H * self._blit_scale)
+        cw, ch = self.canvas.get_size()
+        self._blit_scale = min(ww / cw, wh / ch)
+        sw, sh = int(cw * self._blit_scale), int(ch * self._blit_scale)
         self._blit_off = ((ww - sw) // 2, (wh - sh) // 2)
         self.screen.fill((0, 0, 0))
         self.screen.blit(pygame.transform.smoothscale(self.canvas, (sw, sh)), self._blit_off)
         pygame.display.flip()
 
     def _to_canvas(self, pos: tuple[int, int]) -> tuple[float, float]:
+        """A window position in the layouts' coordinates."""
         ox, oy = self._blit_off
         s = self._blit_scale or 1.0
-        return (pos[0] - ox) / s, (pos[1] - oy) / s
+        return (pos[0] - ox) / s, (pos[1] - oy) / s - STATUS_H

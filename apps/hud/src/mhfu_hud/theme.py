@@ -10,6 +10,8 @@ import pygame
 
 CANVAS_W = 960
 CANVAS_H = 544
+STATUS_H = 18
+"""The window's status row above the canvas."""
 
 Color = tuple[int, int, int]
 

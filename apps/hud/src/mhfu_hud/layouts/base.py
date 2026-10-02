@@ -1,8 +1,8 @@
-"""The Layout base class and what a layout may ask of the reader.
+"""The Layout base class and what a layout may ask of the reader and the writer.
 
 A layout draws one tab or game context on the fixed canvas, keeps its own UI state (which
-monster is selected) and may take key presses. It never talks to the debugger: everything it
-draws comes from the snapshot.
+monster is selected) and may take key presses. Neither protocol has a debugger client: a layout
+draws the snapshot and the writer's status, and hands edits to the writer.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import pygame
 
 from ..assets import AssetLibrary
 from ..calibration import Calibration
-from ..edits import EditBank
+from ..edits import Edit, WriterStatus
 from ..state import GameSnapshot
 from ..theme import C
 
@@ -24,11 +24,24 @@ class Reader(Protocol):
     @property
     def snapshot(self) -> GameSnapshot: ...
 
-    edit_bank: EditBank
-
     def set_section_override(self, section: int | None) -> None: ...
 
     def reset_section_tracking(self) -> None: ...
+
+
+class Writer(Protocol):
+    """What the window and QUEST_PREP need of the writer (`writer.GameWriter`)."""
+
+    @property
+    def status(self) -> WriterStatus: ...
+
+    def stage(self, edit: Edit) -> None: ...
+
+    def change(self, index: int, edit: Edit | None) -> None:
+        """Replace edit `index`, or remove it with None."""
+
+    def toggle(self) -> None:
+        """Flip the master switch."""
 
 
 class Layout:

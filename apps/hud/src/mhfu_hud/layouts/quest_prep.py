@@ -1,7 +1,8 @@
 """QUEST_PREP: stage edits in the village for the monsters a quest will spawn.
 
 The registry is empty before the quest, so the left panel picks a species and the right panel
-holds the staged edits; the reader writes each to every matching monster once it spawns.
+holds the staged edits; the writer writes each to every matching monster once it spawns. Without
+a writer (`hud --read-only`) the edits are off.
 
     left / right   switch panel
     up / down      select; PgUp/PgDn jump 10 species
@@ -15,35 +16,34 @@ holds the staged edits; the reader writes each to every matching monster once it
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pygame
 
 from .. import widgets as W
 from ..assets import AssetLibrary
 from ..calibration import Calibration
-from ..edits import EditBank, StagedEdit
-from ..monster_db import PICKER_SPECIES, species_name
+from ..edits import Edit, Kind, WriterStatus
+from ..monster_db import PICKER_SPECIES
 from ..state import GameSnapshot
 from ..theme import CANVAS_H, CANVAS_W, C
-from .base import Layout, Reader
+from .base import Layout, Writer
 
 R_HEADER = pygame.Rect(12, 12, CANVAS_W - 24, 50)
 R_PICKER = pygame.Rect(12, 70, 360, CANVAS_H - 70 - 50)
 R_EDITS = pygame.Rect(380, 70, CANVAS_W - 380 - 12, CANVAS_H - 70 - 50)
 R_FOOTER = pygame.Rect(12, CANVAS_H - 40, CANVAS_W - 24, 28)
-
-SIZE_STEP = 0.05
-HP_STEP = 10
-EDIT_KINDS = ["size_species", "type_swap", "hp_slot"]
+READ_ONLY = "writes off: started with --read-only"
 
 
 class QuestPrepLayout(Layout):
     name = "quest_prep"
 
     def __init__(
-        self, assets: AssetLibrary, calib: Calibration, reader: Reader | None = None
+        self, assets: AssetLibrary, calib: Calibration, writer: Writer | None = None
     ) -> None:
         super().__init__(assets, calib)
-        self.reader = reader
+        self.writer = writer
         self.zone = "picker"
         self.selected_species = 0
         self.selected_edit = 0
@@ -55,18 +55,20 @@ class QuestPrepLayout(Layout):
     # --- input ---
 
     def handle_key(self, key: int, snapshot: GameSnapshot) -> bool:
-        bank = self.reader.edit_bank if self.reader else None
         if key == pygame.K_LEFT:
             self.zone = "picker"
             return True
         if key == pygame.K_RIGHT:
             self.zone = "edits"
             return True
+        if key == pygame.K_m and self.writer is not None and self._binding_input is None:
+            self.writer.toggle()
+            return True
         if self.zone == "picker":
-            return self._picker_key(key, snapshot, bank)
-        return self._edits_key(key, snapshot, bank)
+            return self._picker_key(key)
+        return self._edits_key(key)
 
-    def _picker_key(self, key: int, snapshot: GameSnapshot, bank: EditBank | None) -> bool:
+    def _picker_key(self, key: int) -> bool:
         n = len(PICKER_SPECIES)
         if self._binding_input is not None:
             ch = pygame.key.name(key)
@@ -76,134 +78,72 @@ class QuestPrepLayout(Layout):
                     val = int(self._binding_input, 16)
                     self.custom_bytes[self.selected_species] = val
                     self._binding_input = None
-                return True
-            if key == pygame.K_ESCAPE:
+            elif key == pygame.K_ESCAPE:
                 self._binding_input = None
-                return True
             return True
-        if key == pygame.K_UP:
-            self.selected_species = (self.selected_species - 1) % n
-            return True
-        if key == pygame.K_DOWN:
-            self.selected_species = (self.selected_species + 1) % n
-            return True
-        if key == pygame.K_PAGEUP:
-            self.selected_species = (self.selected_species - 10) % n
-            return True
-        if key == pygame.K_PAGEDOWN:
-            self.selected_species = (self.selected_species + 10) % n
+        steps = {pygame.K_UP: -1, pygame.K_DOWN: 1, pygame.K_PAGEUP: -10, pygame.K_PAGEDOWN: 10}
+        if key in steps:
+            self.selected_species = (self.selected_species + steps[key]) % n
             return True
         if key == pygame.K_RETURN:
-            if bank is None:
-                return True
-            tb = self._effective_type_byte(self.selected_species)
-            if tb is None:
-                return True  # nothing to key on until a species id is bound
-            name, _ = PICKER_SPECIES[self.selected_species]
-            bank.add(
-                StagedEdit(
-                    kind="size_species",
-                    selector_value=tb,
-                    new_value=1.0,
-                    label=f"size {name} (species 0x{tb:02X}) -> 1.00",
-                )
-            )
-            self.selected_edit = len(bank.edits) - 1
-            self.zone = "edits"
+            species = self._species_id(self.selected_species)
+            if self.writer is not None and species is not None:
+                self.writer.stage(Edit.of(Kind.SIZE, species))
+                self.selected_edit = len(self.writer.status.staged) - 1
+                self.zone = "edits"
             return True
         if key == pygame.K_b:
             self._binding_input = ""
             return True
-        if key == pygame.K_m and bank is not None:
-            bank.toggle_master()
-            return True
         return False
 
-    def _edits_key(self, key: int, snapshot: GameSnapshot, bank: EditBank | None) -> bool:
-        if bank is None or not bank.edits:
-            if key == pygame.K_m and bank is not None:
-                bank.toggle_master()
-                return True
+    def _edits_key(self, key: int) -> bool:
+        if self.writer is None:
             return False
-        n = len(bank.edits)
-        if key == pygame.K_UP:
-            self.selected_edit = (self.selected_edit - 1) % n
+        staged = self.writer.status.staged
+        if not staged:
+            return False
+        n = len(staged)
+        self.selected_edit = min(self.selected_edit, n - 1)
+        if key in (pygame.K_UP, pygame.K_DOWN):
+            self.selected_edit = (self.selected_edit + (1 if key == pygame.K_DOWN else -1)) % n
             return True
-        if key == pygame.K_DOWN:
-            self.selected_edit = (self.selected_edit + 1) % n
-            return True
-        e = bank.edits[self.selected_edit]
+        e = staged[self.selected_edit].edit
+        new: Edit | None
         if key == pygame.K_RETURN:
-            bank.toggle(self.selected_edit)
-            return True
-        if key in (pygame.K_DELETE, pygame.K_x):
-            bank.remove(self.selected_edit)
-            if self.selected_edit >= len(bank.edits):
-                self.selected_edit = max(0, len(bank.edits) - 1)
-            return True
-        if key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
-            if e.kind in ("size_species", "size_slot"):
-                e.new_value = round(e.new_value + SIZE_STEP, 3)
-            elif e.kind == "hp_slot":
-                e.new_value += HP_STEP
-            elif e.kind == "type_swap":
-                e.new_value = float((int(e.new_value) + 1) & 0xFF)
-            e.reset_applied()
-            self._refresh_label(e)
-            return True
-        if key in (pygame.K_MINUS, pygame.K_KP_MINUS):
-            if e.kind in ("size_species", "size_slot"):
-                e.new_value = round(max(0.1, e.new_value - SIZE_STEP), 3)
-            elif e.kind == "hp_slot":
-                e.new_value = max(1, e.new_value - HP_STEP)
-            elif e.kind == "type_swap":
-                e.new_value = float((int(e.new_value) - 1) & 0xFF)
-            e.reset_applied()
-            self._refresh_label(e)
-            return True
-        if key == pygame.K_t:
-            cur = EDIT_KINDS.index(e.kind) if e.kind in EDIT_KINDS else 0
-            e.kind = EDIT_KINDS[(cur + 1) % len(EDIT_KINDS)]
-            e.reset_applied()
-            self._refresh_label(e)
-            return True
-        if key == pygame.K_m:
-            bank.toggle_master()
-            return True
-        return False
+            new = replace(e, enabled=not e.enabled)
+        elif key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+            new = e.stepped(1)
+        elif key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+            new = e.stepped(-1)
+        elif key == pygame.K_t:
+            new = e.next_kind()
+        elif key in (pygame.K_DELETE, pygame.K_x):
+            new = None
+        else:
+            return False
+        self.writer.change(self.selected_edit, new)
+        self.selected_edit = max(0, min(self.selected_edit, len(self.writer.status.staged) - 1))
+        return True
 
     # --- helpers ---
 
-    def _effective_type_byte(self, idx: int) -> int | None:
-        _name, byte = PICKER_SPECIES[idx]
-        if byte is not None:
-            return byte
-        return self.custom_bytes.get(idx)
-
-    def _refresh_label(self, edit: StagedEdit) -> None:
-        sel = edit.selector_value
-        if edit.kind == "size_species":
-            edit.label = f"size {species_name(sel)} (0x{sel:02X}) -> {edit.new_value:.2f}"
-        elif edit.kind == "type_swap":
-            tgt = int(edit.new_value) & 0xFF
-            edit.label = (
-                f"species {species_name(sel)} (0x{sel:02X}) -> {species_name(tgt)} (0x{tgt:02X})"
-            )
-        elif edit.kind == "hp_slot":
-            edit.label = f"hp slot {sel} -> {int(edit.new_value)}"
+    def _species_id(self, idx: int) -> int | None:
+        _name, species = PICKER_SPECIES[idx]
+        return species if species is not None else self.custom_bytes.get(idx)
 
     # --- render ---
 
     def render(self, surface: pygame.Surface, snapshot: GameSnapshot) -> None:
         surface.fill(C.BG)
-        bank = self.reader.edit_bank if self.reader else None
-        self._header(surface, snapshot, bank)
-        self._picker(surface, bank)
-        self._edits(surface, bank)
+        status = self.writer.status if self.writer else None
+        self._header(surface, snapshot, status)
+        self._picker(surface)
+        self._edits(surface, status)
         self._footer(surface)
 
     def _header(
-        self, surface: pygame.Surface, snapshot: GameSnapshot, bank: EditBank | None
+        self, surface: pygame.Surface, snapshot: GameSnapshot, status: WriterStatus | None
     ) -> None:
         W.panel(surface, R_HEADER)
         W.text(
@@ -214,18 +154,23 @@ class QuestPrepLayout(Layout):
             color=C.ACCENT,
             bold=True,
         )
-        master = "ON" if (bank and bank.enabled) else "OFF"
-        n_edits = len(bank.edits) if bank else 0
+        if status is None:
+            line, color = READ_ONLY, C.WARN
+        else:
+            master = "ON" if status.enabled else "OFF"
+            line = f"AUTO-APPLY: {master}   {len(status.staged)} edits   {status.writes} writes"
+            if status.error:
+                line += f"   last error: {status.error}"
+            color = C.TEXT_DIM
         W.text(
             surface,
-            f"ctx={snapshot.context.value}   area_index={snapshot.area_index}   "
-            f"AUTO-APPLY: {master}   {n_edits} edits queued",
+            f"ctx={snapshot.context.value}   area_index={snapshot.area_index}   {line}",
             (R_HEADER.x + 12, R_HEADER.y + 28),
             size=12,
-            color=C.TEXT_DIM,
+            color=color,
         )
 
-    def _picker(self, surface: pygame.Surface, bank: EditBank | None) -> None:
+    def _picker(self, surface: pygame.Surface) -> None:
         title = "SPECIES" + (" (selected)" if self.zone == "picker" else "")
         W.panel(surface, R_PICKER, title=title)
         # 'B' input mode banner
@@ -260,20 +205,22 @@ class QuestPrepLayout(Layout):
             W.text(surface, byte_str, (row.x + 6, row.y + 1), size=11, color=color, bold=True)
             W.text(surface, name, (row.x + 56, row.y + 1), size=11, color=C.TEXT)
 
-    def _edits(self, surface: pygame.Surface, bank: EditBank | None) -> None:
+    def _edits(self, surface: pygame.Surface, status: WriterStatus | None) -> None:
         title = "STAGED EDITS" + (" (selected)" if self.zone == "edits" else "")
         W.panel(surface, R_EDITS, title=title)
-        if bank is None or not bank.edits:
+        if status is None or not status.staged:
+            hint = "no edits queued — focus PICKER (←), select species, ENTER to stage"
             W.text(
                 surface,
-                "no edits queued — focus PICKER (←), select species, ENTER to stage",
+                READ_ONLY if status is None else hint,
                 (R_EDITS.x + 12, R_EDITS.y + 34),
                 size=12,
                 color=C.TEXT_FAINT,
             )
             return
         row_h = 22
-        for i, e in enumerate(bank.edits):
+        for i, st in enumerate(status.staged):
+            e = st.edit
             y = R_EDITS.y + 30 + i * row_h
             row = pygame.Rect(R_EDITS.x + 4, y, R_EDITS.w - 8, row_h - 2)
             if i == self.selected_edit and self.zone == "edits":
@@ -285,7 +232,7 @@ class QuestPrepLayout(Layout):
             W.text(surface, e.label, (row.x + 38, row.y + 4), size=12, color=C.TEXT)
             W.text(
                 surface,
-                f"applied {len(e.applied_to)}",
+                f"applied {st.applied}",
                 (row.right - 8, row.y + 4),
                 size=11,
                 color=C.TEXT_FAINT,

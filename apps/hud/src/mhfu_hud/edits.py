@@ -1,94 +1,92 @@
-"""Staged edits: authored in QUEST_PREP before a quest, written to each matching monster once
-when it spawns.
+"""Staged edits as frozen values: what QUEST_PREP authors and the writer's status it draws.
 
-    size_species  species id X: Entity.resize(value)
-    size_slot     registry slot N: Entity.resize(value)
-    type_swap     species id X: ENTITY.SPECIES = value
-    hp_slot       registry slot N: ENTITY.HP = value
-
-Each edit remembers the entities it wrote (`applied_to`), so a value changed afterwards is not
-written back.
+Every kind keys on the species id (ENTITY.SPECIES), the one thing known before a quest spawns
+its monsters; `writer.GameWriter` writes them.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
+from enum import Enum
 
-from mhfu.memory import Live
-from mhfu.structs import Entity
-from ppsspp_debug import Client
-
+from .monster_db import species_name
 from .state import MonsterHUD
 
+SIZE_STEP = 0.05
+SIZE_MIN = 0.1
+HP_STEP = 10
+HP_DEFAULT = 100
 
-@dataclass
-class StagedEdit:
-    kind: str
-    """size_species, size_slot, type_swap or hp_slot."""
-    selector_value: int
-    """Species id for size_species and type_swap, registry slot for the *_slot kinds."""
-    new_value: float
+
+class Kind(Enum):
+    SIZE = "size"
+    """Entity.resize(value)."""
+    SPECIES = "species"
+    """ENTITY.SPECIES = value."""
+    HP = "hp"
+    """ENTITY.HP = value."""
+
+
+@dataclass(frozen=True)
+class Edit:
+    kind: Kind
+    species: int
+    """The species id it applies to."""
+    value: float
     enabled: bool = True
-    label: str = ""
-    applied_to: set[int] = field(default_factory=set)
 
-    def reset_applied(self) -> None:
-        self.applied_to.clear()
+    @classmethod
+    def of(cls, kind: Kind, species: int) -> Edit:
+        """An edit of `kind` with a value that changes nothing yet where one exists."""
+        value = {Kind.SIZE: 1.0, Kind.SPECIES: float(species), Kind.HP: float(HP_DEFAULT)}
+        return cls(kind, species, value[kind])
 
     def matches(self, m: MonsterHUD) -> bool:
-        key = m.slot if self.kind in ("size_slot", "hp_slot") else m.species
-        return key == self.selector_value
+        return m.species == self.species
 
-    def write(self, e: Entity) -> None:
-        if self.kind in ("size_species", "size_slot"):
-            e.resize(float(self.new_value))
-        elif self.kind == "type_swap":
-            e.species = int(self.new_value) & 0xFF
-        elif self.kind == "hp_slot":
-            e.hp = int(self.new_value) & 0xFFFF
+    def stepped(self, sign: int) -> Edit:
+        """One step up (`sign` 1) or down (-1)."""
+        if self.kind is Kind.SIZE:
+            value = max(SIZE_MIN, round(self.value + sign * SIZE_STEP, 3))
+        elif self.kind is Kind.HP:
+            value = max(1.0, self.value + sign * HP_STEP)
+        else:
+            value = float((int(self.value) + sign) & 0xFF)
+        return replace(self, value=value)
+
+    def next_kind(self) -> Edit:
+        kinds = list(Kind)
+        kind = kinds[(kinds.index(self.kind) + 1) % len(kinds)]
+        return replace(Edit.of(kind, self.species), enabled=self.enabled)
+
+    @property
+    def label(self) -> str:
+        who = f"{species_name(self.species)} (0x{self.species:02X})"
+        if self.kind is Kind.SIZE:
+            return f"size {who} -> {self.value:.2f}"
+        if self.kind is Kind.HP:
+            return f"hp {who} -> {int(self.value)}"
+        to = int(self.value) & 0xFF
+        return f"species {who} -> {species_name(to)} (0x{to:02X})"
 
 
-class EditBank:
-    """Every staged edit, with a master switch."""
+@dataclass(frozen=True)
+class Staged:
+    edit: Edit
+    applied: int = 0
+    """Monsters it has written since the last quest area was entered."""
 
-    def __init__(self) -> None:
-        self.edits: list[StagedEdit] = []
-        self.enabled = True
 
-    def add(self, edit: StagedEdit) -> None:
-        self.edits.append(edit)
+@dataclass(frozen=True)
+class WriterStatus:
+    staged: tuple[Staged, ...] = ()
+    enabled: bool = True
+    """The master switch."""
+    writes: int = 0
+    error: str = ""
+    """The last failed write; the next snapshot retries it."""
 
-    def remove(self, idx: int) -> None:
-        if 0 <= idx < len(self.edits):
-            self.edits.pop(idx)
-
-    def toggle(self, idx: int) -> None:
-        if 0 <= idx < len(self.edits):
-            self.edits[idx].enabled = not self.edits[idx].enabled
-
-    def toggle_master(self) -> None:
-        self.enabled = not self.enabled
-
-    def reset_applied(self) -> None:
-        """Forget the entities written, so the edits fire again on a new quest's monsters."""
-        for e in self.edits:
-            e.reset_applied()
-
-    def apply_to_monsters(self, client: Client | None, monsters: Iterable[MonsterHUD]) -> int:
-        """Write every enabled edit to the monsters it matches and has not written; the count."""
-        if not self.enabled or client is None or not self.edits:
-            return 0
-        mem = Live(client)
-        writes = 0
-        for m in monsters:
-            for e in list(self.edits):
-                if not e.enabled or m.ptr in e.applied_to or not e.matches(m):
-                    continue
-                try:
-                    e.write(Entity(mem, m.ptr))
-                except Exception:
-                    continue  # the next poll retries it
-                e.applied_to.add(m.ptr)
-                writes += 1
-        return writes
+    @property
+    def active(self) -> bool:
+        """Something would be written: the master switch and an edit are on."""
+        return self.enabled and any(s.edit.enabled for s in self.staged)

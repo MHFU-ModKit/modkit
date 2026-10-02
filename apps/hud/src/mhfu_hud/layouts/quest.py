@@ -1,4 +1,5 @@
-"""The LIVE tab in a quest: the map with the monsters on it, vitals, timer, roster, bag.
+"""The LIVE tab in a quest: the map with the monsters on it, vitals, timer, roster, bag. It
+only reads; QUEST_PREP stages the edits.
 
 [ ] cycle the selected monster, ENTER opens its detail page, C enters map calibration.
 """
@@ -8,8 +9,6 @@ from __future__ import annotations
 import math
 
 import pygame
-from mhfu.memory import Live
-from mhfu.structs import Entity
 
 from .. import item_db, panels
 from .. import widgets as W
@@ -51,10 +50,6 @@ class QuestLayout(Layout):
     name = "quest"
 
     DETAIL_SUBTABS = ("stats", "ai")
-    SIZE_STEP_FINE = 0.05
-    SIZE_STEP_COARSE = 0.2
-    SIZE_MIN = 0.1
-    SIZE_MAX = 5.0
 
     def __init__(
         self, assets: AssetLibrary, calib: Calibration, reader: Reader | None = None
@@ -106,38 +101,7 @@ class QuestLayout(Layout):
             return True
         if self.calib_mode:
             return self._calib_key(key)
-        if n and 0 <= self.selected < n:
-            return self._edit_key(key, snapshot.monsters[self.selected])
         return False
-
-    def _edit_key(self, key: int, m: MonsterHUD) -> bool:
-        """Size and species keys on the selected monster: one write per press."""
-        client = getattr(self.reader, "_client", None)
-        if client is None:
-            return False
-        e = Entity(Live(client), m.ptr)
-        size = m.render_scale or 1.0
-        steps = {
-            pygame.K_EQUALS: self.SIZE_STEP_FINE,
-            pygame.K_PLUS: self.SIZE_STEP_FINE,
-            pygame.K_KP_PLUS: self.SIZE_STEP_FINE,
-            pygame.K_MINUS: -self.SIZE_STEP_FINE,
-            pygame.K_KP_MINUS: -self.SIZE_STEP_FINE,
-            pygame.K_PERIOD: self.SIZE_STEP_COARSE,
-            pygame.K_GREATER: self.SIZE_STEP_COARSE,
-            pygame.K_COMMA: -self.SIZE_STEP_COARSE,
-            pygame.K_LESS: -self.SIZE_STEP_COARSE,
-        }
-        try:
-            if key in steps:
-                e.resize(min(self.SIZE_MAX, max(self.SIZE_MIN, size + steps[key])))
-            elif key in (pygame.K_PAGEUP, pygame.K_PAGEDOWN):
-                e.species = (m.species + (1 if key == pygame.K_PAGEUP else -1)) & 0xFF
-            else:
-                return False
-        except Exception:
-            pass  # the next press retries
-        return True
 
     def _calib_key(self, key: int) -> bool:
         q = self.calib.quest

@@ -37,6 +37,11 @@ def parse(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     ap.add_argument("--fullscreen", action="store_true", help="start fullscreen")
     ap.add_argument(
+        "--read-only",
+        action="store_true",
+        help="never write game memory: QUEST_PREP's staged edits are off",
+    )
+    ap.add_argument(
         "--assets",
         type=Path,
         help="artwork folder (default: $MHFU_HUD_ASSETS, else "
@@ -61,12 +66,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     from .app import HUDApp
     from .calibration import Calibration
     from .reader import QUEST_MAP, MemoryReader
+    from .writer import GameWriter
 
     calib = Calibration()
     reader = MemoryReader(args.host, args.port, args.poll_hz, calib.section_map(QUEST_MAP))
+    writer = None if args.read_only else GameWriter(reader)
     reader.start()
+    if writer:
+        writer.start()
     try:
-        app = HUDApp(reader, calib, assets=args.assets, fullscreen=args.fullscreen)
+        app = HUDApp(reader, calib, writer=writer, assets=args.assets, fullscreen=args.fullscreen)
         if not args.shot:
             app.run()
             return 0
@@ -80,6 +89,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(path)
         return 0
     finally:
+        if writer:
+            writer.stop()
         reader.stop()
 
 

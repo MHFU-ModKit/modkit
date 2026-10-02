@@ -96,7 +96,7 @@ class MonsterHUD:
     cells: tuple[Cell, ...] = ()
     """The AI cells AI_MOD lists."""
     herd: tuple[int, ...] = ()
-    """HERD_MEMBERS that are set."""
+    """HERD_MEMBERS that are set; small monsters only."""
 
 
 @dataclass(frozen=True)

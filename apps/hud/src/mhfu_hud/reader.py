@@ -33,7 +33,6 @@ from mhfu.views import Value, View, f32s, ptr, ptrs, u8, u16, u16s, u32, u32s, v
 from ppsspp_debug import Client, DebuggerError
 
 from .calibration import SectionMap
-from .edits import EditBank
 from .monster_db import identify
 from .state import (
     BagSlot,
@@ -149,6 +148,9 @@ AI_CELLS: tuple[Value[Any], ...] = (
     E.herd_rally,
 )
 """The entity cells AI_MOD lists, in its order."""
+SMALL_ONLY = "small monsters:"
+"""How addresses.toml marks an ENTITY field only small monsters fill."""
+BIG_CELLS = tuple(v for v in AI_CELLS if not v.where.doc.startswith(SMALL_ONLY))
 SPECIES_CELLS: tuple[Value[Any], ...] = (
     S.cooldowns,
     S.weights,
@@ -300,6 +302,7 @@ class MemoryReader:
         self.port = port
         self.poll_interval = 1.0 / max(0.5, poll_hz)
         self._client: Client | None = None
+        self._client_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
@@ -312,9 +315,7 @@ class MemoryReader:
         self._tracker = SectionTracker(sections or SectionMap((), {}))
         self._section_requests: queue.SimpleQueue[tuple[str, int | None]] = queue.SimpleQueue()
         self._species: dict[int, SpeciesRow] = {}
-        self._in_quest_with_monsters = False
-        self.edit_bank = EditBank()
-        """Staged edits QUEST_PREP authors; the poll applies them as monsters spawn."""
+        self._subscribers: list[queue.SimpleQueue[GameSnapshot]] = []
 
     # --- lifecycle ---
 
@@ -323,24 +324,43 @@ class MemoryReader:
         self._thread.start()
 
     def stop(self) -> None:
-        # close first: a poll waiting on a reply then fails at once instead of timing out
         self._stop.set()
-        if self._client:
-            try:
-                self._client.close()
-            except Exception:
-                pass
+        self._drop()  # a poll waiting on a reply then fails at once instead of timing out
         if self._thread:
             self._thread.join(timeout=2.0)
+
+    def _drop(self) -> None:
+        """Close the client once, whichever thread gets here first: two closes deadlock."""
+        with self._client_lock:
+            client, self._client = self._client, None
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
 
     @property
     def snapshot(self) -> GameSnapshot:
         with self._lock:
             return self._snapshot
 
+    @property
+    def client(self) -> Client | None:
+        """The connection, for the writer; None while disconnected."""
+        return self._client
+
+    def subscribe(self) -> queue.SimpleQueue[GameSnapshot]:
+        """A queue that gets every snapshot published from now on."""
+        q: queue.SimpleQueue[GameSnapshot] = queue.SimpleQueue()
+        with self._lock:
+            self._subscribers.append(q)
+        return q
+
     def _publish(self, snap: GameSnapshot) -> None:
         with self._lock:
             self._snapshot = snap
+            for q in self._subscribers:
+                q.put(snap)
 
     def set_section_override(self, section: int | None) -> None:
         """Pin the tracked section until reset; safe from any thread."""
@@ -362,9 +382,7 @@ class MemoryReader:
             try:
                 self._publish(self.poll())
             except DEBUGGER_ERRORS as e:
-                if self._client:
-                    self._client.close()
-                self._client = None
+                self._drop()
                 self._publish(GameSnapshot(status_text=f"connection lost: {e}"))
             except Exception as e:  # keep polling: a dead thread would freeze the HUD unseen
                 self._publish(replace(self.snapshot, status_text=f"poll failed: {e!r}"))
@@ -382,19 +400,26 @@ class MemoryReader:
                 self._stop.wait(2.0)
                 continue
             self.host, self.port = client.host, client.port
-            self._client = client
+            with self._client_lock:
+                if not self._stop.is_set():
+                    self._client = client
+                    return
+            client.close()  # stopped while connecting
             return
 
     # --- one poll ---
 
     def _read(self, start: int, size: int) -> Image:
-        assert self._client is not None
-        return Image(self._client.read(start, size), start)
+        c = self._client
+        if c is None:
+            raise ConnectionError("closed")
+        return Image(c.read(start, size), start)
 
     def poll(self) -> GameSnapshot:
         """One poll cycle on the connected client."""
         c = self._client
-        assert c is not None
+        if c is None:
+            raise ConnectionError("closed")
         t0 = time.monotonic()
         self._poll_count += 1
         if self._poll_count == 1 or self._poll_count % STATUS_EVERY == 0:
@@ -426,7 +451,6 @@ class MemoryReader:
         else:
             self._species.clear()
 
-        self._apply_edits(monsters, context, screen)
         player = self._player(g, loaded, context)
         self._update_sections(context, screen, area_index, player)
         return self._meta(
@@ -515,6 +539,7 @@ class MemoryReader:
         if not _finite(pos):
             return None
         species, hp = e.species, e.hp
+        big = species in targets
         name, slug = identify(vtable, species)
         scale = e.render_scale[0]
         lo, hi = SCALE_SANE
@@ -527,7 +552,7 @@ class MemoryReader:
             entity_id=e.id,
             name=name,
             icon_slug=slug,
-            big=species in targets,
+            big=big,
             pos=pos,
             hp=hp,
             hp_max=max(e.max_hp, hp),
@@ -536,8 +561,8 @@ class MemoryReader:
             anim_input=e.anim_input,
             actions=e.slot_actions,
             state=(e.main_state, e.sub_state),
-            cells=cells(e, AI_CELLS),
-            herd=tuple(m for m in e.herd_members if m),
+            cells=cells(e, BIG_CELLS if big else AI_CELLS),
+            herd=() if big else tuple(m for m in e.herd_members if m),
         )
 
     def _species_row(self, species: int) -> None:
@@ -551,18 +576,6 @@ class MemoryReader:
             return
         row = HudSpecies(img, base)
         self._species[species] = SpeciesRow(species, base, cells(row, SPECIES_CELLS))
-
-    def _apply_edits(self, monsters: tuple[MonsterHUD, ...], context: Context, screen: int) -> None:
-        """Write staged edits to new monsters; a fresh quest area makes them fire again."""
-        now_has = context == Context.QUEST and screen == Screen.IN_AREA and bool(monsters)
-        if now_has and not self._in_quest_with_monsters:
-            self.edit_bank.reset_applied()
-        self._in_quest_with_monsters = now_has
-        if monsters:
-            try:
-                self.edit_bank.apply_to_monsters(self._client, monsters)
-            except Exception:
-                pass  # a failed write must not end the poll; the next one retries
 
     def _update_sections(
         self, context: Context, screen: int, area_index: int, player: PlayerHUD

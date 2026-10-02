@@ -181,8 +181,9 @@ class AIModLayout(Layout):
             ("move (main, sub)", state_text(m)),
             ("animating", action_text(m)),
             ("drawn", "yes" if m.drawn else "no (out of view or paused)"),
-            ("herd", f"{len(m.herd)} members"),
         ]
+        if not m.big:
+            summary.append(("herd", f"{len(m.herd)} members"))
         y = int(W.kv_rows(surface, (x, y), summary, size=11, line_h=ROW_H, key_w=LABEL_W))
         pygame.draw.line(surface, C.PANEL_BORDER, (x, y + 2), (R_CELLS.right - 10, y + 2))
         y += 8
