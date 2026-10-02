@@ -63,6 +63,10 @@ def test_shows(panel: CollisionPanel, ws: MapWorkspace) -> None:
     panel.fill.slider.setValue(1000)
     assert not ws.vp.collision.show_class["floor"] and not ws.vp.collision.show_chunk[0]
     assert ws.vp.collision.fill_alpha == 1.0
+    xray, edges = ws.vp.collision_xray, ws.vp.collision_edges
+    panel.xray.click()
+    panel.edge_on.click()
+    assert ws.vp.collision_xray != xray and ws.vp.collision_edges != edges
 
 
 def test_climbable(panel: CollisionPanel, ws: MapWorkspace) -> None:

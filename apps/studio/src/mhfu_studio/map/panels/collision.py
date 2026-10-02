@@ -96,9 +96,25 @@ class CollisionPanel(kit.Panel):
             tip="How solid the collision's edges look",
             on=self._view(lambda vp, v: setattr(vp.collision, "edge_alpha", v)),
         )
+        self.xray = kit.check(
+            "X-ray",
+            tip="Shows the collision through the scenery, so walls behind a hill show too",
+            on=self._view(lambda vp, on: setattr(vp, "collision_xray", on)),
+        )
+        self.fill_on = kit.check(
+            "Faces",
+            tip="Draws the collision triangles filled",
+            on=self._view(lambda vp, on: setattr(vp, "collision_fill", on)),
+        )
+        self.edge_on = kit.check(
+            "Edges",
+            tip="Draws the collision triangles' edges",
+            on=self._view(lambda vp, on: setattr(vp, "collision_edges", on)),
+        )
         looks = kit.Form()
-        looks.row("Faces", self.fill)
-        looks.row("Edges", self.edge)
+        looks.row("", self.xray)
+        looks.layout_.addRow(self.fill_on, self.fill)
+        looks.layout_.addRow(self.edge_on, self.edge)
         #: what draws only while the layer shows
         self.filters: list[QWidget] = [self.chunk_box, *self.classes.values(), looks]
         for w in self.filters:
@@ -374,6 +390,12 @@ class CollisionPanel(kit.Panel):
             kit.put(box, col.show_class.get(k, True))
         self.fill.set(col.fill_alpha)
         self.edge.set(col.edge_alpha)
+        for box, on in (
+            (self.xray, vp.collision_xray),
+            (self.fill_on, vp.collision_fill),
+            (self.edge_on, vp.collision_edges),
+        ):
+            kit.put(box, on)
         climb = sc.climbable()
         self.climb_text.setText(
             f"{len(climb)} climbable triangles (material 9 or 10, near-vertical)"
