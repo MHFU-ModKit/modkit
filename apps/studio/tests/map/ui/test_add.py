@@ -44,6 +44,9 @@ def test_empty(qtbot: Any, game: Extracted, atlas: Atlas, monkeypatch: pytest.Mo
 def test_tips(panel: AddPanel) -> None:
     assert panel.gate.currentWidget() is panel.gate.page
     assert kit.missing_tips(panel) == []
+    more = panel.findChild(kit.More)
+    assert more is not None and more.isAncestorOf(panel.group) and more.isAncestorOf(panel.replace)
+    assert "room for" in panel.fits.text() and not more.isAncestorOf(panel.fits)
 
 
 def test_rows_follow_the_shape(panel: AddPanel, ws: MapWorkspace) -> None:

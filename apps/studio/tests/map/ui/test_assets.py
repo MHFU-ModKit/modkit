@@ -43,11 +43,13 @@ def test_lists(qtbot: Any, game: Extracted, atlas: Atlas) -> None:
     ws = loaded(game, atlas)
     p = panel(qtbot, ws)
     assert kit.missing_tips(p) == [] and p.section.count() == 2
-    assert "(loaded)" in p.section.itemText(0)
+    assert p.section.itemText(0) == "Pokke village (st139)  (this one)"
     pick(p.section, "98")
     assert p.src == 98 and p.group.count() == 5 and p.slot_box.count() == 2
     pick(p.group, "0.1")
-    assert p.object.count() == 2 and "72 f" in p.object.itemText(0)
+    assert p.object.count() == 2 and "72 triangles" in p.object.itemText(0)
+    more = p.findChild(kit.More)
+    assert more is not None and more.isAncestorOf(p.target) and more.inner.isHidden()
     assert not p.unsaved.isHidden() and not p.copy_button.isEnabled()
 
 

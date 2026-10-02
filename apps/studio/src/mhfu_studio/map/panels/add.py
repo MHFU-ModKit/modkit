@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Add panel: edits the workspace's `AddForm` and adds what it describes."""
+"""The Add panel: edits the workspace's `AddForm` and adds what it describes; which group draws
+it, and replacing the selection, under More."""
 
 from __future__ import annotations
 
@@ -36,10 +37,10 @@ WHERE = {
 UVS = ("Planar: the group's own texture", "Keep the slots' UVs", "The shape's own UVs")
 SOLIDS = ("None", "A box around it", "Every triangle")
 SIZE_LABELS = {"box": "Size", "plane": "Size (y unused)", "ramp": "Width, height, length"}
-BUDGET_TIP = (
-    "The group's primitives are the budget: the free ones (cleared, or empty as shipped) and,"
-    " when ticked, those of the objects selected in this group. The count is an estimate; the"
-    " add says what did not fit."
+ROOM_TIP = (
+    "A group draws only in its own drawing slots: the free ones (removed, or empty as shipped)"
+    " and, with Replace, those of the objects selected in it. An estimate; the add says what"
+    " did not fit."
 )
 
 
@@ -118,7 +119,7 @@ class AddPanel(kit.Panel):
         what.body.addWidget(self.what)
         lay.addWidget(what)
 
-        where = kit.Section("Where", tip="Where it goes and which group draws it")
+        where = kit.Section("Where", tip="Where it goes")
         self.where = kit.Form()
         self.place = kit.choice(
             list(WHERE.items()),
@@ -129,27 +130,10 @@ class AddPanel(kit.Panel):
             f.at, tip="The position to add at, in map units", decimals=0, on=self._set("at")
         )
         self.at_shown = kit.label(role="muted")
-        self.group = kit.choice(
-            [],
-            tip="The mesh group that draws the shape: it takes that group's texture and"
-            " material, and spends that group's budget",
-            on=self._set("group", lambda k: int(str(k))),
-        )
-        self.replace = kit.check(
-            "Replace the selected objects",
-            tip="Lets the shape take the primitives of the objects selected in this group; they"
-            " stop drawing and the shape draws in their place",
-            on=self._set("replace"),
-        )
         self.where.row("Place at", self.place)
         self.where.row("Position", self.at)
         self.where.row("", self.at_shown)
-        self.where.row("Into group", self.group)
         where.body.addWidget(self.where)
-        where.body.addWidget(self.replace)
-        self.fits = kit.Alert(level="info")
-        self.fits.setToolTip(BUDGET_TIP)
-        where.body.addWidget(self.fits)
         lay.addWidget(where)
 
         how = kit.Section("Finish", tip="How the shape is textured, coloured and made solid")
@@ -184,16 +168,38 @@ class AddPanel(kit.Panel):
         )
         self.remove = kit.button(
             "Remove the selection",
-            tip="Clears the selected objects so their primitives are free for what you add",
+            tip="Clears the selected objects so their drawing slots are free for what you add",
             on=studio.act("remove", lambda: ws.remove_selected(solid=False)),
             role="danger",
         )
+        self.fits = kit.Alert(level="info")
+        self.fits.setToolTip(ROOM_TIP)
         self.message = kit.label(role="muted", selectable=True)
         how.body.addWidget(form)
         how.body.addWidget(self.colour)
+        how.body.addWidget(self.fits)
         how.body.addWidget(kit.row(self.add, self.remove, stretch=True))
         how.body.addWidget(self.message)
         lay.addWidget(how)
+
+        more = kit.More(tip="Which group draws the shape, and giving it the selection's room")
+        self.group = kit.choice(
+            [],
+            tip="The group that draws the shape: it takes that group's texture and colour, and"
+            " its drawing slots. Picking something in the view picks its group.",
+            on=self._set("group", lambda k: int(str(k))),
+        )
+        self.replace = kit.check(
+            "Replace the selected objects",
+            tip="Lets the shape take the drawing slots of the objects selected in its group;"
+            " they stop drawing and the shape draws in their place",
+            on=self._set("replace"),
+        )
+        into = kit.Form()
+        into.row("Into group", self.group)
+        more.body.addWidget(into)
+        more.body.addWidget(self.replace)
+        lay.addWidget(more)
         lay.addStretch(1)
         self.gate = Gate(page, "add shapes to it")
         self.body.addWidget(self.gate)
@@ -263,8 +269,9 @@ class AddPanel(kit.Panel):
         self.at_shown.setText(f"({x:.0f}, {y:.0f}, {z:.0f})")
         self.replace.setEnabled(kind != COPY)
         need, (cap, free) = f.needs(), f.capacity()
-        extra = f", +{cap - free} from the selection" if cap > free else ""
-        self.fits.setText(f"Needs {need} triangles; {cap} fit here ({free} free{extra})")
+        extra = f", {cap - free} of it the selection's" if cap > free else ""
+        into = target.label if target is not None else "no group"
+        self.fits.setText(f"Needs {need} triangles; room for {cap} in {into}{extra}")
         self.fits.set_level("info" if need <= cap else "error")
         self.add.setEnabled(need > 0 and (kind != COPY or not ws.selection.empty))
         self.remove.setEnabled(not ws.selection.empty)

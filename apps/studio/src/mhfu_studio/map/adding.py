@@ -112,7 +112,7 @@ class AddForm:
         if sc is None or sess is None or g is None:
             return None
         if sess.base_dir is None:
-            self.message = "save the document first: the shape is written into its assets/"
+            self.message = "save the document first (File > Save): the shape goes into its assets/"
             return None
         kind, at = self.kind, tuple(self.placement())
         try:
@@ -151,7 +151,7 @@ class AddForm:
             self.message = f"refused: {e}"
             (sess.base_dir / name).unlink(missing_ok=True)
             return None
-        self.message = f"added {Path(name).name} ({len(t)} triangles) into {g.label} as {name}"
+        self.message = f"added {Path(name).name} ({len(t)} triangles) into {g.label}"
         warnings = sess.warnings()
         if warnings:
             self.message += "   [!] " + warnings[0]
