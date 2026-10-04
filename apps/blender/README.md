@@ -44,8 +44,7 @@ File > Export > MHFU PAC (.bin), or Export PAC in the MHFU tab, writes the selec
 model PAC. An untouched monster comes out byte for byte.
 
 - **Groups.** A group whose vertex count and faces are unchanged is written in place: positions,
-  UVs, normals turned more than about a degree, and weights over the joints its palette already
-  holds. The PAC keeps its size. Adding or deleting vertices or faces, or weighting a vertex to a
+  UVs, the normals you changed, and weights over the joints its palette already holds. The PAC keeps its size. Adding or deleting vertices or faces, or weighting a vertex to a
   joint the group has no palette slot for, rebuilds that group (8 joints at most) and the PAC
   grows. A group whose object is deleted draws nothing; a vertex with no weight is refused.
 - **Objects.** Moving a mesh object in Object Mode moves its vertices in the game. Modifiers and

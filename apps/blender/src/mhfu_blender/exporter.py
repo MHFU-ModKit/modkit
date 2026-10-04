@@ -14,7 +14,7 @@ from bpy.props import IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper
 from mhfu_port.model import MHFU, Model, ModelError
 
-from . import animation, curves, stored, write
+from . import animation, curves, scene, stored, write
 from .importer import clips, monster
 
 if TYPE_CHECKING:
@@ -27,6 +27,8 @@ PACKAGE = __package__ or ""
 IDENTITY_EPS = 1e-5
 """A mesh object this close to the armature's own transform has none of its own: its vertices
 are read as stored, so an untouched one writes back exactly."""
+NORMAL_EPS = 1e-5
+"""How far a normal may differ from the one the import showed and still be unedited."""
 ROTATED_EPS = 1e-4
 """How far a bone's rest axes may turn from upright before the export says so."""
 
@@ -136,16 +138,16 @@ def _group(
     n = len(mesh.vertices)
     positions = _floats(mesh.vertices, "co", n, 3)
     loops = _ints(mesh.loops, "vertex_index", len(mesh.loops))
-    corner = _floats(mesh.corner_normals, "vector", len(loops), 3)
-    count = np.bincount(loops, minlength=n)
-    normals = np.zeros((n, 3))
-    np.add.at(normals, loops, corner)
-    normals = np.where(count[:, None] > 0, normals, np.nan)
+    normals = scene.vertex_normals(mesh)
     if np.abs(matrix - np.eye(4)).max() > IDENTITY_EPS:
         positions = positions @ matrix[:3, :3].T + matrix[:3, 3]
         normals = normals @ np.linalg.inv(matrix[:3, :3])
-    length = np.linalg.norm(normals, axis=1, keepdims=True)
-    normals = normals / np.where(length > 0, length, 1.0)
+        normals /= np.linalg.norm(normals, axis=1, keepdims=True)
+    shown = mesh.attributes.get(stored.NORMAL)
+    turned = np.ones(n, dtype=bool)
+    if shown is not None and shown.domain == "POINT" and shown.data_type == "FLOAT_VECTOR":
+        before = _floats(shown.data, "vector", n, 3)
+        turned = np.abs(np.nan_to_num(normals) - before).max(axis=1, initial=0.0) > NORMAL_EPS
     notes = []
     corners = _corners(mesh)
     layer = mesh.uv_layers.get("UV") or mesh.uv_layers.active
@@ -162,7 +164,7 @@ def _group(
         for v in mesh.vertices
     ]
     triangles = loops[corners].astype(np.int32)
-    return write.Geometry(positions, triangles, normals, uvs, influences), notes
+    return write.Geometry(positions, triangles, normals, turned, uvs, influences), notes
 
 
 def _corners(mesh: Any) -> Any:

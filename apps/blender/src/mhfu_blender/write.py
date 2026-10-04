@@ -32,8 +32,6 @@ Floats = NDArray[np.float64]
 
 BIND_EPS = 1e-3
 """Game units a bind joint may drift (Blender keeps float32) and still count as unmoved."""
-NORMAL_EPS = 0.02
-"""Radians a normal may turn and still count as unedited: more than 8-bit rounding moves it."""
 WEIGHT_EPS = 1e-3
 PAD = 0x800
 """A monster PAC's size is a multiple of this."""
@@ -54,7 +52,10 @@ class Geometry:
     triangles: NDArray[np.int32]
     """`(faces, 3)` vertex numbers, wound as drawn."""
     normals: Floats
-    """`(vertices, 3)`, unit length; NaN for a vertex on no face, which keeps its stored one."""
+    """`(vertices, 3)`, unit length; NaN for a vertex on no face."""
+    turned: NDArray[np.bool_]
+    """Per vertex, whether its normal was edited: a group written in place keeps the others'
+    stored normals byte for byte."""
     uvs: Floats | None
     """`(faces, 3, 2)`, each corner's UV as the GE samples it; None without a UV layer."""
     influences: Sequence[Sequence[tuple[int, float]]]
@@ -68,6 +69,7 @@ class _Mesh:
     positions: Floats
     triangles: NDArray[np.int64]
     normals: Floats
+    turned: NDArray[np.bool_]
     uvs: Floats | None
     influences: list[Sequence[tuple[int, float]]]
 
@@ -238,8 +240,7 @@ def _in_place(out: pmo.Pmo, g: int, geo: _Mesh, palette: list[int]) -> bool:
         vertices.weight[i] = row
     vertices.position = quantize(geo.positions.tolist(), out.scale_of(g), lay.position)
     if lay.normal is not None:
-        old = np.array(vertices.normals(), dtype=np.float64).reshape(-1, 3)
-        turned = np.asarray(_angle(old, geo.normals) > NORMAL_EPS)
+        turned = np.asarray(geo.turned & np.isfinite(geo.normals).all(axis=1))
         normals = geo.normals[turned].tolist()
         _rows(vertices.normal, quantize(normals, (1.0, 1.0, 1.0), lay.normal), turned)
     if lay.texture is not None and geo.uvs is not None:
@@ -352,7 +353,7 @@ def _split(g: int, geo: Geometry, notes: list[str]) -> _Mesh:
     triangles = np.asarray(geo.triangles, dtype=np.int64).reshape(-1, 3)
     influences = list(geo.influences)
     if geo.uvs is None:
-        return _Mesh(geo.positions, triangles, geo.normals, None, influences)
+        return _Mesh(geo.positions, triangles, geo.normals, geo.turned, None, influences)
     corners = np.asarray(geo.uvs, dtype=np.float64).reshape(-1, 2)
     n = len(geo.positions)
     uvs = np.full((n, 2), np.nan)
@@ -372,13 +373,14 @@ def _split(g: int, geo: Geometry, notes: list[str]) -> _Mesh:
             target[v, u, w] = to
         flat[c] = to
     if not copies:
-        return _Mesh(geo.positions, triangles, geo.normals, uvs, influences)
+        return _Mesh(geo.positions, triangles, geo.normals, geo.turned, uvs, influences)
     source = triangles.ravel()[copies]
     notes.append(f"group {g}: {len(copies)} vertices split along UV seams")
     return _Mesh(
         np.vstack([geo.positions, geo.positions[source]]),
         flat.reshape(-1, 3),
         np.vstack([geo.normals, geo.normals[source]]),
+        np.concatenate([geo.turned, geo.turned[source]]),
         np.vstack([uvs, corners[copies]]),
         influences + [influences[v] for v in source.tolist()],
     )
@@ -420,16 +422,6 @@ def _weights(row: Sequence[tuple[int, float]]) -> dict[int, float]:
 
 def _close(a: Mapping[int, float], b: Mapping[int, float]) -> bool:
     return all(abs(a.get(j, 0.0) - b.get(j, 0.0)) <= WEIGHT_EPS for j in {*a, *b})
-
-
-def _angle(stored: Floats, new: Floats) -> Floats:
-    """Per row, radians between a stored normal and a new one: 0 where either is missing (a
-    zero stored normal, a NaN new one), so the stored one stays."""
-    a, b = np.linalg.norm(stored, axis=1), np.linalg.norm(new, axis=1)
-    both = (a > 0) & np.isfinite(b) & (b > 0)
-    cos = (stored * np.nan_to_num(new)).sum(axis=1) / np.where(both, a * b, 1.0)
-    out: Floats = np.where(both, np.arccos(np.clip(cos, -1.0, 1.0)), 0.0)
-    return out
 
 
 def _rows(target: list[Row], rows: list[Row], mask: NDArray[np.bool_]) -> None:

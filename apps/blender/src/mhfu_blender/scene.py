@@ -134,6 +134,8 @@ def _mesh(
     if group.normals is not None:
         mesh.normals_split_custom_set_from_vertices(group.normals.tolist())
     mesh.update()
+    shown: Any = mesh.attributes.new(stored.NORMAL, "FLOAT_VECTOR", "POINT")
+    shown.data.foreach_set("vector", np.nan_to_num(vertex_normals(mesh)).astype(np.float32).ravel())
     obj = bpy.data.objects.new(name, mesh)
     collection.objects.link(obj)
     obj.parent = owner
@@ -147,6 +149,20 @@ def _mesh(
             target.add(vertices[weights == w].tolist(), float(w), "REPLACE")
     modifier: Any = obj.modifiers.new("Armature", "ARMATURE")
     modifier.object = owner
+
+
+def vertex_normals(mesh: Any) -> curves.Floats:
+    """`(vertices, 3)`: each vertex's normal as Blender shows it, its corners' mean at unit
+    length; NaN for a vertex on no face."""
+    n, loops = len(mesh.vertices), np.zeros(len(mesh.loops), dtype=np.int32)
+    mesh.loops.foreach_get("vertex_index", loops)
+    corner = np.zeros(3 * len(loops), dtype=np.float32)
+    mesh.corner_normals.foreach_get("vector", corner)
+    out = np.zeros((n, 3))
+    np.add.at(out, loops, corner.reshape(-1, 3))
+    length = np.linalg.norm(out, axis=1, keepdims=True)
+    unit: curves.Floats = np.where(length > 0, out / np.where(length > 0, length, 1.0), np.nan)
+    return unit
 
 
 def _actions(owner: Any, model: Model, names: Sequence[str]) -> None:

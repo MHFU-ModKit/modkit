@@ -39,8 +39,9 @@ def held(write: ModuleType, model: Model) -> dict[int, Any]:
         length = np.linalg.norm(normals, axis=1, keepdims=True)
         normals = normals / np.where(length > 0, length, 1.0)
         uvs = None if g.uvs is None else g.uvs[g.triangles]
+        turned = np.zeros(g.n_vertices, dtype=bool)
         out[g.index] = write.Geometry(
-            g.positions.copy(), g.triangles.copy(), normals, uvs, influences
+            g.positions.copy(), g.triangles.copy(), normals, turned, uvs, influences
         )
     return out
 
@@ -71,8 +72,9 @@ def test_move_vertex(write: ModuleType, model: Model) -> None:
 def test_turn_normal_and_uv(write: ModuleType, model: Model) -> None:
     groups = held(write, model)
     groups[2].normals[3] = (1.0, 0.0, 0.0)
+    groups[2].turned[3] = True
     groups[2].uvs[groups[2].triangles == 1] = (0.5, 0.25)
-    groups[2].normals[0] = (0.0, 0.999999, 0.001)  # within quantisation: keeps its bytes
+    groups[2].normals[0] = (1.0, 0.0, 0.0)  # not marked turned: keeps its bytes
     out = export(write, model, groups)
     back = Model.from_bytes(out.pac, "back").groups[2]
     assert len(out.pac) == len(model.pac or b"")
@@ -113,6 +115,7 @@ def test_added_geometry(write: ModuleType, model: Model) -> None:
     geo = groups[1]
     geo.positions = np.vstack([geo.positions, (20.0, 120.0, 0.0)])
     geo.normals = np.vstack([geo.normals, (0.0, 1.0, 0.0)])
+    geo.turned = np.append(geo.turned, True)
     geo.uvs = np.vstack([geo.uvs, [[geo.uvs[0, 2], geo.uvs[1, 2], (0.5, 0.5)]]])
     geo.triangles = np.vstack([geo.triangles, (2, 3, 4)]).astype(np.int32)
     geo.influences = [*geo.influences, [(1, 1.0)]]

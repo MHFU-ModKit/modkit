@@ -98,6 +98,24 @@ def test_seam(bpy: ModuleType, load: Callable[..., Any], source: Path, tmp_path:
     assert {tuple(back.uvs[v]) for v in on} == {(0.0, 1.0), (0.25, 0.75)}
 
 
+def test_edited_normal(
+    bpy: ModuleType,
+    load: Callable[..., Any],
+    module: Callable[[str], ModuleType],
+    source: Path,
+    tmp_path: Path,
+) -> None:
+    owner = load(source)
+    mesh = group(owner, 2).data
+    normals = module("scene").vertex_normals(mesh)
+    normals[3] = (1.0, 0.0, 0.0)
+    mesh.normals_split_custom_set_from_vertices(normals.tolist())
+    out = export(bpy, tmp_path / "out.bin")
+    assert len(out) == len(source.read_bytes())
+    back = Model.from_bytes(out, "back").groups[2].normals
+    assert back is not None and np.arccos(back[3, 0] / np.linalg.norm(back[3])) < 0.2
+
+
 def test_bone_moved_in_edit_mode(
     bpy: ModuleType, load: Callable[..., Any], source: Path, tmp_path: Path
 ) -> None:

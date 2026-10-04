@@ -4,8 +4,8 @@
 no bpy.
 
 On the armature object: the source bytes, so the .blend alone reads the model again (`model`),
-and `CLIPS`, the clip in each animation slot. On each bone `JOINT`, on each mesh object `GROUP`,
-on each Action its loop.
+and `CLIPS`, the clip in each animation slot. On each bone `JOINT`, on each mesh object `GROUP`
+and its mesh `NORMAL`, on each Action its loop.
 """
 
 from __future__ import annotations
@@ -34,6 +34,9 @@ JOINT = "mhfu_joint"
 """On a bone (`Bone`, not the pose bone): the skeleton joint it is."""
 GROUP = "mhfu_group"
 """On a mesh object: the PMO group it is."""
+NORMAL = "mhfu_normal"
+"""On a mesh, a vertex attribute: each normal as the import showed it, so export can tell the
+ones an edit moved (Blender 4.2 shows some several degrees off the file's)."""
 LOOP = "mhfu_loop"
 LOOP_START = "mhfu_loop_start"
 """On an Action: the clip's loop word and loop start."""
