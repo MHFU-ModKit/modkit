@@ -38,7 +38,7 @@ def held(write: ModuleType, model: Model) -> dict[int, Any]:
         normals = np.zeros((g.n_vertices, 3)) if g.normals is None else g.normals
         length = np.linalg.norm(normals, axis=1, keepdims=True)
         normals = normals / np.where(length > 0, length, 1.0)
-        uvs = None if g.uvs is None else g.uvs.copy()
+        uvs = None if g.uvs is None else g.uvs[g.triangles]
         out[g.index] = write.Geometry(
             g.positions.copy(), g.triangles.copy(), normals, uvs, influences
         )
@@ -71,7 +71,7 @@ def test_move_vertex(write: ModuleType, model: Model) -> None:
 def test_turn_normal_and_uv(write: ModuleType, model: Model) -> None:
     groups = held(write, model)
     groups[2].normals[3] = (1.0, 0.0, 0.0)
-    groups[2].uvs[1] = (0.5, 0.25)
+    groups[2].uvs[groups[2].triangles == 1] = (0.5, 0.25)
     groups[2].normals[0] = (0.0, 0.999999, 0.001)  # within quantisation: keeps its bytes
     out = export(write, model, groups)
     back = Model.from_bytes(out.pac, "back").groups[2]
@@ -113,7 +113,7 @@ def test_added_geometry(write: ModuleType, model: Model) -> None:
     geo = groups[1]
     geo.positions = np.vstack([geo.positions, (20.0, 120.0, 0.0)])
     geo.normals = np.vstack([geo.normals, (0.0, 1.0, 0.0)])
-    geo.uvs = np.vstack([geo.uvs, (0.5, 0.5)])
+    geo.uvs = np.vstack([geo.uvs, [[geo.uvs[0, 2], geo.uvs[1, 2], (0.5, 0.5)]]])
     geo.triangles = np.vstack([geo.triangles, (2, 3, 4)]).astype(np.int32)
     geo.influences = [*geo.influences, [(1, 1.0)]]
     out = export(write, model, groups)
@@ -127,6 +127,19 @@ def test_added_geometry(write: ModuleType, model: Model) -> None:
     meshes, groups_at = (int.from_bytes(raw[at : at + 4], "little") for at in (0x20, 0x24))
     assert groups_at - meshes == 0x30, "two 0x18 mesh records"
     assert back.clips[0].source == model.clips[0].source
+
+
+def test_seam_splits(write: ModuleType, model: Model) -> None:
+    """A vertex whose faces give it two UVs becomes two vertices, which rebuilds its group."""
+    groups = held(write, model)
+    groups[1].uvs[1, 0] = (0.25, 0.75)  # vertex 2 in the second face
+    out = export(write, model, groups)
+    assert out.rebuilt == [1] and out.notes == ["group 1: 1 vertices split along UV seams"]
+    back = Model.from_bytes(out.pac, "back").groups[1]
+    assert (back.n_vertices, back.n_faces) == (5, 2)
+    assert back.uvs is not None
+    corner = {tuple(back.uvs[v]) for v in np.flatnonzero((back.positions == (10, 120, 0)).all(1))}
+    assert corner == {(0.0, 1.0), (0.25, 0.75)}
 
 
 def test_missing_group_draws_nothing(write: ModuleType, model: Model) -> None:

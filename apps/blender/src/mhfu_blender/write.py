@@ -47,19 +47,29 @@ class ExportError(ValueError):
 
 @dataclass
 class Geometry:
-    """One group as Blender holds it, in model units. A NaN normal or UV is one Blender has none
-    for (a vertex on no face): the stored one stays."""
+    """One group as Blender holds it, in model units."""
 
     positions: Floats
     """`(vertices, 3)`."""
     triangles: NDArray[np.int32]
     """`(faces, 3)` vertex numbers, wound as drawn."""
     normals: Floats
-    """`(vertices, 3)`, unit length."""
+    """`(vertices, 3)`, unit length; NaN for a vertex on no face, which keeps its stored one."""
     uvs: Floats | None
-    """`(vertices, 2)` as the GE samples them; None without a UV layer."""
+    """`(faces, 3, 2)`, each corner's UV as the GE samples it; None without a UV layer."""
     influences: Sequence[Sequence[tuple[int, float]]]
     """Per vertex, (joint, weight)."""
+
+
+@dataclass
+class _Mesh:
+    """A group as a PMO holds it: `Geometry` with one UV per vertex, NaN on a vertex on no face."""
+
+    positions: Floats
+    triangles: NDArray[np.int64]
+    normals: Floats
+    uvs: Floats | None
+    influences: list[Sequence[tuple[int, float]]]
 
 
 @dataclass
@@ -193,11 +203,12 @@ def _geometry(
     palettes = [out.palette(g) for g in range(len(table))]
     rebuilt, cleared = [], []
     for g, group in enumerate(table):
-        geo = edits.get(g)
-        if geo is None:
+        edit = edits.get(g)
+        if edit is None:
             group.block.clear(keep_layout=True)
             cleared.append(g)
             continue
+        geo = _split(g, edit, notes)
         _bounds(geo, out.scale_of(g), g)
         same = len(geo.positions) == groups[g].n_vertices and np.array_equal(
             geo.triangles, groups[g].triangles
@@ -212,7 +223,7 @@ def _geometry(
     return rebuilt
 
 
-def _in_place(out: pmo.Pmo, g: int, geo: Geometry, palette: list[int]) -> bool:
+def _in_place(out: pmo.Pmo, g: int, geo: _Mesh, palette: list[int]) -> bool:
     """Write `geo` into group `g`'s own vertices; False where its weights need joints the
     group's palette lacks, which only a rebuild gives them."""
     vertices = out.groups()[g].block.vertices
@@ -269,7 +280,7 @@ def _new_weights(
     return out
 
 
-def _rebuild(out: pmo.Pmo, g: int, geo: Geometry) -> None:
+def _rebuild(out: pmo.Pmo, g: int, geo: _Mesh) -> None:
     group = out.groups()[g]
     part = _part(g, geo, 0, _uv_scale(out, g))
     try:
@@ -304,9 +315,10 @@ def _donor(model: Model, skeleton: Skeleton, groups: Mapping[int, Geometry]) -> 
     entries = Pac.from_bytes(model.pac).entries
     scale = mesh.donor(model.pac, model.geometry).scale
     kept = [g for g in range(len(model.groups)) if g in groups]
+    notes: list[str] = []
     skinned = []
     for g in kept:
-        part = _part(g, groups[g], model.groups[g].material or 0, (1.0, 1.0))
+        part = _part(g, _split(g, groups[g], notes), model.groups[g].material or 0, (1.0, 1.0))
         skinned.append(Skinned(part, part.influences))
     over = mesh.overflow([s.part for s in skinned], scale)
     if over:
@@ -319,12 +331,12 @@ def _donor(model: Model, skeleton: Skeleton, groups: Mapping[int, Geometry]) -> 
         out = mesh.build(skinned, scale)
     except ValueError as e:
         raise ExportError(str(e)) from None
+    notes[:0] = ["no clips: an in-game monster from an MHP3rd one is a port, built from a manifest"]
     bones = [replace(b, name=None) for b in skeleton.bones]
     fu_skeleton = Skeleton(bones, list(skeleton.params), magic=FU_MAGIC)
     results = _judge(constraints.validate(out, fu_skeleton), [])
     tmh = next((e for e in entries if Tmh.sniff(e)), b"")
     pac = [fu_skeleton.to_bytes(), out.to_bytes(), tmh, EMPTY_ANIM.to_bytes()]
-    notes = ["no clips: an in-game monster from an MHP3rd one is a port, built from a manifest"]
     dropped = [g for g in range(len(model.groups)) if g not in groups]
     if dropped:
         notes.append(f"groups {few(dropped)} have no object: left out")
@@ -334,7 +346,45 @@ def _donor(model: Model, skeleton: Skeleton, groups: Mapping[int, Geometry]) -> 
 # shared
 
 
-def _part(g: int, geo: Geometry, texture: int, uv_scale: tuple[float, float]) -> Part:
+def _split(g: int, geo: Geometry, notes: list[str]) -> _Mesh:
+    """`geo` with one UV per vertex: a vertex whose corners carry several keeps its first corner's
+    and gets a copy, appended, for each other UV."""
+    triangles = np.asarray(geo.triangles, dtype=np.int64).reshape(-1, 3)
+    influences = list(geo.influences)
+    if geo.uvs is None:
+        return _Mesh(geo.positions, triangles, geo.normals, None, influences)
+    corners = np.asarray(geo.uvs, dtype=np.float64).reshape(-1, 2)
+    n = len(geo.positions)
+    uvs = np.full((n, 2), np.nan)
+    claimed = np.zeros(n, dtype=bool)
+    target: dict[tuple[int, float, float], int] = {}
+    copies: list[int] = []
+    flat = triangles.ravel().copy()
+    for c, (v, (u, w)) in enumerate(zip(flat.tolist(), corners.tolist(), strict=True)):
+        to = target.get((v, u, w))
+        if to is None:
+            if claimed[v]:
+                to = n + len(copies)
+                copies.append(c)
+            else:
+                to, claimed[v] = v, True
+                uvs[v] = u, w
+            target[v, u, w] = to
+        flat[c] = to
+    if not copies:
+        return _Mesh(geo.positions, triangles, geo.normals, uvs, influences)
+    source = triangles.ravel()[copies]
+    notes.append(f"group {g}: {len(copies)} vertices split along UV seams")
+    return _Mesh(
+        np.vstack([geo.positions, geo.positions[source]]),
+        flat.reshape(-1, 3),
+        np.vstack([geo.normals, geo.normals[source]]),
+        np.vstack([uvs, corners[copies]]),
+        influences + [influences[v] for v in source.tolist()],
+    )
+
+
+def _part(g: int, geo: _Mesh, texture: int, uv_scale: tuple[float, float]) -> Part:
     """Group `g`'s `geo` as a part to build a group from; a value Blender lacks is zero."""
     normals = np.nan_to_num(geo.normals)
     uvs = np.zeros((len(geo.positions), 2)) if geo.uvs is None else np.nan_to_num(geo.uvs)
@@ -387,7 +437,7 @@ def _rows(target: list[Row], rows: list[Row], mask: NDArray[np.bool_]) -> None:
         target[i] = row
 
 
-def _bounds(geo: Geometry, scale: Vec3, g: int) -> None:
+def _bounds(geo: _Mesh, scale: Vec3, g: int) -> None:
     part = Part(_vec3(geo.positions), [], [], [], [], [], 0)
     over = mesh.overflow([part], scale)
     if over:

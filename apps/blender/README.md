@@ -49,8 +49,8 @@ model PAC. An untouched monster comes out byte for byte.
   joint the group has no palette slot for, rebuilds that group (8 joints at most) and the PAC
   grows. A group whose object is deleted draws nothing; a vertex with no weight is refused.
 - **Objects.** Moving a mesh object in Object Mode moves its vertices in the game. Modifiers and
-  shape keys are not applied. A vertex has one UV: where faces give it several, it keeps its first
-  face's (the report counts them), so split seams in Blender.
+  shape keys are not applied. A PMO vertex has one UV, so a vertex on a UV seam is split into one
+  per UV, which rebuilds its group.
 - **Skeleton.** The bones' rest heads are the bind pose, so Edit Mode moves ship. Adding, deleting
   or re-parenting a bone is refused; a bone's rest rotation and length are not part of the model.
 - **Clips.** Every slot's Action is written back and a slot nobody edited stays byte for byte; a

@@ -69,7 +69,10 @@ def test_added_geometry(
     bm.from_mesh(obj.data)
     bm.verts.ensure_lookup_table()
     corner = bm.verts[2], bm.verts[3]
-    bm.faces.new((*corner, bm.verts.new((20.0, 120.0, 0.0))))
+    face = bm.faces.new((*corner, bm.verts.new((20.0, 120.0, 0.0))))
+    uv = bm.loops.layers.uv["UV"]
+    for loop, vert in zip(face.loops[:2], corner, strict=True):  # no seam: the UVs it has
+        loop[uv].uv = next(other for other in vert.link_loops if other is not loop)[uv].uv
     bm.to_mesh(obj.data)
     bm.free()
     obj.vertex_groups["j01"].add([4], 1.0, "REPLACE")
@@ -82,6 +85,17 @@ def test_added_geometry(
     meshes, groups = (int.from_bytes(pmo[at : at + 4], "little") for at in (0x20, 0x24))
     assert groups - meshes == 0x30, "two 0x18 mesh records"
     assert Pmo.from_bytes(pmo).palette(2)[:2] == [1, 2]
+
+
+def test_seam(bpy: ModuleType, load: Callable[..., Any], source: Path, tmp_path: Path) -> None:
+    """A UV seam cut in Blender splits the vertex on it."""
+    owner = load(source)
+    mesh = group(owner, 2).data
+    mesh.uv_layers["UV"].data[mesh.polygons[1].loop_start].uv = (0.25, 0.25)  # vertex 2
+    back = Model.from_bytes(export(bpy, tmp_path / "out.bin"), "back").groups[2]
+    assert (back.n_vertices, back.n_faces) == (5, 2) and back.uvs is not None
+    on = np.flatnonzero(np.abs(back.positions - (10.0, 120.0, 0.0)).max(axis=1) < STEP)
+    assert {tuple(back.uvs[v]) for v in on} == {(0.0, 1.0), (0.25, 0.75)}
 
 
 def test_bone_moved_in_edit_mode(

@@ -147,9 +147,12 @@ def _group(
     length = np.linalg.norm(normals, axis=1, keepdims=True)
     normals = normals / np.where(length > 0, length, 1.0)
     notes = []
-    uvs, seams = _uvs(mesh, loops, n)
-    if seams:
-        notes.append(f"{seams} vertices have more than one UV: each takes its first face's")
+    corners = _corners(mesh)
+    layer = mesh.uv_layers.get("UV") or mesh.uv_layers.active
+    uvs = None
+    if layer is not None:
+        uvs = _floats(layer.data, "uv", len(loops), 2)[corners]
+        uvs[..., 1] = 1.0 - uvs[..., 1]
     groups = [joint_of.get(vg.name, -1) for vg in obj.vertex_groups]
     stray = sorted(vg.name for vg, j in zip(obj.vertex_groups, groups, strict=True) if j < 0)
     if stray:
@@ -158,36 +161,19 @@ def _group(
         [(groups[e.group], e.weight) for e in v.groups if groups[e.group] >= 0]
         for v in mesh.vertices
     ]
-    return write.Geometry(positions, _triangles(mesh, loops), normals, uvs, influences), notes
+    triangles = loops[corners].astype(np.int32)
+    return write.Geometry(positions, triangles, normals, uvs, influences), notes
 
 
-def _uvs(mesh: Any, loops: Any, n: int) -> tuple[curves.Floats | None, int]:
-    """Per vertex the UV of its first corner, v flipped back; and how many vertices' corners
-    disagree."""
-    layer = mesh.uv_layers.get("UV") or mesh.uv_layers.active
-    if layer is None:
-        return None, 0
-    corner = _floats(layer.data, "uv", len(loops), 2)
-    first = np.full(n, -1)
-    used, at = np.unique(loops, return_index=True)
-    first[used] = at
-    out = np.full((n, 2), np.nan)
-    has = first >= 0
-    out[has] = corner[first[has]]
-    out[:, 1] = 1.0 - out[:, 1]
-    apart = np.abs(corner - corner[first[loops]]).max(axis=1, initial=0.0) > 1e-6
-    return out, len(np.unique(loops[apart]))
-
-
-def _triangles(mesh: Any, loops: Any) -> Any:
-    """Faces as triangles: as stored where every face is one, else Blender's triangulation."""
+def _corners(mesh: Any) -> Any:
+    """`(faces, 3)` loop numbers of the faces as triangles: as stored where every face is one,
+    else Blender's triangulation."""
     totals = _ints(mesh.polygons, "loop_total", len(mesh.polygons))
     if (totals == 3).all():
         starts = _ints(mesh.polygons, "loop_start", len(mesh.polygons))
-        return loops[starts[:, None] + np.arange(3)].astype(np.int32).reshape(-1, 3)
+        return starts[:, None] + np.arange(3)
     mesh.calc_loop_triangles()
-    out = _ints(mesh.loop_triangles, "vertices", 3 * len(mesh.loop_triangles))
-    return out.astype(np.int32).reshape(-1, 3)
+    return _ints(mesh.loop_triangles, "loops", 3 * len(mesh.loop_triangles)).reshape(-1, 3)
 
 
 def _floats(items: Any, name: str, n: int, width: int) -> curves.Floats:
