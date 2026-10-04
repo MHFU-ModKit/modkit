@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """`mhfu go-on-quest`: cold boot the game and take a quest, every step waiting on memory.
 
     mhfu go-on-quest --until village

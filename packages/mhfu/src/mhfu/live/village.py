@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Pokke village: finding NPCs, talking to them, and leaving on a quest.
 
 Every NPC is an ENTITY with NPC_VTABLE and no registry lists them, so `scan_npcs` scans

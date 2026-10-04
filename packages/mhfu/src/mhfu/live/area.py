@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Which section the player is in, and waiting out the loads between sections.
 
 AREA_INDEX (`s.game.area_index`) names the section. MAP_SUBSECTION collides across sections

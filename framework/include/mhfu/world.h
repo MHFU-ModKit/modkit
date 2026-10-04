@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Game state outside a single entity: screen, area, quest clock, player and map. */
 #ifndef MHFU_WORLD_H
 #define MHFU_WORLD_H

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """`mhfu addresses`: the address table as a C header or a Lua module."""
 
 from __future__ import annotations

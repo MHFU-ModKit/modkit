@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The LIVE tab in the village: the background art with the hunter's marker, vitals and raw
 readouts. The marker's spot on the art is a calibration value (C, then arrows, [ ], S)."""
 

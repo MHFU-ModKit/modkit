@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
  * Freecam: flies the camera by overriding the engine's orbit-camera inputs, so
  * the engine still builds eye, matrix and GE upload itself. Toggle: double-tap

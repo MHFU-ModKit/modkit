@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
  * Private to inject.cpp, xram.cpp and volatile_interposer.cpp: the injected-file
  * table and the extra RAM its buffers live in.

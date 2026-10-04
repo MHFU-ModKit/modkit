@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Monster types: the species byte at ENTITY.SPECIES, also a quest record's emId. Incomplete;
  * an unknown monster keeps its raw value. */
 #ifndef MHFU_IDS_H

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """`mhfu moveset`, `mhfu phases`, `mhfu chain`: what a big monster's overlay does per action,
 what ends each action, and what comes after it."""
 

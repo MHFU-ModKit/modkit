@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
  * Loads a second big-monster AI overlay into a fresh slot, relocated with mhfu_ovl_relocate.
  */

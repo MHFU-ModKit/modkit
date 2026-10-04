@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 # Write the .env compose reads: the ISO directory, PPSSPP's user directory, their owner, and the
 # GPU render node when the host has one (Linux only; otherwise PPSSPP renders in software).
 #   [WEB_BIND=0.0.0.0] docker/setup.sh ISO_DIR PPSSPP_HOME

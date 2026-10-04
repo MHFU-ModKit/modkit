@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: MIT
+-- SPDX-FileCopyrightText: 2026 sp00ktober
 -- cli_bridge.lua: the in-game side of the debug shell's command block.
 --
 -- The shell (`mhfu shell`) writes a command block (struct CLI_BRIDGE) in extra RAM;

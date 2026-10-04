@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The pygame window: main loop, tab and layout switching, letterboxed scaling.
 
 Layouts draw on a fixed body (CANVAS_W x CANVAS_H) under a status row; the window scales both to

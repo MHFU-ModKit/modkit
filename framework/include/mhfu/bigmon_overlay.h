@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Load a second big-monster AI overlay (em*.ovl) at a fresh address: the engine loads every
  * em overlay to one load address, so a second family has nowhere else to go. */
 #ifndef MHFU_BIGMON_OVERLAY_H

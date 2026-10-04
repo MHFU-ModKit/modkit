@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The event registry (src/core/events.cpp), built on the host with stub installers."""
 
 import ctypes

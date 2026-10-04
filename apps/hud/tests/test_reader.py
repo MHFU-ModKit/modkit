@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The reader over a fake PPSSPP: what a quest's memory turns into, in a few batched reads."""
 
 from mhfu import addresses as a

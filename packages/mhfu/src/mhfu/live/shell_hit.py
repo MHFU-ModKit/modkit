@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Shell commands on hit volumes: where a monster can be hit (`hitzone`), where it hits
 (`hitbox`). Both read and write the live game.
 

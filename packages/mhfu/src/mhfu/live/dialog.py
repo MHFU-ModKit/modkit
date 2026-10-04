@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """What is on screen: the scene, whether the player can move, and backing out of menus.
 
 SCREEN_STATE cannot tell the village from the boot logos (both 0), so screens are told apart by

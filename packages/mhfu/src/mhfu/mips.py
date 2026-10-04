@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """MIPS as the PSP's Allegrex CPU runs it, decoded by rabbitizer, and the analyses the tools that
 read the game's code share. Registers are rabbitizer enums (`Gpr.a1`, `Fpr.fa0`); read an
 instruction through its fields (`uniqueId`, `rs`, `getProcessedImmediate()`), never its text.

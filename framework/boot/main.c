@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
  * mhfu_boot.prx: the real-PSP entry, a small kernel plugin that loads mhfu_framework.prx from its
  * own directory once the game shows the title or a menu. PPSSPP loads the framework directly.

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 sp00ktober
 # Runs a command in the studio's GL container with this repository mounted at /repo.
 #   apps/studio/docker/run.sh                                   # the studio's tests
 #   MHFU_UI_DISPLAY=1 apps/studio/docker/run.sh                 # with Qt on Xvfb: the GL ones too

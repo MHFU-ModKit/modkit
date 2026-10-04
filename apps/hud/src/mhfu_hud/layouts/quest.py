@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The LIVE tab in a quest: the map with the monsters on it, vitals, timer, roster, bag. It
 only reads; QUEST_PREP stages the edits.
 

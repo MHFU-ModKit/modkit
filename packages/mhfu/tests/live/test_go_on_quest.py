@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 import pytest
 from mhfu.cli import main
 from mhfu.live import Launcher, Session, boot, hall, quests

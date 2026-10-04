@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """AI_MOD: a read-only inspector of each monster's AI cells and its species row.
 
 Three columns: the roster, the selected monster's cells (labelled by their addresses.toml field,

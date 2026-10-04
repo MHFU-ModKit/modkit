@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Player and world helpers (mhfu/world.h). */
 #include "mhfu/world.h"
 #include "mhfu/memory.h"

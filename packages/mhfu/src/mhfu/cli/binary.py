@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """`mhfu dis|xref|switch|reloc`: the game's code, read from BOOT.BIN or an overlay file."""
 
 from __future__ import annotations

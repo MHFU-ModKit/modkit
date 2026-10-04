@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The poller thread: a few batched reads per cycle, parsed through mhfu views into a snapshot.
 
 PPSSPP stops the CPU for every debugger read (about 10 ms), so a poll reads a handful of

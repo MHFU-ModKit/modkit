@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* World events: the quest anchors' helpers raise QUEST_BEGINNING, QUEST_ENTERED and
  * MAP_SECTION_ENTERED; the registry poll raises MONSTER_SPAWNED and drives ai.cpp's spawn,
  * damage and death edges. */

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Staged edits as frozen values: what QUEST_PREP authors and the writer's status it draws.
 
 Every kind keys on the species id (ENTITY.SPECIES), the one thing known before a quest spawns

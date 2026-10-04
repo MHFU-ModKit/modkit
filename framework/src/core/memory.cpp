@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Game-memory access (memory.h) and the world getters that read one fixed cell (world.h). */
 #include "mhfu/memory.h"
 #include "mhfu/world.h"

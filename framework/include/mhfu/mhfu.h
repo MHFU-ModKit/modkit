@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* The whole public API of the MHFU framework, and the game's addresses and struct offsets
  * (MHFU EU, ULES01213). Use the generated names; never a raw address. */
 #ifndef MHFU_MHFU_H

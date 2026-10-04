@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The `mhfu` command. Each module in this package adds its subcommands through `register`."""
 
 from __future__ import annotations

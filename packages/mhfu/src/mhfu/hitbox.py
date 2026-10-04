@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Where a big monster hits you: the attack tables, the mirror image of `hitzone`.
 
 An action handler spawns an attack by id; the species overlay then calls

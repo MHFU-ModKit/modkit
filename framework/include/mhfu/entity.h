@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Entity access: the registry (MHFU_ENTITY_REGISTRY, MHFU_ENTITY_REGISTRY_COUNT slots; slot 0 is
  * never the player, 0 = empty) and typed fields, whose offsets are the MHFU_ENTITY_* macros. */
 #ifndef MHFU_ENTITY_H

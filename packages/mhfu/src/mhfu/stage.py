@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Stages at runtime: the stage overlay's parameter object (exits, spheres, surface table), the
 map table in game_sub.ovl, and the live tables a quest builds on the heap.
 

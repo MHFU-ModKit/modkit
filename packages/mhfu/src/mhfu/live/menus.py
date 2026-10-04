@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Menus steered closed-loop: read the cursor, press, wait for it to move, repeat.
 
 Every menu debounces input, so presses sent faster than it accepts them vanish without an error

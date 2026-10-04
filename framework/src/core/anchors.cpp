@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* The quest-event anchors: detours on two EBOOT stores that raise QUEST_BEGINNING and
  * QUEST_ENTERED through the event registry. */
 #include <pspthreadman.h>

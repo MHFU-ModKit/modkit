@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* The event registry (mhfu/events.h): each event's callbacks with their owners, highest
  * priority first, and the hook each event needs, installed for its first subscriber.
  * Writers change a table with thread dispatch suspended, so a write is atomic on the one

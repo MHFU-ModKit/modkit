@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Where the game keeps things in DATA.BIN, and a game extracted by `mhp-formats extract`.
 
 File ids here are the extracted ones, `file_NNNNN.bin`; the engine asks for NNNNN + 1.

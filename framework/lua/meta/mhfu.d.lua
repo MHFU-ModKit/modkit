@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: MIT
+-- SPDX-FileCopyrightText: 2026 sp00ktober
 ---@meta
 -- The declaration of the mhfu API: tools/lua_api.py builds the registered table from it, so a
 -- function exists in the game exactly when it is declared here.

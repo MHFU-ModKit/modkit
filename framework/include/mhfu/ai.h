@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* AI events for monsters on the generic AI engine: priority chains where each handler gets
  * the previous one's value and returns the value to forward (the input unchanged abstains).
  *

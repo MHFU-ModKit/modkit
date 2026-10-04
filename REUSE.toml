@@ -18,3 +18,16 @@ SPDX-License-Identifier = "GPL-2.0-or-later"
 path = ["packages/mhp-formats/**", "packages/mhfu-port/**", "apps/studio/**", "apps/blender/**"]
 SPDX-FileCopyrightText = "2026 sp00ktober"
 SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# PSPSDK's linkfile.prx, three lines changed
+[[annotations]]
+path = "framework/prx.lds"
+SPDX-FileCopyrightText = [
+    "2005 adresd",
+    "2005 Marcus R. Brown",
+    "2005 James Forshaw",
+    "2005 John Kelley",
+    "2005 Jesper Svennevid",
+    "2026 sp00ktober",
+]
+SPDX-License-Identifier = "BSD-3-Clause"

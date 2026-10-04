@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """What a big monster does after an action: the enter-action call a pair's handler makes when it
 ends, resolved to the pair it enters, with the guards on the path.
 

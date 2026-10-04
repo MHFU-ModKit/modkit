@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Fast travel between Pokke's interiors: triangle at any interior exit zone (house, farm,
 kitchen, both halls, training school) opens a destination list; square walks out instead.
 

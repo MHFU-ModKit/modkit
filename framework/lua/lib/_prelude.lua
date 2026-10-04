@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: MIT
+-- SPDX-FileCopyrightText: 2026 sp00ktober
 -- Handles over the flat mhfu bindings, run before every mod: mhfu.mem, mhfu.world, mhfu.entity
 -- (Entity), mhfu.MON and mhfu.AREA. Annotations stay whole `---` lines: the embedded copy blanks
 -- them (Makefile).

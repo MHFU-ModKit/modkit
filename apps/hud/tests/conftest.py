@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Headless pygame, set before it is imported; a fake PPSSPP with a quest in its memory; snapshots
 and fakes of the reader and writer built by hand. No game data: every byte is written here."""
 

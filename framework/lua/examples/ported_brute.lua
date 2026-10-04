@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: MIT
+-- SPDX-FileCopyrightText: 2026 sp00ktober
 -- ported_brute.lua: the Brute Tigrex, ported from MHP3rd, in place of a Giadrome.
 --
 -- Needs, once: the port built and placed for injection, from modkit with $MHFU_DATA and

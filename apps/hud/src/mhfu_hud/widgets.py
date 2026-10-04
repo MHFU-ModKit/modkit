@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Low-level pygame drawing helpers shared by the layouts."""
 
 from __future__ import annotations

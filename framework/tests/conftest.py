@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Host builds of framework sources, for tests that call them through ctypes."""
 
 import ctypes

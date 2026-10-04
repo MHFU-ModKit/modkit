@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """`mhfu hitzones`, `mhfu hitboxes`: where a big monster is hit and where it hits, from its
 overlay and game_task.ovl. `mhfu inject`: hand a finished file to the framework's live
 injection."""

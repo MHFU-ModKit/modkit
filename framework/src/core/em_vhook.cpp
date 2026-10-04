@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
  * em_vhook: takes over a big monster's AI by wrapping two slots of its species
  * vtable. A species' AI is an overlay reached through a vtable in the EBOOT; the

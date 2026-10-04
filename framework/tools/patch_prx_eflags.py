@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Clear the MIPS ABI field of a PRX's ELF e_flags, in place.
 
 The toolchain marks its output EF_MIPS_ABI_EABI32 and psp-prxgen copies that into the PRX; old

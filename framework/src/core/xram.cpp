@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
  * Extra RAM for injected files: PPSSPP's raw memory=64 window, or on a real PSP the
  * 4 MB volatile partition. Also the real-PSP diagnostics log both inject files use.

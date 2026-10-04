@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Shell commands on a monster's animation and AI: observers over the debugger, and holds
 through the framework bridge.
 

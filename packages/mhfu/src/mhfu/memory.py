@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Game memory, live or from bytes: views and analyses read through `Memory` and run on either.
 
 Live(client)                      # the running game, through ppsspp_debug.Client

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Mods are .lua files in LUA_MODS_DIR: run at boot, re-run when one changes. Libraries are
  * .lua files in its lib/ subdirectory, run only through require and re-run in place when one
  * that has been required changes. */

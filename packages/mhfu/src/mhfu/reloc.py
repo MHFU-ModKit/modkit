@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Move an MWo3 overlay to another address, so overlays built for one load address (all 17 em
 overlays share one) can be resident side by side.
 

@@ -1,9 +1,12 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 [project]
 name = "modkit-testing"
 version = "0.1.0"
 description = "Pytest fixtures shared by the modkit packages: paths to extracted game data."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
 dependencies = ["pytest>=8"]
 classifiers = ["Private :: Do Not Upload"]
 

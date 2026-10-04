@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Which attack each handler of a big-monster overlay spawns. The attack itself is data
 (`mhfu.hitbox`); the id a handler asks for is the literal it passes to its species' attack
 spawner, one of game_task's per-species node constructors (ATTACK_SPAWNERS).

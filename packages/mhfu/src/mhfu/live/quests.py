@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Quest boards: opening one, reading the cards, taking a quest by name and leaving on it.
 
 The card being browsed is plain text in RAM (`s.game.quest_card`), rewritten on every page step,

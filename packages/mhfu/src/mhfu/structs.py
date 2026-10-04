@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The game's live structs as typed views: `Game` for the fixed addresses, `Entity` for monsters,
 the player's combat entity and village NPCs, and the quest, its card and the NPC option menu."""
 

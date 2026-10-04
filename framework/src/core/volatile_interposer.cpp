@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
  * Real-PSP volatile interposer: wraps the game's volatile Lock/Unlock import stubs and
  * carves the top of the game's own lock for the relocate PACs.

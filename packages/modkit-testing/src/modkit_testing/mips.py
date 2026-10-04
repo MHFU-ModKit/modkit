@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """MIPS encoders for test code: registers by ABI name (`"a0"`) or number, immediates masked to
 16 bits, a branch from its own address `at` to `target`."""
 

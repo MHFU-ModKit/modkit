@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 # PPSSPP on a virtual display, watchable in a browser over noVNC, its debugger on port 12345.
 # The build stage runs the same build.sh as a native build; the build context is ppsspp/.
 ARG DEBIAN=trixie

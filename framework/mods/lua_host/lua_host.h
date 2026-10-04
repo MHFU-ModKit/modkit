@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* lua_host's shared state between its files; not part of the SDK. */
 #ifndef MHFU_LUA_HOST_H
 #define MHFU_LUA_HOST_H

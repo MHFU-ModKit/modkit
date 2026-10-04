@@ -70,7 +70,8 @@ extracted files, no memory dumps, no disassembly.
 
 MIT, except the file-format library and everything that bundles it, which are GPL-3.0-or-later
 because they contain code derived from [mhff](https://github.com/svanheulen/mhff), and the
-PPSSPP patches, which are GPL-2.0-or-later like PPSSPP. Every file's licence is machine-readable
+PPSSPP patches, which are GPL-2.0-or-later like PPSSPP, and the PRX linker script, which is
+PSPSDK's under BSD-3-Clause. Every file's licence is machine-readable
 ([REUSE](https://reuse.software/); check with `reuse lint`).
 
 Not affiliated with or endorsed by Capcom. Monster Hunter is a trademark of Capcom Co., Ltd.

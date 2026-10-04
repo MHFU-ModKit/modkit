@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Host stand-ins for hooks.cpp's PSP side: game memory is a word array, the log a counter per
  * line, and a built wrapper a fresh address. */
 #include <stdarg.h>

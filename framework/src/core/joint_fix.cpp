@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
  * The joint fix: when the engine hands the joint builder a skeleton without the skeleton
  * magic, as it does on a quest with a relocated port, the builder gets the relocated PAC's

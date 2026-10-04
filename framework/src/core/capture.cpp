@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Low-fps framebuffer capture streamed to ms0: or host0: (psplink usbhostfs) on a private
  * thread, so the game never waits on it; nothing is allocated until mhfu_capture_set(1). */
 #include <pspkernel.h>

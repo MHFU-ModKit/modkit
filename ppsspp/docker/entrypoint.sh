@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 # Bring up the virtual display, VNC and noVNC, then idle; `ppsspp-ctl start` runs the emulator.
 set -euo pipefail
 

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Combat for clones and scripted movesets: the engine's attack resolver, its
  * effect spawn, the per-frame clone driver and the clone combat-node swap; declared in
  * lua/meta/mhfu.d.lua. */

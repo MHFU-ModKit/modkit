@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Cold boot to the main menu and into the village, each step waiting on a memory read.
 
     logos -> language menu -> title (cycling with the attract movie) -> main menu

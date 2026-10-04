@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Colours, fonts and the canvas size.
 
 Layouts draw on a fixed canvas, twice the PSP's 480x272, that the window scales to fit, so they

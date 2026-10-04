@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """A big monster's move table, read from its overlay: the action tick's (main, sub) pairs, the
 handler each pair runs, and the animation ids the handler hands ACTION_EXECUTOR.
 

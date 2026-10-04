@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 class DebuggerError(Exception):
     """PPSSPP answered a request with an error."""
 

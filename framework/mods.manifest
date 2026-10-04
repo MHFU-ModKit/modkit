@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 # Mods linked into mhfu_framework.prx, one directory under mods/ per line; # leaves one out (it still compiles).
 lua_host
 # monster_nameplates

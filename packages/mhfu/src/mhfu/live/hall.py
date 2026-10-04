@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The Pokke gathering hall: getting in and out, its quest counters, and its fixtures.
 
 The hall is its own area with its own world frame, entered through a door in the village.

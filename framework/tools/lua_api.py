@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Render the C side of the Lua API from its declaration, lua/meta/mhfu.d.lua.
 
 The declaration is the LuaLS definition file mod authors read, so completion and the registered

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """lua_host's hand-over to the exec thread (mods/lua_host/marshal.cpp), on host threads."""
 
 import ctypes

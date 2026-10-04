@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* The event bridge: each mhfu.on_<event> (lua/meta/mhfu.d.lua) stores fn and subscribes a C
  * trampoline (owner lua_host); game-thread events run their Lua on the exec thread (marshal.h). */
 #include "mhfu/mhfu.h"

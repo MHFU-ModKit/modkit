@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 # MHFU runtime addresses and struct layouts, EU release (ULES01213).
 #
 # The single source for every game address the modkit uses. Python reads this file; the C header

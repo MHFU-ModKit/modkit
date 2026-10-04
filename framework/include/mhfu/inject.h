@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Live model injection with no disk edits: an edited big-monster PAC on the memory stick
  * replaces the game's raw PAC before the overlay restructures it, so the engine builds ours.
  *

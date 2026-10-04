@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 from mhfu import files
 from mhfu.cli import main
 from mhfu.em.chain import Chain, Edge, simplify
