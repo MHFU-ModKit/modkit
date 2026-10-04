@@ -6,9 +6,11 @@ vertices it carries.
 A joint's local transform is its channels' rotation, Euler XYZ composed as Rz·Ry·Rx, absolute
 (bind rotations are zero on both games' monsters), and its channels' location, each axis the
 clip does not drive falling back to the bind offset. `world = parent_world @ local`; scale
-channels are ignored (MHFU crashes on them). Channels interpolate linearly between keys and
-hold outside their own first and last key. The bind pose is pure translation, so its inverse is
-too. Arrays take any leading batch shape: `(..., joints, 3)` in, `(..., joints, 4, 4)` out.
+channels are ignored (MHFU crashes on them). Channels interpolate as the engine's cubic `spline`
+between keys, the left key's `ease_out` and the right key's `ease_in` the slopes in raw units per
+frame, and hold outside their own first and last key. The bind pose is pure translation, so its
+inverse is too. Arrays take any leading batch shape: `(..., joints, 3)` in, `(..., joints, 4, 4)`
+out.
 """
 
 from __future__ import annotations
@@ -147,6 +149,32 @@ class Rig:
         return np.asarray(world, dtype=np.float64) @ self.bind_inverse
 
 
+def spline(
+    t: ArrayLike,
+    t0: ArrayLike,
+    x0: ArrayLike,
+    m0: ArrayLike,
+    t1: ArrayLike,
+    x1: ArrayLike,
+    m1: ArrayLike,
+) -> Floats:
+    """The cubic through `(t0, x0)` and `(t1, x1)` with slopes `m0` and `m1` there; `x0` where
+    `t1 <= t0`."""
+    t, t0, x0, m0, t1, x1, m1 = (
+        np.asarray(a, dtype=np.float64) for a in (t, t0, x0, m0, t1, x1, m1)
+    )
+    span = t1 - t0
+    s = np.where(span > 0, (t - t0) / np.where(span > 0, span, 1.0), 0.0)
+    d = s * span
+    out: Floats = (
+        x0 * (1 - 3 * s**2 + 2 * s**3)
+        + x1 * (3 * s**2 - 2 * s**3)
+        + m0 * d * (1 - s) ** 2
+        + m1 * d * (s**2 - s)
+    )
+    return out
+
+
 class Curves:
     """A clip's rotation and location channels, per joint, ready to sample at any frame.
 
@@ -157,7 +185,7 @@ class Curves:
     def __init__(self, clip: Clip, rig: Rig, tracks: Mapping[int, int] | None = None) -> None:
         self.bind_local = rig.bind_local
         track_of = {j: j for j in range(min(rig.n, len(clip.tracks)))} if tracks is None else tracks
-        rows: dict[tuple[int, int, int], list[tuple[int, float]]] = {}
+        rows: dict[tuple[int, int, int], list[tuple[float, ...]]] = {}
         for joint, t in sorted(track_of.items()):
             if not (0 <= joint < rig.n and 0 <= t < len(clip.tracks)):
                 continue
@@ -166,19 +194,26 @@ class Curves:
                 if named is None or named[0] not in _KINDS or not channel.keyframes:
                     continue
                 kind, axis = named
-                keys = sorted(
-                    ((k.frame, dequantize(kind, k.value)) for k in channel.keyframes),
-                    key=lambda fv: fv[0],
+                rows[_KINDS.index(kind), joint, axis] = sorted(
+                    (
+                        (k.frame, *(dequantize(kind, x) for x in (k.value, k.ease_in, k.ease_out)))
+                        for k in channel.keyframes
+                    ),
+                    key=lambda key: key[0],
                 )
-                rows[_KINDS.index(kind), joint, axis] = keys
         self._rows = np.array(list(rows), dtype=np.intp).reshape(-1, 3)
         width = max(map(len, rows.values()), default=1)
         self._frames = np.full((len(rows), width), np.inf)
         self._values = np.zeros((len(rows), width))
+        self._ease_in = np.zeros((len(rows), width))
+        self._ease_out = np.zeros((len(rows), width))
         self._lens = np.array([len(k) for k in rows.values()], dtype=np.intp)
         for i, keys in enumerate(rows.values()):
-            self._frames[i, : len(keys)] = [f for f, _ in keys]
-            self._values[i, : len(keys)] = [v for _, v in keys]
+            frame, value, ease_in, ease_out = zip(*keys, strict=True)
+            self._frames[i, : len(keys)] = frame
+            self._values[i, : len(keys)] = value
+            self._ease_in[i, : len(keys)] = ease_in
+            self._ease_out[i, : len(keys)] = ease_out
         self.driven: tuple[int, ...] = tuple(sorted({j for _, j, _ in rows}))
         """Joints with at least one channel."""
         finite = self._frames[np.isfinite(self._frames)]
@@ -200,11 +235,15 @@ class Curves:
             lo = np.maximum(hi - 1, 0)
             hi = np.minimum(hi, self._lens - 1)
             row = np.arange(len(self._lens))
-            f0, f1 = self._frames[row, lo], self._frames[row, hi]
-            v0, v1 = self._values[row, lo], self._values[row, hi]
-            span = f1 - f0
-            t = np.where(span > 0, (flat[..., 0] - f0) / np.where(span > 0, span, 1.0), 0.0)
-            value = v0 + (v1 - v0) * t
+            value = spline(
+                flat[..., 0],
+                self._frames[row, lo],
+                self._values[row, lo],
+                self._ease_out[row, lo],
+                self._frames[row, hi],
+                self._values[row, hi],
+                self._ease_in[row, hi],
+            )
             kind, joint, axis = self._rows.T
             rot[:, joint[kind == 0], axis[kind == 0]] = value[:, kind == 0]
             loc[:, joint[kind == 1], axis[kind == 1]] = value[:, kind == 1]

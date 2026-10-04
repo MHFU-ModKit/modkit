@@ -28,6 +28,8 @@ LOCAL = [
 VERTICES = [(50.0, 100.0, 0.0), (-50.0, 100.0, 0.0), (0.0, 120.0, 0.0), (50.0, 0.0, 0.0)]
 JOINT = [2, 3, 1, 4]
 TRIANGLES = [(0, 1, 2), (0, 2, 3)]
+AT_6 = 3 * 0.75**2 - 2 * 0.75**3
+"""How far a lift has risen at frame 6 of FRAMES: the spline between two keys without eases."""
 
 
 def skeleton(parents=PARENTS, local=LOCAL, streams=None):
@@ -79,7 +81,7 @@ def test_tear():
     p = port(rest(), lifted(3, 400.0))
     t = verify.tear(p)
     assert t is not None and (t.slot, t.frame, t.joints) == (1, 6, (2, 3))
-    assert t.growth == pytest.approx(math.hypot(100, 300) - 100, abs=0.5)
+    assert t.growth == pytest.approx(math.hypot(100, 400 * AT_6) - 100, abs=0.5)
     assert verify.tear(port(rest())).growth == pytest.approx(0.0, abs=1e-6)
 
 
@@ -87,7 +89,7 @@ def test_worst_and_faces():
     p = port(rest(), lifted(4, -50.0))
     (top, *_) = verify.worst(p)
     assert (top.slot, top.frame, top.joints) == (1, 6, (2, 4))
-    assert top.growth == pytest.approx(37.5, abs=0.1)
+    assert top.growth == pytest.approx(50 * AT_6, abs=0.1)
     (face, ratio), *more = verify.faces(p, 1, FRAMES)
     assert not more and face.joints == (2, 4) and ratio == pytest.approx(1.5, rel=1e-3)
     with pytest.raises(ValueError, match="slot 5 is empty"):
@@ -142,7 +144,11 @@ def test_commands(tmp_path, capsys):
     flat.write_bytes(pac(rest(), raised))
     assert main(["verify", str(torn)]) == 1
     assert main(["stretch", str(torn), "--fork"]) == 0
-    assert "worst tear 216 units (slot 1 frame 6, group 0, joints 2-3)" in capsys.readouterr().out
+    tear = math.hypot(100, 400 * AT_6) - 100
+    assert (
+        f"worst tear {tear:.0f} units (slot 1 frame 6, group 0, joints 2-3)"
+        in capsys.readouterr().out
+    )
     assert main(["stretch", str(torn)]) == main(["stretch", str(torn), "--slot", "1"]) == 0
     assert main(["floor", str(torn), str(flat)]) == 0
     assert "flat.bin stands +30.0 units against torn.bin" in capsys.readouterr().out
