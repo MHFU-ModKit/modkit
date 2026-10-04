@@ -13,8 +13,9 @@ from collections.abc import Iterable, Sequence
 
 import moderngl
 import numpy as np
+from mhfu_port.model import Clip
 
-from mhfu_studio.monster.core.scene import Clip, Scene
+from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.shell.camera import Bounds, Lens, Mat
 from mhfu_studio.shell.lines import Lines, axes_geometry, bounds_geometry
 from mhfu_studio.shell.target import RGBA, SAMPLES

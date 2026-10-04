@@ -24,10 +24,8 @@ from . import skin as skins
 from .data import Data
 from .manifest import Build, Manifest, Skin
 from .mesh import Part, Skinned
+from .model import ANIMATION, MODEL, SKELETON, TEXTURES
 from .rig import Rig
-
-SKELETON, MODEL, TEXTURES, ANIMATION = range(4)
-"""The host PAC's entries a port replaces; the others and the tail ride along."""
 
 Mode = Literal["source_skeleton", "retarget"]
 
@@ -147,11 +145,7 @@ def host(m: Manifest, data: Data) -> Host:
 def record_map(d: Donor, b: Build) -> dict[int, int]:
     """`{donor bone: record}`; the manifest's `bone_offset` and `skip_bones` override the
     species' table rows."""
-    counts = {len(c.tracks) for c in d.clips if c is not None}
-    if len(counts) != 1:
-        raise ValueError(f"the moveset's clips disagree on their record count: {sorted(counts)}")
-    n = counts.pop()
-    return records.for_monster(d.em, n, len(d.skeleton.bones), b.bone_offset, b.skip_bones)
+    return records.for_moveset(d.clips, d.em, len(d.skeleton.bones), b.bone_offset, b.skip_bones)
 
 
 def animated(b: Build, record_of: Mapping[int, int], bones: int) -> int:

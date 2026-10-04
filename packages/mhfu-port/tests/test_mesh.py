@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import hashlib
+from dataclasses import replace
 
 import pytest
 from mhfu_port import mesh, skin
@@ -144,6 +145,14 @@ def test_build():
     assert back.groups()[1].block.vertices.uvs() == parts[1].uvs
     tris = back.triangles(1)
     assert sorted(t for t in tris if len(set(t)) == 3) == [(0, 1, 2), (2, 1, 3)]
+
+
+def test_group():
+    part = _part([[(5, 0.5), (2, 0.5)]] * 4, texture=3)
+    skinned = Skinned(part, part.influences)
+    group = mesh.group(skinned, SCALE, 7)
+    assert group == replace(mesh.build([skinned], SCALE).groups()[0], material=7)
+    assert group.bones == [BoneSlot(0, 5), BoneSlot(1, 2)]
 
 
 def test_palette_limit():

@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 
 from mhfu_port import motion, slots
 from mhfu_port.manifest import Clip, Manifest, ManifestError, Move
+from mhfu_port.model import clip_key
 from mhp_formats import anim
 from mhp_formats.anim import AnimPack
 
@@ -267,11 +268,6 @@ def track_labels(
 def unlabelled_slots(m: Manifest, table: Mapping[int, Fingerprint]) -> list[int]:
     named = {c.slot for c in m.clips.values()}
     return [s for s in sorted(table) if s not in named]
-
-
-def clip_key(slot: int) -> str:
-    """An unnamed slot's clip name, in the manifest and on screen alike."""
-    return f"clip_{slot:02d}"
 
 
 def entry(m: Manifest, slot: int) -> tuple[str, Clip] | None:

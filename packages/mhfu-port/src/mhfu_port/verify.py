@@ -22,11 +22,11 @@ from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Skeleton
 from numpy.typing import NDArray
 
-from . import constraints, fk, records
-from .build import ANIMATION, MODEL, SKELETON
+from . import constraints, fk, motion, records
 from .fidelity import Fidelity, compare, expected
 from .mesh import Part
-from .slots import frames
+from .model import ANIMATION, MODEL, SKELETON
+from .motion import frames
 
 TEAR_LIMIT = 120.0
 """Units an edge across the body fork may grow before the port counts as torn."""
@@ -66,7 +66,7 @@ class Port:
 
     def slots(self) -> list[int]:
         """Every slot some stream fills."""
-        return sorted({i for s in self.anim.streams for i, c in enumerate(s) if c is not None})
+        return motion.filled(self.anim)
 
     def distinct(self) -> Iterator[tuple[int, Clip]]:
         """`(slot, clip)` once per distinct clip, at its lowest slot."""

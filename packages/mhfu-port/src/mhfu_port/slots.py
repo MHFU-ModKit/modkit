@@ -18,18 +18,13 @@ from typing import Literal, TextIO
 from mhfu.em.moveset import Moveset
 from mhp_formats import AnimPack, Clip, Pac, fu
 
-from .motion import donor_slot
+from .motion import donor_slot, frames
 
 Pair = tuple[int, int]
 """(main, sub): what act_set takes."""
 Match = Literal["same", "fill", "unknown"]
 Fingerprint = tuple[int, int]
 """(frames, loop flag)."""
-
-
-def frames(clip: Clip) -> int:
-    """The last keyframe: a clip's length, which the port's bone remap keeps."""
-    return max((k.frame for t in clip.tracks for c in t.channels for k in c.keyframes), default=0)
 
 
 def anim_of(pac: bytes) -> fu.Anim:

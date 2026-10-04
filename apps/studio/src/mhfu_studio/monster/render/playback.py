@@ -14,9 +14,10 @@ from typing import Protocol
 
 import numpy as np
 from mhfu_port import records
+from mhfu_port.model import Clip
 
 from mhfu_studio.monster.core.pose import Pose
-from mhfu_studio.monster.core.scene import Clip, Scene
+from mhfu_studio.monster.core.scene import Scene
 
 GAME_HZ = 30.0
 DEFAULT_SPEED = 2.0

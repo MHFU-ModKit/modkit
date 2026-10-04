@@ -8,9 +8,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import moderngl
+from mhfu_port.model import Clip
 
 from mhfu_studio.harness.render import Image8, Shots, offscreen
-from mhfu_studio.monster.core.scene import Clip, Scene
+from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.shell.context import describe
 
 from .mesh import ISOLATE_HIDE, ISOLATE_OFF, ISOLATE_ONLY, MODES

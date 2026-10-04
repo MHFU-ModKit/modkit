@@ -18,14 +18,24 @@ QUARTER = 4096
 """A raw rotation of 90 degrees."""
 
 
-def clip(*tracks: dict[int, list[tuple[int, int]]]) -> Clip:
-    """One track per dict: channel bit -> [(frame, raw value)]."""
+def clip(*tracks: dict[int, list[tuple[int, ...]]]) -> Clip:
+    """One track per dict: channel bit -> [(frame, raw value[, ease_in, ease_out])]."""
     return Clip(
         [
-            Track([Channel(bit, [Keyframe(v, f) for f, v in keys]) for bit, keys in t.items()])
+            Track(
+                [
+                    Channel(bit, [Keyframe(v, f, *eases) for f, v, *eases in keys])
+                    for bit, keys in t.items()
+                ]
+            )
             for t in tracks
         ]
     )
+
+
+def smooth(s: float) -> float:
+    """The spline between two keys without eases, as a fraction of the way."""
+    return 3 * s**2 - 2 * s**3
 
 
 def rig(parents: list[int], local: list[tuple[float, float, float]] | None = None) -> fk.Rig:
@@ -60,7 +70,7 @@ def test_channel_holds_past_its_last_key():
     )
     rot, _ = c.at(25)
     assert rot[1, 0] == pytest.approx(math.pi / 2)
-    assert rot[2, 0] == pytest.approx(25 / 30 * math.pi / 4)
+    assert rot[2, 0] == pytest.approx(smooth(25 / 30) * math.pi / 4)
     assert c.last_frame == 30
     assert c.driven == (1, 2)
     assert list(c.keys()) == [0, 10, 30]
@@ -76,7 +86,28 @@ def test_fractional_and_batched_frames():
     c = fk.Curves(clip({ROT_Z: [(0, 0), (4, QUARTER)]}), rig([-1]))
     rot, loc = c.at([[1.0, 2.5]])
     assert rot.shape == loc.shape == (1, 2, 1, 3)
-    assert rot[0, :, 0, 2] == pytest.approx([math.pi / 8, 2.5 * math.pi / 8])
+    assert rot[0, :, 0, 2] == pytest.approx(
+        [smooth(0.25) * math.pi / 2, smooth(0.625) * math.pi / 2]
+    )
+
+
+def test_eases_are_slopes():
+    """The engine's spline: the left key's ease_out and the right key's ease_in are its slopes
+    in raw units per frame; at the chord's slope it is a straight line."""
+    r = rig([-1], [(0.0, 0.0, 0.0)])
+    straight = fk.Curves(clip({LOC_Y: [(0, 0, 0, 160), (10, 1600, 160, 0)]}), r)
+    assert straight.at(2.5)[1][0, 1] == pytest.approx(25.0)
+    eased = fk.Curves(clip({LOC_Y: [(0, 0, 0, 320), (10, 1600, 0, 0)]}), r)
+    step = 1e-6
+    slope = (eased.at(step)[1][0, 1] - eased.at(0.0)[1][0, 1]) / step
+    assert slope == pytest.approx(320 / 16, rel=1e-4)
+    assert eased.at(10.0)[1][0, 1] == pytest.approx(100.0)
+
+
+def test_spline_ends():
+    assert fk.spline(3.0, 3.0, 1.0, 9.0, 7.0, 5.0, -9.0) == pytest.approx(1.0)
+    assert fk.spline(7.0, 3.0, 1.0, 9.0, 7.0, 5.0, -9.0) == pytest.approx(5.0)
+    assert fk.spline(9.0, 3.0, 1.0, 9.0, 3.0, 5.0, -9.0) == 1.0
 
 
 def test_track_map():

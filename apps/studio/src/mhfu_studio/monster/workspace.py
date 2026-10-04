@@ -26,12 +26,13 @@ from mhfu_port import slots
 from mhfu_port.data import Data
 from mhfu_port.manifest import Clip as ManifestClip
 from mhfu_port.manifest import Manifest, ManifestError
+from mhfu_port.model import MHFU, clip_key
 from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Skeleton
 
 from mhfu_studio.monster import actions, align, clips, inputs, species
 from mhfu_studio.monster.attacks import AttackSession, hitbox_of
-from mhfu_studio.monster.core.scene import MHFU, Scene
+from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.panels.graph import MoveGraph
 from mhfu_studio.monster.parts import PartSession
@@ -862,7 +863,7 @@ class MonsterWorkspace(Workspace):
         """Selects `slot` for naming and loads its name and label into the boxes."""
         self.edit_slot = slot
         found = self.manifest_clip(slot)
-        self.name_buf = found[0] if found else clips.clip_key(slot)
+        self.name_buf = found[0] if found else clip_key(slot)
         self.label_buf = found[1].label if found else ""
 
     def play_slot(self, slot: int) -> None:
@@ -897,7 +898,7 @@ class MonsterWorkspace(Workspace):
             return
         slot, frame = vp.clip.slot, int(round(vp.playback.phase))
         found = self.manifest_clip(slot)
-        name = found[0] if found else self.name_buf or clips.clip_key(slot)
+        name = found[0] if found else self.name_buf or clip_key(slot)
         label = found[1].label if found else self.label_buf
         if self.edit("", lambda: s.label(slot, name, label, impact_frame=frame)):
             self.message = f"impact = frame {frame}.  {self.message}"

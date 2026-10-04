@@ -16,6 +16,7 @@ from mhp_formats.psp.vtype import (
     NONE,
     VertexType,
     Vertices,
+    quantize_weights,
 )
 
 VT = VertexType
@@ -243,3 +244,19 @@ def test_through_views():
 def test_colors_view():
     v = Vertices(VT(color=COLOR_4444, position=BITS8), color=[0xF00F], position=[(0, 0, 0)])
     assert v.colors() == [(255, 0, 0, 255)]
+
+
+def test_weights_keep_their_total():
+    eight = VT(position=BITS16, weight=BITS8, weight_count=3).layout.weight
+    third = 1 / 3
+    assert quantize_weights([(third, third, third)], eight) == [(43, 43, 42)]
+    assert quantize_weights([(0.75, 0.25, 0.0), (0.4, 0.35, 0.25)], eight) == [
+        (96, 32, 0),
+        (51, 45, 32),
+    ]
+    assert quantize_weights([(1.5, 0.6, 0.0)], eight) == [(192, 77, 0)]
+    wide = VT(position=BITS16, weight=BITS16, weight_count=3).layout.weight
+    assert sum(quantize_weights([(third, third, third)], wide)[0]) == 32768
+    rows = [[random.Random(n).random() for _ in range(3)] for n in range(200)]
+    raws = quantize_weights([[w / sum(r) for w in r] for r in rows], eight)
+    assert {sum(raw) for raw in raws} == {128}

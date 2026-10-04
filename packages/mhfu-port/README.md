@@ -34,8 +34,9 @@ port.pac, port.summary.text()
 | `rig` | The skeleton the port ships: the donor's, reordered so each animation stream is one run of joints |
 | `retarget` | Matches the donor's bones to the host's, to ship the host's skeleton instead |
 | `mesh`, `skin` | The donor's geometry, bound to the rig by the donor's own weights, by distance, or by the host's |
-| `motion` | The donor's moveset as MHFU's in-game animation, on the host's slots |
+| `motion` | The donor's moveset as MHFU's in-game animation, on the host's slots; `put` writes an edited clip back into a slot |
 | `fk` | The engine's forward kinematics: joint matrices and skinned positions for any clip and frame |
+| `model` | A model PAC of either game read into skinned groups, textures and clips; imports nothing of `mhfu` |
 
 ## Checking a build
 

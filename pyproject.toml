@@ -16,9 +16,11 @@ dev = [
 ]
 # the studio's Qt tests; CI leaves it out (no display, no Qt system libraries there)
 qt = ["pytest-qt>=4.5"]
+# bpy stubs for mypy, at the extension's minimum Blender API
+blender = ["fake-bpy-module-4-2"]
 
 [tool.uv]
-default-groups = ["dev", "qt"]
+default-groups = ["dev", "qt", "blender"]
 
 [tool.uv.sources]
 mhp-formats = { workspace = true }
@@ -43,6 +45,8 @@ asyncio_default_fixture_loop_scope = "function"
 [tool.mypy]
 strict = true
 python_version = "3.11"
+# the bpy stubs use 3.12 generics, which only the native parser reads at python_version 3.11
+native_parser = true
 files = [
     "packages/ppsspp-debug/src",
     "packages/mhp-formats/src",
@@ -50,6 +54,8 @@ files = [
     "packages/mhfu-port/src",
     "apps/studio/src",
     "apps/hud/src",
+    "apps/blender/src",
+    "apps/blender/build.py",
 ]
 
 [[tool.mypy.overrides]]

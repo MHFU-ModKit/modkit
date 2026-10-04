@@ -13,9 +13,10 @@ from collections.abc import Iterable
 import moderngl
 import numpy as np
 import numpy.typing as npt
+from mhfu_port.model import Clip
 
 from mhfu_studio.monster.core.pose import Pose
-from mhfu_studio.monster.core.scene import Clip, Scene
+from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.shell.camera import Bounds, Mat, gl_bytes
 from mhfu_studio.shell.shaders import HUE, program, uniform
 

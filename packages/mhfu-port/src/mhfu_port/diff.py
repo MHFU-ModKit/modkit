@@ -27,6 +27,8 @@ from mhp_formats.psp.vtype import Vertices
 from mhp_formats.skeleton import Skeleton
 from numpy.typing import NDArray
 
+from .model import ANIMATION, MODEL, SKELETON, TEXTURES
+
 KINDS = (
     "pac.entries",
     "pac.align",
@@ -68,9 +70,6 @@ KINDS = (
     "anim.layout",
 )
 """Every finding kind. `missing` is in OLD only, `added` in NEW only."""
-
-SKELETON, MODEL, TEXTURES, ANIMATION = range(4)
-"""The monster PAC's entries this diff decodes; the rest compare as bytes."""
 
 STEPS = 2.5
 """Positions this many quantisation steps apart (per axis) are the same point."""

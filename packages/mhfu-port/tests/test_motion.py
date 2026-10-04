@@ -2,11 +2,13 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import hashlib
 from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 from mhfu_port import motion
 from mhfu_port.data import Data
 from mhfu_port.fk import rig_clip
+from mhfu_port.model import ANIMATION, SKELETON
 from mhp_formats import fu
 from mhp_formats.anim import Channel, Clip, Keyframe, Track
 from mhp_formats.pac import Pac
@@ -197,3 +199,150 @@ def test_donor_slot():
     assert [motion.donor_slot([None, c, None, c], s) for s in range(5)] == [1, 1, 1, 3, 1]
     with pytest.raises(ValueError):
         motion.donor_slot([None], 0)
+
+
+def anim_of(*parts: list[Clip | None], odd: Clip | None = None) -> fu.Anim:
+    """Part k's slots in stream 2k; `odd` fills stream 1's slot 2."""
+    streams: list[list[Clip | None]] = [[None] * 3 for _ in range(6)]
+    for k, slots in enumerate(parts):
+        streams[2 * k] = list(slots)
+    streams[1][2] = odd
+    return fu.Anim(streams)
+
+
+def ids(anim: fu.Anim) -> list[list[int]]:
+    """Per slot, the clip object of each stream."""
+    width = max(map(len, anim.streams))
+    return [[id(s[i]) if i < len(s) else 0 for s in anim.streams] for i in range(width)]
+
+
+PARTS = [0, 0, 1, 2, 0]
+"""Joint -> part; part 0's joints are not one run."""
+RIG = Skeleton([Bone(stream=k) for k in PARTS])
+
+
+@pytest.fixture
+def pack() -> fu.Anim:
+    """Slot 0 on every part, each with its own loop; slot 1 shares part 0's clip and lacks part
+    1; part 0's clip carries a track past its joints; slot 2 plays an odd stream only."""
+    body = Clip([track(*ROT, value=v) for v in (0, 1, 4, 99)], 1, 5.0)
+    head = Clip([track(*ROT, value=2)], 0, 0.0)
+    tail = [Clip([track(*ROT, value=3)], 1, 2.0), Clip([track(LOC_Y, value=7)], 1, 2.0)]
+    return anim_of([body, body, None], [head, None, None], tail[:2] + [None], odd=Clip())
+
+
+def test_split_deals_parts():
+    whole = Clip([track(*ROT, value=j) for j in range(5)], 1, 3.0)
+    parts = motion.split(whole, PARTS)
+    assert [[t.channels[0].keyframes[0].value for t in c.tracks] for c in parts.values()] == [
+        [0, 1, 4],
+        [2],
+        [3],
+    ]
+    assert {(c.loop, c.loop_start) for c in parts.values()} == {(1, 3.0)}
+    with pytest.raises(ValueError, match="4 tracks for 5 joints"):
+        motion.split(Clip(whole.tracks[:4]), PARTS)
+
+
+def test_put_round_trip(pack):
+    blob = pack.to_bytes()
+    for slot in (0, 1):
+        whole = rig_clip(pack, slot, RIG)
+        assert whole is not None
+        out = motion.put(pack, slot, whole, RIG)
+        assert out.to_bytes() == blob and out is not pack
+        assert ids(out) == ids(pack)
+    assert rig_clip(pack, 2, RIG) is None
+
+
+def test_put_edit(pack):
+    body = pack.streams[0][0]
+    whole = rig_clip(pack, 1, RIG)
+    assert whole is not None and whole.loop_start == 5.0
+    whole.tracks[4] = track(LOC_Y, value=50)
+    out = motion.put(pack, 1, whole, RIG)
+    assert out.streams[0][0] is body and out.streams[4][1] is pack.streams[4][1]
+    edited = out.streams[0][1]
+    assert edited is not None and edited is not body
+    assert edited.tracks[2] == whole.tracks[4] and edited.tracks[3] is body.tracks[3]
+    assert rig_clip(out, 1, RIG) == whole
+    assert len(out.to_bytes()) > len(pack.to_bytes()), "the shared clip now has two copies"
+
+
+def test_put_loop(pack):
+    whole = rig_clip(pack, 0, RIG)
+    assert whole is not None
+    whole.loop, whole.loop_start = 0, 9.0
+    out = motion.put(pack, 0, whole, RIG)
+    assert {(c.loop, c.loop_start) for s in out.streams[::2] if (c := s[0])} == {(0, 9.0)}
+    assert out.streams[0][1] is pack.streams[0][1]
+
+
+def test_put_copy_keeps_objects(pack):
+    whole = rig_clip(pack, 0, RIG)
+    assert whole is not None
+    copy = Clip([Track(list(t.channels)) for t in whole.tracks], whole.loop, whole.loop_start)
+    assert ids(motion.put(pack, 0, copy, RIG)) == ids(pack)
+
+
+def test_put_rests_an_emptied_track(pack):
+    whole = rig_clip(pack, 0, RIG)
+    assert whole is not None
+    whole.tracks[0] = whole.tracks[2] = Track()
+    out = motion.put(pack, 0, whole, RIG)
+    body, head = out.streams[0][0], out.streams[2][0]
+    assert body is not None and head is not None
+    assert body.tracks[0] == motion.rest(10) and head.tracks[0] == motion.rest(10)
+    assert body.tracks[1] == whole.tracks[1]
+    held = motion.put(pack, 1, Clip([Track()] * 5, 1, 5.0), RIG).streams[0][1]
+    assert held is not None and held.tracks[0] == motion.rest(2), "an empty clip spans 2 frames"
+
+
+def test_put_refuses(pack):
+    whole = rig_clip(pack, 1, RIG)
+    assert whole is not None
+    whole.tracks[2] = track(*ROT)
+    with pytest.raises(ValueError, match=r"joints \[2\] are keyed, but their part does not play"):
+        motion.put(pack, 1, whole, RIG)
+    wide = Skeleton([*RIG.bones, Bone(stream=1)])
+    keyed = Clip([*([Track()] * 5), track(*ROT)])
+    with pytest.raises(ValueError, match="joint 5 is keyed, but its part's clip has 1 tracks"):
+        motion.put(pack, 0, keyed, wide)
+
+
+def _monster(path: Path) -> tuple[Skeleton, bytes] | None:
+    try:
+        entries = Pac.from_bytes(path.read_bytes()).entries
+    except ValueError:
+        return None
+    if len(entries) <= ANIMATION or not Skeleton.sniff(entries[SKELETON]):
+        return None
+    if not fu.Anim.sniff(entries[ANIMATION]):
+        return None
+    return Skeleton.from_bytes(entries[SKELETON]), entries[ANIMATION]
+
+
+def test_put_every_monster(mhfu_data):
+    """Every slot of every model PAC with an in-game anim reads and writes back unchanged, through
+    a copy as an editor hands it back: each part keeps its own clip object, so the pack's bytes
+    come out the same."""
+    pacs = slots = 0
+    for path in sorted(mhfu_data.glob("file_*.bin")):
+        found = _monster(path)
+        if found is None:
+            continue
+        skeleton, raw = found
+        pack = out = fu.Anim.from_bytes(raw)
+        for slot in motion.filled(pack):
+            whole = rig_clip(pack, slot, skeleton)
+            if whole is None:
+                continue
+            copy = Clip(
+                [Track(list(t.channels)) for t in whole.tracks], whole.loop, whole.loop_start
+            )
+            out = motion.put(out, slot, copy, skeleton)
+            assert ids(out)[slot] == ids(pack)[slot]
+            slots += 1
+        assert out.to_bytes() == raw, path.name
+        pacs += 1
+    assert (pacs, slots) == (101, 4583)

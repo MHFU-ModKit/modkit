@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 import tomli_w
 from mhfu import files, hitzone, inject
 
+from .records import ANIM, GEO
+
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
@@ -32,8 +34,6 @@ SKINS: tuple[Skin, ...] = typing.get_args(Skin)
 Shape = Literal["sphere", "capsule"]
 SHAPES: tuple[Shape, ...] = typing.get_args(Shape)
 
-GEO, ANIM = 1, 2
-"""A donor's geometry and moveset files follow its model file by these."""
 MAIN_STATES = range(8)
 """A big monster's behaviour main states."""
 SEAM_RULES = 4

@@ -2,9 +2,10 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import pytest
 from mhfu.files import monster_pac
-from mhfu_port import build, constraints, mesh, motion
+from mhfu_port import constraints, mesh, motion
 from mhfu_port.constraints import ConstraintError
 from mhfu_port.mesh import Part, Skinned
+from mhfu_port.model import ANIMATION, MODEL, SKELETON
 from mhp_formats import Channel, Clip, Keyframe, Track, fu, pmo
 from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Bone, Skeleton
@@ -109,7 +110,7 @@ def test_big_monsters(data):
     """Every big monster of the game, the Tigrex included, keeps every rule."""
     for n in [*BIG_MONSTERS, monster_pac(75)]:
         e = Pac.from_bytes(data.fu.read(n)).entries
-        model = pmo.Pmo.from_bytes(e[build.MODEL])
-        skeleton = Skeleton.from_bytes(e[build.SKELETON])
-        anim = fu.Anim.from_bytes(e[build.ANIMATION])
+        model = pmo.Pmo.from_bytes(e[MODEL])
+        skeleton = Skeleton.from_bytes(e[SKELETON])
+        anim = fu.Anim.from_bytes(e[ANIMATION])
         assert constraints.validate(model, skeleton, anim) == [], n
