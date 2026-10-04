@@ -1,18 +1,41 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""MHFU ModKit for Blender: import MHFU monster PACs, export them and push them into the game."""
+"""MHFU ModKit for Blender: import MHFU monster PACs, export them and push them into the game.
 
-import bpy
+bpy is imported only on registering, so the modules that need none (`curves`, `stored`) import
+anywhere.
+"""
 
-# operators and panels, registered in this order; bl_idname and prefs are keyed on __package__
-CLASSES: tuple[type, ...] = ()
+from typing import Any
+
+
+def classes() -> tuple[type, ...]:
+    """Operators and panels, registered in this order; bl_idname and prefs keyed on __package__."""
+    from . import importer
+
+    return importer.CLASSES
+
+
+def menus() -> tuple[tuple[str, Any], ...]:
+    """`(menu type, draw function)` pairs appended to Blender's menus."""
+    from . import importer
+
+    return importer.MENUS
 
 
 def register() -> None:
-    for cls in CLASSES:
+    import bpy
+
+    for cls in classes():
         bpy.utils.register_class(cls)
+    for menu, draw in menus():
+        getattr(bpy.types, menu).append(draw)
 
 
 def unregister() -> None:
-    for cls in reversed(CLASSES):
+    import bpy
+
+    for menu, draw in reversed(menus()):
+        getattr(bpy.types, menu).remove(draw)
+    for cls in reversed(classes()):
         bpy.utils.unregister_class(cls)
