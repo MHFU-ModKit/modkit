@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* monster_nameplates: name, registry slot and HP over every monster in view, toggled by a
  * double tap of SELECT. The example C mod: a post helper on the HUD master-draw call. */
 #include "mhfu/mhfu.h"

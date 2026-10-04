@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Hook arbitration (hooks.h): every patched word or vtable slot has one owner and keeps its
  * original value for the release. Code patches that wait for a JIT-cold screen queue here and
  * the deferred thread lands them; detour and call wrappers are built once per address. */

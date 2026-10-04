@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* The exec thread (marshal.cpp): Lua allocations on the engine's game thread corrupt the heap,
  * so game-thread events hand their Lua to this thread and wait for the answer. Free of PSP
  * and Lua headers, for the host test. */

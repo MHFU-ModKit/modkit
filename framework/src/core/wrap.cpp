@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* The wrapper builder (wrap.h). Wrappers call one shared save and one shared restore routine
  * in the cave, so each stays under 30 words. */
 #include <stddef.h>

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Keeping a scripted run alive: the quest clock, the player's HP, and calm big monsters.
 
 These are debugger writes, not play: a guarded run shows that a route exists, not that a hunter

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* lua_host: a sandboxed Lua 5.4 VM running mods from the memory stick against the
  * mhfu.* API. Setup, the 10 Hz worker and the mod descriptor. */
 #include <pspctrl.h>

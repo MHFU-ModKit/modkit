@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* mhfu.* bindings for a relocated species overlay and live model injection; declared in
  * lua/meta/mhfu.d.lua. */
 #include "mhfu/mhfu.h"

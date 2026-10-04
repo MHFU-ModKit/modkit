@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Allegrex (MIPS) instruction encoder for building stubs word by word. Each emitter returns
  * the instruction word; no delay slot is emitted, so place one after every jump and branch. */
 #ifndef MHFU_MIPS_H

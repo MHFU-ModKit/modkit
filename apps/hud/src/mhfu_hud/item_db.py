@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Item id (a PLAYER_BAG slot's u16) -> name and icon slug; only the ids listed are named."""
 
 from __future__ import annotations

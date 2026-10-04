@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Walking the player closed-loop. The stick is camera-relative, so every heading is re-solved
 from live memory each tick:
 

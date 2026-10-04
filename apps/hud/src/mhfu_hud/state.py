@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """One poll of game state: the reader thread builds a GameSnapshot, the window draws it.
 
 Every class here is frozen and a snapshot is never changed once published, so the two threads

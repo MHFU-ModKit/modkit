@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Mod descriptor. A mod declares itself with MHFU_MOD(); the framework resolves `needs` and
  * `conflicts`, then calls each init() in dependency order and shutdown() in reverse.
  *

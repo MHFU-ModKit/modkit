@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Game addresses and struct offsets for MHFU EU, read from addresses.toml.
 
     from mhfu import addresses

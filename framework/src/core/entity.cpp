@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Monster-entity access (mhfu/entity.h). */
 #include "mhfu/entity.h"
 #include "mhfu/memory.h"

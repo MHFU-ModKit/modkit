@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
  * Quest monster list (mhfu/quest.h): read and retag the active quest's big monsters, and the
  * buildTargets wrapper that fires MHFU_EVENT_QUEST_TARGETS_BUILDING and finalises an ADD.

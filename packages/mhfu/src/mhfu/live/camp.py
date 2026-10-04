@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The base-camp supply box (the blue chest), and the map in its first slot.
 
 With the map taken the minimap shows the whole map with every area numbered, which makes

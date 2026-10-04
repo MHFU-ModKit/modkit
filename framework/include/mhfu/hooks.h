@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Hook arbitration: every patch belongs to one owner (a mod id), a second owner gets CONFLICT,
  * and the framework restores an owner's patches when that mod shuts down. Events are in
  * events.h. */

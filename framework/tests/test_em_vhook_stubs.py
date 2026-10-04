@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """em_vhook's two stubs, assembled on the host and checked word by word: a stub bug shows up
 in the game as a spin, not a crash."""
 

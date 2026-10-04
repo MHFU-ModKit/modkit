@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """cli_bridge.lua in lupa, against a fake `mhfu` table backed by a dict of memory."""
 
 from pathlib import Path

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 # build/mhfu_framework.prx and build/mhfu_boot.prx: `make -C framework`. Needs docker, uv and make;
 # the image has no Python, so the address tables are rendered here first.
 

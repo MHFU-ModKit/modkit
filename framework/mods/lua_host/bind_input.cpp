@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* mhfu.buttons binding, declared with its CTRL_* masks in lua/meta/mhfu.d.lua. */
 #include <pspctrl.h>
 

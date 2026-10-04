@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
  * Live model injection: the engine builds a big monster from our edited PAC instead of
  * the one it loaded, with no disk edits.

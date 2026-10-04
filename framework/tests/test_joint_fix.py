@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The joint-fix stub, run from the point the joint builder jumps to it."""
 
 import ctypes

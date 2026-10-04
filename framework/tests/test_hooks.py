@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Hook arbitration (hooks.cpp) on the host: owners, the when-quiet queue, detours."""
 
 import ctypes

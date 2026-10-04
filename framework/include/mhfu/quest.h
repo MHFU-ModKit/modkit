@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* The active quest's monster list. Edit it from a MHFU_EVENT_QUEST_TARGETS_BUILDING callback
  * (the quest handle is in its mhfu_quest_ctx_t), before the loading screen loads the models. */
 #ifndef MHFU_QUEST_H

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Game-memory access: plain volatile loads and stores, since the PRX runs on the PSP itself. */
 #ifndef MHFU_MEMORY_H
 #define MHFU_MEMORY_H

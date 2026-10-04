@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* The wrapper builder, every hook's one way to call C from patched code (wrap.cpp). Free of
  * PSP headers, so the host tests compile it. */
 #ifndef MHFU_CORE_WRAP_H

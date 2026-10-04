@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 # The container is a long-lived display; PPSSPP starts and stops inside it through ppsspp-ctl,
 # because automation restarts the emulator between runs. setup.sh writes the .env it reads.
 name: ppsspp

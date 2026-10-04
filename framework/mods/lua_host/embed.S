@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* The Lua run at setup, NUL-terminated for luaL_loadstring, both without their doc comments:
  * the prelude (build/gen/prelude.lua) and the address table (build/gen/addresses.lua). */
     .section .rodata

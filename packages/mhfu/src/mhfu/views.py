@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Typed views of game structs. Offsets and types come from addresses.toml only: a field
 declared here with a type the table disagrees with fails at import.
 

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Events: one registry for every event the framework raises. A callback belongs to an owner,
  * the mod id, and the framework drops an owner's callbacks when that mod shuts down. Higher
  * priority runs first, ties in registration order. An event's hook is installed for its

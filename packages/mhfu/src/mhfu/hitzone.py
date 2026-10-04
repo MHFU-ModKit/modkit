@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Where a big monster can be hit, and for how much: the part system.
 
 Two tables joined by one number. The species overlay (`emNN.ovl`) holds sets of HIT_VOLUME

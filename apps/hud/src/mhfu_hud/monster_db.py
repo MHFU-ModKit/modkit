@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Monster names and icon slugs: by vtable through mhfu, else by species id (ENTITY.SPECIES).
 
 QUEST_PREP stages edits by species id before any monster has spawned, so its picker lists the

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The Layout base class and what a layout may ask of the reader and the writer.
 
 A layout draws one tab or game context on the fixed canvas, keeps its own UI state (which

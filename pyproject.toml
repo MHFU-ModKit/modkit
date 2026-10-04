@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 # Workspace root, not a package: every package under packages/ and apps/ is a member.
 
 [tool.uv.workspace]

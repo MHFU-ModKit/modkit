@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The effects a big-monster overlay spawns. Effects are code, not data: a handler calls a
 game_task spawn with literal arguments, so each call site gives an effect id, a bone and, for
 the framed spawn, a frame.

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* The deferred thread: lands queued code patches on the JIT-cold screens (title, menu) and
  * runs the volatile-memory work. */
 #include <pspthreadman.h>

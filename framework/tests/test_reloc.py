@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The C overlay relocator (src/core/ovl_reloc.cpp) against mhfu.reloc, byte for byte."""
 
 import ctypes

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Monster names for logs (mhfu/ids.h). */
 #include "mhfu/ids.h"
 #include <stdio.h>

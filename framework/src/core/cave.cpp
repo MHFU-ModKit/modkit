@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Code cave: a bump allocator over one RWX BSS block for wrappers and stubs; callers flush
  * the caches after writing (mhfu_hook_flush_caches). */
 #include "internal.h"

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The writer: each staged edit once per monster and quest area, on its own thread, through
 the reader's connection; QUEST_PREP drives it."""
 

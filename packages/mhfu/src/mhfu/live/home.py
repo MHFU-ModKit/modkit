@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The player's house in Pokke: its exit, item box, bed and kitchen door.
 
 Like the hall it is its own area with its own world frame and scratch screen bytes, but it has

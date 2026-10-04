@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Sub-panels and formatting shared by more than one layout."""
 
 from __future__ import annotations

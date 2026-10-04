@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Everything the overlay and the log say about a species' behaviour pairs, joined into one
 document per species (schema `mhfu.species_intel/1`), and its typed reader (`SpeciesIntel`).
 

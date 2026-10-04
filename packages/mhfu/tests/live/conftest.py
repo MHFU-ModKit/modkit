@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """A scripted game for the live flows: a FakePPSSPP whose memory tests change on presses and
 reads, served from its own loop thread, and a clock that jumps on sleep."""
 

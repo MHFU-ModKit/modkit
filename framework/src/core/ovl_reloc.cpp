@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
  * MWo3 overlay relocator, mhfu.reloc in C (tests/test_reloc.py holds the two to the same bytes).
  * An overlay has no relocation table, so its references are found as mhfu.mips finds them:

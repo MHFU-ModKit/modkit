@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """`mhfu effects`, `attacks`, `abi`, `census` and `intel`: what a big-monster overlay does, read
 from its code, and how the engine enters it."""
 

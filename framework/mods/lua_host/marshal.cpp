@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* The exec thread and the hand-over to it (marshal.h). */
 #include "mhfu/log.h"
 #include "marshal.h"

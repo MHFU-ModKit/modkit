@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Host stand-ins for marshal.cpp's PSP side: semaphores and threads on the C++ runtime, the
  * VM a mutex, and a server that doubles its input while it holds the VM. */
 #include <atomic>

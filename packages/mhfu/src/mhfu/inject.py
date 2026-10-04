@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The framework's directories on the PPSSPP memory stick, and the files for its live model
 injection in the inject directory.
 

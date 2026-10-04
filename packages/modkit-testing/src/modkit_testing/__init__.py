@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Pytest plugin with the fixtures every modkit package's tests share."""
 
 import os

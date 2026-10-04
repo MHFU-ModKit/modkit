@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 sp00ktober
 # The studio's tests and `studio render` without a display or a GPU: Python 3.11, uv and Mesa's
 # llvmpipe behind EGL, and Qt's offscreen platform. The repository is mounted at /repo, never
 # copied (run.sh).

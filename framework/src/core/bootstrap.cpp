@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* mhfu_framework.prx entry: module_start spawns the framework thread, which brings up the
  * hook manager, poll threads, mods and the quest-event anchors. */
 #include <pspkernel.h>

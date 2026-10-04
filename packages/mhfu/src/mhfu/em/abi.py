@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The interface the engine calls a big-monster overlay through. Every em overlay loads at the same
 address and has no constructors: BOOT.BIN holds one entity vtable per species whose slots point
 into that species' overlay, and the engine only ever calls a species through it.

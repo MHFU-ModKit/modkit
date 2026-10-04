@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Static mod table: MHFU_MOD descriptors from the mhfu_mods section, initialised in dependency
  * order and shut down in reverse, each mod's events and patches dropped with it. */
 #include <string.h>

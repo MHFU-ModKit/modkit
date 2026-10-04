@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """MWo3 overlays, the game's loadable code modules (game_task, game_sub, em*, stage*), each
 mapped at the address it loads to."""
 

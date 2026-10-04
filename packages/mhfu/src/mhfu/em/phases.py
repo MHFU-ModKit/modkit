@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """What ends a big monster's action: the gates its handler waits on.
 
     from mhfu.em import phases

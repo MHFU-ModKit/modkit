@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Shell commands on the player, the quest, the screen, the monsters and savestates."""
 
 from __future__ import annotations

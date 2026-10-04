@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """`hud`: the live HUD next to PPSSPP, or with `--shot DIR` one PNG per tab and no window."""
 
 from __future__ import annotations

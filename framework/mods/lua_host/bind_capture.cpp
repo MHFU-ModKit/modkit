@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* mhfu.capture bindings over the core's framebuffer capture; declared in lua/meta/mhfu.d.lua. */
 #include "mhfu/mhfu.h"
 #include "internal.h"

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 # Build PPSSPP at the pinned commit with patches/ applied, on macOS or Linux.
 #   ppsspp/build.sh [extra cmake args]
 # PPSSPP_BUILD (default ~/.cache/modkit/ppsspp) holds the checkout and the build, outside the repo

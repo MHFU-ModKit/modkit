@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """World -> map-image projection per map, the map-section anchors, and the tunables the window
 edits.
 

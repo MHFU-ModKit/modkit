@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* The Lua VM: its slab allocator, the lock every entry takes and the panic handler. */
 #include <pspthreadman.h>
 #include <pspsysmem.h>

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
  * em_vhook's two stubs, assembled word by word. Plain C with no PSP SDK (only
  * <stdint.h>, mhfu/mips.h and addresses.gen.h), so the same builders also compile

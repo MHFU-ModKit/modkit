@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The wrapper builder (wrap.cpp): wrappers emitted at a 32-bit base and run in unicorn."""
 
 import ctypes

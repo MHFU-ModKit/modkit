@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Big-monster AI events (mhfu/ai.h): dispatchers over the action picker, the slot loops, the
  * action executor and the AI tick, the hook the registry installs for each event's first
  * subscriber, and the spawn, damage and death edges of the registry poll. */

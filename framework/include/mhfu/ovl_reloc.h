@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* MWo3 overlay relocator: moves a position-dependent overlay (em*.ovl, stage*.ovl) to another
  * address. */
 #ifndef MHFU_OVL_RELOC_H

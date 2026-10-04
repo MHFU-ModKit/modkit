@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Against a real PPSSPP; set PPSSPP_BINARY and PPSSPP_GAME. Run with -s to see the timings."""
 
 import statistics

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """A fake PPSSPP debugger for tests, with the real one's quirks.
 
     async with FakePPSSPP() as fake:

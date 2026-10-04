@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 import pytest
 from mhfu import addresses as a
 from mhfu.memory import Image

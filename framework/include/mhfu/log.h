@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Framework log, ms0:/PSP/PLUGINS/mhfu_framework/framework.log. Lines are held in memory
  * until ms0 I/O is safe, so a mod that fails at boot still shows up. */
 #ifndef MHFU_LOG_H

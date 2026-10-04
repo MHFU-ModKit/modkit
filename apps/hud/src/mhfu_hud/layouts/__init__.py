@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """HUD layouts — one per game context, all extending the Layout base."""
 
 from .ai_mod import AIModLayout

@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: MIT
+-- SPDX-FileCopyrightText: 2026 sp00ktober
 -- second_monster.lua: a second Tigrex in the quest, one that fights like the first.
 --
 -- Run it in a quest with a native Tigrex (Absolute Power), or in the Village Elder's 2-star

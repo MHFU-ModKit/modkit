@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Which behaviour pairs the engine enters on its own, how long it stays, and whether the monster
 moves there: measured from the framework log's `[state]` and `[brute] t=` lines, which the
 observe-only probe (brute_dmg.lua) writes at 2 Hz.

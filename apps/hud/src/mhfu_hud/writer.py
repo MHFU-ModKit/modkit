@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """The only code that writes game memory: QUEST_PREP's staged edits, written on the writer's own
 thread to the monsters in the snapshots the reader publishes.
 

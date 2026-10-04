@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Artwork from an assets folder the HUD does not ship, loaded lazily with a scale cache.
 
     <assets>/monsters/     monster icons, manifest.json maps slug -> file

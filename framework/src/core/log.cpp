@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Framework log (mhfu/log.h), written to ms0 only while the savedata utility cannot be running. */
 #include <pspiofilemgr.h>
 #include <stdarg.h>

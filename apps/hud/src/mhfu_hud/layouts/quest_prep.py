@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """QUEST_PREP: stage edits in the village for the monsters a quest will spawn.
 
 The registry is empty before the quest, so the left panel picks a species and the right panel

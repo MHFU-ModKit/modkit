@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Every tab, context, overlay and sub-page draws from a synthetic snapshot."""
 
 import pygame

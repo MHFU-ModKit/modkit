@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """`mhfu start` and `mhfu stop`: the game in PPSSPP with its debugger open."""
 
 from __future__ import annotations

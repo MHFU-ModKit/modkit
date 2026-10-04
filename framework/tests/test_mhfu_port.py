@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """mhfu_port as a library, against the declared API."""
 
 from pathlib import Path

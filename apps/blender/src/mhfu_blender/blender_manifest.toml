@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 sp00ktober
 # version and wheels are written by ../../build.py: from pyproject.toml and uv.lock
 schema_version = "1.0.0"
 

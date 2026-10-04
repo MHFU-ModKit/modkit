@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: MIT
+-- SPDX-FileCopyrightText: 2026 sp00ktober
 -- action_override.lua: a Tigrex shows his spin animation in place of one of his moves, about
 -- every 10 s while he is in your section.
 --

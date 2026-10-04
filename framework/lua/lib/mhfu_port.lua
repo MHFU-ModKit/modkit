@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: MIT
+-- SPDX-FileCopyrightText: 2026 sp00ktober
 -- mhfu_port: the ported-monster runtime. It loads a port's assets into a quest and drives the
 -- monster so that the move it executes and the clip on screen are the same thing.
 --

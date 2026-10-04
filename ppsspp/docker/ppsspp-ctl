@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 # Start and stop PPSSPP inside the container.
 #   ppsspp-ctl start [--iso PATH] [--state PATH] [--backend vulkan|opengl|software]
 #   ppsspp-ctl stop | restart | status | log [-f] | config

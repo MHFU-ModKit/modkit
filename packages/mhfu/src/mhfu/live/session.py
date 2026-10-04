@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """A running game: launch or attach to PPSSPP, read it through typed views, press its buttons.
 
     with Session.launch(cold=True) as s:      # MHFU_* environment, see Launcher

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """BOOT.BIN, the plain-ELF twin of the encrypted EBOOT.BIN: the main binary as the game loads
 it, before any JIT touches it."""
 

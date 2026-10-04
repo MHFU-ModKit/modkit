@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 # Vulkan on the host's GPU; setup.sh adds this file to COMPOSE_FILE when it finds a render node.
 services:
   ppsspp:

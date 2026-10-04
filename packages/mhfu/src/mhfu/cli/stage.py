@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """`mhfu stage`: stage file ids, the map table, exits and surface tables offline; the gathering
 spots and small-monster spawns of a running quest."""
 

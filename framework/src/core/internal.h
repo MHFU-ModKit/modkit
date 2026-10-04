@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Private contract between the core's translation units; mods include only include/mhfu. */
 #ifndef MHFU_CORE_INTERNAL_H
 #define MHFU_CORE_INTERNAL_H

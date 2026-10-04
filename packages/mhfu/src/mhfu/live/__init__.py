@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """Driving the running game: a `Session` that launches or attaches, and flows built on it.
 
 from mhfu.live import Session, boot, dialog

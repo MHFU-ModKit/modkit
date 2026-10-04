@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """`mhfu shell`: the interactive debug shell on the running game."""
 
 from __future__ import annotations

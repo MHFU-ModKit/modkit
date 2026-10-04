@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
 """`hud --shot` and `--read-only` against a fake PPSSPP; LIVE's keys and every layout reach no
 debugger client."""
 
