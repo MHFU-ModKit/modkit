@@ -79,7 +79,7 @@ class Environment(DataclassMixin):
     fog_range: list[float] = csfield(Array(2, Float32l))
     """(start, end)-shaped: 0 or +-100..2000, then 8000..220000."""
     rest: bytes = csfield(GreedyBytes)
-    """From 0x0E: directions, colours and floats not yet told apart."""
+    """From 0x0E: directions, colours and floats, not told apart."""
 
     @staticmethod
     def sniff(data: bytes) -> bool:

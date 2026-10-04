@@ -167,8 +167,8 @@ def _volume(v: hz.HitVolume, hurtbox: bool) -> Doc:
 
 
 def parts(game_task: Overlay, ovl: Overlay, species: int, task_file: str) -> Doc:
-    """The overlay's hit-volume sets and the species' hitzone grid; static, and never yet
-    changed in a game and seen to work."""
+    """The overlay's hit-volume sets and the species' hitzone grid, static; a grid write changes
+    the damage in game, a hit-volume edit is unverified in game."""
     mem = Space([game_task, ovl])
     sets = hz.find_sets(ovl)
     own = hz.own_set(mem, ovl, species)
@@ -178,8 +178,8 @@ def parts(game_task: Overlay, ovl: Overlay, species: int, task_file: str) -> Doc
     out: Doc = {
         "present": True,
         "source": "mhfu.hitzone",
-        "note": "static: bytes in the ISO. NOT validated in game — no cold boot has ever "
-        "changed either table and confirmed the effect.",
+        "note": "static: bytes in the ISO. A grid write changes the damage in game; a "
+        "hit-volume edit is unverified in game.",
         "sets": [
             {
                 "va": hex32(s.va),
@@ -299,17 +299,17 @@ def attacks(ovl: Overlay, code: Code, species: int, credit: Credit) -> Doc:
     return {
         "present": True,
         "source": "mhfu.hitbox + mhfu.em.attacks",
-        "note": "static: bytes in the ISO. The in-place set overwrite is proven by RAM poke on "
-        "a native Tigrex; the generated-Lua runtime path has not been cold-booted yet.",
+        "note": "static: bytes in the ISO. Overwriting a set in place works on a native "
+        "Tigrex; writing it from the generated Lua module is unverified in game.",
         "setter": hex32(a.ATTACK_TABLE_SETTER),
         "spawner": None if sp is None else hex32(sp.fn),
         "spawner_sites": 0 if sp is None else len(sp.sites),
         "spawner_literal_sites": 0 if sp is None else sp.literal,
         "join": join,
         "join_provenance": (
-            "measured — walked live from the handler to the HP write"
+            "measured: traced in the running game from the handler to the HP write"
             if join == "measured"
-            else "inferred — the overlay's own game_task node constructor, its literal ids "
+            else "inferred: the overlay's own game_task node constructor, its literal ids "
             "against the biggest table; see mhfu.em.attacks.fit"
         ),
         "extra_spawners": [

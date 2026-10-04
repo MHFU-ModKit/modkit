@@ -3,9 +3,10 @@
 """The Timeline: the transport at the engine's rate, and the base monster's action's frames on
 the clip.
 
-The RATE is the action's (2.0 and 2.4 both measured on one monster); the clip owns only its
-SPAN. A gate past the clip's last frame never runs: the strip runs on past the end, shaded, and
-draws it hollow there (at the far edge when it lies further out than a third of the clip)."""
+The RATE is the action's (one monster plays some actions at 2.0, others at 2.4); the clip owns
+only its SPAN. A gate past the clip's last frame never runs: the strip runs on past the end,
+shaded, and draws it hollow there (at the far edge when it lies further out than a third of the
+clip)."""
 
 from __future__ import annotations
 
@@ -209,8 +210,8 @@ class TimelinePanel(kit.Panel):
             on=lambda on: act("in place", lambda: self._in_place(on))(),
         )
         self.speed = kit.number(
-            tip="Clip frames played per game frame. The action sets it, not the clip: 2.0 and"
-            " 2.4 were both measured on one monster.",
+            tip="Clip frames played per game frame. The action sets it, not the clip: one"
+            " monster plays some actions at 2.0, others at 2.4.",
             value=2.0,
             step=0.1,
             decimals=2,
@@ -222,7 +223,7 @@ class TimelinePanel(kit.Panel):
         presets = [
             kit.button(
                 f"{s:.1f}",
-                tip=f"Speed {s:g}, a rate measured in the game",
+                tip=f"Speed {s:g}, a rate the game plays actions at",
                 on=act("speed", partial(self._set, "speed", s)),
             )
             for s in OBSERVED_SPEEDS

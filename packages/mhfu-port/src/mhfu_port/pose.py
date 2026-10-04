@@ -120,7 +120,7 @@ def compare(
 class Floor:
     """Where the idle's first frame puts the mesh's lowest point, by the animation alone; a native
     reads near 0. The game places a port otherwise: the Zinogre reads +105 at his manifest's lift
-    and stands slightly below the ground, so this is not yet a ground lift."""
+    and stands slightly below the ground, so this is not a ground lift."""
 
     height: float
     vertex: int

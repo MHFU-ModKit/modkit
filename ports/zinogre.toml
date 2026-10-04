@@ -1,6 +1,6 @@
 schema = 1
 attack = [
-    { id = 6, power = 8, label = "the charge — testing power; the native is 64 (-72 HP)" },
+    { id = 6, power = 8, label = "the charge; the native's power is 64 (-72 HP)" },
     { id = 31, power = 4, label = "the charge's second attack; native 30" },
 ]
 

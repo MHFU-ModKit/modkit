@@ -33,7 +33,7 @@ OFFSET: dict[int, int] = {40: 0, 58: 0}
 """The first driven bone, by em id, pinned with the fork rule (both rigs fork at bone 1)."""
 
 DEFAULT_OFFSET = 2
-"""blender_p3rd_anim's default; wrong for every monster pinned so far, so pin a new one."""
+"""blender_p3rd_anim's default; wrong for every monster in OFFSET, so pin a new one."""
 
 EM_BY_MODEL: dict[int, int] = {5248: 58, 5339: 40}
 """em id by MHP3rd model PAC file. The stride varies, so this is a table; the two files before

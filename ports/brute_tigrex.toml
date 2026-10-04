@@ -19,7 +19,7 @@ skin = "source"
 slot = 61
 frames = 382
 loop = false
-label = "'crazy forward charge' per docs/brute_tigrex_anim_ids.txt (label 62 = a1 61 on v67_hostslots) — NOT re-derived on this build"
+label = "crazy forward charge"
 
 [moves.charge]
 main = 2
