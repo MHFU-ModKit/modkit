@@ -159,10 +159,15 @@ def build(skinned: Sequence[Skinned], scale: Vec3) -> pmo.Pmo:
     not written."""
     textures = sorted({s.part.texture for s in skinned})
     material_of = {t: i for i, t in enumerate(textures)}
-    groups = [pmo.Group(_block(s, scale), material_of[s.part.texture], _bones(s)) for s in skinned]
+    groups = [group(s, scale, material_of[s.part.texture]) for s in skinned]
     mesh = pmo.Mesh(groups, list(range(len(textures))), lighting=LIGHTING, blend=BLEND)
     materials = [pmo.Material(color=COLOR, shadow=SHADOW, texture=t) for t in textures]
     return pmo.Pmo([mesh], materials, scale, CLIP)
+
+
+def group(skinned: Skinned, scale: Vec3, material: int = 0) -> pmo.Group:
+    """One group of `build`: the part quantised against `scale`, its palette patched from slot 0."""
+    return pmo.Group(_block(skinned, scale), material, _bones(skinned))
 
 
 def _bones(skinned: Skinned) -> list[pmo.BoneSlot]:
