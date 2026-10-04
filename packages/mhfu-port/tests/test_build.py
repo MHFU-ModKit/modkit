@@ -8,6 +8,7 @@ from mhfu_port import build, constraints, manifest
 from mhfu_port.cli import main
 from mhfu_port.manifest import Build
 from mhfu_port.mesh import Part
+from mhfu_port.model import SKELETON, TEXTURES
 from mhfu_port.rig import Rig
 from mhp_formats import fu, p3rd, pmo
 from mhp_formats.anim import CHANNEL_BITS, Channel, Clip, Keyframe, Track
@@ -84,11 +85,11 @@ def host() -> build.Host:
 def test_pac():
     h, new = host(), anim(2, 1)
     out = Pac.from_bytes(build.pac(h, rig([2, 1], 3), pmo.Pmo(), b"textures", new))
-    assert out.entries[build.TEXTURES :] == [b"textures", new.to_bytes(), b"rest"]
+    assert out.entries[TEXTURES:] == [b"textures", new.to_bytes(), b"rest"]
     assert out.tail == b"tail"
-    assert Skeleton.from_bytes(out.entries[build.SKELETON]).params == [0, 3]
+    assert Skeleton.from_bytes(out.entries[SKELETON]).params == [0, 3]
     keep = Pac.from_bytes(build.pac(h, rig([2, 1], 3), pmo.Pmo(), None, new))
-    assert keep.entries[build.TEXTURES] == b"tmh"
+    assert keep.entries[TEXTURES] == b"tmh"
 
 
 @pytest.mark.parametrize(("streams", "declared"), [([2, 1], 4), ([2, 2], 4)])

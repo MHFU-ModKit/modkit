@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 from mhfu.files import monster_pac
 from mhfu_port import manifest, verify
-from mhfu_studio.monster.core.scene import MHFU, MHP3RD, Scene, SceneError, open_scene
+from mhfu_port.model import MHFU, MHP3RD, ModelError
+from mhfu_studio.monster.core.scene import Scene, open_scene
 from mhp_formats import Pac
 
 NAMES = "\n[clips.walk]\nslot = 1\nframes = 10\nloop = true\n\n[clips.nod]\nslot = 2\nframes = 9\n"
@@ -57,9 +58,9 @@ def test_names(scene, make):
 
 
 def test_refused():
-    with pytest.raises(SceneError, match="not a model PAC"):
+    with pytest.raises(ModelError, match="not a model PAC"):
         Scene.from_bytes(b"\0" * 32, "x")
-    with pytest.raises(SceneError, match="no skeleton"):
+    with pytest.raises(ModelError, match="no skeleton"):
         Scene.from_bytes(Pac([b"abc" * 8]).to_bytes(), "x")
 
 

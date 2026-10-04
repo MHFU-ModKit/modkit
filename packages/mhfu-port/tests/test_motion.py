@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 from mhfu_port import motion
-from mhfu_port.build import ANIMATION, SKELETON
 from mhfu_port.data import Data
 from mhfu_port.fk import rig_clip
+from mhfu_port.model import ANIMATION, SKELETON
 from mhp_formats import fu
 from mhp_formats.anim import Channel, Clip, Keyframe, Track
 from mhp_formats.pac import Pac

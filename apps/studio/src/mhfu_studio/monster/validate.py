@@ -20,7 +20,8 @@ from collections.abc import Sequence
 
 from mhfu.em.intel import MIN_DWELL_TICKS, Handoff, SpeciesIntel
 from mhfu_port import build, records
-from mhfu_port.manifest import ANIM, GEO, UNLIMITED_DIST, Hitbox, Hurtbox, Manifest
+from mhfu_port.manifest import UNLIMITED_DIST, Hitbox, Hurtbox, Manifest
+from mhfu_port.records import ANIM, GEO
 from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Skeleton
 

@@ -23,9 +23,9 @@ from mhp_formats.skeleton import Skeleton
 from numpy.typing import NDArray
 
 from . import constraints, fk, motion, records
-from .build import ANIMATION, MODEL, SKELETON
 from .fidelity import Fidelity, compare, expected
 from .mesh import Part
+from .model import ANIMATION, MODEL, SKELETON
 from .motion import frames
 
 TEAR_LIMIT = 120.0

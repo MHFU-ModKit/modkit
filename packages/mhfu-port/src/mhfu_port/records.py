@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
+from mhp_formats.anim import Clip
+
 SKIPPED: dict[int, tuple[int, ...]] = {
     1: (8, 15, 25),
     2: (8, 15, 25),
@@ -36,6 +38,9 @@ DEFAULT_OFFSET = 2
 EM_BY_MODEL: dict[int, int] = {5248: 58, 5339: 40}
 """em id by MHP3rd model PAC file. The stride varies, so this is a table; the two files before
 a model PAC are its AI overlays, whose header names the em id."""
+
+GEO, ANIM = 1, 2
+"""A donor's geometry and moveset (`emNNN`) files follow its model PAC file by these."""
 
 
 def em_for_model(file_id: int) -> int | None:
@@ -80,6 +85,20 @@ def for_monster(
     if skip is None:
         skip = SKIPPED.get(em, ()) if em is not None else ()
     return bone_to_record(n_records, n_bones, offset, skip)
+
+
+def for_moveset(
+    clips: Sequence[Clip | None],
+    em: int | None,
+    n_bones: int,
+    offset: int | None = None,
+    skip: Sequence[int] | None = None,
+) -> dict[int, int]:
+    """`for_monster` on a moveset's record count, which every clip must share."""
+    counts = {len(c.tracks) for c in clips if c is not None}
+    if len(counts) != 1:
+        raise ValueError(f"the moveset's clips disagree on their record count: {sorted(counts)}")
+    return for_monster(em, counts.pop(), n_bones, offset, skip)
 
 
 def body_fork(parents: Sequence[int]) -> int:
