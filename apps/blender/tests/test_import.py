@@ -3,7 +3,7 @@
 """File > Import inside Blender: the scene it builds, its poses against the engine's FK, and its
 Actions read back into the clips they came from."""
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -19,33 +19,18 @@ poses in float32; the largest monsters land within 2e-3."""
 ROTATION = 1e-4
 
 
-@pytest.fixture
-def scene(bpy: ModuleType, extension: str) -> Iterator[Any]:
-    """An empty scene, the extension enabled."""
-    bpy.ops.wm.read_homefile(use_empty=True)
-    yield bpy.context.scene
-
-
-def load(bpy: ModuleType, path: Path, **options: Any) -> Any:
-    assert bpy.ops.import_scene.mhfu_model(filepath=str(path), **options) == {"FINISHED"}
-    return bpy.context.view_layer.objects.active
-
-
-def posed(bpy: ModuleType, owner: Any, joint: str, frame: float) -> np.ndarray:
-    """Each joint's pose matrix; `pose.bones` runs in tree order, not joint order."""
-    bpy.context.scene.frame_set(int(frame), subframe=frame - int(frame))
-    bones = sorted(owner.pose.bones, key=lambda b: b.bone[joint])
-    return np.array([np.array(b.matrix) for b in bones])
-
-
 def check_poses(
-    bpy: ModuleType, module: Callable[[str], ModuleType], owner: Any, model: Model, frames: int
+    posed: Callable[[Any, float], np.ndarray],
+    module: Callable[[str], ModuleType],
+    owner: Any,
+    model: Model,
+    frames: int,
 ) -> None:
     animation, stored = module("animation"), module("stored")
     for clip in model.clips:
         animation.play(owner, owner[stored.CLIPS][str(clip.slot)])
         for frame in np.linspace(0.0, clip.frames, frames):
-            got = posed(bpy, owner, stored.JOINT, float(frame))
+            got = posed(owner, float(frame))
             want = fk.world_matrices(model.rig, clip.source, frame, clip.joint_tracks)
             assert np.abs(got[:, :3, 3] - want[:, :3, 3]).max() < POSITION, (clip.slot, frame)
             assert np.abs(got[:, :3, :3] - want[:, :3, :3]).max() < ROTATION, (clip.slot, frame)
@@ -68,8 +53,9 @@ def check_round_trip(module: Callable[[str], ModuleType], owner: Any) -> Model:
 
 
 def test_synthetic(
-    bpy: ModuleType,
     scene: Any,
+    load: Callable[..., Any],
+    posed: Callable[..., np.ndarray],
     module: Callable[[str], ModuleType],
     synthetic: bytes,
     tmp_path: Path,
@@ -77,7 +63,7 @@ def test_synthetic(
     stored = module("stored")
     path = tmp_path / "file_09999.bin"
     path.write_bytes(synthetic)
-    owner = load(bpy, path)
+    owner = load(path)
     assert owner.type == "ARMATURE" and bytes(owner[stored.PAC]) == synthetic
     assert (owner[stored.GAME], owner[stored.PATH]) == ("mhfu", str(path))
     bones = owner.data.bones
@@ -97,13 +83,14 @@ def test_synthetic(
     assert (clips["1"][stored.LOOP], clips["1"][stored.LOOP_START]) == (1, 4.0)
     assert "mhfu_ch_001" in owner.pose.bones["j01"]
     model = Model.from_bytes(synthetic, "file_09999")
-    check_poses(bpy, module, owner, model, 41)
+    check_poses(posed, module, owner, model, 41)
     check_round_trip(module, owner)
 
 
 def test_saved(
     bpy: ModuleType,
     scene: Any,
+    load: Callable[..., Any],
     module: Callable[[str], ModuleType],
     synthetic: bytes,
     tmp_path: Path,
@@ -112,7 +99,7 @@ def test_saved(
     stored = module("stored")
     path = tmp_path / "file_09999.bin"
     path.write_bytes(synthetic)
-    load(bpy, path)
+    load(path)
     path.unlink()
     blend = tmp_path / "saved.blend"
     bpy.ops.wm.save_as_mainfile(filepath=str(blend))
@@ -132,23 +119,29 @@ def test_refused(bpy: ModuleType, scene: Any, tmp_path: Path) -> None:
 
 
 def test_tigrex(
-    bpy: ModuleType, scene: Any, module: Callable[[str], ModuleType], mhfu_data: Path
+    load: Callable[..., Any],
+    posed: Callable[..., np.ndarray],
+    module: Callable[[str], ModuleType],
+    mhfu_data: Path,
 ) -> None:
-    owner = load(bpy, mhfu_data / "file_06185.bin")
+    owner = load(mhfu_data / "file_06185.bin")
     model = check_round_trip(module, owner)
     assert len(owner.children) == len(model.groups) == 214
-    check_poses(bpy, module, owner, model, 4)
+    check_poses(posed, module, owner, model, 4)
 
 
 def test_brute(
-    bpy: ModuleType, scene: Any, module: Callable[[str], ModuleType], mhp3rd_data: Path
+    load: Callable[..., Any],
+    posed: Callable[..., np.ndarray],
+    module: Callable[[str], ModuleType],
+    mhp3rd_data: Path,
 ) -> None:
     stored = module("stored")
-    owner = load(bpy, mhp3rd_data / "file_05248.bin")
+    owner = load(mhp3rd_data / "file_05248.bin")
     assert (owner[stored.GAME], owner[stored.EM_ID]) == ("mhp3rd", 58)
     assert owner.data.bones[1].name == "j01 COG"
     model = check_round_trip(module, owner)
-    check_poses(bpy, module, owner, model, 4)
+    check_poses(posed, module, owner, model, 4)
 
 
 def _translation(at: tuple[float, float, float]) -> np.ndarray:
@@ -159,7 +152,7 @@ def _translation(at: tuple[float, float, float]) -> np.ndarray:
 
 def test_legacy_actions(
     bpy: ModuleType,
-    scene: Any,
+    load: Callable[..., Any],
     module: Callable[[str], ModuleType],
     synthetic: bytes,
     tmp_path: Path,
@@ -172,4 +165,4 @@ def test_legacy_actions(
     monkeypatch.setattr(animation, "slotted", lambda action: False)
     path = tmp_path / "file_09999.bin"
     path.write_bytes(synthetic)
-    check_round_trip(module, load(bpy, path))
+    check_round_trip(module, load(path))

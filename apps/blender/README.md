@@ -38,6 +38,38 @@ em id, which picks the record map, from its file name unless you give it.
   goes straight, other modes are read by their handles.
 - The .blend keeps the source files' bytes, so export does not need them again.
 
+## Export
+
+File > Export > MHFU PAC (.bin), or Export PAC in the MHFU tab, writes the selected monster as a
+model PAC. An untouched monster comes out byte for byte.
+
+- **Groups.** A group whose vertex count and faces are unchanged is written in place: positions,
+  UVs, normals turned more than about a degree, and weights over the joints its palette already
+  holds. The PAC keeps its size. Adding or deleting vertices or faces, or weighting a vertex to a
+  joint the group has no palette slot for, rebuilds that group (8 joints at most) and the PAC
+  grows. A group whose object is deleted draws nothing; a vertex with no weight is refused.
+- **Objects.** Moving a mesh object in Object Mode moves its vertices in the game. Modifiers and
+  shape keys are not applied. A vertex has one UV: where faces give it several, it keeps its first
+  face's (the report counts them), so split seams in Blender.
+- **Skeleton.** The bones' rest heads are the bind pose, so Edit Mode moves ship. Adding, deleting
+  or re-parenting a bone is refused; a bone's rest rotation and length are not part of the model.
+- **Clips.** Every slot's Action is written back and a slot nobody edited stays byte for byte; a
+  key keeps what the Keys item above lists. A bone whose keys are all deleted holds its bind pose
+  (an empty track would collapse its mesh).
+- **Checks.** `mhfu-port`'s engine rules run on the result: an error the source does not have
+  stops the export, the rest are reported.
+- **MHP3rd.** An MHP3rd model exports as an MHFU PAC with its geometry, skeleton and textures and
+  no clips. An in-game monster from it is a port: build it from a manifest (`mhfu-port build`).
+
+## Push to Game
+
+Push to Game in the MHFU tab exports into the memory stick's inject folder,
+`PSP/PLUGINS/mhfu_framework/inject/`, with the source as the `.orig` the framework recognises the
+loaded file by; the file id comes from the imported `file_NNNNN` name. A PAC of the source's size
+replaces the file in place (`file_NNNNN.bin`), a larger one takes the relocate path
+(`file_NNNNN_grown.bin`). A Lua mod loads it; the report gives the call. The memory stick is the
+extension's preference, else `$MHFU_MEMSTICK`, else PPSSPP's default folder.
+
 The zip carries its dependencies as pure-Python wheels at their `uv.lock` versions, so one zip
 serves every OS. numpy is Blender's own; packages with no pure wheel (psutil, rabbitizer) are left
 out, so the extension must not import the live-game chain that needs them.

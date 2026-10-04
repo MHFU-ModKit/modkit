@@ -82,8 +82,11 @@ def read(action: Any) -> list[curves.Curve]:
     return out
 
 
-def to_clip(owner: Any, action: Any, model: Model, slot: int) -> Clip:
-    """The clip `action` plays in `slot` of `owner`'s model (`stored.model(owner)`).
+def to_clip(
+    owner: Any, action: Any, model: Model, slot: int, bind_local: curves.Floats | None = None
+) -> Clip:
+    """The clip `action` plays in `slot` of `owner`'s model (`stored.model(owner)`), its
+    locations against `bind_local` (default the model's bind offsets).
 
     Channels and tracks the Action does not reach come from the model's own clip in `slot`."""
     native = next((c for c in model.clips if c.slot == slot), None)
@@ -91,7 +94,7 @@ def to_clip(owner: Any, action: Any, model: Model, slot: int) -> Clip:
     return curves.to_clip(
         read(action),
         joints,
-        model.rig.bind_local,
+        model.rig.bind_local if bind_local is None else bind_local,
         int(action.get(stored.LOOP, 0)),
         float(action.get(stored.LOOP_START, 0.0)),
         None if native is None else native.source,

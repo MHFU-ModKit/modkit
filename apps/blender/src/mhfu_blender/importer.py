@@ -148,6 +148,9 @@ class VIEW3D_PT_mhfu(bpy.types.Panel):
         data = owner.animation_data
         current = data.action.name if data is not None and data.action is not None else "Clip"
         box.operator_menu_enum(MHFU_OT_play_clip.bl_idname, "clip", text=current)
+        row = box.row(align=True)
+        row.operator("export_scene.mhfu_pac", text="Export PAC", icon="EXPORT")
+        row.operator("mhfu.push", text="Push to Game", icon="PLAY")
 
 
 def _menu(self: Any, context: Any) -> None:
