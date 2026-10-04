@@ -285,6 +285,19 @@ def test_put_copy_keeps_objects(pack):
     assert ids(motion.put(pack, 0, copy, RIG)) == ids(pack)
 
 
+def test_put_rests_an_emptied_track(pack):
+    whole = rig_clip(pack, 0, RIG)
+    assert whole is not None
+    whole.tracks[0] = whole.tracks[2] = Track()
+    out = motion.put(pack, 0, whole, RIG)
+    body, head = out.streams[0][0], out.streams[2][0]
+    assert body is not None and head is not None
+    assert body.tracks[0] == motion.rest(10) and head.tracks[0] == motion.rest(10)
+    assert body.tracks[1] == whole.tracks[1]
+    held = motion.put(pack, 1, Clip([Track()] * 5, 1, 5.0), RIG).streams[0][1]
+    assert held is not None and held.tracks[0] == motion.rest(2), "an empty clip spans 2 frames"
+
+
 def test_put_refuses(pack):
     whole = rig_clip(pack, 1, RIG)
     assert whole is not None

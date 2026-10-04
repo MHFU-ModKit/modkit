@@ -60,9 +60,12 @@ def put(anim: fu.Anim, slot: int, clip: Clip, skeleton: Skeleton) -> fu.Anim:
     A part whose tracks and loop come out unchanged keeps its own clip object, so the slots
     sharing it still share one copy in the file. A part keeps its own `loop` and `loop_start`
     unless `clip` changes the slot's (`rig_clip` reports the first part's), and its tracks past
-    its joints. Raises ValueError where `clip` keys a joint whose part does not play `slot`."""
+    its joints. A track `clip` leaves empty where the part's own is keyed plays `rest` instead:
+    an empty track collapses its joint's geometry. Raises ValueError where `clip` keys a joint
+    whose part does not play `slot`."""
     streams = [b.stream for b in skeleton.bones]
     whole = rig_clip(anim, slot, skeleton)
+    span = frames(clip) or _MIN_SPAN
     retimed = whole is not None and (clip.loop, clip.loop_start) != (whole.loop, whole.loop_start)
     out = [list(s) for s in anim.streams]
     joints = part_joints(streams)
@@ -78,7 +81,8 @@ def put(anim: fu.Anim, slot: int, clip: Clip, skeleton: Skeleton) -> fu.Anim:
         tracks = list(native.tracks)
         for i, track in enumerate(new.tracks):
             if i < len(tracks):
-                tracks[i] = track
+                emptied = not track.channels and tracks[i].channels
+                tracks[i] = rest(span) if emptied else track
             elif track.channels:
                 raise ValueError(
                     f"slot {slot}: joint {joints[part][i]} is keyed, but its part's clip has "
