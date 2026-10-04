@@ -480,7 +480,7 @@ dependencies = [
 requires-dist = [
     { name = "mhfu", editable = "packages/mhfu" },
     { name = "mhp-formats", editable = "packages/mhp-formats" },
-    { name = "numpy", specifier = ">=2" },
+    { name = "numpy", specifier = ">=1.24" },
     { name = "tomli-w", specifier = ">=1.2" },
 ]
 

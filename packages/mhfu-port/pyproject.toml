@@ -5,7 +5,7 @@ description = "Port Monster Hunter Portable 3rd monsters into Monster Hunter Fre
 readme = "README.md"
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
-dependencies = ["mhp-formats", "mhfu", "numpy>=2", "tomli-w>=1.2"]
+dependencies = ["mhp-formats", "mhfu", "numpy>=1.24", "tomli-w>=1.2"]
 classifiers = ["Typing :: Typed"]
 
 [project.scripts]
