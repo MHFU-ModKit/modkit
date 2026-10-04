@@ -500,8 +500,8 @@ function mhfu.bone_pos(ent, bone) end
 function mhfu.spawn_effect(ent, effect_id, bone) end
 
 ---Experimental: runs each clones_set clone's AI tick and attack resolver alongside the native's,
----so clones fight. Its code patch lands only at a title or menu screen, so enable it at load; a
----crash has been seen.
+---so clones fight. Its code patch lands only at a title or menu screen, so enable it at load. It
+---can crash the game.
 ---@param enable boolean
 function mhfu.clone_combat(enable) end
 

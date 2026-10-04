@@ -1,8 +1,8 @@
 # framework
 
 `mhfu_framework.prx`, the plugin that runs mods inside MHFU (EU, ULES01213): a C++ core, the mods
-composed into it at build time, and a Lua host that runs mods from the memory stick.
-`mhfu_boot.prx` loads it on a real PSP.
+composed into it at build time, and a Lua host that runs mods from the memory stick and reloads
+them when they change. `mhfu_boot.prx` loads it on a real PSP.
 
 ## Build
 
@@ -23,6 +23,20 @@ make -C framework clean
 
 `mods.manifest` lists the mods linked into the plugin, one directory under `mods/` per line; `#`
 disables one. Every mod directory is compiled either way.
+
+## Example
+
+A mod is a `.lua` file in the memory stick's `mods/` (below). This one logs every big monster as
+it spawns:
+
+```lua
+mhfu.on_bigmonster_spawn(function(_, species, slot, hp)
+  mhfu.log(string.format("[hello] species %d in slot %d, hp %d", species, slot, hp))
+end)
+```
+
+`lua/examples/` has three to start from: an animation override, a second big monster in a quest,
+and the ported Brute Tigrex.
 
 ## Memory stick
 
@@ -68,8 +82,8 @@ The plugin loads on a cold boot only; after loading a PPSSPP savestate it no lon
 | `tools/` | `cli_bridge.lua`, the in-game side of `mhfu shell` |
 | `examples/` | small mods to start from |
 
-A mod is a `.lua` file in `mods/`. A library in `mods/lib/` runs once, when a mod first requires
-it: `local port = require("mhfu_port")`. Require at a mod's top level; later, while the Memory Stick
+A library in `mods/lib/` runs once, when a mod first requires it:
+`local port = require("mhfu_port")`. Require at a mod's top level; later, while the Memory Stick
 may be busy, `require` refuses to read a new library. A mod that needs a newer API checks
 `mhfu.api_version`. Errors from the boot load are written to `framework.log` right after it.
 
@@ -77,3 +91,17 @@ An editor with the Lua language server (VS Code's Lua extension) gets completion
 from `.luarc.json` at the repo root; `mhfu.addr` needs `make -C framework
 build/gen/addresses.gen.lua` once. Outside this repo, add `framework/lua/meta` and
 `framework/lua/lib` to `workspace.library`.
+
+## Tests
+
+`uv run pytest framework` compiles framework sources for the host and runs the Lua against the
+declared API; it needs a host `c++` (else those tests skip) and `lupa`, which `uv sync` installs.
+
+## Status
+
+Runs in PPSSPP and on a real PSP under PRO CFW, for MHFU EU only. The Lua API is version 1
+(`mhfu.api_version`); `mhfu.clone_combat` is experimental and can crash the game.
+
+## Licence
+
+MIT.

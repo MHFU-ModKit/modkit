@@ -95,7 +95,7 @@ FIX = {
     "HITBOX_UNCHECKED": "Nothing to change in your port: the base monster's data has no attacks.",
     "ATTACK_RECORD_UNKNOWN": MANIFEST + "delete this [[attack]].",
     "ATTACK_VOLUME_UNKNOWN": MANIFEST + "give the [[attack]] a hit group the base monster has.",
-    "ATTACK_JOIN_INFERRED": "Nothing to change: only em75's attack table was measured.",
+    "ATTACK_JOIN_INFERRED": "Nothing to change: only em75's attack join is traced in game.",
 }
 
 

@@ -2,7 +2,22 @@
 
 The file formats of Monster Hunter Freedom Unite and Monster Hunter Portable 3rd (PSP). Every
 format is a dataclass that reads with `from_bytes` and writes back with `to_bytes`, byte for byte
-on every file the games ship.
+on every file the games ship. It also extracts a game's files from its ISO. The layouts are
+described in [`docs/formats`](../../docs/formats/README.md).
+
+## Install
+
+In a clone of modkit, `uv sync` installs it with the `[iso]` extra that `extract` needs. Elsewhere,
+build the wheels (`uv build --all-packages --wheel`) and:
+
+```bash
+pip install --find-links dist 'mhp-formats[iso]'
+```
+
+The extra brings [pycdlib](https://github.com/clalancette/pycdlib) and mhef, which is not on PyPI
+and installs from git. `uv pip` installs it only when mhef is named as well.
+
+## Example
 
 ```python
 from mhp_formats import Pac, Pmo, Tmh, detect
@@ -33,11 +48,20 @@ Where the games differ, the difference lives in `mhp_formats.fu` (MHFU) or `mhp_
 ## Extracting a game
 
 ```bash
-uv run mhp-formats extract game.iso extracted/   # in this repository; elsewhere, the [iso] extra
+uv run mhp-formats extract mhfu.iso workspace/extracted
+uv run mhp-formats extract mhp3rd.iso workspace/extracted_mhp3
 ```
 
-`extracted/data_files/file_NNNNN.bin` is the game's engine file NNNNN + 1. Only MHFU EU
-(ULES-01213) and MHP3rd (ULJM-05800) are recognised.
+`data_files/file_NNNNN.bin` is the game's engine file NNNNN + 1. Only MHFU EU (ULES-01213) and
+MHP3rd (ULJM-05800) are recognised. In a clone of modkit, `workspace/` is ignored by git and the
+studio finds both extractions there; the other tools take them from `MHFU_DATA` and
+`MHP3RD_DATA`, or `--data` and `--p3rd-data`.
+
+## Status
+
+PACs, models, textures, skeletons and animation packs of both games, and MHFU's stages,
+round-trip byte for byte (the tests check every file when `MHFU_DATA` and `MHP3RD_DATA` are set).
+DXT3 and DXT5 textures do not decode; MHP3rd stages are not read.
 
 ## Licence
 

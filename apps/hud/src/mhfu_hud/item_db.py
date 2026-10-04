@@ -1,4 +1,4 @@
-"""Item id (a PLAYER_BAG slot's u16) -> name and icon slug, for the ids matched in game so far."""
+"""Item id (a PLAYER_BAG slot's u16) -> name and icon slug; only the ids listed are named."""
 
 from __future__ import annotations
 

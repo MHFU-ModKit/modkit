@@ -51,8 +51,8 @@ PART_VS_ROW = (
     " The damage row is which grid row scales a hit: a Tigrex wing is part 6 but row 5."
 )
 GRID_NOTE = (
-    "Grid writes are proven in the game (every byte 0xFF gave 411-damage hits); hurtbox"
-    " writes are still being tested."
+    "Export writes the damage grid and the hurtboxes into the game. Grid writes change the damage"
+    " a hit does; whether hurtbox writes move where hits land is unverified in game."
 )
 
 

@@ -2,10 +2,10 @@
 (`mhfu.hitbox`); the id a handler asks for is the literal it passes to its species' attack
 spawner, one of game_task's per-species node constructors (ATTACK_SPAWNERS).
 
-Only em75's spawner-to-table join was walked live (TIGREX_ATTACK_SPAWN); for the others the
-spawner is the constructor the overlay calls with a moveset's worth of literal ids, and `fit`
-says whether those ids fit the table. The literal is the handler's id: an entity of another
-species served by the overlay reads record `id + hitbox.id_offset(...)`.
+Only em75's spawner-to-table join is traced in the running game (TIGREX_ATTACK_SPAWN); for the
+others the spawner is the constructor the overlay calls with a moveset's worth of literal ids,
+and `fit` says whether those ids fit the table. The literal is the handler's id: an entity of
+another species served by the overlay reads record `id + hitbox.id_offset(...)`.
 """
 
 from __future__ import annotations
@@ -92,8 +92,8 @@ def by_handler(code: Code) -> dict[int, list[int]]:
 
 
 def fit(sp: Spawner | None, table: AttackTable | None) -> str:
-    """How far the spawner's ids join the table: `measured` (em75, walked live), `consistent`,
-    `ids_exceed_table`, `no_spawner` or `no_table`."""
+    """How far the spawner's ids join the table: `measured` (em75, traced in the running game),
+    `consistent`, `ids_exceed_table`, `no_spawner` or `no_table`."""
     if sp is None:
         return "no_spawner"
     if table is None:

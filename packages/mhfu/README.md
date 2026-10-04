@@ -1,8 +1,22 @@
 # mhfu
 
 What the modkit knows about Monster Hunter Freedom Unite (PSP, EU release ULES01213): the game's
-addresses and structs, and the analysis of its code. Everything reads through one memory
-interface, so the same code runs on the running game, a RAM dump or the game's own files.
+addresses and structs, the analysis of its code, and automation of the running game. Everything
+reads through one memory interface, so the same code runs on the running game, a RAM dump or the
+game's own files.
+
+## Install
+
+In a clone of modkit, `uv sync`, then `uv run mhfu --help`. For a wheel, see the root README's
+[Wheels](../../README.md#wheels). The analysis commands need an extracted game (`mhp-formats
+extract`), from `--data` or `MHFU_DATA`.
+
+## Example
+
+```bash
+uv run mhfu go-on-quest --rank 1 --quest Giadrome   # cold boot to standing in the quest
+uv run mhfu shell                                   # a debug shell on the running game
+```
 
 ## Addresses
 
@@ -34,7 +48,7 @@ from mhfu.files import Extracted
 from mhfu.memory import Image, Live
 from mhfu.structs import Entity
 
-game = Extracted.find("extracted/")  # the output of `mhp-formats extract`
+game = Extracted.find("workspace/extracted")  # the output of `mhp-formats extract`
 em75 = game.em(75)  # the Tigrex overlay, mapped where the game loads it
 em75.u32(em75.text.start)
 
@@ -50,19 +64,20 @@ import.
 The game's code is plain MIPS in `BOOT.BIN` and in its overlays (`game_task`, `game_sub`, one
 `emNN` per big monster, one per stage). `mhfu.mips` decodes it with
 [rabbitizer](https://github.com/Decompollaborate/rabbitizer) and finds functions, calls, switches
-and constants; the commands below are built on it. They read an extracted game from `--data` or
-`MHFU_DATA`.
+and constants; the commands below are built on it.
 
 | Command | What it prints |
 |---|---|
 | `mhfu dis ADDR [COUNT]`, `xref ADDR`, `switch ADDR` | Disassembly, references, jump tables, in BOOT.BIN or `--overlay` |
 | `mhfu reloc OVERLAY DELTA -o OUT` | An overlay moved to another address |
 | `mhfu moveset`, `phases`, `chain SPECIES` | A big monster's moves, what ends each, what follows it |
-| `mhfu effects`, `attacks`, `abi` | The effects and attacks each move spawns; the engine-to-overlay interface |
+| `mhfu effects`, `attacks` | The effects and attacks each move spawns |
+| `mhfu abi inventory\|vtables\|interface\|factory\|classes\|callers` | The engine-to-overlay interface: overlays, entity vtables and their slots, em id to overlay, calls through a slot |
 | `mhfu hitzones`, `hitboxes SPECIES` | Where a monster can be hit, and where it hits |
 | `mhfu census --log framework.log` | How long each move lasted in a real game, from the framework's log |
 | `mhfu intel --all` | All of the above per species, as `species/emNN.json` |
-| `mhfu stage ids\|maps\|exits\|surfaces` | Stage files, the map table, area exits |
+| `mhfu stage ids\|maps\|exits\|surfaces` | Stage files, the map table, area exits, surface tables |
+| `mhfu stage spots\|spawns` | In the running game: the quest's gathering spots and small-monster spawns |
 | `mhfu inject FILE_ID FILE` | Places a finished file for the framework's live injection |
 
 ## The running game
@@ -88,9 +103,13 @@ with Session.launch(cold=True) as s:  # PPSSPP here, or in the modkit container
 | `mhfu shell` | A debug shell on the running game: player, monsters, animations, hit volumes |
 
 PPSSPP must open its debugger at startup (`RemoteDebuggerOnStartup = True` in `ppsspp.ini`).
-`MHFU_ISO` names the game image, `MHFU_PPSSPP` a PPSSPP binary other than the usual install,
-and `MHFU_LAUNCHER=docker` (with `MHFU_CONTAINER`) uses the container from `ppsspp/`. The
-automation boots the first save slot; it is tested in German and English, not yet in the other three.
+`MHFU_ISO` names the game image, `MHFU_PPSSPP` a PPSSPP binary not on `PATH`, and
+`MHFU_LAUNCHER=docker` (with `MHFU_CONTAINER`) uses the container from `ppsspp/`.
+
+## Status
+
+Addresses and analysis cover MHFU EU only. The automation boots the first save slot and is
+tested in German and English; French, Spanish and Italian are untested.
 
 ## Licence
 

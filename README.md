@@ -7,36 +7,64 @@
 Libraries, a runtime mod framework and tools for modding Monster Hunter Freedom Unite (PSP, EU
 release ULES01213), and for porting monsters to it from Monster Hunter Portable 3rd.
 
-> **Under construction.** This repository replaces the six
-> [MHFU-ModKit](https://github.com/MHFU-ModKit) repositories, which stay the current release
-> until it is done.
+This repository replaces the six former MHFU-ModKit repositories (framework, example-mods,
+monster-editor, hud, blender-addon, formats), which are archived.
 
 ## Layout
 
 | Path | Contents |
 |---|---|
-| `packages/` | Python libraries: the debugger client, the file formats, the game (`mhfu`, which also holds the address map every language is generated from), the porter |
-| `framework/` | The PRX plugin and its Lua host |
-| `apps/` | The studio (monster and map editor), the HUD, the Blender extension |
-| `ports/` | Manifests of the monsters ported from MHP3rd: the Brute Tigrex and the Zinogre |
-| `ppsspp/` | PPSSPP patched for automation, its build, and a headless container to run it in |
-| `examples/` | Example mods |
-| `docs/` | Guides and format references |
+| [`packages/mhp-formats`](packages/mhp-formats) | The games' file formats, and extracting a game from its ISO |
+| [`packages/mhfu`](packages/mhfu) | The game: its address map (every language's is generated from it), live structs, automation, code analysis |
+| [`packages/mhfu-port`](packages/mhfu-port) | The porter: MHP3rd monsters into MHFU |
+| [`packages/ppsspp-debug`](packages/ppsspp-debug) | A client for PPSSPP's debugger |
+| [`packages/modkit-testing`](packages/modkit-testing) | The pytest fixtures the packages share |
+| [`framework`](framework) | The PRX plugin that runs mods in the game, its Lua host, and example mods in `framework/lua/examples/` |
+| [`apps/studio`](apps/studio) | The studio: ported monsters and map edits |
+| [`apps/hud`](apps/hud) | A live HUD next to PPSSPP |
+| [`apps/blender`](apps/blender) | The Blender extension for monster models |
+| [`ports`](ports) | Manifests of the monsters ported from MHP3rd: the Brute Tigrex and the Zinogre |
+| [`ppsspp`](ppsspp) | PPSSPP patched for automation, its build, and a headless container to run it in |
+| [`docs/formats`](docs/formats/README.md) | The file-format references |
 
-## Development
+## Getting started
 
-Needs [uv](https://docs.astral.sh/uv/).
+Needs git and [uv](https://docs.astral.sh/uv/). Nothing is prebuilt: every part builds from
+this repository.
 
 ```bash
-uv sync                          # every package, plus pytest and pre-commit
-uv run pre-commit install        # ruff, licence headers, comment style on each commit
-uv run pytest
+git clone https://github.com/MHFU-ModKit/modkit
+cd modkit
+uv sync                                          # every package and app, with the test tools
+uv run mhp-formats extract mhfu.iso workspace/extracted
+export MHFU_DATA=$PWD/workspace/extracted/data_files
 ```
 
-Tests that read game files take them from `MHFU_DATA` and `MHP3RD_DATA`, each a directory of
-extracted `DATA.BIN` files, and skip when the variable is unset; tests against a running PPSSPP
-take `PPSSPP_BINARY` and `PPSSPP_GAME` the same way (`ppsspp/build.sh` builds the patched one).
-Nothing from the games is committed here: no ISO, no extracted files, no memory dumps.
+The extraction is the game data the tools read, from your own copy of the game; `workspace/` is
+ignored by git, and the studio finds it there without `MHFU_DATA`. An MHP3rd extraction, for
+porting, goes to `workspace/extracted_mhp3` with `MHP3RD_DATA` (see
+[`mhp-formats`](packages/mhp-formats/README.md#extracting-a-game)). Then:
+
+- the PRX plugin and how to install it: [`framework`](framework/README.md#build)
+- the Blender extension: [`apps/blender`](apps/blender/README.md#build)
+- PPSSPP with the debugger patches, or in Docker: [`ppsspp`](ppsspp/README.md#build)
+
+Each package's own README has its commands. `uv sync --no-group qt` leaves out the Qt test
+plugin, for a machine without a display.
+
+### Wheels
+
+```bash
+uv build --all-packages --wheel                  # every package's wheel into dist/
+pip install --find-links dist mhfu-studio        # elsewhere; its modkit dependencies come from dist/
+```
+
+`uv build --package NAME` builds one. The packages are not on PyPI.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Nothing from the games is committed here: no ISO, no
+extracted files, no memory dumps, no disassembly.
 
 ## Licence
 

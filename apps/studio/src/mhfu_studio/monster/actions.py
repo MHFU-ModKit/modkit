@@ -4,8 +4,8 @@
 actions, what it hits with and whether the timing fits; and the moves as a mod declares them.
 
 The game asks for the base monster's anim N and plays whatever sits in the port's slot N, by
-position, not meaning (`docs/MOD_PORTED_MONSTER.md` §1), unless a move paints its own clip on
-the action. No toolkit here: the Actions panel shows the rows.
+position, not meaning, unless a move paints its own clip on the action. No toolkit here: the
+Actions panel shows the rows.
 """
 
 from __future__ import annotations

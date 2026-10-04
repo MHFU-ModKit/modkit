@@ -2,7 +2,14 @@
 
 A live HUD for MHFU next to PPSSPP: vitals, the quest map with the monsters on it, each
 monster's AI cells and its species row, drawn in a pygame window. It needs a running PPSSPP
-with the remote debugger on (Settings > Tools > Developer Tools > Allow remote debugger).
+with its remote debugger on: Settings > Tools > Developer tools > Allow remote debugger.
+
+## Install
+
+In a clone of modkit, `uv sync`. For a wheel, see the root README's
+[Wheels](../../README.md#wheels).
+
+## Example
 
 ```bash
 uv run hud                  # finds the PPSSPP on this machine and waits for it
@@ -35,3 +42,12 @@ backgrounds/village.png  the village background (.jpg works too)
 
 A `manifest.json` in `monsters/`, `items/` or `maps/` maps a slug to another file name. Map
 calibration you save lands in `${XDG_CONFIG_HOME:-~/.config}/mhfu-hud/calibration.json`.
+
+## Status
+
+Reads vitals, the map, the monsters and their AI cells live, and writes nothing unless you stage
+an edit in QUEST_PREP. Only the Snowy Mountains map is calibrated.
+
+## Licence
+
+MIT.

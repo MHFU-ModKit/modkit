@@ -114,7 +114,7 @@ static void clone_combat_step(const mhfu_bigmonster_ai_step_ctx_t *ctx)
 }
 /* The ai_step detour installs on the first enable, so a script that never enables it
  * leaves the AI tick unpatched. Experimental: the re-entered AI tick can misalign the
- * stack for the engine's VFPU transform code (an alignment crash was seen). */
+ * stack for the engine's VFPU transform code, which then crashes. */
 int lb_clone_combat(lua_State *L)
 {
     int en = lua_toboolean(L, 1);
