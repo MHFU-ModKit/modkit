@@ -10,6 +10,7 @@ resolution-markers = [
 [manifest]
 members = [
     "mhfu",
+    "mhfu-blender",
     "mhfu-hud",
     "mhfu-port",
     "mhfu-studio",
@@ -19,6 +20,7 @@ members = [
 ]
 
 [manifest.dependency-groups]
+blender = [{ name = "fake-bpy-module-4-2" }]
 dev = [
     { name = "lupa", specifier = ">=2" },
     { name = "mhp-formats", extras = ["iso"], editable = "packages/mhp-formats" },
@@ -156,6 +158,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c9/02/bd72be9134d25ed783ecbbc38a539ffaefbf90c78418c7fb7229600dbac7/distlib-0.4.3.tar.gz", hash = "sha256:f152097224a0ae24be5a0f6bae1b9359af82133bce63f98a95f86cae1aede9ed", size = 615141, upload-time = "2026-06-12T08:04:52.847Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/02/08/9c41fb51ab5b43eb21674aff13df270e8ba6c4b29c8624e328dc7a9482af/distlib-0.4.3-py2.py3-none-any.whl", hash = "sha256:4b0ce306c966eb73bc3a7b6abad017c556dadd92c44701562cd528ac7fde4d5b", size = 470628, upload-time = "2026-06-12T08:04:50.506Z" },
+]
+
+[[package]]
+name = "fake-bpy-module-4-2"
+version = "20260730"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/d2/c25f6be4c6f85c420687eb2346066cd355232b2110ee023fd50b019c7f26/fake_bpy_module_4_2-20260730.tar.gz", hash = "sha256:1e007a3480b341c7de17761c43b358e679b1ba9078f601e906c8dc3871e84e9b", size = 803572, upload-time = "2026-07-30T04:10:26.661Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bb/1e/3d22aa9e51558bfebb8840294c2adfb1ad457fa923cd0fbc03a30fa22ad0/fake_bpy_module_4_2-20260730-py3-none-any.whl", hash = "sha256:e21183e63b7ebcd91132f62264472b28220e37a670dc213545bd4989640f2c60", size = 926511, upload-time = "2026-07-30T04:10:25.054Z" },
 ]
 
 [[package]]
@@ -417,6 +428,23 @@ requires-dist = [
     { name = "psutil", specifier = ">=6" },
     { name = "pyelftools", specifier = ">=0.31" },
     { name = "rabbitizer", specifier = ">=1.16" },
+]
+
+[[package]]
+name = "mhfu-blender"
+version = "0.1.0"
+source = { editable = "apps/blender" }
+dependencies = [
+    { name = "mhfu" },
+    { name = "mhfu-port" },
+    { name = "mhp-formats" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mhfu", editable = "packages/mhfu" },
+    { name = "mhfu-port", editable = "packages/mhfu-port" },
+    { name = "mhp-formats", editable = "packages/mhp-formats" },
 ]
 
 [[package]]

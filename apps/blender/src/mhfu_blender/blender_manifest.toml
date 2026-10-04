@@ -1,0 +1,18 @@
+# version and wheels are written by ../../build.py: from pyproject.toml and uv.lock
+schema_version = "1.0.0"
+
+id = "mhfu_blender"
+name = "MHFU ModKit"
+tagline = "Import, edit and export MHFU monsters, push them to the game"
+maintainer = "sp00ktober"
+type = "add-on"
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
+copyright = ["2026 sp00ktober"]
+
+[permissions]
+files = "Read game files, write PACs and the memory stick's inject folder"
+
+[build]
+# Blender's defaults, plus tests
+paths_exclude_pattern = ["__pycache__/", ".*", "/*.zip", "tests/", "test_*.py"]

@@ -8,6 +8,8 @@ dist/
 .env
 *.gen.h
 *.gen.lua
+# the Blender extension's pytest for Blender's Python (dist/ is above)
+apps/blender/.cache/
 
 # game data never enters the repo
 *.iso
