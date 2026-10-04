@@ -8,6 +8,7 @@ weights, texture, colour, normal, position, each aligned to its component size, 
 to its largest alignment, and `morph_count` such vertices back to back per vertex.
 """
 
+import math
 import struct
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -313,7 +314,8 @@ def quantize_vertices(
     colors: Sequence[Rgba] | None = None,
 ) -> Vertices:
     """Vertices of `vtype` from floats, the inverse of `Vertices.positions` and its kin: fixed
-    point rounds and clamps. Give exactly the attributes the type has."""
+    point rounds and clamps, weights through `quantize_weights`. Give exactly the attributes the
+    type has."""
     if vtype.through or vtype.morph_count != 1:
         raise ValueError("only transformed vertices without morphing quantise")
     lay = vtype.layout
@@ -328,7 +330,7 @@ def quantize_vertices(
     if weights is not None and lay.weight is not None:
         if any(len(w) != vtype.weight_count for w in weights):
             raise ValueError(f"every vertex takes {vtype.weight_count} weights")
-        out.weight = quantize(weights, one, lay.weight)
+        out.weight = quantize_weights(weights, lay.weight)
     if uvs is not None and lay.texture is not None:
         out.texture = quantize(uvs, one, lay.texture)
     if normals is not None and lay.normal is not None:
@@ -351,3 +353,23 @@ def quantize(
         tuple(min(max(round(v / s * unit), lo), hi) for v, s in zip(row, scale, strict=False))
         for row in rows
     ]
+
+
+def quantize_weights(rows: Sequence[Sequence[float]], fld: Field) -> list[tuple[float, ...]]:
+    """Blend weights to the raw components `Vertices` keeps for `fld`. A fixed-point row keeps
+    its total: the largest remainders round up, so weights summing to 1.0 sum to the unit
+    exactly, as the games' own do."""
+    code = fld.codes[0]
+    if code == "f":
+        return [tuple(float(w) for w in row) for row in rows]
+    lo, hi = _FIXED[code]
+    unit = _UNIT[code]
+    out: list[tuple[float, ...]] = []
+    for row in rows:
+        scaled = [min(max(w * unit, lo), hi) for w in row]
+        raw = [math.floor(x) for x in scaled]
+        short = round(sum(scaled)) - sum(raw)
+        for k in sorted(range(len(raw)), key=lambda k: raw[k] - scaled[k])[:short]:
+            raw[k] += 1
+        out.append(tuple(raw))
+    return out

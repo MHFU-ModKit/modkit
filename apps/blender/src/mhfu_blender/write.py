@@ -23,7 +23,7 @@ from mhp_formats import fu, pmo
 from mhp_formats.anim import Clip
 from mhp_formats.pac import Pac
 from mhp_formats.pmo import BoneSlot, Vec3
-from mhp_formats.psp.vtype import Row, Vertices, quantize
+from mhp_formats.psp.vtype import Row, Vertices, quantize, quantize_weights
 from mhp_formats.skeleton import FU_MAGIC, Skeleton
 from mhp_formats.tmh import Tmh
 from numpy.typing import ArrayLike, NDArray
@@ -265,7 +265,7 @@ def _new_weights(
             if joint not in slots:
                 return None
             weights[slots.index(joint)] += w
-        out[i] = quantize([weights], (1.0,) * vt.weight_count, lay)[0]
+        out[i] = quantize_weights([weights], lay)[0]
     return out
 
 
