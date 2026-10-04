@@ -118,3 +118,6 @@ def test_donor(mhp3rd_data, tmp_path):
     )
     assert [c.frames for c in named.clips] == [c.frames for c in m.clips]
     assert named.record_to_bone == m.record_to_bone and not named.notes
+    assert m.pac is not None and m.em_id == 58
+    again = Model.from_bytes(m.pac, m.name, m.geometry, m.moveset, m.em_id)
+    assert again.record_to_bone == m.record_to_bone and len(again.clips) == len(m.clips)

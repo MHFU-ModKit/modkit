@@ -118,6 +118,9 @@ class Model:
         notes: Sequence[str] = (),
         pac: bytes | None = None,
         path: Path | None = None,
+        geometry: bytes | None = None,
+        moveset: bytes | None = None,
+        em_id: int | None = None,
     ) -> None:
         self.name = name
         self.game = game
@@ -136,6 +139,10 @@ class Model:
         self.pac = pac
         """The model PAC it was read from."""
         self.path = path
+        self.geometry = geometry
+        self.moveset = moveset
+        self.em_id = em_id
+        """A donor's companions and em id as `from_bytes` was given them, to read it again."""
         self._by_slot = {c.slot: c for c in self.clips}
         self._by_name: dict[str, Clip] = {}
         self._curves: dict[int, fk.Curves] = {}
@@ -190,6 +197,9 @@ class Model:
                 notes=notes,
                 pac=data,
                 path=path,
+                geometry=geometry,
+                moveset=moveset,
+                em_id=em_id,
             )
         try:
             if at != SKELETON:
