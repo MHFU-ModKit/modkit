@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from mhfu_port import build, fk, mesh, motion, records, slots
+from mhfu_port import build, fk, mesh, motion, records
 from mhfu_port.data import Data
 from mhfu_port.manifest import GEO, Manifest
 from mhfu_port.manifest import Build as BuildSettings
@@ -199,7 +199,7 @@ def _fu_clips(port: Port, notes: list[str]) -> list[Clip]:
         out.append(
             Clip(
                 slot,
-                slots.frames(clip),
+                motion.frames(clip),
                 bool(clip.loop),
                 tracks,
                 _driven(clip, None, n),
@@ -252,7 +252,7 @@ def _donor_clips(
     out = [
         Clip(
             slot,
-            slots.frames(c),
+            motion.frames(c),
             bool(c.loop),
             len(c.tracks),
             _driven(c, bone_record, n),

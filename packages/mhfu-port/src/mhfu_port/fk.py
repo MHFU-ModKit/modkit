@@ -284,21 +284,35 @@ class Skin:
         return unit
 
 
+def part_joints(streams: Sequence[int]) -> dict[int, list[int]]:
+    """Each skeleton part's joints, `streams[j]` being joint j's part (`Bone.stream`): part k's
+    clips hold one track per joint of `part_joints(...)[k]`, in that order."""
+    out: dict[int, list[int]] = {}
+    for joint, part in enumerate(streams):
+        out.setdefault(part, []).append(joint)
+    return out
+
+
+def part_clip(anim: AnimPack, part: int, slot: int) -> Clip | None:
+    """The clip skeleton part `part` plays in `slot`; None where it has none."""
+    s = FU_PART_STREAM * part
+    stream = anim.streams[s] if 0 <= s < len(anim.streams) else []
+    return stream[slot] if 0 <= slot < len(stream) else None
+
+
 def rig_clip(anim: AnimPack, slot: int, skeleton: Skeleton) -> Clip | None:
-    """An MHFU slot as one clip over the whole rig, track i driving joint i: the engine splits
-    the rig over its streams by `Bone.stream`, each part's tracks in joint order. None when no
-    part has a clip in the slot."""
-    parts = [s[slot] if slot < len(s) else None for s in anim.streams]
-    rank: dict[int, int] = {}
-    tracks: list[Track] = []
+    """An MHFU slot as one clip over the whole rig, track i driving joint i, with the loop of
+    the part of the lowest joint; `motion.put` is the inverse. None when no part plays `slot`."""
+    tracks = [Track() for _ in skeleton.bones]
     first: Clip | None = None
-    for bone in skeleton.bones:
-        k = rank[bone.stream] = rank.get(bone.stream, -1) + 1
-        s = FU_PART_STREAM * bone.stream
-        part = parts[s] if s < len(parts) else None
+    for part, joints in part_joints([b.stream for b in skeleton.bones]).items():
+        clip = part_clip(anim, part, slot)
+        if clip is None:
+            continue
         if first is None:
-            first = part
-        tracks.append(part.tracks[k] if part is not None and k < len(part.tracks) else Track())
+            first = clip
+        for joint, track in zip(joints, clip.tracks, strict=False):
+            tracks[joint] = track
     if first is None:
         return None
     return Clip(tracks, first.loop, first.loop_start)

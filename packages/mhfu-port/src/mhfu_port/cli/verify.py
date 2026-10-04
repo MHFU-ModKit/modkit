@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from mhfu.files import monster_pac
 
 from .. import build, constraints, data, fidelity, manifest, pose, verify
-from ..slots import frames
+from ..motion import frames
 
 if TYPE_CHECKING:
     from . import Subparsers
