@@ -3,14 +3,28 @@
 A Blender 4.2+ extension for MHFU monster models: import a PAC, edit it, export it as a PAC and
 push it into the running game. It reads and writes through `mhp-formats` and `mhfu-port`.
 
+## Build
+
+From a clone of modkit:
+
 ```bash
 uv run apps/blender/build.py           # apps/blender/dist/mhfu_blender-<version>.zip
 uv run apps/blender/build.py test      # build, install into a throwaway profile, run tests/ in Blender
 ```
 
-`--blender PATH` (or `$BLENDER`) picks the Blender; the default is
-`/Applications/Blender.app` on macOS and `blender` on `PATH` elsewhere. Install the zip from
-Blender's Preferences > Get Extensions > Install from Disk.
+The build packs and validates the zip with Blender itself: `--blender PATH` (or `$BLENDER`) picks
+it; the default is the one in `/Applications/Blender.app` on macOS and `blender` on `PATH`
+elsewhere. Install the zip from Blender's Preferences > Get Extensions > Install from Disk.
+
+The zip carries its dependencies as pure-Python wheels at their `uv.lock` versions, so one zip
+serves every OS. numpy is Blender's own; packages with no pure wheel (psutil, rabbitizer) are left
+out, so the extension must not import the live-game chain that needs them.
+
+## Example
+
+Import `file_06185.bin` from an extracted MHFU (the Tigrex model), move some vertices in Edit
+Mode, and press Push to Game in the MHFU tab: the PAC lands on the memory stick, and the report
+gives the line a Lua mod needs to load it into the running game.
 
 ## Import
 
@@ -44,9 +58,9 @@ File > Export > MHFU PAC (.bin), or Export PAC in the MHFU tab, writes the selec
 model PAC. An untouched monster comes out byte for byte.
 
 - **Groups.** A group whose vertex count and faces are unchanged is written in place: positions,
-  UVs, the normals you changed, and weights over the joints its palette already holds. The PAC keeps its size. Adding or deleting vertices or faces, or weighting a vertex to a
-  joint the group has no palette slot for, rebuilds that group (8 joints at most) and the PAC
-  grows. A group whose object is deleted draws nothing; a vertex with no weight is refused.
+  UVs, the normals you changed, and weights over the joints its palette already holds. The PAC
+  keeps its size. Adding or deleting vertices or faces, or weighting a vertex to a joint the
+  group has no palette slot for, rebuilds that group (8 joints at most) and the PAC grows. A group whose object is deleted draws nothing; a vertex with no weight is refused.
 - **Objects.** Moving a mesh object in Object Mode moves its vertices in the game. Modifiers and
   shape keys are not applied. A PMO vertex has one UV, so a vertex on a UV seam is split into one
   per UV, which rebuilds its group.
@@ -69,12 +83,17 @@ replaces the file in place (`file_NNNNN.bin`), a larger one takes the relocate p
 (`file_NNNNN_grown.bin`). A Lua mod loads it; the report gives the call. The memory stick is the
 extension's preference, else `$MHFU_MEMSTICK`, else PPSSPP's default folder.
 
-The zip carries its dependencies as pure-Python wheels at their `uv.lock` versions, so one zip
-serves every OS. numpy is Blender's own; packages with no pure wheel (psutil, rabbitizer) are left
-out, so the extension must not import the live-game chain that needs them.
+## Tests
 
 Tests that need Blender take the `bpy` fixture and skip anywhere else; `build.py test` runs them
-inside Blender with pytest from a cached directory under `.cache/`, never inside Blender itself.
+inside Blender with pytest from a cached directory under `.cache/`.
 
-Licensed GPL-3.0-or-later: it is built on `mhp-formats`, which contains code derived from
+## Status
+
+Blender 4.2 or newer; tested on 4.2, 4.5 and 5.2. The Blender tests run locally only: CI has no
+Blender.
+
+## Licence
+
+GPL-3.0-or-later: it is built on `mhp-formats`, which contains code derived from
 [mhff](https://github.com/svanheulen/mhff).

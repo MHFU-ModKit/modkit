@@ -5,17 +5,21 @@ rides an MHFU monster, the host: it keeps the host's AI and replaces its model P
 donor's own skeleton, skinned model, textures and moveset. The framework injects that PAC into
 the running game.
 
-## A port
+## Install
+
+In a clone of modkit, `uv sync`, then `uv run mhfu-port --help`. For a wheel, see the root
+README's [Wheels](../../README.md#wheels). Building reads both extracted games
+(`mhp-formats extract`) from `--data` / `--p3rd-data`, or `MHFU_DATA` / `MHP3RD_DATA`.
+
+## Example
 
 A manifest in `ports/` names the donor's files, the host and the build settings (see
-`ports/README.md`), and is the only input:
+[`ports/`](../../ports)), and is the only input:
 
 ```bash
-mhfu-port build ports/zinogre.toml          # zinogre.bin, the model PAC
-mhfu-port inject ports/zinogre.toml         # the same, placed for the framework to load
+uv run mhfu-port build ports/zinogre.toml    # zinogre.bin, the model PAC
+uv run mhfu-port inject ports/zinogre.toml   # the same, placed for the framework to load
 ```
-
-Both read the extracted games from `--data` / `--p3rd-data`, or `MHFU_DATA` / `MHP3RD_DATA`.
 
 ```python
 from mhfu_port import build, manifest
@@ -47,10 +51,17 @@ port.pac, port.summary.text()
 | `mhfu-port validate PAC` | The engine's rules (`constraints`) on any monster PAC; `build` refuses a port that breaks one |
 | `mhfu-port pose PAC --manifest M` | The port's clips against the donor's, joint by joint |
 | `mhfu-port stretch PAC [--fork]` | How far each clip pulls the mesh apart, and the tear across the fork |
-| `mhfu-port floor PAC... --host 75` | Where the idle pose puts the feet by the animation alone, against the host (not yet where the game puts a port) |
+| `mhfu-port floor PAC... --host 75` | Where the idle pose puts the feet by the animation alone, against the host (not where the game puts a port) |
 | `mhfu-port fidelity M` | The port's skin weights against the donor's own |
 | `mhfu-port slots`, `labels` | Which host move plays which ported clip; hand labels checked against a build |
 
+## Status
+
+Builds donors whose animation-record offset is pinned in `records.OFFSET`: the Brute Tigrex and
+the Zinogre, both on the Tigrex. A port's animations come across; its AI is the host's, and the
+studio edits its hit volumes and attacks.
+
 ## Licence
 
-GPL-3.0-or-later.
+GPL-3.0-or-later: it is built on `mhp-formats`, which contains code derived from
+[mhff](https://github.com/svanheulen/mhff).

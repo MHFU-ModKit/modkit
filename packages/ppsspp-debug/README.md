@@ -5,6 +5,13 @@ set breakpoints and watchpoints, pause and step the CPU, press buttons. `Client`
 `AsyncClient` is for asyncio; both have the same methods. Nothing in it is specific to one
 game.
 
+## Install
+
+In a clone of modkit, `uv sync`. For a wheel, see the root README's
+[Wheels](../../README.md#wheels).
+
+## Example
+
 ```python
 from ppsspp_debug import Client
 
@@ -28,8 +35,8 @@ async with AsyncClient.connect(port=12345) as ppsspp:
             print(call.message)
 ```
 
-PPSSPP opens the debugger at startup only with `RemoteDebuggerOnStartup = True` in its
-`ppsspp.ini`, or from Settings > Tools > Developer tools.
+Turn the debugger on in PPSSPP with Settings > Tools > Developer tools > Allow remote debugger,
+which also sets `RemoteDebuggerOnStartup = True` in `ppsspp.ini` so it opens at every start.
 
 ## What it handles for you
 
@@ -90,3 +97,12 @@ PPSSPP_BINARY=/path/to/PPSSPPSDL PPSSPP_GAME=/path/to/game.iso uv run pytest pac
 
 `PPSSPP_CONTAINER=ppsspp` in place of `PPSSPP_BINARY` runs them in the modkit's container, with
 `PPSSPP_GAME` a path inside it.
+
+## Status
+
+Works with stock and patched PPSSPP 1.20.4; `save_state()`, `load_state()` and the speed calls
+need the patched build, and `screenshot()` fails under Vulkan.
+
+## Licence
+
+MIT.

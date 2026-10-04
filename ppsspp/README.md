@@ -13,7 +13,7 @@ it uses what the patches add where the emulator has it.
 | `0005-debugger-game-speed` | `game.speed.get` and `game.speed.set`, to run faster or slower than real time |
 
 The last three are backports from PPSSPP's master branch and go when the pin moves to a release
-that has them. The patches are GPL-2.0-or-later, like PPSSPP.
+that has them.
 
 ## Build
 
@@ -25,6 +25,16 @@ It fetches PPSSPP at the pinned commit into `~/.cache/modkit/ppsspp` (2.4 GB wit
 `PPSSPP_BUILD` moves it), applies the patches, builds, and prints the path of the binary. It needs
 git, CMake and Ninja, plus Xcode's command line tools on macOS, or on Linux the packages the
 Dockerfile installs.
+
+## Example
+
+```bash
+export MHFU_PPSSPP=$(ppsspp/build.sh | tail -n 1)   # the binary build.sh prints last
+uv run mhfu start --iso mhfu.iso                    # the game, with its debugger open
+```
+
+The debugger opens at startup once Settings > Tools > Developer tools > Allow remote debugger
+has been ticked (it sets `RemoteDebuggerOnStartup = True` in `ppsspp.ini`).
 
 ## Headless in Docker
 
@@ -67,3 +77,12 @@ What the container takes care of:
 
 A container that has been up for days can start failing in ways that look like your code;
 restart it first.
+
+## Status
+
+The patches apply to v1.20.4 and build on macOS and Linux; the container runs PPSSPP with Vulkan
+on a Linux GPU and in software elsewhere.
+
+## Licence
+
+The patches are GPL-2.0-or-later, like PPSSPP; the scripts and the container are MIT.
