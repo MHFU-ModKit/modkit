@@ -88,7 +88,7 @@ def for_monster(
 
 
 def for_moveset(
-    clips: Sequence[Clip | None],
+    clips: Iterable[Clip | None],
     em: int | None,
     n_bones: int,
     offset: int | None = None,

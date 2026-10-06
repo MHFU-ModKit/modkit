@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The clip vocabulary: what each slot of a built port holds, and whether a clip's name still
-points at the clip it was written for.
+"""The clip vocabulary: what each executor entry (anim) of a built port holds, and whether a
+clip's name still points at the clip it was written for.
 
-A port's slot holds the donor's own clip (CARRIED), the builder's fill, a copy of the donor's
-first clip (FILLER: forcing it plays idle, which looks exactly like a failed override), the
-host's clip, or something else; a donor clip whose slot the host lacks is DROPPED. Slots move
-between builds, so a label records `(frames, loop)` and the build it was written against, and
-`track_labels` looks the fingerprint up in the build at hand.
+A port's entry holds the donor clip its layout (`mhfu_port.layout`) puts there (CARRIED), a copy
+of the donor's first clip an older build filled with (FILLER: forcing it plays idle, which looks
+exactly like a failed override), the host's clip, or something else; a donor clip the layout
+finds no entry for is DROPPED. Entries move between builds, so a label records `(frames, loop)`
+and the build it was written against, and `track_labels` looks the fingerprint up in the build
+at hand.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
 from mhfu_port import motion, slots
+from mhfu_port.fk import ENTRY_BANK
 from mhfu_port.manifest import Clip, Manifest, ManifestError, Move
 from mhfu_port.model import clip_key
 from mhp_formats import anim
@@ -80,9 +82,8 @@ def pac_clip_table(pac: bytes) -> dict[int, Fingerprint]:
 
 
 def source_clip_table(moveset: bytes) -> dict[int, Fingerprint]:
-    """Slot -> fingerprint of an MHP3rd donor moveset: its main clip set."""
-    clips = motion.moveset(moveset)
-    return {s: _print(c) for s, c in enumerate(clips) if c is not None}
+    """MHP3rd clip id -> fingerprint of a donor moveset, every stream."""
+    return {cid: _print(c) for cid, c in motion.moveset(moveset).items()}
 
 
 def _print(clip: anim.Clip) -> Fingerprint:
@@ -105,7 +106,9 @@ class SlotCoverage:
     frames: int
     loop: bool
     source: Fingerprint | None = None
-    """The donor clip of the same index."""
+    """The donor clip the layout puts in this entry."""
+    clip: int | None = None
+    """Its MHP3rd id."""
 
     @property
     def scriptable(self) -> bool:
@@ -116,12 +119,12 @@ class SlotCoverage:
         """In words, for the Clips panel."""
         fp = f"{self.frames} frames" + (", loops" if self.loop else "")
         return {
-            CARRIED: f"The original's own clip {self.slot}, intact ({fp}).",
+            CARRIED: f"The original's clip {self.clip}, intact ({fp}).",
             FILLER: f"An idle copy ({fp}). Forcing this anim plays idle, which on screen looks"
             " just like an override that never fired.",
             HOST: f"The base monster's own clip ({fp}): this anim plays its motion on your"
             " skeleton.",
-            ALTERED: f"{fp}: matches neither the original's clip {self.slot} nor the base"
+            ALTERED: f"{fp}: matches neither the original's clip {self.clip} nor the base"
             " monster's.",
             UNKNOWN: f"{fp}. No original moveset to compare against.",
         }[self.kind]
@@ -131,7 +134,7 @@ class SlotCoverage:
 class Coverage:
     slots: dict[int, SlotCoverage] = field(default_factory=dict)
     dropped: dict[int, Fingerprint] = field(default_factory=dict)
-    """Donor slots the host has no slot for."""
+    """Donor clips the layout finds no entry for."""
     has_source: bool = False
     has_host: bool = False
 
@@ -145,6 +148,10 @@ class Coverage:
     def kind(self, slot: int) -> str | None:
         c = self.slots.get(slot)
         return c.kind if c else None
+
+    def sources(self) -> dict[int, int]:
+        """Entry -> the MHP3rd clip the layout puts there."""
+        return {s: c.clip for s, c in self.slots.items() if c.clip is not None}
 
     def summary(self) -> str:
         n = self.counts()
@@ -161,7 +168,7 @@ class Coverage:
             lines.append("  no host pack: a slot still holding the host's clip reads ALTERED")
         if self.dropped:
             lines.append(
-                f"  {len(self.dropped)} donor clip(s) DROPPED, no host slot of that index: "
+                f"  {len(self.dropped)} donor clip(s) DROPPED, no entry left for them: "
                 + ", ".join(map(str, sorted(self.dropped)))
             )
         lines.append(f"  => {n[CARRIED]} scriptable slot(s), a1 == the slot index")
@@ -169,19 +176,21 @@ class Coverage:
 
 
 def coverage(
-    port: AnimPack, host: AnimPack | None = None, donor: AnimPack | None = None
+    port: AnimPack,
+    host: AnimPack | None = None,
+    donor: Mapping[int, anim.Clip] | None = None,
+    layout: Mapping[int, int] | None = None,
 ) -> Coverage:
-    """Each slot of a built pack against the donor's moveset (stream 0) and the host's pack, by
-    the builder's own fill rule; every slot is UNKNOWN without the donor."""
+    """Each entry of a built pack against the donor clip `layout` (entry -> MHP3rd id; by
+    default each stream-0 clip in the entry of its id) puts there and the host's pack; every
+    entry is UNKNOWN without the donor."""
     table = clip_table(port)
     host_table = clip_table(host) if host is not None else {}
-    donor_table = (
-        {s: _print(c) for s, c in enumerate(donor.streams[0]) if c is not None}
-        if donor is not None
-        else {}
-    )
-    held = slots.correspondence(port, donor) if donor is not None else {}
-    cov = Coverage(has_source=donor is not None, has_host=host is not None)
+    donor = donor or {}
+    if layout is None:
+        layout = {cid: cid for cid in donor if cid < ENTRY_BANK}
+    held = slots.correspondence(port, donor, layout) if donor else {}
+    cov = Coverage(has_source=bool(donor), has_host=host is not None)
     for slot, fp in sorted(table.items()):
         src = held.get(slot)
         if src is None:
@@ -192,9 +201,12 @@ def coverage(
             kind = FILLER
         else:
             kind = HOST if host_table.get(slot) == fp else ALTERED
-        cov.slots[slot] = SlotCoverage(slot, kind, fp[0], fp[1], donor_table.get(slot))
+        cid = layout.get(slot)
+        fp_src = _print(donor[cid]) if cid is not None and cid in donor else None
+        cov.slots[slot] = SlotCoverage(slot, kind, fp[0], fp[1], fp_src, cid)
     if host is not None:
-        cov.dropped = {s: fp for s, fp in donor_table.items() if s not in host_table}
+        placed = set(layout.values())
+        cov.dropped = {cid: _print(c) for cid, c in donor.items() if cid not in placed}
     return cov
 
 
@@ -283,10 +295,11 @@ def _label(
     label: str | None,
     build: str | None,
     impact_frame: int | None = None,
+    source: int | None = None,
 ) -> None:
     found = entry(m, slot)
     if found is None:
-        m.clips[name] = Clip(slot)
+        m.clips[name] = Clip(slot, source=None if source == slot else source)
     elif found[0] != name:
         m.rename_clip(found[0], name)
     c = m.clips[name]
@@ -300,14 +313,20 @@ def _label(
 
 class LabelSession:
     """Names clips against ONE build (`table`, `build`): the fingerprint and the build id come
-    from the pack that is open, never from what the manifest said."""
+    from the pack that is open, never from what the manifest said. With `sources` (entry ->
+    MHP3rd clip, `Coverage.sources`), a new name places the clip the entry holds there."""
 
     def __init__(
-        self, doc: PortDocument, table: Mapping[int, Fingerprint], build: str | None = None
+        self,
+        doc: PortDocument,
+        table: Mapping[int, Fingerprint],
+        build: str | None = None,
+        sources: Mapping[int, int] | None = None,
     ) -> None:
         self.doc = doc
         self.table = dict(table)
         self.build = build
+        self.sources = dict(sources or {})
 
     def entry(self, slot: int) -> tuple[str, Clip] | None:
         return entry(self.doc.manifest, slot)
@@ -320,17 +339,21 @@ class LabelSession:
         """Name `slot`'s clip, renaming its old name and every move that plays it."""
         name = check_name(name)
         fp = self._fingerprint(slot, name)
-        self.doc.edit(lambda m: _label(m, slot, name, fp, label, self.build, impact_frame))
+        src = self.sources.get(slot)
+        self.doc.edit(lambda m: _label(m, slot, name, fp, label, self.build, impact_frame, src))
         return f"clips.{name} = slot {slot}"
 
     def _fingerprint(self, slot: int, name: str) -> Fingerprint:
-        """`slot`'s fingerprint, refusing a slot this build lacks or a name another slot has."""
+        """`slot`'s fingerprint, refusing a slot this build lacks, one holding none of the
+        original's clips, or a name another slot has."""
         clash = self.doc.manifest.clips.get(name)
         if clash is not None and clash.slot != slot:
             raise ManifestError(f"clips.{name} already exists, on slot {clash.slot}")
         fp = self.table.get(slot)
         if fp is None:
             raise ManifestError(f"slot {slot} is not populated in this build")
+        if self.sources and slot not in self.sources and self.entry(slot) is None:
+            raise ManifestError(f"anim {slot} holds none of the original's clips")
         return fp
 
     def bind_move(self, name: str, main: int, sub: int, slot: int | None = None) -> str:
@@ -346,7 +369,7 @@ class LabelSession:
 
         def bind(m: Manifest) -> None:
             if new is not None:
-                _label(m, *new, None, self.build)
+                _label(m, *new, None, self.build, source=self.sources.get(new[0]))
             mv = m.moves.get(name)
             if mv is None:
                 m.moves[name] = Move(main, sub, clip=clip)
@@ -411,12 +434,14 @@ def import_labels(
     labelled_build: str,
     only_carried: Coverage | None = None,
     overwrite: bool = False,
+    sources: Mapping[int, int] | None = None,
 ) -> list[int]:
     """Fold `N -> text` labels into the manifest as one edit; returns the slots labelled.
 
     `labelled_build` is where the LABELS came from, never the build at hand. Slots the build
     does not populate are skipped, so are non-CARRIED ones with `only_carried`, and so are
-    labelled ones unless `overwrite`."""
+    labelled ones unless `overwrite`. A new name places the clip `sources` says the entry
+    holds."""
     todo = []
     for slot, text in sorted(labels.items()):
         if slot not in table:
@@ -430,7 +455,8 @@ def import_labels(
 
     def apply(m: Manifest) -> None:
         for slot, name, text in todo:
-            _label(m, slot, name, table[slot], text, labelled_build)
+            src = (sources or {}).get(slot)
+            _label(m, slot, name, table[slot], text, labelled_build, source=src)
 
     if todo:
         doc.edit(apply)

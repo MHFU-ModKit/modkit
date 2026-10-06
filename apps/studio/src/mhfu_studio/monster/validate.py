@@ -2,9 +2,9 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The checks on a port manifest that need evidence: the built PAC and the base monster's intel.
 
-The loader refuses anything structural. What is left: an anim the build does not hold (the
-builder drops an original clip with no base monster's slot, and fills a third of the slots with
-idle), a move on an action the census saw never entered (it lasts one tick), and joint numbers
+The loader refuses anything structural. What is left: an anim the build does not hold (a build
+older than the manifest's clip layout) or holds an idle copy in (an older builder's filler), a
+move on an action the census saw never entered (it lasts one tick), and joint numbers
 off the skeleton the port ships. Missing evidence is said, never passed silently; a standing
 condition nobody fixes in a port (no census, a guessed attack table) is info, so the problem
 count holds only problems. The damage grid and the hit groups being shared with a native base
@@ -228,9 +228,8 @@ def _clips(m: Manifest, table: dict[int, clips.Fingerprint]) -> list[Finding]:
                     "error",
                     "CLIP_SLOT_MISSING",
                     w,
-                    f"anim {c.slot} is not in this build: the builder drops an original clip "
-                    "the base monster has no anim number for, so forcing it reaches nothing."
-                    + moved.get(name, ""),
+                    f"anim {c.slot} is not in this build, so forcing it reaches nothing: "
+                    "rebuild the port from this manifest." + moved.get(name, ""),
                 )
             )
             continue

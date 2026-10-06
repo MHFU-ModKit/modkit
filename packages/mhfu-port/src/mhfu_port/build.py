@@ -19,9 +19,11 @@ from mhp_formats.skeleton import Skeleton
 from mhp_formats.tmh import Tmh
 
 from . import constraints, mesh, motion, records, retarget
+from . import layout as layouts
 from . import rig as rigs
 from . import skin as skins
 from .data import Data
+from .layout import Layout
 from .manifest import Build, Manifest, Skin
 from .mesh import Part, Skinned
 from .model import ANIMATION, MODEL, SKELETON, TEXTURES
@@ -38,8 +40,8 @@ class Donor:
     skeleton: Skeleton
     textures: bytes | None
     """Its TMH as stored; None keeps the host's."""
-    clips: list[Clip | None]
-    """Its moveset by slot."""
+    clips: dict[int, Clip]
+    """Its moveset by MHP3rd id (`motion.clip_id`)."""
     em: int | None
     """Its species, which picks the record map; None builds unmapped."""
 
@@ -81,6 +83,10 @@ class Summary:
     vertices: int
     clips: int
     """The donor's distinct clips."""
+    placed: int
+    """The clips in an executor entry."""
+    entries: int
+    """The host's executor entries."""
     size: int
     host_size: int
 
@@ -90,7 +96,8 @@ class Summary:
             (
                 f"{self.mode}, skin {self.skin}, {em}",
                 f"streams {'+'.join(map(str, self.streams))}, lead pad {self.lead_pad}",
-                f"{self.groups} groups, {self.vertices} vertices, {self.clips} clips",
+                f"{self.groups} groups, {self.vertices} vertices, {self.clips} clips, "
+                f"{self.placed} in the host's {self.entries} executor entries",
                 f"{self.size} bytes, host {self.host_size} ({self.size - self.host_size:+d})",
             )
         )
@@ -100,6 +107,7 @@ class Summary:
 class Built:
     pac: bytes
     summary: Summary
+    layout: Layout
 
 
 # 1. the inputs
@@ -145,7 +153,9 @@ def host(m: Manifest, data: Data) -> Host:
 def record_map(d: Donor, b: Build) -> dict[int, int]:
     """`{donor bone: record}`; the manifest's `bone_offset` and `skip_bones` override the
     species' table rows."""
-    return records.for_moveset(d.clips, d.em, len(d.skeleton.bones), b.bone_offset, b.skip_bones)
+    return records.for_moveset(
+        d.clips.values(), d.em, len(d.skeleton.bones), b.bone_offset, b.skip_bones
+    )
 
 
 def animated(b: Build, record_of: Mapping[int, int], bones: int) -> int:
@@ -206,20 +216,32 @@ def skin(parts: Sequence[Part], b: Build, bind: Binding, h: Host) -> tuple[list[
 # 5. the motion
 
 
+def layout(m: Manifest, d: Donor, h: Host) -> Layout:
+    """Each donor clip's executor entry: the manifest's, else the packer's."""
+    return layouts.of(m, d.clips, h.anim)
+
+
 def animation(
-    d: Donor, h: Host, bind: Binding, record_of: Mapping[int, int], lift: float = 0.0
+    d: Donor,
+    h: Host,
+    bind: Binding,
+    record_of: Mapping[int, int],
+    placed: Layout,
+    lift: float = 0.0,
 ) -> fu.Anim:
-    """The donor's moveset on the rig's joints, its pelvis raised by `lift` world units."""
-    clips: Sequence[Clip | None] = d.clips
+    """The donor's moveset on the rig's joints in the entries `placed` gives it, its pelvis
+    raised by `lift` world units. Entries it leaves keep the host's clips on the host's rig."""
+    clips: Mapping[int, Clip] = d.clips
     if lift:
         bone_of_record = {r: bone for bone, r in record_of.items()}
         parents = [bone.parent for bone in d.skeleton.bones]
-        pelvis = motion.pelvis(clips, bone_of_record, parents)
+        pelvis = motion.pelvis(clips.values(), bone_of_record, parents)
         if pelvis is not None:
             clips = motion.lift(clips, lift, pelvis)
     # records are not positional in either mode: joint -> donor bone -> record
     track_of = {j: record_of.get(bone) for j, bone in bind.bone_of.items() if bone is not None}
-    return motion.build(clips, h.anim, bind.rig.streams, track_of)
+    keep = bind.mode == "retarget"
+    return motion.build(clips, placed.entries, h.anim, bind.rig.streams, track_of, keep)
 
 
 # 6. the PAC
@@ -247,7 +269,8 @@ def build(m: Manifest, data: Data) -> Built:
     kept = parts(d, m.build)
     skinned, skin_used = skin(kept, m.build, bind, h)
     model = mesh.build(skinned, d.model.scale)
-    anim = animation(d, h, bind, record_of, m.build.ground_lift)
+    placed = layout(m, d, h)
+    anim = animation(d, h, bind, record_of, placed, m.build.ground_lift)
     out = pac(h, bind.rig, model, d.textures, anim)
     summary = Summary(
         mode=bind.mode,
@@ -257,8 +280,10 @@ def build(m: Manifest, data: Data) -> Built:
         streams=tuple(bind.rig.streams),
         groups=len(kept),
         vertices=sum(len(p.positions) for p in kept),
-        clips=len({id(c) for c in d.clips if c is not None}),
+        clips=len({id(c) for c in d.clips.values()}),
+        placed=len(placed.entries),
+        entries=placed.capacity,
         size=len(out),
         host_size=len(h.pac.to_bytes()),
     )
-    return Built(out, summary)
+    return Built(out, summary, placed)

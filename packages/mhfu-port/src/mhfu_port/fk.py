@@ -29,7 +29,11 @@ WEIGHT_EPS = 1e-4
 slots with weight 0, and a 0-weight slot still names a bone."""
 
 FU_PART_STREAM = 2
-"""MHFU keeps the clips of `Bone.stream` k in animation stream `FU_PART_STREAM * k`."""
+"""MHFU keeps the clips of `Bone.stream` k in animation streams `FU_PART_STREAM * k` and the
+`FU_PART_STREAM - 1` after it, one bank of `ENTRY_BANK` executor entries each."""
+ENTRY_BANK = 100
+"""Executor entries per stream: entry e of part k plays slot `e % ENTRY_BANK` of stream
+`FU_PART_STREAM * k + e // ENTRY_BANK` (the resolver's `input % 1000`, hundreds the stream)."""
 
 _KINDS = ("rot", "loc")
 
@@ -332,16 +336,32 @@ def part_joints(streams: Sequence[int]) -> dict[int, list[int]]:
     return out
 
 
-def part_clip(anim: AnimPack, part: int, slot: int) -> Clip | None:
-    """The clip skeleton part `part` plays in `slot`; None where it has none."""
-    s = FU_PART_STREAM * part
+def entry_slot(part: int, entry: int) -> tuple[int, int]:
+    """`(stream, slot)` that skeleton part `part` plays for executor entry `entry`."""
+    bank, slot = divmod(entry, ENTRY_BANK)
+    if not 0 <= bank < FU_PART_STREAM:
+        raise ValueError(f"entry {entry} is past the part's {FU_PART_STREAM} streams")
+    return FU_PART_STREAM * part + bank, slot
+
+
+def entry_of(stream: int, slot: int) -> int:
+    """The executor entry that plays `slot` of `stream`."""
+    return stream % FU_PART_STREAM * ENTRY_BANK + slot
+
+
+def part_clip(anim: AnimPack, part: int, entry: int) -> Clip | None:
+    """The clip skeleton part `part` plays for executor entry `entry`; None where it has none."""
+    if not 0 <= entry < FU_PART_STREAM * ENTRY_BANK:
+        return None
+    s, slot = entry_slot(part, entry)
     stream = anim.streams[s] if 0 <= s < len(anim.streams) else []
-    return stream[slot] if 0 <= slot < len(stream) else None
+    return stream[slot] if slot < len(stream) else None
 
 
 def rig_clip(anim: AnimPack, slot: int, skeleton: Skeleton) -> Clip | None:
-    """An MHFU slot as one clip over the whole rig, track i driving joint i, with the loop of
-    the part of the lowest joint; `motion.put` is the inverse. None when no part plays `slot`."""
+    """An MHFU executor entry as one clip over the whole rig, track i driving joint i, with the
+    loop of the part of the lowest joint; `motion.put` is the inverse. None when no part plays
+    `slot`."""
     tracks = [Track() for _ in skeleton.bones]
     first: Clip | None = None
     for part, joints in part_joints([b.stream for b in skeleton.bones]).items():

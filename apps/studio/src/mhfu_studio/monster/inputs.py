@@ -7,10 +7,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from mhfu_port import build
+from mhfu_port import build, motion
 from mhfu_port.data import Data
 from mhfu_port.manifest import Manifest
-from mhp_formats import fu, p3rd
+from mhp_formats import fu
+from mhp_formats.anim import Clip
 
 from mhfu_studio.monster.clips import build_id
 from mhfu_studio.shell import places
@@ -39,5 +40,6 @@ def host_anim(m: Manifest, data: Data) -> fu.Anim:
     return build.host(m, data).anim
 
 
-def donor_anim(m: Manifest, data: Data) -> p3rd.Anim:
-    return p3rd.Anim.from_bytes(data.p3rd.read(m.source.anim))
+def donor_clips(m: Manifest, data: Data) -> dict[int, Clip]:
+    """The donor's clips by MHP3rd id."""
+    return motion.moveset(data.p3rd.read(m.source.anim))
