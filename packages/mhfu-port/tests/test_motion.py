@@ -176,8 +176,8 @@ def _host(data: Data) -> fu.Anim:
 @pytest.mark.parametrize(
     ("anim", "split", "count", "odd", "digest"),
     [
-        (5250, [31, 9, 4], 77, 0, "14e8c702013e1d22"),
-        (5341, [33, 6, 7], 102, 4, "e3d3a433292d607e"),
+        (5250, [31, 9, 4], 77, 19, "07e5af6ecd71cbe9"),
+        (5341, [33, 6, 7], 102, 20, "7ff5026c6aae378c"),
     ],
 )
 def test_donor(data, anim, split, count, odd, digest):

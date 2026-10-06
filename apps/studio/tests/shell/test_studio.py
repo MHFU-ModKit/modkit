@@ -252,3 +252,29 @@ def test_jobs_get_the_places(
     places.remember(places.MHFU, tmp_path / "g")
     studio.start(Job("x", ("map", "x")))
     assert got["MHFU_DATA"] == str(tmp_path / "g")
+
+
+def test_undo_and_revert_run_in_the_view_context(studio: Studio, tmp_path: Path) -> None:
+    """A refresh after undo, redo or revert may rebuild GL objects: it runs in `gl_current`."""
+    from contextlib import contextmanager
+
+    inside: list[bool] = []
+    current = [False]
+
+    @contextmanager
+    def gl() -> Any:
+        current[0] = True
+        try:
+            yield
+        finally:
+            current[0] = False
+
+    studio.gl_current = gl
+    ws = dirty(studio, "map", doc_file(tmp_path, "a.toml"))
+    ws.refresh = lambda: inside.append(current[0])  # type: ignore[method-assign]
+    ws.revert = lambda: inside.append(current[0])  # type: ignore[method-assign]
+    studio.undo()
+    studio.redo()
+    studio.ask_revert = lambda name: True
+    studio.revert()
+    assert inside == [True, True, True]

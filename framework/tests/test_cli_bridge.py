@@ -20,7 +20,7 @@ BR, CB = a.CLI_BRIDGE_BLOCK, a.CLI_BRIDGE
 class Game:
     """The script loaded, with monsters at registry slots 1 and 2."""
 
-    def __init__(self) -> None:
+    def __init__(self, port_lib: str | None = None) -> None:
         self.mem: dict[int, int] = {}
         self.slots = {1: a.RAM.start + 0x100000, 2: a.RAM.start + 0x110000}
         self.seq = 0
@@ -37,6 +37,8 @@ class Game:
                 "log": lambda _msg: None,
             }
         )
+        if port_lib is not None:
+            self.lua.execute(f"package.loaded.mhfu_port = {port_lib}")
         self.lua.execute(SCRIPT.read_text())
 
     def gate(self, slot: int) -> int:
@@ -53,9 +55,12 @@ class Game:
     def tick(self) -> None:
         self.lua.globals().mhfu_tick()
 
-    def action(self, engine_choice: int) -> int:
-        ctx = self.lua.table_from({"action_id": engine_choice})
-        return int(self.handlers[0](ctx))
+    def action(self, engine_choice: int, slot: int = 1) -> int:
+        """The executor hook's answer for the monster in `slot`; the engine's without one."""
+        if not self.handlers:
+            return engine_choice
+        ctx = self.lua.table_from({"action_id": engine_choice, "entity": self.slots[slot]})
+        return int(self.handlers[-1](ctx))
 
 
 @pytest.fixture
@@ -66,9 +71,27 @@ def game() -> Game:
 def test_clear_releases_the_action(game):
     game.send(FORCE, arg=0x2B)
     assert (game.mem[BR + CB.STATUS], game.action(5)) == (0x2B, 0x2B)
+    assert game.action(5, slot=2) == 5
     game.send(CLEAR)
     game.tick()
     assert (game.mem[BR + CB.STATUS], game.action(5)) == (0, 5)
+
+
+PORT_LIB = """{ ports = { zin = { name = "zin", ent = %d, log = {},
+  latch = function(self, a1, uses) self.log[#self.log + 1] = a1 .. "x" .. uses end,
+  release = function(self) self.log[#self.log + 1] = "release" end } } }"""
+
+
+def test_a_ported_monster_is_forced_through_its_port():
+    game = Game(PORT_LIB % Game().slots[1])
+    game.send(FORCE, arg=101)
+    game.send(FORCE, arg=102)
+    game.send(CLEAR)
+    log = game.lua.eval("package.loaded.mhfu_port.ports.zin.log")
+    assert list(log.values()) == ["101x1073741823", "release", "102x1073741823", "release"]
+    assert not game.handlers  # the port's hook stays the only one
+    game.send(FORCE, slot=2, arg=7)
+    assert game.action(5, slot=2) == 7
 
 
 def test_freeze_off_unfreezes(game):

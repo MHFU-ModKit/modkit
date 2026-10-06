@@ -14,6 +14,7 @@ import dataclasses
 import tomllib
 from collections.abc import Callable, Hashable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -29,9 +30,11 @@ from mhfu_port.manifest import Manifest, ManifestError
 from mhfu_port.model import MHFU, clip_key
 from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Skeleton
+from ppsspp_debug import DebuggerError
 
-from mhfu_studio.monster import actions, align, clips, inputs, species
+from mhfu_studio.monster import actions, align, clip_browser, clip_game, clips, inputs, species
 from mhfu_studio.monster.attacks import AttackSession, hitbox_of
+from mhfu_studio.monster.clip_browser import ClipBrowser, SourceClip
 from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.panels.graph import MoveGraph
@@ -57,10 +60,12 @@ from mhfu_studio.shell.workspace import (
 
 if TYPE_CHECKING:
     import moderngl
+    from mhfu.live.session import Session
+    from mhfu_port.model import Clip as SceneClip
 
     from mhfu_studio.monster.render.hitboxes import HitboxOverlay
     from mhfu_studio.monster.render.viewport import MonsterViewport
-    from mhfu_studio.monster.runtime import AttackTables
+    from mhfu_studio.monster.runtime import Host
     from mhfu_studio.shell.studio import Studio
 
 Pair = tuple[int, int]
@@ -147,6 +152,8 @@ class MonsterWorkspace(Workspace):
         self.hosts: list[HostSummary] | None = None
         self._survey: Future[list[HostSummary]] | None = None
         self._pool: ThreadPoolExecutor | None = None
+        #: the running game, for Play in game
+        self.game_session: Callable[[], AbstractContextManager[Session]] = clip_game.attached
         self._reset()
 
     def _reset(self) -> None:
@@ -193,6 +200,15 @@ class MonsterWorkspace(Workspace):
         self._rows: tuple[tuple[object, ...], list[actions.ActionRow]] | None = None
         self._parts: PartSession | None = None
         self._attacks: AttackSession | None = None
+        #: the donor clip picked in Clips, by MHP3rd id
+        self.edit_clip: int | None = None
+        self._browser: ClipBrowser | None = None
+        #: why there is no browser
+        self.browser_note = ""
+        self._previews: dict[int, SceneClip] = {}
+        #: the scene and the layout it was built with (`_relayout`)
+        self._built_for: Scene | None = None
+        self._built: dict[int, int] = {}
 
     # the shell's side
 
@@ -237,7 +253,7 @@ class MonsterWorkspace(Workspace):
         self._sent = None
         self.undriven = undriven_geometry(scene)
         if doc is not None:
-            doc.pac = scene.pac
+            doc.pac, doc.sources = scene.pac, self.sources()
             doc.intel = self.host_intel()
         if self.vp is not None:
             self.vp.set_scene(scene)
@@ -459,7 +475,11 @@ class MonsterWorkspace(Workspace):
         section, key = target
         m = self.manifest
         if section == "clips" and isinstance(key, str) and key in m.clips:
-            self.play_slot(m.clips[key].slot)
+            at = clips.at(m.clips[key], self.sources())
+            if at is None:
+                self.play_source(m.clips[key].id)
+            else:
+                self.play_slot(at)
             self.focus("Clips")
         elif section == "moves" and isinstance(key, str) and key in m.moves:
             self.select_action(m.moves[key].main, m.moves[key].sub, key)
@@ -521,6 +541,7 @@ class MonsterWorkspace(Workspace):
 
     def sync(self) -> None:
         """Re-reads everything the manifest decides."""
+        self._relayout()
         m = self.manifest
         self._seen = m
         if self.scene is not None and m is not None:
@@ -575,7 +596,7 @@ class MonsterWorkspace(Workspace):
 
         return self.manifest is not None and runtime.has_tables(self.manifest)
 
-    def _module(self) -> tuple[Manifest, int | None, AttackTables | None, str]:
+    def _module(self) -> tuple[Manifest, Host | None, str]:
         """What `runtime.export` takes for the document as it is now."""
         from mhfu_studio.monster import runtime
 
@@ -583,14 +604,14 @@ class MonsterWorkspace(Workspace):
             raise ValueError("no port manifest open")
         m, intel = self.doc.manifest, self.host_intel()
         source = f"{runtime.source_of(m)}, unsaved edits" if self.doc.dirty else ""
-        return m, runtime.host_capacity(intel), runtime.host_attack_tables(intel), source
+        return m, runtime.host(intel), source
 
     def export_hit(self) -> None:
         """`<name>_hit.lua` in the working directory."""
         from mhfu_studio.monster import runtime
 
-        m, cap, tables, source = self._module()
-        path = runtime.export(m, None, cap, tables, source).resolve()
+        m, host, source = self._module()
+        path = runtime.export(m, None, host, source).resolve()
         self.message = f"wrote {path} (id {runtime.content_id(m)})"
 
     def deploy_hit(self) -> None:
@@ -598,9 +619,9 @@ class MonsterWorkspace(Workspace):
         to the memory stick's mods folder."""
         from mhfu_studio.monster import runtime
 
-        m, cap, tables, source = self._module()
+        m, host, source = self._module()
         out = runtime.cache_dir() / runtime.module_name(m)
-        dep = runtime.ship(m, out, cap, tables, mods_dir=self.mods_dir(), source=source)
+        dep = runtime.ship(m, out, host, mods_dir=self.mods_dir(), source=source)
         self._sent = m
         lib = "" if dep.library is None else f" and {runtime.LIB_SUBDIR}/{runtime.LIBRARY}"
         self.message = (
@@ -628,10 +649,9 @@ class MonsterWorkspace(Workspace):
                 " the base monster's in Hitboxes or Parts first."
             )
         try:
-            runtime.check(m, runtime.host_attack_tables(self.host_intel()))
+            runtime.check(m, runtime.host(self.host_intel()))
         except ManifestError as e:
-            gap = self.intel_gap("attack")
-            return f"cannot send hitboxes or attacks. {gap}" if gap else f"cannot send: {e}"
+            return self._cannot("send", m, e)
         try:
             self.mods_dir()
         except places.Missing as e:
@@ -646,6 +666,42 @@ class MonsterWorkspace(Workspace):
             self.deploy_hit()
         except (OSError, ValueError) as e:  # ManifestError is a ValueError
             self.message = f"send failed: {e}"
+
+    def _cannot(self, verb: str, m: Manifest, e: ManifestError) -> str:
+        """Why the tables cannot go: the missing intel when that is it, else `e`."""
+        attacks = bool(m.hitboxes or m.attacks)
+        gap = self.intel_gap("attack" if attacks else "part")
+        what = "hitboxes or attacks" if attacks else "hurtboxes or the damage grid"
+        return f"cannot {verb} {what}. {gap}" if gap else f"cannot {verb}: {e}"
+
+    def push_blocker(self) -> str | None:
+        """Why "Push to game" cannot run now; a game not attached is found by the push."""
+        from mhfu_studio.monster import runtime
+
+        m = self.manifest
+        if m is None or not runtime.has_tables(m):
+            return self.send_blocker()
+        try:
+            runtime.check(m, runtime.host(self.host_intel()))
+        except ManifestError as e:
+            return self._cannot("push", m, e)
+        return None
+
+    def push(self) -> None:
+        """The hit tables straight into the running game, read back; no save, no stick."""
+        from mhfu_studio.monster import push
+
+        try:
+            m, host, source = self._module()
+            done = push.to_game(m, host, source)
+        except (OSError, ValueError) as e:  # Refused and ManifestError are ValueErrors
+            self.message = f"push failed: {e}"
+            return
+        try:
+            stale = push.stick_differs(m, self.mods_dir())
+        except OSError:  # no stick: nothing there to fight the push
+            stale = ""
+        self.message = done.describe() + stale
 
     # the games and the intel
 
@@ -858,9 +914,14 @@ class MonsterWorkspace(Workspace):
             self._vocab = clips.survey(self.manifest, self.clip_table(), cov, build, notes)
         return self._vocab
 
+    def sources(self) -> dict[int, int]:
+        """The open build's layout, entry -> MHP3rd id; empty without one (the pins say)."""
+        sc = self.scene
+        return {} if sc is None else {e: cid for cid, e in sc.placed.items()}
+
     def manifest_clip(self, slot: int) -> tuple[str, ManifestClip] | None:
         m = self.manifest
-        return None if m is None else clips.entry(m, slot)
+        return None if m is None else clips.entry(m, slot, self.sources())
 
     def pick_clip(self, slot: int) -> None:
         """Selects `slot` for naming and loads its name and label into the boxes."""
@@ -883,7 +944,12 @@ class MonsterWorkspace(Workspace):
         self.recompute_alignment()
 
     def label(self) -> None:
-        s = self.label_session
+        """Names the picked clip: the one in the picked anim, else a clip in none (by id)."""
+        s, br, cid = self.label_session, self.browser(), self.edit_clip
+        if self.edit_slot is None and br is not None and cid is not None:
+            build = None if self.scene is None else self.scene.build_id
+            self.edit("", lambda: br.name(cid, self.name_buf, self.label_buf, build))
+            return
         if s is None or self.edit_slot is None:
             self.message = "no manifest to write to"
             return
@@ -986,7 +1052,7 @@ class MonsterWorkspace(Workspace):
             self.alignment, self.markers = None, []
             return
         clip = None if self.vp is None else self.vp.clip
-        found = None if clip is None else clips.entry(m, clip.slot)
+        found = None if clip is None else self.manifest_clip(clip.slot)
         mv = m.moves.get(self.move or "")
         self.alignment = align.align_pair(
             m,
@@ -1234,6 +1300,194 @@ class MonsterWorkspace(Workspace):
     def _overlay(self, which: str) -> HitboxOverlay | None:
         vp = self.vp
         return None if vp is None else vp.hitboxes if which == "hitboxes" else vp.attacks
+
+    # every donor clip by MHP3rd id (the Clips panel)
+
+    def browser(self) -> ClipBrowser | None:
+        """None without a manifest or the games; `browser_note` says why."""
+        if self._browser is None and not self.browser_note and self.doc is not None:
+            m = self.doc.manifest
+            try:
+                games = self.games()
+                donor, host = inputs.donor_clips(m, games), inputs.host_anim(m, games)
+            except (OSError, ValueError) as e:
+                self.browser_note = f"no original moveset to list ({e}): the anims of this build"
+                return None
+            self._browser = ClipBrowser(self.doc, donor, host)
+        return self._browser
+
+    def source_rows(self) -> list[SourceClip]:
+        """Every donor clip by id, then the build's anims that hold none; every anim of the
+        build without the donor or a layout."""
+        sc, br = self.scene, self.browser()
+        if sc is None:
+            return []
+        own = [self._anim_row(c.slot) for c in sc.clips]
+        if br is None:
+            return own
+        try:
+            placed = br.layout().entries
+        except ManifestError as e:
+            self.browser_note = f"no layout ({e}): the anims of this build"
+            return own
+        return br.rows(r for r in own if r.entry not in placed)
+
+    def _anim_row(self, slot: int) -> SourceClip:
+        assert self.scene is not None
+        c, found = self.scene.clip(slot), self.manifest_clip(slot)
+        name, label = (found[0], found[1].label) if found else ("", "")
+        return SourceClip(None, slot, c.frames, c.loop, name, label)
+
+    def source_clip(self, cid: int) -> SceneClip:
+        """What plays donor clip `cid`: the open build's anim holding it, else its preview."""
+        br, sc = self.browser(), self.scene
+        if br is None or sc is None or self.doc is None or cid not in br.donor:
+            raise KeyError(f"no clip {cid} of the original here")
+        e = br.layout().ids.get(cid)
+        if e is not None:
+            c = next((c for c in sc.clips if c.slot == e), None)
+            if c is not None and (c.frames, c.loop) == br.prints[cid]:
+                return c
+        if cid not in self._previews:
+            self._previews[cid] = clip_browser.preview(self.doc.manifest, self.games(), cid)
+        return self._previews[cid]
+
+    def play_source(self, cid: int) -> None:
+        """Plays donor clip `cid` from frame 0 and picks it for naming."""
+        from mhfu_studio.monster.render.playback import root_travel
+
+        try:
+            clip = self.source_clip(cid)
+        except (OSError, ValueError, KeyError) as e:
+            self.message = f"clip {cid} does not play: {e}"
+            return
+        self.edit_clip = cid
+        if clip.slot >= 0:
+            self.play_slot(clip.slot)
+            self.pick_clip(clip.slot)
+            return
+        assert self.scene is not None
+        self._travel.setdefault(clip.slot, root_travel(self.scene, clip))
+        held = None if self.manifest is None else layout.holder(self.manifest, cid)
+        c = None if held is None or self.manifest is None else self.manifest.clips[held]
+        self.edit_slot, self.name_buf, self.label_buf = None, held or "", c.label if c else ""
+        if self.vp is not None:
+            self.vp.play_clip(clip)
+            self.vp.playback.play()
+        self.recompute_alignment()
+
+    def playing_clip(self) -> int | None:
+        """The donor clip on screen, by id."""
+        clip = None if self.vp is None else self.vp.clip
+        if clip is None:
+            return None
+        if clip.slot < 0:
+            return -1 - clip.slot
+        return self.coverage()[0].sources().get(clip.slot)
+
+    def picked_clip(self) -> int | None:
+        """The donor clip picked for naming, by id: the one in the picked anim, else a clip in
+        none (`edit_clip`)."""
+        br = self.browser()
+        if br is None:
+            return None
+        if self.edit_slot is not None:
+            return br.layout().entries.get(self.edit_slot)
+        return self.edit_clip
+
+    def place_clip(self, entry: int) -> None:
+        """The picked clip into anim `entry`, under the typed name if it has none; the port is
+        built again."""
+        br, cid = self.browser(), self.picked_clip()
+        if br is None or cid is None:
+            self.message = "pick one of the original's clips first"
+            return
+        at = br.layout().ids.get(cid)
+        typed = self.name_buf.strip()
+        name = clip_key(entry) if typed in ("", clip_key(at if at is not None else -1)) else typed
+        if self.edit("", lambda: br.place(cid, entry, name)):
+            said, self.message = self.message, ""
+            self.play_source(cid)
+            self.message = said
+
+    def _relayout(self) -> None:
+        """The port built again when an edit or its undo moved a clip; the view follows."""
+        from mhfu_studio.monster.render.skeleton import undriven_geometry
+
+        m, sc, br = self.manifest, self.scene, self.browser()
+        if m is None or sc is None or br is None:
+            return
+        try:
+            now = br.layout().entries
+        except ManifestError:
+            return
+        if self._built_for is not sc:
+            self._built_for, self._built = sc, now
+            return
+        if now == self._built:
+            return
+        self._built = now
+        try:
+            scene = Scene.from_manifest(m, None, "port", self.games())
+        except (OSError, ValueError) as e:
+            self.message = f"not built again ({e}): the view shows the last build"
+            return
+        cid = self.playing_clip()
+        self.scene = self._built_for = scene
+        if self.doc is not None:
+            self.doc.pac, self.doc.sources = scene.pac, self.sources()
+        self.undriven = undriven_geometry(scene)
+        self._coverage = self._vocab = self._labels = self._rows = self._counts = None
+        self._travel, self._previews = {}, {}
+        vp = self.vp
+        if vp is not None:
+            strip, speed = vp.strip_root, None if vp.actor is None else vp.playback.speed
+            vp.set_scene(scene, frame_camera=False)
+            vp.strip_root = strip
+            if speed is not None:
+                vp.playback.speed = speed
+        if cid is not None:
+            self.play_source(cid)
+
+    def game_entry(self) -> int:
+        """The anim Play in game forces: the picked clip's, refused while its anim differs from
+        the saved manifest's, since the game holds the build injected from the file."""
+        br, cid, doc = self.browser(), self.picked_clip(), self.doc
+        if br is None or cid is None or doc is None:
+            if self.edit_slot is None:
+                raise LookupError("pick a clip first")
+            return self.edit_slot
+        now = br.layout().ids.get(cid)
+        saved = layout.of(doc.saved_manifest, br.donor, br.host).ids.get(cid)
+        if now is None:
+            raise LookupError(f"clip {cid} has no anim in this layout: place it first")
+        if now != saved:
+            raise LookupError(
+                f"clip {cid} is anim {now} here but {saved} in the saved manifest: save, then"
+                " build and inject the port (mhfu-port inject) before playing it in the game"
+            )
+        return now
+
+    def play_in_game(self) -> None:
+        """Holds the picked clip's anim on the running game's big monster (`clip_game`)."""
+        try:
+            entry = self.game_entry()
+            with self.game_session() as s:
+                held = clip_game.force(s, entry, self.host_species)
+        except (LookupError, OSError, ValueError, DebuggerError) as e:
+            self.message = f"not played in the game: {e}"
+            return
+        self.message = held.says()
+
+    def release_in_game(self) -> None:
+        """Lets the big monster's own brain pick again."""
+        try:
+            with self.game_session() as s:
+                slot, acked = clip_game.release(s, self.host_species)
+        except (LookupError, OSError, ValueError, DebuggerError) as e:
+            self.message = f"not released: {e}"
+            return
+        self.message = f"monster {slot} released" + ("" if acked else "; no ack")
 
 
 def _roots() -> tuple[Path | None, ...]:

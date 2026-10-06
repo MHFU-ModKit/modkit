@@ -128,15 +128,15 @@ class Build:
 
 @dataclass
 class Clip:
-    """One clip of the port's vocabulary: the donor's MHP3rd clip `source` (`stream * 100 +
-    slot`; None: `slot`) placed in executor entry `slot`, the a1 that plays it. Every other
-    donor clip goes where `layout` packs it.
+    """One clip of the port's vocabulary, the donor's MHP3rd clip `source` (`stream * 100 +
+    slot`). Without `slot` it is a name only and `layout` packs the clip; with one it is pinned
+    in that executor entry, the a1 that plays it (`source` None: the clip numbered like it).
 
     `frames` and `loop` fingerprint the clip in a build; `labelled_build` names the build the
     label was written against.
     """
 
-    slot: int
+    slot: int | None = None
     source: int | None = field(default=None, kw_only=True)
     frames: int | None = None
     loop: bool | None = None
@@ -147,7 +147,11 @@ class Clip:
     @property
     def id(self) -> int:
         """The MHP3rd clip id."""
-        return self.slot if self.source is None else self.source
+        if self.source is not None:
+            return self.source
+        if self.slot is None:
+            raise ManifestError("a clip needs a source or a slot")
+        return self.slot
 
 
 @dataclass
@@ -444,8 +448,10 @@ def _validate(m: Manifest) -> None:
     sources: dict[int, str] = {}
     for name, c in m.clips.items():
         w = f"clips.{name}"
-        _need(c.slot not in slots, w, f"slot {c.slot} is clips.{slots.get(c.slot)}")
-        slots[c.slot] = name
+        _need(c.slot is not None or c.source is not None, w, "needs a source or a slot")
+        if c.slot is not None:
+            _need(c.slot not in slots, w, f"slot {c.slot} is clips.{slots.get(c.slot)}")
+            slots[c.slot] = name
         cid = c.id
         _need(cid >= 0, w, "source is 0 or more")
         _need(cid not in sources, w, f"clip {cid} is placed by clips.{sources.get(cid)} too")

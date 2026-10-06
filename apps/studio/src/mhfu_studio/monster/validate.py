@@ -16,7 +16,7 @@ land on), or says what to do (`FIX`).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from mhfu.em.intel import MIN_DWELL_TICKS, Handoff, SpeciesIntel
 from mhfu_port import build, records
@@ -130,12 +130,16 @@ def _f(
 
 
 def validate(
-    m: Manifest, pac: bytes | None = None, intel: SpeciesIntel | None = None
+    m: Manifest,
+    pac: bytes | None = None,
+    intel: SpeciesIntel | None = None,
+    sources: Mapping[int, int] | None = None,
 ) -> list[Finding]:
-    """Every check; `pac` is the BUILT port, `intel` the host species'."""
+    """Every check; `pac` is the BUILT port, `sources` its layout (entry -> MHP3rd id; without
+    it only pinned clips are found), `intel` the host species'."""
     return [
         *_settings(m),
-        *_pac(m, pac),
+        *_pac(m, pac, sources or {}),
         *_moves(m, intel),
         *_parts(m, intel),
         *_attacks(m, intel),
@@ -181,7 +185,7 @@ def _settings(m: Manifest) -> list[Finding]:
     return out
 
 
-def _pac(m: Manifest, pac: bytes | None) -> list[Finding]:
+def _pac(m: Manifest, pac: bytes | None, sources: Mapping[int, int]) -> list[Finding]:
     if pac is None:
         if m.clips or m.hurtboxes or m.effects:
             return [
@@ -201,7 +205,7 @@ def _pac(m: Manifest, pac: bytes | None) -> list[Finding]:
         out.append(_f("error", "PAC_UNREADABLE", "", f"no clip table in the PAC: {e}"))
         table = None
     if table is not None:
-        out += _clips(m, table)
+        out += _clips(m, table, sources)
     if m.hurtboxes or m.effects or m.hitboxes:
         try:
             n = bone_count(pac)
@@ -212,35 +216,41 @@ def _pac(m: Manifest, pac: bytes | None) -> list[Finding]:
     return out
 
 
-def _clips(m: Manifest, table: dict[int, clips.Fingerprint]) -> list[Finding]:
+def _clips(
+    m: Manifest, table: dict[int, clips.Fingerprint], sources: Mapping[int, int]
+) -> list[Finding]:
     out = []
     moved = {
         t.name: f" {t.message}"
-        for t in clips.track_labels(m, table)
+        for t in clips.track_labels(m, table, sources=sources)
         if t.status in (clips.MOVED, clips.AMBIGUOUS)
     }
     idle = table.get(1)
     for name, c in sorted(m.clips.items()):
         w = f"clips.{name}"
-        if c.slot not in table:
+        slot = clips.at(c, sources)
+        if slot is None and not sources:
+            continue  # a name the packer places, and no layout to find it in
+        if slot is None or slot not in table:
+            where = f"clip {c.id} is in no anim" if slot is None else f"anim {slot} is not"
             out.append(
                 _f(
                     "error",
                     "CLIP_SLOT_MISSING",
                     w,
-                    f"anim {c.slot} is not in this build, so forcing it reaches nothing: "
+                    f"{where} in this build, so forcing it reaches nothing: "
                     "rebuild the port from this manifest." + moved.get(name, ""),
                 )
             )
             continue
-        end, loop = table[c.slot]
+        end, loop = table[slot]
         if c.frames is not None and c.frames != end:
             out.append(
                 _f(
                     "error",
                     "CLIP_FRAMES_MISMATCH",
                     w,
-                    f"frames = {c.frames} here, but anim {c.slot} of this build ends at {end}: "
+                    f"frames = {c.frames} here, but anim {slot} of this build ends at {end}: "
                     "it holds a different clip." + moved.get(name, ""),
                 )
             )
@@ -250,16 +260,16 @@ def _clips(m: Manifest, table: dict[int, clips.Fingerprint]) -> list[Finding]:
                     "error",
                     "CLIP_LOOP_MISMATCH",
                     w,
-                    f"loop = {c.loop} here, but anim {c.slot} of this build has loop = {loop}",
+                    f"loop = {c.loop} here, but anim {slot} of this build has loop = {loop}",
                 )
             )
-        if idle is not None and c.slot != 1 and table[c.slot] == idle:
+        if idle is not None and slot != 1 and table[slot] == idle:
             out.append(
                 _f(
                     "warning",
                     "CLIP_IS_FILLER",
                     w,
-                    f"anim {c.slot} is an idle copy ({idle[0]}f, loop={idle[1]}): forcing it "
+                    f"anim {slot} is an idle copy ({idle[0]}f, loop={idle[1]}): forcing it "
                     "plays idle, which looks just like an override that did nothing.",
                 )
             )

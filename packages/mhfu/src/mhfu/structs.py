@@ -10,6 +10,7 @@ from enum import IntEnum
 
 from . import addresses as a
 from .addresses import Struct
+from .entries import input_action
 from .memory import Memory
 from .views import View, f32, f32s, ptr, ptrs, s8, u8, u16, u16s, u32, vec3
 
@@ -18,9 +19,6 @@ TARGET_GROUPS = a.QUEST.TARGETS.count  # the engine's cap
 EM_ID_SPECIES = 0xFF
 """QUEST_TARGET.EM_ID holds the species in its low byte."""
 
-ACTION_INPUT_BASE = 0x3E8
-"""ENTITY.ANIM_INPUT[k] is the executor action id + ACTION_INPUT_BASE + k * ACTION_INPUT_STEP."""
-ACTION_INPUT_STEP = 0xC8
 EXECUTOR_VTABLES = frozenset({a.TIGREX_VTABLE})
 """Species known to animate through ACTION_EXECUTOR, so their ANIM_INPUT decodes to action ids;
 the small-monster-shaped AI keeps its own ids there."""
@@ -46,11 +44,6 @@ SPECIES_IDS = {
     0x4D: "Giadrome",
 }
 """ENTITY.SPECIES (the em id) -> name, for the ids checked in the game."""
-
-
-def input_action(value: int, slot: int) -> int:
-    """The executor action id in ENTITY.ANIM_INPUT[slot]."""
-    return value - ACTION_INPUT_BASE - slot * ACTION_INPUT_STEP
 
 
 class Screen(IntEnum):
@@ -350,3 +343,45 @@ class BigMonster(Entity):
     def drawn(self) -> bool:
         """VISIBILITY_GATE draws it: it is in the player's section and has DRAW_GATE."""
         return not self.render_flags & SKIP_DRAW
+
+
+# --- clips ---
+
+
+class ClipBlock(View):
+    """One body part's clip player, at ENTITY.CLIP_BLOCKS + part * CLIP_BLOCK.SIZE."""
+
+    struct = a.CLIP_BLOCK
+    phase = f32(a.CLIP_BLOCK.PHASE)
+    speed = f32(a.CLIP_BLOCK.SPEED)
+    loop_start = f32(a.CLIP_BLOCK.LOOP_START)
+    end = f32(a.CLIP_BLOCK.END)
+    node = ptr(a.CLIP_BLOCK.NODE)
+    flags = u16(a.CLIP_BLOCK.FLAGS)
+
+    @classmethod
+    def of(cls, mem: Memory, entity: int, part: int) -> ClipBlock:
+        assert a.CLIP_BLOCK.size
+        return cls(mem, entity + a.ENTITY.CLIP_BLOCKS + part * a.CLIP_BLOCK.size)
+
+
+# --- areas ---
+
+
+class AreaChange(View):
+    """The area-change half of MONSTER_MANAGER_SINGLETON: a pending exit and where it lands."""
+
+    struct = a.MONSTER_MANAGER
+
+    landing = vec3(a.MONSTER_MANAGER.LANDING)
+    landing_yaw = u16(a.MONSTER_MANAGER.LANDING_YAW)
+    exit = ptr(a.MONSTER_MANAGER.EXIT)
+    requests = u32(a.MONSTER_MANAGER.REQUESTS)
+
+
+class Hunter(View):
+    """PLAYER_ENTITY's own fields."""
+
+    struct = a.HUNTER
+
+    exiting = u8(a.HUNTER.EXITING)

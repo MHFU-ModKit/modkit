@@ -30,6 +30,8 @@ class PortDocument:
         self._saved = copy.deepcopy(m)
         self.pac: bytes | None = None
         """The built model PAC the clips and bones are checked against."""
+        self.sources: dict[int, int] = {}
+        """Its layout: entry -> MHP3rd clip id; empty: the manifest's pins."""
         self.intel: SpeciesIntel | None = None
         """The host species' intel."""
 
@@ -79,7 +81,7 @@ class PortDocument:
     def findings(self) -> list[Finding]:
         from mhfu_studio.monster.validate import validate
 
-        return validate(self.manifest, pac=self.pac, intel=self.intel)
+        return validate(self.manifest, pac=self.pac, intel=self.intel, sources=self.sources)
 
     def can_undo(self) -> bool:
         return self._history.can_undo()

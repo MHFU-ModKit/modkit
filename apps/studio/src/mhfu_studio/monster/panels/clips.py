@@ -1,16 +1,19 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Clips panel: every anim, what is really in it (an idle copy plays idle, and forcing it
-looks exactly like a failed override), and the names it carries, keyed to this build."""
+"""The Clips panel: every clip of the original by MHP3rd id, the anim it plays in, what is
+really in that anim (an idle copy plays idle, and forcing it looks exactly like a failed
+override), and its name; naming, placing and Play in game."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from mhfu_studio.monster import clips
 from mhfu_studio.monster import validate as V
+from mhfu_studio.monster.clip_browser import SourceClip
 from mhfu_studio.monster.clips import SlotCoverage, Vocabulary
 from mhfu_studio.monster.render.playback import DEFAULT_SPEED, wall_clock
 from mhfu_studio.shell.findings import Level
@@ -46,6 +49,7 @@ STATUS = {
     clips.LOST: "gone",
     clips.UNCHECKABLE: "unchecked",
 }
+UNPLACED = "in no anim: the base monster has no anim left for it"
 
 
 def _page() -> tuple[QWidget, QVBoxLayout]:
@@ -57,12 +61,17 @@ def _page() -> tuple[QWidget, QVBoxLayout]:
 
 
 class ClipsPanel(kit.Panel):
-    """Every anim: play one, see what it really holds, and name it."""
+    """Every clip: play one, see what it really holds, name it, place it."""
 
     def __init__(self, ws: MonsterWorkspace, studio: Studio) -> None:
         super().__init__(scroll=False)
         self.ws, self.studio = ws, studio
-        self._slot: int | None = None
+        self._picked: tuple[str, int] | None = None
+        #: the row whose name and label the boxes were loaded with
+        self._loaded: tuple[str, int] | None = None
+        #: the row the arrow keys just played, so the click that follows does not replay it
+        self._stepped_to: object = None
+        self._rows: list[SourceClip] = []
         page, lay = _page()
 
         self.count = kit.label(role="title", wrap=False)
@@ -82,8 +91,8 @@ class ClipsPanel(kit.Panel):
         self.filler.setToolTip(KIND_TIPS[clips.FILLER])
         self.dropped = kit.label(role="muted")
         self.dropped.setToolTip(
-            "The base monster has no anim of that number, so the builder had nowhere to put"
-            " these clips of the original: they are not in this build at all."
+            "The base monster has no anim left for these clips of the original: they are not"
+            " in this build. Place one over another clip to put it in."
         )
         self.notes = kit.label(role="muted")
         self.health = kit.Alert()
@@ -95,19 +104,22 @@ class ClipsPanel(kit.Panel):
             lay.addWidget(w)
 
         self.filter = kit.text_field(
-            tip="Shows only the clips whose anim #, name, kind or label contains this text",
-            placeholder="Filter: anim #, name, kind or label",
+            tip="Shows only the clips whose id, stream, anim #, name, kind or label contains this"
+            " text ('stream 2', 'unnamed')",
+            placeholder="Filter: id, stream 2, anim #, name, kind, label",
         )
         self.filter.textChanged.connect(self._filter)
         lay.addWidget(self.filter)
         self.table = kit.Table(
-            ["Anim", "Kind", "Frames", "Travel", "Name"],
-            tip="Every anim in the build; click one to play it from the start. The anim # is what"
-            " a script passes to force it; a clip that repeats says loop after its frames;"
+            ["Id", "Anim", "Frames", "Travel", "Name"],
+            tip="Every clip of the original by its MHP3rd id (stream x 100 + slot), and the anim"
+            " that plays it: what a script passes to force it. Click one, or step with the arrow"
+            " keys, to play it from the start; a clip that repeats says loop after its frames;"
             " Travel is how far the clip carries the body.",
             swatch_column=1,
         )
-        self.table.picked.connect(self._play)
+        self.table.picked.connect(self._clicked)
+        self.table.currentCellChanged.connect(self._stepped)
         lay.addWidget(self.table, 1)
 
         self.editor = kit.Section("Name the clip", tip="Write a name and a label into the manifest")
@@ -122,17 +134,31 @@ class ClipsPanel(kit.Panel):
         form = kit.Form()
         self.name = kit.text_field(
             tip="The clip's key in the manifest (letters, digits, - and _). Moves name their clip"
-            " by it; renaming follows them.",
+            " by it; renaming follows them. Naming moves no clip. Return goes on to Shows.",
             placeholder="clip_07",
         )
         self.label = kit.text_field(
-            tip="What the clip shows, in your words: 'tail sweep', 'roar'",
+            tip="What the clip shows, in your words: 'tail sweep', 'roar'. Return applies and"
+            " plays the next clip.",
             placeholder="tail sweep",
         )
-        for field in (self.name, self.label):
-            field.returnPressed.connect(self._apply)
+        self.name.returnPressed.connect(self.label.setFocus)
+        self.label.returnPressed.connect(self._apply_next)
         form.row("Name", self.name)
         form.row("Shows", self.label)
+        self.anim = kit.integer(
+            tip="The anim (executor entry) to play this clip in. Place pins it there; a clip"
+            " pinned there swaps into this one's anim, any other takes the anim this frees.",
+            lo=0,
+            hi=0,
+        )
+        self.place = kit.button(
+            "Place",
+            tip="Moves the clip to the anim beside; the port is built again. Undo takes it back.",
+            on=self._place,
+            icon="ph.swap",
+        )
+        form.row("Anim", kit.row(self.anim, self.place, stretch=True))
         self.editor.body.addWidget(form)
         self.apply = kit.button(
             "Apply",
@@ -140,7 +166,20 @@ class ClipsPanel(kit.Panel):
             on=self._apply,
             icon="ph.check",
         )
-        self.editor.body.addWidget(kit.row(self.apply, stretch=True))
+        self.in_game = kit.button(
+            "Play in game",
+            tip="Holds this clip's anim on the running game's big monster through the"
+            " framework's cli_bridge.lua (MHFU_LANE's PPSSPP, else the one running)",
+            on=self.studio.act("play in game", self.ws.play_in_game),
+            icon="ph.play",
+        )
+        self.release = kit.button(
+            "Release",
+            tip="Lets the big monster's own brain pick its moves again",
+            on=self.studio.act("release", self.ws.release_in_game),
+            icon="ph.square",
+        )
+        self.editor.body.addWidget(kit.row(self.apply, self.in_game, self.release, stretch=True))
         self.edit_hint = kit.label(role="muted")
         self.editor.body.addWidget(self.edit_hint)
         lay.addWidget(self.editor)
@@ -155,12 +194,32 @@ class ClipsPanel(kit.Panel):
         self.pages = kit.Pages(page, self.empty)
         self.body.addWidget(self.pages)
 
+    # acting
+
     def _filter(self, text: str) -> None:
         self.studio.act("filter clips", lambda: setattr(self.ws, "clip_filter", text))()
 
-    def _play(self, slot: object) -> None:
-        if isinstance(slot, int):
-            self.studio.act(f"play anim {slot}", lambda: self.ws.play_slot(slot))()
+    def _play(self, key: object) -> None:
+        if not isinstance(key, tuple):
+            return
+        what, n = key
+        if what == "clip":
+            self.studio.act(f"play clip {n}", lambda: self.ws.play_source(n))()
+        else:
+            self.studio.act(f"play anim {n}", lambda: self.ws.play_slot(n))()
+
+    def _stepped(self, row: int, _col: int, before: int, _before_col: int) -> None:
+        """A new current row plays: the arrow keys, or the press of a click."""
+        it = self.table.item(row, 0)
+        if row != before and it is not None:
+            self._stepped_to = it.data(Qt.ItemDataRole.UserRole)
+            self._play(self._stepped_to)
+
+    def _clicked(self, key: object) -> None:
+        """A click replays from the start, unless its own press just played the row."""
+        if key != self._stepped_to:
+            self._play(key)
+        self._stepped_to = None
 
     def _apply(self) -> None:
         def run() -> None:
@@ -168,6 +227,30 @@ class ClipsPanel(kit.Panel):
             self.ws.label()
 
         self.studio.act("name clip", run)()
+
+    def _apply_next(self) -> None:
+        """Apply, then the next row plays, the name box ready for it."""
+        name, label = self.name.text().strip(), self.label.text()
+        self._apply()
+        c = None if self.ws.manifest is None else self.ws.manifest.clips.get(name)
+        if c is None or c.label != label:
+            return  # refused: stay on the clip
+        keys = [r.key for r in self._rows]
+        if self._picked in keys and keys.index(self._picked) + 1 < len(keys):
+            self._play(keys[keys.index(self._picked) + 1])
+        self.name.setText(self.ws.name_buf)
+        self.label.setText(self.ws.label_buf)
+        self.name.setFocus()
+        self.name.selectAll()
+
+    def _place(self) -> None:
+        def run() -> None:
+            self.ws.name_buf = self.name.text()
+            self.ws.place_clip(self.anim.value())
+
+        self.studio.act("place clip", run)()
+
+    # showing
 
     def sync(self) -> None:
         ws, sc = self.ws, self.ws.scene
@@ -178,12 +261,41 @@ class ClipsPanel(kit.Panel):
                 self.empty.say("No clips", "This PAC has no animation in it.")
             return
         vocab = ws.vocabulary()
-        self.count.setText(f"{len(sc.clips)} clips, {sum(c.loop for c in sc.clips)} looping")
+        self._rows = ws.source_rows()
+        donor = ws.browser() is not None and any(r.id is not None for r in self._rows)
+        self._picked = self._editing()
+        if donor:
+            ids = [r for r in self._rows if r.id is not None]
+            streams = len({r.stream for r in ids})
+            named = sum(bool(r.name) for r in ids)
+            self.count.setText(f"{len(ids)} clips in {streams} streams, {named} named")
+        else:
+            self.count.setText(f"{len(sc.clips)} clips, {sum(c.loop for c in sc.clips)} looping")
         self.build.setText(f"build {vocab.build}" if vocab.build else "build not identified")
         self._coverage(vocab)
+        self.table.setColumnHidden(0, not donor)
         self._table(vocab)
         self._editor(vocab)
         findings.take(ws, {V.CLIP_NAME: self.name})
+
+    def _editing(self) -> tuple[str, int] | None:
+        """The row picked for naming: the one in the picked anim, else a clip in none."""
+        ws = self.ws
+        if ws.edit_slot is not None:
+            return next((r.key for r in self._rows if r.entry == ws.edit_slot), None)
+        if ws.edit_clip is not None and any(r.id == ws.edit_clip for r in self._rows):
+            return "clip", ws.edit_clip
+        return None
+
+    def _playing(self) -> tuple[str, int] | None:
+        vp = self.ws.vp
+        clip = None if vp is None else vp.clip
+        if clip is None:
+            return None
+        cid = self.ws.playing_clip()
+        if cid is not None and any(r.id == cid for r in self._rows):
+            return "clip", cid
+        return "anim", clip.slot
 
     def _coverage(self, vocab: Vocabulary) -> None:
         cov = vocab.coverage
@@ -196,13 +308,14 @@ class ClipsPanel(kit.Panel):
             sw.setVisible(bool(n[kind]))
         self.filler.setText(FILLER_WARNING.format(n=n[clips.FILLER]))
         self.filler.setVisible(cov.has_source and n[clips.FILLER] > 0)
+        out = [r.id for r in self._rows if r.id is not None and r.entry is None]
         self.dropped.setText(
-            f"{len(cov.dropped)} of the original's clips are not in this build: "
-            + ", ".join(map(str, sorted(cov.dropped)))
+            f"{len(out)} of the original's clips are in no anim: " + ", ".join(map(str, out))
         )
-        self.dropped.setVisible(bool(cov.dropped))
-        self.notes.setText("\n".join(f"• {n}" for n in vocab.notes))
-        self.notes.setVisible(bool(vocab.notes))
+        self.dropped.setVisible(bool(out))
+        notes = [*vocab.notes, *([self.ws.browser_note] if self.ws.browser_note else [])]
+        self.notes.setText("\n".join(f"• {n}" for n in notes))
+        self.notes.setVisible(bool(notes))
         bad = vocab.suspect
         self.health.setText(f"{len(bad)} name(s) do not match this build")
         self.health.setVisible(bool(bad))
@@ -217,69 +330,85 @@ class ClipsPanel(kit.Panel):
         )
 
     def _table(self, vocab: Vocabulary) -> None:
-        ws, sc, vp = self.ws, self.ws.scene, self.ws.vp
-        assert sc is not None
+        ws, vp = self.ws, self.ws.vp
         kit.put(self.filter, ws.clip_filter)
         needle = ws.clip_filter.strip().lower()
         speed = DEFAULT_SPEED if vp is None or vp.actor is None else vp.playback.speed
         rows, data, colors, tips, levels = [], [], [], [], []
-        for c in sc.clips:
-            cov = vocab.coverage.slots.get(c.slot)
-            found = ws.manifest_clip(c.slot)
-            label = found[1].label if found else ""
-            text = f"{c.slot} {' '.join(c.names)} {kind_text(cov)} {label}"
+        for r in self._rows:
+            cov = None if r.entry is None else vocab.coverage.slots.get(r.entry)
+            text = " ".join(
+                [
+                    "" if r.id is None else f"{r.id} stream {r.stream}",
+                    f"anim {r.entry}" if r.entry is not None else "unplaced",
+                    r.name or "unnamed",
+                    kind_text(cov),
+                    r.label,
+                ]
+            )
             if needle and needle not in text.lower():
                 continue
-            net, _ = ws.travel(c.slot)
+            net = 0.0 if r.entry is None else ws.travel(r.entry)[0]
             rows.append(
                 (
-                    str(c.slot),
-                    kind_text(cov),
-                    f"{c.frames} loop" if c.loop else str(c.frames),
+                    "" if r.id is None else str(r.id),
+                    "·" if r.entry is None else str(r.entry),
+                    f"{r.frames} loop" if r.loop else str(r.frames),
                     f"{net:.0f}" if net >= 1.0 else "",
-                    c.name if c.names else "",
+                    r.name,
                 )
             )
-            data.append(c.slot)
+            data.append(r.key)
             colors.append(None if cov is None else COVERAGE[cov.kind])
-            tip = [cov.why() if cov else "Kind unknown"]
-            tip.append(f"{wall_clock(c.frames, speed):.2f} s at speed {speed:.2f}")
-            if label:
-                tip.append(label)
-            if not c.whole_rig:
-                tip.append("Partial: it moves only some of the joints")
-            tips.append("\n".join(tip))
+            tips.append(row_tip(r, cov, speed))
             levels.append(level_of(cov))
-        self.table.set_rows(rows, data, colors=colors, tips=tips, levels=levels)
-        playing = None if vp is None or vp.clip is None else vp.clip.slot
-        if playing is None:
-            self.table.clearSelection()
-        else:
-            self.table.select_data(playing)
+        playing = self._playing()
+        with QSignalBlocker(self.table):
+            self.table.set_rows(rows, data, colors=colors, tips=tips, levels=levels)
+            if playing is None:
+                self.table.clearSelection()
+            else:
+                self.table.select_data(playing)
 
     def _editor(self, vocab: Vocabulary) -> None:
         ws = self.ws
-        self.editor.setVisible(True)
-        editing = ws.manifest is not None and ws.edit_slot is not None
-        for w in (self.slot, self.why, self.name, self.label, self.apply):
+        row = next((r for r in self._rows if r.key == self._picked), None)
+        editing = ws.manifest is not None and row is not None
+        for w in (self.slot, self.why, self.name, self.label, self.apply, self.slot_kind):
             w.setVisible(editing)
+        placeable = editing and row is not None and row.id is not None
+        self.anim.setVisible(placeable)
+        self.place.setVisible(placeable)
         self.slot_swatch.setVisible(False)
-        self.slot_kind.setVisible(editing)
         if ws.manifest is None:
             self.edit_hint.setText("Names and labels live in a manifest: open a port manifest.")
-        elif ws.edit_slot is None:
-            self.edit_hint.setText("Click a clip above to name it.")
-        self.edit_hint.setVisible(not editing)
-        if not editing or ws.edit_slot is None:
+        elif row is None:
+            self.edit_hint.setText("Click a clip above to play it and name it.")
+        elif row.entry is None:
+            self.edit_hint.setText("Place it in an anim to play it in the game.")
+        self.edit_hint.setVisible(not editing or (row is not None and row.entry is None))
+        if not editing or row is None:
             return
-        cov = vocab.coverage.slots.get(ws.edit_slot)
-        self.slot.setText(f"Anim {ws.edit_slot}")
+        cov = None if row.entry is None else vocab.coverage.slots.get(row.entry)
+        head = f"Clip {row.id}" if row.id is not None else f"Anim {row.entry}"
+        where = (
+            ""
+            if row.id is None
+            else f"  stream {row.stream}, "
+            + (f"anim {row.entry}" if row.entry is not None else "no anim")
+        )
+        self.slot.setText(head + where)
         self.slot_swatch.set(None if cov is None else COVERAGE[cov.kind])
         self.slot_kind.setText(kind_text(cov))
-        self.why.setText(cov.why() if cov else "Its kind is unknown.")
+        self.why.setText(cov.why() if cov else UNPLACED if row.entry is None else "Kind unknown.")
         self.why.set_level(level_of(cov))
-        if ws.edit_slot != self._slot:  # a new pick loads its name; typing is left alone
-            self._slot = ws.edit_slot
+        self.in_game.setEnabled(row.entry is not None)
+        br = ws.browser()
+        if placeable and br is not None:
+            self.anim.setMaximum(max(br.layout().capacity - 1, 0))
+            kit.put(self.anim, row.entry if row.entry is not None else 0)
+        if row.key != self._loaded:  # a new pick loads its name; typing stays
+            self._loaded = row.key
             kit.put(self.name, ws.name_buf)
             kit.put(self.label, ws.label_buf)
 
@@ -291,3 +420,14 @@ def kind_text(cov: SlotCoverage | None) -> str:
 def level_of(cov: SlotCoverage | None) -> Level | None:
     """An idle copy is the loud one: a forced idle looks like an override that never fired."""
     return "warning" if cov is not None and cov.kind == clips.FILLER else None
+
+
+def row_tip(r: SourceClip, cov: SlotCoverage | None, speed: float) -> str:
+    lines = []
+    if r.id is not None:
+        lines.append(f"MHP3rd clip {r.id}: stream {r.stream}, slot {r.id % 100}")
+    lines.append(cov.why() if cov else UNPLACED if r.entry is None else "Kind unknown")
+    lines.append(f"{wall_clock(r.frames, speed):.2f} s at speed {speed:.2f}")
+    if r.label:
+        lines.append(r.label)
+    return "\n".join(lines)

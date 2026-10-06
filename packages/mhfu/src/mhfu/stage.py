@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import math
 import struct
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, NamedTuple, TypeVar
 
 from . import addresses as a
 from . import files
@@ -21,7 +22,7 @@ from .files import Extracted
 from .memory import Image, Memory, Unmapped
 from .mips import Code, Gpr
 from .overlay import Overlay
-from .views import View, f32, ptr, ptrs, u8, u16, u16s, u32, vec3
+from .views import View, f32, ptr, ptrs, u8, u16, u16s, u32, u32s, vec3
 
 R = TypeVar("R", bound=View)
 
@@ -70,6 +71,12 @@ class StageParams(View):
     env = u8(a.STAGE_PARAMS.ENV)
     exit_count = u8(a.STAGE_PARAMS.EXIT_COUNT)
     sphere_count = u8(a.STAGE_PARAMS.SPHERE_COUNT)
+    wall_classes = u32s(a.STAGE_PARAMS.WALL_CLASSES)
+
+    def wall_class(self, surface: int) -> int:
+        """The class the wall resolver reads for a triangle's surface id: byte 0 of the word at
+        4 * surface, past WALL_CLASSES for an id over 2 as the engine reads it."""
+        return self.mem.u8(self.base + a.STAGE_PARAMS.WALL_CLASSES + 4 * surface)
 
 
 class Exit(View):
@@ -81,6 +88,7 @@ class Exit(View):
     height = f32(a.STAGE_EXIT.HEIGHT)
     dest = vec3(a.STAGE_EXIT.DEST)
     yaw = u16(a.STAGE_EXIT.YAW)
+    end = vec3(a.STAGE_EXIT.END)
 
 
 class Sphere(View):
@@ -395,8 +403,11 @@ COLLISION_ENTRY = 5
 """The stage PAC entry holding the collision, a PAC of HITS chunks."""
 FLOOR_CHUNK = 1
 """The collision chunk of the walkable floor; chunk 0 holds walls and ceilings."""
+WALL_CHUNK = 0
 HITS_TAG = b"HITS"
 HITS_GRID_AT = 0x28
+HITS_BASE = 8
+"""In a stage file, a HITS chunk's offsets count from its start + this."""
 """Where a chunk's grid starts; the loader's fixup points the header's grid word here."""
 _PAC_ROW = struct.Struct("<II")
 _HITS_HEAD = struct.Struct("<4sIIIIIiiII")
@@ -414,29 +425,93 @@ class NotLoaded(LookupError):
     """The stage's PAC is not resident, or the loader has not fixed up its collision yet."""
 
 
+class Triangle(NamedTuple):
+    """One collision triangle: `dot(normal, v) + d == 0`; the flags word split as
+    `mhp_formats.fu.stage.TriFlags` names it."""
+
+    surface: int
+    """Index into the stage overlay's surface table."""
+    material: int
+    """Footstep/effect class; 9 or 10 on a near-vertical triangle is a climbable wall."""
+    exclude: int
+    """Query mask: a query sharing a bit skips the triangle."""
+    v0: tuple[float, float, float]
+    v1: tuple[float, float, float]
+    v2: tuple[float, float, float]
+    normal: tuple[float, float, float]
+    d: float
+    address: int
+
+
+def fix_up(chunk: bytes, at: int) -> bytes:
+    """A HITS chunk as the loader leaves it at address `at`: its two header offsets and every
+    grid word made addresses (offsets count from the chunk + HITS_BASE), and every list word
+    (a triangle index * 56) the triangle's address."""
+    out = bytearray(chunk)
+    head = list(_HITS_HEAD.unpack_from(out, 0))
+    nx, nz, grid, tris = head[4], head[5], head[8], head[9]
+    tris_at = at + HITS_BASE + tris
+    head[8], head[9] = at + HITS_BASE + grid, tris_at
+    _HITS_HEAD.pack_into(out, 0, *head)
+    lists = set()
+    for k in range(nx * nz):
+        pos = HITS_GRID_AT + 4 * k
+        lst = _U32.unpack_from(out, pos)[0]
+        _U32.pack_into(out, pos, at + HITS_BASE + lst)
+        lists.add(HITS_BASE + lst)
+    for i in lists:  # once each: cells may share a list
+        while (w := _U32.unpack_from(out, i)[0]) != LIST_END:
+            _U32.pack_into(out, i, tris_at + w)
+            i += 4
+    return bytes(out)
+
+
 class Floor:
     """A stage's walkable floor as the loader left it: the chunk read once, its grid, lists
     and list entries absolute addresses. An address outside the chunk (a collision push's
-    added triangles) is read live."""
+    added triangles) is read live. `read(..., chunk=WALL_CHUNK)` gives the walls instead."""
 
     def __init__(self, mem: Memory, chunk: Image, stage: int) -> None:
-        _, _, cx, cz, nx, nz, _, _, grid, _ = chunk.unpack(_HITS_HEAD, chunk.base)
+        _, _, cx, cz, nx, nz, _, _, grid, tris = chunk.unpack(_HITS_HEAD, chunk.base)
         self.mem, self.chunk, self.stage = mem, chunk, stage
         self.cell, self.grid, self.grid_at = (cx, cz), (nx, nz), grid
+        self.tris_at = tris
 
     @classmethod
-    def read(cls, mem: Memory, stage: int) -> Floor:
+    def read(cls, mem: Memory, stage: int, chunk: int = FLOOR_CHUNK) -> Floor:
         slot = resident_files(mem).get(files.stage_pac(stage))
         if slot is None:
             raise NotLoaded(f"st{stage:03d}.pac is not resident")
         coll = slot.data + mem.unpack(_PAC_ROW, slot.data + 4 + 8 * COLLISION_ENTRY)[0]
-        if mem.u32(coll) <= FLOOR_CHUNK:
-            raise NotLoaded(f"st{stage:03d} has no floor chunk")
-        at = coll + mem.unpack(_PAC_ROW, coll + 4 + 8 * FLOOR_CHUNK)[0]
+        what = "floor" if chunk == FLOOR_CHUNK else f"chunk {chunk}"
+        if mem.u32(coll) <= chunk:
+            raise NotLoaded(f"st{stage:03d} has no {what}")
+        at = coll + mem.unpack(_PAC_ROW, coll + 4 + 8 * chunk)[0]
         tag, size, *_, grid, _ = mem.unpack(_HITS_HEAD, at)
         if tag != HITS_TAG or grid != at + HITS_GRID_AT:
-            raise NotLoaded(f"st{stage:03d}'s floor at 0x{at:08X} is not fixed up")
+            raise NotLoaded(f"st{stage:03d}'s {what} at 0x{at:08X} is not fixed up")
         return cls(mem, Image(mem.read(at, size), at), stage)
+
+    @classmethod
+    def from_file(cls, game: Extracted, stage: int, chunk: int = FLOOR_CHUNK) -> Floor:
+        """The chunk out of the extracted `st<NNN>.pac`, fixed up as the loader does, at the
+        address it has in the file (the stage PAC's own offsets)."""
+        pac = game.read(files.stage_pac(stage))
+        coll = _PAC_ROW.unpack_from(pac, 4 + 8 * COLLISION_ENTRY)[0]
+        if not coll or _U32.unpack_from(pac, coll)[0] <= chunk:
+            raise NotLoaded(f"st{stage:03d} has no collision chunk {chunk}")
+        at = coll + _PAC_ROW.unpack_from(pac, coll + 4 + 8 * chunk)[0]
+        size = _HITS_HEAD.unpack_from(pac, at)[1]
+        image = Image(fix_up(pac[at : at + size], at), at)
+        return cls(image, image, stage)
+
+    def triangles(self) -> Iterator[Triangle]:
+        """The chunk's own triangle array, in file order; a push's added triangles are not
+        in it."""
+        for at in range(self.tris_at, self.chunk.end - _TRI.size + 1, _TRI.size):
+            w, x0, y0, z0, x1, y1, z1, x2, y2, z2, n0, n1, n2, d = self.chunk.unpack(_TRI, at)
+            v0, v1, v2, n = (x0, y0, z0), (x1, y1, z1), (x2, y2, z2), (n0, n1, n2)
+            yield Triangle(w & 0xFF, w >> 8 & 0xFF, w >> 16, v0, v1, v2, n, d, at)
 
     def _unpack(self, fmt: struct.Struct, address: int) -> tuple[Any, ...]:
         source = self.chunk if address in self.chunk else self.mem

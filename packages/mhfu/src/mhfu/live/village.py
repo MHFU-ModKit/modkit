@@ -37,8 +37,9 @@ TALK_PRESSES = 4  # a cross right after a walk stops can be lost
 EXIT_XZ = (9500.0, 8400.0)  # the square prompt "go on the quest" at the bottom of the village
 EXIT_ROUTE = ((10140.0, 8404.0), (9800.0, 8450.0), EXIT_XZ)
 EXIT_PROMPTS = frozenset({a.SCENE_PROMPT, a.SCENE_PROMPT_ALT})
-DEPART_PRESSES = 3
-DEPART_WINDOW = 12.0  # the prompt shows a beat before it takes input, so a press can be lost
+DEPART_PRESSES = 6
+TOOK_WINDOW = 2.0  # for a taken square to move SCREEN_STATE; the prompt shows a beat before it
+# takes input, so the first press can be lost (two boots of three, fast-forwarded)
 
 
 def scan_npcs(s: Session) -> list[Entity]:
@@ -199,24 +200,30 @@ def at_departure_zone(s: Session, window: float = 0.6) -> bool:
         return False
 
 
+def _screen_leaves(s: Session, value: int) -> Callable[[], bool]:
+    return lambda: s.game.screen_state != value
+
+
 def depart(s: Session, timeout: float = 90.0, attempts: int = 6) -> int:
     """Walk to the village exit and start the quest under contract; returns AREA_INDEX.
 
-    No cell says a contract is signed, and without one the prompt never shows, so the
-    TimeoutError this raises is that answer.
+    A square counts once SCREEN_STATE leaves its value in the zone (183 at the exit, 32 once
+    taken), so a lost one costs TOOK_WINDOW, not the load's timeout. Without a contract the
+    prompt never shows, and the TimeoutError this raises says so.
     """
     dialog.dismiss(s)
     nav.walk_path(s, EXIT_ROUTE, tolerance=95)
     for i in range(attempts):
         if at_departure_zone(s):
+            took = _screen_leaves(s, s.game.screen_state)
             # re-checking the zone between presses would read its flicker as having left it
-            for press in range(DEPART_PRESSES):
+            for _ in range(DEPART_PRESSES):
                 s.press("square", 8)
-                last = press == DEPART_PRESSES - 1
                 try:
-                    return area.wait_for_in_area(s, timeout if last else DEPART_WINDOW)
+                    s.wait(took, TOOK_WINDOW, "the departure")
                 except TimeoutError:
-                    pass
+                    continue
+                return area.wait_for_in_area(s, timeout)
         nudge = 60 if i % 2 else -60
         nav.walk_to(s, EXIT_XZ[0] + nudge, EXIT_XZ[1] + nudge, tolerance=45, timeout=12.0)
     raise TimeoutError("no departure prompt at the village exit; is a quest under contract?")

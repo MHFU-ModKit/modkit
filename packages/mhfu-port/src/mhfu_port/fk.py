@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 import numpy as np
+from mhfu.entries import ENTRY_BANK, PART_STREAMS, entry_clip
 from mhp_formats.anim import AnimPack, Clip, Track, channel_kind, dequantize
 from mhp_formats.skeleton import Skeleton, Vec3
 from numpy.typing import ArrayLike, NDArray
@@ -28,12 +29,6 @@ WEIGHT_EPS = 1e-4
 """Influences at or below this weight are dropped before normalising: a palette pads unused
 slots with weight 0, and a 0-weight slot still names a bone."""
 
-FU_PART_STREAM = 2
-"""MHFU keeps the clips of `Bone.stream` k in animation streams `FU_PART_STREAM * k` and the
-`FU_PART_STREAM - 1` after it, one bank of `ENTRY_BANK` executor entries each."""
-ENTRY_BANK = 100
-"""Executor entries per stream: entry e of part k plays slot `e % ENTRY_BANK` of stream
-`FU_PART_STREAM * k + e // ENTRY_BANK` (the resolver's `input % 1000`, hundreds the stream)."""
 
 _KINDS = ("rot", "loc")
 
@@ -338,20 +333,19 @@ def part_joints(streams: Sequence[int]) -> dict[int, list[int]]:
 
 def entry_slot(part: int, entry: int) -> tuple[int, int]:
     """`(stream, slot)` that skeleton part `part` plays for executor entry `entry`."""
-    bank, slot = divmod(entry, ENTRY_BANK)
-    if not 0 <= bank < FU_PART_STREAM:
-        raise ValueError(f"entry {entry} is past the part's {FU_PART_STREAM} streams")
-    return FU_PART_STREAM * part + bank, slot
+    if not 0 <= entry < PART_STREAMS * ENTRY_BANK:
+        raise ValueError(f"entry {entry} is past the part's {PART_STREAMS} streams")
+    return entry_clip(entry, part)
 
 
 def entry_of(stream: int, slot: int) -> int:
     """The executor entry that plays `slot` of `stream`."""
-    return stream % FU_PART_STREAM * ENTRY_BANK + slot
+    return stream % PART_STREAMS * ENTRY_BANK + slot
 
 
 def part_clip(anim: AnimPack, part: int, entry: int) -> Clip | None:
     """The clip skeleton part `part` plays for executor entry `entry`; None where it has none."""
-    if not 0 <= entry < FU_PART_STREAM * ENTRY_BANK:
+    if not 0 <= entry < PART_STREAMS * ENTRY_BANK:
         return None
     s, slot = entry_slot(part, entry)
     stream = anim.streams[s] if 0 <= s < len(anim.streams) else []

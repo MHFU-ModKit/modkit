@@ -38,11 +38,11 @@ def test_partial():
 
 
 def test_pack():
-    """Own ids first, then the rest by id into the free entries the host fills, then the lowest
-    others, past the partial one."""
+    """Ids under the capacity in their own entries, past the partial one; the rest by id into
+    the free entries the host fills, then the lowest others."""
     got = layout.plan({}, {1, 2, 4, 6, 100, 101, 205}, host({1, 2, 3, 5}, {4}), TIGREX)
-    assert got.entries == {0: 101, 1: 1, 2: 2, 3: 4, 5: 100, 6: 6, 7: 205}
-    assert (got.placed, got.partial, got.unplaced, got.ids[205]) == (set(), {4}, (), 7)
+    assert got.entries == {1: 1, 2: 2, 3: 4, 5: 205, 6: 6, 100: 100, 101: 101}
+    assert (got.placed, got.partial, got.unplaced, got.ids[205]) == (set(), {4}, (), 5)
 
 
 def test_manifest_first():
@@ -50,6 +50,79 @@ def test_manifest_first():
     got = layout.plan(named, {1, 2, 205, 206}, host({1, 2, 3}), TIGREX)
     assert got.entries == {0: 1, 1: 206, 2: 2, 3: 205}
     assert got.placed == {1, 2, 3}
+
+
+def test_pin_swaps():
+    """A pin takes the entry; the clip the packer had there takes the entry the pin freed."""
+    ids, h = {1, 2, 4, 6, 100, 101, 205}, host({1, 2, 3, 5}, {4})
+    base = layout.plan({}, ids, h, TIGREX)
+    got = layout.plan({"a": Named(1, source=205)}, ids, h, TIGREX)
+    assert layout.moved(base, got) == {1: (1, 5), 205: (5, 1)}
+    chain = {"a": Named(1, source=205), "b": Named(5, source=101)}
+    assert layout.moved(base, layout.plan(chain, ids, h, TIGREX)) == {
+        1: (1, 101),
+        101: (101, 5),
+        205: (5, 1),
+    }
+
+
+def test_pin_to_empty():
+    ids, h = {1, 2, 100, 101, 205}, host({1, 2, 3, 5})
+    base = layout.plan({}, ids, h, TIGREX)
+    got = layout.plan({"a": Named(40, source=100)}, ids, h, TIGREX)
+    assert layout.moved(base, got) == {100: (100, 40)}
+
+
+def test_pin_from_full():
+    """A pinned clip the packer had no entry for leaves the one it takes over unplaced."""
+    ids, h = {0, 1, 2, 100}, host({0}, slots=3)
+    base = layout.plan({}, ids, h, TIGREX)
+    got = layout.plan({"a": Named(1, source=100)}, ids, h, TIGREX)
+    assert (base.unplaced, got.unplaced, got.entries[1]) == ((100,), (1,), 100)
+
+
+def test_place():
+    m = manifest.loads(HEAD + "[clips.run]\nslot = 1\n")
+    ids, h = {1, 2, 205}, host({1, 2, 3})
+    now = layout.of(m, ids, h)
+    layout.place(m, now, 205, 1, "dash")
+    assert {n: (c.slot, c.id) for n, c in m.clips.items()} == {"run": (3, 1), "dash": (1, 205)}
+    layout.place(m, layout.of(m, ids, h), 205, 2, "rush")
+    assert set(m.clips) == {"run", "rush"} and m.clips["rush"].slot == 2
+    full = layout.plan({}, {0, 1, 2, 100}, host({0}, slots=3), TIGREX)
+    with pytest.raises(layout.LayoutError, match="clip 100 has no entry"):
+        layout.place(manifest.loads(HEAD + "[clips.a]\nslot = 1\n"), full, 100, 1, "b")
+    with pytest.raises(manifest.ManifestError, match="clips.run already names clip 1"):
+        layout.pin(m, "run", 205, 2)
+
+
+def test_place_over_a_name():
+    """A clip named but not pinned is the packer's to move: only the placed clip pins."""
+    m = manifest.loads(HEAD + "[clips.run]\nsource = 1\n")
+    ids, h = {1, 2, 205}, host({1, 2, 3})
+    layout.place(m, layout.of(m, ids, h), 205, 1, "dash")
+    assert m.clips["run"].slot is None and m.clips["dash"].slot == 1
+    assert layout.of(m, ids, h).entries == {1: 205, 2: 2, 3: 1}
+
+
+def test_name_clip():
+    m = manifest.loads(HEAD + "[clips.run]\nslot = 3\nsource = 205\n")
+    layout.name_clip(m, "walk", 2)
+    layout.name_clip(m, "dash", 205)
+    assert m.clips == {"walk": Named(source=2), "dash": Named(3, source=205)}
+    assert (
+        manifest.loads(manifest.dumps(m)) == m
+        and "slot" not in manifest.dumps(m).split("[clips.walk]")[1].split("[clips.dash]")[0]
+    )
+    ids, h = {1, 2, 205}, host({1, 2, 3})
+    got = layout.of(m, ids, h)
+    assert got.placed == {3} and layout.names(m, got) == {1: "clip_01", 2: "walk", 3: "dash"}
+    assert layout.where(m.clips["walk"], got.ids) == 2 and layout.where(m.clips["walk"], {}) is None
+    assert layout.pinned(m).entries == {3: 205}
+    with pytest.raises(manifest.ManifestError, match="needs a source or a slot"):
+        manifest.loads(HEAD + "[clips.a]\nlabel = 'x'\n")
+    with pytest.raises(layout.LayoutError, match="clips.a: the donor has no clip 7"):
+        layout.plan({"a": Named(source=7)}, ids, h, TIGREX)
 
 
 def test_full():
@@ -70,8 +143,11 @@ def test_refuses(named, why):
         layout.plan({"x": named}, {1, 2, 4, 123}, host({1}, {4}), TIGREX)
 
 
+HEAD = '[port]\nname = "t"\nhost_species = 75\npac = "t.bin"\n[source]\nmodel = 5248\n'
+
+
 def test_manifest_source():
-    head = '[port]\nname = "t"\nhost_species = 75\npac = "t.bin"\n[source]\nmodel = 5248\n'
+    head = HEAD
     m = manifest.loads(head + "[clips.a]\nslot = 3\nsource = 205\n")
     assert (m.clips["a"].id, manifest.loads(manifest.dumps(m)) == m) == (205, True)
     with pytest.raises(manifest.ManifestError, match="clip 3 is placed by clips.a too"):
@@ -93,10 +169,10 @@ def test_lua():
     assert body == ['  ["dash-stop"] = 1,  -- MHP3rd 1', "  clip_02 = 3,  -- MHP3rd 7"]
 
 
-@pytest.mark.parametrize(("name", "clips", "odd"), [("zinogre", 102, 4), ("brute_tigrex", 77, 0)])
+@pytest.mark.parametrize(("name", "clips", "odd"), [("zinogre", 102, 20), ("brute_tigrex", 77, 19)])
 def test_ports(data, name, clips, odd):
-    """Every source clip in an entry: stream 0 in its own but the Tigrex's partial 24 and 25,
-    the manifest's where it says, the rest packed."""
+    """Every source clip in an entry: under the capacity in its own but the Tigrex's partial 24
+    and 25, the manifest's where it says, the rest packed."""
     m = manifest.load(PORTS / f"{name}.toml")
     d, h = build.donor(m, data), build.host(m, data)
     got = build.layout(m, d, h)
@@ -104,5 +180,22 @@ def test_ports(data, name, clips, odd):
     assert sorted(got.entries.values()) == sorted(d.clips)
     assert got.partial == {24, 25} and not got.partial & set(got.entries)
     assert sum(e >= 100 for e in got.entries) == odd and max(got.entries) < got.capacity
-    assert all(got.ids[c] == c for c in d.clips if c < 100 and c not in got.partial)
-    assert all(got.entries[c.slot] == c.id for c in m.clips.values())
+    assert all(got.ids[c] == c for c in d.clips if c < got.capacity and c not in got.partial)
+    assert all(c.slot is None or got.entries[c.slot] == c.id for c in m.clips.values())
+    assert set(layout.names(m, got).values()) >= set(m.clips) and not got.placed
+
+
+@pytest.mark.parametrize("name", ["zinogre", "brute_tigrex"])
+def test_naming_moves_nothing(data, name):
+    """Naming each clip, one after another, pins none and changes no entry; neither does
+    pinning each where the layout has it."""
+    m = manifest.load(PORTS / f"{name}.toml")
+    d, h = build.donor(m, data), build.host(m, data)
+    base = build.layout(m, d, h)
+    for cid in sorted(base.ids):
+        layout.name_clip(m, f"c{cid}", cid)
+        assert layout.of(m, d.clips, h.anim).entries == base.entries, cid
+    assert len(m.clips) == len(d.clips) and not layout.of(m, d.clips, h.anim).placed
+    for cid, e in sorted(base.ids.items()):
+        layout.pin(m, f"c{cid}", cid, e)
+        assert layout.of(m, d.clips, h.anim).entries == base.entries, cid

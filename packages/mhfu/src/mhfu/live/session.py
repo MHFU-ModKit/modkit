@@ -33,6 +33,7 @@ from ppsspp_debug import (
     find_debuggers,
 )
 
+from .. import inject
 from ..memory import Live
 from ..structs import Game
 
@@ -79,7 +80,7 @@ class Launcher:
             iso=env.get("MHFU_ISO"),
             container=env.get("MHFU_CONTAINER", "ppsspp"),
             docker_cli=env.get("MHFU_DOCKER", "docker"),
-            lane=int(env["MHFU_LANE"]) if env.get("MHFU_LANE") else None,
+            lane=ln.number if (ln := inject.lane(env)) else None,
         )
 
     def binary(self) -> str:

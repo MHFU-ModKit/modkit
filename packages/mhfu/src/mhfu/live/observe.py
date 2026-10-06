@@ -8,8 +8,13 @@ pair the monster was in.
     run = obs.run(list(obs.callees), seconds=30, state=path)
     print(report([run]))
 
-A call is seen by a log-only breakpoint on the callee whose condition keeps the returns into the
-overlay's text: calls the overlay makes through engine code, by `jalr` or by a tail jump are not.
+Four instruments, all log-only, so the game keeps running:
+- `targets`: a breakpoint on each callee, kept when $ra returns into the overlay's text;
+- `indirect`: one on each of the overlay's register calls (`jalr`, `jr` tail calls), logging
+  the register, so the callee is what the register held;
+- `engine`: one on any function, kept when a register (a0 by default) holds the monster, which
+  sees what the engine does to it with no overlay frame in between (movement, collision);
+- `writes`: a watchpoint on entity fields, logging the pc of each write.
 Pair changes come from a breakpoint on SET_AI_STATE, the one writer of the pair, and snapshots
 from one read of the entity each, which stops the CPU for one request.
 """
@@ -20,7 +25,7 @@ import collections
 import statistics
 import struct
 import threading
-from collections.abc import Callable, Collection, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from functools import cache
@@ -56,31 +61,81 @@ def outbound(code: Code) -> dict[int, tuple[int, ...]]:
     return {t: tuple(s) for t, s in sorted(sites.items(), key=lambda kv: (-len(kv[1]), kv[0]))}
 
 
-def log_format(entity: int) -> str:
-    """What each breakpoint logs: the clock, $ra, the entity's pair as one u16, a0..a2."""
-    return f"{{usec}} {{ra}} {{[{entity + a.ENTITY.MAIN_STATE:#x},2]}} {{a0}} {{a1}} {{a2}}"
+def indirect(code: Code) -> dict[int, str]:
+    """`code`'s register calls whose target static analysis cannot see: site -> register."""
+    return {c.site: code.at(c.site).rs.name for c in code.calls if c.target is None}
+
+
+def _pair_ref(entity: int) -> str:
+    return f"{{[{entity + a.ENTITY.MAIN_STATE:#x},2]}}"
+
+
+def log_format(entity: int, register: str | None = None) -> str:
+    """What each breakpoint logs: the clock, $ra, the entity's pair as one u16, a0..a3, and
+    for a register call the register."""
+    tail = f" {{{register}}}" if register else ""
+    return f"{{usec}} {{ra}} {_pair_ref(entity)} {{a0}} {{a1}} {{a2}} {{a3}}{tail}"
+
+
+def write_format(entity: int) -> str:
+    """What each watchpoint logs: the clock, the writing pc, the entity's pair."""
+    return f"{{usec}} {{pc}} {_pair_ref(entity)}"
+
+
+def _unpair(word: int) -> Pair:
+    return word & 0xFF, word >> 8
 
 
 @dataclass(frozen=True)
 class Call:
-    """A logged call: `site` is the `jal` ($ra - 8), `pair` the monster's at entry, `t` the
-    emulated microseconds since its run began."""
+    """A logged call: `site` is the `jal` ($ra - 8) or the register call, `pair` the monster's
+    at entry, `t` the emulated microseconds since its run began."""
 
     callee: int
     site: int
     pair: Pair
     t: int
-    args: tuple[int, int, int]
+    args: tuple[int, int, int, int]
 
 
 def parse(hit: Hit, start: int) -> Call | None:
     """A hit logged in `log_format`; None for any other line."""
     try:
-        usec, ra, pair, a0, a1, a2 = (int(f, 16) for f in (hit.message or "").split())
+        usec, ra, pair, *args = (int(f, 16) for f in (hit.message or "").split())
     except ValueError:
         return None
-    t = (usec - start) % WRAP
-    return Call(hit.pc or hit.address, ra - 8, (pair & 0xFF, pair >> 8), t, (a0, a1, a2))
+    pc = hit.pc or hit.address
+    if len(args) == 5:  # a register call: the callee is the register, the site the breakpoint
+        callee, site = args.pop(), pc
+    elif len(args) == 4:
+        callee, site = pc, ra - 8
+    else:
+        return None
+    a0, a1, a2, a3 = args
+    return Call(callee, site, _unpair(pair), (usec - start) % WRAP, (a0, a1, a2, a3))
+
+
+@dataclass(frozen=True)
+class Write:
+    """A logged write to the entity: `offset` from its base, `function` the one holding `pc`
+    when known."""
+
+    offset: int
+    pc: int
+    function: int | None
+    pair: Pair
+    t: int
+
+
+def parse_write(
+    hit: Hit, start: int, entity: int, function: Callable[[int], int | None] = lambda _: None
+) -> Write | None:
+    """A watchpoint hit logged in `write_format`; None for any other line."""
+    try:
+        usec, pc, pair = (int(f, 16) for f in (hit.message or "").split())
+    except ValueError:
+        return None
+    return Write(hit.address - entity, pc, function(pc), _unpair(pair), (usec - start) % WRAP)
 
 
 @dataclass(frozen=True)
@@ -94,7 +149,7 @@ class Transition:
 
     @classmethod
     def of(cls, call: Call) -> Transition:
-        _, main, sub = call.args
+        _, main, sub, _ = call.args
         return cls(call.t, call.pair, (main & 0xFF, sub & 0xFF), call.site)
 
 
@@ -187,13 +242,24 @@ class Run:
 
     entity: int
     targets: tuple[int, ...]
+    indirect: tuple[int, ...] = ()
+    """Register-call sites traced."""
+    engine: tuple[int, ...] = ()
+    watched: tuple[tuple[int, int], ...] = ()
+    """(offset, size) spans of the entity whose writes are logged."""
     seconds: float = 0.0
     calls: list[Call] = field(default_factory=list)
+    writes: list[Write] = field(default_factory=list)
     transitions: list[Transition] = field(default_factory=list)
     snapshots: list[Snapshot] = field(default_factory=list)
     stats: list[FrameStats] = field(default_factory=list)
     dropped: int = 0
     unparsed: int = 0
+
+    def traced(self) -> set[int]:
+        """Callees this run would have seen: those armed, and what its register calls hit."""
+        seen = {c.callee for c in self.calls if c.site in self.indirect}
+        return set(self.targets) | set(self.engine) | seen
 
     def timeline(self) -> list[tuple[Pair, int, int]]:
         """(pair, from, to) in emulated microseconds, from the first snapshot and each
@@ -265,12 +331,33 @@ class Observer:
         self.code = engine.codes[species]
         self.callees = outbound(self.code)
         """Callee -> its call sites in the overlay."""
+        self.indirect = indirect(self.code)
+        """Register-call site in the overlay -> its register."""
         self.vtable = engine.owners[species].vtable.va
+        self._zones: dict[str, Code] = {}
 
     @property
     def condition(self) -> str:
         """True when $ra returns into the overlay's text."""
         return f"ra > {self.code.text.start:#x} && ra <= {self.code.text.stop:#x}"
+
+    def function(self, pc: int) -> int | None:
+        """The start of the function holding `pc`, in the engine or this species' overlay."""
+        zone = self.engine.zone(pc)
+        if zone is None:
+            return None
+        if zone not in self._zones:
+            e = self.engine
+            if zone == "em":
+                code = self.code
+            elif zone == "game_task":
+                code = e.task_code
+            else:
+                mem = e.eboot if zone == "eboot" else e.game_sub
+                code = Code(mem, mem.text)
+            self._zones[zone] = code
+        code = self._zones[zone]
+        return code.function(pc).start if pc in code.text else None
 
     def entities(self) -> list[int]:
         """Registry entities of this species, by vtable."""
@@ -291,15 +378,29 @@ class Observer:
         targets: Iterable[int] = (),
         *,
         seconds: float,
+        indirect: Iterable[int] = (),
+        engine: Mapping[int, str] | Iterable[int] = (),
+        writes: Iterable[tuple[int, int]] = (),
         rate: float = 2.0,
         state: str | None = None,
         entity: int | None = None,
         marks: bool = True,
         log: Callable[[str], None] = lambda _: None,
     ) -> Run:
-        """Trace `targets`, and with `marks` the pair changes, and snapshot the monster `rate`
+        """Trace `targets`, the register-call sites `indirect`, the `engine` functions (address
+        -> the register holding the monster, a0 for a plain list), the writes to the entity's
+        `(offset, size)` spans, and with `marks` the pair changes; snapshot the monster `rate`
         times a second (0: at the ends only) for `seconds` of emulated time; `state` is loaded
         first."""
+        targets = tuple(int(t) for t in targets)
+        holders = (
+            {int(k): v for k, v in engine.items()}
+            if isinstance(engine, Mapping)
+            else dict.fromkeys((int(k) for k in engine), "a0")
+        )
+        writes = tuple((int(offset), int(size)) for offset, size in writes)
+        if overlap := set(targets) & set(holders):
+            raise ValueError(f"traced both as callee and engine function: {sorted(overlap)}")
         client = self.s.client
         if state is not None:
             client.load_state(state)
@@ -309,7 +410,7 @@ class Observer:
             if not found:
                 raise ValueError(f"no em{self.species} monster in the entity registry")
             entity = found[0]
-        run = Run(entity, tuple(targets))
+        run = Run(entity, targets, tuple(int(i) for i in indirect), tuple(holders), writes)
         start = self.usec()
 
         def take(sink: list[Any], convert: Callable[[Call], Any]) -> Callable[[Hit], None]:
@@ -322,27 +423,48 @@ class Observer:
 
             return put
 
+        def put_write(hit: Hit) -> None:
+            w = parse_write(hit, start, entity, self.function)
+            if w is None:
+                run.unparsed += 1
+            else:
+                run.writes.append(w)
+
         def snap() -> Snapshot:
             data = client.read(entity, SNAPSHOT_SIZE)
             return Snapshot((self.usec() - start) % WRAP, data)
 
         fmt = log_format(entity)
+        calls = take(run.calls, lambda c: c)
+        wanted = [_Trace(calls, run.targets, condition=self.condition, log_format=fmt)]
+        for reg, sites in _by_value({s: self.indirect[s] for s in run.indirect}).items():
+            wanted.append(_Trace(calls, sites, log_format=log_format(entity, reg)))
+        for reg, fns in _by_value(holders).items():
+            wanted.append(_Trace(calls, fns, condition=f"{reg} == {entity:#x}", log_format=fmt))
+        spans = tuple((entity + off, size) for off, size in run.watched)
+        wanted.append(_Trace(put_write, writes=spans, log_format=write_format(entity)))
+        if marks:
+            marked = take(run.transitions, Transition.of)
+            condition = f"a0 == {entity:#x}"
+            wanted.append(_Trace(marked, (a.SET_AI_STATE,), condition=condition, log_format=fmt))
         streams: list[SyncStream[Hit]] = []
         # the traces end before their readers do, so the hits queued by then are all taken
         with ExitStack() as readers, ExitStack() as traces:
-            if run.targets:
+            for w in wanted:
+                if not (w.addresses or w.writes):
+                    continue
                 hits = traces.enter_context(
-                    client.trace(run.targets, condition=self.condition, log_format=fmt)
+                    client.trace(
+                        w.addresses, writes=w.writes, condition=w.condition, log_format=w.log_format
+                    )
                 )
-                readers.enter_context(_Reader(hits, take(run.calls, lambda c: c)))
+                readers.enter_context(_Reader(hits, w.sink))
                 streams.append(hits)
-            if marks:
-                pairs = traces.enter_context(
-                    client.trace([a.SET_AI_STATE], condition=f"a0 == {entity:#x}", log_format=fmt)
-                )
-                readers.enter_context(_Reader(pairs, take(run.transitions, Transition.of)))
-                streams.append(pairs)
-            log(f"{len(run.targets)} callee(s) on 0x{entity:08X}, {seconds:g} emulated s")
+            log(
+                f"{len(run.targets)} callee(s), {len(run.indirect)} register call(s), "
+                f"{len(run.engine)} engine function(s), {len(run.watched)} field(s) "
+                f"on 0x{entity:08X}, {seconds:g} emulated s"
+            )
             run.snapshots.append(snap())
             next_snap = next_stats = self.s.now()
             while (self.usec() - start) % WRAP < seconds * 1e6:
@@ -361,8 +483,27 @@ class Observer:
             traces.close()
         run.dropped = sum(s.dropped for s in streams)
         run.calls = [c for c in run.calls if c.t <= last.t]
+        run.writes = [w for w in run.writes if w.t <= last.t]
         run.transitions = [tr for tr in run.transitions if tr.t <= last.t]
         return run
+
+
+@dataclass(frozen=True)
+class _Trace:
+    """One `trace()` of a run and where its hits go."""
+
+    sink: Callable[[Hit], None]
+    addresses: tuple[int, ...] = ()
+    writes: tuple[tuple[int, int], ...] = ()
+    condition: str | None = None
+    log_format: str | None = None
+
+
+def _by_value(mapping: Mapping[int, str]) -> dict[str, tuple[int, ...]]:
+    out: dict[str, list[int]] = collections.defaultdict(list)
+    for key, value in mapping.items():
+        out[value].append(key)
+    return {k: tuple(v) for k, v in out.items()}
 
 
 @dataclass(frozen=True)
@@ -435,7 +576,7 @@ def by_pair(runs: Sequence[Run]) -> list[PairCalls]:
     calls: dict[tuple[Pair, int], list[Call]] = collections.defaultdict(list)
     traced: dict[int, list[int]] = collections.defaultdict(list)
     for r, run in enumerate(runs):
-        for va in run.targets:
+        for va in run.traced():
             traced[va].append(r)
         for c in run.calls:
             calls[c.pair, c.callee].append(c)
@@ -477,7 +618,7 @@ def report(runs: Sequence[Run], *, sites: int = 3, a1_limit: int = 6) -> str:
     """Per pair, the callees most called first, with their call sites and, when few, their
     a1 values (decimal, as action ids are written); then the pair sequence of the first run."""
     lines = []
-    traced = {va for run in runs for va in run.targets}
+    traced = {va for run in runs for va in run.traced()}
     calls = sum(len(run.calls) for run in runs)
     lines.append(
         f"{len(runs)} run(s), {len(traced)} callee(s) traced, "
@@ -495,6 +636,35 @@ def report(runs: Sequence[Run], *, sites: int = 3, a1_limit: int = 6) -> str:
     if runs:
         steps = [f"{_pair(p)} {(b - f) / 1e6:.1f}s" for p, f, b in runs[0].timeline()]
         lines.append("sequence: " + " -> ".join(steps))
+    return "\n".join(lines)
+
+
+def field_name(offset: int) -> str:
+    """The ENTITY field at `offset`, `NAME+0xN` inside one, else `+0xNNN`."""
+    for name, start, fmt in _fields():
+        if start <= offset < start + fmt.size:
+            return name if offset == start else f"{name}+{offset - start:#x}"
+    return f"+0x{offset:03X}"
+
+
+def writes_report(runs: Sequence[Run], *, limit: int = 4) -> str:
+    """Per pair, each field written and the functions writing it (`function@pc`), the most
+    writes first."""
+    per: dict[Pair, dict[str, collections.Counter[tuple[int | None, int]]]] = {}
+    for run in runs:
+        for w in run.writes:
+            fields = per.setdefault(w.pair, {})
+            fields.setdefault(field_name(w.offset), collections.Counter())[w.function, w.pc] += 1
+    lines = []
+    for pair, fields in per.items():
+        lines.append(f"{_pair(pair)} writes")
+        for name, writers in sorted(fields.items()):
+            shown = []
+            for (fn, pc), n in writers.most_common(limit):
+                label = f"{fn:08X} {symbols.name(fn) or '-'}" if fn is not None else "?"
+                shown.append(f"{label} @{pc:08X} x{n}")
+            more = f" +{len(writers) - limit}" if len(writers) > limit else ""
+            lines.append(f"  {name}: " + ", ".join(shown) + more)
     return "\n".join(lines)
 
 

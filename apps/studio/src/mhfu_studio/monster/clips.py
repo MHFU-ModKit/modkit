@@ -18,8 +18,8 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
+from mhfu_port import layout as layouts
 from mhfu_port import motion, slots
-from mhfu_port.fk import ENTRY_BANK
 from mhfu_port.manifest import Clip, Manifest, ManifestError, Move
 from mhfu_port.model import clip_key
 from mhp_formats import anim
@@ -83,10 +83,10 @@ def pac_clip_table(pac: bytes) -> dict[int, Fingerprint]:
 
 def source_clip_table(moveset: bytes) -> dict[int, Fingerprint]:
     """MHP3rd clip id -> fingerprint of a donor moveset, every stream."""
-    return {cid: _print(c) for cid, c in motion.moveset(moveset).items()}
+    return {cid: fingerprint(c) for cid, c in motion.moveset(moveset).items()}
 
 
-def _print(clip: anim.Clip) -> Fingerprint:
+def fingerprint(clip: anim.Clip) -> Fingerprint:
     frames, loop = slots.fingerprint(clip)
     return frames, bool(loop)
 
@@ -182,13 +182,13 @@ def coverage(
     layout: Mapping[int, int] | None = None,
 ) -> Coverage:
     """Each entry of a built pack against the donor clip `layout` (entry -> MHP3rd id; by
-    default each stream-0 clip in the entry of its id) puts there and the host's pack; every
+    default each entry read as the clip of its own id) puts there and the host's pack; every
     entry is UNKNOWN without the donor."""
     table = clip_table(port)
     host_table = clip_table(host) if host is not None else {}
     donor = donor or {}
     if layout is None:
-        layout = {cid: cid for cid in donor if cid < ENTRY_BANK}
+        layout = {cid: cid for cid in donor if cid in table}
     held = slots.correspondence(port, donor, layout) if donor else {}
     cov = Coverage(has_source=bool(donor), has_host=host is not None)
     for slot, fp in sorted(table.items()):
@@ -202,11 +202,11 @@ def coverage(
         else:
             kind = HOST if host_table.get(slot) == fp else ALTERED
         cid = layout.get(slot)
-        fp_src = _print(donor[cid]) if cid is not None and cid in donor else None
+        fp_src = fingerprint(donor[cid]) if cid is not None and cid in donor else None
         cov.slots[slot] = SlotCoverage(slot, kind, fp[0], fp[1], fp_src, cid)
     if host is not None:
         placed = set(layout.values())
-        cov.dropped = {cid: _print(c) for cid, c in donor.items() if cid not in placed}
+        cov.dropped = {cid: fingerprint(c) for cid, c in donor.items() if cid not in placed}
     return cov
 
 
@@ -218,7 +218,8 @@ class LabelTrack:
     """One named clip, checked against the build in front of you."""
 
     name: str
-    slot: int
+    slot: int | None
+    """The anim the layout plays it in; None: none."""
     status: str
     message: str
     label: str = ""
@@ -231,24 +232,47 @@ class LabelTrack:
         return self.status in (CURRENT, STILL_VALID)
 
 
+def _ids(sources: Mapping[int, int]) -> dict[int, int]:
+    """Entry -> MHP3rd id (`Coverage.sources`, a layout's `entries`) turned around."""
+    return {cid: e for e, cid in sources.items()}
+
+
+def at(c: Clip, sources: Mapping[int, int]) -> int | None:
+    """The anim clip `c` plays in: where `sources` (entry -> MHP3rd id) puts its clip, else
+    its pin."""
+    return layouts.where(c, _ids(sources))
+
+
 def track_labels(
-    m: Manifest, table: Mapping[int, Fingerprint], build: str | None = None
+    m: Manifest,
+    table: Mapping[int, Fingerprint],
+    build: str | None = None,
+    sources: Mapping[int, int] | None = None,
 ) -> list[LabelTrack]:
-    """Whether each clip name still points at its clip: the fingerprint looked up in `table`.
-    A fingerprint several slots share is AMBIGUOUS, never resolved to the first."""
+    """Whether each clip name still points at its clip: the fingerprint looked up in `table`
+    at the anim `sources` (entry -> MHP3rd id) or its pin puts it in. A fingerprint several
+    slots share is AMBIGUOUS, never resolved to the first."""
+    ids = _ids(sources or {})
     out = []
     for name, c in sorted(m.clips.items()):
         lb = c.labelled_build
+        slot = layouts.where(c, ids)
+        if slot is None:
+            why = "the layout leaves its clip out" if ids else "no layout says where it plays"
+            msg = f"clip {c.id} is in no anim: {why}."
+            status = LOST if ids else UNCHECKABLE
+            out.append(LabelTrack(name, None, status, msg, c.label, labelled_build=lb))
+            continue
         if c.frames is None:
-            msg = f"no `frames` recorded; whatever is in anim {c.slot} now wears this name."
-            out.append(LabelTrack(name, c.slot, UNCHECKABLE, msg, c.label, labelled_build=lb))
+            msg = f"no `frames` recorded; whatever is in anim {slot} now wears this name."
+            out.append(LabelTrack(name, slot, UNCHECKABLE, msg, c.label, labelled_build=lb))
             continue
         loop = c.loop
         want = f"{c.frames}f{', loop' if loop else ''}"
         matches = tuple(
             s for s, (f, lp) in sorted(table.items()) if f == c.frames and loop in (None, lp)
         )
-        if c.slot in matches:
+        if slot in matches:
             same = build is not None and lb == build
             if same:
                 why = " — labelled against this very build"
@@ -257,33 +281,42 @@ def track_labels(
             else:
                 why = " (no build recorded for the label: this rests on the fingerprint alone)"
             status = CURRENT if same else STILL_VALID
-            msg = f"anim {c.slot} still holds a {want} clip{why}"
-            out.append(LabelTrack(name, c.slot, status, msg, c.label, labelled_build=lb))
+            msg = f"anim {slot} still holds a {want} clip{why}"
+            out.append(LabelTrack(name, slot, status, msg, c.label, labelled_build=lb))
         elif len(matches) == 1:
             msg = (
                 f"the {want} clip this name was written for is now anim {matches[0]}, not "
-                f"{c.slot}. Name it again there."
+                f"{slot}. Name it again there."
             )
-            out.append(LabelTrack(name, c.slot, MOVED, msg, c.label, matches[0], matches, lb))
+            out.append(LabelTrack(name, slot, MOVED, msg, c.label, matches[0], matches, lb))
         elif matches:
             msg = (
-                f"anim {c.slot} does not hold it any more and {len(matches)} anims match its "
+                f"anim {slot} does not hold it any more and {len(matches)} anims match its "
                 f"length and loop ({', '.join(map(str, matches))})."
             )
-            out.append(LabelTrack(name, c.slot, AMBIGUOUS, msg, c.label, None, matches, lb))
+            out.append(LabelTrack(name, slot, AMBIGUOUS, msg, c.label, None, matches, lb))
         else:
             msg = f"nothing in this build is {want}: the clip this name describes is not here."
-            out.append(LabelTrack(name, c.slot, LOST, msg, c.label, labelled_build=lb))
+            out.append(LabelTrack(name, slot, LOST, msg, c.label, labelled_build=lb))
     return out
 
 
-def unlabelled_slots(m: Manifest, table: Mapping[int, Fingerprint]) -> list[int]:
-    named = {c.slot for c in m.clips.values()}
+def unlabelled_slots(
+    m: Manifest, table: Mapping[int, Fingerprint], sources: Mapping[int, int] | None = None
+) -> list[int]:
+    ids = _ids(sources or {})
+    named = {layouts.where(c, ids) for c in m.clips.values()}
     return [s for s in sorted(table) if s not in named]
 
 
-def entry(m: Manifest, slot: int) -> tuple[str, Clip] | None:
-    """The manifest's clip in `slot`, with its name."""
+def entry(
+    m: Manifest, slot: int, sources: Mapping[int, int] | None = None
+) -> tuple[str, Clip] | None:
+    """The manifest's clip in anim `slot`, with its name: the one naming the clip `sources`
+    (entry -> MHP3rd id) puts there, else the one pinned there."""
+    cid = (sources or {}).get(slot)
+    if cid is not None:
+        return next(((n, c) for n, c in m.clips.items() if c.id == cid), None)
     return next(((n, c) for n, c in m.clips.items() if c.slot == slot), None)
 
 
@@ -297,11 +330,16 @@ def _label(
     impact_frame: int | None = None,
     source: int | None = None,
 ) -> None:
-    found = entry(m, slot)
-    if found is None:
-        m.clips[name] = Clip(slot, source=None if source == slot else source)
-    elif found[0] != name:
-        m.rename_clip(found[0], name)
+    """Names the clip in `slot`: MHP3rd clip `source` without pinning it; without a `source`,
+    whatever is in `slot`, pinned there, all a build alone says."""
+    if source is not None:
+        layouts.name_clip(m, name, source)
+    else:
+        found = entry(m, slot)
+        if found is None:
+            m.clips[name] = Clip(slot)
+        elif found[0] != name:
+            m.rename_clip(found[0], name)
     c = m.clips[name]
     c.frames, c.loop = fp
     c.labelled_build = build
@@ -314,7 +352,8 @@ def _label(
 class LabelSession:
     """Names clips against ONE build (`table`, `build`): the fingerprint and the build id come
     from the pack that is open, never from what the manifest said. With `sources` (entry ->
-    MHP3rd clip, `Coverage.sources`), a new name places the clip the entry holds there."""
+    MHP3rd clip, `Coverage.sources`), a name is the clip's, which the packer keeps placing;
+    without, it pins the anim."""
 
     def __init__(
         self,
@@ -329,7 +368,7 @@ class LabelSession:
         self.sources = dict(sources or {})
 
     def entry(self, slot: int) -> tuple[str, Clip] | None:
-        return entry(self.doc.manifest, slot)
+        return entry(self.doc.manifest, slot, self.sources)
 
     def default_name(self, slot: int) -> str:
         found = self.entry(slot)
@@ -347,8 +386,8 @@ class LabelSession:
         """`slot`'s fingerprint, refusing a slot this build lacks, one holding none of the
         original's clips, or a name another slot has."""
         clash = self.doc.manifest.clips.get(name)
-        if clash is not None and clash.slot != slot:
-            raise ManifestError(f"clips.{name} already exists, on slot {clash.slot}")
+        if clash is not None and (there := at(clash, self.sources)) != slot:
+            raise ManifestError(f"clips.{name} already exists, on anim {there}")
         fp = self.table.get(slot)
         if fp is None:
             raise ManifestError(f"slot {slot} is not populated in this build")
@@ -448,7 +487,7 @@ def import_labels(
             continue
         if only_carried is not None and only_carried.kind(slot) != CARRIED:
             continue
-        found = entry(doc.manifest, slot)
+        found = entry(doc.manifest, slot, sources)
         if found is not None and found[1].label and not overwrite:
             continue
         todo.append((slot, found[0] if found else clip_key(slot), text))
@@ -496,11 +535,15 @@ def survey(
     """Coverage and label health for one pack; `m` None for a PAC with no manifest."""
     return Vocabulary(
         cov,
-        [] if m is None else track_labels(m, table, build),
-        sorted(table) if m is None else unlabelled_slots(m, table),
+        [] if m is None else track_labels(m, table, build, cov.sources()),
+        sorted(table) if m is None else unlabelled_slots(m, table, cov.sources()),
         build,
         list(notes),
     )
+
+
+def _or_dash(n: int | None) -> str:
+    return "-" if n is None else str(n)
 
 
 def report(name: str, v: Vocabulary) -> str:
@@ -513,8 +556,8 @@ def report(name: str, v: Vocabulary) -> str:
             "against this build"
         )
         lines += [
-            f"  {' ' if t.trusted else '!'} {t.name:<14} slot {t.slot:<3} {t.status:<12} "
-            f"{t.message}"
+            f"  {' ' if t.trusted else '!'} {t.name:<14} slot {_or_dash(t.slot):<3} "
+            f"{t.status:<12} {t.message}"
             for t in v.tracks
         ]
     worth = [s for s in v.unlabelled if v.kind(s) == CARRIED]

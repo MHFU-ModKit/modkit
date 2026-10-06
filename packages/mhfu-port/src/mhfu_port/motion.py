@@ -4,7 +4,7 @@
 joints, and an edited whole-rig clip written back into an executor entry.
 
 MHFU splits one rig into parts by `Bone.stream` (the Tigrex: 31 body, 9 head, 5 tail joints),
-each part's clips in its own animation streams (`fk.FU_PART_STREAM`), all playing the same
+each part's clips in its own animation streams (`mhfu.entries.PART_STREAMS`), all playing the same
 executor entry together (`fk.entry_slot`). `fk.rig_clip` joins an entry's parts into one clip;
 `split` and `put` undo it. MHP3rd keeps each clip whole, in independent streams.
 """
@@ -13,11 +13,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 
+from mhfu.entries import PART_STREAMS
 from mhp_formats import fu, p3rd
 from mhp_formats.anim import CHANNEL_BITS, AnimPack, Channel, Clip, Keyframe, Track, quantize
 from mhp_formats.skeleton import Skeleton
 
-from .fk import FU_PART_STREAM, entry_of, entry_slot, part_clip, part_joints, rig_clip
+from .fk import entry_of, entry_slot, part_clip, part_joints, rig_clip
 
 _BIT = {kind: bit for bit, kind in CHANNEL_BITS.items()}
 _ROTATION = tuple(_BIT["rot", axis] for axis in range(3))
@@ -145,7 +146,7 @@ def build(
     if any(width < 0 for width in streams):
         raise ValueError(f"negative stream width in {list(streams)}")
     for k, width in enumerate(streams):
-        si = FU_PART_STREAM * k
+        si = PART_STREAMS * k
         if width and not any(c is not None for c in _stream(host, si)):
             raise ValueError(f"part {k} plays stream {si}, where the host has no clip")
     if not layout:

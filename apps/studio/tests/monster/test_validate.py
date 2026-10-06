@@ -106,6 +106,19 @@ def test_pac(make, synthetic_pac):
         V.bone_count(b"\0" * 64)
 
 
+def test_named_clips(make, synthetic_pac):
+    """A clip named without a slot is checked in the anim the layout gives it, skipped without
+    a layout, and missing where the layout leaves it out."""
+    m = make("\n[clips.walk]\nsource = 205\nframes = 10\n[clips.out]\nsource = 206\n")
+    by = {(f.code, f.where) for f in V.validate(m, synthetic_pac, sources={1: 205})}
+    assert ("CLIP_SLOT_MISSING", "clips.out") in by and not any(w == "clips.walk" for _, w in by)
+    by = {(f.code, f.where) for f in V.validate(m, synthetic_pac, sources={2: 205})}
+    assert ("CLIP_FRAMES_MISMATCH", "clips.walk") in by
+    assert not any(
+        w.startswith("clips.") for _, w in {(f.code, f.where) for f in V.validate(m, synthetic_pac)}
+    )
+
+
 def test_filler(make, synthetic_pac, monkeypatch):
     monkeypatch.setattr(V.clips, "pac_clip_table", lambda pac: {1: (10, True), 5: (10, True)})
     out = found(V.validate(make("\n[clips.f]\nslot = 5\n"), synthetic_pac))

@@ -15,11 +15,12 @@ Every write to a monster here is one-shot: a big monster maintained per tick sto
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
+from typing import TYPE_CHECKING
 
 from ppsspp_debug import DebuggerError, Disconnected, Lane, find_debuggers
 
@@ -28,6 +29,10 @@ from ..stage import Floor, map_manager
 from ..structs import DRAW_GATE, BigMonster, Player
 from . import boot, quests, survival
 from .session import Launcher, Session
+
+if TYPE_CHECKING:
+    from ..points import Point
+    from . import navigation, route
 
 Vec3 = tuple[float, float, float]
 Log = Callable[[str], None]
@@ -295,3 +300,17 @@ class Rig:
         tb: TracebackType | None,
     ) -> None:
         self.close()
+
+    def goto(self, point: Point, plan: route.Map, log: Log | None = None) -> Vec3:
+        """`route.goto`: the hunter on the floor at `point`, one area change away at most."""
+        from . import route
+
+        return route.goto(self.s, point, plan, log)
+
+    def walk(
+        self, point: Point, plan: route.Map, climbs: Sequence[Point] = (), log: Log | None = None
+    ) -> navigation.Walk:
+        """`route.walk`: walked to `point`, exit to exit, taking the ledges in `climbs`."""
+        from . import route
+
+        return route.walk(self.s, point, plan, climbs, log=log)

@@ -103,7 +103,29 @@ with Session.launch(cold=True) as s:  # PPSSPP here, or in the modkit container
 | `mhfu start`, `mhfu stop` | The game with its debugger open, or stopped |
 | `mhfu shell` | A debug shell on the running game: player, monsters, animations, hit volumes |
 | `mhfu rig load\|save\|where\|teleport\|summon\|pin\|speed` | Set up a live experiment: savestates, the player on the floor at x, z, a big monster beside the player, pinned HP, fast-forward |
+| `mhfu rig points\|goto\|walk` | Named points of a map document; the player put at one (one area change away) or walked to it, exit to exit |
 | `mhfu observe trace\|cost` | Which engine functions a big monster's overlay calls in each of its states, and how often, without stopping the game |
+
+Named points live in a map document's `map.toml` (`mhfu.points`; the studio's map editor sets
+them). `mhfu rig goto NAME --map DIR` changes area straight to the point's stage and puts the
+player on its floor; `mhfu rig walk NAME...` walks there. The walk's route crosses stages by
+their files (floor, walls, exits): an exit counts only if a walk reaches it. Besides walking it
+takes three things the collision gives: climbable walls (material 9 or 10), ledges (an unmarked
+step of 120 to 350 units) and drops off a cliff (one way). Climb points in the document replace
+a ledge the collision gets wrong. Both need the extracted game (`--data` or
+`MHFU_DATA`); `MHFU_MAP` names the document.
+
+```python
+from mhfu.files import Extracted
+from mhfu.live import route
+from mhfu.live.rig import Rig
+from mhfu import points
+
+wall = points.find(points.load("maps/snow"), "tigrex_wall")
+with Rig.open(state=6) as rig:
+    plan = route.Map.live(rig.s, Extracted.find())
+    rig.goto(wall, plan)  # one area change: about two seconds
+```
 
 PPSSPP must open its debugger at startup (`RemoteDebuggerOnStartup = True` in `ppsspp.ini`).
 `MHFU_ISO` names the game image, `MHFU_PPSSPP` a PPSSPP binary not on `PATH`, and

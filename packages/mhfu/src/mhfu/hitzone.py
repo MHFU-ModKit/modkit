@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from . import addresses as a
 from . import files
 from .files import Extracted
-from .memory import Memory, Space, Unmapped
+from .memory import Image, Memory, Space, Unmapped
 from .overlay import Overlay
 from .structs import Species
 from .views import View, f32, u8s, u16, u32, vec3
@@ -91,6 +91,25 @@ class HitVolume(View):
 
 
 STRIDE: int = a.HIT_VOLUME.step
+SENTINEL = bytes([0xFF] * 8) + bytes(STRIDE - 8)
+"""The record that ends a set as the writers put it: every u16 0xFFFF, the rest zero."""
+
+
+def pack(
+    bone: int,
+    shape: int,
+    row: int,
+    part: int,
+    flags: int,
+    radius: float,
+    offset: tuple[float, float, float],
+    far: tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> bytes:
+    """One record's bytes."""
+    v = HitVolume(Image(bytes(STRIDE), 0))
+    v.bone, v.shape, v.row, v.part, v.flags = bone, shape, row, part, flags
+    v.radius, v.offset, v.far = radius, offset, far
+    return v.raw
 
 
 @dataclass

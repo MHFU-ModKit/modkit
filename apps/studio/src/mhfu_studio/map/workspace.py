@@ -10,6 +10,7 @@ lives here.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import time
 from collections.abc import Callable, Hashable, Sequence
@@ -18,7 +19,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from mhfu import points as P
 from mhfu.files import Extracted
+from mhfu.points import Point
 
 from mhfu_studio.shell import places
 from mhfu_studio.shell.camera import Bounds
@@ -60,7 +63,7 @@ from .core.edit import (
 )
 from .core.scene import Key, MapScene, SceneError, group_name, open_stage
 from .document import MANIFEST, MapDocument
-from .tools import GROUPS, MOVE, ROTATE, SCALE, SELECT, VERBS, ViewportTools
+from .tools import GROUPS, MOVE, POINT, ROTATE, SCALE, SELECT, VERBS, ViewportTools
 
 if TYPE_CHECKING:
     import moderngl
@@ -73,6 +76,12 @@ VILLAGE = 139
 """The section a viewport set up with nothing loaded shows: Pokke village, row 0."""
 SMALL = 50.0
 """A selection smaller than this is framed as a box this size around its centre."""
+POINT_COLORS = {
+    "point": (1.0, 0.82, 0.25, 1.0),
+    "waypoint": (0.45, 0.85, 1.0, 1.0),
+    "climb": (0.75, 1.0, 0.45, 1.0),
+}
+"""A named point's marker, by kind."""
 
 
 CLEAR = Shortcut(("Escape",), "Clears the selection, or drops a drag or a box under way")
@@ -146,6 +155,8 @@ class MapWorkspace(Workspace):
         #: the op a finding showed, and the control its panel lands on (`land`)
         self.shown_op: int | None = None
         self.landing = ""
+        #: the named point the Points panel edits
+        self.point: str | None = None
         self.locate()
 
     # the shell's hooks
@@ -329,6 +340,12 @@ class MapWorkspace(Workspace):
                 shown=False,
             ),
             Dock(
+                "Points", "right", build("points", "PointsPanel"),
+                "Named places on the map for `mhfu rig goto` and `walk`: set one with the Point"
+                " tool, name it here, and save the document.",
+                shown=False,
+            ),
+            Dock(
                 "Textures", "bottom", build("textures", "TexturesPanel"),
                 "The area's textures: who wears each slot, and replacing one with a picture or a"
                 " flat colour. Send to game shows the change in the running game.",
@@ -361,6 +378,8 @@ class MapWorkspace(Workspace):
         sc, t = self.scene, self.tools
         if sc is None:
             return plain(self.data_error) or "Click an area in Areas to load it"
+        if t.tool == POINT:
+            return "Click the ground to set a named point \u00b7 drag turns the view"
         sel = self.col_sel if t.kind == COLLISION else self.selection
         if sel.empty:
             if t.tool == SELECT:
@@ -404,7 +423,22 @@ class MapWorkspace(Workspace):
 
     def paint(self, o: Overlay) -> None:
         self._labels(o)
+        self._points(o)
         self.tools.paint(o)
+
+    def _points(self, o: Overlay) -> None:
+        """The area's named points: a ring on the ground and the name above it."""
+        vp, here = self.vp, self.points_here()
+        if vp is None or not here:
+            return
+        w, h = o.size
+        pts = vp.camera.project(np.array([p.at for p in here], np.float64), o.size)
+        for p, (x, y, z) in zip(here, pts, strict=True):
+            if 0.0 <= z <= 1.0 and 0.0 <= x <= w and 0.0 <= y <= h:
+                color = POINT_COLORS[p.kind]
+                width = 3.0 if p.name == self.point else 1.5
+                o.circle((float(x), float(y)), 6.0, color=color, width=width)
+                o.text((float(x) + 8.0, float(y) - 16.0), p.name, color)
 
     def _labels(self, o: Overlay) -> None:
         """The exits', arrivals' and spheres' names at their places, in their colours."""
@@ -741,6 +775,52 @@ class MapWorkspace(Workspace):
             m = compose(pivot=self.selection.centroid(sc), by=by, rotate=rotate, scale=scale)
             if self.do("transform", sess.apply_now, self.selection, m):
                 self.tools.turned(m)
+
+    # named points
+
+    def points_here(self) -> list[Point]:
+        """The document's points on the loaded area, or on its twin of the other time of day."""
+        sc = self.scene
+        return [] if sc is None else P.on_stage(self.doc.points, sc.stage, self.game)
+
+    def place_point(self, at: tuple[float, float, float] | None) -> Point | None:
+        """A new point on the loaded area at `at`, picked for the Points panel."""
+        sc = self.scene
+        if sc is None:
+            return None
+        if at is None:
+            self.message = "no ground under the pointer: click the floor to set a point"
+            return None
+        p = Point(self.doc.new_point_name(), sc.stage, at)
+        self.doc.put_point(p)
+        self.point = p.name
+        x, y, z = at
+        self.message = f"set {p.name} at ({x:.0f}, {y:.0f}, {z:.0f}): name it in Points"
+        self._focus = "Points"
+        return p
+
+    def edit_point(self, which: str, /, **changes: Any) -> str | None:
+        """Change the point named `which` (fields of `Point`); the refusal in words, None when
+        done."""
+        old = self.doc.point(which)
+        if old is None:
+            return f"no point {which}"
+        new = dataclasses.replace(old, **changes)
+        if new.kind != "climb":
+            new = dataclasses.replace(new, heading=None)
+        elif new.heading is None:
+            new = dataclasses.replace(new, heading=0.0)
+        try:
+            self.doc.put_point(new, replacing=which)
+        except P.PointError as e:
+            return str(e)
+        self.point = new.name
+        return None
+
+    def remove_point(self, name: str) -> None:
+        self.doc.remove_point(name)
+        if self.point == name:
+            self.point = None
 
     def select_group(self, key: Key | None) -> None:
         sc = self.scene

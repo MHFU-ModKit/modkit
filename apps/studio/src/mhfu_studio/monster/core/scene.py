@@ -9,14 +9,14 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Self
 
-from mhfu_port import build
+from mhfu_port import build, layout
 from mhfu_port.data import Data
 from mhfu_port.manifest import Manifest
 from mhfu_port.model import MHP3RD, Clip, Model
 
 from mhfu_studio.monster.clips import build_id
 from mhfu_studio.monster.core.pose import Pose
-from mhfu_studio.monster.inputs import built
+from mhfu_studio.monster.inputs import built, placed
 from mhfu_studio.shell import places
 
 
@@ -26,6 +26,8 @@ class Scene(Model):
     def __init__(self, *args: Any, **kw: Any) -> None:
         super().__init__(*args, **kw)
         self.manifest: Manifest | None = None
+        self.placed: dict[int, int] = {}
+        """MHP3rd clip id -> the anim the build plays it in; empty: the manifest's pins."""
         self.build_id = (
             None if self.path is None or self.pac is None else build_id(self.path.name, self.pac)
         )
@@ -76,8 +78,10 @@ class Scene(Model):
         if side != "port":
             raise ValueError(f"side is 'port' or 'source', not {side!r}")
         b = built(m, pac, data)
-        sc = cls.from_bytes(b.pac, m.port.name, manifest=m, path=pac)
+        sc = cls.from_bytes(b.pac, m.port.name, path=pac)
         sc.build_id = b.id
+        sc.placed = (b.layout or placed(m, data)).ids
+        sc.attach_manifest(m)
         return sc
 
     # names
@@ -88,7 +92,9 @@ class Scene(Model):
         self.manifest = m
         by_slot: dict[int, list[str]] = {}
         for name, c in m.clips.items():
-            by_slot.setdefault(c.id if self.game == MHP3RD else c.slot, []).append(name)
+            at = c.id if self.game == MHP3RD else layout.where(c, self.placed)
+            if at is not None:
+                by_slot.setdefault(at, []).append(name)
         self.rename(by_slot)
 
     def clip_table(self) -> dict[int, tuple[int, bool]]:
@@ -109,9 +115,10 @@ class Scene(Model):
         """Where the manifest's clip fingerprints disagree with this PAC."""
         out: list[str] = []
         for name, mc in sorted((self.manifest.clips if self.manifest else {}).items()):
-            got = self._by_slot.get(mc.slot)
+            at = layout.where(mc, self.placed)
+            got = None if at is None else self._by_slot.get(at)
             if got is None:
-                out.append(f"clips.{name}: slot {mc.slot} is not in this PAC")
+                out.append(f"clips.{name}: clip {mc.id} is in no anim of this PAC")
                 continue
             if mc.frames is not None and mc.frames != got.frames:
                 out.append(

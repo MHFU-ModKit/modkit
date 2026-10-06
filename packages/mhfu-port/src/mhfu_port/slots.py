@@ -17,9 +17,10 @@ from dataclasses import dataclass
 from typing import Literal, TextIO
 
 from mhfu.em.moveset import Moveset
+from mhfu.entries import ENTRY_BANK, PART_STREAMS
 from mhp_formats import AnimPack, Clip, Pac, fu
 
-from .fk import ENTRY_BANK, FU_PART_STREAM, entry_of
+from .fk import entry_of
 from .motion import frames
 
 Pair = tuple[int, int]
@@ -69,7 +70,7 @@ def streams_of(anim: AnimPack, entry: int) -> tuple[int, ...]:
     return tuple(
         i
         for i, s in enumerate(anim.streams)
-        if i % FU_PART_STREAM == bank and slot < len(s) and s[slot] is not None
+        if i % PART_STREAMS == bank and slot < len(s) and s[slot] is not None
     )
 
 

@@ -108,13 +108,17 @@ not known. Ease values use the channel's unit, per frame.
 
 MHFU splits a rig into parts by `Bone.stream`, and part `k`'s clips sit in streams `2k` and
 `2k + 1`, one track per joint of the part in joint order. The engine plays an executor entry
-(the action id `a1`): entry `e` of part `k` is slot `e % 100` of stream `2k + e // 100`, so
-entries 0-99 play the even streams and 100 and up the odd ones (`mhfu_port.fk.entry_slot`); the
-odd half is read from the resolver's arithmetic and not yet seen playing in the game. Many
-natives fill the odd streams of all three parts alike; the Tigrex leaves them empty and has 123
-entries. An entry plays every part's clip together; an entry may exist in only some parts,
-such as a head-and-neck clip over an idle body. `mhfu_port.fk.rig_clip` joins an entry's parts
-into one clip over the whole rig, and `mhfu_port.motion.put` writes one back.
+(the action id `a1`): part `k`'s input becomes `a1 + 1000 + 200k`, and the part plays slot
+`input % 100` of stream `(input - 1000) // 100`. So entry `e` of part `k` is slot `e % 100` of
+stream `2k + e // 100`: entries 0-99 play the even streams, 100 and up the odd ones
+(`mhfu.entries.entry_clip`). The Tigrex has 123 entries, and an id
+past them plays another (123 plays entry 0, 150 entry 27). Its brain asks for 100-122 although
+its own pack leaves the odd streams empty; many natives fill them in all three parts alike, and a
+port's packer puts every donor id under 123 in the entry of that id. A part whose slot is empty
+keeps the clip it was playing. An entry plays every part's clip together, except where the executor drives only some parts: on
+the Tigrex, 24 and 25 reach the head alone, a head-and-neck clip over whatever the body plays.
+`mhfu_port.fk.rig_clip` joins an entry's parts into one clip over the whole rig, and
+`mhfu_port.motion.put` writes one back.
 
 - The animated joints are the first `params[1]` bones. Each part is a contiguous run of joint
   indices: part 0 the body, each later part one subtree hanging off one joint (the head, the
@@ -122,6 +126,10 @@ into one clip over the whole rig, and `mhfu_port.motion.put` writes one back.
 - The joints past the animated count carry one more part id and are not animated; on a monster
   with a cuttable tail they are a second root chain, the severed tail.
 - Within a part, track `i` drives the part's `i`-th joint.
+- Each part's clip player is a `CLIP_BLOCK` at `ENTITY.CLIP_BLOCKS`: `NODE` is the clip, the
+  pack's address (`ENTITY.ACTION_TABLE`) plus its slot-table offset, and `END` its last
+  keyframe. `mhfu clips play <entry>` holds an entry and reads them; `mhfu clips sweep` checks a
+  whole port against the build.
 
 ### MHP3rd: clip sets and records
 

@@ -10,9 +10,15 @@
     number = 98
     ops = "st098.json"            # the schema of `stage.ops`
 
+    [[point]]                     # the schema of `mhfu.points`, which `mhfu rig goto` reads
+    name = "tigrex_wall"
+    stage = 97
+    at = [10900.0, 325.0, 9200.0]
+
 Stages naming the same list (a night twin) share it: editing one edits both. The loaded
 stage's list is its edit session's own, so undo, redo and dirty go through the session. A stage
-whose list is empty (every edit undone) is neither saved nor a change.
+whose list is empty (every edit undone) is neither saved nor a change. Points are the
+document's own: a change to them is a change, outside undo.
 """
 
 from __future__ import annotations
@@ -25,7 +31,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import tomli_w
+from mhfu import points as P
 from mhfu.files import Extracted
+from mhfu.points import Point
 
 from mhfu_studio.shell.findings import Finding
 from mhfu_studio.stage import collision, mesh, textures
@@ -80,6 +88,7 @@ class MapDocument:
         #: the [map] table's other keys, kept for the round trip
         self.extra: dict[str, Any] = dict(extra or {})
         self.stages: list[StageEntry] = []
+        self.points: list[Point] = []
         self.session: EditSession | None = None
         self.game: Extracted | None = None
         self._files: dict[int, StageFile] = {}
@@ -139,6 +148,33 @@ class MapDocument:
         """Something besides the session changed."""
         self._changes += 1
 
+    # the points
+
+    def point(self, name: str) -> Point | None:
+        return next((p for p in self.points if p.name == name), None)
+
+    def put_point(self, point: Point, replacing: str | None = None) -> None:
+        """Add `point`, or put it in the place of the point named `replacing`; raises
+        PointError for a bad point or a name another point has."""
+        point.check()
+        others = [p for p in self.points if p.name != replacing]
+        if any(p.name == point.name for p in others):
+            raise P.PointError(f"a point is already named {point.name}")
+        at = next((i for i, p in enumerate(self.points) if p.name == replacing), None)
+        if at is None:
+            self.points.append(point)
+        else:
+            self.points[at] = point
+        self.touch()
+
+    def remove_point(self, name: str) -> None:
+        self.points = [p for p in self.points if p.name != name]
+        self.touch()
+
+    def new_point_name(self, base: str = "point") -> str:
+        names = {p.name for p in self.points}
+        return next(f"{base}_{k}" for k in range(1, len(names) + 2) if f"{base}_{k}" not in names)
+
     # loading and saving
 
     @classmethod
@@ -176,6 +212,10 @@ class MapDocument:
                 except ValueError as e:
                     raise DocumentError(str(e)) from None
             doc.stages.append(StageEntry(n, file, lists[file]))
+        try:
+            doc.points = P.parse(data.get("point", []))
+        except P.PointError as e:
+            raise DocumentError(f"{p}: {e}") from None
         doc._saved = doc._state()
         return doc
 
@@ -210,8 +250,12 @@ class MapDocument:
         if self.description:
             table["description"] = self.description
         table.update(self.extra)
-        stages = [{"number": s.number, "ops": s.ops_file} for s in self.kept()]
-        return {"map": table, "stage": stages} if stages else {"map": table}
+        out: dict[str, Any] = {"map": table}
+        if stages := [{"number": s.number, "ops": s.ops_file} for s in self.kept()]:
+            out["stage"] = stages
+        if self.points:
+            out["point"] = P.dump(self.points)
+        return out
 
     def _lists(self) -> dict[str, list[Op]]:
         return {s.ops_file: s.ops for s in self.kept()}
@@ -262,7 +306,7 @@ class MapDocument:
         """The op checks of `stage.ops` per stage (with the writers when the game is there),
         and the document's own."""
         out: list[Finding] = []
-        if not self.stages and self.directory is not None:
+        if not self.stages and not self.points and self.directory is not None:
             fix = "Open an area in Areas and edit it: the document names it then."
             out.append(Finding("warning", "no-stages", "the document names no stage", fix=fix))
         for file, users in self.shared_lists().items():

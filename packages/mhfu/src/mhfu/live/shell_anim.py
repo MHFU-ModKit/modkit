@@ -28,13 +28,15 @@ from ..views import View, u32
 from .shell import FREEZE_BITS, CommandError, Monster, Poller, integer, table
 
 if TYPE_CHECKING:
+    from .session import Session
     from .shell import Shell
 
 MAGIC = 0x4D484252
 """CLI_BRIDGE.MAGIC once a command is written ("MHBR")."""
 PROBE_MARK = 0xC0FFEE01
-ACK_TIMEOUT = 1.0
-"""A live game tick acks within a few frames; no ack in this long means it is not running."""
+ACK_TIMEOUT = 3.0
+"""cli_bridge.lua acks on its next tick, 2 Hz under mhfu_port and now and then late; no ack in
+this long means it is not running."""
 RECORD_PERIOD = 0.1
 STALLED = "the game is paused or cli_bridge.lua is not loaded"
 ROW = struct.Struct("<BB")
@@ -96,6 +98,17 @@ class Bridge:
             b.status = 0
         return seq
 
+    def request(
+        self, session: Session, op: Op, slot: int, arg: int = 0, timeout: float = ACK_TIMEOUT
+    ) -> tuple[int, bool]:
+        """`send`, then wait for the ack: the script sees only the newest SEQ, so a command sent
+        before the last one was acked would replace it unseen. Returns (SEQ, acked)."""
+        seq = self.send(op, slot, arg)
+        try:
+            return seq, session.wait(lambda: self.block.ack == seq, timeout, "ack")
+        except TimeoutError:
+            return seq, False
+
 
 def _bridge(shell: Shell) -> Bridge:
     bridge = Bridge(shell.mem)
@@ -108,13 +121,7 @@ def _bridge(shell: Shell) -> Bridge:
 
 
 def _send(shell: Shell, bridge: Bridge, op: Op, slot: int, arg: int = 0) -> tuple[int, bool]:
-    """Send a command and wait for its ack; the script sees only the newest SEQ, so a command
-    sent before the last one was acked would replace it unseen. Returns (SEQ, acked)."""
-    seq = bridge.send(op, slot, arg)
-    try:
-        return seq, shell.session.wait(lambda: bridge.block.ack == seq, ACK_TIMEOUT, "ack")
-    except TimeoutError:
-        return seq, False
+    return bridge.request(shell.session, op, slot, arg)
 
 
 def _unacked(acked: bool) -> str:

@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The `studio port` commands (scene, clips, align, check, hit) and `studio render monster`."""
+"""The `studio port` commands (scene, clips, align, check, hit, push), `studio render monster`."""
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from mhfu_port.manifest import Manifest
 
     from mhfu_studio.monster.inputs import Built
+    from mhfu_studio.monster.runtime import Host
 
 
 VIEWS = ("front", "back", "side", "other_side", "three", "top")
@@ -85,6 +87,13 @@ def register(groups: Groups) -> None:
     _intel_arguments(p)
     data.add_arguments(p)
     p.set_defaults(run=run_hit)
+
+    p = groups.port.add_parser("push", help="write a port's hit tables into the running game")
+    p.add_argument("manifest", type=Path)
+    p.add_argument("--dry", action="store_true", help="list the writes, touch nothing")
+    _intel_arguments(p)
+    data.add_arguments(p)
+    p.set_defaults(run=run_push)
 
 
 def _render(groups: Groups) -> None:
@@ -184,6 +193,17 @@ def _manifest(path: Path) -> Manifest:
     return manifest.load(path)
 
 
+def _sources(args: argparse.Namespace, m: Manifest) -> dict[int, int]:
+    """The manifest's layout, entry -> MHP3rd id; its pins alone without the games."""
+    from mhfu_studio.monster.inputs import placed
+
+    try:
+        games = _games(args)
+    except FileNotFoundError:
+        games = None
+    return placed(m, games).entries
+
+
 def _built(args: argparse.Namespace, m: Manifest) -> Built:
     from mhfu_studio.monster.inputs import built
 
@@ -275,7 +295,8 @@ def run_clips(args: argparse.Namespace) -> int:
     if args.slots:
         for slot in sorted(table):
             c = cov.slots[slot]
-            named = ",".join(n for n, cl in m.clips.items() if cl.slot == slot) or "-"
+            got = cov.sources()
+            named = ",".join(n for n, cl in m.clips.items() if clips.at(cl, got) == slot) or "-"
             print(f"a1 {slot:<4d} {c.kind:<8} {named:<14} {c.why()}")
         return 0
     print(clips.report(m.port.name, clips.survey(m, table, cov, b.id)))
@@ -290,9 +311,10 @@ def run_align(args: argparse.Namespace) -> int:
     ends = None
     if args.pac:
         ends = {s: fp[0] for s, fp in clips.pac_clip_table(args.pac.read_bytes()).items()}
+    sources = _sources(args, m)
     if args.pair:
         main, sub = (int(x) for x in args.pair.split(","))
-        found = clips.entry(m, args.slot) if args.slot is not None else None
+        found = clips.entry(m, args.slot, sources) if args.slot is not None else None
         impact = (
             args.impact if args.impact is not None else found[1].impact_frame if found else None
         )
@@ -313,8 +335,10 @@ def run_align(args: argparse.Namespace) -> int:
         return 0
     for name in [args.move] if args.move else sorted(m.moves):
         c = m.clips.get(m.moves[name].clip or "")
-        end = None if ends is None or c is None else ends.get(c.slot)
-        print(align.align(m, name, intel, end).report() + "\n")
+        at = None if c is None else clips.at(c, sources)
+        end = None if ends is None or at is None else ends.get(at)
+        ids = {cid: e for e, cid in sources.items()}
+        print(align.align(m, name, intel, end, ids=ids).report() + "\n")
     return 0
 
 
@@ -327,8 +351,12 @@ def run_check(args: argparse.Namespace) -> int:
     status = 0
     for path in args.manifest:
         m = _manifest(path)
-        pac = None if args.no_pac else _built(args, m).pac
-        found = validate.validate(m, pac, _intel(args, m.port.host_species))
+        b = None if args.no_pac else _built(args, m)
+        pac, sources = None, {}
+        if b is not None:
+            pac = b.pac
+            sources = b.layout.entries if b.layout is not None else _sources(args, m)
+        found = validate.validate(m, pac, _intel(args, m.port.host_species), sources)
         print(f"== {path} ({m.port.name} on em{m.port.host_species:02d})")
         print(validate.report(found) + "\n")
         level = worst(found)
@@ -337,31 +365,51 @@ def run_check(args: argparse.Namespace) -> int:
     return status
 
 
+def _host(args: argparse.Namespace, m: Manifest) -> Host | None:
+    from mhfu_studio.monster import runtime
+
+    host = runtime.host(_intel(args, m.port.host_species))
+    if host is not None and getattr(args, "capacity", None) is not None:
+        host = dataclasses.replace(host, capacity=args.capacity)
+    return host
+
+
 def run_hit(args: argparse.Namespace) -> int:
     from mhfu_studio.monster import runtime
 
     m = _manifest(args.manifest)
-    intel = _intel(args, m.port.host_species)
-    cap = args.capacity if args.capacity is not None else runtime.host_capacity(intel)
-    tables = runtime.host_attack_tables(intel)
+    host = _host(args, m)
     if args.print:
-        print(runtime.lua_hit_module(m, cap, attacks=tables), end="")
+        print(runtime.lua_hit_module(m, host), end="")
         return 0
     path = args.out or Path(runtime.module_name(m))
-    dep = runtime.ship(m, path, cap, tables, library_path=args.library) if args.deploy else None
+    dep = runtime.ship(m, path, host, library_path=args.library) if args.deploy else None
     if dep is None:
-        runtime.export(m, path, cap, tables)
+        runtime.export(m, path, host)
     print(
         f"wrote {path} ({len(m.hurtboxes)} volume(s), {len(m.hitzones)} state(s), "
         f"{len(runtime.sets_of(m))} attack set(s), {len(m.attacks)} attack record(s), "
         f"id {runtime.content_id(m)})"
     )
-    if cap is not None and len(m.hurtboxes) > cap:
-        print(f"{len(m.hurtboxes) - cap} volume(s) exceed the host set's {cap}: truncated")
-    for s, vols in runtime.sets_of(m).items():
-        c = tables.capacities.get(s) if tables else None
-        if c is not None and len(vols) > c:
-            print(f"set {s}: {len(vols)} volume(s) but the host's holds {c}: truncated")
+    for note in runtime.plan(m, host).notes:
+        print(note)
     if dep is not None:
         print(f"deployed {dep.describe()}")
+    return 0
+
+
+def run_push(args: argparse.Namespace) -> int:
+    from mhfu_studio.monster import push, runtime
+
+    m = _manifest(args.manifest)
+    host = _host(args, m)
+    if args.dry:
+        for w in runtime.plan(m, host).writes:
+            print(f"0x{w.at:08X} {len(w.data):5d} B  {w.what}  ({len(w.guards)} guard(s))")
+        return 0
+    try:
+        print(push.to_game(m, host).describe())
+    except push.Refused as e:
+        print(f"refused: {e}")
+        return 1
     return 0

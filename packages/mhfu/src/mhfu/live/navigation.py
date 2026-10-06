@@ -29,9 +29,11 @@ XZ = tuple[float, float]
 
 PROGRESS = 4.0  # units of closing distance that count as progress
 DETOUR = math.radians(70.0)  # off the direct line, to clear a corner after a stall
-DETOUR_SECONDS = 0.7
+DETOUR_DISTANCE = 100.0  # how far a detour goes, so a fast-forwarded game goes no further
+DETOUR_SECONDS = 0.7  # the most a detour lasts, where the hunter is wedged and cannot go far
 CAMERA_EVERY = 4  # walk ticks between camera reads
 STICK_EPS = 0.05  # stick change worth re-sending
+WALK = 0.7  # stick magnitude of a walk (about 70 units/s); 0.5 and less do not move the hunter
 
 
 class Camera(View):
@@ -135,7 +137,8 @@ def walk_to(
     After `patience` ticks without it the walk strafes off the line, alternating sides, and
     gives up as "blocked" after `max_detours`. It is no pathfinder: give `walk_path` waypoints
     round real corners. The player is about 100 units wide, so a `tolerance` under 40
-    oscillates; inside `slow_radius` the stick eases off so the walk does not overshoot.
+    oscillates; inside `slow_radius` the hunter walks instead of running so the walk does not
+    overshoot.
     """
     target = (x, z)
     start = s.now()
@@ -171,11 +174,11 @@ def walk_to(
                 detours += 1
                 side = -side
                 stick.toward(world_angle(here, target) + side * DETOUR, yaw)
-                s.sleep(DETOUR_SECONDS)
+                detour(s, here, tick)
                 best, stalled = distance(where(s), target), 0
                 yaw, age = camera.yaw, 0
                 continue
-            magnitude = 1.0 if remaining >= slow_radius else max(0.35, remaining / slow_radius)
+            magnitude = 1.0 if remaining >= slow_radius else WALK
             stick.toward(world_angle(here, target), yaw, magnitude)
             s.sleep(tick)
         here = where(s)
@@ -185,17 +188,44 @@ def walk_to(
             stick.release()
 
 
+def detour(s: Session, origin: XZ, tick: float) -> None:
+    """Hold the stick as set until the hunter is DETOUR_DISTANCE from `origin`, at most
+    DETOUR_SECONDS: a distance, not a time, so fast-forward does not stretch it."""
+    end = s.now() + DETOUR_SECONDS
+    while s.now() < end:
+        s.sleep(tick)
+        if distance(where(s), origin) >= DETOUR_DISTANCE:
+            return
+
+
 def walk_path(
-    s: Session, points: Iterable[XZ], *, tolerance: float = 60.0, timeout: float = 40.0
+    s: Session,
+    points: Iterable[XZ],
+    *,
+    tolerance: float = 60.0,
+    timeout: float = 40.0,
+    until: Callable[[], object] | None = None,
+    patience: int = 14,
+    max_detours: int = 4,
 ) -> Walk:
-    """Walk waypoints in order, stopping at the first that is not reached."""
+    """Walk waypoints in order, stopping at the first that is not reached or once `until`."""
     points = list(points)
     if not points:
         raise ValueError("no waypoints")
     for i, (x, z) in enumerate(points):
         last = i == len(points) - 1
-        walk = walk_to(s, x, z, tolerance=tolerance, timeout=timeout, release=last)
-        if not walk.reached:
+        walk = walk_to(
+            s,
+            x,
+            z,
+            tolerance=tolerance,
+            timeout=timeout,
+            release=last,
+            until=until,
+            patience=patience,
+            max_detours=max_detours,
+        )
+        if not walk.reached or walk.reason == "until":
             if not last:
                 Stick(s).release()
             break
@@ -299,29 +329,60 @@ def push(
 
 
 def climb(
-    s: Session, heading_deg: float, hold: float = 5.0, square_up: float = 1.2, tick: float = 0.3
+    s: Session,
+    heading_deg: float,
+    hold: float = 5.0,
+    square_up: float = 1.2,
+    tick: float = 0.3,
+    lift: float = 40.0,
+    onto: float = 150.0,
 ) -> tuple[Pose, Pose]:
     """Climb the ledge ahead; returns the poses before and after.
 
     A ledge and a wall both stop a walk. Shoving into the face squares the player up to it,
     circle grabs, and holding the direction climbs. The heading must be perpendicular to the
-    face. A climb shows in Y, a step up with the footprint barely moving.
+    face. A climb shows in Y, a step up with the footprint barely moving. The shove ends
+    `onto` units out where there is no face, the hold once the player is `lift` higher and
+    `onto` units on: distances, so a fast-forwarded game does not run on past the ledge.
     """
     angle = math.radians(heading_deg)
     stick = Stick(s)
     camera = Camera(s.mem)
-    try:
+    start = pose(s)
+
+    def steer() -> None:
         stick.toward(angle, camera.yaw)
-        s.sleep(square_up)
+
+    try:
+        _hold(s, square_up, tick, steer, lambda p: distance(p.xz, start.xz) >= onto)
         stick.release()
         before = pose(s)
         s.press("circle", 4)
         s.sleep(0.6)
-        end = s.now() + hold
-        while s.now() < end:
-            stick.toward(angle, camera.yaw)
-            s.sleep(tick)
+        _hold(
+            s,
+            hold,
+            tick,
+            steer,
+            lambda p: p.y - before.y >= lift and distance(p.xz, before.xz) >= onto,
+        )
     finally:
         stick.release()
     s.sleep(0.6)
     return before, pose(s)
+
+
+def _hold(
+    s: Session,
+    seconds: float,
+    tick: float,
+    steer: Callable[[], None],
+    enough: Callable[[Pose], bool],
+) -> None:
+    """Steer every tick for `seconds`, or until `enough(pose)`."""
+    end = s.now() + seconds
+    while s.now() < end:
+        steer()
+        s.sleep(tick)
+        if enough(pose(s)):
+            return

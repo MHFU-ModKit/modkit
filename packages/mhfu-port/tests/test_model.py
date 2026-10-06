@@ -14,8 +14,9 @@ from mhp_formats.anim import quantize
 from mhp_formats.skeleton import Bone, Skeleton
 
 BUNDLED = ("model", "fk", "motion", "mesh", "records", "constraints")
-"""The modules a Blender extension imports, which cannot carry mhfu's live chain."""
-LIVE = ("mhfu", "ppsspp_debug", "psutil", "rabbitizer", "elftools")
+"""The modules a Blender extension imports: mhfu's standard-library modules (`mhfu.entries`)
+but not its live chain, whose native wheels the extension cannot bundle."""
+LIVE = ("ppsspp_debug", "psutil", "rabbitizer", "elftools")
 
 
 def synthetic(skeleton_at: int = 0) -> bytes:
@@ -46,7 +47,7 @@ def synthetic(skeleton_at: int = 0) -> bytes:
     return Pac(entries).to_bytes()
 
 
-def test_bundled_modules_import_without_mhfu():
+def test_bundled_modules_import_without_the_live_chain():
     blocked = "".join(f"sys.modules[{m!r}] = None\n" for m in LIVE)
     imports = "".join(f"import mhfu_port.{m}\n" for m in BUNDLED)
     r = subprocess.run(
