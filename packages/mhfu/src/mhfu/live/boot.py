@@ -7,9 +7,17 @@
 
 SCREEN_STATE reads 0 for the logos, the language menu and the village alike; the scene tells them
 apart. The language menu waits for input forever, and a press sent during the logos is lost.
+
+Every wait is on memory and every press counts frames, so the flows run under `fast_forward`,
+except the title, which takes START only at the game's own rate.
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
+
+from ppsspp_debug import Disconnected, Unsupported
 
 from .. import addresses as a
 from ..structs import Screen
@@ -62,16 +70,20 @@ def boot_to_title(s: Session, language: str = "english", timeout: float = 90.0) 
 
 
 def press_past_title(s: Session, timeout: float = 30.0) -> None:
-    """Press START until the main menu is up; the attract movie swallows some presses."""
+    """Press START until the main menu is up; the attract movie swallows some presses.
+
+    Under fast-forward the title ignores START for minutes, so this runs at the game's rate.
+    """
     window = 2.6
-    s.press_until(
-        lambda: s.game.screen_state == Screen.MENU,
-        "main menu",
-        "start",
-        frames=3,
-        attempts=max(1, round(timeout / window)),
-        window=window,
-    )
+    with own_speed(s):
+        s.press_until(
+            lambda: s.game.screen_state == Screen.MENU,
+            "main menu",
+            "start",
+            frames=3,
+            attempts=max(1, round(timeout / window)),
+            window=window,
+        )
 
 
 def boot_to_main_menu(s: Session, language: str = "english", timeout: float = 90.0) -> None:
@@ -100,3 +112,45 @@ def to_village(s: Session, language: str = "english", timeout: float = 60.0) -> 
         attempts=max(1, round(timeout / window)),
         window=window,
     )
+
+
+def is_fast(s: Session) -> bool:
+    try:
+        return s.client.speed().fast_forward
+    except Unsupported:
+        return False
+
+
+def set_fast(s: Session, on: bool) -> bool:
+    """Run the emulator unlimited, or at the game's own rate; False on a PPSSPP that cannot."""
+    try:
+        s.client.set_speed(None, fast_forward=on)
+    except Unsupported:
+        return False
+    return True
+
+
+@contextmanager
+def fast_forward(s: Session, on: bool = True) -> Iterator[bool]:
+    """Unlimited speed for the block, the game's own rate after; yields whether it is fast."""
+    fast = on and set_fast(s, True)
+    try:
+        yield fast
+    finally:
+        if fast:
+            with suppress(Disconnected):
+                set_fast(s, False)
+
+
+@contextmanager
+def own_speed(s: Session) -> Iterator[None]:
+    """The game's own rate for the block, fast-forward again after if it was."""
+    fast = is_fast(s)
+    if fast:
+        set_fast(s, False)
+    try:
+        yield
+    finally:
+        if fast:
+            with suppress(Disconnected):
+                set_fast(s, True)

@@ -21,8 +21,8 @@ SIZE = 0x180_0000
 class Scripted(FakePPSSPP):
     """A fake PPSSPP with `on_press(button)` and `on_read(address)` hooks that change memory."""
 
-    def __init__(self) -> None:
-        super().__init__(base=BASE, size=SIZE)
+    def __init__(self, patched: bool = False) -> None:
+        super().__init__(base=BASE, size=SIZE, patched=patched)
         self.presses: list[str] = []
         self.on_press: list[Callable[[str], None]] = []
         self.on_read: list[Callable[[int], None]] = []
@@ -65,11 +65,13 @@ def ram() -> Image:
 
 
 @pytest.fixture
-def fake():
+def fake(request):
+    """Stock PPSSPP; the modkit's build with `@pytest.mark.parametrize("fake", [True],
+    indirect=True)`."""
     loop = asyncio.new_event_loop()
     thread = threading.Thread(target=loop.run_forever, daemon=True)
     thread.start()
-    server = Scripted()
+    server = Scripted(patched=getattr(request, "param", False))
     asyncio.run_coroutine_threadsafe(server.__aenter__(), loop).result()
     yield server
     asyncio.run_coroutine_threadsafe(server.__aexit__(None, None, None), loop).result()

@@ -85,3 +85,20 @@ def test_past_the_title_in_the_village(s, fake):
 def test_unknown_language(s):
     with pytest.raises(ValueError, match="one of"):
         boot.select_language(s, "german")
+
+
+@pytest.mark.parametrize("fake", [True], indirect=True)
+def test_fast_forward(s, fake):
+    speeds = []
+    fake.on_press.append(lambda _: speeds.append(fake.fast_forward))
+    Boot(fake)
+    with boot.fast_forward(s) as fast:
+        assert fast and boot.is_fast(s)
+        boot.to_village(s, "deutsch")
+    assert not boot.is_fast(s)
+    assert speeds == [True] * 3 + [False] + [True] * 4  # the title at the game's own rate
+
+
+def test_stock_ppsspp_runs_at_its_own_rate(s):
+    with boot.fast_forward(s) as fast:
+        assert not fast and not boot.is_fast(s)
