@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import pytest
-from mhfu_port import manifest, slots
+from mhfu_port import layout, manifest, slots
 from mhfu_port.manifest import ManifestError
 from mhfu_studio.monster import clips as C
-from mhfu_studio.monster.inputs import donor_anim, host_anim
+from mhfu_studio.monster.inputs import donor_clips, host_anim
 from mhp_formats import fu
 
 LABELS = """
@@ -34,7 +34,7 @@ def packs(make_clip):
     idle, own, host4, d5, p5, extra = (
         make_clip(f, lp) for f, lp in ((100, 1), (50, 0), (70, 0), (30, 0), (31, 0), (90, 0))
     )
-    donor = pack(slot1=idle, slot2=own, slot5=d5, slot6=make_clip(100, 1), slot7=extra)
+    donor = {1: idle, 2: own, 5: d5, 6: make_clip(100, 1), 7: extra}
     port = pack(slot1=idle, slot2=own, slot3=idle, slot4=host4, slot5=p5, slot6=idle)
     host = pack(
         slot1=make_clip(20),
@@ -49,12 +49,15 @@ def packs(make_clip):
 
 def test_coverage(packs):
     port, host, donor = packs
-    cov = C.coverage(port, host, donor)
+    cov = C.coverage(port, host, donor, {1: 1, 2: 2, 5: 5, 6: 6})
     kinds = {s: c.kind for s, c in cov.slots.items()}
     assert kinds == {1: C.CARRIED, 2: C.CARRIED, 3: C.FILLER, 4: C.HOST, 5: C.ALTERED, 6: C.CARRIED}
     assert cov.dropped == {7: (90, False)} and cov.slots[2].scriptable
     assert cov.counts()[C.DROPPED] == 1 and "1 donor clip(s) DROPPED" in cov.summary()
     assert "idle copy" in cov.slots[3].why().lower()
+    assert cov.sources() == {1: 1, 2: 2, 5: 5, 6: 6}
+    moved = C.coverage(port, host, donor, {2: 6, 6: 2})
+    assert (moved.kind(2), moved.kind(6), moved.slots[2].clip) == (C.ALTERED, C.FILLER, 6)
 
 
 def test_coverage_without_evidence(packs):
@@ -90,11 +93,12 @@ def test_tracks(make):
 
 def test_label(doc):
     d = doc(LABELS)
-    s = C.LabelSession(d, {61: (382, False), 5: (120, True)}, "new.bin@2")
+    s = C.LabelSession(d, {61: (382, False), 5: (120, True)}, "new.bin@2", {61: 61, 5: 205})
     assert s.default_name(5) == "clip_05" and s.default_name(61) == "charge"
     s.label(5, "walk", "slow walk", impact_frame=40)
     c = d.manifest.clips["walk"]
     assert (c.frames, c.loop, c.labelled_build, c.impact_frame) == (120, True, "new.bin@2", 40)
+    assert (c.slot, c.source, d.manifest.clips["charge"].source) == (5, 205, None)
     s.label(61, "rush")
     assert "charge" not in d.manifest.clips and d.manifest.moves["charge"].clip == "rush"
     assert d.manifest.clips["rush"].label == ""
@@ -105,6 +109,9 @@ def test_label(doc):
             s.label(61, bad)
     with pytest.raises(ManifestError, match="not populated"):
         s.label(7, "nothing")
+    s.table[8] = (10, False)
+    with pytest.raises(ManifestError, match="anim 8 holds none of the original's clips"):
+        s.label(8, "host")
 
 
 REBIND = (
@@ -192,12 +199,13 @@ def test_report(make, packs):
 def test_zinogre(games, built, ports):
     m = manifest.load(ports / "zinogre.toml")
     port = slots.anim_of(built("zinogre"))
-    cov = C.coverage(port, host_anim(m, games), donor_anim(m, games))
+    host, donor = host_anim(m, games), donor_clips(m, games)
+    cov = C.coverage(port, host, donor, layout.of(m, donor, host).entries)
     n = cov.counts()
-    assert len(cov.slots) == 64 and n[C.FILLER] == 30 and n[C.DROPPED] == 8
+    assert len(cov.slots) == n[C.CARRIED] == 102 and n[C.FILLER] == n[C.DROPPED] == 0
     assert all(t.trusted for t in C.track_labels(m, C.clip_table(port)))
 
 
 def test_brute(built):
     table = C.pac_clip_table(built("brute_tigrex"))
-    assert 82 not in table and table[69] == table[1] and table[61] == (382, False)
+    assert len(table) == 77 and table[61] == (382, False) and 24 not in table

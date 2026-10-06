@@ -3,8 +3,9 @@
 import numpy as np
 import pytest
 from mhfu.files import monster_pac
-from mhfu_port import manifest, verify
+from mhfu_port import layout, manifest, verify
 from mhfu_port.model import MHFU, MHP3RD, ModelError
+from mhfu_studio.monster import inputs
 from mhfu_studio.monster.core.scene import Scene, open_scene
 from mhp_formats import Pac
 
@@ -82,6 +83,8 @@ def test_donor_matches_port(games, built, ports, name, joints, groups, vertices,
     m = manifest.load(ports / f"{name}.toml")
     src = Scene.from_manifest(m, side="source", data=games)
     port = Scene.from_bytes(built(name), name, manifest=m)
+    host = inputs.host_anim(m, games)
+    entry = layout.of(m, inputs.donor_clips(m, games), host).ids
     assert src.game == MHP3RD and src.rig.n == joints and src.record_to_bone
     assert (
         (len(src.groups), src.n_vertices)
@@ -99,16 +102,15 @@ def test_donor_matches_port(games, built, ports, name, joints, groups, vertices,
     p_idx = np.array([c.tree[i] for i in s_idx])
     worst, compared = 0.0, 0
     for clip in src.clips:
-        pc = port._by_slot.get(clip.slot)
-        if pc is None or not pc.whole_rig:
-            continue
+        pc = port._by_slot[entry[clip.slot]]
+        assert pc.whole_rig
         for frame in (clip.frames // 4, clip.frames // 2):
             a = src.pose(clip, frame).joints[s_idx]
             b = port.pose(pc, frame).joints[p_idx]
             a[:, 1] += m.build.ground_lift
             worst = max(worst, float(np.linalg.norm(a - b, axis=1).max()))
             compared += 1
-    assert compared > 60 and worst < 0.05, (compared, worst)
+    assert compared == 2 * len(src.clips) and worst < 0.05, (compared, worst)
 
 
 def test_manifest_port(games, ports):

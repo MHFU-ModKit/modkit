@@ -1,21 +1,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""`slots` and `labels`: what each animation slot of a built port plays."""
+"""`slots` and `labels`: what each executor entry of a built port plays."""
 
 from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
 from mhfu.em.moveset import Moveset
 from mhfu.files import monster_pac
-from mhp_formats import p3rd
+from mhp_formats import Clip, fu
 
-from .. import data, manifest, slots
+from .. import data, layout, manifest, motion, slots
 
 if TYPE_CHECKING:
     from . import Subparsers
@@ -23,7 +23,8 @@ if TYPE_CHECKING:
 
 def register(sub: Subparsers) -> None:
     p = sub.add_parser(
-        "slots", help="each host slot's (main, sub) pairs, lengths and donor clip in a port, as CSV"
+        "slots",
+        help="each host entry's (main, sub) pairs, lengths and donor clip in a port, as CSV",
     )
     p.add_argument("port", type=Path, nargs="?", help="a built model PAC")
     _common(p)
@@ -40,34 +41,39 @@ def _common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--manifest", type=Path, help="the port's: host, donor and clip names")
     p.add_argument("--host", type=int, metavar="SPECIES", help="the MHFU host")
     p.add_argument("--donor", type=int, metavar="FILE", help="MHP3rd moveset file")
-    p.add_argument("--stream", type=int, default=0, help="the donor stream (default: 0)")
     p.add_argument("-o", "--out", type=Path, help="CSV file (default: stdout)")
     data.add_arguments(p)
 
 
-def _resolve(args: argparse.Namespace) -> dict[int, str]:
-    """Fill `--host` and `--donor` from the manifest where not given; the manifest's clip
-    names by slot."""
-    names: dict[int, str] = {}
-    if args.manifest:
-        m = manifest.load(args.manifest)
+def _resolve(args: argparse.Namespace) -> manifest.Manifest | None:
+    """Fill `--host` and `--donor` from the manifest where not given; the manifest."""
+    m = manifest.load(args.manifest) if args.manifest else None
+    if m is not None:
         args.host = m.port.host_species if args.host is None else args.host
         args.donor = m.source.anim if args.donor is None else args.donor
-        for name, clip in sorted(m.clips.items()):
-            names[clip.slot] = f"{names[clip.slot]} {name}" if clip.slot in names else name
     if args.host is None:
         raise ValueError("give --host or --manifest")
-    return names
+    return m
+
+
+def _layout(
+    m: manifest.Manifest | None, donor: Mapping[int, Clip], host: fu.Anim, species: int
+) -> dict[int, int]:
+    """The manifest's layout of the donor's clips, else the packer's alone."""
+    clips = m.clips if m is not None else {}
+    return layout.plan(clips, donor, host, species).entries
 
 
 def run_slots(args: argparse.Namespace) -> int:
-    names = _resolve(args)
+    m = _resolve(args)
     d = data.from_arguments(args)
     host = slots.anim_of(d.fu.read(monster_pac(args.host)))
     drivers = slots.driven(Moveset(d.fu.em(args.host)))
     port = slots.anim_of(args.port.read_bytes()) if args.port else None
-    donor = p3rd.Anim.from_bytes(d.p3rd.read(args.donor)) if args.donor is not None else None
-    rows = slots.catalog(host, drivers, port, donor, args.stream, names)
+    donor = motion.moveset(d.p3rd.read(args.donor)) if args.donor is not None else None
+    placed = _layout(m, donor, host, args.host) if donor is not None else None
+    names = {c.slot: name for name, c in sorted(m.clips.items())} if m is not None else {}
+    rows = slots.catalog(host, drivers, port, donor, placed, names)
     with _output(args.out) as out:
         slots.write_catalog(rows, out)
 
@@ -90,14 +96,14 @@ def run_slots(args: argparse.Namespace) -> int:
         say(f"  port: {n['same']} own donor clip, {n['fill']} the fill, {n['unknown']} unknown")
         if not n["same"]:
             say(
-                f"  no port slot holds its own clip of donor file {args.donor} stream "
-                f"{args.stream}: is that the moveset the port was built from?"
+                f"  no port entry holds the clip its layout puts there from donor file "
+                f"{args.donor}: is that the moveset the port was built from?"
             )
     return 0
 
 
 def run_labels(args: argparse.Namespace) -> int:
-    _resolve(args)
+    m = _resolve(args)
     if args.donor is None:
         raise ValueError("give --donor or --manifest")
     d = data.from_arguments(args)
@@ -107,9 +113,10 @@ def run_labels(args: argparse.Namespace) -> int:
         if path.stem in builds:
             raise ValueError(f"two builds named {path.stem}")
         builds[path.stem] = slots.anim_of(path.read_bytes())
-    donor = p3rd.Anim.from_bytes(d.p3rd.read(args.donor))
+    donor = motion.moveset(d.p3rd.read(args.donor))
+    host = slots.anim_of(d.fu.read(monster_pac(args.host)))
     drivers = slots.driven(Moveset(d.fu.em(args.host)))
-    rows = slots.verdicts(labels, builds, donor, args.stream, drivers)
+    rows = slots.verdicts(labels, builds, donor, _layout(m, donor, host, args.host), drivers)
     with _output(args.out) as out:
         slots.write_verdicts(rows, list(builds), out)
 

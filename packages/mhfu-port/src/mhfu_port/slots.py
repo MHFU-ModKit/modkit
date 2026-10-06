@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""What each animation slot of a built port plays, and which (main, sub) pairs reach it.
+"""What each executor entry of a built port plays, and which (main, sub) pairs reach it.
 
-The animation id `a1` a behaviour handler passes the executor IS the slot index, in every
-stream; so a slot is "the clip the engine plays when the brain enters these pairs".
+The animation id `a1` a behaviour handler passes the executor IS the entry (`fk.entry_slot`
+names its slot in each stream); so an entry is "the clip the engine plays when the brain enters
+these pairs".
 """
 
 from __future__ import annotations
@@ -18,7 +19,8 @@ from typing import Literal, TextIO
 from mhfu.em.moveset import Moveset
 from mhp_formats import AnimPack, Clip, Pac, fu
 
-from .motion import donor_slot, frames
+from .fk import ENTRY_BANK, FU_PART_STREAM, entry_of
+from .motion import frames
 
 Pair = tuple[int, int]
 """(main, sub): what act_set takes."""
@@ -50,68 +52,76 @@ def fingerprint(clip: Clip) -> Fingerprint:
 
 
 def slot_prints(anim: AnimPack) -> dict[int, Fingerprint]:
-    """Slot -> fingerprint of the clip it plays; MHFU splits one clip across streams, so of its
+    """Entry -> fingerprint of the clip it plays; MHFU splits one clip across streams, so of its
     longest part."""
     out: dict[int, Fingerprint] = {}
-    for stream in anim.streams:
+    for si, stream in enumerate(anim.streams):
         for slot, clip in enumerate(stream):
             if clip is not None:
-                out[slot] = max(out.get(slot, (0, 0)), fingerprint(clip))
+                e = entry_of(si, slot)
+                out[e] = max(out.get(e, (0, 0)), fingerprint(clip))
     return out
 
 
-def streams_of(anim: AnimPack, slot: int) -> tuple[int, ...]:
-    """The streams with a clip in `slot`."""
-    return tuple(i for i, s in enumerate(anim.streams) if slot < len(s) and s[slot] is not None)
+def streams_of(anim: AnimPack, entry: int) -> tuple[int, ...]:
+    """The streams with a clip for `entry`."""
+    bank, slot = divmod(entry, ENTRY_BANK)
+    return tuple(
+        i
+        for i, s in enumerate(anim.streams)
+        if i % FU_PART_STREAM == bank and slot < len(s) and s[slot] is not None
+    )
 
 
 def shared(anim: AnimPack) -> dict[int, int]:
-    """Slot -> how many slots of its stream play the same stored clip, the most over streams."""
+    """Entry -> how many entries of its stream play the same stored clip, the most over
+    streams."""
     out: dict[int, int] = {}
-    for stream in anim.streams:
+    for si, stream in enumerate(anim.streams):
         count = Counter(id(c) for c in stream if c is not None)
         for slot, clip in enumerate(stream):
             if clip is not None:
-                out[slot] = max(out.get(slot, 0), count[id(clip)])
+                e = entry_of(si, slot)
+                out[e] = max(out.get(e, 0), count[id(clip)])
     return out
 
 
 @dataclass(frozen=True)
 class Source:
-    """The donor clip a port slot holds."""
+    """The donor clip a port entry holds."""
 
     match: Match
-    slot: int | None
-    """The donor slot: the port slot itself for "same", the fill's for "fill"."""
+    clip: int | None
+    """The donor's MHP3rd clip id: the layout's for "same", the donor's first for "fill"."""
 
     def __str__(self) -> str:
-        return self.match if self.slot is None else f"{self.match} {self.slot}"
+        return self.match if self.clip is None else f"{self.match} {self.clip}"
 
 
-def correspondence(port: AnimPack, donor: AnimPack, stream: int = 0) -> dict[int, Source]:
-    """Port slot -> the clip of donor `stream` it holds: the one the builder's fill rule
-    (`motion.donor_slot`) puts there, where the fingerprints agree. An empty or missing donor
-    stream is an error, not an empty answer."""
-    if not 0 <= stream < len(donor.streams):
-        raise ValueError(f"the donor has streams 0-{len(donor.streams) - 1}, not {stream}")
-    clips = donor.streams[stream]
-    if all(c is None for c in clips):
-        full = [i for i, s in enumerate(donor.streams) if any(c is not None for c in s)]
-        raise ValueError(f"donor stream {stream} holds no clips; these do: {full}")
+def correspondence(
+    port: AnimPack, donor: Mapping[int, Clip], layout: Mapping[int, int]
+) -> dict[int, Source]:
+    """Port entry -> the donor clip it holds where the fingerprints agree: the one `layout`
+    (entry -> id) puts there, else the donor's first clip (an idle copy older builds filled
+    with). An empty donor is an error, not an empty answer."""
+    if not donor:
+        raise ValueError("the donor has no clips")
+    first = min(donor)
     out = {}
-    for slot, fp in slot_prints(port).items():
-        d = donor_slot(clips, slot)
-        clip = clips[d]
-        if clip is not None and fingerprint(clip) == fp:
-            out[slot] = Source("same" if d == slot else "fill", d)
+    for e, fp in slot_prints(port).items():
+        cid = layout.get(e)
+        if cid is not None and cid in donor and fingerprint(donor[cid]) == fp:
+            out[e] = Source("same", cid)
+        elif cid != first and fingerprint(donor[first]) == fp:
+            out[e] = Source("fill", first)
         else:
-            out[slot] = Source("unknown", None)
+            out[e] = Source("unknown", None)
     return out
 
 
 @dataclass(frozen=True)
 class Row:
-    """One slot of the host's tables."""
+    """One executor entry of the host's tables."""
 
     slot: int
     pairs: tuple[Pair, ...]
@@ -120,23 +130,27 @@ class Row:
     host_frames: int | None
     port_frames: int | None
     shared: int
-    """Slots of the port playing this slot's stored clip: many for the fill."""
+    """Entries of the port playing this entry's stored clip: many for the fill."""
     source: Source | None
     clip: str = ""
-    """The manifest's name for the clip in this slot."""
+    """The manifest's name for the clip in this entry."""
 
 
 def catalog(
     host: AnimPack,
     drivers: Mapping[int, Collection[Pair]],
     port: AnimPack | None = None,
-    donor: AnimPack | None = None,
-    stream: int = 0,
+    donor: Mapping[int, Clip] | None = None,
+    layout: Mapping[int, int] | None = None,
     names: Mapping[int, str] | None = None,
 ) -> list[Row]:
-    """Every slot the host fills, the port fills or a pair drives; `source` needs both packs,
-    `names` names clips by slot."""
-    source = correspondence(port, donor, stream) if port is not None and donor is not None else {}
+    """Every entry the host fills, the port fills or a pair drives; `source` needs the port,
+    the donor and the layout, `names` names clips by entry."""
+    source = (
+        correspondence(port, donor, layout)
+        if port is not None and donor is not None and layout is not None
+        else {}
+    )
     host_fp = slot_prints(host)
     port_fp = slot_prints(port) if port is not None else {}
     port_shared = shared(port) if port is not None else {}
@@ -163,8 +177,8 @@ def catalog(
 
 
 def slot_count(anim: AnimPack) -> int:
-    """The length of the pack's slot tables; an id past it names no slot."""
-    return max((len(s) for s in anim.streams), default=0)
+    """One past the last entry the pack's slot tables hold; an id past it names no slot."""
+    return max((entry_of(si, len(s) - 1) + 1 for si, s in enumerate(anim.streams) if s), default=0)
 
 
 CATALOG = (
@@ -211,29 +225,30 @@ def read_labels(text: str) -> dict[int, str]:
 
 @dataclass(frozen=True)
 class Verdict:
-    """What each build held at a labelled slot."""
+    """What each build held at a labelled entry."""
 
     slot: int
     label: str
     pairs: tuple[Pair, ...]
     builds: Mapping[str, Source | None]
-    """Build name -> its clip in the slot; None where the slot is empty."""
+    """Build name -> its clip in the entry; None where the entry is empty."""
 
     @property
     def transfers(self) -> tuple[str, ...]:
-        """The builds where the label describes donor clip `slot`."""
+        """The builds where the label describes the donor clip the layout puts there."""
         return tuple(b for b, s in self.builds.items() if s is not None and s.match == "same")
 
 
 def verdicts(
     labels: Mapping[int, str],
     builds: Mapping[str, AnimPack],
-    donor: AnimPack,
-    stream: int = 0,
+    donor: Mapping[int, Clip],
+    layout: Mapping[int, int],
     drivers: Mapping[int, Collection[Pair]] | None = None,
 ) -> list[Verdict]:
-    """A label names what a build played in slot N: donor clip N only where that build put it."""
-    held = {name: correspondence(anim, donor, stream) for name, anim in builds.items()}
+    """A label names what a build played in entry N: the layout's clip only where that build
+    put it there."""
+    held = {name: correspondence(anim, donor, layout) for name, anim in builds.items()}
     return [
         Verdict(
             slot,

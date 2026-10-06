@@ -5,7 +5,7 @@ rest pose puts its feet."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -28,6 +28,7 @@ class SlotPose:
     """One donor clip against the port's, at the donor's middle key."""
 
     slot: int
+    """The port's executor entry."""
     frame: float
     joints: int
     median: float
@@ -45,9 +46,10 @@ class Poses:
     unmatched: list[int]
     slots: list[SlotPose] = field(default_factory=list)
     absent: list[int] = field(default_factory=list)
-    """Donor slots the port does not fill."""
+    """Entries the port leaves empty though a donor clip goes there."""
     partial: list[tuple[int, int, int]] = field(default_factory=list)
-    """`(slot, port joints, donor joints)` where the host fills the slot in only some parts."""
+    """`(entry, port joints, donor joints)` where the port fills the entry in only some
+    parts."""
     compared: int = 0
     """Donor bones compared: those of its root tree."""
 
@@ -61,10 +63,11 @@ class Poses:
 
 
 def compare(
-    port: Port, donor: Skeleton, clips: Sequence[Clip | None], record_of: Mapping[int, int]
+    port: Port, donor: Skeleton, clips: Mapping[int, Clip], record_of: Mapping[int, int]
 ) -> Poses:
-    """Each donor clip posed on the donor's rig (bone -> record `record_of`) against the port's
-    clip in the same slot on the port's rig, joint by joint under the correspondence.
+    """Each donor clip, by the port's executor entry it goes to, posed on the donor's rig (bone
+    -> record `record_of`) against the port's clip in that entry on the port's rig, joint by
+    joint under the correspondence.
 
     Raises ValueError when the correspondence places too few donor bones to judge."""
     c = correspondence(donor, port.skeleton)
@@ -82,9 +85,7 @@ def compare(
     bones = np.array(list(tree), dtype=np.intp)
     joints = np.array(list(tree.values()), dtype=np.intp)
     root = 0  # where the correspondence's walk starts
-    for slot, clip in enumerate(clips):
-        if clip is None:
-            continue
+    for slot, clip in sorted(clips.items()):
         built = port.clip(slot)
         if built is None:
             out.absent.append(slot)

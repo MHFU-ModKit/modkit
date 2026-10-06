@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 
 import pytest
-from mhfu_port import build, constraints, manifest
+from mhfu_port import build, constraints, layout, manifest, verify
 from mhfu_port.cli import main
 from mhfu_port.manifest import Build
 from mhfu_port.mesh import Part
@@ -17,8 +17,8 @@ from mhp_formats.skeleton import Bone, Skeleton
 
 PORTS = Path(__file__).parents[3] / "ports"
 BUILT = {
-    "brute_tigrex": "e2ea7c5ce1c991b1230e0c1ba035e11a6bbd0c5b118e7f6b7f3db5c03e12c34d",
-    "zinogre": "e473098a2dd1b9d4d13f5f404689963fbfe11840d3452458f1579f4c2488a6cb",
+    "brute_tigrex": "7c4d62c9fa4c01b4a5b1028c15a013fad6d9215000a4ad7eddc6413b4acf977d",
+    "zinogre": "eca12ec0f40a7aaa9aef371d16a844cd8ee0a77628fa65e88f950b667b396360",
 }
 """sha256 of each manifest's build: changes only with an intended change to the port."""
 HEAD = '[port]\nname = "t"\nhost_species = 75\npac = "t.bin"\n[source]\nmodel = 5248\n'
@@ -30,8 +30,8 @@ def clip(tracks: int) -> Clip:
 
 def donor(bones: int, *tracks: int, em: int | None = None) -> build.Donor:
     skeleton = Skeleton([Bone(parent=i - 1) for i in range(bones)])
-    clips: list[Clip | None] = [clip(n) for n in tracks]
-    return build.Donor(p3rd.Pmo(), skeleton, None, [None, *clips], em)
+    clips = {i + 1: clip(n) for i, n in enumerate(tracks)}
+    return build.Donor(p3rd.Pmo(), skeleton, None, clips, em)
 
 
 @pytest.mark.parametrize(("em_id", "want"), [(None, 58), (40, 40), (-1, None)])
@@ -143,9 +143,10 @@ def test_animation(monkeypatch):
     d.clips[1] = lifted
     seen = {}
     monkeypatch.setattr(build.motion, "build", lambda *a: seen.update(args=a) or fu.Anim())
-    build.animation(d, host(), binding("retarget", {0: 1, 1: None, 2: 2}), {1: 0, 2: 1}, 2.0)
-    clips, _, streams, track_of = seen["args"]
-    assert (streams, track_of) == ([2, 1], {0: 0, 2: 1})
+    bind = binding("retarget", {0: 1, 1: None, 2: 2})
+    build.animation(d, host(), bind, {1: 0, 2: 1}, layout.Layout({4: 1}), 2.0)
+    clips, entries, _, streams, track_of, keep = seen["args"]
+    assert (entries, streams, track_of, keep) == ({4: 1}, [2, 1], {0: 0, 2: 1}, True)
     assert clips[1].tracks[0].channels[0].keyframes[0].value == 32
 
 
@@ -154,15 +155,23 @@ def test_port(data, name):
     built = build.build(manifest.load(PORTS / f"{name}.toml"), data)
     assert (built.summary.mode, built.summary.skin) == ("source_skeleton", "source")
     assert built.summary.size == len(built.pac)
+    assert built.summary.placed == built.summary.clips == len(built.layout.entries)
+    assert len(list(verify.Port(built.pac).distinct())) == built.summary.clips
     assert hashlib.sha256(built.pac).hexdigest() == BUILT[name]
 
 
 def test_cli(data, tmp_path):
     toml = PORTS / "brute_tigrex.toml"
     games = ["--data", str(data.fu.root), "--p3rd-data", str(data.p3rd.root)]
-    out = tmp_path / "out.bin"
+    out = tmp_path / "built" / "out.bin"
+    out.parent.mkdir()
     assert main(["build", str(toml), "-o", str(out), *games]) == 0
-    assert main(["inject", str(toml), "--dir", str(tmp_path), *games]) == 0
-    port = manifest.load(toml).port
+    lib = tmp_path / "lib"
+    assert main(["inject", str(toml), "--dir", str(tmp_path), "--lib", str(lib), *games]) == 0
+    m = manifest.load(toml)
+    port = m.port
     assert (tmp_path / port.pac).read_bytes() == out.read_bytes()
     assert (tmp_path / port.orig).read_bytes() == data.fu.read(port.host_frame)
+    module = layout.module_name(m)
+    assert (lib / module).read_text() == (out.parent / module).read_text()
+    assert "  charge = 61,  -- MHP3rd 61\n" in (lib / module).read_text()

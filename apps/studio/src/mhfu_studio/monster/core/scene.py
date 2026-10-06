@@ -12,7 +12,7 @@ from typing import Any, Self
 from mhfu_port import build
 from mhfu_port.data import Data
 from mhfu_port.manifest import Manifest
-from mhfu_port.model import Clip, Model
+from mhfu_port.model import MHP3RD, Clip, Model
 
 from mhfu_studio.monster.clips import build_id
 from mhfu_studio.monster.core.pose import Pose
@@ -83,11 +83,12 @@ class Scene(Model):
     # names
 
     def attach_manifest(self, m: Manifest) -> None:
-        """Bind the clip names to a manifest, after an edit renamed them."""
+        """Bind the clip names to a manifest, after an edit renamed them: by executor entry on a
+        port, by MHP3rd clip id on its donor."""
         self.manifest = m
         by_slot: dict[int, list[str]] = {}
         for name, c in m.clips.items():
-            by_slot.setdefault(c.slot, []).append(name)
+            by_slot.setdefault(c.id if self.game == MHP3RD else c.slot, []).append(name)
         self.rename(by_slot)
 
     def clip_table(self) -> dict[int, tuple[int, bool]]:

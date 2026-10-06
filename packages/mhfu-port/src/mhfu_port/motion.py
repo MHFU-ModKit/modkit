@@ -1,22 +1,23 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """MHFU in-game animation: the donor's moveset rebuilt as the clips the engine plays on the port's
-joints, and an edited whole-rig clip written back into a slot.
+joints, and an edited whole-rig clip written back into an executor entry.
 
 MHFU splits one rig into parts by `Bone.stream` (the Tigrex: 31 body, 9 head, 5 tail joints),
-each part's clips in its own animation stream (`fk.FU_PART_STREAM`), all playing the same slot
-together. `fk.rig_clip` joins a slot's parts into one clip; `split` and `put` undo it.
+each part's clips in its own animation streams (`fk.FU_PART_STREAM`), all playing the same
+executor entry together (`fk.entry_slot`). `fk.rig_clip` joins an entry's parts into one clip;
+`split` and `put` undo it. MHP3rd keeps each clip whole, in independent streams.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from mhp_formats import fu, p3rd
 from mhp_formats.anim import CHANNEL_BITS, AnimPack, Channel, Clip, Keyframe, Track, quantize
 from mhp_formats.skeleton import Skeleton
 
-from .fk import FU_PART_STREAM, part_clip, part_joints, rig_clip
+from .fk import FU_PART_STREAM, entry_of, entry_slot, part_clip, part_joints, rig_clip
 
 _BIT = {kind: bit for bit, kind in CHANNEL_BITS.items()}
 _ROTATION = tuple(_BIT["rot", axis] for axis in range(3))
@@ -26,11 +27,25 @@ _PLAYABLE = 0x1FF
 engine looks a channel up in a table indexed by its bit and crashes on the scale bits."""
 _MIN_SPAN = 2
 """Frames a rest track spans on a clip without keyframes, so the interpolator has a span."""
+SOURCE_BANK = 100
+"""MHP3rd motion ids per stream: a clip's id is `stream * SOURCE_BANK + slot`."""
 
 
-def moveset(anim: bytes) -> list[Clip | None]:
-    """A donor's clips by slot, from its MHP3rd animation file: stream 0, the main clip set."""
-    return p3rd.Anim.from_bytes(anim).streams[0]
+def clip_id(stream: int, slot: int) -> int:
+    """MHP3rd's motion id of `slot` in `stream`."""
+    if not 0 <= slot < SOURCE_BANK:
+        raise ValueError(f"slot {slot} of stream {stream} has no motion id")
+    return stream * SOURCE_BANK + slot
+
+
+def moveset(anim: bytes) -> dict[int, Clip]:
+    """A donor's clips by MHP3rd motion id (`clip_id`), every stream of its animation file."""
+    out = {}
+    for s, stream in enumerate(p3rd.Anim.from_bytes(anim).streams):
+        for slot, clip in enumerate(stream):
+            if clip is not None:
+                out[clip_id(s, slot)] = clip
+    return out
 
 
 def frames(clip: Clip) -> int:
@@ -39,8 +54,15 @@ def frames(clip: Clip) -> int:
 
 
 def filled(anim: AnimPack) -> list[int]:
-    """Every slot some stream fills."""
-    return sorted({i for s in anim.streams for i, c in enumerate(s) if c is not None})
+    """Every executor entry some stream fills."""
+    return sorted(
+        {
+            entry_of(si, i)
+            for si, s in enumerate(anim.streams)
+            for i, c in enumerate(s)
+            if c is not None
+        }
+    )
 
 
 def split(clip: Clip, streams: Sequence[int]) -> dict[int, Clip]:
@@ -55,7 +77,8 @@ def split(clip: Clip, streams: Sequence[int]) -> dict[int, Clip]:
 
 
 def put(anim: fu.Anim, slot: int, clip: Clip, skeleton: Skeleton) -> fu.Anim:
-    """`anim` with the whole-rig `clip` (as `fk.rig_clip` reads it) written back into `slot`.
+    """`anim` with the whole-rig `clip` (as `fk.rig_clip` reads it) written back into executor
+    entry `slot`.
 
     A part whose tracks and loop come out unchanged keeps its own clip object, so the slots
     sharing it still share one copy in the file. A part keeps its own `loop` and `loop_start`
@@ -90,7 +113,8 @@ def put(anim: fu.Anim, slot: int, clip: Clip, skeleton: Skeleton) -> fu.Anim:
                 )
         loop = (clip.loop, clip.loop_start) if retimed else (native.loop, native.loop_start)
         if tracks != native.tracks or loop != (native.loop, native.loop_start):
-            out[FU_PART_STREAM * part][slot] = Clip(tracks, *loop)
+            si, i = entry_slot(part, slot)
+            out[si][i] = Clip(tracks, *loop)
     return fu.Anim(out, anim.tail)
 
 
@@ -104,51 +128,52 @@ def rest(frames: int) -> Track:
 
 
 def build(
-    clips: Sequence[Clip | None],
+    clips: Mapping[int, Clip],
+    layout: Mapping[int, int],
     host: fu.Anim,
     streams: Sequence[int],
     track_of: Mapping[int, int | None] | None = None,
+    keep_host: bool = False,
 ) -> fu.Anim:
-    """The donor's `clips` (by slot) as an in-game animation on the host's slot layout.
+    """The donor's `clips` (by id) as an in-game animation on the host's stream layout, each in
+    the executor entry `layout` (entry -> id) gives it.
 
     `streams` is the joint count of each skeleton part (`Bone.stream`), in joint order; joint `j`
     plays donor track `track_of[j]`, or track `j` without a map, and rests for the clip's own
-    length where that is None or missing. Scale channels are dropped. A slot the host fills plays
-    the donor's `donor_slot`; a donor clip in a slot the host leaves empty is dropped."""
+    length where that is None or missing. Scale channels are dropped. An entry the layout leaves
+    keeps the host's clips with `keep_host` (they fit the host's rig only), else stays empty."""
     if any(width < 0 for width in streams):
         raise ValueError(f"negative stream width in {list(streams)}")
     for k, width in enumerate(streams):
         si = FU_PART_STREAM * k
         if width and not any(c is not None for c in _stream(host, si)):
             raise ValueError(f"part {k} plays stream {si}, where the host has no clip")
-    donor = {slot: clip for slot, clip in enumerate(clips) if clip is not None}
-    if not donor:
-        raise ValueError("the donor has no clips")
+    if not layout:
+        raise ValueError("the layout places no clip")
     part_of = [k for k, width in enumerate(streams) for _ in range(width)]
     parts: dict[int, dict[int, Clip]] = {}
-    for clip in donor.values():
+    out: list[list[Clip | None]] = [
+        list(s) if keep_host else [None for _ in s] for s in host.streams
+    ]
+    for entry, cid in sorted(layout.items()):
+        clip = clips.get(cid)
+        if clip is None:
+            raise ValueError(f"entry {entry}: the donor has no clip {cid}")
         if id(clip) not in parts:
             tracks = _joint_tracks(clip, len(part_of), track_of)
             parts[id(clip)] = split(Clip(tracks, clip.loop, clip.loop_start), part_of)
-    out: list[list[Clip | None]] = [[None] * len(stream) for stream in host.streams]
-    for k, width in enumerate(streams):
-        si = FU_PART_STREAM * k
-        for slot, native in enumerate(_stream(host, si) if width else []):
-            if native is not None:
-                out[si][slot] = parts[id(donor[donor_slot(clips, slot)])][k]
+        for k, width in enumerate(streams):
+            si, slot = entry_slot(k, entry)
+            if not width:
+                continue
+            if slot >= len(_stream(host, si)):
+                raise ValueError(f"entry {entry}: stream {si} has {len(_stream(host, si))} slots")
+            out[si][slot] = parts[id(clip)][k]
     return fu.Anim(out)
 
 
-def donor_slot(clips: Sequence[Clip | None], slot: int) -> int:
-    """The donor slot whose clip `build` plays in host slot `slot`: its own, else the lowest."""
-    filled = [s for s, clip in enumerate(clips) if clip is not None]
-    if not filled:
-        raise ValueError("the donor has no clips")
-    return slot if slot < len(clips) and clips[slot] is not None else filled[0]
-
-
 def pelvis(
-    clips: Sequence[Clip | None],
+    clips: Iterable[Clip | None],
     bone_of_track: Mapping[int, int] | None = None,
     parents: Sequence[int] = (),
 ) -> int | None:
@@ -176,23 +201,23 @@ def pelvis(
     return max(score, key=score.__getitem__)
 
 
-def lift(clips: Sequence[Clip | None], units: float, track: int) -> list[Clip | None]:
+def lift(clips: Mapping[int, Clip], units: float, track: int) -> dict[int, Clip]:
     """`clips` with `units` (world units) added to `track`'s location Y in every clip.
 
     The whole body rises with the pelvis and its bob is kept; this moves a donor rig authored
     against another game's floor onto MHFU's, where the rest pose stands on the origin."""
     raw = quantize("loc", units)
     done: dict[int, Clip] = {}
-    out: list[Clip | None] = []
-    for clip in clips:
-        if clip is None or track >= len(clip.tracks):
-            out.append(clip)
+    out: dict[int, Clip] = {}
+    for key, clip in clips.items():
+        if track >= len(clip.tracks):
+            out[key] = clip
             continue
         if id(clip) not in done:
             tracks = list(clip.tracks)
             tracks[track] = Track([_lifted(c, raw) for c in tracks[track].channels])
             done[id(clip)] = Clip(tracks, clip.loop, clip.loop_start)
-        out.append(done[id(clip)])
+        out[key] = done[id(clip)]
     return out
 
 
