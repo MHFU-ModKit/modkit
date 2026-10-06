@@ -2,9 +2,10 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """Where the studio finds the two extracted games and PPSSPP's memory stick.
 
-Every lookup goes through `find`: the place's environment variable, else its saved setting
-(`shell.settings`), else a guess. A job the window runs gets the answers
-as environment variables (`environ`), so its command line finds what the window found.
+Every lookup goes through `find`: the lane's own (`MHFU_LANE`, for the memory stick), else the
+place's environment variable, else its saved setting (`shell.settings`), else a guess. A job the
+window runs gets the answers as environment variables (`environ`), so its command line finds
+what the window found.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from mhfu import inject
 from mhfu.files import Extracted
 from mhfu_port.data import Data
 from mhp_formats.databin import Game
+from ppsspp_debug import Lane
 
 from mhfu_studio.shell import settings
 
@@ -72,6 +74,8 @@ class Place:
     #: the usable path for a chosen one; FileNotFoundError or ValueError says why not
     check: Callable[[Path], Path]
     guess: Callable[[], Path | None]
+    #: where a lane keeps its own; with `MHFU_LANE` set it wins, as its PPSSPP reads only that
+    in_lane: Callable[[Lane], Path] | None = None
 
 
 MHFU = Place(
@@ -100,10 +104,11 @@ MEMSTICK = Place(
     "PPSSPP's memory stick: its PSP folder, or the folder holding it",
     inject.memstick,
     inject.detect,
+    lambda lane: lane.stick,
 )
 PLACES = (MHFU, MHP3RD, MEMSTICK)
 
-Source = Literal["env", "saved", "found", ""]
+Source = Literal["lane", "env", "saved", "found", ""]
 
 
 @dataclass(frozen=True)
@@ -113,7 +118,7 @@ class Found:
     place: Place
     #: usable; None when nothing was found or `given` is not usable
     path: Path | None
-    #: env (its variable), saved (the setting), found (a guess), or "" for nowhere
+    #: lane (`MHFU_LANE`), env (its variable), saved (the setting), found (a guess), or ""
     source: Source
     #: what the variable or the setting says
     given: str = ""
@@ -137,7 +142,12 @@ class Found:
         if self.path is None:
             why = self.why()
             return why[:1].upper() + why[1:]
-        how = {"env": f"from {self.place.env}", "saved": "chosen", "found": "found"}
+        how = {
+            "lane": f"from {inject.LANE_ENV}",
+            "env": f"from {self.place.env}",
+            "saved": "chosen",
+            "found": "found",
+        }
         return f"{plain(str(self.path))} ({how.get(self.source, self.source)})"
 
 
@@ -158,9 +168,11 @@ def setting(place: Place) -> str:
 
 
 def find(place: Place) -> Found:
-    """The variable, else the setting, else a guess; a bad variable or setting is reported,
+    """The lane's, else the variable, else the setting, else a guess; a bad one is reported,
     not passed over."""
+    lane = inject.lane() if place.in_lane is not None else None
     told: tuple[tuple[Source, str | None], ...] = (
+        ("lane", str(place.in_lane(lane)) if place.in_lane and lane else None),
         ("env", os.environ.get(place.env)),
         ("saved", settings.store.get(setting(place))),
     )
