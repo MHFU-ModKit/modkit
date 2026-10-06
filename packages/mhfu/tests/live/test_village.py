@@ -128,8 +128,9 @@ def at_exit(fake, walks):
     fake.on_read.append(read)
 
 
-def test_depart(s, fake, walks):
+def test_depart(s, fake, walks, clock):
     at_exit(fake, walks)
+    fake.poke("B", a.SCREEN_STATE, Screen.CONTRACT)
 
     def press(button):
         if fake.presses == ["square", "square"]:  # the first press is lost
@@ -137,9 +138,11 @@ def test_depart(s, fake, walks):
             fake.poke("H", a.AREA_INDEX, 98)
 
     fake.on_press.append(press)
+    start = clock.now
     assert village.depart(s) == 98
     assert fake.presses == ["square", "square"]
     assert walks == list(village.EXIT_ROUTE)
+    assert clock.now - start < village.TOOK_WINDOW + 3  # the lost press cost its window only
 
 
 def test_depart_without_a_contract(s, fake, walks):
