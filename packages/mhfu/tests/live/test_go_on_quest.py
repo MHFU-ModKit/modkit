@@ -33,7 +33,14 @@ def run(monkeypatch, fake):
         return quests.Taken(card, 98 if kw["leave"] else None)
 
     monkeypatch.setattr(quests, "take", take)
-    for name in ("MHFU_LAUNCHER", "MHFU_PPSSPP", "MHFU_ISO", "MHFU_CONTAINER", "MHFU_DOCKER"):
+    for name in (
+        "MHFU_LAUNCHER",
+        "MHFU_PPSSPP",
+        "MHFU_ISO",
+        "MHFU_CONTAINER",
+        "MHFU_DOCKER",
+        "MHFU_LANE",
+    ):
         monkeypatch.delenv(name, raising=False)
 
     def go(*argv):

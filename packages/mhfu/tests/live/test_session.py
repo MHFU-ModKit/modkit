@@ -38,6 +38,7 @@ def test_launcher_env(tmp_path):
     assert Launcher.from_env({}) == Launcher()
     env = {"MHFU_LAUNCHER": "docker", "MHFU_CONTAINER": "rig", "MHFU_ISO": "/iso/game.iso"}
     assert Launcher.from_env(env) == Launcher(docker=True, container="rig", iso="/iso/game.iso")
+    assert Launcher.from_env({"MHFU_LANE": "2"}) == Launcher(lane=2)
     with pytest.raises(ValueError, match="MHFU_LAUNCHER"):
         Launcher.from_env({"MHFU_LAUNCHER": "cloud"})
     binary = tmp_path / "PPSSPPSDL"

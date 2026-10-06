@@ -7,7 +7,14 @@ from mhfu.live import Launcher, Session, session
 
 @pytest.fixture(autouse=True)
 def no_launcher_env(monkeypatch):
-    for name in ("MHFU_LAUNCHER", "MHFU_PPSSPP", "MHFU_ISO", "MHFU_CONTAINER", "MHFU_DOCKER"):
+    for name in (
+        "MHFU_LAUNCHER",
+        "MHFU_PPSSPP",
+        "MHFU_ISO",
+        "MHFU_CONTAINER",
+        "MHFU_DOCKER",
+        "MHFU_LANE",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
