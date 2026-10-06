@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass
 
 from mhfu.em.intel import AttackIntel, PairIntel, SpeciesIntel
+from mhfu_port import layout
 from mhfu_port.manifest import Claim, Manifest, Move
 
 from mhfu_studio.monster import clips
@@ -302,22 +303,15 @@ def lua_move(mv: Move) -> str:
 
 
 def lua_moves(m: Manifest) -> str:
-    """The `clips` and `moves` fields of a mod's `P.define{…}` (the shape
-    `mods/lua/zinogre_lunge.lua` writes by hand); empty without moves."""
+    """The `moves` field of a mod's `P.define{…}`; empty without moves. Its clips come from the
+    layout module `mhfu-port inject` writes with the PAC, not from a copy here."""
     if not m.moves:
         return ""
-    used = [n for n in m.clips if any(mv.clip == n for mv in m.moves.values())]
-    builds = {m.clips[n].labelled_build for n in used} - {None}
     source = m.path.name if m.path is not None else m.port.name
-    head = [f"-- from {source}, for your mod's P.define{{ ... }}"]
-    if len(builds) == 1:
-        head.append(f"-- anims of build {builds.pop()}")
     return "\n".join(
         [
-            *head,
-            "clips = {",
-            *(f"  {_lua_key(n)} = {m.clips[n].slot}," for n in used),
-            "},",
+            f"-- from {source}, for your mod's P.define{{ ... }}; the clips are in "
+            f"{layout.module_name(m)}",
             "moves = {",
             *(f"  {_lua_key(n)} = {lua_move(mv)}," for n, mv in m.moves.items()),
             "},",

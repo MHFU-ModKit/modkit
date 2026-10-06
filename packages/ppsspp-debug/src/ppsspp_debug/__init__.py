@@ -14,7 +14,8 @@ with Client.connect() as ppsspp:
 
 from ._client import AsyncClient, Stream
 from ._errors import DebuggerError, Disconnected, Unsupported
-from ._launch import DockerEmulator, LocalEmulator, find_debuggers
+from ._lane import AppEmulator, Lane
+from ._launch import DockerEmulator, LocalEmulator, emulators, find_debuggers
 from ._sync import Client, SyncStream
 from ._types import (
     BUTTONS,
@@ -39,6 +40,7 @@ from ._types import (
 
 __all__ = [
     "BUTTONS",
+    "AppEmulator",
     "AsyncClient",
     "Breakpoint",
     "Button",
@@ -53,6 +55,7 @@ __all__ = [
     "GameInfo",
     "Hit",
     "Instruction",
+    "Lane",
     "LocalEmulator",
     "LogLine",
     "RawEvent",
@@ -64,6 +67,7 @@ __all__ = [
     "SyncStream",
     "Unsupported",
     "Watchpoint",
+    "emulators",
     "find_debuggers",
     "parse_hit",
 ]

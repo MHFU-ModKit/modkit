@@ -79,7 +79,7 @@ class MeshGroup:
 @dataclass
 class Clip:
     slot: int
-    """The executor a1."""
+    """The executor entry (a1); a donor's MHP3rd clip id."""
     frames: int
     """The last keyframe."""
     loop: bool
@@ -181,7 +181,7 @@ class Model:
             try:
                 donor = mesh.donor(data, geometry)
                 groups = _donor_groups(donor, n, by_image)
-                moves = motion.moveset(moveset) if moveset is not None else []
+                moves = motion.moveset(moveset) if moveset is not None else {}
                 em = em_id if em_id is not None and em_id >= 0 else None
                 clips, r2b = _donor_clips(moves, skeleton, em, bone_offset, skip_bones, notes)
             except ValueError as e:
@@ -431,7 +431,7 @@ def _fu_clips(pack: fu.Anim, skeleton: Skeleton, notes: list[str]) -> list[Clip]
 
 
 def _donor_clips(
-    moves: Sequence[anim.Clip | None],
+    moves: Mapping[int, anim.Clip],
     skeleton: Skeleton,
     em: int | None,
     bone_offset: int | None,
@@ -439,7 +439,7 @@ def _donor_clips(
     notes: list[str],
 ) -> tuple[list[Clip], dict[int, int] | None]:
     """Clips through the porter's record map; `{record: bone}` alongside."""
-    if not any(c is not None for c in moves):
+    if not moves:
         notes.append("no MHP3rd moveset was loaded: bind pose only")
         return [], None
     if em is None:
@@ -449,12 +449,11 @@ def _donor_clips(
             "rule (mhfu_port.records)."
         )
     n = len(skeleton.bones)
-    bone_record = records.for_moveset(moves, em, n, bone_offset, skip_bones)
+    bone_record = records.for_moveset(moves.values(), em, n, bone_offset, skip_bones)
     parents = [b.parent for b in skeleton.bones]
     loc = {
         bone
-        for c in moves
-        if c is not None
+        for c in moves.values()
         for bone, r in bone_record.items()
         if r < len(c.tracks)
         and any(
@@ -478,8 +477,7 @@ def _donor_clips(
             c,
             bone_record,
         )
-        for slot, c in enumerate(moves)
-        if c is not None
+        for slot, c in sorted(moves.items())
     ]
     return out, {r: b for b, r in bone_record.items()}
 

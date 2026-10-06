@@ -89,18 +89,23 @@ def run_validate(args: argparse.Namespace) -> int:
 
 def run_pose(args: argparse.Namespace) -> int:
     m = manifest.load(args.manifest)
-    d = build.donor(m, data.from_arguments(args))
+    games = data.from_arguments(args)
+    d = build.donor(m, games)
+    placed = build.layout(m, d, build.host(m, games)).entries
     port = verify.Port(args.port.read_bytes())
-    r = pose.compare(port, d.skeleton, d.clips, build.record_map(d, m.build))
+    clips = {e: d.clips[cid] for e, cid in placed.items()}
+    r = pose.compare(port, d.skeleton, clips, build.record_map(d, m.build))
     print(f"{r.matched} of {r.bones} donor bones placed (pad {r.pad}), {r.compared} compared")
-    print(f"{'slot':>4} {'joints':>6} {'median':>8} {'p90':>8} {'worst':>8} {'lift':>7}")
+    print(
+        f"{'entry':>5} {'clip':>4} {'joints':>6} {'median':>8} {'p90':>8} {'worst':>8} {'lift':>7}"
+    )
     for s in r.slots:
         print(
-            f"{s.slot:>4} {s.joints:>6} {s.median:>8.2f} {s.p90:>8.2f} {s.worst:>8.2f} "
-            f"{s.lift:>7.1f}"
+            f"{s.slot:>5} {placed[s.slot]:>4} {s.joints:>6} {s.median:>8.2f} {s.p90:>8.2f} "
+            f"{s.worst:>8.2f} {s.lift:>7.1f}"
         )
     if r.absent:
-        print(f"donor slots the port does not fill: {' '.join(map(str, r.absent))}")
+        print(f"entries the port leaves empty: {' '.join(map(str, r.absent))}")
     if r.partial:
         shown = ", ".join(f"{s} ({a} of {b} joints)" for s, a, b in r.partial)
         print(f"filled in only some parts, not compared: {shown}")

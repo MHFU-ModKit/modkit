@@ -128,18 +128,26 @@ class Build:
 
 @dataclass
 class Clip:
-    """One clip of the port's vocabulary; `slot` is the executor a1 that plays it.
+    """One clip of the port's vocabulary: the donor's MHP3rd clip `source` (`stream * 100 +
+    slot`; None: `slot`) placed in executor entry `slot`, the a1 that plays it. Every other
+    donor clip goes where `layout` packs it.
 
     `frames` and `loop` fingerprint the clip in a build; `labelled_build` names the build the
-    label was written against, since slots move between builds.
+    label was written against.
     """
 
     slot: int
+    source: int | None = field(default=None, kw_only=True)
     frames: int | None = None
     loop: bool | None = None
     impact_frame: int | None = None
     label: str = ""
     labelled_build: str | None = None
+
+    @property
+    def id(self) -> int:
+        """The MHP3rd clip id."""
+        return self.slot if self.source is None else self.source
 
 
 @dataclass
@@ -433,9 +441,15 @@ def _vec3(v: list[float] | None, where: str) -> None:
 def _validate(m: Manifest) -> None:
     """The rules the types cannot say: bounds and cross-references."""
     slots: dict[int, str] = {}
+    sources: dict[int, str] = {}
     for name, c in m.clips.items():
-        _need(c.slot not in slots, f"clips.{name}", f"slot {c.slot} is clips.{slots.get(c.slot)}")
+        w = f"clips.{name}"
+        _need(c.slot not in slots, w, f"slot {c.slot} is clips.{slots.get(c.slot)}")
         slots[c.slot] = name
+        cid = c.id
+        _need(cid >= 0, w, "source is 0 or more")
+        _need(cid not in sources, w, f"clip {cid} is placed by clips.{sources.get(cid)} too")
+        sources[cid] = name
     claimed: dict[tuple[int, int | None], str] = {}
     for name, mv in m.moves.items():
         w = f"moves.{name}"

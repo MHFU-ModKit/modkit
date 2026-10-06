@@ -22,18 +22,28 @@ from types import TracebackType
 from typing import TypeVar
 
 import psutil
-from ppsspp_debug import Button, Client, DockerEmulator, LocalEmulator, find_debuggers
+from ppsspp_debug import (
+    AppEmulator,
+    Button,
+    Client,
+    DockerEmulator,
+    Lane,
+    LocalEmulator,
+    emulators,
+    find_debuggers,
+)
 
 from ..memory import Live
 from ..structs import Game
 
 T = TypeVar("T")
-Emulator = LocalEmulator | DockerEmulator
+Emulator = LocalEmulator | AppEmulator | DockerEmulator
 
 POLL = 0.1  # seconds between reads; every read stops the CPU, so faster polling stalls the game
 
 # PPSSPP binaries tried, in order, when MHFU_PPSSPP is unset
 BINARIES = (
+    "~/.cache/modkit/ppsspp/src/build/PPSSPPSDL.app/Contents/MacOS/PPSSPPSDL",  # ppsspp/build.sh
     "PPSSPPSDL",
     "PPSSPPQt",
     "ppsspp",
@@ -46,7 +56,8 @@ class Launcher:
     """How to start PPSSPP. Paths are as the emulator sees them: inside the container for docker.
 
     Environment defaults: MHFU_LAUNCHER (local or docker), MHFU_PPSSPP (binary), MHFU_ISO
-    (without it, docker boots the first image in /iso), MHFU_CONTAINER, MHFU_DOCKER (the CLI).
+    (without it, docker boots the first image in /iso), MHFU_CONTAINER, MHFU_DOCKER (the CLI),
+    MHFU_LANE (a local `Lane`: its own hidden PPSSPP, stick and port).
     """
 
     docker: bool = False
@@ -54,6 +65,7 @@ class Launcher:
     iso: str | None = None
     container: str = "ppsspp"
     docker_cli: str = "docker"
+    lane: int | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Launcher:
@@ -67,11 +79,13 @@ class Launcher:
             iso=env.get("MHFU_ISO"),
             container=env.get("MHFU_CONTAINER", "ppsspp"),
             docker_cli=env.get("MHFU_DOCKER", "docker"),
+            lane=int(env["MHFU_LANE"]) if env.get("MHFU_LANE") else None,
         )
 
     def binary(self) -> str:
         """The local PPSSPP binary: MHFU_PPSSPP, else the first of BINARIES found."""
         for name in [self.ppsspp] if self.ppsspp else BINARIES:
+            name = os.path.expanduser(name)
             found = shutil.which(name) or (name if Path(name).is_file() else None)
             if found:
                 return found
@@ -81,14 +95,24 @@ class Launcher:
         path = os.fspath(state) if state is not None else None
         return DockerEmulator(self.container, game=self.iso, state=path, docker=self.docker_cli)
 
-    def local_emulator(self, state: str | os.PathLike[str] | None = None) -> LocalEmulator:
-        """PPSSPP on this machine; `state` loads at launch and skips the cold boot."""
-        if self.iso is None:
+    def local_emulator(
+        self, state: str | os.PathLike[str] | None = None
+    ) -> LocalEmulator | AppEmulator:
+        """PPSSPP on this machine, in its lane if it has one (whose own image serves without
+        MHFU_ISO); `state` loads at launch and skips the cold boot."""
+        lane = Lane(self.lane) if self.lane is not None else None
+        iso = self.iso or (lane.game if lane and lane.game.exists() else None)
+        if iso is None:
             raise FileNotFoundError("no game image; set MHFU_ISO or pass iso=")
-        return LocalEmulator(self.binary(), self.iso, state=state)
+        if lane is not None:
+            return lane.prepare(iso).emulator(self.binary(), state=state)
+        return LocalEmulator(self.binary(), iso, state=state)
 
     def stop(self) -> int:
-        """Stop the container's emulator, or every PPSSPP on this machine; returns how many."""
+        """Stop the container's emulator, this lane's, or every PPSSPP on this machine outside a
+        lane; returns how many."""
+        if self.lane is not None:
+            return Lane(self.lane).stop()
         if self.docker:
             emulator = DockerEmulator(self.container, docker=self.docker_cli)
             running = emulator.running()
@@ -98,15 +122,15 @@ class Launcher:
 
 
 def stop_local(grace: float = 3.0) -> int:
-    """Terminate every PPSSPP process of this user, killing those alive after `grace` s."""
+    """Terminate every PPSSPP process of this user outside a lane, killing those alive after
+    `grace` s."""
     stopped = []
-    for p in psutil.process_iter(["name"]):
-        if "ppsspp" in (p.info["name"] or "").lower():
-            try:
-                p.terminate()
-                stopped.append(p)
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
+    for p in emulators():
+        try:
+            p.terminate()
+            stopped.append(p)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
     _, alive = psutil.wait_procs(stopped, timeout=grace)
     for p in alive:
         try:
@@ -180,10 +204,12 @@ class Session:
                 docker.start()
             emulator = docker
         else:
-            if ports := find_debuggers():
+            lane = Lane(launcher.lane) if launcher.lane is not None else None
+            if ports := lane.debuggers() if lane else find_debuggers():
                 if not fresh:
-                    return cls.attach(ports[0] if len(ports) == 1 else None, timeout=timeout)
-                stop_local()
+                    one = lane is not None or len(ports) == 1
+                    return cls.attach(ports[0] if one else None, timeout=timeout)
+                launcher.stop()
             emulator = launcher.local_emulator(state)
             emulator.start()
         try:

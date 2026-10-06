@@ -95,7 +95,9 @@ def test_rejects(data):
 
 
 # a file each game stores unencrypted, and one it encrypts
-@pytest.mark.parametrize(("game", "plain", "secret"), [(Game.MHFU, 42, 41), (Game.MHP3RD, 17, 16)])
+@pytest.mark.parametrize(
+    ("game", "plain", "secret"), [(Game.MHFU, 42, 41), (Game.MHP2G, 22, 21), (Game.MHP3RD, 17, 16)]
+)
 def test_cipher(game, plain, secret):
     data = DataBin([bytes([i]) * BLOCK for i in range(64)], {3: BLOCK}).to_bytes()
     sealed = encrypt(data, game)

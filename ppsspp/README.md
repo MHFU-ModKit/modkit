@@ -36,6 +36,18 @@ uv run mhfu start --iso mhfu.iso                    # the game, with its debugge
 The debugger opens at startup once Settings > Tools > Developer tools > Allow remote debugger
 has been ticked (it sets `RemoteDebuggerOnStartup = True` in `ppsspp.ini`).
 
+## Lanes: several at once on one machine
+
+```bash
+MHFU_ISO=~/isos/mhfu.iso uv run mhfu start --lane 1    # prints 45101
+uv run mhfu stop --lane 1
+```
+
+A lane is a PPSSPP of its own: its own `HOME` under `~/.cache/modkit/lanes/<n>` (so its own
+memory stick, cloned from `~/.config/ppsspp/PSP` the first time), its own clone of the game image,
+and debugger port 45100 + n. On macOS it starts hidden and never takes focus. `mhfu stop` without
+`--lane` leaves lanes alone. In Python, `ppsspp_debug.Lane` or `MHFU_LANE` for `mhfu.live`.
+
 ## Headless in Docker
 
 ```bash

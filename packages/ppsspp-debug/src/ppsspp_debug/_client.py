@@ -10,7 +10,7 @@ import logging
 import os
 import struct
 from collections import deque
-from collections.abc import AsyncIterator, Callable, Collection, Generator
+from collections.abc import AsyncIterator, Callable, Collection, Generator, Iterable
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from importlib.metadata import version
 from types import TracebackType
@@ -771,6 +771,50 @@ class AsyncClient:
                 with suppress(Disconnected):
                     await self.remove_watchpoint(address, size)
                     await self._release_untaken(hits, stop)
+
+    @asynccontextmanager
+    async def trace(
+        self,
+        addresses: Iterable[int],
+        *,
+        condition: str | None = None,
+        log_format: str | None = None,
+    ) -> AsyncIterator[Stream[t.Hit]]:
+        """Execution breakpoints that only log, on every address for the block, as one stream.
+
+        All are armed in one stop of the CPU, so they start on the same frame, and removed on
+        exit. Each costs the emulator a lookup over every armed breakpoint per hit.
+        """
+        points = frozenset(addresses)
+
+        def match(event: t.Event) -> t.Hit | None:
+            if isinstance(event, t.Hit):
+                return event if event.kind == "exec" and event.start in points else None
+            if isinstance(event, t.LogLine):
+                hit = event.hit
+                if hit is not None and hit.kind == "exec" and hit.pc in points:
+                    return hit
+            return None
+
+        async with self._subscribed(self._hit_source(False, log_format)) as sub:
+            armed: list[int] = []
+            try:
+                async with self.paused():
+                    for address in points:
+                        await self.add_breakpoint(
+                            address,
+                            stop=False,
+                            log=True,
+                            condition=condition,
+                            log_format=log_format,
+                        )
+                        armed.append(address)
+                yield Stream(sub, match)
+            finally:
+                with suppress(Disconnected):
+                    async with self.paused():
+                        for address in armed:
+                            await self.remove_breakpoint(address)
 
     def _hit_source(self, stop: bool, log_format: str | None) -> set[str]:
         """The broadcasts a breakpoint's hits arrive as."""

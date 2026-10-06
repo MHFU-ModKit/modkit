@@ -6,7 +6,7 @@ import pytest
 from mhfu import addresses as a
 from mhfu import files, mips
 from mhfu import stage as S
-from mhfu.memory import Image
+from mhfu.memory import Image, Space
 from mhfu.overlay import TEXT, Overlay
 from modkit_testing import mips as asm
 
@@ -213,3 +213,67 @@ def test_lobby_loads_the_variants(game):
     picker = mips.instructions(eboot, a.STAGE_VARIANT_FILE, a.STAGE_VARIANT_FILE + 0x100)
     first = files.engine_id(files.stage_variant_pac(0))
     assert any(i.isIType() and i.getProcessedImmediate() == first for i in picker)
+
+
+PAC_AT = a.USER_RAM + 0xE0_0000  # a heap address for the stage PAC
+
+
+def tri(*verts: tuple[float, float, float]) -> bytes:
+    """A floor triangle with its unit normal and plane, normal y up."""
+    (ax, ay, az), (bx, by, bz), (cx, cy, cz) = verts
+    u, v = (bx - ax, by - ay, bz - az), (cx - ax, cy - ay, cz - az)
+    n = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+    length = sum(c * c for c in n) ** 0.5
+    n = tuple(c / length * (-1 if n[1] < 0 else 1) for c in n)
+    d = -(n[0] * ax + n[1] * ay + n[2] * az)
+    return struct.pack("<I13f", 0, *verts[0], *verts[1], *verts[2], *n, d)
+
+
+def resident_stage(stage: int, fixed: bool = True) -> Space:
+    """A resident stage PAC whose floor chunk is a 2x2 grid of 500-unit cells: cell (0, 0)
+    lists a level floor at 100, a ramp y = x / 5 and a wall, every other cell nothing."""
+    tris = [
+        tri((0, 100, 0), (0, 100, 400), (400, 100, 0)),
+        tri((0, 0, 0), (0, 0, 500), (500, 100, 0)),
+        tri((0, 0, 0), (0, 500, 0), (0, 0, 500)),
+    ]
+    coll, chunk = 0x40, 0x60
+    grid = chunk + S.HITS_GRID_AT
+    lists = grid + 4 * 4
+    tri_at = lists + 4 * (len(tris) + 1) + 4 * 3
+    size = tri_at - chunk + 56 * len(tris)
+    pac = bytearray(chunk + size)
+    struct.pack_into("<I", pac, 0, 6)
+    struct.pack_into("<II", pac, 4 + 8 * S.COLLISION_ENTRY, coll, chunk - coll + size)
+    struct.pack_into("<I4I", pac, coll, 2, 0, 0, chunk - coll, size)
+    grid_word = PAC_AT + grid if fixed else S.HITS_GRID_AT - 8
+    head = (S.HITS_TAG, size, 500, 500, 2, 2, 0, 0, grid_word, PAC_AT + tri_at)
+    pac[chunk:grid] = struct.pack("<4sIIIIIiiII", *head)
+    first = [PAC_AT + tri_at + 56 * k for k in range(len(tris))] + [S.LIST_END]
+    rest = lists + 4 * len(first)
+    struct.pack_into("<4I", pac, grid, PAC_AT + lists, PAC_AT + rest, PAC_AT + rest, PAC_AT + rest)
+    struct.pack_into(f"<{len(first)}I", pac, lists, *first)
+    struct.pack_into("<I", pac, rest, S.LIST_END)
+    pac[tri_at:] = b"".join(tris)
+    table = Image(bytes(0x400), a.RESOURCE_TABLE)
+    table.write_u32(a.RESOURCE_TABLE, a.RESOURCE_TABLE + 0x10)
+    row = struct.pack("<HHII", S.LOADED, files.engine_id(files.stage_pac(stage)), PAC_AT, 0)
+    table.write(a.RESOURCE_TABLE + 0x10, row)
+    return Space([table, Image(bytes(pac), PAC_AT)])
+
+
+def test_floor():
+    floor = S.Floor.read(resident_stage(98), 98)
+    assert floor.heights(100, 100) == pytest.approx([100, 20])
+    assert floor.height(100, 100) == pytest.approx(100)
+    assert floor.height(450, 20, near=0) == pytest.approx(90)
+    assert floor.height(100, 100, near=30) == pytest.approx(20)
+    assert floor.heights(600, 100) == [] and floor.height(-1, 100) is None
+    assert floor.heights(0, 0) == pytest.approx([100, 0])
+
+
+def test_floor_not_loaded():
+    with pytest.raises(S.NotLoaded, match="not resident"):
+        S.Floor.read(resident_stage(98), 99)
+    with pytest.raises(S.NotLoaded, match="not fixed up"):
+        S.Floor.read(resident_stage(98, fixed=False), 98)

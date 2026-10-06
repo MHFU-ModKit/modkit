@@ -236,6 +236,7 @@ CLONE_POOL = { eu = 0x0A800000, type = "bytes", doc = "framework-owned entity-cl
 INJECT_XRAM = { eu = 0x0B000000, type = "bytes", doc = "framework-owned model-inject scratch in the extra-RAM window (emulator only); a relocated PAC lands at its start" }
 EXTRA_RAM_END = { eu = 0x0C000000, type = "bytes", doc = "first address past the extra-RAM window (PPSSPP memory=64)" }
 
+
 [struct.ENTITY]
 doc = "common entity layout of monsters, the player combat entity and village NPCs; field docs name a narrower user"
 [struct.ENTITY.fields]

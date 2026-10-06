@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """Stages at runtime: the stage overlay's parameter object (exits, spheres, surface table), the
-map table in game_sub.ovl, and the live tables a quest builds on the heap.
+map table in game_sub.ovl, the live tables a quest builds on the heap, and the floor height
+under a point.
 
 A stage number is the runtime area_index. The stage FILE (`st<NNN>.pac`, its collision and
-meshes) is `mhp_formats.fu.stage`'s; nothing here reads it.
+meshes) is `mhp_formats.fu.stage`'s; only `Floor` reads part of it, as the loader left it in RAM.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from __future__ import annotations
 import math
 import struct
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from . import addresses as a
 from . import files
@@ -386,3 +387,92 @@ def find_spawns(image: Image) -> list[SmallSpawn]:
                 out.append(spawn)
         at = image.data.find(marker, at + 1)
     return out
+
+
+# --- the walkable floor, read live ---
+
+COLLISION_ENTRY = 5
+"""The stage PAC entry holding the collision, a PAC of HITS chunks."""
+FLOOR_CHUNK = 1
+"""The collision chunk of the walkable floor; chunk 0 holds walls and ceilings."""
+HITS_TAG = b"HITS"
+HITS_GRID_AT = 0x28
+"""Where a chunk's grid starts; the loader's fixup points the header's grid word here."""
+_PAC_ROW = struct.Struct("<II")
+_HITS_HEAD = struct.Struct("<4sIIIIIiiII")
+"""tag, size, cell x/z, nx/nz, origin x/z, grid, triangles: `docs/formats/stage.md`."""
+_TRI = struct.Struct("<I13f")
+_U32 = struct.Struct("<I")
+LIST_END = 0xFFFFFFFF
+LEVEL = 1e-6
+"""A triangle whose normal has |y| under this is a wall, with no height to give."""
+EDGE = 1e-3
+"""Slack, in world units squared, on a triangle's edge in the inside test."""
+
+
+class NotLoaded(LookupError):
+    """The stage's PAC is not resident, or the loader has not fixed up its collision yet."""
+
+
+class Floor:
+    """A stage's walkable floor as the loader left it: the chunk read once, its grid, lists
+    and list entries absolute addresses. An address outside the chunk (a collision push's
+    added triangles) is read live."""
+
+    def __init__(self, mem: Memory, chunk: Image, stage: int) -> None:
+        _, _, cx, cz, nx, nz, _, _, grid, _ = chunk.unpack(_HITS_HEAD, chunk.base)
+        self.mem, self.chunk, self.stage = mem, chunk, stage
+        self.cell, self.grid, self.grid_at = (cx, cz), (nx, nz), grid
+
+    @classmethod
+    def read(cls, mem: Memory, stage: int) -> Floor:
+        slot = resident_files(mem).get(files.stage_pac(stage))
+        if slot is None:
+            raise NotLoaded(f"st{stage:03d}.pac is not resident")
+        coll = slot.data + mem.unpack(_PAC_ROW, slot.data + 4 + 8 * COLLISION_ENTRY)[0]
+        if mem.u32(coll) <= FLOOR_CHUNK:
+            raise NotLoaded(f"st{stage:03d} has no floor chunk")
+        at = coll + mem.unpack(_PAC_ROW, coll + 4 + 8 * FLOOR_CHUNK)[0]
+        tag, size, *_, grid, _ = mem.unpack(_HITS_HEAD, at)
+        if tag != HITS_TAG or grid != at + HITS_GRID_AT:
+            raise NotLoaded(f"st{stage:03d}'s floor at 0x{at:08X} is not fixed up")
+        return cls(mem, Image(mem.read(at, size), at), stage)
+
+    def _unpack(self, fmt: struct.Struct, address: int) -> tuple[Any, ...]:
+        source = self.chunk if address in self.chunk else self.mem
+        return source.unpack(fmt, address)
+
+    def heights(self, x: float, z: float) -> list[float]:
+        """Every floor height under (x, z): the triangles its grid cell lists that hold it."""
+        ix, iz = int(x // self.cell[0]), int(z // self.cell[1])
+        nx, nz = self.grid
+        if not (0 <= ix < nx and 0 <= iz < nz):
+            return []
+        at = self._unpack(_U32, self.grid_at + 4 * (ix * nz + iz))[0]
+        out = []
+        while (tri := self._unpack(_U32, at)[0]) != LIST_END:
+            _, x0, _, z0, x1, _, z1, x2, _, z2, n0, n1, n2, d = self._unpack(_TRI, tri)
+            if abs(n1) >= LEVEL and _inside((x, z), (x0, z0), (x1, z1), (x2, z2)):
+                out.append(-(n0 * x + n2 * z + d) / n1)
+            at += 4
+        return out
+
+    def height(self, x: float, z: float, near: float | None = None) -> float | None:
+        """The floor under (x, z): the highest, or the one nearest height `near`; None for
+        none, which is off this stage."""
+        ys = self.heights(x, z)
+        if not ys:
+            return None
+        return max(ys) if near is None else min(ys, key=lambda y: abs(y - near))
+
+
+def _inside(p: tuple[float, float], *corners: tuple[float, float]) -> bool:
+    """`p` in the triangle's xz projection, edges included, either winding."""
+    (ax, az), (bx, bz), (cx, cz) = corners
+    px, pz = p
+    s = (
+        (bx - ax) * (pz - az) - (bz - az) * (px - ax),
+        (cx - bx) * (pz - bz) - (cz - bz) * (px - bx),
+        (ax - cx) * (pz - cz) - (az - cz) * (px - cx),
+    )
+    return all(v >= -EDGE for v in s) or all(v <= EDGE for v in s)

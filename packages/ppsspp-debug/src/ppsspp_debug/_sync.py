@@ -270,6 +270,7 @@ class Client:
     remove_watchpoint = _blocking(AsyncClient.remove_watchpoint)
     watchpoints = _blocking(AsyncClient.watchpoints)
     watchpoint = _blocking_stream(AsyncClient.watchpoint)
+    trace = _blocking_stream(AsyncClient.trace)
 
     press = _blocking(AsyncClient.press)
     hold = _blocking(AsyncClient.hold)

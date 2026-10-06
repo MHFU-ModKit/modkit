@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from mhfu import files, hitzone
 from mhfu.em.intel import AttackIntel, HostSummary, PairIntel, PartIntel, SpeciesIntel
 from mhfu.files import Extracted
-from mhfu_port import slots
+from mhfu_port import layout, slots
 from mhfu_port.data import Data
 from mhfu_port.manifest import Clip as ManifestClip
 from mhfu_port.manifest import Manifest, ManifestError
@@ -775,7 +775,10 @@ class MonsterWorkspace(Workspace):
     @property
     def label_session(self) -> clips.LabelSession | None:
         if self._labels is None and self.doc is not None and self.scene is not None:
-            self._labels = clips.LabelSession(self.doc, self.clip_table(), self.scene.build_id)
+            sources = self.coverage()[0].sources()
+            self._labels = clips.LabelSession(
+                self.doc, self.clip_table(), self.scene.build_id, sources
+            )
         return self._labels
 
     @property
@@ -827,26 +830,26 @@ class MonsterWorkspace(Workspace):
                 "nowhere to go"
             )
             return clips.coverage(port), notes
-        host = donor = None
         try:
             games = self.games()
         except FileNotFoundError as e:
             notes.append(f"no base monster's pack and no original moveset: {e}")
             return clips.coverage(port), notes
-        for what, read in (
-            ("base monster's pack", inputs.host_anim),
-            ("original moveset", inputs.donor_anim),
-        ):
+        host = donor = placed = None
+        try:
+            host = inputs.host_anim(m, games)
+        except (OSError, ValueError) as e:
+            notes.append(f"base monster's pack unreadable ({e})")
+        try:
+            donor = inputs.donor_clips(m, games)
+        except (OSError, ValueError) as e:
+            notes.append(f"original moveset unreadable ({e})")
+        if host is not None and donor is not None:
             try:
-                got = read(m, games)
-            except (OSError, ValueError) as e:
-                notes.append(f"{what} unreadable ({e})")
-                continue
-            if read is inputs.host_anim:
-                host = got
-            else:
-                donor = got
-        return clips.coverage(port, host, donor), notes
+                placed = layout.of(m, donor, host).entries
+            except ValueError as e:
+                notes.append(f"no clip layout ({e}): each anim read as its own clip id")
+        return clips.coverage(port, host, donor, placed), notes
 
     def vocabulary(self) -> clips.Vocabulary:
         if self._vocab is None:

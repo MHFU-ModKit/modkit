@@ -52,8 +52,9 @@ uv run mhp-formats extract mhfu.iso workspace/extracted
 uv run mhp-formats extract mhp3rd.iso workspace/extracted_mhp3
 ```
 
-`data_files/file_NNNNN.bin` is the game's engine file NNNNN + 1. Only MHFU EU (ULES-01213) and
-MHP3rd (ULJM-05800) are recognised. In a clone of modkit, `workspace/` is ignored by git and the
+`data_files/file_NNNNN.bin` is the game's engine file NNNNN + 1. MHFU EU (ULES-01213) and
+MHP3rd (ULJM-05800) are recognised, and MHP2G JP (ULJM-05500) for research only: its code is what
+the MHP2G decomp names, and `mhfu names` matches it to EU's. In a clone of modkit, `workspace/` is ignored by git and the
 studio finds both extractions there; the other tools take them from `MHFU_DATA` and
 `MHP3RD_DATA`, or `--data` and `--p3rd-data`.
 

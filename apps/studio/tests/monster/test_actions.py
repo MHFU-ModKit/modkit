@@ -167,7 +167,7 @@ def test_lua_round_trips(make: Any) -> None:
     assert '["end"] = { main = 0, sub = 3, clip = "stop", claim = { main = 3 } },' in text
     assert "claim = { main = { 0, 1 }, sub = 7 }" in text and "label" not in text
     clips, moves = back(define(text))
-    assert clips == {"lunge_forward": 6, "stop": 21}
+    assert clips == {} and "clips =" not in text, "the clips come from the layout module"
     assert moves == {n: lua_fields(mv) for n, mv in m.moves.items()}
     assert A.lua_moves(make("")) == ""
 
@@ -175,7 +175,7 @@ def test_lua_round_trips(make: Any) -> None:
 def test_lua_of_the_zinogre(ports: Path) -> None:
     m = manifest.load(ports / "zinogre.toml")
     text = A.lua_moves(m)
-    assert text.startswith("-- from zinogre.toml") and "-- anims of build zinogre_v10" in text
+    assert text.startswith("-- from zinogre.toml") and "are in zinogre_clips.lua" in text
     clips, moves = back(define(text))
-    assert clips == {n: m.clips[n].slot for n in ("lunge_forward", "dash_forward_stop")}
+    assert clips == {}
     assert moves == {n: lua_fields(mv) for n, mv in m.moves.items()}

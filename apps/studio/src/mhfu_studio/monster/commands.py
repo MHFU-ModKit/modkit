@@ -235,7 +235,7 @@ def run_scene(args: argparse.Namespace) -> int:
 
 
 def run_clips(args: argparse.Namespace) -> int:
-    from mhfu_port import slots
+    from mhfu_port import layout, slots
 
     from mhfu_studio.monster import clips, inputs
     from mhfu_studio.monster.document import PortDocument
@@ -246,12 +246,15 @@ def run_clips(args: argparse.Namespace) -> int:
     b = _built(args, m)
     port = slots.anim_of(b.pac)
     table = clips.clip_table(port)
-    cov = clips.coverage(port, inputs.host_anim(m, games), inputs.donor_anim(m, games))
+    host, donor = inputs.host_anim(m, games), inputs.donor_clips(m, games)
+    cov = clips.coverage(port, host, donor, layout.of(m, donor, host).entries)
     if args.import_labels:
         labels = slots.read_labels(args.import_labels.read_text(encoding="utf-8"))
         provenance = args.labels_from or clips.UNRECORDED.format(args.import_labels.name)
         only = None if args.all_slots else cov
-        done = clips.import_labels(doc, labels, table, provenance, only, args.overwrite)
+        done = clips.import_labels(
+            doc, labels, table, provenance, only, args.overwrite, cov.sources()
+        )
         print(
             f"{args.import_labels}: {len(labels)} label(s), {len(done)} land on a slot this "
             f"manifest does not name yet\n  recorded as labelled against: {provenance}"

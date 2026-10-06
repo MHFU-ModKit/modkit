@@ -65,14 +65,15 @@ class Port:
         return fk.rig_clip(self.anim, slot, self.skeleton)
 
     def slots(self) -> list[int]:
-        """Every slot some stream fills."""
+        """Every executor entry some stream fills."""
         return motion.filled(self.anim)
 
     def distinct(self) -> Iterator[tuple[int, Clip]]:
-        """`(slot, clip)` once per distinct clip, at its lowest slot."""
+        """`(entry, clip)` once per distinct clip, at its lowest entry."""
         seen = set()
+        parts = sorted({b.stream for b in self.skeleton.bones})
         for slot in self.slots():
-            key = tuple(id(s[slot]) if slot < len(s) else 0 for s in self.anim.streams)
+            key = tuple(id(fk.part_clip(self.anim, k, slot)) for k in parts)
             clip = self.clip(slot)
             if key not in seen and clip is not None:
                 seen.add(key)

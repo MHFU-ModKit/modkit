@@ -86,20 +86,20 @@ def test_clips(games, ports, tmp_path, capsys):
     data = ["--data", str(games.fu.root), "--p3rd-data", str(games.p3rd.root)]
     assert main(["port", "clips", str(ports / "zinogre.toml"), *data]) == 0
     out = capsys.readouterr().out
-    assert "64 populated slot(s)" in out and "30 filler" in out and "8 donor clip(s) DROPPED" in out
+    assert "102 populated slot(s): 102 carried, 0 filler" in out and "DROPPED" not in out
     assert main(["port", "clips", str(ports / "zinogre.toml"), "--slots", *data]) == 0
     assert "a1 2    CARRIED  welcome_howl" in capsys.readouterr().out
     path = tmp_path / "z.toml"
     shutil.copyfile(ports / "zinogre.toml", path)
     labels = tmp_path / "l.txt"
-    labels.write_text("3 -> a filler\n7 -> a new one\n")
+    labels.write_text("3 -> packed there\n7 -> a new one\n")
     args = ["port", "clips", str(path), "--import-labels", str(labels), *data]
     assert main(args) == 0
     assert "+[clips.clip_07]" in capsys.readouterr().out and "clip_07" not in path.read_text()
     assert main([*args, "--write"]) == 0
     m = manifest.load(path)
     assert m.clips["clip_07"].labelled_build.startswith("unrecorded: l.txt")
-    assert "clip_03" not in m.clips
+    assert (m.clips["clip_03"].source, m.clips["clip_07"].source) == (24, None)
 
 
 def test_ports_check(games, ports, tmp_path, monkeypatch, capsys):

@@ -46,6 +46,7 @@ def launcher_args(p: argparse.ArgumentParser, paths: bool = True) -> None:
         "--local", dest="docker", action="store_false", help="PPSSPP on this machine (default)"
     )
     p.add_argument("--container", help="container name (MHFU_CONTAINER, default ppsspp)")
+    p.add_argument("--lane", type=int, help="a hidden PPSSPP of its own, numbered (MHFU_LANE)")
     if paths:
         p.add_argument("--ppsspp", help="local PPSSPP binary (MHFU_PPSSPP)")
         p.add_argument("--iso", help="game image as the emulator sees it (MHFU_ISO)")
@@ -55,6 +56,7 @@ def launcher(args: argparse.Namespace) -> Launcher:
     given = {
         "docker": args.docker,
         "container": args.container,
+        "lane": args.lane,
         "ppsspp": getattr(args, "ppsspp", None),
         "iso": getattr(args, "iso", None),
     }

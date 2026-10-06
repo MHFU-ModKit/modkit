@@ -7,25 +7,42 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from pathlib import Path
 from types import TracebackType
 
 import psutil
 
 StrPath = str | os.PathLike[str]
 
+LANES = Path("~/.cache/modkit/lanes").expanduser()
+"""Where each `Lane` keeps its HOME; a process whose arguments point in here belongs to one."""
+
 
 def find_debuggers() -> list[int]:
-    """Debugger ports of the PPSSPP processes on this machine, read from their own sockets.
+    """Debugger ports of the PPSSPP processes on this machine outside a lane, read from their
+    own sockets.
 
     PPSSPP silently takes a random port when its configured one is busy and saves that port
     back to ppsspp.ini, so the process is the only reliable source.
     """
     ports: set[int] = set()
-    for proc in psutil.process_iter(["name"]):
-        if "ppsspp" in (proc.info["name"] or "").lower():
-            ports.update(_listening(proc))
+    for proc in emulators():
+        ports.update(_listening(proc))
     return sorted(ports)
+
+
+def emulators() -> list[psutil.Process]:
+    """The PPSSPP processes on this machine that no `Lane` owns."""
+    found = []
+    for proc in psutil.process_iter(["name", "cmdline"]):
+        if "ppsspp" in (proc.info["name"] or "").lower() and not _in_lane(proc.info["cmdline"]):
+            found.append(proc)
+    return found
+
+
+def _in_lane(cmdline: Sequence[str] | None) -> bool:
+    return any(arg.startswith(f"{LANES}{os.sep}") for arg in cmdline or ())
 
 
 def _listening(proc: psutil.Process) -> set[int]:
@@ -53,7 +70,9 @@ class LocalEmulator:
         state: StrPath | None = None,
         args: Sequence[str] = (),
         log_file: StrPath | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> None:
+        self.env = {**os.environ, **env} if env else None
         self.command = [
             os.fspath(binary),
             *(["-v", f"--log={os.fspath(log_file)}"] if log_file else []),
@@ -72,6 +91,7 @@ class LocalEmulator:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            env=self.env,
         )
 
     def running(self) -> bool:

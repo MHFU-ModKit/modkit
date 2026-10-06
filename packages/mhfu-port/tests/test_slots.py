@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from mhfu.em.moveset import Moveset
 from mhfu.files import monster_pac
-from mhfu_port import slots
+from mhfu_port import motion, slots
 from mhfu_port.cli import main, parser
 from mhfu_port.cli.slots import run_labels, run_slots
 from mhp_formats import Channel, Clip, Keyframe, Pac, Track, fu, p3rd
@@ -28,50 +28,59 @@ def reread(anim):
 
 @pytest.fixture
 def donor():
-    """Stream 0 lacks slot 0; stream 2 is empty."""
-    return reread(p3rd.Anim([[None, clip(10), clip(20), clip(30, 1), clip(40)], [clip(5)], []]))
+    """Clips 1-4 and 100: stream 0 lacks slot 0, stream 2 is empty."""
+    anim = p3rd.Anim([[None, clip(10), clip(20), clip(30, 1), clip(40)], [clip(5)], []])
+    return motion.moveset(anim.to_bytes())
+
+
+LAYOUT = {1: 1, 2: 2, 3: 3, 4: 4, 100: 100}
 
 
 def build(donor, occupancy, size):
-    """A port the way the builder lays one out: donor clip N in slot N, the first in the rest."""
-    clips = donor.streams[0] + [None] * size
-    fill = next(c for c in clips if c is not None)
+    """An older build: donor clip N in entry N, the donor's first in the rest."""
+    fill = donor[min(donor)]
     streams = [
-        [(clips[i] or fill) if i in used else None for i in range(size)] for used in occupancy
+        [donor.get(i, fill) if i in used else None for i in range(size)] for used in occupancy
     ]
     return reread(fu.Anim(streams))
 
 
 @pytest.fixture
 def port(donor):
-    """Slot 4 plays a foreign clip; slot 5 lives in stream 1 only."""
-    anim = build(donor, [{1, 2, 3, 4, 6}, set()], 7)
+    """Entry 4 plays a foreign clip, entry 5 lives in part 1 only, entry 100 in stream 1."""
+    anim = build(donor, [{1, 2, 3, 4, 6}, set(), set(), set()], 7)
     anim.streams[0][4] = clip(99)
-    anim.streams[1][5] = clip(10)
-    anim.streams[1][2] = clip(7)  # a shorter part of slot 2's clip
+    anim.streams[2][5] = clip(10)
+    anim.streams[2][2] = clip(7)  # a shorter part of entry 2's clip
+    anim.streams[1][0] = donor[100]
     return reread(anim)
 
 
 def test_correspondence(port, donor):
-    got = {s: str(v) for s, v in slots.correspondence(port, donor).items()}
-    assert got == {1: "same 1", 2: "same 2", 3: "same 3", 4: "unknown", 5: "fill 1", 6: "fill 1"}
+    got = {s: str(v) for s, v in slots.correspondence(port, donor, LAYOUT).items()}
+    assert got == {
+        1: "same 1",
+        2: "same 2",
+        3: "same 3",
+        4: "unknown",
+        5: "fill 1",
+        6: "fill 1",
+        100: "same 100",
+    }
+    with pytest.raises(ValueError, match="no clips"):
+        slots.correspondence(port, {}, LAYOUT)
 
 
 def test_loop_tells_apart(donor):
     port = build(donor, [{3}], 4)
     port.streams[0][3] = clip(30)
-    assert slots.correspondence(port, donor)[3].match == "unknown"
+    assert slots.correspondence(port, donor, LAYOUT)[3].match == "unknown"
 
 
-def test_empty_stream(port, donor):
-    with pytest.raises(ValueError, match=r"stream 2 holds no clips; these do: \[0, 1\]"):
-        slots.correspondence(port, donor, 2)
-    with pytest.raises(ValueError, match="streams 0-2, not 3"):
-        slots.correspondence(port, donor, 3)
-
-
-def test_shared(port):
-    assert slots.shared(port) == {1: 2, 2: 1, 3: 1, 4: 1, 5: 1, 6: 2}
+def test_entries(port):
+    assert slots.shared(port) == {1: 2, 2: 1, 3: 1, 4: 1, 5: 1, 6: 2, 100: 1}
+    assert (slots.streams_of(port, 2), slots.streams_of(port, 100)) == ((0, 2), (1,))
+    assert slots.slot_count(port) == 107
 
 
 def test_anim_of(port):
@@ -85,17 +94,17 @@ def test_anim_of(port):
 def test_catalog(port, donor):
     host = reread(fu.Anim([[clip(8) if i in (1, 2, 7) else None for i in range(8)]]))
     drivers = {2: [(1, 0), (0, 3)], 7: [(2, 1)], 99: [(4, 4)]}
-    rows = {r.slot: r for r in slots.catalog(host, drivers, port, donor, names={2: "bite"})}
+    rows = {r.slot: r for r in slots.catalog(host, drivers, port, donor, LAYOUT, {2: "bite"})}
     assert sorted(rows) == [1, 2, 3, 4, 5, 6, 7]
     two = rows[2]
-    assert (two.pairs, two.host_streams, two.port_streams) == (((0, 3), (1, 0)), (0,), (0, 1))
+    assert (two.pairs, two.host_streams, two.port_streams) == (((0, 3), (1, 0)), (0,), (0, 2))
     assert (two.host_frames, two.port_frames, str(two.source)) == (8, 20, "same 2")
     assert (rows[7].port_frames, rows[7].source, rows[5].shared) == (None, None, 1)
     out = io.StringIO()
     slots.write_catalog(rows.values(), out)
     lines = out.getvalue().splitlines()
     assert lines[0] == ",".join(slots.CATALOG)
-    assert lines[2] == '2,"(0,3) (1,0)",2,0,0 1,8,20,1,same 2,bite'
+    assert lines[2] == '2,"(0,3) (1,0)",2,0,0 2,8,20,1,same 2,bite'
 
 
 def test_labels(port, donor):
@@ -103,7 +112,7 @@ def test_labels(port, donor):
     labels = slots.read_labels(text)
     assert labels == {1: "idle", 5: "roar", 9: "nothing"}
     other = build(donor, [{1, 5, 9}], 10)
-    rows = slots.verdicts(labels, {"a": port, "b": other}, donor, drivers={5: [(0, 1)]})
+    rows = slots.verdicts(labels, {"a": port, "b": other}, donor, LAYOUT, {5: [(0, 1)]})
     assert [v.transfers for v in rows] == [("a", "b"), (), ()]
     assert str(rows[1].builds["a"]) == "fill 1" and rows[2].builds["a"] is None
     out = io.StringIO()
@@ -118,7 +127,7 @@ def test_commands():
     args = parser().parse_args(
         ["labels", "l.txt", "a.bin", "b.bin", "--host", "75", "--donor", "1"]
     )
-    assert (args.run, args.stream, len(args.ports)) == (run_labels, 0, 2)
+    assert (args.run, len(args.ports)) == (run_labels, 2)
     assert parser().parse_args(["slots", "--host", "75"]).run is run_slots
     assert main(["slots"]) == 1
 
@@ -128,16 +137,9 @@ def test_driven(data):
     assert d[24] == ((0, 8),) and d[25] == ((0, 9),)  # one handler, told apart by its case
 
 
-def test_empty_donor_stream(data):
-    donor = p3rd.Anim.from_bytes(data.p3rd.read(BRUTE_MOVESET))
-    host = slots.anim_of(data.fu.read(monster_pac(TIGREX)))
-    with pytest.raises(ValueError, match="stream 2 holds no clips"):
-        slots.correspondence(host, donor, 2)
-
-
 def test_cli(data, tmp_path, capsys):
     host = Pac.from_bytes(data.fu.read(monster_pac(TIGREX)))
-    donor = p3rd.Anim.from_bytes(data.p3rd.read(BRUTE_MOVESET))
+    donor = motion.moveset(data.p3rd.read(BRUTE_MOVESET))
     anim = next(i for i, e in enumerate(host.entries) if fu.Anim.sniff(e))
     streams = fu.Anim.from_bytes(host.entries[anim]).streams
     used = [{i for i, c in enumerate(s) if c is not None} for s in streams]
@@ -150,10 +152,10 @@ def test_cli(data, tmp_path, capsys):
     out = tmp_path / "slots.csv"
     assert main(["slots", str(port), *common, "-o", str(out)]) == 0
     rows = list(csv.DictReader(out.open()))
-    assert {r["source"].split()[0] for r in rows if r["source"]} == {"same", "fill"}
+    assert {r["source"].split()[0] for r in rows if r["source"]} == {"same", "fill", "unknown"}
+    # the older build's partial entries hold a clip the layout puts elsewhere
+    assert [r["slot"] for r in rows if r["source"] == "unknown"] == ["24", "25"]
     same = [r for r in rows if r["source"] == f"same {r['slot']}"]
-    assert main(["slots", str(port), *common, "--stream", "2"]) == 1
-    assert "stream 2 holds no clips" in capsys.readouterr().err
 
     labels = tmp_path / "labels.txt"
     labels.write_text(f"{same[0]['slot']} -> seen\n")
