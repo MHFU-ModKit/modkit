@@ -4,9 +4,10 @@ import pytest
 from mhfu import addresses as a
 from mhfu.cli import clips as cli
 from mhfu.cli import main
-from mhfu.live import Session, clips, rig
+from mhfu.live import Launcher, Session, clips, rig
 from mhfu.live.shell_anim import MAGIC, Op
 from mhfu.structs import ACTION_INPUT_BASE, ACTION_INPUT_STEP, entry_clip
+from ppsspp_debug import Lane
 
 MON, PACK = a.RAM.start + 0x90_0000, a.RAM.start + 0x91_0000  # inside the fake's memory
 E, B, CB, BR = a.ENTITY, a.CLIP_BLOCK, a.CLI_BRIDGE, a.CLI_BRIDGE_BLOCK
@@ -186,9 +187,14 @@ def test_deploy(tmp_path):
     (lib / "zin_clips.lua").write_text("return {}\n")
     wrote = clips.deploy("zin", stick=stick)
     assert sorted(p.name for p in wrote) == ["cli_bridge.lua", "mhfu_port.lua", "zin_rig.lua"]
-    rider = (stick / "PLUGINS/mhfu_framework/mods/zin_rig.lua").read_text()
+    mods = stick / "PLUGINS/mhfu_framework/mods"
+    rider = (mods / "zin_rig.lua").read_text()
     assert "species = 75, replace = { 77 }" in rider
     assert 'orig = "file_06185.bin.orig"' in rider and "fid = 6186" in rider
+    (mods / "zin_rig.lua").rename(mods / "old_rig.lua")
+    (mods / "own_rig.lua").write_text("-- not ours\n")
+    clips.deploy("zin", stick=stick)
+    assert sorted(p.name for p in mods.glob("*_rig.lua")) == ["own_rig.lua", "zin_rig.lua"]
 
 
 def test_cli(fake, engine, clock, monkeypatch, tmp_path, capsys):
@@ -208,3 +214,16 @@ def test_cli(fake, engine, clock, monkeypatch, tmp_path, capsys):
     assert main(["clips", "play", "100", "--lane", "3"]) == 0
     assert "part 1: stream 3 slot 0, 202 frames" in capsys.readouterr().out
     assert cli.entries(["3", "100-102"]) == [3, 100, 101, 102]
+
+
+def test_ride_deploys_to_the_launchers_lane(monkeypatch):
+    seen = []
+    monkeypatch.setattr(clips, "deploy", lambda *args: seen.append(args))
+
+    def no_boot(*args, **kw):
+        raise RuntimeError("no boot here")
+
+    monkeypatch.setattr(clips.Rig, "open", no_boot)
+    with pytest.raises(RuntimeError):
+        clips.ride("zin", launcher=Launcher(lane=3))
+    assert seen == [("zin", None, clips.TIGREX, (clips.GIADROME,), Lane(3).stick)]
