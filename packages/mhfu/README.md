@@ -108,9 +108,11 @@ with Session.launch(cold=True) as s:  # PPSSPP here, or in the modkit container
 
 Named points live in a map document's `map.toml` (`mhfu.points`; the studio's map editor sets
 them). `mhfu rig goto NAME --map DIR` changes area straight to the point's stage and puts the
-player on its floor; `mhfu rig walk NAME...` walks there, planning over each stage's live floor
-and walls and leaving by its exits, and climbs at the document's climb points. Both need the
-extracted game for the exits (`--data` or `MHFU_DATA`); `MHFU_MAP` names the document.
+player on its floor; `mhfu rig walk NAME...` walks there. The walk's route crosses stages by
+their files (floor, walls, exits): an exit counts only if a walk reaches it, and climbable walls
+(collision material 9 or 10) and hunter-height ledges are climbs on the way. Climb points in
+the document add ledges the collision misses. Both need the extracted game (`--data` or
+`MHFU_DATA`); `MHFU_MAP` names the document.
 
 ```python
 from mhfu.files import Extracted

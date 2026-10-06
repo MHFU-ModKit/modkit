@@ -38,7 +38,7 @@ def wall(x, z0, z1, top=500.0):
 
 
 def walked(steps):
-    return [st for st in steps if not isinstance(st, route.Climb)]
+    return [st for st in steps if not isinstance(st, route.Climb | route.Drop)]
 
 
 def test_gate_holds_a_cylinder_and_a_capsule():
@@ -116,6 +116,11 @@ def test_a_drop_is_walked():
         route.NavGrid(ledge), (3000.0, 300.0, 1000.0), Point("low", 1, (1000.0, 0.0, 1000.0))
     )
     assert steps[-1] == (1000.0, 0.0, 1000.0)
+    (drop,) = [st for st in steps if isinstance(st, route.Drop)]
+    assert drop.edge[1] - drop.foot[1] == 300
+    assert route._runs(steps) == [
+        [(st.foot[0], st.foot[2]) if st is drop else (st[0], st[2]) for st in steps]
+    ]
 
 
 def test_a_roof_is_not_walked_under():
@@ -215,12 +220,13 @@ def test_climbable_wall_is_a_climb():
     (c,) = route.wall_climbs(cliff(900.0), walls)
     assert c.foot == pytest.approx((1900.0, 0.0, 1000.0)) and c.heading == pytest.approx(90)
     assert c.top == pytest.approx((2150.0, 900.0, 1000.0)) and c.height == 900
+    assert c.kind == "wall"
     assert route.wall_climbs(cliff(900.0), quad(2000.0, 900.0, 1100.0, -50.0, 900.0)) == []
 
 
 def test_ledge_is_a_climb_and_a_tall_wall_is_not():
     found = route.ledges(cliff(250.0), quad(2000.0, 0.0, 600.0, 0.0, 250.0))
-    assert found and all(c.heading == pytest.approx(90) for c in found)
+    assert found and all(c.heading == pytest.approx(90) and c.kind == "ledge" for c in found)
     assert {round(c.top[1]) for c in found} == {250}
     assert route.ledges(cliff(900.0), quad(2000.0, 0.0, 600.0, 0.0, 900.0)) == []
     assert route.ledges(cliff(60.0), quad(2000.0, 0.0, 600.0, 0.0, 60.0)) == []  # walked
@@ -256,3 +262,26 @@ def test_route_takes_the_climb_not_the_fewest_exits():
     assert plan.route(1, (1000.0, 0.0, 1000.0), goal) == [via, on]
     with pytest.raises(route.NoPath):
         plan.route(1, (1000.0, 0.0, 1000.0), goal, banned=[via])
+
+
+def test_a_climb_starts_on_its_side_of_a_fence():
+    """A ledge whose foot is behind a fence cannot be reached from the far side of it."""
+    fence = quad(1500.0, 0.0, 4000.0, 0.0, 200.0, normal_x=1.0)
+    grid = route.NavGrid(cliff(250.0), fence)
+    assert grid.crosses((1400.0, 1000.0), (1600.0, 1000.0), 0.0)
+    assert not grid.crosses((1600.0, 1000.0), (1900.0, 1000.0), 0.0)
+    assert not grid.crosses((1400.0, 1000.0), (1600.0, 1000.0), 300.0)  # above it
+    ledge = route.Climb((1900.0, 0.0, 1000.0), 90.0, (2150.0, 250.0, 1000.0))
+    assert grid.add_edge(ledge)
+    (start,) = grid.climbs
+    assert 1500 < grid.xz(start[0], start[1])[0] < 2000
+
+
+def test_a_climb_point_replaces_the_found_climb_beside_it():
+    walls = quad(2000.0, 0.0, 600.0, 0.0, 250.0)
+    found = route.terrain(cliff(250.0), walls)
+    assert any(c.heading == pytest.approx(90) for e in found.climbs.values() for _, c in e)
+    point = Point("ledge", 1, (1900.0, 0.0, 300.0), "climb", 75.0)
+    grid = route.terrain(cliff(250.0), walls, [point])
+    headings = {round(c.heading) for e in grid.climbs.values() for _, c in e}
+    assert headings == {75}
