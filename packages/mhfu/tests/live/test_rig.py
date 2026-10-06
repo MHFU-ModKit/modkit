@@ -8,7 +8,7 @@ from mhfu.cli import main
 from mhfu.live import Launcher, Session, rig
 from mhfu.structs import DRAW_GATE, SKIP_DRAW
 from PIL import Image
-from ppsspp_debug import Lane
+from ppsspp_debug import DebuggerError, Lane
 
 TIGREX, MAP_MANAGER = a.RAM.start + 0x90_0000, a.RAM.start + 0x91_0000  # heap in `fake`
 AREA = 109
@@ -121,6 +121,32 @@ def test_open_from_a_state(fake, game, clock, monkeypatch):
         assert r.s.game.player.max_hp == 150
         assert r.speed(fast=True) and fake.fast_forward
     assert not fake.fast_forward
+
+
+@pytest.mark.parametrize("fake", [True], indirect=True)
+def test_open_launches_a_state_and_reads_it_stopped(fake, game, clock, monkeypatch):
+    monkeypatch.setattr(rig, "running", lambda launcher: False)
+    launched = []
+
+    def launch(*args, state=None, **kw):
+        launched.append(state)
+        s = Session.attach(fake.port, timeout=5)
+        pause, refusals = s.client.pause, [DebuggerError("cpu.stepping", "CPU not started")]
+
+        def refused_once():
+            if refusals:
+                raise refusals.pop()
+            return pause()
+
+        monkeypatch.setattr(s.client, "pause", refused_once)
+        return s
+
+    monkeypatch.setattr(Session, "launch", launch)
+    stopped = []
+    fake.on_read.append(lambda address: stopped.append(fake.stepping))
+    with rig.Rig.open(Launcher(lane=1), state=6):
+        assert launched == [rig.state_file(6, 1)]
+        assert stopped and all(stopped) and not fake.stepping
 
 
 @pytest.fixture

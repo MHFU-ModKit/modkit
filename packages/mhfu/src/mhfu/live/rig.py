@@ -26,6 +26,7 @@ from PIL import Image, ImageDraw, ImageFont
 from ppsspp_debug import DebuggerError, Disconnected, Lane, find_debuggers
 
 from .. import addresses as a
+from ..memory import Unmapped
 from ..stage import Floor, map_manager
 from ..structs import DRAW_GATE, BigMonster, Player
 from . import boot, quests, survival
@@ -175,6 +176,30 @@ def pin_hp(s: Session, hp: int | None = None, *, tick: float = 0.5) -> survival.
     return survival.Guard(s, hp=pinned, calm_monsters=False, tick=tick)
 
 
+# After a launch with a state, memory is read only with the CPU stopped: PPSSPP deadlocks on a
+# read that waits for the CPU to stop while the queued load reinitialises memory, which it does
+# when the state's memory size is not the boot's (a plugin.ini `memory =` line).
+
+
+def _paused(s: Session) -> bool:
+    """Stopped the CPU; False while PPSSPP says it has not started."""
+    try:
+        s.client.pause()
+    except DebuggerError as e:
+        if e.message != "CPU not started":
+            raise
+        return False
+    return True
+
+
+def _loaded(s: Session) -> bool:
+    """The player is in memory; False while memory is not up."""
+    try:
+        return s.game.player.loaded
+    except Unmapped:
+        return False
+
+
 class Rig:
     """A game set up for an experiment, and cleaned up after: its pins stopped, the game's own
     rate back if it fast-forwarded.
@@ -230,7 +255,15 @@ class Rig:
             except (DebuggerError, TimeoutError):
                 rig.s.close()
         s = Session.launch(launcher, state=path, stop_on_exit=stop_on_exit)
-        s.wait(lambda: s.game.player.loaded, 30.0, "the player after the load")
+        try:
+            s.wait(lambda: _paused(s), 10.0, "the CPU to stop")
+            try:
+                s.wait(lambda: _loaded(s), 30.0, "the player after the load")
+            finally:
+                s.client.resume()
+        except BaseException:
+            s.close()
+            raise
         return cls(s, launcher)
 
     @classmethod
