@@ -640,8 +640,9 @@ class NavGrid:
         return any(lo < y + BODY[1] and hi > y + BODY[0] for lo, hi in self.walls.get(cell, []))
 
     def levels(self, ix: int, iz: int) -> list[float]:
-        """The walkable levels of a sample: none with floor above it within HEADROOM (a tent, a
-        rock), none at a wall, none in an avoided trigger."""
+        """The levels of a sample a hunter may stand on: none with floor above it within
+        HEADROOM (a tent, a rock), none in an avoided trigger. One next to a wall (`walled`)
+        is walked to only by dropping onto it."""
         key = (ix, iz)
         if key not in self._levels:
             x, z = self.xz(ix, iz)
@@ -650,10 +651,15 @@ class NavGrid:
                 y
                 for y in raw
                 if not any(y + LEVEL < h < y + HEADROOM for h in raw)
-                and not self.walled(key, y)
                 and not any(g.holds(x, y, z) for g in self.avoid)
             ]
         return self._levels[key]
+
+    def open(self, cell: tuple[int, int]) -> list[tuple[int, float]]:
+        """(index, height) of the cell's levels a walk may enter: not blocked, off the walls."""
+        if cell in self.blocked:
+            return []
+        return [(k, y) for k, y in enumerate(self.levels(*cell)) if not self.walled(cell, y)]
 
     def node(self, x: float, y: float, z: float, reach: int = 1) -> Node | None:
         """The walkable sample nearest (x, z) within `reach` samples, at the level nearest `y`."""
@@ -661,13 +667,11 @@ class NavGrid:
         found = []
         for dx in range(-reach, reach + 1):
             for dz in range(-reach, reach + 1):
-                ys = self.levels(ix + dx, iz + dz)
-                if ys and (ix + dx, iz + dz) not in self.blocked:
-                    k = min(range(len(ys)), key=lambda i: abs(ys[i] - y))
+                ys = self.open((ix + dx, iz + dz))
+                if ys:
+                    k, h = min(ys, key=lambda kh: abs(kh[1] - y))
                     sx, sz = self.xz(ix + dx, iz + dz)
-                    found.append(
-                        (math.hypot(sx - x, sz - z) + abs(ys[k] - y), (ix + dx, iz + dz, k))
-                    )
+                    found.append((math.hypot(sx - x, sz - z) + abs(h - y), (ix + dx, iz + dz, k)))
         return min(found)[1] if found else None
 
     def height(self, n: Node) -> float:
@@ -694,12 +698,12 @@ class NavGrid:
         for dx in range(-reach, reach + 1):
             for dz in range(-reach, reach + 1):
                 cell = (ix + dx, iz + dz)
-                ys = self.levels(*cell)
-                if cell in self.blocked or not ys:
+                ys = self.open(cell)
+                if not ys:
                     continue
-                k = min(range(len(ys)), key=lambda i: abs(ys[i] - y))
+                k, h = min(ys, key=lambda kh: abs(kh[1] - y))
                 sx, sz = self.xz(*cell)
-                if abs(ys[k] - y) < LEVEL and not self.crosses((sx, sz), (x, z), ys[k]):
+                if abs(h - y) < LEVEL and not self.crosses((sx, sz), (x, z), h):
                     found.append((math.hypot(sx - x, sz - z), (*cell, k)))
         return min(found)[1] if found else None
 
@@ -745,8 +749,12 @@ class NavGrid:
                     continue
                 run = self.step * math.hypot(dx, dz)
                 j = min(range(len(ys)), key=lambda i: abs(ys[i] - y))
-                if ys[j] - y <= self.rise * run:
-                    yield (jx, jz, j), run
+                rise = ys[j] - y
+                if rise > self.rise * run:
+                    continue
+                if rise >= -LEDGE[0] and self.walled((jx, jz), ys[j]):
+                    continue  # a walk keeps off walls; a drop may land beside one
+                yield (jx, jz, j), run
 
     def flood(
         self,
@@ -834,6 +842,8 @@ class NavGrid:
                 return False
             h = min(ys, key=lambda v: abs(v - y))
             if h - y > self.rise * self.step * math.dist(cell, nxt):
+                return False
+            if h - y >= -LEDGE[0] and self.walled(nxt, h):
                 return False
             cell, y = nxt, h
         return True

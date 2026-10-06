@@ -285,3 +285,13 @@ def test_a_climb_point_replaces_the_found_climb_beside_it():
     grid = route.terrain(cliff(250.0), walls, [point])
     headings = {round(c.heading) for e in grid.climbs.values() for _, c in e}
     assert headings == {75}
+
+
+def test_a_drop_lands_at_the_foot_of_its_cliff():
+    """The cliff face walls the samples at its foot; a walk keeps off them, a drop may not."""
+    face = quad(2000.0, 0.0, 4000.0, 0.0, 900.0, normal_x=-1.0)
+    grid = route.NavGrid(cliff(900.0), face)
+    top, foot = grid.node(2150.0, 900.0, 1000.0), (19, 10)
+    assert top is not None and grid.walled(foot, 0.0)
+    assert any(m[:2] == foot for m, _ in grid.neighbours((20, 10, 0)))  # off the edge
+    assert not any(m[:2] == foot for m, _ in grid.neighbours((18, 10, 0)))  # along the foot
