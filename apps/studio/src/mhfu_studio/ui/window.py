@@ -633,6 +633,7 @@ class Window(QMainWindow):
     def _sync_send(self) -> None:
         """Send only sends, Stop only stops; the title bar's button is Stop while a job runs."""
         job, why = self.studio.job, self.studio.send_blocker()
+        self.send_action.setText(self.studio.active.send_label)
         for a, tip, on in (
             (self.send_action, why or chrome.SEND_TIP, why is None),
             (self.stop_action, STOP_TIP if job is None else f"Stops {job.title}", job is not None),
@@ -795,7 +796,8 @@ class Window(QMainWindow):
         self.message.setToolTip(message)  # the bar clips it
         hint = ws.hint()
         if hint and self.send_action.isEnabled():  # `_sync_send` asked the workspace
-            hint += f" \u00b7 {about.native(self.send_action.shortcut())} send to game"
+            label = self.studio.active.send_label.lower()
+            hint += f" \u00b7 {about.native(self.send_action.shortcut())} {label}"
         self.hint.setText(hint)
         self.hint.setToolTip(hint)
         self._sync_problems()

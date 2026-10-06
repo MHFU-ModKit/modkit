@@ -42,7 +42,7 @@ ROWS, CLIP_ROWS = 10, 8
 EVERYWHERE = {"UNMEASURED"}
 LUA_NOTE = (
     "The game reads moves from your mod's Lua file, not from this file. Copy them into the"
-    " mod's P.define{…}; Send to game carries only the hitboxes."
+    " mod's P.define{…}; Send hitboxes to game carries nothing else."
 )
 ROWS_TIP = (
     "Every action worth a clip: your moves, then the base monster's attacks, then what the game"

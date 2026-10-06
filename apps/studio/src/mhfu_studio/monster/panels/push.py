@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""Push to game, beside Send to game: the hit tables straight into the running game."""
+"""Push to game, beside Send hitboxes to game: the hit tables straight into the running game."""
 
 from __future__ import annotations
 

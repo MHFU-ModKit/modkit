@@ -229,7 +229,7 @@ class HitboxesPanel(kit.Panel):
         lay.addWidget(edit)
 
         ship = kit.Section(
-            "4  Send to game", tip="Your hitboxes onto the memory stick, or into the game"
+            f"4  {ws.send_label}", tip="Your hitboxes onto the memory stick, or into the game"
         )
         self.send = SendRow(ws, studio)
         self.push = PushRow(ws, studio)
