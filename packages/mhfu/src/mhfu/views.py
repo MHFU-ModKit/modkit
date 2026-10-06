@@ -149,3 +149,11 @@ def f32s(where: Field | Address) -> Value[tuple[float, ...]]:
 
 def ptrs(where: Field | Address) -> Value[tuple[int, ...]]:
     return Value(where, "ptr", True)
+
+
+def layout(type: str) -> _struct.Struct | None:
+    """The packing of an addresses.toml type such as `u16[3]`; None for `bytes` or a struct."""
+    m = _ARRAY.match(type)
+    base, count = (m[1], int(m[2])) if m else (type, 1)
+    fmt = _FORMATS.get(base)
+    return None if fmt is None else _struct.Struct("<" + fmt * count)
