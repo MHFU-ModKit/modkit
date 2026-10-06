@@ -76,6 +76,24 @@ def stage_overlay(stage: int) -> int:
 
 
 @dataclass(frozen=True)
+class Release:
+    """Where a release keeps its code, by extracted file id."""
+
+    game_task: int
+    game_sub: int
+    em_first: int
+
+    def em(self, species: int) -> int:
+        return self.em_first + EM_SPECIES.index(species)
+
+
+EU = Release(GAME_TASK, GAME_SUB, EM_FIRST)
+JP = Release(50, 55, 6042)
+"""MHP2G (ULJM-05500), the release the MHP2G decomp is built from. Its disc carries a blank
+BOOT.BIN: the code is in the encrypted EBOOT.BIN alone."""
+
+
+@dataclass(frozen=True)
 class Extracted:
     """The output directory of `mhp-formats extract` for MHFU EU."""
 
@@ -110,3 +128,21 @@ class Extracted:
 
     def eboot(self) -> Eboot:
         return Eboot.from_path(self.root / "PSP_GAME" / "SYSDIR" / "BOOT.BIN")
+
+    @property
+    def boot(self) -> Path:
+        return self.root / "PSP_GAME" / "SYSDIR" / "BOOT.BIN"
+
+    def code(self, release: Release = EU) -> dict[str, Eboot | Overlay]:
+        """BOOT.BIN, game_task, game_sub and the em overlays, by module name (`em75`)."""
+        with self.boot.open("rb") as f:
+            if f.read(4) != b"\x7fELF":
+                raise FileNotFoundError(
+                    f"{self.boot} is not an ELF: write the decrypted EBOOT.BIN over it "
+                    "(pspdecrypt, or PPSSPP's dump of the decrypted EBOOT)"
+                )
+        out: dict[str, Eboot | Overlay] = {"eboot": self.eboot()}
+        out["game_task"] = self.overlay(release.game_task)
+        out["game_sub"] = self.overlay(release.game_sub)
+        out |= {f"em{s:02d}": self.overlay(release.em(s)) for s in EM_SPECIES}
+        return out
