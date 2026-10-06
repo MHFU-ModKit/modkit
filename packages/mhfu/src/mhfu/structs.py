@@ -330,3 +330,23 @@ class Game(View):
         """Every entity in registry slots 1..20; the registry is sparse, so nulls are skipped."""
         slots = enumerate(self.registry)
         return {slot: Entity(self.mem, p) for slot, p in slots if slot and p in a.RAM}
+
+
+# --- rig ---
+
+SKIP_DRAW = 0x4
+"""ENTITY.RENDER_FLAGS bit VISIBILITY_GATE sets on a big monster it does not draw."""
+DRAW_GATE = 0x8000
+"""ENTITY.FLAGS bit a big monster needs, besides ENTITY.SECTION == AREA_INDEX, to be drawn."""
+
+
+class BigMonster(Entity):
+    """A big monster, with the two words VISIBILITY_GATE reads and writes."""
+
+    render_flags = u32(a.ENTITY.RENDER_FLAGS)
+    flags = u32(a.ENTITY.FLAGS)
+
+    @property
+    def drawn(self) -> bool:
+        """VISIBILITY_GATE draws it: it is in the player's section and has DRAW_GATE."""
+        return not self.render_flags & SKIP_DRAW

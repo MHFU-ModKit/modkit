@@ -8,7 +8,7 @@
     mhfu go-on-quest --board hall --rank 0 --quest gather --until accepted
 
 It always cold boots, since plugins load on a cold boot only, and leaves the emulator running
-where it stopped unless --stop.
+where it stopped unless --stop. It fast-forwards until it stops, unless --no-fast.
 """
 
 from __future__ import annotations
@@ -54,6 +54,9 @@ def register(sub: Subparsers) -> None:
     p.add_argument("--until", choices=UNTIL, default="quest", help="stop once this is reached")
     p.add_argument("--no-depart", action="store_true", help="the same as --until accepted")
     p.add_argument("--stop", action="store_true", help="stop the emulator at the end")
+    p.add_argument(
+        "--no-fast", dest="fast", action="store_false", help="run at the game's own speed"
+    )
     launcher_args(p)
     p.set_defaults(run=run)
 
@@ -72,7 +75,10 @@ def run(args: argparse.Namespace) -> int:
         print(f"[{time.monotonic() - start:6.1f}s] {message}", flush=True)
 
     try:
-        with Session.launch(launcher(args), cold=True, stop_on_exit=args.stop) as s:
+        with (
+            Session.launch(launcher(args), cold=True, stop_on_exit=args.stop) as s,
+            boot.fast_forward(s, args.fast),
+        ):
             return go(s, args, until, log)
     except (ConnectionError, RuntimeError, TimeoutError, LookupError) as e:
         print(f"mhfu go-on-quest: {e}", file=sys.stderr)
