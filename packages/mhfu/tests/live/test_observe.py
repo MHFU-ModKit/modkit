@@ -39,7 +39,8 @@ def engine() -> SimpleNamespace:
 
 
 def hit(callee: int, usec: int, ra: int, main: int, sub: int, *args: int) -> Hit:
-    words = [usec, ra, main | sub << 8, *(args or (0, 0, 0))]
+    """A hit logged in `log_format`: a0..a3, then the register of a register call."""
+    words = [usec, ra, main | sub << 8, *args, *[0] * (4 - len(args))]
     return Hit("exec", callee, callee, False, message=" ".join(f"{w:08x}" for w in words))
 
 
@@ -63,9 +64,39 @@ def test_outbound():
 
 def test_parse():
     call = ob.parse(hit(OUT1, 0x1000_0010, CODE + 0x10, 1, 4, ENT, 17, 0), 0x1000_0000)
-    assert call == ob.Call(OUT1, CODE + 8, (1, 4), 0x10, (ENT, 17, 0))
+    assert call == ob.Call(OUT1, CODE + 8, (1, 4), 0x10, (ENT, 17, 0, 0))
     assert ob.parse(hit(OUT1, 5, CODE, 0, 0), 0xFFFF_FFFF).t == 6  # the clock wraps
     assert ob.parse(Hit("exec", OUT1, OUT1, False, message="z_un_test"), 0) is None
+    register = ob.parse(hit(CODE + 0x18, 9, 0, 1, 4, ENT, 0, 6, 1, OUT3), 0)
+    assert (register.callee, register.site, register.args) == (OUT3, CODE + 0x18, (ENT, 0, 6, 1))
+
+
+def test_parse_write():
+    line = Hit("memory", ENT + 0x27E, None, False, message=f"00000010 {OUT1:08x} 00000401")
+    w = ob.parse_write(line, 0, ENT, lambda pc: pc - 8)
+    assert w == ob.Write(0x27E, OUT1, OUT1 - 8, (1, 4), 0x10)
+    assert ob.parse_write(Hit("memory", ENT, None, False, message="x"), 0, ENT) is None
+
+
+def test_indirect():
+    words = [0x0320F809, 0, 0x03200008, 0, 0x03E00008, 0]  # jalr t9; jr t9; jr ra
+    text = Image(struct.pack("<6I", *words), CODE)
+    assert ob.indirect(Code(text, range(CODE, CODE + 24))) == {CODE: "t9", CODE + 8: "t9"}
+
+
+def test_field_name():
+    assert ob.field_name(a.ENTITY.POSITION) == "POSITION"
+    assert ob.field_name(a.ENTITY.POSITION + 8) == "POSITION+0x8"
+    assert ob.field_name(0x27C) == "+0x27C"
+
+
+def test_writes_report():
+    r = ob.Run(ENT, ())
+    r.writes = [ob.Write(0x200, OUT1 + 4, OUT1, (1, 4), 1)] * 2
+    r.writes.append(ob.Write(0x27C, OUT2, None, (0, 6), 2))
+    text = ob.writes_report([r])
+    assert f"(1,4) writes\n  POSITION: {OUT1:08X} - @{OUT1 + 4:08X} x2" in text
+    assert f"(0,6) writes\n  +0x27C: ? @{OUT2:08X} x1" in text
 
 
 def test_diff_names_fields_and_words():
@@ -187,6 +218,34 @@ def test_run_traces_and_snapshots(s, fake):
     assert {c.name for c in change.changes} >= {"MAIN_STATE", "SUB_STATE"}
 
 
+def test_run_engine_indirect_and_writes(s, fake):
+    setup_monster(fake)
+    e = engine()
+    e.zone = lambda va: "em" if CODE <= va < CODE + 0x80 else None
+    obs = ob.Observer(s, e, 75)
+    obs.indirect = {CODE + 0x18: "t9"}
+
+    async def script(n):
+        if n == 3:
+            assert fake.breakpoints[OUT3]["condition"] == f"t0 == {ENT:#x}"
+            assert "{t9}" in fake.breakpoints[CODE + 0x18]["logFormat"]
+            assert (ENT + 0x278, 4) in fake.watchpoints
+            await fake.log(bkp(OUT3, 600_000, CODE + 0x24, 1, 4, 7, 0, 0, ENT))
+            await fake.log(bkp(CODE + 0x18, 650_000, 0, 1, 4, ENT, 0, 6, 1, OUT2))
+            await fake.log(f"CHK Write32(CPU) at {ENT + 0x278:08x}: 000AAE60 {CODE + 4:08x} 0401")
+
+    emulated_clock(fake, script)
+    r = obs.run(
+        seconds=1.0, rate=0, indirect=obs.indirect, engine={OUT3: "t0"}, writes=[(0x278, 4)]
+    )
+    assert not fake.breakpoints and not fake.watchpoints
+    assert sorted((c.callee, c.site) for c in r.calls) == [(OUT2, CODE + 0x18), (OUT3, CODE + 0x1C)]
+    assert r.writes == [ob.Write(0x278, CODE + 4, CODE, (1, 4), 450_000)]  # from the first usec
+    assert r.traced() == {OUT2, OUT3}
+    with pytest.raises(ValueError, match="both"):
+        obs.run([OUT3], seconds=1, engine=[OUT3])
+
+
 def test_run_refuses_another_overlay(s, fake):
     setup_monster(fake)
     e = engine()
@@ -240,3 +299,15 @@ def test_layout():
 
     assert layout("u16[3]").size == 6 and layout("vec3").size == 12
     assert layout("bytes") is None and layout("QUEST_TARGET[2]") is None
+
+
+def test_cli_engine_and_writes_specs():
+    from mhfu.cli import observe as cli
+
+    assert cli._engine(f"{OUT1:#x}@t0, ACT_SET") == {OUT1: "t0", a.ACT_SET: "a0"}
+    assert cli._writes("POSITION,YAW,0x27C,0x27E:1") == [
+        (a.ENTITY.POSITION, 12),
+        (a.ENTITY.YAW, 2),
+        (0x27C, 4),
+        (0x27E, 1),
+    ]

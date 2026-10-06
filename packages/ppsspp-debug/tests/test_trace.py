@@ -25,6 +25,35 @@ async def test_trace_arms_and_removes(client, fake):
     assert not fake.stepping
 
 
+async def test_trace_logs_writes(client, fake):
+    async with client.trace([BASE], writes=[(BASE + 0x200, 12)], log_format="{pc}") as hits:
+        assert list(fake.watchpoints) == [(BASE + 0x200, 12)]
+        assert not any(w["enabled"] or w["read"] for w in fake.watchpoints.values())
+        await fake.access(BASE + 0x208, pc=BASE + 0x40)
+        await fake.access(BASE + 0x20C, pc=BASE + 0x44)  # outside the span: no watchpoint
+        await fake.execute(BASE)
+        got = [await hits.next(1), await hits.next(1)]
+    assert [(h.kind, h.address) for h in got] == [("memory", BASE + 0x208), ("exec", BASE)]
+    assert not fake.watchpoints and not fake.breakpoints
+
+
+async def test_trace_retranslates_after_arming(client, fake):
+    # PPSSPP retranslates only the last breakpoint's address; a watchpoint change drops all code
+    added = []
+    original = fake._table["memory.breakpoint.add"]
+
+    async def add(ws, msg):
+        added.append((msg["address"], msg["size"], bool(fake.breakpoints)))
+        await original(ws, msg)
+
+    fake._table["memory.breakpoint.add"] = add
+    points = [BASE, BASE + 0x40]
+    async with client.trace(points, log_format="x"):
+        assert not fake.watchpoints
+    [(address, size, after_breakpoints)] = added
+    assert address in points and size == 1 and after_breakpoints
+
+
 async def test_trace_keeps_a_stopped_cpu_stopped(client, fake):
     await client.pause()
     async with client.trace([BASE], log_format="x"):
