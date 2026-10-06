@@ -1334,17 +1334,30 @@ class MonsterWorkspace(Workspace):
             return -1 - clip.slot
         return self.coverage()[0].sources().get(clip.slot)
 
+    def picked_clip(self) -> int | None:
+        """The donor clip picked for naming, by id: the one in the picked anim, else a clip in
+        none (`edit_clip`)."""
+        br = self.browser()
+        if br is None:
+            return None
+        if self.edit_slot is not None:
+            return br.layout().entries.get(self.edit_slot)
+        return self.edit_clip
+
     def place_clip(self, entry: int) -> None:
         """The picked clip into anim `entry`, under the typed name if it has none; the port is
         built again."""
-        br, cid = self.browser(), self.edit_clip
+        br, cid = self.browser(), self.picked_clip()
         if br is None or cid is None:
             self.message = "pick one of the original's clips first"
             return
         at = br.layout().ids.get(cid)
         typed = self.name_buf.strip()
         name = clip_key(entry) if typed in ("", clip_key(at if at is not None else -1)) else typed
-        self.edit("", lambda: br.place(cid, entry, name))
+        if self.edit("", lambda: br.place(cid, entry, name)):
+            said, self.message = self.message, ""
+            self.play_source(cid)
+            self.message = said
 
     def _relayout(self) -> None:
         """The port built again when an edit or its undo moved a clip; the view follows."""
@@ -1388,7 +1401,7 @@ class MonsterWorkspace(Workspace):
     def game_entry(self) -> int:
         """The anim Play in game forces: the picked clip's, refused while its anim differs from
         the saved manifest's, since the game holds the build injected from the file."""
-        br, cid, doc = self.browser(), self.edit_clip, self.doc
+        br, cid, doc = self.browser(), self.picked_clip(), self.doc
         if br is None or cid is None or doc is None:
             if self.edit_slot is None:
                 raise LookupError("pick a clip first")

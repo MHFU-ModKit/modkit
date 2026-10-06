@@ -187,3 +187,27 @@ def test_place_every_clip(games, ports, tmp_path):
     assert layout.of(m, d.clips, h.anim).ids == want
     table = pac_clip_table(build.build(m, games).pac)
     assert all(table[e] == br.prints[cid] for cid, e in want.items())
+
+
+def test_view_follows_a_placement(gl, games, ports, tmp_path):
+    """On a viewport: the placed clip plays on in its new anim, and undo brings the old build
+    back on screen."""
+    path = tmp_path / "zinogre.toml"
+    shutil.copy(ports / "zinogre.toml", path)
+    ws = MonsterWorkspace(games)
+    ws.intel_cache[75] = None
+    ws.setup(gl)
+    try:
+        ws.open(path)
+        ws.play_source(248)
+        ws.vp.strip_root = True
+        assert ws.vp.clip.slot == 100 and ws.playing_clip() == 248
+        ws.place_clip(7)
+        assert ws.vp.scene is ws.scene and ws.vp.clip is ws.scene.clip(7)
+        assert ws.playing_clip() == 248 and ws.vp.playback.playing and ws.vp.strip_root
+        ws.doc.undo()
+        ws.refresh()
+        assert ws.vp.scene is ws.scene and ws.vp.clip is ws.scene.clip(100)
+        assert ws.playing_clip() == 248 and ws.browser().layout().entries[7] == 7
+    finally:
+        ws.close()
