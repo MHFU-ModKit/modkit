@@ -3,7 +3,7 @@
 """A live experiment set up without a human: the game booted fast or loaded from a savestate,
 the player and a big monster put where the test needs them, the player kept alive.
 
-    with Rig.open(Launcher(lane=1), state=6) as rig:     # PPSSPP_STATE/ULES01213_1.01_6.ppst
+    with Rig.open(state=6) as rig:    # MHFU_LANE's PPSSPP_STATE/ULES01213_1.01_6.ppst
         rig.teleport(6400, 7800)
         tigrex = rig.summon(distance=600)
         with rig.pin_hp():
