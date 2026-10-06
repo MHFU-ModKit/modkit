@@ -21,9 +21,10 @@ import heapq
 import math
 from collections import deque
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .. import addresses as a
+from .. import points
 from ..files import Extracted
 from ..points import Point
 from ..stage import (
@@ -167,7 +168,6 @@ class Map:
     stages: tuple[int, ...]
     gates: dict[int, list[Gate]]
     game: Extracted | None = None
-    _others: dict[int, list[Gate]] = field(default_factory=dict)
 
     @classmethod
     def read(cls, game: Extracted, stages: Iterable[int]) -> Map:
@@ -201,26 +201,20 @@ class Map:
         return out[::-1]
 
     def local(self, stage: int) -> int:
-        """`stage` on this map: itself, or the stage with the same exit triggers (the other
-        time of day, which shares the frame)."""
+        """`stage` on this map: itself, or the stage of the same frame (`points.frame`: the
+        other time of day)."""
         if stage in self.stages:
             return stage
         if self.game is not None:
-            if stage not in self._others:
-                self._others[stage] = _gates(self.game, stage)
-            mine = _signature(self._others[stage])
+            mine = points.frame(self.game, stage)
             for n in self.stages:
-                if mine and _signature(self.gates[n]) == mine:
+                if mine and points.frame(self.game, n) == mine:
                     return n
         raise LookupError(f"st{stage:03d} is not on this map ({_names(self.stages)})")
 
 
 def _gates(game: Extracted, stage: int) -> list[Gate]:
     return [Gate.of(stage, e) for e in StageOverlay.read(game, stage).exits()]
-
-
-def _signature(gates: Sequence[Gate]) -> tuple[tuple[float, ...], ...]:
-    return tuple(sorted((*g.trigger, g.radius, g.height) for g in gates))
 
 
 def _names(stages: Iterable[int]) -> str:

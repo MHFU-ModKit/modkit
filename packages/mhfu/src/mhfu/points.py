@@ -14,6 +14,7 @@ studio's map editor writes and `mhfu rig walk|goto` reads.
 
 from __future__ import annotations
 
+import functools
 import math
 import tomllib
 from collections.abc import Iterable, Mapping
@@ -22,6 +23,8 @@ from pathlib import Path
 from typing import Any
 
 from . import files
+from .files import Extracted
+from .stage import StageOverlay
 
 MANIFEST = "map.toml"
 KINDS = ("point", "waypoint", "climb")
@@ -130,6 +133,31 @@ def load(path: str | Path) -> list[Point]:
         return parse(data.get("point", []))
     except PointError as e:
         raise PointError(f"{p}: {e}") from None
+
+
+@functools.cache
+def frame(game: Extracted, stage: int) -> tuple[tuple[float, ...], ...]:
+    """What two stages of one world frame share: their exit triggers. A day stage and its
+    night twin match, so a point set on either is on both."""
+    exits = StageOverlay.read(game, stage).exits()
+    return tuple(sorted((*e.trigger, e.radius, e.height) for e in exits))
+
+
+def on_stage(points: Iterable[Point], stage: int, game: Extracted | None) -> list[Point]:
+    """The points set on `stage`, or (with the game) on a stage of the same frame."""
+
+    def same(other: int) -> bool:
+        if other == stage:
+            return True
+        if game is None:
+            return False
+        try:
+            here = frame(game, stage)
+            return bool(here) and frame(game, other) == here
+        except (OSError, ValueError):
+            return False
+
+    return [p for p in points if same(p.stage)]
 
 
 def find(points: Iterable[Point], name: str) -> Point:

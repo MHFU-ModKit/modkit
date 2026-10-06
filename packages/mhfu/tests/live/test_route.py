@@ -5,6 +5,7 @@ import math
 
 import pytest
 from mhfu import addresses as a
+from mhfu import points
 from mhfu.live import rig, route
 from mhfu.points import Point
 from mhfu.stage import Triangle
@@ -69,11 +70,11 @@ def test_map_path_and_bans():
 
 
 def test_map_local_finds_the_twin(monkeypatch):
-    monkeypatch.setattr(route, "_gates", lambda game, stage: [gate(106, 109)])
+    frames = {97: ("snow",), 106: ("snow",), 50: ("desert",)}
+    monkeypatch.setattr(points, "frame", lambda game, stage: frames[stage])
     plan = route.Map((97,), {97: [gate(97, 100)]}, game=object())
     assert plan.local(97) == 97
-    assert plan.local(106) == 97  # the same triggers: the night twin
-    monkeypatch.setattr(route, "_gates", lambda game, stage: [gate(trigger=(1.0, 2.0, 3.0))])
+    assert plan.local(106) == 97  # the other time of day
     with pytest.raises(LookupError):
         plan.local(50)
 

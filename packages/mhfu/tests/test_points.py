@@ -67,3 +67,21 @@ def test_find():
 def test_parse_reads_toml():
     data = tomllib.loads('[[point]]\nname = "p"\nstage = 98\nat = [1, 2.5, 3]\n')
     assert P.parse(data["point"]) == [P.Point("p", 98, (1.0, 2.5, 3.0))]
+
+
+def test_on_stage(monkeypatch):
+    frames = {97: ("snow",), 106: ("snow",), 98: ("camp",)}
+    monkeypatch.setattr(P, "frame", lambda game, stage: frames[stage])
+    night = P.Point("n", 106, (0.0, 0.0, 0.0))
+    camp = P.Point("c", 98, (0.0, 0.0, 0.0))
+    assert P.on_stage([WALL, night, camp], 97, game=object()) == [WALL, night]
+    assert P.on_stage([WALL, night, camp], 97, game=None) == [WALL]
+
+
+def test_frame_of_the_snowy_twins():
+    game = pytest.importorskip("mhfu.files").Extracted
+    try:
+        g = game.find()
+    except FileNotFoundError:
+        pytest.skip("MHFU_DATA is not set")
+    assert P.frame(g, 97) == P.frame(g, 106) != P.frame(g, 98)
