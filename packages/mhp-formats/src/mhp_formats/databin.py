@@ -21,6 +21,7 @@ class Game(Enum):
     """A game by its product code, which picks the cipher of its DATA.BIN."""
 
     MHFU = "ULES-01213"
+    MHP2G = "ULJM-05500"
     MHP3RD = "ULJM-05800"
 
 
@@ -116,6 +117,11 @@ def _crypt(data: bytes, game: Game, encrypting: bool) -> bytes:
 
 def _cipher(game: Game) -> Any:
     psp = _iso_extra("mhef.psp")
+    if game is Game.MHP2G:
+        # mhef rejects MHP2G_JP (its branches fall through): the same cipher, JP's plain files
+        cipher = psp.DataCipher(psp.MHP2G_EU)
+        cipher._exceptions = psp.DataCipher._mhp2g_jp_exceptions
+        return cipher
     return psp.DataCipher({Game.MHFU: psp.MHP2G_EU, Game.MHP3RD: psp.MHP3_JP}[game])
 
 
