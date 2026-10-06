@@ -15,7 +15,31 @@ uv run mhfu-port inject ports/brute_tigrex.toml   # built and placed on the memo
 ```
 
 `build` writes the model PAC that `[port] pac` names, from the extracted games in `MHFU_DATA`
-and `MHP3RD_DATA`. The built file is game data: never commit it.
+and `MHP3RD_DATA`, and `<name>_clips.lua` beside it; `inject` puts that module in the memory
+stick's `mods/lib/` (`--lib` elsewhere). The built files are game data: never commit them.
+
+## Clips
+
+Every clip of the donor's moveset goes into the port, each in an executor entry: the action id
+(`a1`) that plays it. A donor clip is known by its MHP3rd id, `stream * 100 + slot`, so a
+stream-0 id is its slot. `[clips.<name>]` names a clip and places it:
+
+```toml
+[clips.dash]
+slot = 3        # the executor entry
+source = 205    # the MHP3rd clip; without it, the one numbered like the entry
+```
+
+The builder packs the rest: a stream-0 clip into the entry of its own id, every other clip, by
+id, into a free entry, first those the host fills (its own brain asks for them), then the others
+from 0 up to 122 (the Tigrex has 123 entries). No clip goes to an entry the host plays on some
+body parts only (the Tigrex's 24 and 25, head and neck over an idle body). An entry no clip
+takes stays empty on a port with its own skeleton, where the host's clips do not fit, and keeps
+the host's clip on a port that rides the host's skeleton.
+
+`<name>_clips.lua` maps each clip's name (the manifest's, else `clip_<entry>`) to its entry, and
+`mhfu_port.lua`'s `P.define` reads it as the port's clips, so no mod keeps a copy of the layout.
+`mhfu-port pose` checks that each entry plays its clip.
 
 ## Example
 

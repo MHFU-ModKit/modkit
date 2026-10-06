@@ -106,12 +106,15 @@ not known. Ease values use the channel's unit, per frame.
 
 ### MHFU: parts and streams
 
-MHFU splits a rig into parts by `Bone.stream`, and part `k`'s clips sit in stream `2k`, one track
-per joint of the part in joint order. A slot plays every part's clip together; a slot may exist
-in only some parts, such as a head-and-neck clip over an idle body. Stream `2k + 1`, where
-populated, is a second clip set; modkit reads only the even streams (`mhfu_port.fk.FU_PART_STREAM`).
-`mhfu_port.fk.rig_clip` joins a slot's parts into one clip over the whole rig, and
-`mhfu_port.motion.put` writes one back.
+MHFU splits a rig into parts by `Bone.stream`, and part `k`'s clips sit in streams `2k` and
+`2k + 1`, one track per joint of the part in joint order. The engine plays an executor entry
+(the action id `a1`): entry `e` of part `k` is slot `e % 100` of stream `2k + e // 100`, so
+entries 0-99 play the even streams and 100 and up the odd ones (`mhfu_port.fk.entry_slot`); the
+odd half is read from the resolver's arithmetic and not yet seen playing in the game. Many
+natives fill the odd streams of all three parts alike; the Tigrex leaves them empty and has 123
+entries. An entry plays every part's clip together; an entry may exist in only some parts,
+such as a head-and-neck clip over an idle body. `mhfu_port.fk.rig_clip` joins an entry's parts
+into one clip over the whole rig, and `mhfu_port.motion.put` writes one back.
 
 - The animated joints are the first `params[1]` bones. Each part is a contiguous run of joint
   indices: part 0 the body, each later part one subtree hanging off one joint (the head, the
@@ -122,8 +125,9 @@ populated, is a second clip set; modkit reads only the even streams (`mhfu_port.
 
 ### MHP3rd: clip sets and records
 
-MHP3rd's streams are separate clip sets over the whole rig; stream 0 is the main moveset. Its
-tracks are not positional: record `i` drives the `i`-th bone counted from a per-monster offset,
+MHP3rd's streams are separate clip sets over the whole rig, and a monster's AI plays clips from
+all of them; a clip's id is `stream * 100 + slot` (`mhfu_port.motion.clip_id`). Its tracks are
+not positional: record `i` drives the `i`-th bone counted from a per-monster offset,
 stepping over the bones the moveset never drives. The offset follows the fork rule: every record
 with location channels lands at or above the body fork, the lowest joint with more than one
 child. `mhfu_port.records` holds the map (`record_to_bone`, `body_fork`, `loc_below_fork`).

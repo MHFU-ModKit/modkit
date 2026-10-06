@@ -17,7 +17,7 @@ A manifest in `ports/` names the donor's files, the host and the build settings 
 [`ports/`](../../ports)), and is the only input:
 
 ```bash
-uv run mhfu-port build ports/zinogre.toml    # zinogre.bin, the model PAC
+uv run mhfu-port build ports/zinogre.toml    # zinogre.bin, the model PAC, and zinogre_clips.lua
 uv run mhfu-port inject ports/zinogre.toml   # the same, placed for the framework to load
 ```
 
@@ -29,8 +29,8 @@ port = build.build(manifest.load("ports/zinogre.toml"), Data.find())
 port.pac, port.summary.text()
 ```
 
-`build` runs as steps (`donor`, `host`, `record_map`, `binding`, `parts`, `skin`, `animation`,
-`pac`), each a function a tool can stop at:
+`build` runs as steps (`donor`, `host`, `record_map`, `binding`, `parts`, `skin`, `layout`,
+`animation`, `pac`), each a function a tool can stop at:
 
 | Module | Does |
 |---|---|
@@ -38,7 +38,8 @@ port.pac, port.summary.text()
 | `rig` | The skeleton the port ships: the donor's, reordered so each animation stream is one run of joints |
 | `retarget` | Matches the donor's bones to the host's, to ship the host's skeleton instead |
 | `mesh`, `skin` | The donor's geometry, bound to the rig by the donor's own weights, by distance, or by the host's |
-| `motion` | The donor's moveset as MHFU's in-game animation, on the host's slots; `put` writes an edited clip back into a slot |
+| `layout` | Which executor entry each donor clip goes to: the manifest's, else the packer's; and the Lua module that carries it to the game |
+| `motion` | The donor's moveset, every stream, as MHFU's in-game animation in those entries; `put` writes an edited clip back into an entry |
 | `fk` | The engine's forward kinematics: joint matrices and skinned positions for any clip and frame |
 | `model` | A model PAC of either game read into skinned groups, textures and clips; imports nothing of `mhfu` |
 
