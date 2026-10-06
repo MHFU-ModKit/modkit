@@ -6,7 +6,8 @@ One Qt window for authoring MHFU mods offline, with the commands behind it. Two 
   in [`ports/`](../../ports), checked against the base monster's data from the game, and
   exported as a Lua module the framework loads (`<name>_hit.lua`).
 - **Map**: edits to a stage's mesh, collision and textures, kept as edit lists in a `map.toml`
-  document and pushed into the running game through PPSSPP's debugger.
+  document and pushed into the running game through PPSSPP's debugger; and named points (the
+  Point tool, the Points panel), which `mhfu rig goto|walk` takes the hunter to.
 
 ## Install
 
