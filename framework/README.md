@@ -92,6 +92,16 @@ from `.luarc.json` at the repo root; `mhfu.addr` needs `make -C framework
 build/gen/addresses.gen.lua` once. Outside this repo, add `framework/lua/meta` and
 `framework/lua/lib` to `workspace.library`.
 
+## Moves of a port's own
+
+`mhfu.move_play(ent, { entry = 46, attacks = { { 56, 6 } } })` plays executor entry 46 as a
+move on a big monster: the move rides a native carrier pair (default `(0,2)`, the Tigrex's
+alert hub), its clip goes on every body part, attack id 6 spawns when the clip crosses frame 56,
+and when the clip ends the carrier hands back to the monster's own brain. A reaction, a hit
+that flinches it for one, ends the move at once. It runs in C on the AI step em_vhook wraps
+(`include/mhfu/move.h`), so it needs a cold boot and a spawned big monster. From the debugger:
+`mhfu move ride <port>`, then `mhfu move play 46 --attack 6@56`.
+
 ## Tests
 
 `uv run pytest framework` compiles framework sources for the host and runs the Lua against the

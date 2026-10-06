@@ -187,6 +187,7 @@ static uint32_t play(uint32_t ent)
         return 0;
     }
     attacks(ent, prev, mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_PHASE));
+    /* a move's per-frame steering (travel, turning, walls) goes here, before the end checks */
     int done = !(mhfu_mem_read_u16(b + MHFU_CLIP_BLOCK_FLAGS) & 1);
     int timed = S->move.length && S->frames >= S->move.length;
     if (done || timed) {
