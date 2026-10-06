@@ -14,6 +14,7 @@ import dataclasses
 import tomllib
 from collections.abc import Callable, Hashable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -29,9 +30,11 @@ from mhfu_port.manifest import Manifest, ManifestError
 from mhfu_port.model import MHFU, clip_key
 from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Skeleton
+from ppsspp_debug import DebuggerError
 
-from mhfu_studio.monster import actions, align, clips, inputs, species
+from mhfu_studio.monster import actions, align, clip_browser, clip_game, clips, inputs, species
 from mhfu_studio.monster.attacks import AttackSession, hitbox_of
+from mhfu_studio.monster.clip_browser import ClipBrowser, SourceClip
 from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.panels.graph import MoveGraph
@@ -57,6 +60,8 @@ from mhfu_studio.shell.workspace import (
 
 if TYPE_CHECKING:
     import moderngl
+    from mhfu.memory import Memory
+    from mhfu_port.model import Clip as SceneClip
 
     from mhfu_studio.monster.render.hitboxes import HitboxOverlay
     from mhfu_studio.monster.render.viewport import MonsterViewport
@@ -147,6 +152,8 @@ class MonsterWorkspace(Workspace):
         self.hosts: list[HostSummary] | None = None
         self._survey: Future[list[HostSummary]] | None = None
         self._pool: ThreadPoolExecutor | None = None
+        #: the running game's memory, for Play in game
+        self.game_memory: Callable[[], AbstractContextManager[Memory]] = clip_game.attached
         self._reset()
 
     def _reset(self) -> None:
@@ -193,6 +200,15 @@ class MonsterWorkspace(Workspace):
         self._rows: tuple[tuple[object, ...], list[actions.ActionRow]] | None = None
         self._parts: PartSession | None = None
         self._attacks: AttackSession | None = None
+        #: the donor clip picked in Clips, by MHP3rd id
+        self.edit_clip: int | None = None
+        self._browser: ClipBrowser | None = None
+        #: why there is no browser
+        self.browser_note = ""
+        self._previews: dict[int, SceneClip] = {}
+        #: the scene and the layout it was built with (`_relayout`)
+        self._built_for: Scene | None = None
+        self._built: dict[int, int] = {}
 
     # the shell's side
 
@@ -521,6 +537,7 @@ class MonsterWorkspace(Workspace):
 
     def sync(self) -> None:
         """Re-reads everything the manifest decides."""
+        self._relayout()
         m = self.manifest
         self._seen = m
         if self.scene is not None and m is not None:
@@ -1234,6 +1251,181 @@ class MonsterWorkspace(Workspace):
     def _overlay(self, which: str) -> HitboxOverlay | None:
         vp = self.vp
         return None if vp is None else vp.hitboxes if which == "hitboxes" else vp.attacks
+
+    # every donor clip by MHP3rd id (the Clips panel)
+
+    def browser(self) -> ClipBrowser | None:
+        """None without a manifest or the games; `browser_note` says why."""
+        if self._browser is None and not self.browser_note and self.doc is not None:
+            m = self.doc.manifest
+            try:
+                games = self.games()
+                donor, host = inputs.donor_clips(m, games), inputs.host_anim(m, games)
+            except (OSError, ValueError) as e:
+                self.browser_note = f"no original moveset to list ({e}): the anims of this build"
+                return None
+            self._browser = ClipBrowser(self.doc, donor, host)
+        return self._browser
+
+    def source_rows(self) -> list[SourceClip]:
+        """Every donor clip by id, then the build's anims that hold none; every anim of the
+        build without the donor or a layout."""
+        sc, br = self.scene, self.browser()
+        if sc is None:
+            return []
+        own = [self._anim_row(c.slot) for c in sc.clips]
+        if br is None:
+            return own
+        try:
+            placed = br.layout().entries
+        except ManifestError as e:
+            self.browser_note = f"no layout ({e}): the anims of this build"
+            return own
+        return br.rows(r for r in own if r.entry not in placed)
+
+    def _anim_row(self, slot: int) -> SourceClip:
+        assert self.scene is not None
+        c, found = self.scene.clip(slot), self.manifest_clip(slot)
+        name, label = (found[0], found[1].label) if found else ("", "")
+        return SourceClip(None, slot, c.frames, c.loop, name, label)
+
+    def source_clip(self, cid: int) -> SceneClip:
+        """What plays donor clip `cid`: the open build's anim holding it, else its preview."""
+        br, sc = self.browser(), self.scene
+        if br is None or sc is None or self.doc is None or cid not in br.donor:
+            raise KeyError(f"no clip {cid} of the original here")
+        e = br.layout().ids.get(cid)
+        if e is not None:
+            c = next((c for c in sc.clips if c.slot == e), None)
+            if c is not None and (c.frames, c.loop) == br.prints[cid]:
+                return c
+        if cid not in self._previews:
+            self._previews[cid] = clip_browser.preview(self.doc.manifest, self.games(), cid)
+        return self._previews[cid]
+
+    def play_source(self, cid: int) -> None:
+        """Plays donor clip `cid` from frame 0 and picks it for naming."""
+        from mhfu_studio.monster.render.playback import root_travel
+
+        try:
+            clip = self.source_clip(cid)
+        except (OSError, ValueError, KeyError) as e:
+            self.message = f"clip {cid} does not play: {e}"
+            return
+        self.edit_clip = cid
+        if clip.slot >= 0:
+            self.play_slot(clip.slot)
+            self.pick_clip(clip.slot)
+            return
+        assert self.scene is not None
+        self._travel.setdefault(clip.slot, root_travel(self.scene, clip))
+        self.edit_slot, self.name_buf, self.label_buf = None, "", ""
+        if self.vp is not None:
+            self.vp.play_clip(clip)
+            self.vp.playback.play()
+        self.recompute_alignment()
+
+    def playing_clip(self) -> int | None:
+        """The donor clip on screen, by id."""
+        clip = None if self.vp is None else self.vp.clip
+        if clip is None:
+            return None
+        if clip.slot < 0:
+            return -1 - clip.slot
+        return self.coverage()[0].sources().get(clip.slot)
+
+    def place_clip(self, entry: int) -> None:
+        """The picked clip into anim `entry`, under the typed name if it has none; the port is
+        built again."""
+        br, cid = self.browser(), self.edit_clip
+        if br is None or cid is None:
+            self.message = "pick one of the original's clips first"
+            return
+        at = br.layout().ids.get(cid)
+        typed = self.name_buf.strip()
+        name = clip_key(entry) if typed in ("", clip_key(at if at is not None else -1)) else typed
+        self.edit("", lambda: br.place(cid, entry, name))
+
+    def _relayout(self) -> None:
+        """The port built again when an edit or its undo moved a clip; the view follows."""
+        from mhfu_studio.monster.render.skeleton import undriven_geometry
+
+        m, sc, br = self.manifest, self.scene, self.browser()
+        if m is None or sc is None or br is None:
+            return
+        try:
+            now = br.layout().entries
+        except ManifestError:
+            return
+        if self._built_for is not sc:
+            self._built_for, self._built = sc, now
+            return
+        if now == self._built:
+            return
+        self._built = now
+        try:
+            scene = Scene.from_manifest(m, None, "port", self.games())
+        except (OSError, ValueError) as e:
+            self.message = f"not built again ({e}): the view shows the last build"
+            return
+        cid = self.playing_clip()
+        self.scene = self._built_for = scene
+        if self.doc is not None:
+            self.doc.pac = scene.pac
+        self.undriven = undriven_geometry(scene)
+        self._coverage = self._vocab = self._labels = self._rows = self._counts = None
+        self._travel, self._previews = {}, {}
+        vp = self.vp
+        if vp is not None:
+            strip, speed = vp.strip_root, None if vp.actor is None else vp.playback.speed
+            vp.set_scene(scene, frame_camera=False)
+            vp.strip_root = strip
+            if speed is not None:
+                vp.playback.speed = speed
+        if cid is not None:
+            self.play_source(cid)
+
+    def game_entry(self) -> int:
+        """The anim Play in game forces: the picked clip's, refused while its anim differs from
+        the saved manifest's, since the game holds the build injected from the file."""
+        br, cid, doc = self.browser(), self.edit_clip, self.doc
+        if br is None or cid is None or doc is None:
+            if self.edit_slot is None:
+                raise LookupError("pick a clip first")
+            return self.edit_slot
+        now = br.layout().ids.get(cid)
+        saved = layout.of(doc.saved_manifest, br.donor, br.host).ids.get(cid)
+        if now is None:
+            raise LookupError(f"clip {cid} has no anim in this layout: place it first")
+        if now != saved:
+            raise LookupError(
+                f"clip {cid} is anim {now} here but {saved} in the saved manifest: save, then"
+                " build and inject the port (mhfu-port inject) before playing it in the game"
+            )
+        return now
+
+    def play_in_game(self) -> None:
+        """Holds the picked clip's anim on the running game's big monster (`clip_game`)."""
+        try:
+            entry = self.game_entry()
+            with self.game_memory() as mem:
+                sent = clip_game.force(mem, entry, self.host_species)
+        except (LookupError, OSError, ValueError, DebuggerError) as e:
+            self.message = f"not played in the game: {e}"
+            return
+        ack = "" if sent.acked else f"; no ack: {clip_game.STALLED}"
+        self.message = f"anim {entry} held on monster {sent.slot} until Release{ack}"
+
+    def release_in_game(self) -> None:
+        """Lets the big monster's own brain pick again."""
+        try:
+            with self.game_memory() as mem:
+                sent = clip_game.release(mem, self.host_species)
+        except (LookupError, OSError, ValueError, DebuggerError) as e:
+            self.message = f"not released: {e}"
+            return
+        ack = "" if sent.acked else f"; no ack: {clip_game.STALLED}"
+        self.message = f"monster {sent.slot} released{ack}"
 
 
 def _roots() -> tuple[Path | None, ...]:
