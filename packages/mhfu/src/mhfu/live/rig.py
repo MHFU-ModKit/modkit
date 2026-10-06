@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -167,7 +168,8 @@ def pin_hp(s: Session, hp: int | None = None, *, tick: float = 0.5) -> survival.
 
 
 class Rig:
-    """A game set up for an experiment, and cleaned up after: pins stopped, speed restored.
+    """A game set up for an experiment, and cleaned up after: its pins stopped, the game's own
+    rate back if it fast-forwarded.
 
     The emulator keeps running unless `stop_on_exit`, so the next rig attaches in a second.
     """
@@ -176,6 +178,7 @@ class Rig:
         self.s = s
         self.launcher = launcher or Launcher.from_env()
         self.guards: list[survival.Guard] = []
+        self.fast = False
 
     @classmethod
     def open(
@@ -248,7 +251,9 @@ class Rig:
 
     def speed(self, *, fast: bool = False) -> bool:
         """Fast-forward, or the game's own rate; False on a PPSSPP that cannot."""
-        return boot.set_fast(self.s, fast)
+        done = boot.set_fast(self.s, fast)
+        self.fast = fast and done
+        return done
 
     def teleport(self, x: float, z: float, near: float | None = None) -> Vec3:
         return teleport(self.s, x, z, near)
@@ -271,10 +276,9 @@ class Rig:
     def close(self) -> None:
         for guard in self.guards:
             guard.__exit__(None, None, None)
-        try:
-            boot.set_fast(self.s, False)
-        except (Disconnected, DebuggerError):
-            pass
+        if self.fast:
+            with suppress(Disconnected):
+                boot.set_fast(self.s, False)
         self.s.close()
 
     def __enter__(self) -> Rig:

@@ -4,11 +4,12 @@ import math
 
 import pytest
 from mhfu import addresses as a
+from mhfu.cli import main
 from mhfu.live import Launcher, Session, rig
 from mhfu.structs import DRAW_GATE, SKIP_DRAW
 from ppsspp_debug import Lane
 
-TIGREX = a.RAM.start + 0x90_0000  # a heap address in `fake`
+TIGREX, MAP_MANAGER = a.RAM.start + 0x90_0000, a.RAM.start + 0x91_0000  # heap in `fake`
 AREA = 109
 
 
@@ -119,3 +120,29 @@ def test_open_from_a_state(fake, game, clock, monkeypatch):
         assert r.s.game.player.max_hp == 150
         assert r.speed(fast=True) and fake.fast_forward
     assert not fake.fast_forward
+
+
+@pytest.fixture
+def cli(fake, game, clock, monkeypatch):
+    """`mhfu rig ...` against the fake game, attached rather than launched."""
+    monkeypatch.setattr(rig, "running", lambda launcher: True)
+    monkeypatch.setattr(Session, "launch", lambda *a, **kw: Session.attach(fake.port, timeout=5))
+    fake.poke("I", a.MAP_MANAGER_PTR, MAP_MANAGER)
+    fake.poke("H", MAP_MANAGER + a.MAP_MANAGER.STAGE, AREA)
+    return lambda *argv: main(["rig", *argv, "--lane", "1"])
+
+
+def test_cli(cli, capsys):
+    assert cli("teleport", "300", "-40") == 0
+    assert cli("summon", "--distance", "500") == 0
+    assert cli("where") == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[2] == f"stage st{AREA}, area {AREA}, screen 0"
+    assert out[:2] == ["player -> (300, 5.0, -40)", "Tigrex -> (800, 5, -40), 500 away, drawn"]
+    assert out[-1] == f"Tigrex 0x{TIGREX:08X} (800, 5, -40), 500 away, section {AREA}, drawn"
+
+
+def test_cli_not_drawn(cli, game, capsys):
+    game.on_read.clear()
+    assert cli("summon") == 1
+    assert "NOT drawn" in capsys.readouterr().out
