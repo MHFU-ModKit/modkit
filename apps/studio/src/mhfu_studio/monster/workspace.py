@@ -123,6 +123,7 @@ class _Warm:
 class MonsterWorkspace(Workspace):
     name = "monster"
     filters = ("Port manifest", "*.toml", "Monster PAC", "*.bin *.pac")
+    send_label = "Send hitboxes to game"
 
     def __init__(self, data: Data | None = None, intel_root: Path | None = None) -> None:
         self._data = data
@@ -131,7 +132,7 @@ class MonsterWorkspace(Workspace):
         self._found = _roots()
         #: what the last `warmup` read, for `open` to take
         self._warm: _Warm | None = None
-        #: the manifest as the last Send to game sent it
+        #: the manifest as the last Send hitboxes to game sent it
         self._sent: Manifest | None = None
         #: species intel from this directory instead of the cache built from the game
         self.intel_root = intel_root
@@ -317,7 +318,7 @@ class MonsterWorkspace(Workspace):
             Step("Pick an action", self.pair is not None),
             Step("Copy the base monster's hitboxes", bool(m.hitboxes)),
             Step("Change one", self._hitboxes_changed(m)),
-            Step("Send to game", self._sent is m, SEND_KEY),
+            Step(self.send_label, self._sent is m, SEND_KEY),
         )
 
     def _hitboxes_changed(self, m: Manifest) -> bool:

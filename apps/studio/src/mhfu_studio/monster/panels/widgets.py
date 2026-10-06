@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """Qt pieces the monster panels share: the source switch, a volume's form, the no-scene state,
-the see-through switch and the Send to game row."""
+the see-through switch and the Send hitboxes to game row."""
 
 from __future__ import annotations
 
@@ -130,13 +130,13 @@ def sync_see_through(box: QCheckBox, ws: MonsterWorkspace) -> None:
 
 
 class SendRow(QWidget):
-    """The title bar's Send to game where a panel's task ends, and why it cannot run."""
+    """The title bar's Send hitboxes to game where a panel's task ends, and why it cannot run."""
 
     def __init__(self, ws: MonsterWorkspace, studio: Studio) -> None:
         super().__init__()
         self.ws, self.studio = ws, studio
         self.send = kit.button(
-            "Send to game",
+            ws.send_label,
             tip="Puts your hitboxes, hurtboxes and damage grid on the memory stick, saved or"
             " not; a running game reloads them. The title bar's button (⌘↩) does the same.",
             on=studio.act("send", studio.send),

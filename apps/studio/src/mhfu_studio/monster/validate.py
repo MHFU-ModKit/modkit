@@ -580,7 +580,7 @@ def _attacks(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
     if attacks is None or not attacks.present:
         msg = (
             f"no attack data for {species.label(host)}: hit groups, attack ids and sizes are "
-            "not checked, and Send to game refuses until there is."
+            "not checked, and Send hitboxes to game refuses until there is."
         )
         out.append(_f("warning", "HITBOX_UNCHECKED", "hitbox", msg))
         return out

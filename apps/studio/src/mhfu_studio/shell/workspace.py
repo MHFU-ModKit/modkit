@@ -157,6 +157,8 @@ class Workspace(Protocol):
     name: str
     #: open-dialog filters as (name, pattern) pairs: ("Port manifest", "*.toml", ...)
     filters: Sequence[str] = ("All files", "*")
+    #: the title bar's send button, saying what this workspace sends
+    send_label: str = "Send to game"
     #: how often `message` was set: the studio shows each one, a repeat too
     said: int = 0
     _message: str = ""

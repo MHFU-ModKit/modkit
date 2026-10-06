@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell import studio as studio_module
 from mhfu_studio.shell.workspace import Job
 from mhfu_studio.ui.job import ProcessRunner
@@ -130,3 +131,12 @@ def test_message_tip(make_window: Make) -> None:
     w.studio.message = "x" * 400
     w.sync()
     assert w.message.toolTip() == "x" * 400
+
+
+def test_send_says_what_it_sends(make_window: Make) -> None:
+    ws = Sender(Job("help", ("--help",)))
+    ws.send_label = "Send hitboxes to game"
+    w = make_window(ws, FakeWorkspace("monster"))
+    w.sync()
+    assert w.bar.send.text() == "Send hitboxes to game"
+    assert MonsterWorkspace.send_label == "Send hitboxes to game"

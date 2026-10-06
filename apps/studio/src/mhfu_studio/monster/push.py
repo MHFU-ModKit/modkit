@@ -138,5 +138,5 @@ def stick_differs(m: Manifest, mods: Path) -> str:
         return ""
     return (
         f"; the memory stick's {path.name} (id {found[1]}) puts its own tables back while the"
-        " port is in the area: Send to game to put these there too"
+        " port is in the area: Send hitboxes to game to put these there too"
     )
