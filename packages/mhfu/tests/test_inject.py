@@ -3,6 +3,7 @@
 import pytest
 from mhfu import inject
 from mhfu.cli import main
+from ppsspp_debug import Lane
 
 
 def test_names():
@@ -39,6 +40,7 @@ def test_named(tmp_path):
 @pytest.fixture(autouse=True)
 def _no_env(monkeypatch):
     monkeypatch.delenv(inject.MEMSTICK_ENV, raising=False)
+    monkeypatch.delenv(inject.LANE_ENV, raising=False)
 
 
 def test_default_inject_dir(tmp_path, monkeypatch):
@@ -75,6 +77,19 @@ def test_memstick_override(tmp_path, monkeypatch):
     monkeypatch.setattr(inject, "MEMSTICK_ROOTS", ())
     monkeypatch.delenv(inject.MEMSTICK_ENV)
     assert inject.detect() is None
+
+
+def test_memstick_lane(tmp_path, monkeypatch):
+    stick = tmp_path / "3/.config/ppsspp/PSP"
+    stick.mkdir(parents=True)
+    monkeypatch.setattr(inject, "Lane", lambda n: Lane(n, root=tmp_path))
+    monkeypatch.setenv(inject.MEMSTICK_ENV, str(tmp_path / "elsewhere"))
+    monkeypatch.setenv(inject.LANE_ENV, "3")
+    assert inject.lane() == Lane(3, root=tmp_path)
+    assert inject.memstick() == stick
+    (other := tmp_path / "other").mkdir()
+    assert inject.memstick(other) == other
+    assert inject.lane({}) is None
 
 
 def test_cli(tmp_path, capsys):

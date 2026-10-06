@@ -46,7 +46,9 @@ uv run mhfu stop --lane 1
 A lane is a PPSSPP of its own: its own `HOME` under `~/.cache/modkit/lanes/<n>` (so its own
 memory stick, cloned from `~/.config/ppsspp/PSP` the first time), its own clone of the game image,
 and debugger port 45100 + n. On macOS it starts hidden and never takes focus. `mhfu stop` without
-`--lane` leaves lanes alone. In Python, `ppsspp_debug.Lane` or `MHFU_LANE` for `mhfu.live`.
+`--lane` leaves lanes alone. In Python, `ppsspp_debug.Lane` or `MHFU_LANE` for `mhfu.live`;
+with `MHFU_LANE` set, everything that writes the memory stick (`mhfu-port inject`, the studio)
+writes the lane's.
 
 ## Headless in Docker
 

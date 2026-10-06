@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
+
+from ppsspp_debug import Lane
 
 MEMSTICK_ROOTS = (
     "~/.config/ppsspp/PSP",
@@ -23,6 +26,8 @@ MEMSTICK_ROOTS = (
 """PPSSPP memory-stick roots, most likely first; the PRX sees them as ms0:/PSP."""
 MEMSTICK_ENV = "MHFU_MEMSTICK"
 """Names the memory stick's PSP folder, over `MEMSTICK_ROOTS`."""
+LANE_ENV = "MHFU_LANE"
+"""Numbers the hidden PPSSPP (`ppsspp_debug.Lane`) this process works in; its stick wins."""
 INJECT_SUBDIR = "PLUGINS/mhfu_framework/inject"
 MODS_SUBDIR = "PLUGINS/mhfu_framework/mods"
 """Where the framework loads Lua mods from; `require` reads its `lib/`."""
@@ -40,8 +45,17 @@ def detect() -> Path | None:
     return None
 
 
+def lane(env: Mapping[str, str] | None = None) -> Lane | None:
+    """The lane `$MHFU_LANE` numbers, if any."""
+    value = (os.environ if env is None else env).get(LANE_ENV)
+    return Lane(int(value)) if value else None
+
+
 def memstick(root: str | os.PathLike[str] | None = None) -> Path:
-    """`root`, else `$MHFU_MEMSTICK`, else `detect`; a folder holding `PSP` means that one."""
+    """`root`, else the stick of `lane()`, else `$MHFU_MEMSTICK`, else `detect`; a folder holding
+    `PSP` means that one."""
+    if root is None and (ln := lane()) is not None:
+        root = ln.stick
     given = root if root is not None else os.environ.get(MEMSTICK_ENV)
     if not given:
         found = detect()
