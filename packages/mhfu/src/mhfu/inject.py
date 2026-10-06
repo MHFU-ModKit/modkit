@@ -15,8 +15,10 @@ import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ppsspp_debug import Lane
+if TYPE_CHECKING:
+    from ppsspp_debug import Lane
 
 MEMSTICK_ROOTS = (
     "~/.config/ppsspp/PSP",
@@ -46,9 +48,14 @@ def detect() -> Path | None:
 
 
 def lane(env: Mapping[str, str] | None = None) -> Lane | None:
-    """The lane `$MHFU_LANE` numbers, if any."""
+    """The lane `$MHFU_LANE` numbers, if any. ppsspp_debug loads only then: the Blender add-on
+    imports this module without the native wheels it needs."""
     value = (os.environ if env is None else env).get(LANE_ENV)
-    return Lane(int(value)) if value else None
+    if not value:
+        return None
+    from ppsspp_debug import Lane
+
+    return Lane(int(value))
 
 
 def memstick(root: str | os.PathLike[str] | None = None) -> Path:

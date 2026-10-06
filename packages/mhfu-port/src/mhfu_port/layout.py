@@ -18,10 +18,11 @@ import re
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 
+from mhfu.entries import ENTRY_BANK, PART_STREAMS
 from mhp_formats.anim import AnimPack
 
 from . import manifest
-from .fk import ENTRY_BANK, FU_PART_STREAM, entry_slot, part_clip
+from .fk import entry_slot, part_clip
 from .model import clip_key
 from .motion import filled
 
@@ -64,7 +65,7 @@ def _addressable(host: AnimPack) -> int:
     """Entries every part of the host can hold: each one's streams have a slot for it."""
     parts = _parts(host)
     n = 0
-    while n < FU_PART_STREAM * ENTRY_BANK:
+    while n < PART_STREAMS * ENTRY_BANK:
         for k in parts:
             si, slot = entry_slot(k, n)
             if si >= len(host.streams) or slot >= len(host.streams[si]):
@@ -75,8 +76,8 @@ def _addressable(host: AnimPack) -> int:
 
 def _parts(host: AnimPack) -> list[int]:
     """The body parts the host animates: those with a clip in their first stream."""
-    count = (len(host.streams) + FU_PART_STREAM - 1) // FU_PART_STREAM
-    return [k for k in range(count) if any(c is not None for c in host.streams[FU_PART_STREAM * k])]
+    count = (len(host.streams) + PART_STREAMS - 1) // PART_STREAMS
+    return [k for k in range(count) if any(c is not None for c in host.streams[PART_STREAMS * k])]
 
 
 def partial(host: AnimPack, entries: int) -> frozenset[int]:

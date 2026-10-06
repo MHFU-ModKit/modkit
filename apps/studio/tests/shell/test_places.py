@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 from pathlib import Path
 
+import ppsspp_debug
 import pytest
 from mhfu import inject
 from mhfu_studio.shell import places, settings
@@ -75,7 +76,7 @@ def test_memstick(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_memstick_lane(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     lane = tmp_path / "2/.config/ppsspp/PSP"
     (lane / inject.MODS_SUBDIR).mkdir(parents=True)
-    monkeypatch.setattr(inject, "Lane", lambda n: Lane(n, root=tmp_path))
+    monkeypatch.setattr(ppsspp_debug, "Lane", lambda n: Lane(n, root=tmp_path))
     places.remember(MEMSTICK, tmp_path)
     monkeypatch.setenv(inject.MEMSTICK_ENV, str(tmp_path))
     monkeypatch.setenv(inject.LANE_ENV, "2")

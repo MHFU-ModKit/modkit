@@ -29,15 +29,9 @@ from ppsspp_debug import Lane
 
 from .. import addresses as a
 from .. import files, inject
+from ..entries import ACTION_INPUT_STEP, ENTRY_BANK, entry_clip, input_action
 from ..memory import Memory
-from ..structs import (
-    ACTION_INPUT_STEP,
-    STREAM_SLOTS,
-    BigMonster,
-    ClipBlock,
-    entry_clip,
-    input_action,
-)
+from ..structs import BigMonster, ClipBlock
 from .quests import Log
 from .rig import Rig, big_monsters
 from .session import Launcher, Session
@@ -105,7 +99,7 @@ class Pack:
     def entries(self) -> list[int]:
         """The executor entries some body part has a clip for; an entry past a part's
         ACTION_INPUT_STEP would read the next part's streams."""
-        parts = len(self.streams) * STREAM_SLOTS // ACTION_INPUT_STEP
+        parts = len(self.streams) * ENTRY_BANK // ACTION_INPUT_STEP
         return [
             e
             for e in range(ACTION_INPUT_STEP)
@@ -121,7 +115,7 @@ class Part:
     taken: bool
     """Its ENTITY.ANIM_INPUT reads the entry: the executor dispatched it to this part."""
     asked: tuple[int, int]
-    """(stream, slot) the resolver names for the entry (`structs.entry_clip`)."""
+    """(stream, slot) the resolver names for the entry (`entries.entry_clip`)."""
     held: tuple[tuple[int, int], ...]
     """Every (stream, slot) holding the clip it plays."""
     empty: bool

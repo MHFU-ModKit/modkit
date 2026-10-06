@@ -10,6 +10,7 @@ from enum import IntEnum
 
 from . import addresses as a
 from .addresses import Struct
+from .entries import input_action
 from .memory import Memory
 from .views import View, f32, f32s, ptr, ptrs, s8, u8, u16, u16s, u32, vec3
 
@@ -18,9 +19,6 @@ TARGET_GROUPS = a.QUEST.TARGETS.count  # the engine's cap
 EM_ID_SPECIES = 0xFF
 """QUEST_TARGET.EM_ID holds the species in its low byte."""
 
-ACTION_INPUT_BASE = 0x3E8
-"""ENTITY.ANIM_INPUT[k] is the executor action id + ACTION_INPUT_BASE + k * ACTION_INPUT_STEP."""
-ACTION_INPUT_STEP = 0xC8
 EXECUTOR_VTABLES = frozenset({a.TIGREX_VTABLE})
 """Species known to animate through ACTION_EXECUTOR, so their ANIM_INPUT decodes to action ids;
 the small-monster-shaped AI keeps its own ids there."""
@@ -46,11 +44,6 @@ SPECIES_IDS = {
     0x4D: "Giadrome",
 }
 """ENTITY.SPECIES (the em id) -> name, for the ids checked in the game."""
-
-
-def input_action(value: int, slot: int) -> int:
-    """The executor action id in ENTITY.ANIM_INPUT[slot]."""
-    return value - ACTION_INPUT_BASE - slot * ACTION_INPUT_STEP
 
 
 class Screen(IntEnum):
@@ -353,15 +346,6 @@ class BigMonster(Entity):
 
 
 # --- clips ---
-
-STREAM_SLOTS = 100
-"""Slots per animation stream: ENTITY.ANIM_INPUT value v plays slot v % STREAM_SLOTS of stream
-(v - ACTION_INPUT_BASE) // STREAM_SLOTS of the pack at ENTITY.ACTION_TABLE."""
-
-
-def entry_clip(entry: int, part: int) -> tuple[int, int]:
-    """(stream, slot) body part `part` plays for executor entry `entry`."""
-    return divmod(entry + part * ACTION_INPUT_STEP, STREAM_SLOTS)
 
 
 class ClipBlock(View):

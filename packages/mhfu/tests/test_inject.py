@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
+import ppsspp_debug
 import pytest
 from mhfu import inject
 from mhfu.cli import main
@@ -82,7 +83,7 @@ def test_memstick_override(tmp_path, monkeypatch):
 def test_memstick_lane(tmp_path, monkeypatch):
     stick = tmp_path / "3/.config/ppsspp/PSP"
     stick.mkdir(parents=True)
-    monkeypatch.setattr(inject, "Lane", lambda n: Lane(n, root=tmp_path))
+    monkeypatch.setattr(ppsspp_debug, "Lane", lambda n: Lane(n, root=tmp_path))
     monkeypatch.setenv(inject.MEMSTICK_ENV, str(tmp_path / "elsewhere"))
     monkeypatch.setenv(inject.LANE_ENV, "3")
     assert inject.lane() == Lane(3, root=tmp_path)

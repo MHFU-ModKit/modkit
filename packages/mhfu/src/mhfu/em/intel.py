@@ -29,11 +29,11 @@ from .. import addresses as a
 from .. import files
 from .. import hitbox as hb
 from .. import hitzone as hz
+from ..entries import ACTION_INPUT_BASE
 from ..files import Extracted
 from ..memory import Space
 from ..mips import Code
 from ..overlay import Overlay
-from ..structs import ACTION_INPUT_BASE
 from . import attacks as atk
 from . import census as cs
 from . import chain as ch

@@ -16,11 +16,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from mhfu.entries import PART_STREAMS
 from mhp_formats import fu, pmo
 from mhp_formats.anim import CHANNEL_BITS
 from mhp_formats.skeleton import Skeleton
-
-from .fk import FU_PART_STREAM
 
 Level = Literal["error", "warn"]
 
@@ -191,17 +190,17 @@ def _template(skeleton: Skeleton, template: Skeleton) -> list[Result]:
 
 
 def _partition(anim: fu.Anim, skeleton: Skeleton) -> list[Result]:
-    """Stream s plays part s // FU_PART_STREAM; a part's clips carry one track per joint of it,
+    """Stream s plays part s // PART_STREAMS; a part's clips carry one track per joint of it,
     and every part has clips, so the parts together cover exactly the animated joints."""
     part = Counter(b.stream for b in skeleton.bones[: animated(skeleton)])
     out = []
     for si, stream in enumerate(anim.streams):
         widths = sorted({len(c.tracks) for c in stream if c is not None and c.tracks})
-        want = part.get(si // FU_PART_STREAM, 0)
+        want = part.get(si // PART_STREAMS, 0)
         if widths and widths != [want]:
             out.append(Result("PARTITION", f"stream {si} carries {widths} tracks, its part {want}"))
     for k, joints in sorted(part.items()):
-        si = FU_PART_STREAM * k
+        si = PART_STREAMS * k
         if si >= len(anim.streams) or all(c is None for c in anim.streams[si]):
             out.append(Result("PARTITION", f"part {k} has {joints} joints and no clips"))
     return out

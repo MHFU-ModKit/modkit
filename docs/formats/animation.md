@@ -111,7 +111,7 @@ MHFU splits a rig into parts by `Bone.stream`, and part `k`'s clips sit in strea
 (the action id `a1`): part `k`'s input becomes `a1 + 1000 + 200k`, and the part plays slot
 `input % 100` of stream `(input - 1000) // 100`. So entry `e` of part `k` is slot `e % 100` of
 stream `2k + e // 100`: entries 0-99 play the even streams, 100 and up the odd ones
-(`mhfu.structs.entry_clip`, `mhfu_port.fk.entry_slot`). The Tigrex has 123 entries, and an id
+(`mhfu.entries.entry_clip`). The Tigrex has 123 entries, and an id
 past them plays another (123 plays entry 0, 150 entry 27). Its brain asks for 100-122 although
 its own pack leaves the odd streams empty; many natives fill them in all three parts alike, and a
 port's packer puts every donor id under 123 in the entry of that id. A part whose slot is empty

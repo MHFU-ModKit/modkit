@@ -4,9 +4,9 @@ import pytest
 from mhfu import addresses as a
 from mhfu.cli import clips as cli
 from mhfu.cli import main
+from mhfu.entries import ACTION_INPUT_BASE, ACTION_INPUT_STEP, entry_clip
 from mhfu.live import Launcher, Session, clips, rig
 from mhfu.live.shell_anim import MAGIC, Op
-from mhfu.structs import ACTION_INPUT_BASE, ACTION_INPUT_STEP, entry_clip
 from ppsspp_debug import Lane
 
 MON, PACK = a.RAM.start + 0x90_0000, a.RAM.start + 0x91_0000  # inside the fake's memory

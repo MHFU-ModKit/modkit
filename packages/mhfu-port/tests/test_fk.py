@@ -6,6 +6,7 @@ from collections import Counter
 import numpy as np
 import pytest
 from mhfu import files
+from mhfu.entries import PART_STREAMS
 from mhfu.files import Extracted
 from mhfu_port import fk
 from mhp_formats.anim import Channel, Clip, Keyframe, Track
@@ -166,7 +167,7 @@ def test_tigrex_parts(mhfu_data):
     skeleton, pack = Skeleton.from_bytes(pac.entries[0]), Anim.from_bytes(pac.entries[3])
     width = Counter(b.stream for b in skeleton.bones[: skeleton.params[1]])
     for k, n in width.items():
-        clips = [c for c in pack.streams[fk.FU_PART_STREAM * k] if c is not None]
+        clips = [c for c in pack.streams[PART_STREAMS * k] if c is not None]
         assert clips and {len(c.tracks) for c in clips} == {n}
-    odd = [c for s in pack.streams[1 :: fk.FU_PART_STREAM] for c in s if c is not None]
+    odd = [c for s in pack.streams[1::PART_STREAMS] for c in s if c is not None]
     assert not odd
