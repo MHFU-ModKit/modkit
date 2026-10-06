@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
+import random
 import shutil
 from collections.abc import Iterator
 from pathlib import Path
@@ -159,3 +160,30 @@ def test_browser_place_alone(doc):
 
 def _clip(frames: int) -> Clip:
     return Clip([Track([Channel(0x008, [Keyframe(0, 0), Keyframe(0, frames)])])])
+
+
+def test_place_every_clip(games, ports, tmp_path):
+    """All 102 placed into a shuffled layout, one after another: each lands where it was put
+    and stays, the saved manifest loads on that layout, and the port builds on it."""
+    from mhfu_port import build, manifest
+    from mhfu_studio.monster.clips import pac_clip_table
+    from mhfu_studio.monster.document import PortDocument
+
+    path = tmp_path / "zinogre.toml"
+    shutil.copy(ports / "zinogre.toml", path)
+    doc = PortDocument.open(path)
+    d, h = build.donor(doc.manifest, games), build.host(doc.manifest, games)
+    br = B.ClipBrowser(doc, d.clips, h.anim)
+    base = br.layout().entries
+    spots = sorted(base)
+    random.Random(97).shuffle(spots)
+    want = dict(zip(sorted(base.values()), spots, strict=True))
+    for cid, e in want.items():
+        br.place(cid, e, f"c{cid}")
+        assert br.layout().ids[cid] == e
+    assert br.layout().ids == want and len(doc.manifest.clips) == 102
+    doc.save()
+    m = manifest.load(path)
+    assert layout.of(m, d.clips, h.anim).ids == want
+    table = pac_clip_table(build.build(m, games).pac)
+    assert all(table[e] == br.prints[cid] for cid, e in want.items())
