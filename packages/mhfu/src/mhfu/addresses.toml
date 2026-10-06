@@ -79,7 +79,7 @@ HUD_DRAW = { eu = 0x08891B14, type = "fn", doc = "HUD master draw" }
 HUD_TEXT_DRAW = { eu = 0x0889377C, type = "fn", doc = "banner text draw f(ctx, text descriptor) of UTF-16LE text" }
 
 # --- entities and monsters ---
-MONSTER_MANAGER_SINGLETON = { eu = 0x08B0C7C0, type = "bytes", doc = "big-monster manager singleton (struct MONSTER_MANAGER) that drives per-frame monster processing" }
+MONSTER_MANAGER_SINGLETON = { eu = 0x08B0C7C0, type = "bytes", doc = "the GameTask object (struct MONSTER_MANAGER): per-frame monster processing, the area index and area-change requests" }
 ENTITY_REGISTRY = { eu = 0x09C1213C, type = "ptr[21]", doc = "entity pointers: slot 0 is never the player, slots 1..20 hold monsters, 0 = empty" }
 COLLISION_WORLD_PTR = { eu = 0x09C18FD0, type = "ptr", doc = "pointer to the collision world (struct COLLISION_WORLD) holding the per-frame hit-test list" }
 COLLISION_TEST = { eu = 0x09C41E58, type = "fn", doc = "per-frame hit test: walks COLLISION_WORLD.LIST_HEAD; an entity without a listed node deals no damage" }
@@ -120,7 +120,7 @@ IN_SECTION = { eu = 0x08865BAC, type = "fn", doc = "(entity): 1 when ENTITY.SECT
 EFFECT_OWNER = { eu = 0x08866284, type = "fn", doc = "an entity's effect owner tag, from ENTITY.CLASS and ENTITY.ID" }
 FK_WALKER = { eu = 0x08863198, type = "fn", doc = "per-frame forward-kinematics walker over an entity's joints and animation channels" }
 APPLY_HP_DELTA = { eu = 0x088D6594, type = "fn", doc = "(entity, signed delta): applies HP damage or healing, clamped to HP_CAP and MAX_HP" }
-MONSTER_PROCESSOR = { eu = 0x09A60198, type = "fn", doc = "per-monster processor MONSTER_MANAGER.PROCESSOR normally points at (game_task overlay)" }
+MONSTER_PROCESSOR = { eu = 0x09A60198, type = "fn", doc = "GameTask's in-area update, which MONSTER_MANAGER.PROCESSOR normally points at; processes the monsters (game_task overlay)" }
 RAISE_EVENT = { eu = 0x09A677F8, type = "fn", doc = "generic AI event raise(entity, 0, event_id, 0) (game_task overlay)" }
 STRESS_RESPONSE = { eu = 0x09A679D8, type = "fn", doc = "stress-response ladder over the AI condition cells; writes an animation-input literal" }
 TIMER_SCALE = { eu = 0x09AACCF8, type = "fn", doc = "scales an AI timer refill by entity stats (x1.5, x1 or x0.667)" }
@@ -269,7 +269,7 @@ CLIP = { offset = 0x0B8, type = "ptr", doc = "slot-0 clip node of the playing an
 CLIP_FLAGS = { offset = 0x0BC, type = "u16", doc = "slot-0 clip flags: bit 0 playing (cleared when the clip ends), bit 1 loop" }
 JOINTS = { offset = 0x190, type = "ptr", doc = "live joint array the engine poses from (struct JOINT, stride 0x250)" }
 SLOT_COUNT = { offset = 0x1A2, type = "u16", doc = "AI slot count on the small-monster path; big monsters ignore it" }
-ACTION_TABLE = { offset = 0x1AC, type = "ptr", doc = "per-species table the vt[8] resolver maps an animation input through: probabilities for small monsters, clip pointers for big ones" }
+ACTION_TABLE = { offset = 0x1AC, type = "ptr", doc = "per-species table the vt[8] resolver maps an animation input through: probabilities for small monsters, the animation pack's base for big ones (CLIP_BLOCK.NODE = base + slot-table offset)" }
 SLOT_INPUTS = { offset = 0x1B8, type = "u16[3]", doc = "per-slot input cursors fed to the vt[8] resolver; zeroed by act_set" }
 NEXT_OBJ = { offset = 0x1C4, type = "ptr", doc = "next entity on the engine's update list; splice clones in here" }
 PREV_OBJ = { offset = 0x1C8, type = "ptr", doc = "previous entity on the engine's update list (not a pursue target)" }
@@ -284,7 +284,7 @@ SIZE_RADIUS = { offset = 0x270, type = "f32", doc = "cached size-derived radius;
 MAIN_STATE = { offset = 0x298, type = "u8", doc = "big monsters: behaviour main state written by act_set; with SUB_STATE it picks the move" }
 SUB_STATE = { offset = 0x299, type = "u8", doc = "big monsters: behaviour sub state written by act_set" }
 SECTION = { offset = 0x29A, type = "u16", doc = "section the engine places the entity in (AREA_INDEX encoding); visibility gate A, lags transitions" }
-TARGET_ACQUIRED = { offset = 0x2A4, type = "u8", doc = "aggro-eval target-acquired flag; reads 0 even on an engaged native, not a combat signal" }
+TARGET_ACQUIRED = { offset = 0x2A4, type = "u8", doc = "monsters: aggro-eval target-acquired flag, reads 0 even on an engaged native; on the hunter this is HUNTER.EXITING" }
 HP = { offset = 0x2E4, type = "u16", doc = "current HP" }
 COMBAT_NODE = { offset = 0x2EC, type = "ptr", doc = "this entity's collision node (struct COLLISION_NODE); 0 means it cannot deal damage" }
 TARGET = { offset = 0x2F4, type = "ptr", doc = "big monsters: resolved combat target (player or Felyne); flickers, so sample a histogram" }
@@ -382,7 +382,7 @@ POSITION = { offset = 0x40, type = "vec3", doc = "hit-test position (the owner's
 PLAYER = { offset = 0x68, type = "ptr", doc = "the combatant this node is registered against (the player)" }
 
 [struct.MONSTER_MANAGER]
-doc = "big-monster manager singleton at MONSTER_MANAGER_SINGLETON"
+doc = "the GameTask object at MONSTER_MANAGER_SINGLETON"
 [struct.MONSTER_MANAGER.fields]
 PROCESSOR = { offset = 0x0C, type = "ptr", doc = "per-monster processor the per-frame drive calls; a data word, so swapping it is JIT-safe" }
 FRAME_COUNTER = { offset = 0x30, type = "u32", doc = "incremented once per drive, i.e. once per frame" }
@@ -561,7 +561,7 @@ doc = "one area transition of a stage: a trigger cylinder here and a landing poi
 size = 0x34
 [struct.STAGE_EXIT.fields]
 TARGET = { offset = 0x00, type = "u16", doc = "the stage it leads to" }
-FLAG = { offset = 0x02, type = "u16", doc = "1 on a few exits, else 0; meaning unknown" }
+FLAG = { offset = 0x02, type = "u16", doc = "trigger shape: 0 a cylinder at TRIGGER, 1 a capsule from TRIGGER to END of radius RADIUS (the map-edge exits)" }
 TRIGGER = { offset = 0x04, type = "vec3", doc = "base of the trigger cylinder the hunter walks into" }
 RADIUS = { offset = 0x10, type = "f32", doc = "trigger radius" }
 HEIGHT = { offset = 0x14, type = "f32", doc = "trigger height" }
@@ -632,4 +632,4 @@ ANGLES = { offset = 0x17C, type = "f32[3]", doc = "orbit euler angles in radians
 [struct.HUNTER]
 doc = "the player combat entity PLAYER_ENTITY beyond the ENTITY fields it shares"
 [struct.HUNTER.fields]
-EXITING = { offset = 0x2A4, type = "u8", doc = "1 while leaving through an exit; without it an area change loads the stage and leaves the hunter frozen where he stood" }
+EXITING = { offset = 0x2A4, type = "u8", doc = "1 while leaving through an exit; without it an area change loads the stage and leaves the hunter frozen in place" }
