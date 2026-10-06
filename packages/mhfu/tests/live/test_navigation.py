@@ -163,3 +163,20 @@ def test_walk_arrives_past_the_dead_zone(s, fake, clock):
     World(s, fake, clock, dead=0.5)  # a quest hunter does not move on a stick of 0.5 or less
     walk = nav.walk_to(s, 1000.0, 0.0)
     assert walk.reached and walk.remaining <= 60.0
+
+
+def test_climb_stops_holding_on_top(s, fake, clock):
+    grabbed = []
+    fake.on_press.append(grabbed.append)
+    world = World(s, fake, clock, speed=1400.0, blocked=lambda x, z: z > 100 and not grabbed)
+    up = world.place
+
+    def place(x, z, heading=None):  # fast-forwarded, onto a ledge 200 up past z = 100
+        up(x, z, heading)
+        fake.poke("f", PLAYER_AT + 4, 200.0 if z > 100 else 0.0)
+
+    world.place = place
+    start = clock.now
+    before, after = nav.climb(s, 0.0, hold=5.0)
+    assert grabbed == ["circle"] and after.y - before.y == 200
+    assert after.z < 1000 and clock.now - start < 3

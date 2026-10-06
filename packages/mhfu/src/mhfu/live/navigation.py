@@ -329,29 +329,60 @@ def push(
 
 
 def climb(
-    s: Session, heading_deg: float, hold: float = 5.0, square_up: float = 1.2, tick: float = 0.3
+    s: Session,
+    heading_deg: float,
+    hold: float = 5.0,
+    square_up: float = 1.2,
+    tick: float = 0.3,
+    lift: float = 40.0,
+    onto: float = 150.0,
 ) -> tuple[Pose, Pose]:
     """Climb the ledge ahead; returns the poses before and after.
 
     A ledge and a wall both stop a walk. Shoving into the face squares the player up to it,
     circle grabs, and holding the direction climbs. The heading must be perpendicular to the
-    face. A climb shows in Y, a step up with the footprint barely moving.
+    face. A climb shows in Y, a step up with the footprint barely moving. The shove ends
+    `onto` units out where there is no face, the hold once the player is `lift` higher and
+    `onto` units on: distances, so a fast-forwarded game does not run on past the ledge.
     """
     angle = math.radians(heading_deg)
     stick = Stick(s)
     camera = Camera(s.mem)
-    try:
+    start = pose(s)
+
+    def steer() -> None:
         stick.toward(angle, camera.yaw)
-        s.sleep(square_up)
+
+    try:
+        _hold(s, square_up, tick, steer, lambda p: distance(p.xz, start.xz) >= onto)
         stick.release()
         before = pose(s)
         s.press("circle", 4)
         s.sleep(0.6)
-        end = s.now() + hold
-        while s.now() < end:
-            stick.toward(angle, camera.yaw)
-            s.sleep(tick)
+        _hold(
+            s,
+            hold,
+            tick,
+            steer,
+            lambda p: p.y - before.y >= lift and distance(p.xz, before.xz) >= onto,
+        )
     finally:
         stick.release()
     s.sleep(0.6)
     return before, pose(s)
+
+
+def _hold(
+    s: Session,
+    seconds: float,
+    tick: float,
+    steer: Callable[[], None],
+    enough: Callable[[Pose], bool],
+) -> None:
+    """Steer every tick for `seconds`, or until `enough(pose)`."""
+    end = s.now() + seconds
+    while s.now() < end:
+        steer()
+        s.sleep(tick)
+        if enough(pose(s)):
+            return
