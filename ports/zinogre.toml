@@ -34,12 +34,12 @@ loop = true
 label = "starts to slowly walk forward"
 labelled_build = "zinogre_v10.bin@09091d56"
 
-[clips.standing_charge_up]
+[clips.exhausted_pausing]
 source = 10
 frames = 408
 loop = true
-label = "standing in place and charging up i think"
-labelled_build = "zinogre_v10.bin@09091d56"
+label = "when he gets exchausted and needs a break i guess"
+labelled_build = "zinogre.bin@76e44506"
 
 [clips.howl_eat_from_ground]
 source = 12
@@ -165,6 +165,372 @@ source = 65
 frames = 162
 loop = true
 labelled_build = "zinogre_v10.bin@09091d56"
+
+[clips.idle]
+source = 1
+frames = 220
+loop = true
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.sudden_upwards_houl]
+source = 22
+frames = 170
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.backflip_jump_backwards]
+source = 25
+frames = 118
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.backflip_jump_forward]
+source = 27
+frames = 56
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.slam_right_part_1]
+source = 33
+frames = 44
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.jumping_down]
+source = 63
+frames = 54
+loop = true
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.small_houl_exhausted]
+source = 66
+frames = 240
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.stop_brief_forward_run]
+source = 67
+frames = 108
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.crouch_get_up]
+source = 100
+frames = 152
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.flinch_head_tumble_backwards]
+source = 101
+frames = 216
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.flinch_roll_left_part_1]
+source = 103
+frames = 74
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.flinch_roll_right_part_1]
+source = 104
+frames = 74
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.flinch_roll_left_part_2]
+source = 107
+frames = 176
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.flinch_roll_right_part_2]
+source = 108
+frames = 176
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.in_shock_trap]
+source = 109
+frames = 38
+loop = true
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.fall_asleep_2]
+source = 110
+frames = 292
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.flinch_tail_cut]
+source = 111
+frames = 286
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.flich_brief_houl]
+source = 112
+frames = 214
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.death]
+source = 113
+frames = 400
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.in_fall_trap]
+source = 114
+frames = 220
+loop = true
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.in_fall_trap_death]
+source = 115
+frames = 316
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.jump_out_of_fall_trap]
+source = 116
+frames = 22
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.on_ground_helpless_left]
+source = 117
+frames = 78
+loop = true
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.on_ground_helpless_right]
+source = 118
+frames = 78
+loop = true
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.jump_to_ground]
+source = 119
+frames = 48
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.horn_thrust_forward]
+source = 120
+frames = 92
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.sleeping_right]
+source = 121
+frames = 238
+loop = true
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.in_shock_trap_2]
+source = 122
+frames = 246
+loop = true
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.break_out_of_shocktrap]
+source = 123
+frames = 156
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.stamp_right_claw]
+source = 200
+frames = 228
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.charge_attack_fromright_horn_faster]
+source = 201
+frames = 68
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.stamp_right_claw_endofcombo]
+source = 210
+frames = 194
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.stamp_big_right_part]
+source = 209
+frames = 36
+loop = true
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.charge_attack_fromleft_horn]
+source = 204
+frames = 56
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.charge_attack_fromright_horn]
+source = 203
+frames = 56
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.charge_attack_fromleft_horn_faster]
+source = 202
+frames = 68
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.begin_charge_forward]
+source = 213
+frames = 78
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.stamp_right_claw_houl]
+source = 214
+frames = 304
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.stepback_backflip_righttoleft_part_1]
+source = 218
+frames = 132
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.stepback_backflip_lefttoright_part_1]
+source = 221
+frames = 132
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.stepback_backflip_lefttoright_part_2]
+source = 222
+frames = 42
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.stepback_backflip_lefttoright_part_3]
+source = 223
+frames = 224
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.stepback_backflip_righttoleft_part_2]
+source = 219
+frames = 42
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.stepback_backflip_righttoleft_part_3]
+source = 220
+frames = 224
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.straight_backflip]
+source = 224
+frames = 126
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.flinch_fall_on_back]
+source = 226
+frames = 346
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.air_roll_forward]
+source = 225
+frames = 70
+loop = true
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.charge_run_forward]
+source = 227
+frames = 146
+loop = true
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.sidekick_forward_rightshoulder]
+source = 228
+frames = 240
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.horn_smackdown_front_part_1]
+source = 230
+frames = 104
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.horn_smackdown_front_part_2]
+source = 231
+frames = 186
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.stamp_claw_right_into_backflip]
+source = 235
+frames = 202
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.jump_into_sidewise_airborne_tumble]
+source = 236
+frames = 236
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.chomp_chomp_dash_part_1]
+source = 237
+frames = 134
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.chomp_chomp_dash_ending_1]
+source = 238
+frames = 66
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.chomp_chomp_dash_ending_2]
+source = 240
+frames = 68
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.flinch_ground_into_backflip_lefttoright]
+source = 244
+frames = 154
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.flinch_ground_into_backflip_righttoleft]
+source = 245
+frames = 154
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.standup_frontattack]
+source = 247
+frames = 196
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.jump_throw_lightning_left]
+source = 248
+frames = 202
+loop = false
+labelled_build = "zinogre.bin@76e44506"
+
+[clips.stamp_claw_left]
+source = 253
+frames = 228
+loop = false
+labelled_build = "zinogre.bin@76e44506"
 
 [moves.lunge]
 main = 1

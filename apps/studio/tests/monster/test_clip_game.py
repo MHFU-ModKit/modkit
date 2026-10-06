@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-import shutil
 from contextlib import nullcontext
 
 import pytest
@@ -93,10 +92,9 @@ def test_target():
         clip_game.target(Fake(), 75)
 
 
-def test_play_button(games, ports, tmp_path, game, calls):
+def test_play_button(games, ports, tmp_path, game, calls, zinogre_toml):
     """The picked clip's anim reaches the game; a clip moved since the save does not."""
-    path = tmp_path / "zinogre.toml"
-    shutil.copy(ports / "zinogre.toml", path)
+    path = zinogre_toml
     ws = MonsterWorkspace(games)
     ws.intel_cache[75] = None
     ws.open(path)

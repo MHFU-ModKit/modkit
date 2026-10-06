@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-import shutil
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -96,9 +95,8 @@ def test_filler_is_loud(workspace: MonsterWorkspace, qtbot: Any) -> None:
 
 
 @pytest.fixture
-def zinogre(games: Any, ports: Path, tmp_path: Path, qtbot: Any) -> ClipsPanel:
-    path = tmp_path / "zinogre.toml"
-    shutil.copy(ports / "zinogre.toml", path)
+def zinogre(games: Any, qtbot: Any, zinogre_toml: Path) -> ClipsPanel:
+    path = zinogre_toml
     ws = MonsterWorkspace(games)
     ws.intel_cache[75] = None
     ws.open(path)
@@ -112,12 +110,14 @@ def ids(p: ClipsPanel) -> list[str]:
 def test_every_clip(zinogre: ClipsPanel) -> None:
     p = zinogre
     assert p.table.rowCount() == 102 and not p.table.isColumnHidden(0)
-    assert p.count.text() == "102 clips in 3 streams, 21 named" and kit.missing_tips(p) == []
+    named = len(p.ws.doc.manifest.clips)
+    assert p.count.text() == f"102 clips in 3 streams, {named} named"
+    assert kit.missing_tips(p) == []
     assert ids(p)[:3] == ["1", "2", "4"] and p.table.item(101, 1).text() == "56"
     p.filter.setText("stream 2")
     assert p.table.rowCount() == 39
     p.filter.setText("unnamed")
-    assert p.table.rowCount() == 81
+    assert p.table.rowCount() == 102 - named
 
 
 def test_name_and_next(zinogre: ClipsPanel) -> None:
