@@ -34,8 +34,9 @@ if TYPE_CHECKING:
 MAGIC = 0x4D484252
 """CLI_BRIDGE.MAGIC once a command is written ("MHBR")."""
 PROBE_MARK = 0xC0FFEE01
-ACK_TIMEOUT = 1.0
-"""A live game tick acks within a few frames; no ack in this long means it is not running."""
+ACK_TIMEOUT = 3.0
+"""cli_bridge.lua acks on its next tick, 2 Hz under mhfu_port and now and then late; no ack in
+this long means it is not running."""
 RECORD_PERIOD = 0.1
 STALLED = "the game is paused or cli_bridge.lua is not loaded"
 ROW = struct.Struct("<BB")
