@@ -80,8 +80,7 @@ def run(args: argparse.Namespace) -> int:
 
 
 def _against(anim: fu.Anim, skeleton: Skeleton, csv: Path, names: dict[int, str]) -> int:
-    """Each clip played in the game against its root path. A frame's position holds the root
-    motion up to its cursor less one frame's speed; a leg is compared up to its first wall."""
+    """Each clip played in the game against its root path, up to its first wall."""
     filled = set(motion.filled(anim))
     print(f"{'entry':>5} {'clip':34} {'from':>6} {'to':>6} {'game':>6} {'expect':>6} ratio  wall")
     for leg in observe.legs(observe.read_frames(csv)):
@@ -89,17 +88,23 @@ def _against(anim: fu.Anim, skeleton: Skeleton, csv: Path, names: dict[int, str]
         fs = leg.frames if hit is None else leg.frames[: leg.frames.index(hit)]
         if len(fs) < 2 or leg.entry not in filled:
             continue
-        lo, hi = max(fs[0].clip - fs[0].speed, 0.0), fs[-1].clip - fs[-1].speed
-        pts = travel.path(anim, skeleton, leg.entry, np.linspace(lo, hi, 200))
-        want = fs[0].scale * float(np.linalg.norm(np.diff(pts, axis=0), axis=1).sum())
+        want = sum(_step(anim, skeleton, leg.entry, f) for f in fs[:-1])
         got = observe.Leg(leg.entry, tuple(fs)).path
         ratio = f"{got / want:5.3f}" if want >= MOVES else "    -"
         wall = f"{hit.walls:#010x} class {2 if hit.stuck else 1} at {hit.clip:g}" if hit else "-"
         print(
-            f"{leg.entry:5d} {names.get(leg.entry, ''):34.34} {lo:6.1f} {hi:6.1f}"
+            f"{leg.entry:5d} {names.get(leg.entry, ''):34.34} {fs[0].clip:6.1f} {fs[-1].clip:6.1f}"
             f" {got:6.0f} {want:6.0f} {ratio}  {wall}"
         )
     return 0
+
+
+def _step(anim: fu.Anim, skeleton: Skeleton, entry: int, f: observe.Frame) -> float:
+    """What the next frame adds to the position: the root's move over the speed's span up to
+    the cursor, from 0 while the cursor is under the speed (ROOT_MOTION)."""
+    lo = f.clip - f.speed
+    a, b = travel.path(anim, skeleton, entry, [lo, f.clip] if lo >= 0 else [0.0, f.speed])
+    return f.scale * float(np.hypot(*(b - a)))
 
 
 def _open(args: argparse.Namespace) -> tuple[bytes, dict[int, str]]:
