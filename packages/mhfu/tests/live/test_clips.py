@@ -162,6 +162,12 @@ def test_sweep_releases(s, engine):
     assert engine.forced == [0, 101, -1]
 
 
+def test_sweep_plays_a_head_only_dispatch_again(s, engine):
+    played = list(clips.sweep(s, [3, 25]))
+    assert engine.forced == [3, 25, 25, -1]
+    assert [all(q.taken for q in p.parts) for p in played] == [True, False]
+
+
 def test_read_expect(tmp_path):
     path = tmp_path / "slots.csv"
     path.write_text(

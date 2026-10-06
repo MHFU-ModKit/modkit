@@ -293,15 +293,20 @@ def sweep(
     kick_after: float = 2.0,
     timeout: float = 6.0,
 ) -> Iterator[Played]:
-    """`play` each entry in turn; the hold ends when the sweep does."""
+    """`play` each entry in turn, once more where some part did not take it (a handler may put
+    the body back on its idle after the dispatch); the hold ends when the sweep does."""
     _, m = monster(s, slot)
     link = bridge(s)
     pack = Pack.read(s.mem, m.action_table)
     try:
         for e in entries:
-            yield play(
-                s, e, slot=slot, link=link, pack=pack, kick_after=kick_after, timeout=timeout
-            )
+            for _ in range(2):
+                p = play(
+                    s, e, slot=slot, link=link, pack=pack, kick_after=kick_after, timeout=timeout
+                )
+                if all(q.taken for q in p.parts):
+                    break
+            yield p
     finally:
         release(s, slot, link)
 
