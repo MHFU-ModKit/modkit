@@ -38,8 +38,8 @@ EXIT_XZ = (9500.0, 8400.0)  # the square prompt "go on the quest" at the bottom 
 EXIT_ROUTE = ((10140.0, 8404.0), (9800.0, 8450.0), EXIT_XZ)
 EXIT_PROMPTS = frozenset({a.SCENE_PROMPT, a.SCENE_PROMPT_ALT})
 DEPART_PRESSES = 6
-TOOK_WINDOW = 2.0  # for a square to take SCREEN_STATE off CONTRACT; the prompt shows a beat
-# before it takes input, so the first press can be lost (always, under fast-forward)
+TOOK_WINDOW = 2.0  # for a taken square to move SCREEN_STATE; the prompt shows a beat before it
+# takes input, so the first press can be lost (two boots of three, fast-forwarded)
 
 
 def scan_npcs(s: Session) -> list[Entity]:
@@ -207,9 +207,9 @@ def _screen_leaves(s: Session, value: int) -> Callable[[], bool]:
 def depart(s: Session, timeout: float = 90.0, attempts: int = 6) -> int:
     """Walk to the village exit and start the quest under contract; returns AREA_INDEX.
 
-    A square counts once SCREEN_STATE leaves its value in the zone (CONTRACT), so a lost one
-    costs TOOK_WINDOW, not the load's timeout. Without a contract the prompt never shows, and
-    the TimeoutError this raises says so.
+    A square counts once SCREEN_STATE leaves its value in the zone (183 at the exit, 32 once
+    taken), so a lost one costs TOOK_WINDOW, not the load's timeout. Without a contract the
+    prompt never shows, and the TimeoutError this raises says so.
     """
     dialog.dismiss(s)
     nav.walk_path(s, EXIT_ROUTE, tolerance=95)
