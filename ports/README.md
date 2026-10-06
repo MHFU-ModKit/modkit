@@ -30,9 +30,10 @@ slot = 3        # the executor entry
 source = 205    # the MHP3rd clip; without it, the one numbered like the entry
 ```
 
-The builder packs the rest: a stream-0 clip into the entry of its own id, every other clip, by
-id, into a free entry, first those the host fills (its own brain asks for them), then the others
-from 0 up to 122 (the Tigrex has 123 entries). No clip goes to an entry the host plays on some
+The builder packs the rest: a clip whose id is under the host's entry count into the entry of its
+own id (entry 100 + s plays slot s of the odd streams), every other clip, by id, into a free
+entry, first those the host fills (its own brain asks for them), then the others from 0 up to
+122 (the Tigrex has 123 entries). No clip goes to an entry the host plays on some
 body parts only (the Tigrex's 24 and 25, head and neck over an idle body). An entry no clip
 takes stays empty on a port with its own skeleton, where the host's clips do not fit, and keeps
 the host's clip on a port that rides the host's skeleton.

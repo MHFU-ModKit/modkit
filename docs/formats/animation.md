@@ -113,8 +113,9 @@ MHFU splits a rig into parts by `Bone.stream`, and part `k`'s clips sit in strea
 stream `2k + e // 100`: entries 0-99 play the even streams, 100 and up the odd ones
 (`mhfu.structs.entry_clip`, `mhfu_port.fk.entry_slot`). The Tigrex has 123 entries, and an id
 past them plays another (123 plays entry 0, 150 entry 27). Its brain asks for 100-122 although
-its own pack leaves the odd streams empty; many natives fill them in all three parts alike. A part whose slot is empty keeps the clip it was playing. An
-entry plays every part's clip together, except where the executor drives only some parts: on
+its own pack leaves the odd streams empty; many natives fill them in all three parts alike, and a
+port's packer puts every donor id under 123 in the entry of that id. A part whose slot is empty
+keeps the clip it was playing. An entry plays every part's clip together, except where the executor drives only some parts: on
 the Tigrex, 24 and 25 reach the head alone, a head-and-neck clip over whatever the body plays.
 `mhfu_port.fk.rig_clip` joins an entry's parts into one clip over the whole rig, and
 `mhfu_port.motion.put` writes one back.

@@ -112,7 +112,7 @@ def test_every_clip(zinogre: ClipsPanel) -> None:
     p = zinogre
     assert p.table.rowCount() == 102 and not p.table.isColumnHidden(0)
     assert p.count.text() == "102 clips in 3 streams, 21 named" and kit.missing_tips(p) == []
-    assert ids(p)[:3] == ["1", "2", "4"] and p.table.item(101, 1).text() == "103"
+    assert ids(p)[:3] == ["1", "2", "4"] and p.table.item(101, 1).text() == "56"
     p.filter.setText("stream 2")
     assert p.table.rowCount() == 39
     p.filter.setText("unnamed")
@@ -139,10 +139,10 @@ def test_place(zinogre: ClipsPanel) -> None:
     p, ws = zinogre, zinogre.ws
     row = ids(p).index("248")
     p.table.cellClicked.emit(row, 0)
-    assert ws.edit_clip == 248 and p.anim.value() == 100
+    assert ws.edit_clip == 248 and p.anim.value() == 50
     p.anim.setValue(7)
     p.place.click()
-    assert ws.message == "clip 7 anim 7 -> anim 100; clip 248 anim 100 -> anim 7"
+    assert ws.message == "clip 7 anim 7 -> anim 50; clip 248 anim 50 -> anim 7"
     assert p.table.item(row, 1).text() == "7" and ws.doc.manifest.clips["clip_07"].source == 248
 
 
@@ -157,4 +157,4 @@ def test_play_in_game(zinogre: ClipsPanel, monkeypatch: pytest.MonkeyPatch) -> N
     ws.game_memory = lambda: nullcontext(None)  # type: ignore[assignment,arg-type,return-value]
     p.table.cellClicked.emit(ids(p).index("248"), 0)
     p.in_game.click()
-    assert sent == [(100, 75)] and ws.message == "anim 100 held on monster 3 until Release"
+    assert sent == [(50, 75)] and ws.message == "anim 50 held on monster 3 until Release"

@@ -90,8 +90,8 @@ def test_play_button(games, ports, tmp_path, game):
     ws.game_memory = lambda: nullcontext(game)
     ws.play_source(248)
     ws.play_in_game()
-    assert game.command() == (MAGIC, Op.FORCE_ACTION, 3, 100)
-    assert ws.message == "anim 100 held on monster 3 until Release"
+    assert game.command() == (MAGIC, Op.FORCE_ACTION, 3, 50)
+    assert ws.message == "anim 50 held on monster 3 until Release"
     ws.play_source(2)
     ws.play_in_game()
     assert game.command()[3] == 2

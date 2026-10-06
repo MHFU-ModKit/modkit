@@ -44,7 +44,7 @@ def test_rows(zinogre):
     assert len(rows) == 102 and all(r.id is not None and r.entry is not None for r in rows)
     by_stream = {s: sum(r.stream == s for r in rows) for s in (0, 1, 2)}
     assert by_stream == {0: 42, 1: 21, 2: 39}
-    assert {r.entry for r in rows if r.id in (248, 253, 257, 258)} == {100, 101, 102, 103}
+    assert {r.entry for r in rows if r.id in (248, 253, 257, 258)} == {50, 53, 55, 56}
     named = {r.name: r.id for r in rows if r.name}
     assert named["welcome_howl"] == 2 and len(named) == len(zinogre.doc.manifest.clips)
 
@@ -75,14 +75,14 @@ def test_place(zinogre):
     ws.play_source(248)
     ws.name_buf = "slam"
     ws.place_clip(2)
-    assert ws.message == "clip 2 anim 2 -> anim 100; clip 248 anim 100 -> anim 2"
+    assert ws.message == "clip 2 anim 2 -> anim 50; clip 248 anim 50 -> anim 2"
     now = entries(ws)
-    assert now == {**before, 2: 248, 100: 2}
+    assert now == {**before, 2: 248, 50: 2}
     m = ws.doc.manifest
     assert (m.clips["slam"].slot, m.clips["slam"].source, m.clips["welcome_howl"].slot) == (
         2,
         248,
-        100,
+        50,
     )
     assert (ws.scene.clip(2).frames, ws.scene.clip(2).loop) == ws.browser().prints[248]
     assert ws.source_clip(248).slot == 2, "the rebuilt port plays it"
@@ -201,13 +201,13 @@ def test_view_follows_a_placement(gl, games, ports, tmp_path):
         ws.open(path)
         ws.play_source(248)
         ws.vp.strip_root = True
-        assert ws.vp.clip.slot == 100 and ws.playing_clip() == 248
+        assert ws.vp.clip.slot == 50 and ws.playing_clip() == 248
         ws.place_clip(7)
         assert ws.vp.scene is ws.scene and ws.vp.clip is ws.scene.clip(7)
         assert ws.playing_clip() == 248 and ws.vp.playback.playing and ws.vp.strip_root
         ws.doc.undo()
         ws.refresh()
-        assert ws.vp.scene is ws.scene and ws.vp.clip is ws.scene.clip(100)
+        assert ws.vp.scene is ws.scene and ws.vp.clip is ws.scene.clip(50)
         assert ws.playing_clip() == 248 and ws.browser().layout().entries[7] == 7
     finally:
         ws.close()

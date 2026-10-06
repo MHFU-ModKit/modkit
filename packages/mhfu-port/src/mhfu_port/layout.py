@@ -3,12 +3,13 @@
 """Where each source clip of a port goes: the executor entry (the a1 that plays it) the manifest
 gives it, else the one the packer picks.
 
-The packer alone puts every stream-0 clip in the entry of its own id and the rest, by id, in the
-free entries: first those the host fills, which its own brain asks for, then the others from 0
-up. No whole clip goes to an entry the host plays on some body parts only (the Tigrex's 24 and
-25), where it would move one part. A manifest clip pins MHP3rd clip `source` (default: `slot`)
-in entry `slot`; the clip the packer had there takes the entry the pin freed, so a pin moves
-only the clips it touches. What fills the entries left over is `motion.build`'s.
+The packer alone puts every clip whose id is under the host's capacity in the entry of its own id
+(entry 100 + s plays slot s of streams 1, 3 and 5) and the rest, by id, in the free entries:
+first those the host fills, which its own brain asks for, then the others from 0 up. No whole
+clip goes to an entry the host plays on some body parts only (the Tigrex's 24 and 25), where it
+would move one part. A manifest clip pins MHP3rd clip `source` (default: `slot`) in entry
+`slot`; the clip the packer had there takes the entry the pin freed, so a pin moves only the
+clips it touches. What fills the entries left over is `motion.build`'s.
 """
 
 from __future__ import annotations
@@ -142,7 +143,7 @@ def _pack(
     ids: Collection[int], cap: int, part: Collection[int], asked: Collection[int]
 ) -> tuple[dict[int, int], list[int]]:
     """The packer with no manifest: entry -> id, and the ids no entry is left for."""
-    entries = {cid: cid for cid in sorted(ids) if cid < min(ENTRY_BANK, cap) and cid not in part}
+    entries = {cid: cid for cid in sorted(ids) if cid < cap and cid not in part}
     free = iter(_free(entries.keys() | set(part), cap, asked))
     left: list[int] = []
     for cid in sorted(set(ids) - set(entries.values())):

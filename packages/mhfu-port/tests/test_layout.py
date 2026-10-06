@@ -38,11 +38,11 @@ def test_partial():
 
 
 def test_pack():
-    """Own ids first, then the rest by id into the free entries the host fills, then the lowest
-    others, past the partial one."""
+    """Ids under the capacity in their own entries, past the partial one; the rest by id into
+    the free entries the host fills, then the lowest others."""
     got = layout.plan({}, {1, 2, 4, 6, 100, 101, 205}, host({1, 2, 3, 5}, {4}), TIGREX)
-    assert got.entries == {0: 101, 1: 1, 2: 2, 3: 4, 5: 100, 6: 6, 7: 205}
-    assert (got.placed, got.partial, got.unplaced, got.ids[205]) == (set(), {4}, (), 7)
+    assert got.entries == {1: 1, 2: 2, 3: 4, 5: 205, 6: 6, 100: 100, 101: 101}
+    assert (got.placed, got.partial, got.unplaced, got.ids[205]) == (set(), {4}, (), 5)
 
 
 def test_manifest_first():
@@ -57,12 +57,12 @@ def test_pin_swaps():
     ids, h = {1, 2, 4, 6, 100, 101, 205}, host({1, 2, 3, 5}, {4})
     base = layout.plan({}, ids, h, TIGREX)
     got = layout.plan({"a": Named(1, source=205)}, ids, h, TIGREX)
-    assert layout.moved(base, got) == {1: (1, 7), 205: (7, 1)}
-    chain = {"a": Named(1, source=205), "b": Named(7, source=101)}
+    assert layout.moved(base, got) == {1: (1, 5), 205: (5, 1)}
+    chain = {"a": Named(1, source=205), "b": Named(5, source=101)}
     assert layout.moved(base, layout.plan(chain, ids, h, TIGREX)) == {
-        1: (1, 0),
-        101: (0, 7),
-        205: (7, 1),
+        1: (1, 101),
+        101: (101, 5),
+        205: (5, 1),
     }
 
 
@@ -70,7 +70,7 @@ def test_pin_to_empty():
     ids, h = {1, 2, 100, 101, 205}, host({1, 2, 3, 5})
     base = layout.plan({}, ids, h, TIGREX)
     got = layout.plan({"a": Named(40, source=100)}, ids, h, TIGREX)
-    assert layout.moved(base, got) == {100: (3, 40)}
+    assert layout.moved(base, got) == {100: (100, 40)}
 
 
 def test_pin_from_full():
@@ -140,10 +140,10 @@ def test_lua():
     assert body == ['  ["dash-stop"] = 1,  -- MHP3rd 1', "  clip_02 = 3,  -- MHP3rd 7"]
 
 
-@pytest.mark.parametrize(("name", "clips", "odd"), [("zinogre", 102, 4), ("brute_tigrex", 77, 0)])
+@pytest.mark.parametrize(("name", "clips", "odd"), [("zinogre", 102, 20), ("brute_tigrex", 77, 19)])
 def test_ports(data, name, clips, odd):
-    """Every source clip in an entry: stream 0 in its own but the Tigrex's partial 24 and 25,
-    the manifest's where it says, the rest packed."""
+    """Every source clip in an entry: under the capacity in its own but the Tigrex's partial 24
+    and 25, the manifest's where it says, the rest packed."""
     m = manifest.load(PORTS / f"{name}.toml")
     d, h = build.donor(m, data), build.host(m, data)
     got = build.layout(m, d, h)
@@ -151,7 +151,7 @@ def test_ports(data, name, clips, odd):
     assert sorted(got.entries.values()) == sorted(d.clips)
     assert got.partial == {24, 25} and not got.partial & set(got.entries)
     assert sum(e >= 100 for e in got.entries) == odd and max(got.entries) < got.capacity
-    assert all(got.ids[c] == c for c in d.clips if c < 100 and c not in got.partial)
+    assert all(got.ids[c] == c for c in d.clips if c < got.capacity and c not in got.partial)
     assert all(got.entries[c.slot] == c.id for c in m.clips.values())
 
 

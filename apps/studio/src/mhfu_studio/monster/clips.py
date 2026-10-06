@@ -19,7 +19,6 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
 from mhfu_port import motion, slots
-from mhfu_port.fk import ENTRY_BANK
 from mhfu_port.manifest import Clip, Manifest, ManifestError, Move
 from mhfu_port.model import clip_key
 from mhp_formats import anim
@@ -182,13 +181,13 @@ def coverage(
     layout: Mapping[int, int] | None = None,
 ) -> Coverage:
     """Each entry of a built pack against the donor clip `layout` (entry -> MHP3rd id; by
-    default each stream-0 clip in the entry of its id) puts there and the host's pack; every
+    default each entry read as the clip of its own id) puts there and the host's pack; every
     entry is UNKNOWN without the donor."""
     table = clip_table(port)
     host_table = clip_table(host) if host is not None else {}
     donor = donor or {}
     if layout is None:
-        layout = {cid: cid for cid in donor if cid < ENTRY_BANK}
+        layout = {cid: cid for cid in donor if cid in table}
     held = slots.correspondence(port, donor, layout) if donor else {}
     cov = Coverage(has_source=bool(donor), has_host=host is not None)
     for slot, fp in sorted(table.items()):
