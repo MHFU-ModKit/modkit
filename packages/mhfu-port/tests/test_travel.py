@@ -59,6 +59,11 @@ def test_carry_moves_travel_to_root():
     assert t.carried == (0.0, 1000.0) and t.drawn == (10.0, 0.0)
 
 
+def test_carry_keeps_a_rooted_clip():
+    clip = dash([], [loc(2, (0, 0), (40, 1000))])
+    assert travel.carry(pack(clip), rig()).streams[0][0] is clip
+
+
 def test_carry_keeps_pose():
     base = [loc(0, (0, 5), (40, 9)), loc(1, (0, 165), (40, 165)), loc(2, (3, 0), (37, 800), ease=4)]
     top = [loc(1, (0, 226), (9, 210), (20, 290), (33, 200), ease=-6), loc(2, (0, 0), (40, 3))]

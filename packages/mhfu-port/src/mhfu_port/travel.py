@@ -105,7 +105,8 @@ def path(anim: fu.Anim, skeleton: Skeleton, entry: int, frames: ArrayLike) -> fk
 
 def carry(anim: fu.Anim, skeleton: Skeleton) -> fu.Anim:
     """`anim` with joint 0's x and z travel on the root, where the engine carries it, and the
-    root's x and z sway plus both joints' height on joint 0, where the FK draws them.
+    root's x and z sway plus both joints' height on joint 0, where the FK draws them; a clip
+    with no x or z on joint 0 (a native's, a retarget's) stays as it is.
 
     The FK pose is unchanged: both joints only translate, so their locations add. Raises
     ValueError where joint 0 rotates, is not the root's parent or sits off the origin."""
@@ -135,6 +136,8 @@ def _carried(clip: Clip, t0: int, tr: int) -> Clip:
     if any(c.bit in _ROT and any(k.value for k in c.keyframes) for c in base.channels):
         raise ValueError("joint 0 rotates, so its travel cannot move to the root")
     b, t = _locs(base), _locs(top)
+    if X not in b and Z not in b:
+        return clip
     span = motion.frames(clip) or 2
     new_base = _track(base, {X: t.get(X), Y: _sum(b.get(Y), t.get(Y)), Z: t.get(Z)}, span)
     new_top = _track(top, {X: b.get(X), Y: None, Z: b.get(Z)}, span)
