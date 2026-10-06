@@ -45,8 +45,8 @@ local OFF_POS       = E.POSITION
 local OFF_YAW       = E.YAW            -- the rotation control: the matrix is rebuilt from it
 local OFF_MAIN      = E.MAIN_STATE
 local OFF_SUB       = E.SUB_STATE
-local OFF_PREV_MAIN = E.PREV_MAIN      -- the pair the action tick last dispatched; it copies
-local OFF_PREV_SUB  = E.PREV_SUB       -- MAIN/SUB here first thing every tick
+local OFF_TICK_MAIN = E.TICK_MAIN      -- the pair the action tick last ran; it copies
+local OFF_TICK_SUB  = E.TICK_SUB       -- MAIN/SUB here first thing every tick
 local OFF_PHASE     = E.PHASE          -- per-action phase cursor, 3 bytes
 local OFF_SECTION   = E.SECTION
 local OFF_HP        = E.HP             -- current HP; MAX_HP is only the clamp
@@ -161,8 +161,8 @@ end
 -- frames, and repeated forcing sets the freeze bits that halt the AI tick, so each pulse clears
 -- them.
 local function act_set(ent, main, sub)
-  mhfu.write_u8(ent + OFF_PREV_MAIN, mhfu.read_u8(ent + OFF_MAIN))
-  mhfu.write_u8(ent + OFF_PREV_SUB,  mhfu.read_u8(ent + OFF_SUB))
+  mhfu.write_u8(ent + OFF_TICK_MAIN, mhfu.read_u8(ent + OFF_MAIN))
+  mhfu.write_u8(ent + OFF_TICK_SUB,  mhfu.read_u8(ent + OFF_SUB))
   mhfu.write_u8(ent + OFF_MAIN, main)
   mhfu.write_u8(ent + OFF_SUB,  sub)
   mhfu.write_u8(ent + OFF_PHASE,     0)

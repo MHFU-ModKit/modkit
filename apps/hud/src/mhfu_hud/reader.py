@@ -93,8 +93,8 @@ class HudEntity(Entity):
     stimulus_tag = u16(a.ENTITY.STIMULUS_TAG)
     condition_flags = u32(a.ENTITY.CONDITION_FLAGS)
     action_budget = u32(a.ENTITY.ACTION_BUDGET)
-    prev_main = u8(a.ENTITY.PREV_MAIN)
-    prev_sub = u8(a.ENTITY.PREV_SUB)
+    tick_main = u8(a.ENTITY.TICK_MAIN)
+    tick_sub = u8(a.ENTITY.TICK_SUB)
     ai_timer_a = u16(a.ENTITY.AI_TIMER_A)
     ai_timer_b = u16(a.ENTITY.AI_TIMER_B)
     stress = u16(a.ENTITY.STRESS)
@@ -120,8 +120,8 @@ AI_CELLS: tuple[Value[Any], ...] = (
     E.main_state,
     E.sub_state,
     E.phase,
-    E.prev_main,
-    E.prev_sub,
+    E.tick_main,
+    E.tick_sub,
     E.anim_input,
     E.anim_mode,
     E.anim_speed,
