@@ -228,7 +228,7 @@ def test_cli_trace(s, fake, monkeypatch, capsys, tmp_path):
     args = ["observe", "trace", "--seconds", "1", "--callees", f"ACT_SET,{OUT1:#x}"]
     assert main([*args, "--json", str(out)]) == 0
     text = capsys.readouterr().out
-    assert f"(0,2)  1 entries, 1.0 s, 1 calls\n  {OUT1:08X}" in text
+    assert f"(0,2)  1 entries, 1.0 s, 1 calls\n  {OUT1:08X}      1" in text
     assert "run 1: 2 callee(s), speed 1.000x" in text
     data = json.loads(out.read_text())
     assert data["runs"][0]["targets"] == [a.ACT_SET, OUT1]

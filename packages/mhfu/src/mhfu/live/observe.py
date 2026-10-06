@@ -460,9 +460,16 @@ def _pair(p: Pair) -> str:
     return f"({p[0]},{p[1]})"
 
 
-def _counts(counter: dict[int, int], limit: int, as_hex: bool = True) -> str:
+def _counts(counter: dict[int, int], limit: int, small: bool = False) -> str:
+    """`value:count`, the most counted first; `small` values in decimal, as action ids are."""
     top = sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))
-    text = " ".join(f"{k:08X}:{n}" if as_hex else f"{k}:{n}" for k, n in top[:limit])
+
+    def show(k: int) -> str:
+        if not small:
+            return f"{k:08X}"
+        return str(k) if k < 0x10000 else f"{k:#x}"
+
+    text = " ".join(f"{show(k)}:{n}" for k, n in top[:limit])
     return text + (f" +{len(top) - limit}" if len(top) > limit else "")
 
 
@@ -480,10 +487,10 @@ def report(runs: Sequence[Run], *, sites: int = 3, a1_limit: int = 6) -> str:
         n = sum(c.count for c in pc.callees)
         lines.append(f"{_pair(pc.pair)}  {pc.entries} entries, {pc.seconds:.1f} s, {n} calls")
         for c in pc.callees:
-            a1 = f"  a1 {_counts(c.a1, a1_limit, False)}" if len(c.a1) <= a1_limit else ""
+            a1 = f"  a1 {_counts(c.a1, a1_limit, True)}" if len(c.a1) <= a1_limit else ""
             lines.append(
-                f"  {c.va:08X} {c.name or '-':22} {c.count:6} {c.per_entry:8.1f}/entry  "
-                f"{_counts(c.sites, sites)}{a1}"
+                f"  {c.va:08X} {c.count:6} {c.per_entry:8.1f}/entry  {c.name or '-'}"
+                f"  at {_counts(c.sites, sites)}{a1}"
             )
     if runs:
         steps = [f"{_pair(p)} {(b - f) / 1e6:.1f}s" for p, f, b in runs[0].timeline()]
