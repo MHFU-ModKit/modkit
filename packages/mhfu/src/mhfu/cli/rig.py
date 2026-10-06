@@ -86,7 +86,10 @@ def register(sub: Subparsers) -> None:
     c.set_defaults(run=goto)
     c = command("walk", "walk the player to named points in turn, exit to exit")
     c.add_argument("point", nargs="+", help="points' names in the map document, in order")
-    c.add_argument("--no-guard", dest="guard", action="store_false", help="leave HP and monsters")
+    c.add_argument("--no-guard", dest="guard", action="store_false", help="leave HP and the clock")
+    c.add_argument(
+        "--calm", action="store_true", help="also calm big monsters (their sight stays zero after)"
+    )
     _map_args(c)
     c.set_defaults(run=walk)
 
@@ -260,8 +263,8 @@ def walk(args: argparse.Namespace) -> int:
         targets = [P.find(known, name) for name in args.point]
         climbs = [p for p in known if p.kind == "climb"]
         with Rig.attach(launcher(args)) as rig, ExitStack() as guard:
-            if args.guard:
-                guard.enter_context(survival.Guard(rig.s))
+            if args.guard or args.calm:
+                guard.enter_context(survival.Guard(rig.s, calm_monsters=args.calm))
             plan = _plan(rig, args)
             for point in targets:
                 log(f"to {point.name}")
