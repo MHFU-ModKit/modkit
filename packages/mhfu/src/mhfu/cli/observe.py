@@ -34,7 +34,7 @@ def register(sub: Subparsers) -> None:
     t.add_argument(
         "--callees",
         default="all",
-        help="all, or a comma list of addresses and addresses.toml names",
+        help="all, none, or a comma list of addresses and addresses.toml names",
     )
     t.add_argument("--budget", type=int, help="breakpoints per run; more runs each replay --state")
     t.add_argument("--rate", type=float, default=2.0, help="snapshots a second (0: ends only)")
@@ -80,8 +80,8 @@ def _err(line: str) -> None:
 
 
 def _callees(spec: str, obs: observe.Observer) -> list[int]:
-    if spec == "all":
-        return list(obs.callees)
+    if spec in ("all", "none"):
+        return list(obs.callees) if spec == "all" else []
     table = a.table().addresses
     out = []
     for item in spec.split(","):

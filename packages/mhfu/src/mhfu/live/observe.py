@@ -20,7 +20,6 @@ import collections
 import statistics
 import struct
 import threading
-import time
 from collections.abc import Callable, Collection, Iterable, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field
@@ -42,7 +41,7 @@ SNAPSHOT_SIZE = 0x800
 WRAP = 1 << 32
 """PPSSPP's `usec` is the emulated clock in microseconds, cut to 32 bits."""
 DRAIN = 0.3
-"""Seconds a reader keeps taking hits after its run ends, for the log still in flight."""
+"""Seconds the log of a call takes to arrive, with room to spare."""
 
 Pair = tuple[int, int]
 _U32 = struct.Struct("<I")
@@ -222,7 +221,8 @@ class Run:
 
 
 class _Reader:
-    """Takes hits off a stream on a thread of its own until stopped and drained."""
+    """Takes hits off a stream on a thread of its own until its trace has ended and the hits
+    queued by then are taken."""
 
     def __init__(self, hits: SyncStream[Hit], sink: Callable[[Hit], None]) -> None:
         self.hits, self.sink = hits, sink
@@ -243,19 +243,16 @@ class _Reader:
         self._thread.join()
 
     def _run(self) -> None:
-        deadline: float | None = None
-        while deadline is None or time.monotonic() < deadline:
+        while True:
             try:
                 hit = self.hits.next(DRAIN)
             except TimeoutError:
                 if self._stop.is_set():
                     return
                 continue
-            except Disconnected:
+            except Disconnected:  # the trace ended and its queue is empty
                 return
             self.sink(hit)
-            if deadline is None and self._stop.is_set():
-                deadline = time.monotonic() + DRAIN
 
 
 class Observer:
@@ -330,19 +327,20 @@ class Observer:
             return Snapshot((self.usec() - start) % WRAP, data)
 
         fmt = log_format(entity)
-        with ExitStack() as stack:
-            streams: list[SyncStream[Hit]] = []
+        streams: list[SyncStream[Hit]] = []
+        # the traces end before their readers do, so the hits queued by then are all taken
+        with ExitStack() as readers, ExitStack() as traces:
             if run.targets:
-                hits = stack.enter_context(
+                hits = traces.enter_context(
                     client.trace(run.targets, condition=self.condition, log_format=fmt)
                 )
-                stack.enter_context(_Reader(hits, take(run.calls, lambda c: c)))
+                readers.enter_context(_Reader(hits, take(run.calls, lambda c: c)))
                 streams.append(hits)
             if marks:
-                pairs = stack.enter_context(
+                pairs = traces.enter_context(
                     client.trace([a.SET_AI_STATE], condition=f"a0 == {entity:#x}", log_format=fmt)
                 )
-                stack.enter_context(_Reader(pairs, take(run.transitions, Transition.of)))
+                readers.enter_context(_Reader(pairs, take(run.transitions, Transition.of)))
                 streams.append(pairs)
             log(f"{len(run.targets)} callee(s) on 0x{entity:08X}, {seconds:g} emulated s")
             run.snapshots.append(snap())
@@ -359,6 +357,8 @@ class Observer:
             last = snap()
             run.snapshots.append(last)
             run.seconds = last.t / 1e6
+            self.s.sleep(DRAIN)  # the log of the calls before `last` is still on its way
+            traces.close()
         run.dropped = sum(s.dropped for s in streams)
         run.calls = [c for c in run.calls if c.t <= last.t]
         run.transitions = [tr for tr in run.transitions if tr.t <= last.t]
