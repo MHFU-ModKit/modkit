@@ -45,7 +45,7 @@ def register(sub: Subparsers) -> None:
     launcher_args(c)
     c.add_argument("entry", type=int, help="executor entry: the clip")
     c.add_argument("--attack", action="append", default=[], metavar="ID@FRAME", type=_attack)
-    c.add_argument("--carrier", type=_ints, default=(0, 1), metavar="MAIN,SUB")
+    c.add_argument("--carrier", type=_ints, default=(0, 2), metavar="MAIN,SUB")
     c.add_argument("--back", type=_ints, metavar="MAIN,SUB[,MODE]", help="entered at the end")
     c.add_argument("--length", type=int, default=0, help="AI frames; default the clip's")
     c.add_argument("--skip", action="store_true", help="no host AI step while the clip plays")
@@ -130,7 +130,7 @@ def report(r: moves.Played) -> list[str]:
             )
     for w, drop in r.damage():
         late = [
-            f"{(w.phase - sp.cursor) / moves.SPEED:+.1f} AI frames from the spawn"
+            f"AI frame {w.frame}, {w.frame - sp.at:+d} from the spawn"
             for sp in r.spawns
             if sp.at is not None
         ]

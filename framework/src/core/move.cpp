@@ -250,7 +250,7 @@ extern "C" void mhfu_move_init_spec(mhfu_move_t *mv, uint16_t entry)
     for (unsigned k = 0; k < sizeof(*mv); k++) b[k] = 0;
     mv->entry = entry;
     mv->carrier_main = 0;
-    mv->carrier_sub = 1;
+    mv->carrier_sub = 2;
     mv->back_main = MHFU_MOVE_NO_PAIR;
 }
 

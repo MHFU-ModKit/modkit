@@ -52,11 +52,13 @@ Pair = tuple[int, int]
 @dataclass(frozen=True)
 class Move:
     """What `mhfu_move_t` holds: an entry, its attacks as (clip frame, attack id), the carrier
-    pair it rides, the pair entered at the end (None: the carrier hands off itself)."""
+    pair it rides, the pair entered at the end (None: the carrier hands off itself). The
+    default carrier (0,2) is em75's alert hub: one dispatch, then the brain once the clip ends;
+    (0,1) is not entered as itself when ENTITY+0x4B9 is set (the translator makes it (0,2))."""
 
     entry: int
     attacks: tuple[tuple[int, int], ...] = ()
-    carrier: Pair = (0, 1)
+    carrier: Pair = (0, 2)
     back: tuple[int, int, int] | None = None
     length: int = 0
     skip: bool = False
@@ -134,7 +136,8 @@ class Spawn:
 
 @dataclass(frozen=True)
 class HpWrite:
-    """A CPU write to the hunter's HP: what it read just before, the timing part's cursor then."""
+    """A CPU write to the hunter's HP: what it read just before, the timing part's cursor and
+    the move's AI frame (MOVE_STATE.FRAMES) then."""
 
     t: float
     """Seconds after the ask, emulated."""
@@ -143,6 +146,7 @@ class HpWrite:
     hp: int
     phase: float
     pair: Pair
+    frame: int
 
 
 @dataclass(frozen=True)
@@ -171,7 +175,7 @@ class Played:
         """HP writes that lowered it, with the drop: each write's reading against the next
         one's, the last against `hp_after`. Only right while nothing but the CPU writes HP."""
         after = [w.hp for w in self.hits[1:]] + [self.hp_after]
-        return [(w, w.hp - nxt) for w, nxt in zip(self.hits, after, strict=True) if w.hp > nxt]
+        return [(w, w.hp - nxt) for w, nxt in zip(self.hits, after, strict=False) if w.hp > nxt]
 
 
 def _pair(word: int) -> Pair:
@@ -184,23 +188,31 @@ def _usec(s: Session) -> int:
 
 def _parse(message: str | None, start: int) -> HpWrite | None:
     try:
-        usec, pc, ra, phase, hp, pair = (int(f, 16) for f in (message or "").split())
+        usec, pc, ra, phase, hp, pair, frame = (int(f, 16) for f in (message or "").split())
     except ValueError:
         return None
     (cursor,) = struct.unpack("<f", struct.pack("<I", phase & 0xFFFF_FFFF))
     # the logged pair is the u16 at MAIN_STATE: main in the low byte
-    return HpWrite(((usec - start) % WRAP) / 1e6, pc, ra, hp, cursor, (pair & 0xFF, pair >> 8))
+    t = ((usec - start) % WRAP) / 1e6
+    return HpWrite(t, pc, ra, hp, cursor, (pair & 0xFF, pair >> 8), frame)
 
 
-def ask(s: Session, move: Move, slot: int, link: Bridge) -> MoveState:
-    """Write `move` into the bridge and have it played on `slot`'s monster; the block."""
+def block(s: Session) -> MoveState:
+    """The move player's block, as cli_bridge.lua published it."""
+    at = s.mem.u32(a.CLI_BRIDGE_BLOCK + a.CLI_BRIDGE.MOVE_STATE)
+    if not at:
+        raise ConnectionError("no move player: cli_bridge.lua has not published its block")
+    return MoveState(s.mem, at)
+
+
+def ask(s: Session, move: Move, slot: int, link: Bridge, st: MoveState) -> None:
+    """Write `move` into the bridge and have it played on `slot`'s monster."""
+    before = st.started
     s.mem.write(a.CLI_BRIDGE_BLOCK + a.CLI_BRIDGE.MOVE, move.pack())
     if not link.request(s, cast(Op, CMD_MOVE), slot)[1]:
         raise TimeoutError("no ack: the game is paused or cli_bridge.lua is not loaded")
-    block = s.mem.u32(a.CLI_BRIDGE_BLOCK + a.CLI_BRIDGE.MOVE_STATE)
-    if not block:
+    if not st.pending and st.started == before:
         raise RuntimeError("move refused: no big monster vtable is wrapped (em_vhook)")
-    return MoveState(s.mem, block)
 
 
 def play(
@@ -221,7 +233,12 @@ def play(
     phase = m.base + a.ENTITY.CLIP_BLOCKS + move.part * a.CLIP_BLOCK.size + a.CLIP_BLOCK.PHASE
     hp = a.PLAYER_ENTITY + a.ENTITY.HP
     cells = m.base + a.ENTITY.MAIN_STATE
-    fmt = f"{{usec}} {{pc}} {{ra}} {{[{phase:#x},4]}} {{[{hp:#x},2]}} {{[{cells:#x},2]}}"
+    st = block(s)
+    frames = st.base + a.MOVE_STATE.FRAMES
+    fmt = (
+        f"{{usec}} {{pc}} {{ra}} {{[{phase:#x},4]}} {{[{hp:#x},2]}} {{[{cells:#x},2]}}"
+        f" {{[{frames:#x},4]}}"
+    )
     pairs: list[tuple[float, Pair]] = []
     raw: list[str | None] = []
     with s.client.trace(writes=[(hp, 2)], log_format=fmt) as stream:
@@ -235,7 +252,7 @@ def play(
             return now
 
         note()
-        st = ask(s, move, k, link)
+        ask(s, move, k, link, st)
         s.wait(lambda: not st.pending, 5.0, "the move's AI step")
         deadline = s.now() + timeout
         while st.state != DONE and s.now() < deadline:

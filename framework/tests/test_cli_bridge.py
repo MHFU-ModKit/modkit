@@ -141,14 +141,8 @@ def test_freezing_another_slot_frees_the_first(game):
 
 
 def test_move_plays_the_block_spec_on_the_slot(game):
+    assert game.mem[BR + CB.MOVE_STATE] == MOVE_BLOCK
     game.send(MOVE, slot=2)
     assert game.moves == [(game.slots[2], BR + CB.MOVE)]
-    assert game.mem[BR + CB.MOVE_STATE] == MOVE_BLOCK
     game.send(CLEAR)
     assert game.stops == 1
-
-
-def test_refused_move_publishes_zero(game):
-    game.wrapped = False
-    game.send(MOVE)
-    assert game.mem[BR + CB.MOVE_STATE] == 0

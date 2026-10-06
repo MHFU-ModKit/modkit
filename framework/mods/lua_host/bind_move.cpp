@@ -34,7 +34,7 @@ static void spec_of(lua_State *L, int t, mhfu_move_t *mv)
     if (lua_getfield(L, t, "carrier") == LUA_TTABLE) {
         int c = lua_gettop(L);
         mv->carrier_main = (uint8_t)list_at(L, c, 1, 0);
-        mv->carrier_sub = (uint8_t)list_at(L, c, 2, 1);
+        mv->carrier_sub = (uint8_t)list_at(L, c, 2, 2);
     }
     lua_pop(L, 1);
     if (lua_getfield(L, t, "back") == LUA_TTABLE) {

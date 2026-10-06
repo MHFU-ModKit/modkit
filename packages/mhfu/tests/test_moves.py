@@ -13,7 +13,7 @@ def test_pack_follows_the_table() -> None:
     raw = moves.Move(46, ((56, 6), (90, 31)), back=(0, 2, 1), skip=True, part=1).pack()
     assert a.MOVE.size and len(raw) == a.MOVE.size
     assert struct.unpack_from("<HH", raw, a.MOVE.ENTRY) == (46, 0)
-    assert raw[a.MOVE.CARRIER_MAIN : a.MOVE.ATTACK_COUNT + 1] == bytes([0, 1, 0, 2, 1, 1, 1, 2])
+    assert raw[a.MOVE.CARRIER_MAIN : a.MOVE.ATTACK_COUNT + 1] == bytes([0, 2, 0, 2, 1, 1, 1, 2])
     assert struct.unpack_from("<4H", raw, a.MOVE.ATTACKS) == (56, 6, 90, 31)
 
 
@@ -27,7 +27,7 @@ def test_attack_word() -> None:
 
 
 def test_report_times_the_hit_against_the_spawn() -> None:
-    hit = moves.HpWrite(1.0, 0x1000, 0x2000, 150, 58.0, (0, 1))
+    hit = moves.HpWrite(1.0, 0x1000, 0x2000, 150, 58.0, (0, 1), 29)
     r = moves.Played(
         moves.Move(46, ((56, 6),)),
         1,
@@ -43,4 +43,4 @@ def test_report_times_the_hit_against_the_spawn() -> None:
     )
     text = "\n".join(cli.report(r))
     assert "played to its end" in text
-    assert "hunter -9 HP" in text and "+1.0 AI frames from the spawn" in text
+    assert "hunter -9 HP" in text and "+1 from the spawn" in text

@@ -71,7 +71,8 @@ typedef struct {
     uint32_t next_entity;
 } mhfu_move_state_t;
 
-/* entry on the carrier (0,1): no back pair, no attacks, timed on part 0 */
+/* entry on the carrier (0,2), em75's alert hub (one dispatch, then the brain once the clip
+ * ends; (0,1) becomes (0,2) under ENTITY+0x4B9): no back pair, no attacks, timed on part 0 */
 void mhfu_move_init_spec(mhfu_move_t *mv, uint16_t entry);
 
 /* Starts mv on entity at its next AI step, ending a move it plays; 0 while nothing is wrapped. */

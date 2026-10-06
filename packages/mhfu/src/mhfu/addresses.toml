@@ -526,7 +526,7 @@ ARG2 = { offset = 0x14, type = "u32", doc = "spare argument; cli_bridge.lua igno
 ACK = { offset = 0x18, type = "u32", doc = "SEQ the game has applied" }
 STATUS = { offset = 0x1C, type = "u32", doc = "action id currently held" }
 PROBE = { offset = 0x20, type = "u32", doc = "CLI scratch word used to test that the block is mapped" }
-MOVE_STATE = { offset = 0x24, type = "ptr", doc = "the move player's MOVE_STATE block, which cli_bridge.lua writes after CMD 4: 0 when the move was refused" }
+MOVE_STATE = { offset = 0x24, type = "ptr", doc = "the move player's MOVE_STATE block, which cli_bridge.lua publishes when it loads" }
 MOVE = { offset = 0x40, type = "MOVE", doc = "the move CMD 4 plays on SLOT's monster" }
 
 [struct.MAP_ROW]

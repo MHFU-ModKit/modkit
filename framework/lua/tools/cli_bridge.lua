@@ -126,8 +126,8 @@ function cli_bridge_tick()
         mhfu.write_u32(BR + CB.STATUS, 0)   -- nothing held
       elseif cmd == CMD_MOVE then
         local ent = entity(a0)
-        local ok = ent ~= nil and mhfu.move_play(ent, BR + CB.MOVE)
-        mhfu.write_u32(BR + CB.MOVE_STATE, ok and mhfu.move_block() or 0)
+        -- a refused move leaves the block's PENDING and STARTED as they were
+        if ent ~= nil then mhfu.move_play(ent, BR + CB.MOVE) end
       end
       mhfu.write_u32(BR + CB.ACK, seq)
       mhfu.log(string.format("[cli_bridge] cmd=%d slot=%d a1=%d (seq=%d)%s", cmd, a0, a1, seq,
@@ -165,5 +165,6 @@ if not _G.__cli_bridge_installed then
   end
 end
 
+mhfu.write_u32(BR + CB.MOVE_STATE, mhfu.move_block())
 mhfu.log(string.format("[cli_bridge] ready, polling 0x%08X%s", BR,
                        PORTS and "; ported monsters through mhfu_port" or ""))

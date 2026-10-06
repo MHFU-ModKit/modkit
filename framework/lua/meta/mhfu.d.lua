@@ -629,7 +629,7 @@ function mhfu.move_block() end
 ---@class mhfu.Move
 ---@field entry integer executor entry: the clip
 ---@field length? integer AI frames from the clip's dispatch, default 0 = until the clip ends
----@field carrier? integer[] { main, sub } the native pair the move rides, default { 0, 1 }
+---@field carrier? integer[] { main, sub } the native pair the move rides, default { 0, 2 }
 ---@field back? integer[] { main, sub, mode } entered at the end, default none
 ---@field skip? boolean the host AI step skips while the clip plays, except on a hit
 ---@field part? integer body part whose cursor times the attacks, default 0
