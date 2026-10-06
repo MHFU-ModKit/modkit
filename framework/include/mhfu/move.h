@@ -21,6 +21,8 @@
 
 #include <stdint.h>
 
+#include "mhfu/steer.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -61,6 +63,8 @@ enum {
     MHFU_MOVE_END_REPLACED,
     MHFU_MOVE_END_REFUSED,    /* enter-action did not land the carrier */
     MHFU_MOVE_END_LOST,       /* another dispatch replaced the clip */
+    MHFU_MOVE_END_WALL,       /* a wall ahead (mhfu/steer.h); the carrier or back pair takes over */
+    MHFU_MOVE_END_STUCK,      /* a class-2 wall ahead: the spec's stuck pair was entered */
 };
 
 /* struct MOVE_STATE in addresses.toml */
@@ -80,6 +84,7 @@ typedef struct {
     uint32_t node_vtable[MHFU_MOVE_MAX_ATTACKS];
     uint32_t ended_frame[MHFU_MOVE_MAX_ATTACKS];
     uint8_t  ended_state[MHFU_MOVE_MAX_ATTACKS];
+    mhfu_steer_state_t steer;
 } mhfu_move_state_t;
 
 /* entry on the carrier (0,2), em75's alert hub (one dispatch, then the brain once the clip
@@ -91,6 +96,10 @@ int  mhfu_move_play(uint32_t entity, const mhfu_move_t *mv);
 
 /* Ends the move at the next AI step; the carrier keeps running and hands off itself. */
 void mhfu_move_stop(void);
+
+/* The steering the next move takes on its first playing frame (STEER_STATE.NEXT): give one
+ * before each mhfu_move_play, mhfu_steer_init_spec's for none. */
+void mhfu_move_steer(const mhfu_steer_spec_t *s);
 
 /* The block, or 0 before the framework's init. */
 const volatile mhfu_move_state_t *mhfu_move_state(void);

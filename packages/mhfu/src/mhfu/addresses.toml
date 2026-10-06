@@ -190,6 +190,8 @@ EM75_ACTION_TICK = { eu = 0x09D36A08, type = "fn", doc = "em75 per-frame switch 
 EM75_CHARGE = { eu = 0x09D28738, type = "fn", doc = "em75 (1,4) handler: phase 3 enters (0,6) mode 1 when EM75_COLLIDED, else hands off to (0,3) once BUDGET_STEP spends RUN_BUDGET" }
 EM75_STUCK = { eu = 0x09D26940, type = "fn", doc = "em75 (0,6), head stuck in a wall: executor a1 20 with ACTION_BUDGET 180, then a1 21 (pull out) until the clip ends, then (0,1)" }
 MONSTER_AI_STEP_CALL = { eu = 0x09AC6638, type = "code", doc = "MONSTER_STEP loading the species AI step (vt+0x7C) to call it, $s2 the monster: POSITION, WALL_SECTORS and the clip are the frame before's" }
+AI_SCRIPT = { eu = 0x09AB4B68, type = "fn", doc = "(entity) a big monster's AI script: opcodes until one yields; opcode 5 sets ENTITY.FREEZE_GATE's low byte and enters (main, sub) mode 1 through ENTER_ACTION; nothing in main 5 or 6" }
+SCRIPT_TICK = { eu = 0x09AD8278, type = "fn", doc = "(entity) from a species' AI step: counts ENTITY.SCRIPT_WAIT down, else runs AI_SCRIPT once ENTITY.SCRIPT_WAKE is set and clears it" }
 
 # --- big-monster intel: effects, attacks, engine interface ---
 EFFECT_SPAWN_AT = { eu = 0x09ACB610, type = "fn", doc = "effect spawn at a bone (entity, id, bone base, bone offset); wraps EFFECT_SPAWN" }
@@ -329,6 +331,8 @@ FLINCH = { offset = 0x580, type = "s16[8]", doc = "big monsters: flinch counters
 STEER = { offset = 0x637, type = "u8", doc = "big monsters: set by a charge's translator; while set BUDGET_STEP turns with TURN_TOWARD" }
 RUN_BUDGET = { offset = 0x76C, type = "f32", doc = "big monsters: distance a run move may still travel; BUDGET_STEP subtracts the clip's root motion, the translator seeds it" }
 CLIP_BLOCKS = { offset = 0x080, type = "CLIP_BLOCK[3]", doc = "big monsters: one clip player per body part (Bone.stream); CLIP and CLIP_FLAGS are part 0's" }
+SCRIPT_WAKE = { offset = 0x4B5, type = "u8", doc = "big monsters: set as the brain hubs (0,1)/(0,2) run; SCRIPT_TICK runs the AI script and clears it. A pair entered from outside with it set is cut short by the script's next pair" }
+SCRIPT_WAIT = { offset = 0x778, type = "s16", doc = "big monsters: AI frames SCRIPT_TICK waits before it may run the AI script" }
 
 [struct.MONSTER_VTABLE]
 doc = "a species entity vtable (ENTITY.VTABLE): slot k at +8 + 4k, after the offset-to-top and typeinfo pair"
@@ -673,13 +677,13 @@ HOST_ATTACKS = { offset = 0x30, type = "u8", doc = "1 keeps the host entry's ani
 
 [struct.MOVE_STATE]
 doc = "the move player's block in partition memory (move.cpp): the move it runs and what happened, read by mhfu.live.moves"
-size = 0x108
+size = 0x53C
 [struct.MOVE_STATE.fields]
 MAGIC = { offset = 0x00, type = "u32", doc = "0x4D4F5650 (MOVP)" }
 STARTED = { offset = 0x04, type = "u32", doc = "moves started since boot" }
 PENDING = { offset = 0x08, type = "u32", doc = "1 while NEXT waits for its entity's next AI step" }
 STATE = { offset = 0x0C, type = "u8", doc = "0 idle, 1 entering the carrier, 2 playing, 3 reading the successor, 4 done" }
-END = { offset = 0x0D, type = "u8", doc = "why the last move ended: 1 clip done, 2 back pair entered, 3 pair changed, 4 stopped, 5 replaced, 6 carrier refused, 7 clip lost" }
+END = { offset = 0x0D, type = "u8", doc = "why the last move ended: 1 clip done, 2 back pair entered, 3 pair changed, 4 stopped, 5 replaced, 6 carrier refused, 7 clip lost, 8 a wall ahead, 9 a class-2 wall: the stuck pair entered" }
 SKIPPING = { offset = 0x0E, type = "u8", doc = "1 when the move skipped this frame's host AI step" }
 ENTITY = { offset = 0x10, type = "ptr", doc = "the monster the move runs on" }
 FRAMES = { offset = 0x14, type = "u32", doc = "AI frames since the clip's dispatch" }
@@ -698,3 +702,38 @@ NEXT_ENTITY = { offset = 0xE0, type = "ptr", doc = "NEXT's monster" }
 NODE_VTABLE = { offset = 0xE4, type = "ptr[4]", doc = "each spawned node's vtable right after the spawn, which ending it checks" }
 ENDED_FRAME = { offset = 0xF4, type = "u32[4]", doc = "FRAMES when the move ended each attack's node; 0xFFFFFFFF = not ended by the move" }
 ENDED_STATE = { offset = 0x104, type = "u8[4]", doc = "the node's ATTACK_NODE.STATE then: 1 or 2 ended by the move, 0 it had ended itself, 0xFF no longer the move's (left alone)" }
+STEER = { offset = 0x108, type = "STEER_STATE", doc = "the move's steering: its turn curve, its mode and walls (mhfu/steer.h)" }
+
+[struct.STEER_PARAMS]
+doc = "how a move turns and stops (steer.h mhfu_steer_t)"
+size = 0xC
+[struct.STEER_PARAMS.fields]
+TURN = { offset = 0x0, type = "u8", doc = "0 still, 1 toward the hunter, 2 away, 3 TOTAL over FRAMES" }
+WALLS = { offset = 0x1, type = "u8", doc = "1: a wall ahead ends the move" }
+RATE = { offset = 0x2, type = "u16", doc = "toward or away: most YAW units an AI frame (TURN_TOWARD's step; the charge steers 64)" }
+TOTAL = { offset = 0x4, type = "s32", doc = "fixed: YAW units over the move, under one turn either way" }
+FRAMES = { offset = 0x8, type = "u16", doc = "fixed: AI frames TOTAL is spread over" }
+DIR = { offset = 0xA, type = "u16", doc = "direction of travel against YAW, YAW units: 0 forward; picks the wall sectors that count as ahead" }
+
+[struct.STEER_SPEC]
+doc = "a move's steering as the move player takes it (steer.h mhfu_steer_spec_t)"
+size = 0x214
+[struct.STEER_SPEC.fields]
+STEER = { offset = 0x0, type = "STEER_PARAMS", doc = "turn mode and walls" }
+KEY_COUNT = { offset = 0xC, type = "u16", doc = "KEYS in use; 0: the clip does not turn YAW" }
+STUCK_MAIN = { offset = 0xE, type = "u8", doc = "pair entered on a class-2 wall ahead (ENTITY.STUCK_WALL), em75's (0,6)" }
+STUCK_SUB = { offset = 0xF, type = "u8", doc = "with STUCK_MAIN" }
+STUCK_MODE = { offset = 0x10, type = "u8", doc = "ENTER_ACTION mode for it, 1 as the Tigrex charge enters it" }
+KEYS = { offset = 0x14, type = "u16[256]", doc = "YAW every 2 clip frames, the last at the clip's end: the clips module's _turns (mhfu_port.travel.Turn)" }
+
+[struct.STEER_STATE]
+doc = "the move player's steering (steer.h mhfu_steer_state_t), in MOVE_STATE"
+size = 0x434
+[struct.STEER_STATE.fields]
+NEXT = { offset = 0x0, type = "STEER_SPEC", doc = "the steering the next move takes on its first playing frame" }
+NOW = { offset = 0x214, type = "STEER_SPEC", doc = "the steering of the move running" }
+BASE = { offset = 0x428, type = "u16", doc = "YAW the turn curve adds to: YAW on the first playing frame, turned by the mode and each loop" }
+WALL = { offset = 0x42A, type = "u8", doc = "the last frame's wall result: 0 none, 1 a wall ahead, 2 a class-2 one" }
+CURSOR = { offset = 0x42C, type = "f32", doc = "part 0's clip cursor the step saw last" }
+YAW0 = { offset = 0x430, type = "u16", doc = "YAW on the move's first playing frame" }
+YAW = { offset = 0x432, type = "u16", doc = "YAW as the step left it" }

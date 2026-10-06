@@ -8,6 +8,8 @@ framework's move player (`mhfu.live.moves`), and what came of it.
     mhfu move play 46 --attack 6@56                # stamp_right_claw, attack 6 at frame 56
     mhfu move play 46 --attack 6@56-90             # ... ended at frame 90
     mhfu move play 46 --attack 6@56 --repeat 10    # a soak
+    mhfu move play 20 --curve zinogre --walls      # the dash, its turn on YAW, ended by a wall
+    mhfu move play 9 --turn fixed --total 90 --frames 50
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from ppsspp_debug import DebuggerError, Lane
 
+from .. import inject
 from ..live import clips, moves
 from ..live.rig import Rig
 from .live import launcher, launcher_args
@@ -58,6 +61,16 @@ def register(sub: Subparsers) -> None:
     c.add_argument("--after", type=float, default=8.0, help="seconds watched after the end")
     c.add_argument("--hp", type=int, help="set the hunter's HP and its caps to this first")
     c.add_argument("--repeat", type=int, default=1, help="moves in a row")
+    c.add_argument(
+        "--curve", metavar="PORT", help="YAW follows the entry's turn from PORT's clips module"
+    )
+    c.add_argument("--turn", choices=moves.TURNS, default="still", help="a turn on top of it")
+    c.add_argument("--rate", type=int, default=64, help="hunter, away: YAW units an AI frame")
+    c.add_argument("--total", type=float, default=0.0, help="fixed: degrees, the way YAW grows")
+    c.add_argument("--frames", type=int, default=1, help="fixed: AI frames to spread it over")
+    c.add_argument("--walls", action="store_true", help="a wall ahead ends the move")
+    c.add_argument("--dir", type=float, default=0.0, help="degrees of the travel against YAW")
+    c.add_argument("--stuck", type=_ints, default=(0, 6, 1), metavar="MAIN,SUB,MODE")
     c.set_defaults(run=play)
 
     c = cmds.add_parser("stop", help="end the running move")
@@ -114,9 +127,12 @@ def _log_size(args: argparse.Namespace) -> int | None:
 def report(r: moves.Played) -> list[str]:
     """What a played move says, one line per finding."""
     mv = r.move
+    turned = ((r.yaw - r.yaw0 + 0x8000) & 0xFFFF) - 0x8000
     out = [
         f"entry {mv.entry}: {r.reason} after {r.frames} AI frames, then ({r.end_pair[0]},"
-        f"{r.end_pair[1]}); {r.skipped} host steps skipped; end at {r.t_end:.2f} s"
+        f"{r.end_pair[1]}); {r.skipped} host steps skipped; end at {r.t_end:.2f} s",
+        f"  YAW 0x{r.yaw0:04X} -> 0x{r.yaw:04X}, turned {turned * 360 / moves.FULL_TURN:.1f}"
+        f" degrees (curve {len(r.steer.curve)} keys, {r.steer.turn})",
     ]
     for p in r.parts:
         held = " / ".join(f"{s}:{i}" for s, i in p.held) or "a clip outside the pack"
@@ -167,6 +183,22 @@ def play(args: argparse.Namespace) -> int:
         args.part,
         host_attacks=args.host_attacks,
     )
+    curve: tuple[int, ...] = ()
+    if args.curve:
+        lane = launcher(args).lane
+        stick = Lane(lane).stick if lane is not None else None
+        module = inject.memstick(stick) / inject.MODS_SUBDIR / clips.LIB / f"{args.curve}_clips.lua"
+        curve = moves.turns_of(module.read_text(encoding="utf-8")).get(args.entry, ())
+    steer = moves.Steer(
+        curve,
+        args.turn,
+        args.rate,
+        args.total,
+        args.frames,
+        args.walls,
+        args.dir,
+        (args.stuck[0], args.stuck[1], args.stuck[2]),
+    )
     ends: dict[str, int] = {}
     size = _log_size(args)
     try:
@@ -176,7 +208,7 @@ def play(args: argparse.Namespace) -> int:
                 if args.hp:
                     p = s.game.player
                     p.hp_cap, p.max_hp, p.hp = args.hp, args.hp, args.hp
-                r = moves.play(s, mv, slot=args.slot, after=args.after)
+                r = moves.play(s, mv, slot=args.slot, after=args.after, steer=steer)
                 ends[r.reason] = ends.get(r.reason, 0) + 1
                 if args.repeat > 1:
                     print(f"--- move {n}/{args.repeat}")

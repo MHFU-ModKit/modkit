@@ -63,14 +63,71 @@ static void spec_of(lua_State *L, int t, mhfu_move_t *mv)
     lua_pop(L, 1);
 }
 
+static const char *const TURNS[] = {"still", "hunter", "away", "fixed", NULL};
+
+static int hex(int c)
+{
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+}
+
+/* t.steer (mhfu/steer.h): turn = "still" | "hunter" | "away" | "fixed", rate (YAW units a
+ * frame), total (degrees) over frames, dir (degrees), walls, stuck = { main, sub, mode }, curve
+ * = the clips module's _turns string for the entry */
+static void steer_of(lua_State *L, int t, mhfu_steer_spec_t *sp)
+{
+    mhfu_steer_init_spec(sp);
+    if (lua_getfield(L, t, "steer") != LUA_TTABLE) {
+        lua_pop(L, 1);
+        return;
+    }
+    int s = lua_gettop(L);
+    lua_getfield(L, s, "turn");
+    if (!lua_isnil(L, -1)) sp->steer.turn = (uint8_t)luaL_checkoption(L, -1, NULL, TURNS);
+    lua_pop(L, 1);
+    lua_getfield(L, s, "walls");
+    sp->steer.walls = (uint8_t)lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    sp->steer.rate = (uint16_t)opt_field(L, s, "rate", 64);
+    sp->steer.frames = (uint16_t)opt_field(L, s, "frames", 1);
+    lua_getfield(L, s, "total");
+    sp->steer.total = (int32_t)(luaL_optnumber(L, -1, 0) * MHFU_STEER_TURN / 360);
+    lua_pop(L, 1);
+    lua_getfield(L, s, "dir");
+    sp->steer.dir = (uint16_t)(int32_t)(luaL_optnumber(L, -1, 0) * MHFU_STEER_TURN / 360);
+    lua_pop(L, 1);
+    if (lua_getfield(L, s, "stuck") == LUA_TTABLE) {
+        int k = lua_gettop(L);
+        sp->stuck_main = (uint8_t)list_at(L, k, 1, sp->stuck_main);
+        sp->stuck_sub = (uint8_t)list_at(L, k, 2, sp->stuck_sub);
+        sp->stuck_mode = (uint8_t)list_at(L, k, 3, sp->stuck_mode);
+    }
+    lua_pop(L, 1);
+    size_t n = 0;
+    lua_getfield(L, s, "curve");
+    const char *c = lua_isstring(L, -1) ? lua_tolstring(L, -1, &n) : NULL;
+    for (size_t i = 0; c && i + 4 <= n && sp->key_count < MHFU_STEER_KEYS; i += 4) {
+        int v = 0;
+        for (size_t j = 0; j < 4; j++) {
+            int d = hex(c[i + j]);
+            luaL_argcheck(L, d >= 0, 2, "steer.curve is hex digits, 4 a key");
+            v = v * 16 + d;
+        }
+        sp->keys[sp->key_count++] = (uint16_t)v;
+    }
+    lua_pop(L, 2);
+}
+
 int lb_move_play(lua_State *L)
 {
     uint32_t ent = (uint32_t)luaL_checkinteger(L, 1);
     mhfu_move_t mv;
     if (lua_istable(L, 2)) {
         spec_of(L, 2, &mv);
+        mhfu_steer_spec_t sp;
+        steer_of(L, 2, &sp);
+        mhfu_move_steer(&sp);
     } else {
-        /* a MOVE struct the debugger wrote, word by word */
+        /* a MOVE struct the debugger wrote, word by word; it wrote STEER_STATE.NEXT itself */
         uint32_t at = (uint32_t)luaL_checkinteger(L, 2);
         luaL_argcheck(L, (at & 3) == 0, 2, "a MOVE struct is word aligned");
         uint32_t *w = (uint32_t *)&mv;

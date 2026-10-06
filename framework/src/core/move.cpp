@@ -61,6 +61,15 @@ static_assert(offsetof(mhfu_move_state_t, next_entity) == MHFU_MOVE_STATE_NEXT_E
 static_assert(offsetof(mhfu_move_state_t, node_vtable) == MHFU_MOVE_STATE_NODE_VTABLE, "MOVE_STATE layout");
 static_assert(offsetof(mhfu_move_state_t, ended_frame) == MHFU_MOVE_STATE_ENDED_FRAME, "MOVE_STATE layout");
 static_assert(offsetof(mhfu_move_state_t, ended_state) == MHFU_MOVE_STATE_ENDED_STATE, "MOVE_STATE layout");
+static_assert(offsetof(mhfu_move_state_t, steer) == MHFU_MOVE_STATE_STEER, "MOVE_STATE layout");
+static_assert(sizeof(mhfu_steer_spec_t) == MHFU_STEER_SPEC_SIZE, "STEER_SPEC layout");
+static_assert(offsetof(mhfu_steer_spec_t, key_count) == MHFU_STEER_SPEC_KEY_COUNT, "STEER_SPEC layout");
+static_assert(offsetof(mhfu_steer_spec_t, stuck_main) == MHFU_STEER_SPEC_STUCK_MAIN, "STEER_SPEC layout");
+static_assert(offsetof(mhfu_steer_spec_t, keys) == MHFU_STEER_SPEC_KEYS, "STEER_SPEC layout");
+static_assert(sizeof(mhfu_steer_state_t) == MHFU_STEER_STATE_SIZE, "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, now) == MHFU_STEER_STATE_NOW, "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, base) == MHFU_STEER_STATE_BASE, "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, yaw0) == MHFU_STEER_STATE_YAW0, "STEER_STATE layout");
 
 /* --- the engine ------------------------------------------------------------------------- */
 
@@ -97,7 +106,18 @@ static void     enter(uint32_t e, uint32_t m, uint32_t s, uint32_t mode) { mhfu_
 static void     execute(uint32_t e, uint32_t entry) { mhfu_host_execute(e, entry); }
 static uint32_t spawn(uint32_t sp, uint32_t e, uint32_t id) { return mhfu_host_spawn(sp, e, id); }
 static void     end_node(uint32_t node, uint32_t vtable) { mhfu_host_end(node, vtable); }
+extern "C" void *mhfu_host_at(uint32_t addr);
 #endif
+
+/* game memory a steer may read and write directly */
+static void *direct(uint32_t addr)
+{
+#ifndef MHFU_HOST
+    return (void *)addr;
+#else
+    return mhfu_host_at(addr);
+#endif
+}
 
 static volatile mhfu_move_state_t *S;
 
@@ -113,6 +133,21 @@ static uint32_t clip_block(uint32_t ent, int part)
 static uint32_t carrier(void)
 {
     return ((uint32_t)S->move.carrier_main << 8) | S->move.carrier_sub;
+}
+
+/* YAW along the clip's turn and the spec's mode; the wall result (mhfu/steer.h). Part 0 holds
+ * the root, whose motion the turn's keys go with. */
+static int steer(uint32_t ent)
+{
+    uint32_t b = clip_block(ent, 0);
+    void *e = direct(ent);
+    if (!e) return MHFU_STEER_GO;
+    const mhfu_vec3_t *hunter =
+        (const mhfu_vec3_t *)direct(MHFU_PLAYER_ENTITY + MHFU_ENTITY_POSITION);
+    return mhfu_steer_move(e, hunter, &S->steer, S->frames,
+                           mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_PHASE),
+                           mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_LOOP_START),
+                           mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_END));
 }
 
 static uint32_t step(uint32_t ent);
@@ -248,8 +283,16 @@ static uint32_t play(uint32_t ent)
         return 0;
     }
     attacks(ent, prev, mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_PHASE));
-    /* a move's per-frame steering (travel, turning, walls) goes here, before the end checks */
-    int done = !(mhfu_mem_read_u16(b + MHFU_CLIP_BLOCK_FLAGS) & 1);
+    int wall = steer(ent);
+    if (wall == MHFU_STEER_STUCK) {
+        /* as the Tigrex charge ends on such a wall; the AI script waits for the hub after it */
+        const volatile mhfu_steer_spec_t *sp = &S->steer.now;
+        enter(ent, sp->stuck_main, sp->stuck_sub, sp->stuck_mode);
+        mhfu_mem_write_u8(ent + MHFU_ENTITY_SCRIPT_WAKE, 0);
+        finish(MHFU_MOVE_END_STUCK, pair_of(ent));
+        return 0;
+    }
+    int done = !(mhfu_mem_read_u16(b + MHFU_CLIP_BLOCK_FLAGS) & 1) || wall == MHFU_STEER_WALL;
     int timed = S->move.length && S->frames >= S->move.length;
     if (done || timed) {
         if (S->move.back_main != MHFU_MOVE_NO_PAIR || timed) {
@@ -257,13 +300,13 @@ static uint32_t play(uint32_t ent)
             enter(ent, back ? S->move.back_main : S->move.carrier_main,
                   back ? S->move.back_sub : S->move.carrier_sub,
                   back ? S->move.back_mode : 0);
-            finish(MHFU_MOVE_END_BACK, pair_of(ent));
+            finish(wall ? MHFU_MOVE_END_WALL : MHFU_MOVE_END_BACK, pair_of(ent));
             return 0;
         }
         /* the host step runs the carrier's last phase now; AFTER reads what it picked */
         end_attacks(ent);
         mhfu_em_mute_events(0);
-        S->end = MHFU_MOVE_END_CLIP;
+        S->end = wall ? MHFU_MOVE_END_WALL : MHFU_MOVE_END_CLIP;
         S->end_frame = S->frames;
         S->skipping = 0;
         S->state = MHFU_MOVE_AFTER;
@@ -338,6 +381,14 @@ extern "C" void mhfu_move_stop(void)
     mhfu_em_step(step);
 }
 
+extern "C" void mhfu_move_steer(const mhfu_steer_spec_t *s)
+{
+    if (!S || !s) return;
+    volatile uint32_t *to = (volatile uint32_t *)&S->steer.next;
+    const uint32_t *from = (const uint32_t *)s;
+    for (unsigned k = 0; k < sizeof(mhfu_steer_spec_t) / 4; k++) to[k] = from[k];
+}
+
 extern "C" const volatile mhfu_move_state_t *mhfu_move_state(void) { return S; }
 
 static void on_quest(const mhfu_event_ctx_t *ctx)
@@ -365,6 +416,7 @@ extern "C" int mhfu_move_init(void)
     volatile uint8_t *b = (volatile uint8_t *)S;
     for (unsigned k = 0; k < sizeof(mhfu_move_state_t); k++) b[k] = 0;
     S->magic = MAGIC;
+    mhfu_steer_init_spec((mhfu_steer_spec_t *)&S->steer.next);
     if (mhfu_on_quest_beginning(on_quest, 0, OWNER) != MHFU_HOOK_OK)
         mhfu_log("[%s] quest event registration failed", OWNER);
     mhfu_log("[%s] block @0x%08X", OWNER, (unsigned)at);
@@ -378,6 +430,7 @@ extern "C" int mhfu_move_init(void)
     volatile uint8_t *b = (volatile uint8_t *)S;
     for (unsigned k = 0; k < sizeof(mhfu_move_state_t); k++) b[k] = 0;
     S->magic = MAGIC;
+    mhfu_steer_init_spec((mhfu_steer_spec_t *)&S->steer.next);
     return 0;
 }
 /* host tests drive the step directly and reset between cases */

@@ -59,6 +59,23 @@ INLINE int wall(uint32_t sectors, uint8_t stuck, uint16_t dir)
     return stuck ? MHFU_STEER_STUCK : MHFU_STEER_WALL;
 }
 
+/* YAW at clip frame `cursor`: keys every KEY_STEP frames, the last at `end` when that is
+ * nearer, joined by straight lines the short way; held outside them. */
+INLINE uint16_t curve(const volatile mhfu_steer_spec_t *s, float cursor, float end)
+{
+    uint32_t n = s->key_count < MHFU_STEER_KEYS ? s->key_count : MHFU_STEER_KEYS;
+    if (!n) return 0;
+    if (cursor <= 0) return s->keys[0];
+    uint32_t i = (uint32_t)(cursor / MHFU_STEER_KEY_STEP);
+    if (i >= n - 1) return s->keys[n - 1];
+    float f0 = (float)(i * MHFU_STEER_KEY_STEP), f1 = (float)((i + 1) * MHFU_STEER_KEY_STEP);
+    if (i + 1 == n - 1 && end > f0 && end < f1) f1 = end;
+    float t = (cursor - f0) / (f1 - f0);
+    if (t > 1) t = 1;
+    float d = (float)(int16_t)(uint16_t)(s->keys[i + 1] - s->keys[i]) * t;
+    return (uint16_t)(s->keys[i] + (int32_t)(d < 0 ? d - 0.5f : d + 0.5f));
+}
+
 extern "C" {
 
 uint16_t mhfu_steer_bearing(float dx, float dz) { return bearing(dx, dz); }
@@ -98,6 +115,61 @@ int mhfu_steer_step(void *entity, const mhfu_vec3_t *hunter, const mhfu_steer_t 
     } else if (p->turn == MHFU_STEER_FIXED) {
         *yaw = (uint16_t)(*yaw + share(p->total, p->frames, frame));
     }
+    return MHFU_STEER_GO;
+}
+
+void mhfu_steer_init_spec(mhfu_steer_spec_t *s)
+{
+    uint8_t *b = (uint8_t *)s;
+    for (unsigned k = 0; k < sizeof(*s); k++) b[k] = 0;
+    s->stuck_sub = 6;
+    s->stuck_mode = 1;
+}
+
+uint16_t mhfu_steer_curve(const volatile mhfu_steer_spec_t *s, float cursor)
+{
+    return curve(s, cursor, (float)(MHFU_STEER_KEYS * MHFU_STEER_KEY_STEP));
+}
+
+int mhfu_steer_move(void *entity, const mhfu_vec3_t *hunter, volatile mhfu_steer_state_t *st,
+                    uint32_t frame, float cursor, float loop_start, float end)
+{
+    volatile uint8_t *e = (volatile uint8_t *)entity;
+    volatile uint16_t *yaw = (volatile uint16_t *)(e + MHFU_ENTITY_YAW);
+    volatile mhfu_steer_spec_t *sp = &st->now;
+    if (frame <= 1) {
+        volatile uint32_t *to = (volatile uint32_t *)&st->now;
+        volatile uint32_t *from = (volatile uint32_t *)&st->next;
+        for (unsigned k = 0; k < sizeof(mhfu_steer_spec_t) / 4; k++) to[k] = from[k];
+        st->yaw0 = *yaw;
+        st->base = (uint16_t)(*yaw - curve(sp, cursor, end));
+        st->wall = MHFU_STEER_GO;
+    } else {
+        if (sp->steer.walls) {
+            int w = wall(*(volatile uint32_t *)(e + MHFU_ENTITY_WALL_SECTORS),
+                         e[MHFU_ENTITY_STUCK_WALL], sp->steer.dir);
+            if (w != MHFU_STEER_GO) {
+                st->wall = (uint8_t)w;
+                return w;
+            }
+        }
+        if (cursor < st->cursor) /* a loop: the turn of the frames it skipped back over stays */
+            st->base = (uint16_t)(st->base + curve(sp, end, end) - curve(sp, loop_start, end));
+    }
+    st->cursor = cursor;
+    uint8_t mode = sp->steer.turn;
+    if ((mode == MHFU_STEER_HUNTER || mode == MHFU_STEER_AWAY) && hunter) {
+        volatile float *pos = (volatile float *)(e + MHFU_ENTITY_POSITION);
+        uint16_t want = bearing(hunter->x - pos[0], hunter->z - pos[2]);
+        if (mode == MHFU_STEER_AWAY) want = (uint16_t)(want + MHFU_STEER_TURN / 2);
+        uint16_t now = *yaw;
+        st->base = (uint16_t)(st->base + (uint16_t)(toward(now, want, sp->steer.rate) - now));
+    } else if (mode == MHFU_STEER_FIXED && frame >= 1) {
+        st->base = (uint16_t)(st->base + share(sp->steer.total, sp->steer.frames,
+                                               (uint16_t)(frame - 1)));
+    }
+    *yaw = (uint16_t)(st->base + curve(sp, cursor, end));
+    st->yaw = *yaw;
     return MHFU_STEER_GO;
 }
 

@@ -48,3 +48,18 @@ def test_report_times_the_hit_against_the_spawn() -> None:
     text = "\n".join(cli.report(r))
     assert "played to its end" in text and "6@56-90" in text and "AI frame 45: ended" in text
     assert "hunter -9 HP" in text and "+1 from the spawn" in text
+
+
+def test_steer_packs_as_the_spec():
+    sp = moves.Steer((0, 0x2000, 0xFFFF), "fixed", 64, -90.0, 30, True, 90.0, (0, 6, 1))
+    b = sp.pack()
+    assert len(b) == a.STEER_SPEC.size
+    turn, walls, rate, total, frames, dir_ = struct.unpack_from("<BBHiHH", b, a.STEER_SPEC.STEER)
+    assert (turn, walls, rate, total, frames, dir_) == (3, 1, 64, -0x4000, 30, 0x4000)
+    assert struct.unpack_from("<HBBB", b, a.STEER_SPEC.KEY_COUNT) == (3, 0, 6, 1)
+    assert struct.unpack_from("<3H", b, a.STEER_SPEC.KEYS) == (0, 0x2000, 0xFFFF)
+
+
+def test_turns_of_a_clips_module():
+    text = 'return {\n  dash = 20,\n  _turns = {\n    [46] = "00001000ffff",\n  },\n}\n'
+    assert moves.turns_of(text) == {46: (0, 0x1000, 0xFFFF)}
