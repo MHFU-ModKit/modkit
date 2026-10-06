@@ -97,6 +97,7 @@ int lb_em_status(lua_State *L)
     SF_INT("sub_last_sub",   st.sub_last_in & 0xFF);
     SF_INT("sub_last_mode", (st.sub_last_in >> 16) & 0xFF);
     SF_INT("brain_fires", st.brain_fires);
+    SF_INT("events_muted", st.events_muted);
     SF_INT("req_pending", st.req_pending);
     SF_INT("req_done",    st.req_done);
     SF_INT("req_main",   (st.req_result >> 8) & 0xFF);

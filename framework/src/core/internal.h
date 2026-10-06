@@ -112,6 +112,10 @@ int  mhfu_capture_status(int *frames, int *kb, int *err);  /* returns active (0/
 /* ignored while active */
 void mhfu_capture_configure(int scale, int interval_ms, const char *path);
 
+/* --- move player (move.cpp) --- */
+/* Its block and its quest handler; em_vhook's init calls it. */
+int  mhfu_move_init(void);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
