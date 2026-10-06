@@ -1,0 +1,107 @@
+Debugger: screenshot.save, writing the frame on screen to a PNG while the game runs.
+
+gpu.buffer.screenshot answers only while the CPU or GPU is stepping, and on some backends not even
+then. This takes the frame the way the screenshot hotkey does and answers once the file is written.
+
+diff --git a/Core/Debugger/WebSocket/GPUBufferSubscriber.cpp b/Core/Debugger/WebSocket/GPUBufferSubscriber.cpp
+index ce53edd..6a0a5c6 100644
+--- a/Core/Debugger/WebSocket/GPUBufferSubscriber.cpp
++++ b/Core/Debugger/WebSocket/GPUBufferSubscriber.cpp
+@@ -16,21 +16,29 @@
+ // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
+ 
+ #include <algorithm>
++#include <atomic>
++#include <chrono>
++#include <future>
++#include <memory>
+ #ifndef USING_QT_UI
+ #include <png.h>
+ #include <zlib.h>
+ #endif
+ #include "Common/Data/Encoding/Base64.h"
++#include "Common/File/Path.h"
+ #include "Common/StringUtils.h"
++#include "Common/System/System.h"
+ #include "Core/Debugger/WebSocket/GPUBufferSubscriber.h"
+ #include "Core/Debugger/WebSocket/WebSocketUtils.h"
+ #include "Core/MIPS/MIPSDebugInterface.h"
+ #include "Core/Screenshot.h"
++#include "Core/System.h"
+ #include "GPU/Debugger/Stepping.h"
+ 
+ DebuggerSubscriber *WebSocketGPUBufferInit(DebuggerEventHandlerMap &map) {
+ 	// No need to bind or alloc state, these are all global.
+ 	map["gpu.buffer.screenshot"] = &WebSocketGPUBufferScreenshot;
++	map["screenshot.save"] = &WebSocketScreenshotSave;
+ 	map["gpu.buffer.renderColor"] = &WebSocketGPUBufferRenderColor;
+ 	map["gpu.buffer.renderDepth"] = &WebSocketGPUBufferRenderDepth;
+ 	map["gpu.buffer.renderStencil"] = &WebSocketGPUBufferRenderStencil;
+@@ -286,6 +294,58 @@ void WebSocketGPUBufferScreenshot(DebuggerRequest &req) {
+ 	});
+ }
+ 
++// Write the frame on screen to a PNG file (screenshot.save)
++//
++// Unlike gpu.buffer.screenshot this works while the game runs: the render thread takes the frame
++// after its next emulated frame, the way the screenshot hotkey does, and a pool thread writes it.
++//
++// Parameters:
++//  - path: string, the PNG to write, as the emulator sees it.
++//  - scale: optional integer, at most this many times the PSP's 480x272 (default 1); 0 keeps the
++//    render resolution.
++//
++// Response (same event name) with no extra data once the file is written, or error.
++void WebSocketScreenshotSave(DebuggerRequest &req) {
++	if (PSP_GetBootState() != BootState::Complete)
++		return req.Fail("Game not running");
++	std::string path;
++	if (!req.ParamString("path", &path))
++		return;
++	uint32_t scale = 1;
++	if (!req.ParamU32("scale", &scale, false, DebuggerParamType::OPTIONAL))
++		return;
++	if (scale > 16)
++		return req.Fail("Parameter 'scale' must be between 0 and 16");
++
++	// One screenshot is pending at a time: a second would replace the first's callback.
++	static std::atomic<bool> busy{false};
++	if (busy.exchange(true))
++		return req.Fail("Another screenshot is pending");
++
++	auto done = std::make_shared<std::promise<ScreenshotResult>>();
++	std::future<ScreenshotResult> result = done->get_future();
++	const int maxRes = scale == 0 ? -1 : (int)scale;
++	// The render thread reads the pending screenshot, so it is scheduled from there.
++	System_RunOnMainThread([path, maxRes, done]() {
++		ScheduleScreenshot(Path(path), ScreenshotFormat::PNG, ScreenshotType::Display, maxRes, [done](ScreenshotResult r) {
++			done->set_value(r);
++		});
++	});
++	const bool ready = result.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
++	busy = false;
++	if (!ready)
++		return req.Fail("Timed out waiting for the frame");
++	switch (result.get()) {
++	case ScreenshotResult::Success:
++		req.Respond();
++		return;
++	case ScreenshotResult::FailedToWriteFile:
++		return req.Fail("Could not write the file");
++	default:
++		return req.Fail("No frame to take");
++	}
++}
++
+ // Retrieve current color render buffer (gpu.buffer.renderColor)
+ //
+ // Parameters:
+diff --git a/Core/Debugger/WebSocket/GPUBufferSubscriber.h b/Core/Debugger/WebSocket/GPUBufferSubscriber.h
+index 00b93d7..381e4aa 100644
+--- a/Core/Debugger/WebSocket/GPUBufferSubscriber.h
++++ b/Core/Debugger/WebSocket/GPUBufferSubscriber.h
+@@ -27,3 +27,4 @@ void WebSocketGPUBufferRenderDepth(DebuggerRequest &req);
+ void WebSocketGPUBufferRenderStencil(DebuggerRequest &req);
+ void WebSocketGPUBufferTexture(DebuggerRequest &req);
+ void WebSocketGPUBufferClut(DebuggerRequest &req);
++void WebSocketScreenshotSave(DebuggerRequest &req);

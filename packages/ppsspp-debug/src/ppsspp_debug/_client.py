@@ -913,7 +913,7 @@ class AsyncClient:
         return t.frame_stats(await self._call("gpu.stats.get", {}))
 
     async def screenshot(self) -> t.Screenshot:
-        """The current output frame; some GPU backends answer only while stepping."""
+        """The current output frame, while stepping and not in a lane; else `save_screenshot`."""
         return t.screenshot(await self._call("gpu.buffer.screenshot", {"type": "uri"}))
 
     # the modkit's patched PPSSPP only: Unsupported on stock builds
@@ -925,6 +925,15 @@ class AsyncClient:
     async def load_state(self, path: str | os.PathLike[str], timeout: float = 30.0) -> None:
         """Load the savestate at `path`, as the emulator sees it; returns once it is loaded."""
         await self._call("savestate.load", {"path": os.fspath(path)}, timeout)
+
+    async def save_screenshot(
+        self, path: str | os.PathLike[str], scale: int = 1, timeout: float = 15.0
+    ) -> None:
+        """Write the frame on screen to a PNG at `path`, as the emulator sees it, while the game
+        runs too; returns once it is written. At most `scale` times 480x272, 0 for the render size.
+        """
+        params = {"path": os.fspath(path), "scale": scale}
+        await self._call("screenshot.save", params, timeout)
 
 
 def _trips(hit: t.Hit, kind: str, start: int) -> bool:

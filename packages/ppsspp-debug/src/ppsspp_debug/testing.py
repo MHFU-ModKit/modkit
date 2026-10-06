@@ -20,6 +20,7 @@ import asyncio
 import base64
 import json
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from types import TracebackType
 from typing import Any
 
@@ -300,6 +301,7 @@ class FakePPSSPP:
             handlers |= {"game.speed.get": self._speed, "game.speed.set": self._speed}
         if self.patched:
             handlers |= {"savestate.save": self._save_state, "savestate.load": self._load_state}
+            handlers["screenshot.save"] = self._save_screenshot
         return handlers
 
     async def _ok(self, ws: ServerConnection, msg: dict[str, Any]) -> None:
@@ -474,6 +476,13 @@ class FakePPSSPP:
     async def _screenshot(self, ws: ServerConnection, msg: dict[str, Any]) -> None:
         uri = "data:image/png;base64," + base64.b64encode(_PNG).decode()
         await self._reply(ws, msg, width=1, height=1, uri=uri)
+
+    async def _save_screenshot(self, ws: ServerConnection, msg: dict[str, Any]) -> None:
+        try:
+            Path(msg["path"]).write_bytes(_PNG)
+        except OSError:
+            return await self._fail(ws, msg, "Could not write the file")
+        await self._reply(ws, msg)
 
     async def _save_state(self, ws: ServerConnection, msg: dict[str, Any]) -> None:
         self.states[msg["path"]] = bytes(self.memory)

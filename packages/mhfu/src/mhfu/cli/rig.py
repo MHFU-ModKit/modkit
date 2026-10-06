@@ -11,6 +11,8 @@
     mhfu rig points --map maps/snow                   # the named points of a map document
     mhfu rig goto wall --map maps/snow                # one area change, then onto the floor
     mhfu rig walk camp_gate wall --map maps/snow      # walked, exit to exit
+    mhfu rig shot shots/now.png                       # the frame on screen, the game running on
+    mhfu rig film shots/charge --seconds 3 --fps 10   # 0000.png ... and sheet.png of them all
 
 A cold boot into a quest is `mhfu go-on-quest`, which fast-forwards too. A map document is the
 studio's (`map.toml` or its folder), by default `MHFU_MAP`.
@@ -27,12 +29,12 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ppsspp_debug import DebuggerError
+from ppsspp_debug import DebuggerError, Unsupported
 
 from .. import points as P
 from ..files import Extracted
 from ..live import boot, navigation, route, survival
-from ..live.rig import OffFloor, Rig, big_monsters, floor
+from ..live.rig import SHEET_COLUMNS, OffFloor, Rig, big_monsters, floor
 from ..points import Point
 from ..stage import NotLoaded, map_manager
 from .live import launcher, launcher_args
@@ -92,6 +94,17 @@ def register(sub: Subparsers) -> None:
     )
     _map_args(c)
     c.set_defaults(run=walk)
+    c = command("shot", "the frame on screen to a PNG, while the game runs")
+    c.add_argument("path", type=Path)
+    _scale_arg(c)
+    c.set_defaults(run=shot)
+    c = command("film", "the frames on screen to PNGs, and a contact sheet of them")
+    c.add_argument("folder", type=Path)
+    c.add_argument("--seconds", type=float, default=3.0)
+    c.add_argument("--fps", type=float, default=10.0)
+    c.add_argument("--columns", type=int, default=SHEET_COLUMNS, help="frames across the sheet")
+    _scale_arg(c)
+    c.set_defaults(run=film)
 
 
 def _fail(args: argparse.Namespace, e: Exception) -> int:
@@ -277,4 +290,43 @@ def walk(args: argparse.Namespace) -> int:
     except (OSError, KeyError, LookupError, P.PointError, RuntimeError, DebuggerError) as e:
         return _fail(args, e)
     log(f"at ({x:.0f}, {y:.0f}, {z:.0f})")
+    return 0
+
+
+def _scale_arg(c: argparse.ArgumentParser) -> None:
+    c.add_argument(
+        "--scale", type=int, default=1, help="at most this many times 480x272; 0: render size"
+    )
+
+
+_NO_SHOTS = "this PPSSPP cannot; the modkit's build can (ppsspp/build.sh)"
+
+
+def shot(args: argparse.Namespace) -> int:
+    try:
+        with Rig.attach(launcher(args)) as rig:
+            print(rig.shot(args.path, args.scale))
+    except Unsupported:
+        return _fail(args, RuntimeError(_NO_SHOTS))
+    except (ConnectionError, DebuggerError, TimeoutError) as e:
+        return _fail(args, e)
+    return 0
+
+
+def film(args: argparse.Namespace) -> int:
+    try:
+        with Rig.attach(launcher(args)) as rig:
+            got = rig.film(
+                args.folder, args.seconds, args.fps, scale=args.scale, columns=args.columns
+            )
+    except Unsupported:
+        return _fail(args, RuntimeError(_NO_SHOTS))
+    except (ConnectionError, DebuggerError, TimeoutError, ValueError) as e:
+        return _fail(args, e)
+    ms = sorted(1000 * c for c in got.costs)
+    print(
+        f"{len(got.frames)} frames at {got.fps:.1f} fps, a shot {ms[len(ms) // 2]:.0f} ms "
+        f"(max {ms[-1]:.0f}), the game at {got.speed:.2f}x"
+    )
+    print(got.sheet)
     return 0
