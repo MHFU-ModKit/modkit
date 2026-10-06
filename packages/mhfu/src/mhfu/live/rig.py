@@ -203,9 +203,13 @@ class Rig:
             raise ValueError("a state or a quest, not both")
         if quest is not None:
             rig = cls(Session.launch(launcher, cold=True, stop_on_exit=stop_on_exit), launcher)
-            with boot.fast_forward(rig.s, fast):
-                boot.to_village(rig.s)
-                quests.take(rig.s, rank, quest, log=log)
+            try:
+                with boot.fast_forward(rig.s, fast):
+                    boot.to_village(rig.s)
+                    quests.take(rig.s, rank, quest, log=log)
+            except BaseException:
+                rig.close()
+                raise
             return rig
         if state is None:
             return cls(Session.launch(launcher, stop_on_exit=stop_on_exit), launcher)
