@@ -25,6 +25,18 @@ async def test_trace_arms_and_removes(client, fake):
     assert not fake.stepping
 
 
+async def test_trace_logs_writes(client, fake):
+    async with client.trace([BASE], writes=[(BASE + 0x200, 12)], log_format="{pc}") as hits:
+        assert list(fake.watchpoints) == [(BASE + 0x200, 12)]
+        assert not any(w["enabled"] or w["read"] for w in fake.watchpoints.values())
+        await fake.access(BASE + 0x208, pc=BASE + 0x40)
+        await fake.access(BASE + 0x20C, pc=BASE + 0x44)  # outside the span: no watchpoint
+        await fake.execute(BASE)
+        got = [await hits.next(1), await hits.next(1)]
+    assert [(h.kind, h.address) for h in got] == [("memory", BASE + 0x208), ("exec", BASE)]
+    assert not fake.watchpoints and not fake.breakpoints
+
+
 async def test_trace_keeps_a_stopped_cpu_stopped(client, fake):
     await client.pause()
     async with client.trace([BASE], log_format="x"):

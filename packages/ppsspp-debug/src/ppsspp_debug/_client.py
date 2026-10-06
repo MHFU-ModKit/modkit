@@ -775,29 +775,37 @@ class AsyncClient:
     @asynccontextmanager
     async def trace(
         self,
-        addresses: Iterable[int],
+        addresses: Iterable[int] = (),
         *,
+        writes: Iterable[tuple[int, int]] = (),
         condition: str | None = None,
         log_format: str | None = None,
     ) -> AsyncIterator[Stream[t.Hit]]:
-        """Execution breakpoints that only log, on every address for the block, as one stream.
+        """Execution breakpoints on `addresses` and watchpoints on the `(address, size)` spans
+        in `writes`, all only logging, for the block, as one stream.
 
         All are armed in one stop of the CPU, so they start on the same frame, and removed on
-        exit. Each costs the emulator a lookup over every armed breakpoint per hit.
+        exit. Each breakpoint costs the emulator a lookup over every armed one per hit; any
+        watchpoint sends every memory access down the slow path. A watchpoint's log line has
+        no pc under a `log_format`: put `{pc}` in it.
         """
         points = frozenset(addresses)
+        spans = tuple(dict.fromkeys(writes))
+
+        def watched(address: int) -> bool:
+            return any(0 <= address - start < size for start, size in spans)
 
         def match(event: t.Event) -> t.Hit | None:
-            if isinstance(event, t.Hit):
-                return event if event.kind == "exec" and event.start in points else None
-            if isinstance(event, t.LogLine):
-                hit = event.hit
-                if hit is not None and hit.kind == "exec" and hit.pc in points:
-                    return hit
-            return None
+            hit = event.hit if isinstance(event, t.LogLine) else event
+            if not isinstance(hit, t.Hit):
+                return None
+            if hit.kind == "exec":
+                return hit if (hit.pc if hit.start is None else hit.start) in points else None
+            return hit if hit.kind == "memory" and watched(hit.address) else None
 
         async with self._subscribed(self._hit_source(False, log_format)) as sub:
             armed: list[int] = []
+            spanned: list[tuple[int, int]] = []
             try:
                 async with self.paused():
                     for address in points:
@@ -809,12 +817,24 @@ class AsyncClient:
                             log_format=log_format,
                         )
                         armed.append(address)
+                    for start, size in spans:
+                        await self.add_watchpoint(
+                            start,
+                            size,
+                            stop=False,
+                            log=True,
+                            condition=condition,
+                            log_format=log_format,
+                        )
+                        spanned.append((start, size))
                 yield Stream(sub, match)
             finally:
                 with suppress(Disconnected):
                     async with self.paused():
                         for address in armed:
                             await self.remove_breakpoint(address)
+                        for start, size in spanned:
+                            await self.remove_watchpoint(start, size)
 
     def _hit_source(self, stop: bool, log_format: str | None) -> set[str]:
         """The broadcasts a breakpoint's hits arrive as."""
