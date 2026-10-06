@@ -37,6 +37,11 @@ body parts only (the Tigrex's 24 and 25, head and neck over an idle body). An en
 takes stays empty on a port with its own skeleton, where the host's clips do not fit, and keeps
 the host's clip on a port that rides the host's skeleton.
 
+A `[clips.<name>]` pins its clip on top of that packing: the clip the packer had in its entry
+takes the entry the pin freed. So naming a clip where it is moves nothing, and placing one
+elsewhere swaps it with the clip there. The studio's Clips panel lists every clip by MHP3rd id
+and names and places them.
+
 `<name>_clips.lua` maps each clip's name (the manifest's, else `clip_<entry>`) to its entry, and
 `mhfu_port.lua`'s `P.define` reads it as the port's clips, so no mod keeps a copy of the layout.
 `mhfu-port pose` checks that each entry plays its clip.
