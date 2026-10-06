@@ -453,10 +453,11 @@ static void install_for(uint32_t entity)
     }
     g_installed = 1;
 
-    mhfu_log("[%s] vtable 0x%08X: slot29 0x%08X -> 0x%08X, slot32 0x%08X -> 0x%08X",
-             OWNER, (unsigned)vt, (unsigned)g_orig_ai,
+    mhfu_log("[%s] vtable 0x%08X: slot29 0x%08X -> 0x%08X, slot32 0x%08X -> 0x%08X, "
+             "slot30 0x%08X -> 0x%08X", OWNER, (unsigned)vt, (unsigned)g_orig_ai,
              (unsigned)(uintptr_t)g_stub_ai, (unsigned)g_orig_act,
-             (unsigned)(uintptr_t)g_stub_act);
+             (unsigned)(uintptr_t)g_stub_act, (unsigned)g_orig_evt,
+             (unsigned)(uintptr_t)g_stub_evt);
 }
 
 static void uninstall(void)
