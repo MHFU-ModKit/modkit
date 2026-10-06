@@ -39,6 +39,15 @@ def test_prepare_clones_and_owns_the_port(tmp_path, stick):
     assert lane.game.read_bytes() == b"iso"
 
 
+def test_prepare_fills_an_empty_dir(tmp_path, stick):
+    game = tmp_path / "game.iso"
+    game.write_bytes(b"iso")
+    lane = Lane(4, tmp_path / "lanes")
+    (lane.stick / "SAVEDATA").mkdir(parents=True)
+    lane.prepare(game, stick)
+    assert (lane.stick / "SAVEDATA/ULES01213/DATA.BIN").read_bytes() == b"save"
+
+
 def test_prepare_keeps_the_lane_stick_unless_fresh(tmp_path, stick):
     game = tmp_path / "game.iso"
     game.write_bytes(b"iso")

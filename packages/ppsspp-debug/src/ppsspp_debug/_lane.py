@@ -66,7 +66,7 @@ class Lane:
         if fresh or not self.game.exists():
             _clone(Path(game), self.game)
         for name in CLONED:
-            if (src / name).exists() and (fresh or not (self.stick / name).exists()):
+            if (src / name).exists() and (fresh or _empty(self.stick / name)):
                 _clone(src / name, self.stick / name)
         controls = self.stick / "SYSTEM/controls.ini"
         if (src / "SYSTEM/controls.ini").exists() and (fresh or not controls.exists()):
@@ -205,6 +205,10 @@ def settings(ini: str, values: Mapping[str, str]) -> str:
             lines[:0], at = ["[General]"], 1
         lines[at:at] = [f"{k} = {v}" for k, v in missing.items()]
     return "\n".join(lines) + "\n"
+
+
+def _empty(path: Path) -> bool:
+    return not path.exists() or (path.is_dir() and not any(path.iterdir()))
 
 
 def _bundle(binary: StrPath) -> Path | None:
