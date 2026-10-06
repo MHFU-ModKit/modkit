@@ -3,8 +3,9 @@
 One Qt window for authoring MHFU mods offline, with the commands behind it. Two workspaces:
 
 - **Monster**: a ported monster's clips, labels, parts, hitboxes and moves, kept in its manifest
-  in [`ports/`](../../ports), checked against the base monster's data from the game, and
-  exported as a Lua module the framework loads (`<name>_hit.lua`).
+  in [`ports/`](../../ports), checked against the base monster's data from the game. Its hit
+  tables are one set of writes over the base monster's, exported as a Lua module the framework
+  loads (`<name>_hit.lua`) or pushed into the running game through PPSSPP's debugger.
 - **Map**: edits to a stage's mesh, collision and textures, kept as edit lists in a `map.toml`
   document and pushed into the running game through PPSSPP's debugger.
 
@@ -29,13 +30,14 @@ uv run studio                                    # the window
 uv run studio open ports/zinogre.toml            # the window on a port
 uv run studio port check ports/zinogre.toml      # the same checks, on the command line
 uv run studio port hit ports/zinogre.toml --deploy   # zinogre_hit.lua onto the memory stick
+uv run studio port push ports/zinogre.toml           # the same writes into the running game
 ```
 
 | Command | Does |
 |---|---|
 | `studio open [PATH]` | The window, with PATH open; `--workspace NAME`, `--size WxH` |
 | `studio render selftest\|map\|monster` | A stage or a monster to PNG, without a window |
-| `studio port scene\|clips\|align\|check\|hit` | A port's contents, clip coverage and labels, timing against the host, checks, and its Lua module |
+| `studio port scene\|clips\|align\|check\|hit\|push` | A port's contents, clip coverage and labels, timing against the host, checks, its Lua module, and the same writes into the running game (`MHFU_LANE` picks a lane's) |
 | `studio map inject\|edit\|push\|exits\|surfaces\|budget\|textures\|verify` | A map document into the running game, one edit list offline or live, and what a stage holds |
 
 `--help` on any of them says more.

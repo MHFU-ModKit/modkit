@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The `studio port` commands (scene, clips, align, check, hit) and `studio render monster`."""
+"""The `studio port` commands (scene, clips, align, check, hit, push), `studio render monster`."""
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from mhfu_port.manifest import Manifest
 
     from mhfu_studio.monster.inputs import Built
+    from mhfu_studio.monster.runtime import Host
 
 
 VIEWS = ("front", "back", "side", "other_side", "three", "top")
@@ -85,6 +87,13 @@ def register(groups: Groups) -> None:
     _intel_arguments(p)
     data.add_arguments(p)
     p.set_defaults(run=run_hit)
+
+    p = groups.port.add_parser("push", help="write a port's hit tables into the running game")
+    p.add_argument("manifest", type=Path)
+    p.add_argument("--dry", action="store_true", help="list the writes, touch nothing")
+    _intel_arguments(p)
+    data.add_arguments(p)
+    p.set_defaults(run=run_push)
 
 
 def _render(groups: Groups) -> None:
@@ -337,31 +346,51 @@ def run_check(args: argparse.Namespace) -> int:
     return status
 
 
+def _host(args: argparse.Namespace, m: Manifest) -> Host | None:
+    from mhfu_studio.monster import runtime
+
+    host = runtime.host(_intel(args, m.port.host_species))
+    if host is not None and getattr(args, "capacity", None) is not None:
+        host = dataclasses.replace(host, capacity=args.capacity)
+    return host
+
+
 def run_hit(args: argparse.Namespace) -> int:
     from mhfu_studio.monster import runtime
 
     m = _manifest(args.manifest)
-    intel = _intel(args, m.port.host_species)
-    cap = args.capacity if args.capacity is not None else runtime.host_capacity(intel)
-    tables = runtime.host_attack_tables(intel)
+    host = _host(args, m)
     if args.print:
-        print(runtime.lua_hit_module(m, cap, attacks=tables), end="")
+        print(runtime.lua_hit_module(m, host), end="")
         return 0
     path = args.out or Path(runtime.module_name(m))
-    dep = runtime.ship(m, path, cap, tables, library_path=args.library) if args.deploy else None
+    dep = runtime.ship(m, path, host, library_path=args.library) if args.deploy else None
     if dep is None:
-        runtime.export(m, path, cap, tables)
+        runtime.export(m, path, host)
     print(
         f"wrote {path} ({len(m.hurtboxes)} volume(s), {len(m.hitzones)} state(s), "
         f"{len(runtime.sets_of(m))} attack set(s), {len(m.attacks)} attack record(s), "
         f"id {runtime.content_id(m)})"
     )
-    if cap is not None and len(m.hurtboxes) > cap:
-        print(f"{len(m.hurtboxes) - cap} volume(s) exceed the host set's {cap}: truncated")
-    for s, vols in runtime.sets_of(m).items():
-        c = tables.capacities.get(s) if tables else None
-        if c is not None and len(vols) > c:
-            print(f"set {s}: {len(vols)} volume(s) but the host's holds {c}: truncated")
+    for note in runtime.plan(m, host).notes:
+        print(note)
     if dep is not None:
         print(f"deployed {dep.describe()}")
+    return 0
+
+
+def run_push(args: argparse.Namespace) -> int:
+    from mhfu_studio.monster import push, runtime
+
+    m = _manifest(args.manifest)
+    host = _host(args, m)
+    if args.dry:
+        for w in runtime.plan(m, host).writes:
+            print(f"0x{w.at:08X} {len(w.data):5d} B  {w.what}  ({len(w.guards)} guard(s))")
+        return 0
+    try:
+        print(push.to_game(m, host).describe())
+    except push.Refused as e:
+        print(f"refused: {e}")
+        return 1
     return 0

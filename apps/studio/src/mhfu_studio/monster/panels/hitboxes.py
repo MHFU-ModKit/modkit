@@ -24,6 +24,7 @@ from mhfu_studio.ui import findings, kit
 
 from .common import bone_span
 from .parts import HOST_BONES
+from .push import PushRow
 from .widgets import (
     NoScene,
     SendRow,
@@ -227,9 +228,13 @@ class HitboxesPanel(kit.Panel):
         edit.body.addWidget(self.shared)
         lay.addWidget(edit)
 
-        ship = kit.Section("4  Send to game", tip="Your hitboxes onto the memory stick")
+        ship = kit.Section(
+            "4  Send to game", tip="Your hitboxes onto the memory stick, or into the game"
+        )
         self.send = SendRow(ws, studio)
+        self.push = PushRow(ws, studio)
         ship.body.addWidget(self.send)
+        ship.body.addWidget(self.push)
         self.ship_box = ship
         lay.addWidget(ship)
         self.no_manifest = kit.label(
@@ -492,6 +497,7 @@ class HitboxesPanel(kit.Panel):
         self.shared.setText(shared_note(ws))
         self.ship_box.setVisible(has_doc)
         self.send.sync()
+        self.push.sync()
         self.export.setEnabled(ws.exportable())
         self.keep.setEnabled(port and ws.selected_attack_volume is not None)
         self.no_manifest.setVisible(not has_doc)

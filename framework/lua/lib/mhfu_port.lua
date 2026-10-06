@@ -179,7 +179,7 @@ Port.__index = Port
 
 -- What a redefine keeps: the spawn event that bound `ent` will not fire again (ent = 0 would stop
 -- the brain), and the hit tables in the game belong to the entity, not to the declaration.
-local KEEP = { "ent", "_hit_id", "_hit_last", "_hit_cap", "_atk_caps" }
+local KEEP = { "ent", "_hit_id", "_hit_last" }
 
 --- A port's clips, name -> executor entry, from mods/lib/<name>_clips.lua: `mhfu-port inject`
 --- generates it from the manifest with the PAC, so the two agree. Empty, logged once, without it.
@@ -517,305 +517,139 @@ function Port:hold_pin()
 end
 
 -- ------------------------------------------------------------- hit tables
--- The port's own hurtboxes, hitzones and attacks, written into the game. The editor exports a
--- port's [[hurtbox]] / [[hitzone]] as a generated `<name>_hit.lua` that calls P.hit(name, tbl).
+-- A port's hurtboxes, hitzone grid and attacks, written into the game. The studio exports them
+-- as a generated `<name>_hit.lua` calling P.hit(name, tbl), where `tbl.writes` is the whole plan
+-- (mhfu_studio.monster.runtime.plan, which also feeds the studio's debugger push): each `data`
+-- goes at `at` once every `guard` reads back as given. Where a record goes, how many fit and what
+-- is refused are decided there; this only writes what it is given.
 --
--- Both hang off the species row (SPECIES_TABLE + species * SPECIES.STRIDE): HURTBOX_SET is the
--- HIT_VOLUME set the species walks (the overlay holds several and only this pointer picks one),
--- HITZONE_STATES points at its hitzone grids. Volumes go in place over the original records, then
--- a sentinel: shorter is fine, longer is not (the bytes past the original sentinel are someone
--- else's), so the original count, measured on first contact, is the cap. Nothing is relocated
--- and no pointer rewritten.
+-- Species data is map-wide per species id: beside a native of the same species this re-skins
+-- the native too.
 --
--- Species data is map-wide per species id: as a replace the port is the only one of its species
--- in the quest, but beside a native of the same species this re-skins the native too.
---
--- Applied once the entity is live in-area, re-checked every tick against one record and one grid
--- byte, and re-applied with a log line if either changed (an overlay reload shows up here) or a
--- re-export registers a new content id.
---
--- Attacks go the other way: a handler spawns an attack by id, and ATTACK_RECORD `id` at
--- attack_tables.records names a volume set (VOLUME_SET), reached through the overlay's pointer
--- table at attack_tables.volumes + set*4; both are the species overlay's static addresses, from
--- the export. Each authored set goes in place over the host set of that index, then a sentinel;
--- each `attacks` entry writes only the levers it names. The addresses are not handed over by the
--- engine, so a set is written only if its live record count equals the exported `cap` on first
--- contact; otherwise it is left alone with a log line.
-local HV = mhfu.addr.HIT_VOLUME
-local SPECIES_TABLE  = mhfu.addr.SPECIES_TABLE
-local SPECIES_STRIDE = mhfu.addr.SPECIES.STRIDE
-local F_SPHERES      = mhfu.addr.SPECIES.HURTBOX_SET
-local F_STATES       = mhfu.addr.SPECIES.HITZONE_STATES
-local REC            = HV.SIZE
-local GRID_BLOCK     = mhfu.addr.HITZONE_GRID.SIZE
-local GRID_ROWS, GRID_COLS = 7, 10
-local SENTINEL       = 0xFFFF
-local MAX_RECORDS    = 512    -- a walk bound; the longest set in the game is 49
-local ATK_REC        = mhfu.addr.ATTACK_RECORD.SIZE
-local ATK_POWER, ATK_ELEMENT, ATK_VOLUME = mhfu.addr.ATTACK_RECORD.POWER,
-  mhfu.addr.ATTACK_RECORD.ELEMENT, mhfu.addr.ATTACK_RECORD.VOLUME_SET
-
+-- Applied once the port is live in-area, compared byte for byte every tick, and re-applied with a
+-- log line when the live bytes change (an overlay reload) or a re-export registers a new id.
 P._hit = P._hit or {}         -- port name -> table, from the generated module
 
---- Register a port's hit tables. `tbl` = { species, id, volumes = {{bone, shape,
---- row, part, flags, radius, ax, ay, az, bx, by, bz}, ...} | nil, grid = {{row*7}
---- x states} | nil }. Keyed by PORT name so the data module and the brain module
---- can load in either order; the tick joins them.
-function P.hit(name, tbl)
-  P._hit[name] = tbl            -- a new id applies on the next tick (hit_tick)
-  local nsets = 0
-  if tbl.attack_sets then for _ in pairs(tbl.attack_sets) do nsets = nsets + 1 end end
-  log("[port:%s] hit tables registered: %s volume(s), %s grid state(s), %d attack "
-      .. "set(s), %s attack record(s), id %s",
-      name, tbl.volumes and #tbl.volumes or "no", tbl.grid and #tbl.grid or "no",
-      nsets, tbl.attacks and #tbl.attacks or "no", tostring(tbl.id))
+local function unhex(s)
+  return (s:gsub("%s", ""):gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end))
 end
 
-local function species_row(port)
-  return SPECIES_TABLE + port.species * SPECIES_STRIDE
+local function hex(s)
+  return (s:gsub(".", function(c) return string.format("%02X", c:byte()) end))
 end
 
-local function write_record(at, r)
-  mhfu.write_u16(at + HV.BONE, r[1])
-  mhfu.write_u16(at + HV.SHAPE, r[2])
-  mhfu.write_u16(at + HV.HITZONE_ROW, r[3])
-  mhfu.write_u16(at + HV.PART, r[4])
-  mhfu.write_u32(at + HV.FLAGS, r[5])
-  wf(at + HV.RADIUS, r[6])
-  wf(at + HV.OFFSET_A, r[7]); wf(at + HV.OFFSET_A + 4, r[8]); wf(at + HV.OFFSET_A + 8, r[9])
-  wf(at + HV.OFFSET_B, r[10]); wf(at + HV.OFFSET_B + 4, r[11]); wf(at + HV.OFFSET_B + 8, r[12])
+--- The u32 at byte `i` of `bin`, as read_u32 returns it.
+local function word(bin, i)
+  local b0, b1, b2, b3 = bin:byte(i, i + 3)
+  return b0 | b1 << 8 | b2 << 16 | b3 << 24
 end
 
-local function write_sentinel(at)
-  for i = 0, 3 do mhfu.write_u16(at + i * 2, SENTINEL) end
-  for i = 8, REC - 4, 4 do mhfu.write_u32(at + i, 0) end
-end
-
---- The live address of attack volume set `set`, through the overlay's pointer
---- table, or nil (+why) when the export names a set the table does not have.
-local function attack_set_base(tbl, set)
-  local at = tbl.attack_tables
-  if not at or not at.volumes then return nil, "no attack_tables in the export" end
-  if at.n_sets and set >= at.n_sets then
-    return nil, string.format("set %d but the host has %d", set, at.n_sets)
-  end
-  local base = mhfu.read_u32(at.volumes + set * 4)
-  if base == 0 or not mhfu.mem_valid(base) then
-    return nil, string.format("set %d pointer 0x%08X invalid", set, base)
-  end
-  return base
-end
-
---- Sorted set indices, so the log and the writes are in one order every time.
-local function attack_set_indices(tbl)
-  local idx = {}
-  if tbl.attack_sets then
-    for k in pairs(tbl.attack_sets) do idx[#idx + 1] = k end
-  end
-  table.sort(idx)
-  return idx
-end
-
---- Does the live table still carry what we wrote? One record and one byte —
---- cheap enough for every tick, specific enough to catch a reload.
-local function hit_intact(port, tbl)
-  local row = species_row(port)
-  if tbl.volumes then
-    local base = mhfu.read_u32(row + F_SPHERES)
-    if base == 0 then return false end
-    local n = math.min(#tbl.volumes, port._hit_cap or #tbl.volumes)
-    if n == 0 then
-      if mhfu.read_u16(base) ~= SENTINEL then return false end
+--- The live bytes at `at` are `bin`: a word at a time where aligned.
+local function holds(at, bin)
+  local i, n = 1, #bin
+  while i <= n do
+    local x = at + i - 1
+    if x % 4 == 0 and i + 3 <= n then
+      if mhfu.read_u32(x) ~= word(bin, i) then return false end
+      i = i + 4
     else
-      local r = tbl.volumes[1]
-      if mhfu.read_u16(base) ~= r[1] then return false end
-      if math.abs(rf(base + HV.RADIUS) - r[6]) > 0.01 then return false end
-      if mhfu.read_u16(base + n * REC) ~= SENTINEL then return false end
-    end
-  end
-  if tbl.grid and tbl.grid[1] then
-    local stt = mhfu.read_u32(row + F_STATES)
-    if stt == 0 then return false end
-    local blk = mhfu.read_u32(stt)
-    if blk == 0 or mhfu.read_u8(blk + 1) ~= tbl.grid[1][1][2] then return false end
-  end
-  for _, set in ipairs(attack_set_indices(tbl)) do
-    local spec = tbl.attack_sets[set]
-    local base = attack_set_base(tbl, set)
-    if not base then return false end
-    local cap = (port._atk_caps and port._atk_caps[set]) or spec.cap or #spec.volumes
-    local n = math.min(#spec.volumes, cap)
-    if n == 0 then
-      if mhfu.read_u16(base) ~= SENTINEL then return false end
-    else
-      local r = spec.volumes[1]
-      if mhfu.read_u16(base) ~= r[1] then return false end
-      if math.abs(rf(base + HV.RADIUS) - r[6]) > 0.01 then return false end
-      if mhfu.read_u16(base + n * REC) ~= SENTINEL then return false end
-    end
-  end
-  if tbl.attacks and tbl.attack_tables and tbl.attack_tables.records then
-    for _, a in ipairs(tbl.attacks) do
-      local rec = tbl.attack_tables.records + a.id * ATK_REC
-      if a.power and mhfu.read_u8(rec + ATK_POWER) ~= a.power then return false end
-      if a.element and mhfu.read_u8(rec + ATK_ELEMENT) ~= a.element then return false end
-      if a.volume and mhfu.read_u8(rec + ATK_VOLUME) ~= a.volume then return false end
+      if mhfu.read_u8(x) ~= bin:byte(i) then return false end
+      i = i + 1
     end
   end
   return true
 end
 
-local function hit_apply(port, tbl)
-  local row = species_row(port)
-  local wrote = {}
-  if tbl.volumes then
-    local base = mhfu.read_u32(row + F_SPHERES)
-    if base == 0 or not mhfu.mem_valid(base) then
-      return false, string.format("no set pointer at 0x%08X", row + F_SPHERES)
+local function put(at, bin)
+  local i, n = 1, #bin
+  while i <= n do
+    local x = at + i - 1
+    if x % 4 == 0 and i + 3 <= n then
+      mhfu.write_u32(x, word(bin, i)); i = i + 4
+    else
+      mhfu.write_u8(x, bin:byte(i)); i = i + 1
     end
-    -- the cap is the original count, measured once per boot (P._once): after a library reload,
-    -- measuring again would count our shorter table and shrink the cap
-    local capkey = "hitcap:" .. tostring(port.species)
-    if not P._once[capkey] then
-      local n = 0
-      while n < MAX_RECORDS and mhfu.read_u16(base + n * REC) ~= SENTINEL do
-        n = n + 1
-      end
-      P._once[capkey] = n
-      log("[port:%s] host set 0x%08X holds %d record(s) — the in-place cap",
-          port.name, base, n)
-    end
-    port._hit_cap = P._once[capkey]
-    local n = #tbl.volumes
-    if n > port._hit_cap then
-      log("[port:%s] %d volume(s) but only %d fit in place — TRUNCATED",
-          port.name, n, port._hit_cap)
-      n = port._hit_cap
-    end
-    for i = 1, n do write_record(base + (i - 1) * REC, tbl.volumes[i]) end
-    write_sentinel(base + n * REC)
-    wrote[#wrote + 1] = string.format("%d volume(s) @0x%08X", n, base)
   end
-  if tbl.grid then
-    local stt = mhfu.read_u32(row + F_STATES)
-    if stt == 0 or not mhfu.mem_valid(stt) then
-      return false, string.format("no state table at 0x%08X", row + F_STATES)
-    end
-    -- the state count is stored nowhere: the pointer table sits right after
-    -- the last block it points at, so it is (table - first_block) / 0x48
-    local b0 = mhfu.read_u32(stt)
-    local have = (stt - b0) // GRID_BLOCK
-    if have < 1 or have > 8 then
-      return false, string.format("state table 0x%08X -> 0x%08X: %d states?",
-                                  stt, b0, have)
-    end
-    local n = math.min(#tbl.grid, have)
-    if #tbl.grid ~= have then
-      log("[port:%s] grid: manifest has %d state(s), the species %d — writing %d",
-          port.name, #tbl.grid, have, n)
-    end
-    for s = 1, n do
-      local blk = mhfu.read_u32(stt + (s - 1) * 4)
-      for r = 1, GRID_ROWS do
-        local rowv = tbl.grid[s][r]
-        for c = 1, GRID_COLS do
-          mhfu.write_u8(blk + (r - 1) * GRID_COLS + (c - 1), rowv[c])
-        end
-      end
-    end
-    wrote[#wrote + 1] = string.format("%d grid state(s) @0x%08X", n, b0)
-  end
-  -- attack sets, each in place over the host set of that index. The live count is measured once
-  -- per set (P._once, as for the hurtbox cap) and must equal the exported `cap`, or nothing is
-  -- written: the address is static, and a wrong count means a different overlay is loaded.
-  local sets = attack_set_indices(tbl)
-  if #sets > 0 then
-    port._atk_caps = port._atk_caps or {}
-    for _, set in ipairs(sets) do
-      local spec = tbl.attack_sets[set]
-      local base, why = attack_set_base(tbl, set)
-      if not base then return false, "attack " .. why end
-      local capkey = string.format("atkcap:%d:%d", port.species, set)
-      if not P._once[capkey] then
-        local n = 0
-        while n < MAX_RECORDS and mhfu.read_u16(base + n * REC) ~= SENTINEL do
-          n = n + 1
-        end
-        if spec.cap and n ~= spec.cap then
-          return false, string.format(
-            "attack set %d @0x%08X holds %d record(s), the export expected %d — "
-            .. "not the table the export was built against; NOT written",
-            set, base, n, spec.cap)
-        end
-        P._once[capkey] = n
-        log("[port:%s] attack set %d @0x%08X holds %d record(s) — the in-place cap",
-            port.name, set, base, n)
-      end
-      port._atk_caps[set] = P._once[capkey]
-    end
-    local n_sets, n_vols = 0, 0
-    for _, set in ipairs(sets) do
-      local spec = tbl.attack_sets[set]
-      local base = attack_set_base(tbl, set)
-      local cap = port._atk_caps[set]
-      local n = #spec.volumes
-      if n > cap then
-        log("[port:%s] attack set %d: %d volume(s) but only %d fit in place — "
-            .. "TRUNCATED", port.name, set, n, cap)
-        n = cap
-      end
-      for i = 1, n do write_record(base + (i - 1) * REC, spec.volumes[i]) end
-      write_sentinel(base + n * REC)
-      n_sets, n_vols = n_sets + 1, n_vols + n
-    end
-    wrote[#wrote + 1] = string.format("%d attack set(s)/%d volume(s) via 0x%08X",
-                                      n_sets, n_vols, tbl.attack_tables.volumes)
-  end
-  if tbl.attacks and #tbl.attacks > 0 then
-    local at = tbl.attack_tables
-    if not at or not at.records then
-      return false, "attacks but no attack_tables.records in the export"
-    end
-    local n = 0
-    for _, a in ipairs(tbl.attacks) do
-      if at.n_records and a.id >= at.n_records then
-        log("[port:%s] attack record %d but the host has %d — skipped",
-            port.name, a.id, at.n_records)
-      else
-        local rec = at.records + a.id * ATK_REC
-        if a.power   then mhfu.write_u8(rec + ATK_POWER,   a.power)   end
-        if a.element then mhfu.write_u8(rec + ATK_ELEMENT, a.element) end
-        if a.volume  then mhfu.write_u8(rec + ATK_VOLUME,  a.volume)  end
-        n = n + 1
-      end
-    end
-    wrote[#wrote + 1] = string.format("%d attack record(s) @0x%08X", n, at.records)
-  end
-  return true, table.concat(wrote, ", ")
 end
 
---- Called from the tick for a live, in-area port. Applies on the first
---- opportunity, on a new export id and whenever the live bytes stop matching.
+local function live(at, n)
+  local out = {}
+  for i = 0, n - 1 do out[#out + 1] = string.format("%02X", mhfu.read_u8(at + i)) end
+  return table.concat(out)
+end
+
+--- Register a port's hit tables: `tbl` = { species, id, notes, writes = {{ what, at,
+--- guard = {{at, hex}, ...}, data = {hex, ...} }, ...} }. Keyed by PORT name so the data module
+--- and the brain module can load in either order; the tick joins them.
+function P.hit(name, tbl)
+  if not tbl.writes then
+    log("[port:%s] hit tables ignored: an export without `writes`, from an older studio; "
+        .. "re-export it", name)
+    return
+  end
+  local ws, size = {}, 0
+  for i, w in ipairs(tbl.writes) do
+    local guards = {}
+    for _, g in ipairs(w.guard or {}) do guards[#guards + 1] = { at = g[1], bin = unhex(g[2]) } end
+    ws[i] = { what = w.what, at = w.at, bin = unhex(table.concat(w.data)), guards = guards }
+    size = size + #ws[i].bin
+  end
+  tbl._w = ws
+  P._hit[name] = tbl            -- a new id applies on the next tick (hit_tick)
+  log("[port:%s] hit tables registered: %d write(s), %d byte(s), id %s", name, #ws, size,
+      tostring(tbl.id))
+  for _, note in ipairs(tbl.notes or {}) do log("[port:%s] hit tables: %s", name, note) end
+end
+
+--- The first guard that does not hold, with what it reads.
+local function failing(ws)
+  for _, w in ipairs(ws) do
+    for _, g in ipairs(w.guards) do
+      if not holds(g.at, g.bin) then
+        return string.format("%s: 0x%08X reads %s, the export expected %s", w.what, g.at,
+                             live(g.at, #g.bin), hex(g.bin))
+      end
+    end
+  end
+end
+
+--- Called from the tick for a live, in-area port. Applies on the first opportunity, on a new
+--- export id and whenever the live bytes stop matching; all or nothing.
 local function hit_tick(port)
   local tbl = P._hit[port.name]
   if not tbl then return end
-  if port._hit_id == tbl.id and hit_intact(port, tbl) then return end
-  -- _hit_id is what is in place (nil after a failed apply, so it retries); _hit_last names
-  -- what got in last, for the log
+  local intact = true
+  for _, w in ipairs(tbl._w) do
+    if not holds(w.at, w.bin) then intact = false; break end
+  end
+  if intact and port._hit_id == tbl.id then return end
+  if tbl.species ~= port.species and not port._hit_species_warned then
+    port._hit_species_warned = true
+    log("[port:%s] hit tables are for species %s, the port runs as %s", port.name,
+        tostring(tbl.species), tostring(port.species))
+  end
+  if not intact then
+    local why = failing(tbl._w)
+    if why then
+      port._hit_id = nil
+      if (port._hit_fail or 0) % 20 == 0 then
+        log("[port:%s] hit tables NOT written: %s (not the table the export was built "
+            .. "against: another overlay, or a relocated one)", port.name, why)
+      end
+      port._hit_fail = (port._hit_fail or 0) + 1
+      return
+    end
+    for _, w in ipairs(tbl._w) do put(w.at, w.bin) end
+  end
+  -- _hit_id is what is in place; _hit_last names what got in last, for the log
   local id = tostring(tbl.id)
   local why = port._hit_last == nil and "first contact"
            or (port._hit_last == id and "live table changed under us" or "new export")
-  local ok, what = hit_apply(port, tbl)
-  if ok then
-    port._hit_id, port._hit_last = tbl.id, id
-    log("[port:%s] HIT TABLES APPLIED (%s): %s  id=%s", port.name, why, what, id)
-  else
-    port._hit_id = nil
-    if (port._hit_fail or 0) % 20 == 0 then
-      log("[port:%s] hit tables NOT applied: %s", port.name, tostring(what))
-    end
-    port._hit_fail = (port._hit_fail or 0) + 1
-  end
+  port._hit_id, port._hit_last, port._hit_fail = tbl.id, id, 0
+  local size = 0
+  for _, w in ipairs(tbl._w) do size = size + #w.bin end
+  log("[port:%s] HIT TABLES APPLIED (%s%s): %d write(s), %d byte(s)  id=%s", port.name, why,
+      intact and ", already in place" or "", #tbl._w, size, id)
 end
 
 -- ------------------------------------------------------------- events

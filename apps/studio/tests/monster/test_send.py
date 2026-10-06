@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """Send to game: the hit tables as they are now, onto a memory stick in tmp_path."""
 
+import struct
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,11 @@ def ws(
     return w
 
 
+def f32(v: float) -> str:
+    """`v` as the module's hex spells it."""
+    return struct.pack("<f", v).hex().upper()
+
+
 def radius(ws: MonsterWorkspace, r: float) -> None:
     assert ws.doc is not None
     ws.doc.edit(lambda m: setattr(m.hurtboxes[0], "radius", r))
@@ -59,11 +65,11 @@ def test_send_is_the_document_now(ws: MonsterWorkspace, mods: Path) -> None:
     radius(ws, 77.0)
     ws.save()
     ws.send()
-    assert "77.0," in (mods / "t_hit.lua").read_text(), "not the earlier export"
+    assert f32(77.0) in (mods / "t_hit.lua").read_text(), "not the earlier export"
     radius(ws, 55.0)
     ws.send()
     text = (mods / "t_hit.lua").read_text()
-    assert "55.0," in text and "t.toml, unsaved edits" in text and ws.doc.dirty
+    assert f32(55.0) in text and "t.toml, unsaved edits" in text and ws.doc.dirty
 
 
 def test_blockers(
