@@ -189,6 +189,7 @@ EM75_AI_STEP = { eu = 0x09D35328, type = "fn", doc = "em75 slot-29 AI step: REAC
 EM75_ACTION_TICK = { eu = 0x09D36A08, type = "fn", doc = "em75 per-frame switch on MAIN_STATE then SUB_STATE; copies the pair to ENTITY.TICK_MAIN and TICK_SUB first, as every species' tick does" }
 EM75_CHARGE = { eu = 0x09D28738, type = "fn", doc = "em75 (1,4) handler: phase 3 enters (0,6) mode 1 when EM75_COLLIDED, else hands off to (0,3) once BUDGET_STEP spends RUN_BUDGET" }
 EM75_STUCK = { eu = 0x09D26940, type = "fn", doc = "em75 (0,6), head stuck in a wall: executor a1 20 with ACTION_BUDGET 180, then a1 21 (pull out) until the clip ends, then (0,1)" }
+MONSTER_AI_STEP_CALL = { eu = 0x09AC6638, type = "code", doc = "MONSTER_STEP loading the species AI step (vt+0x7C) to call it, $s2 the monster: POSITION, WALL_SECTORS and the clip are the frame before's" }
 
 # --- big-monster intel: effects, attacks, engine interface ---
 EFFECT_SPAWN_AT = { eu = 0x09ACB610, type = "fn", doc = "effect spawn at a bone (entity, id, bone base, bone offset); wraps EFFECT_SPAWN" }
