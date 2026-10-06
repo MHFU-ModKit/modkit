@@ -52,8 +52,9 @@ the host's clip on a port that rides the host's skeleton.
 | `brute_tigrex.toml` | Brute Tigrex (MHP3rd model 5248) | Tigrex, replacing the Giadrome |
 | `zinogre.toml` | Zinogre (MHP3rd model 5339) | Tigrex, replacing the Giadrome |
 
-Both build and animate in the game with the Tigrex's AI; their moves and hitboxes are work in
-progress in the studio.
+Both build and animate in the game with the Tigrex's AI. Every clip of both plays in the game,
+on the frames the build gives it in every body part, the Zinogre's in entries 100 and up
+included (`mhfu clips sweep`). Their moves and hitboxes are work in progress in the studio.
 
 ## Licence
 

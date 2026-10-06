@@ -324,6 +324,7 @@ GROUND_Y = { offset = 0x2CC, type = "f32", doc = "floor height GROUND_QUERY foun
 FLINCH = { offset = 0x580, type = "s16[8]", doc = "big monsters: flinch counters REACTION_CHECK counts down by part damage; at 0 the part flinches (code 12)" }
 STEER = { offset = 0x637, type = "u8", doc = "big monsters: set by a charge's translator; while set BUDGET_STEP turns with TURN_TOWARD" }
 RUN_BUDGET = { offset = 0x76C, type = "f32", doc = "big monsters: distance a run move may still travel; BUDGET_STEP subtracts the clip's root motion, the translator seeds it" }
+CLIP_BLOCKS = { offset = 0x080, type = "CLIP_BLOCK[3]", doc = "big monsters: one clip player per body part (Bone.stream); CLIP and CLIP_FLAGS are part 0's" }
 
 [struct.MONSTER_VTABLE]
 doc = "a species entity vtable (ENTITY.VTABLE): slot k at +8 + 4k, after the offset-to-top and typeinfo pair"
@@ -346,6 +347,17 @@ doc = "one entry of an entity's live joint array (ENTITY.JOINTS)"
 size = 0x250
 [struct.JOINT.fields]
 POSITION = { offset = 0x100, type = "vec3", doc = "world position of this bone" }
+
+[struct.CLIP_BLOCK]
+doc = "one body part's clip player (ENTITY.CLIP_BLOCKS): which clip the part plays and how far in"
+size = 0x40
+[struct.CLIP_BLOCK.fields]
+PHASE = { offset = 0x10, type = "f32", doc = "playback cursor in clip frames; CLIP_CURSOR_REACHED tests it" }
+SPEED = { offset = 0x14, type = "f32", doc = "frames the cursor advances per game frame, set by the action dispatch, not the clip" }
+LOOP_START = { offset = 0x18, type = "f32", doc = "frame a looping clip restarts at" }
+END = { offset = 0x1C, type = "f32", doc = "the clip's last keyframe: its length in frames" }
+NODE = { offset = 0x38, type = "ptr", doc = "the clip: ENTITY.ACTION_TABLE (the animation pack) plus the slot table's offset" }
+FLAGS = { offset = 0x3C, type = "u16", doc = "bit 0 playing, cleared when the clip ends; bit 1 loop" }
 
 [struct.COLLISION_WORLD]
 doc = "collision world COLLISION_WORLD_PTR points at"

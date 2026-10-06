@@ -350,3 +350,32 @@ class BigMonster(Entity):
     def drawn(self) -> bool:
         """VISIBILITY_GATE draws it: it is in the player's section and has DRAW_GATE."""
         return not self.render_flags & SKIP_DRAW
+
+
+# --- clips ---
+
+STREAM_SLOTS = 100
+"""Slots per animation stream: ENTITY.ANIM_INPUT value v plays slot v % STREAM_SLOTS of stream
+(v - ACTION_INPUT_BASE) // STREAM_SLOTS of the pack at ENTITY.ACTION_TABLE."""
+
+
+def entry_clip(entry: int, part: int) -> tuple[int, int]:
+    """(stream, slot) body part `part` plays for executor entry `entry`."""
+    return divmod(entry + part * ACTION_INPUT_STEP, STREAM_SLOTS)
+
+
+class ClipBlock(View):
+    """One body part's clip player, at ENTITY.CLIP_BLOCKS + part * CLIP_BLOCK.SIZE."""
+
+    struct = a.CLIP_BLOCK
+    phase = f32(a.CLIP_BLOCK.PHASE)
+    speed = f32(a.CLIP_BLOCK.SPEED)
+    loop_start = f32(a.CLIP_BLOCK.LOOP_START)
+    end = f32(a.CLIP_BLOCK.END)
+    node = ptr(a.CLIP_BLOCK.NODE)
+    flags = u16(a.CLIP_BLOCK.FLAGS)
+
+    @classmethod
+    def of(cls, mem: Memory, entity: int, part: int) -> ClipBlock:
+        assert a.CLIP_BLOCK.size
+        return cls(mem, entity + a.ENTITY.CLIP_BLOCKS + part * a.CLIP_BLOCK.size)
