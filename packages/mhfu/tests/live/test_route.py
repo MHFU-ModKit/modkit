@@ -191,3 +191,68 @@ def test_goto_this_stage_teleports(s, fake, monkeypatch):
     monkeypatch.setattr(route, "change_area", lambda *a, **kw: pytest.fail("changed area"))
     plan = route.Map((1,), {1: [gate()]})
     assert route.goto(s, Point("p", 1, (1.0, 2.0, 3.0)), plan) == (1.0, 2.0, 3.0)
+
+
+def quad(x, z0, z1, y0, y1, normal_x=-1.0, material=0):
+    """Two triangles of a wall in the plane x = `x`, its normal along x."""
+    a, b, c, d = (x, y0, z0), (x, y0, z1), (x, y1, z1), (x, y1, z0)
+    n = (normal_x, 0.0, 0.0)
+    return [
+        Triangle(0, material, 0, a, b, c, n, -normal_x * x, 0),
+        Triangle(0, material, 0, a, c, d, n, -normal_x * x, 0),
+    ]
+
+
+def cliff(height):
+    """Floor 0 west of x = 2000, `height` east of it."""
+    return Ground(lambda x, z: [0.0] if x < 2000 else [height])
+
+
+def test_climbable_wall_is_a_climb():
+    walls = quad(2000.0, 900.0, 1100.0, -50.0, 900.0, material=10)
+    (face,) = route.faces(walls)
+    assert face.normal == pytest.approx((-1.0, 0.0)) and face.middle == pytest.approx((2000, 1000))
+    (c,) = route.wall_climbs(cliff(900.0), walls)
+    assert c.foot == pytest.approx((1900.0, 0.0, 1000.0)) and c.heading == pytest.approx(90)
+    assert c.top == pytest.approx((2150.0, 900.0, 1000.0)) and c.height == 900
+    assert route.wall_climbs(cliff(900.0), quad(2000.0, 900.0, 1100.0, -50.0, 900.0)) == []
+
+
+def test_ledge_is_a_climb_and_a_tall_wall_is_not():
+    found = route.ledges(cliff(250.0), quad(2000.0, 0.0, 600.0, 0.0, 250.0))
+    assert found and all(c.heading == pytest.approx(90) for c in found)
+    assert {round(c.top[1]) for c in found} == {250}
+    assert route.ledges(cliff(900.0), quad(2000.0, 0.0, 600.0, 0.0, 900.0)) == []
+    assert route.ledges(cliff(60.0), quad(2000.0, 0.0, 600.0, 0.0, 60.0)) == []  # walked
+
+
+def test_terrain_climbs_the_cliff():
+    walls = quad(2000.0, 0.0, 4000.0, -50.0, 900.0)
+    walls += quad(2000.0, 900.0, 1100.0, -50.0, 900.0, material=10)
+    grid = route.terrain(cliff(900.0), walls)
+    steps = route.plan_walk(grid, (1000.0, 0.0, 1000.0), Point("top", 1, (3000.0, 900.0, 1000.0)))
+    (c,) = [st for st in steps if isinstance(st, route.Climb)]
+    assert c.heading == pytest.approx(90) and steps[-1] == (3000.0, 900.0, 1000.0)
+
+
+def test_flood_reaches_exits_and_the_goal():
+    low, high = gate(target=2, trigger=(500.0, -100.0, 500.0)), gate(target=3)
+    grid = route.NavGrid(cliff(900.0))
+    reach, found = grid.flood((1000.0, 0.0, 1000.0), [low, high], lambda x, y, z: x < 300)
+    assert set(reach) == {low} and found is not None  # high is up the cliff
+    assert reach[low] == pytest.approx(math.dist((1050, 1050), (750, 750)), abs=200)
+
+
+def test_route_takes_the_climb_not_the_fewest_exits():
+    """1 -> 2 is up an unclimbable cliff; 1 -> 3 -> 2 walks round. The route goes round."""
+    up = gate(1, 2, trigger=(3500.0, 800.0, 2000.0))
+    via = gate(1, 3, trigger=(500.0, -100.0, 500.0))
+    on = gate(3, 2, trigger=(500.0, -100.0, 500.0))
+    on = route.Gate(3, 2, on.trigger, on.radius, on.height, (3000.0, 900.0, 3000.0), 0, RECORD)
+    plan = route.Map((1, 2, 3), {1: [up, via], 2: [], 3: [on]}, game=None)
+    plan._grids = {(1, ()): route.NavGrid(cliff(900.0)), (2, ()): route.NavGrid(cliff(900.0))}
+    plan._grids[(3, ())] = route.NavGrid(Ground())
+    goal = Point("g", 2, (3500.0, 900.0, 3500.0))
+    assert plan.route(1, (1000.0, 0.0, 1000.0), goal) == [via, on]
+    with pytest.raises(route.NoPath):
+        plan.route(1, (1000.0, 0.0, 1000.0), goal, banned=[via])

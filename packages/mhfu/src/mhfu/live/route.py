@@ -18,10 +18,11 @@ that stop: the area change copies them at once and the next stage's overlay repl
 from __future__ import annotations
 
 import heapq
+import itertools
 import math
 from collections import deque
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .. import addresses as a
 from .. import points
@@ -69,7 +70,25 @@ LEG = 1500.0
 REPLANS = 4
 """Walks re-planned around a spot that blocked the hunter, per stage."""
 CLIMB_COST = 300.0
-"""What a climb counts as in walked units."""
+"""What a climb counts as in walked units, besides its height."""
+CLIMB_MATERIALS = (9, 10)
+"""Collision materials of a climbable wall: 10 roots and vines, 9 rock (`file-formats`)."""
+VERTICAL = 0.34
+"""A climbable triangle's |normal y| is under this; material 9 is also flat bulk floor."""
+FOOT = 100.0
+"""How far in front of a climbable wall its foot is."""
+TOP = 150.0
+"""How far behind a climbable wall's top edge the hunter stands after it."""
+LEDGE = (120.0, 350.0)
+"""A step this high is climbed onto (section 1's two: 200 and 300); lower is walked."""
+LEDGE_SLACK = 100.0
+"""A ledge's floor is this close to its wall's foot and top."""
+LEDGE_EVERY = 300.0
+"""Spacing of the climbs found along one ledge."""
+CLIMB_SPEED = 60.0
+"""Units a second a climb gains, a little under the 75 measured on a section-2 root."""
+CHANGE_COST = 1000.0
+"""What an area change counts as in walked units: the load."""
 CLIMB_FAN = (0.0, -12.0, 12.0, -25.0, 25.0)
 """Headings tried round a climb's own: whether circle grabs is sensitive to the angle."""
 CLIMB_LIFT = 40.0
@@ -168,6 +187,7 @@ class Map:
     stages: tuple[int, ...]
     gates: dict[int, list[Gate]]
     game: Extracted | None = None
+    _grids: dict[tuple[int, tuple[Point, ...]], NavGrid] = field(default_factory=dict)
 
     @classmethod
     def read(cls, game: Extracted, stages: Iterable[int]) -> Map:
@@ -199,6 +219,68 @@ class Map:
             out.append(step)
             goal = step.stage
         return out[::-1]
+
+    def grid(self, stage: int, climbs: Sequence[Point] = ()) -> NavGrid:
+        """The stage's walk planner from its file: floor, walls, its climbable walls and the
+        climb points set on it (or on its twin); read once."""
+        key = (stage, tuple(climbs))
+        if key not in self._grids:
+            if self.game is None:
+                raise NoPath("planning across stages needs the extracted game")
+            floor = Floor.from_file(self.game, stage)
+            try:
+                walls = list(Floor.from_file(self.game, stage, WALL_CHUNK).triangles())
+            except NotLoaded:
+                walls = []
+            self._grids[key] = terrain(floor, walls, [c for c in climbs if self._on(c, stage)])
+        return self._grids[key]
+
+    def _on(self, point: Point, stage: int) -> bool:
+        try:
+            return self.local(point.stage) == stage
+        except LookupError:
+            return False
+
+    def route(
+        self,
+        stage: int,
+        at: Vec3,
+        goal: Point,
+        climbs: Sequence[Point] = (),
+        banned: Iterable[Gate] = (),
+    ) -> list[Gate]:
+        """The exits to take from `at` on `stage` to `goal`, the walk and climbs shortest:
+        Dijkstra over (stage, where the hunter enters it), each stage flooded from its file.
+        [] when the goal is on `stage` and walkable; NoPath when no way leads there."""
+        target = self.local(goal.stage)
+        gx, gy, gz = goal.at
+
+        def done(x: float, y: float, z: float) -> bool:
+            return math.hypot(x - gx, z - gz) <= 2 * STEP and abs(y - gy) < LEVEL
+
+        skip = set(banned)
+        tie = itertools.count()
+        todo: list[tuple[float, int, int | None, Vec3, tuple[Gate, ...]]] = [
+            (0.0, next(tie), stage, at, ())
+        ]
+        seen: set[tuple[int, int, int]] = set()
+        while todo:
+            cost, _, st, pos, path = heapq.heappop(todo)
+            if st is None:
+                return list(path)
+            key = (st, int(pos[0] // STEP), int(pos[2] // STEP))
+            if key in seen:
+                continue
+            seen.add(key)
+            gates = [g for g in self.gates.get(st, []) if g not in skip and g.target in self.stages]
+            reach, here = self.grid(st, climbs).flood(pos, gates, done if st == target else None)
+            if here is not None:
+                heapq.heappush(todo, (cost + here, next(tie), None, pos, path))
+            for g, walked in reach.items():
+                heapq.heappush(
+                    todo, (cost + walked + CHANGE_COST, next(tie), g.target, g.dest, (*path, g))
+                )
+        raise NoPath(f"no walk or climb leads from st{stage:03d} to {goal.name} (st{target:03d})")
 
     def local(self, stage: int) -> int:
         """`stage` on this map: itself, or the stage of the same frame (`points.frame`: the
@@ -293,16 +375,122 @@ Node = tuple[int, int, int]
 
 @dataclass(frozen=True)
 class Climb:
-    """A ledge the planner may take: walk to `foot`, climb facing `heading` (degrees), and
-    stand on the floor at `top`."""
+    """A ledge or a climbable wall the planner may take: walk to `foot`, climb facing
+    `heading` (degrees), and stand on the floor at `top`."""
 
     foot: Vec3
     heading: float
     top: Vec3
 
+    @property
+    def height(self) -> float:
+        return self.top[1] - self.foot[1]
+
 
 Step = Vec3 | Climb
 """A planned walk: floor points to walk to in turn, and the climbs between them."""
+
+
+@dataclass(frozen=True)
+class Face:
+    """One flat climbable wall: its outward normal in x and z (the side the hunter climbs
+    from), its middle at the wall, its width along the wall and its height span."""
+
+    normal: XZ
+    middle: XZ
+    width: float
+    span: tuple[float, float]
+
+
+def faces(walls: Iterable[Triangle]) -> list[Face]:
+    """The climbable walls among `walls`: material 9 or 10 on near-vertical triangles, those of
+    one plane and touching joined into one face."""
+    tris = [t for t in walls if t.material in CLIMB_MATERIALS and abs(t.normal[1]) < VERTICAL]
+    groups: list[list[Triangle]] = []
+    for t in tris:
+        home = next((g for g in groups if any(_same_face(t, u) for u in g)), None)
+        if home is None:
+            groups.append([t])
+        else:
+            home.append(t)
+    out = []
+    for g in groups:
+        nx = sum(t.normal[0] for t in g)
+        nz = sum(t.normal[2] for t in g)
+        n = math.hypot(nx, nz)
+        normal = (nx / n, nz / n)
+        along = (normal[1], -normal[0])
+        verts = [v for t in g for v in (t.v0, t.v1, t.v2)]
+        ts = [v[0] * along[0] + v[2] * along[1] for v in verts]
+        cx, cz = (sum(v[0] for v in verts) / len(verts), sum(v[2] for v in verts) / len(verts))
+        mid = (min(ts) + max(ts)) / 2 - (cx * along[0] + cz * along[1])
+        middle = (cx + mid * along[0], cz + mid * along[1])
+        span = (min(v[1] for v in verts), max(v[1] for v in verts))
+        out.append(Face(normal, middle, max(ts) - min(ts), span))
+    return out
+
+
+def ledges(floor: Floor, walls: Iterable[Triangle], every: float = LEDGE_EVERY) -> list[Climb]:
+    """The steps a hunter climbs onto (`navigation.climb`): an unmarked near-vertical wall
+    between floor in front at its foot and floor behind at its top, LEDGE above it. A climb
+    every `every` units along each wall triangle, square on to it."""
+    out: dict[tuple[int, int, int, int], Climb] = {}
+    lo_rise, hi_rise = LEDGE
+    for t in walls:
+        if abs(t.normal[1]) >= VERTICAL or t.material in CLIMB_MATERIALS:
+            continue
+        ys = (t.v0[1], t.v1[1], t.v2[1])
+        bottom, top = min(ys), max(ys)
+        if top - bottom > hi_rise + LEVEL:
+            continue
+        n = math.hypot(t.normal[0], t.normal[2])
+        nx, nz = t.normal[0] / n, t.normal[2] / n
+        xs = sorted(((v[0] * nz - v[2] * nx), v) for v in (t.v0, t.v1, t.v2))
+        a, b = xs[0][1], xs[-1][1]
+        length = math.hypot(b[0] - a[0], b[2] - a[2])
+        k = max(1, int(length // every))
+        for i in range(k):
+            f = (i + 0.5) / k
+            px, pz = a[0] + (b[0] - a[0]) * f, a[2] + (b[2] - a[2]) * f
+            for sx, sz in ((nx, nz), (-nx, -nz)):
+                fx, fz, tx, tz = px + FOOT * sx, pz + FOOT * sz, px - TOP * sx, pz - TOP * sz
+                feet = [y for y in floor.heights(fx, fz) if abs(y - bottom) < LEDGE_SLACK]
+                tops = [y for y in floor.heights(tx, tz) if abs(y - top) < LEDGE_SLACK]
+                if feet and tops and lo_rise < max(tops) - min(feet) <= hi_rise:
+                    heading = math.degrees(math.atan2(-sx, -sz))
+                    key = (int(fx // STEP), int(fz // STEP), int(tx // STEP), int(tz // STEP))
+                    out.setdefault(key, Climb((fx, min(feet), fz), heading, (tx, max(tops), tz)))
+    return list(out.values())
+
+
+def _same_face(t: Triangle, u: Triangle) -> bool:
+    """Coplanar (normals within ~10 degrees, the planes within 30 units) and touching."""
+    dot = t.normal[0] * u.normal[0] + t.normal[2] * u.normal[2]
+    if dot < 0.985:
+        return False
+    if abs(sum(t.normal[k] * u.v0[k] for k in range(3)) + t.d) > 30:
+        return False
+    return any(math.dist(a, b) < 60 for a in (t.v0, t.v1, t.v2) for b in (u.v0, u.v1, u.v2))
+
+
+def wall_climbs(floor: Floor, walls: Iterable[Triangle]) -> list[Climb]:
+    """A climb per climbable face whose foot and top have floor: the foot FOOT in front at the
+    lowest level the wall rises above, the top TOP behind at the highest level it reaches."""
+    out = []
+    for f in faces(walls):
+        (nx, nz), (mx, mz), (lo, hi) = f.normal, f.middle, f.span
+        fx, fz = mx + FOOT * nx, mz + FOOT * nz
+        feet = [y for y in floor.heights(fx, fz) if lo - LEVEL * 2 <= y <= hi - LEVEL]
+        if not feet:
+            continue
+        foot = min(feet)
+        tx, tz = mx - TOP * nx, mz - TOP * nz
+        tops = [y for y in floor.heights(tx, tz) if foot + LEVEL < y <= hi + LEVEL * 2]
+        if not tops:
+            continue
+        heading = math.degrees(math.atan2(-nx, -nz))
+        out.append(Climb((fx, foot, fz), heading, (tx, max(tops), tz)))
+    return out
 
 
 class NavGrid:
@@ -332,7 +520,7 @@ class NavGrid:
         for t in walls:
             if abs(t.normal[1]) < STEEP:
                 self._wall(t)
-        self.climbs: dict[Node, tuple[Node, Climb]] = {}
+        self.climbs: dict[Node, list[tuple[Node, Climb]]] = {}
         self._raw: dict[tuple[int, int], list[float]] = {}
         self._levels: dict[tuple[int, int], list[float]] = {}
 
@@ -405,11 +593,23 @@ class NavGrid:
         x, z = self.xz(n[0], n[1])
         return x, self.height(n), z
 
+    def add_edge(self, climb: Climb) -> bool:
+        """Join the samples at the climb's foot and top; False where either has no floor."""
+        start, top = self.node(*climb.foot, reach=2), self.node(*climb.top, reach=2)
+        if start is None or top is None:
+            return False
+        self.climbs.setdefault(start, []).append((top, climb))
+        return True
+
+    def drop(self, climb: Climb) -> None:
+        """Forget a climb that did not lift the hunter."""
+        for k, edges in self.climbs.items():
+            self.climbs[k] = [e for e in edges if e[1] != climb]
+
     def add_climb(self, foot: Vec3, heading: float, reach: float = 600.0) -> Climb | None:
         """Join the foot of a ledge to the first floor higher up along `heading` degrees;
         None where either end has no walkable sample."""
-        start = self.node(*foot, reach=2)
-        if start is None:
+        if self.node(*foot, reach=2) is None:
             return None
         h, fy = math.radians(heading), foot[1]
         r = self.step / 2
@@ -418,18 +618,17 @@ class NavGrid:
             ix, iz = int(x // self.step), int(z // self.step)
             ys = [y for y in self.levels(ix, iz) if y - fy > LEVEL / 2]
             if ys:
-                top = (ix, iz, self.levels(ix, iz).index(min(ys)))
-                climb = Climb(foot, heading, self.point(top))
-                self.climbs[start] = (top, climb)
-                return climb
+                tx, tz = self.xz(ix, iz)
+                climb = Climb(foot, heading, (tx, min(ys), tz))
+                return climb if self.add_edge(climb) else None
             r += self.step / 2
         return None
 
     def neighbours(self, n: Node) -> Iterable[tuple[Node, float]]:
         ix, iz, k = n
         y = self.height(n)
-        if n in self.climbs:
-            yield self.climbs[n][0], CLIMB_COST
+        for top, climb in self.climbs.get(n, []):
+            yield top, CLIMB_COST + climb.height
         for dx in (-1, 0, 1):
             for dz in (-1, 0, 1):
                 if not dx and not dz:
@@ -446,6 +645,43 @@ class NavGrid:
                 j = min(range(len(ys)), key=lambda i: abs(ys[i] - y))
                 if ys[j] - y <= self.rise * run:
                     yield (jx, jz, j), run
+
+    def flood(
+        self,
+        start: Vec3,
+        gates: Sequence[Gate],
+        goal: Callable[[float, float, float], bool] | None = None,
+    ) -> tuple[dict[Gate, float], float | None]:
+        """The walked cost from `start` into each of `gates` (a trigger ends a walk into it)
+        and to the first sample `goal` accepts; a gate or goal out of reach is left out."""
+        first = self.node(*start, reach=2)
+        if first is None:
+            return {}, None
+        cost = {first: 0.0}
+        todo = [(0.0, first)]
+        reached: dict[Gate, float] = {}
+        found: float | None = None
+        expanded = 0
+        while todo and expanded < SEARCH:
+            c, n = heapq.heappop(todo)
+            if c > cost[n]:
+                continue
+            expanded += 1
+            x, y, z = self.point(n)
+            inside = [g for g in gates if g.holds(x, y, z)]
+            for g in inside:
+                reached.setdefault(g, c)
+            if found is None and goal is not None and goal(x, y, z):
+                found = c
+            if len(reached) == len(gates) and (goal is None or found is not None):
+                break
+            if inside and n != first:
+                continue
+            for m, run in self.neighbours(n):
+                if c + run < cost.get(m, math.inf):
+                    cost[m] = c + run
+                    heapq.heappush(todo, (c + run, m))
+        return reached, found
 
     def search(
         self, start: Vec3, done: Callable[[float, float, float], bool], toward: XZ
@@ -521,11 +757,11 @@ class NavGrid:
         runs: list[list[Vec3]] = [[start]]
         out: list[Step] = []
         for a_, b_ in zip(nodes, nodes[1:], strict=False):
-            edge = self.climbs.get(a_)
-            if edge is not None and edge[0] == b_:
-                runs[-1].append(edge[1].foot)
+            edge = next((c for top, c in self.climbs.get(a_, []) if top == b_), None)
+            if edge is not None:
+                runs[-1].append(edge.foot)
                 out += self.legs(runs[-1])[1:]
-                out.append(edge[1])
+                out.append(edge)
                 runs.append([self.point(b_)])
             else:
                 runs[-1].append(self.point(b_))
@@ -552,6 +788,23 @@ def collision(s: Session) -> tuple[Floor, list[Triangle]]:
     return floor, walls
 
 
+def terrain(
+    floor: Floor,
+    walls: Sequence[Triangle],
+    climbs: Iterable[Point] = (),
+    avoid: Iterable[Gate] = (),
+) -> NavGrid:
+    """A stage's walk planner: its floor and walls, its climbable walls and ledges as climbs,
+    and the hand-set climb points."""
+    grid = NavGrid(floor, walls, avoid=avoid)
+    for c in (*wall_climbs(floor, walls), *ledges(floor, walls)):
+        grid.add_edge(c)
+    for p in climbs:
+        if p.heading is not None:
+            grid.add_climb(p.at, p.heading)
+    return grid
+
+
 def plan_walk(grid: NavGrid, start: Vec3, goal: Point | Gate) -> list[Step]:
     """The steps from `start` to `goal`: a point (to within two samples, then onto it) or into
     an exit's trigger."""
@@ -570,9 +823,11 @@ def plan_walk(grid: NavGrid, start: Vec3, goal: Point | Gate) -> list[Step]:
 
 
 def climb(s: Session, step: Climb, fan: Sequence[float] = CLIMB_FAN) -> bool:
-    """Climb a ledge from its foot, turning the heading a little each failed try."""
+    """Climb from the foot, held as long as the height takes, turning the heading a little each
+    failed try."""
+    hold = 5.0 + max(step.height, 0.0) / CLIMB_SPEED
     for turn in fan:
-        before, after = nav.climb(s, step.heading + turn)
+        before, after = nav.climb(s, step.heading + turn, hold=hold)
         if after.y - before.y >= CLIMB_LIFT:
             return True
     return False
@@ -596,10 +851,8 @@ def _walk_stage(
     start_area = s.game.area_index
     leaves = isinstance(goal, Gate)
     floor, walls = collision(s)
-    grid = NavGrid(floor, walls, avoid=[g for g in plan.gates.get(stage, []) if g != goal])
-    for c in climbs:
-        if plan.local(c.stage) == stage and c.heading is not None:
-            grid.add_climb(c.at, c.heading)
+    others = [g for g in plan.gates.get(stage, []) if g != goal]
+    grid = terrain(floor, walls, [c for c in climbs if plan._on(c, stage)], others)
 
     def left() -> bool:
         return not area.in_area(s) or s.game.area_index != start_area
@@ -614,7 +867,7 @@ def _walk_stage(
             if isinstance(run, Climb):
                 if not climb(s, run):
                     say(f"  no lift climbing at {_xz(run.foot)}")
-                    grid.climbs = {k: v for k, v in grid.climbs.items() if v[1] != run}
+                    grid.drop(run)
                     break
                 continue
             result = nav.walk_path(
@@ -681,14 +934,22 @@ def walk(
 ) -> nav.Walk:
     """Walk to `point`: exit to exit while it is on another stage, then to the point.
 
-    `climbs` are the ledges the planner may take (points of kind "climb"); an exit it cannot
-    reach is dropped and another way tried. A climb point as the goal is climbed on arrival.
+    The stages come from `Map.route` (each stage's file: floor, walls, climbable walls),
+    re-planned at every landing; `climbs` are the hand-set ledges the planner may take too
+    (points of kind "climb"). An exit the live walk cannot reach is dropped and another way
+    tried. A climb point as the goal is climbed on arrival.
     """
     say = log or (lambda _: None)
     goal = plan.local(point.stage)
     banned: set[Gate] = set()
     while (here := map_manager(s.mem).stage) != goal:
-        gate = plan.path(here, goal, banned)[0]
+        if plan.game is None:
+            gate = plan.path(here, goal, banned)[0]
+        else:
+            p = nav.pose(s)
+            route = plan.route(here, (p.x, p.y, p.z), point, climbs, banned)
+            say("route: " + " ".join(f"st{g.stage:03d}>st{g.target:03d}" for g in route))
+            gate = route[0]
         start = s.game.area_index
         say(f"st{here:03d} -> st{gate.target:03d}")
         try:
