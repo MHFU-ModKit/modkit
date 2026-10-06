@@ -299,3 +299,15 @@ def test_layout():
 
     assert layout("u16[3]").size == 6 and layout("vec3").size == 12
     assert layout("bytes") is None and layout("QUEST_TARGET[2]") is None
+
+
+def test_cli_engine_and_writes_specs():
+    from mhfu.cli import observe as cli
+
+    assert cli._engine(f"{OUT1:#x}@t0, ACT_SET") == {OUT1: "t0", a.ACT_SET: "a0"}
+    assert cli._writes("POSITION,YAW,0x27C,0x27E:1") == [
+        (a.ENTITY.POSITION, 12),
+        (a.ENTITY.YAW, 2),
+        (0x27C, 4),
+        (0x27E, 1),
+    ]
