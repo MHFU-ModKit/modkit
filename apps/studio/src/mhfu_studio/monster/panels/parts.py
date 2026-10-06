@@ -21,6 +21,7 @@ from mhfu_studio.monster.tools import HURT
 from mhfu_studio.monster.workspace import HOST, PORT
 from mhfu_studio.ui import findings, kit
 
+from .push import PushRow
 from .widgets import (
     NoScene,
     SendRow,
@@ -251,7 +252,9 @@ class PartsPanel(kit.Panel):
         lay.addWidget(grid)
 
         self.send = SendRow(ws, studio)
+        self.push = PushRow(ws, studio)
         lay.addWidget(self.send)
+        lay.addWidget(self.push)
         self.no_manifest = kit.label(
             "This scene has no manifest, so there is nothing to write parts into.", role="muted"
         )
@@ -481,6 +484,8 @@ class PartsPanel(kit.Panel):
         self._start(host, sess if has_doc else None)
         self.send.setVisible(has_doc)
         self.send.sync()
+        self.push.setVisible(has_doc)
+        self.push.sync()
         self.export.setEnabled(ws.exportable())
         self.no_manifest.setVisible(not has_doc)
         self.keep.setEnabled(port and ws.selected_volume is not None)

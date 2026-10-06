@@ -391,43 +391,37 @@ HIT_RELOAD = """
 local QUEST
 mhfu.on_quest_targets_building = function(fn) QUEST = fn end
 local P = require("mhfu_port")
-local HV = mhfu.addr.HIT_VOLUME
--- a host hurtbox set of 3 records and one attack set of 2, each sentinel-terminated
-local SET, VT, ASET = ENT + 0x4000, ENT + 0x5000, ENT + 0x6000
-local row = mhfu.addr.SPECIES_TABLE + 75 * mhfu.addr.SPECIES.STRIDE
-mhfu.write_u32(row + mhfu.addr.SPECIES.HURTBOX_SET, SET)
-mhfu.write_u32(VT, ASET)
-for i = 0, 2 do mhfu.write_u16(SET + i * HV.SIZE, 1) end
-mhfu.write_u16(SET + 3 * HV.SIZE, 0xFFFF)
-for i = 0, 1 do mhfu.write_u16(ASET + i * HV.SIZE, 1) end
-mhfu.write_u16(ASET + 2 * HV.SIZE, 0xFFFF)
+-- a table at SET whose pointer at PTR is the guard, as the studio's plan has them
+local SET, PTR = ENT + 0x4000, ENT + 0x5000
+mhfu.write_u32(PTR, SET)
 local zin = P.define{ name = "zinogre", species = 75 }
 zin.ent = ENT
--- a hot-reloaded <name>_hit.lua re-runs this; 4 volumes over a cap of 3 are truncated
-local function export(id, radius)
-  local v = { 2, 0, 0, 1, 0, radius, 0, 0, 0, 0, 0, 0 }
-  P.hit("zinogre", { species = 75, id = id, volumes = { v, v, v, v },
-                     attack_tables = { volumes = VT, n_sets = 1 },
-                     attack_sets = { [0] = { cap = 2, volumes = { v } } } })
+-- a hot-reloaded <name>_hit.lua re-runs this
+local function export(id, byte)
+  P.hit("zinogre", { species = 75, id = id, writes = {
+    { what = "hurtboxes", at = SET, guard = { { PTR, string.format("%02X%02X%02X%02X",
+        SET & 0xFF, SET >> 8 & 0xFF, SET >> 16 & 0xFF, SET >> 24) } },
+      data = { "0200 0000", string.format("%02X", byte) } } } })
 end
-local function radius() return mhfu.read_f32(SET + HV.RADIUS) end
+local function at() return mhfu.read_u8(SET + 4) end
 
-export("599b6933", 100.0); ticks(2)
-assert(count("APPLIED %(first contact%).*id=599b6933") == 1 and radius() == 100.0)
-export("73527c5b", 200.0); ticks(2)
-assert(count("APPLIED %(new export%).*id=73527c5b") == 1 and radius() == 200.0)
-export("73527c5b", 200.0); ticks(2)
+export("599b6933", 0x10); ticks(2)
+assert(count("APPLIED %(first contact%).*id=599b6933") == 1 and at() == 0x10)
+assert(mhfu.read_u32(SET) == 2)
+export("73527c5b", 0x20); ticks(2)
+assert(count("APPLIED %(new export%).*id=73527c5b") == 1 and at() == 0x20)
+export("73527c5b", 0x20); ticks(2)
 assert(count("APPLIED") == 2, "the same id is not re-applied")
-export("599b6933", 100.0); ticks(1)
-assert(count("APPLIED %(new export%).*id=599b6933") == 1 and radius() == 100.0)
-mhfu.write_f32(SET + HV.RADIUS, 5.0); ticks(1)
-assert(count("APPLIED %(live table changed under us%)") == 1 and radius() == 100.0)
+export("599b6933", 0x10); ticks(1)
+assert(count("APPLIED %(new export%).*id=599b6933") == 1 and at() == 0x10)
+mhfu.write_u8(SET + 4, 5); ticks(1)
+assert(count("APPLIED %(live table changed under us%)") == 1 and at() == 0x10)
 assert(count("first contact") == 1)
 
 -- a brain-mod reload redefines the port: what is in place stays in place
 local before = zin
 zin = P.define{ name = "zinogre", species = 75 }
-for _, k in ipairs({ "ent", "_hit_id", "_hit_last", "_hit_cap", "_atk_caps" }) do
+for _, k in ipairs({ "ent", "_hit_id", "_hit_last" }) do
   assert(zin[k] ~= nil and zin[k] == before[k], k)
 end
 ticks(2)
@@ -435,8 +429,12 @@ assert(count("APPLIED") == 4, "not re-applied after a redefine")
 
 -- the next quest loads the overlay afresh: its first apply is first contact again
 QUEST(1)
-mhfu.write_f32(SET + HV.RADIUS, 5.0); ticks(1)
-assert(count("APPLIED %(first contact%).*id=599b6933") == 2 and radius() == 100.0)
+mhfu.write_u8(SET + 4, 5); ticks(1)
+assert(count("APPLIED %(first contact%).*id=599b6933") == 2 and at() == 0x10)
+
+-- a guard that does not hold: nothing is written, once in the log per 20 tries
+mhfu.write_u32(PTR, 0); mhfu.write_u8(SET + 4, 5); ticks(3)
+assert(at() == 5 and count("NOT written: hurtboxes: 0x%x+ reads 00000000") == 1)
 """
 
 

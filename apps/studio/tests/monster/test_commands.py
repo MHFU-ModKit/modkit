@@ -67,19 +67,24 @@ def test_align(offline, capsys):
     assert "(1,4) -> (1,4)  clip idle" in capsys.readouterr().out
 
 
-def test_hit(offline, tmp_path, capsys, monkeypatch):
+def test_hit(offline, games, tmp_path, capsys, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    assert main(["port", "hit", str(offline), "--print"]) == 0
+    assert main(["port", "hit", str(offline)]) == 1
+    assert "build its intel" in capsys.readouterr().err
+    data = ["--data", str(games.fu.root)]
+    assert main(["port", "hit", str(offline), "--print", *data]) == 0
     assert 'P.hit("t", {' in capsys.readouterr().out
-    assert main(["port", "hit", str(offline), "--capacity", "0"]) == 0
-    assert (tmp_path / "t_hit.lua").is_file() and "truncated" in capsys.readouterr().out
+    assert main(["port", "hit", str(offline), "--capacity", "0", *data]) == 0
+    assert (tmp_path / "t_hit.lua").is_file() and "left out" in capsys.readouterr().out
     stick = tmp_path / "PSP"
     (stick / inject.MODS_SUBDIR).mkdir(parents=True)
     monkeypatch.setattr(inject, "MEMSTICK_ROOTS", (str(stick),))
     out = tmp_path / "o.lua"
-    assert main(["port", "hit", str(offline), "-o", str(out), "--deploy"]) == 0
+    assert main(["port", "hit", str(offline), "-o", str(out), "--deploy", *data]) == 0
     assert (stick / inject.MODS_SUBDIR / "o.lua").read_text() == out.read_text()
     assert "deployed o.lua + lib/" in capsys.readouterr().out
+    assert main(["port", "push", str(offline), "--dry", *data]) == 0
+    assert capsys.readouterr().out.endswith("80 B  hurtboxes  (2 guard(s))\n")
 
 
 def test_clips(games, ports, tmp_path, capsys):

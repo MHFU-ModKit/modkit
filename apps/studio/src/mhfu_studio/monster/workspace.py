@@ -65,7 +65,7 @@ if TYPE_CHECKING:
 
     from mhfu_studio.monster.render.hitboxes import HitboxOverlay
     from mhfu_studio.monster.render.viewport import MonsterViewport
-    from mhfu_studio.monster.runtime import AttackTables
+    from mhfu_studio.monster.runtime import Host
     from mhfu_studio.shell.studio import Studio
 
 Pair = tuple[int, int]
@@ -592,7 +592,7 @@ class MonsterWorkspace(Workspace):
 
         return self.manifest is not None and runtime.has_tables(self.manifest)
 
-    def _module(self) -> tuple[Manifest, int | None, AttackTables | None, str]:
+    def _module(self) -> tuple[Manifest, Host | None, str]:
         """What `runtime.export` takes for the document as it is now."""
         from mhfu_studio.monster import runtime
 
@@ -600,14 +600,14 @@ class MonsterWorkspace(Workspace):
             raise ValueError("no port manifest open")
         m, intel = self.doc.manifest, self.host_intel()
         source = f"{runtime.source_of(m)}, unsaved edits" if self.doc.dirty else ""
-        return m, runtime.host_capacity(intel), runtime.host_attack_tables(intel), source
+        return m, runtime.host(intel), source
 
     def export_hit(self) -> None:
         """`<name>_hit.lua` in the working directory."""
         from mhfu_studio.monster import runtime
 
-        m, cap, tables, source = self._module()
-        path = runtime.export(m, None, cap, tables, source).resolve()
+        m, host, source = self._module()
+        path = runtime.export(m, None, host, source).resolve()
         self.message = f"wrote {path} (id {runtime.content_id(m)})"
 
     def deploy_hit(self) -> None:
@@ -615,9 +615,9 @@ class MonsterWorkspace(Workspace):
         to the memory stick's mods folder."""
         from mhfu_studio.monster import runtime
 
-        m, cap, tables, source = self._module()
+        m, host, source = self._module()
         out = runtime.cache_dir() / runtime.module_name(m)
-        dep = runtime.ship(m, out, cap, tables, mods_dir=self.mods_dir(), source=source)
+        dep = runtime.ship(m, out, host, mods_dir=self.mods_dir(), source=source)
         self._sent = m
         lib = "" if dep.library is None else f" and {runtime.LIB_SUBDIR}/{runtime.LIBRARY}"
         self.message = (
@@ -645,10 +645,9 @@ class MonsterWorkspace(Workspace):
                 " the base monster's in Hitboxes or Parts first."
             )
         try:
-            runtime.check(m, runtime.host_attack_tables(self.host_intel()))
+            runtime.check(m, runtime.host(self.host_intel()))
         except ManifestError as e:
-            gap = self.intel_gap("attack")
-            return f"cannot send hitboxes or attacks. {gap}" if gap else f"cannot send: {e}"
+            return self._cannot("send", m, e)
         try:
             self.mods_dir()
         except places.Missing as e:
@@ -663,6 +662,42 @@ class MonsterWorkspace(Workspace):
             self.deploy_hit()
         except (OSError, ValueError) as e:  # ManifestError is a ValueError
             self.message = f"send failed: {e}"
+
+    def _cannot(self, verb: str, m: Manifest, e: ManifestError) -> str:
+        """Why the tables cannot go: the missing intel when that is it, else `e`."""
+        attacks = bool(m.hitboxes or m.attacks)
+        gap = self.intel_gap("attack" if attacks else "part")
+        what = "hitboxes or attacks" if attacks else "hurtboxes or the damage grid"
+        return f"cannot {verb} {what}. {gap}" if gap else f"cannot {verb}: {e}"
+
+    def push_blocker(self) -> str | None:
+        """Why "Push to game" cannot run now; a game not attached is found by the push."""
+        from mhfu_studio.monster import runtime
+
+        m = self.manifest
+        if m is None or not runtime.has_tables(m):
+            return self.send_blocker()
+        try:
+            runtime.check(m, runtime.host(self.host_intel()))
+        except ManifestError as e:
+            return self._cannot("push", m, e)
+        return None
+
+    def push(self) -> None:
+        """The hit tables straight into the running game, read back; no save, no stick."""
+        from mhfu_studio.monster import push
+
+        try:
+            m, host, source = self._module()
+            done = push.to_game(m, host, source)
+        except (OSError, ValueError) as e:  # Refused and ManifestError are ValueErrors
+            self.message = f"push failed: {e}"
+            return
+        try:
+            stale = push.stick_differs(m, self.mods_dir())
+        except OSError:  # no stick: nothing there to fight the push
+            stale = ""
+        self.message = done.describe() + stale
 
     # the games and the intel
 

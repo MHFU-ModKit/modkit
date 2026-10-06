@@ -133,6 +133,23 @@ def test_export_and_deploy(
     assert workspace.message.startswith("sent t_hit.lua")
 
 
+def test_push(workspace: MonsterWorkspace, qtbot: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mhfu.live import rig
+
+    monkeypatch.setenv("MHFU_LANE", "9")
+    monkeypatch.setattr(rig, "running", lambda launcher: False)
+    p = on_port(workspace, qtbot)
+    assert p.push.push.isEnabled() and not p.push.hint.isVisibleTo(p)
+    p.push.push.click()
+    assert (
+        workspace.message
+        == "push failed: no game attached: no PPSSPP with its debugger runs on lane 9"
+    )
+    workspace.intel_cache[75] = None
+    p.sync()
+    assert not p.push.push.isEnabled() and "cannot push" in p.push.hint.text()
+
+
 def test_no_intel_says_why(workspace: MonsterWorkspace, qtbot: Any) -> None:
     workspace.intel_cache.pop(75)
     p = build(workspace, qtbot)
