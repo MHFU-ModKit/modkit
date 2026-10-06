@@ -100,9 +100,9 @@ alert hub), its clip goes on every body part, attack id 6 spawns when the clip c
 and when the clip ends the carrier hands back to the monster's own brain. A reaction, a hit
 that flinches it for one, ends the move at once. An attack can also end at a frame
 (`{ 56, 6, 80 }`), and while the move plays the host's own attacks and effects for the entry
-its clip sits in are skipped (`host_attacks = true` keeps them). It runs in C on the AI step em_vhook wraps
-(`include/mhfu/move.h`), so it needs a cold boot and a spawned big monster. From the debugger:
-`mhfu move ride <port>`, then `mhfu move play 46 --attack 6@56`.
+its clip sits in are skipped (`host_attacks = true` keeps them). It runs in C on the AI step
+em_vhook wraps (`include/mhfu/move.h`), so it needs a cold boot and a spawned big monster. From
+the debugger: `mhfu move ride <port>`, then `mhfu move play 46 --attack 6@56-80`.
 
 ## Tests
 
