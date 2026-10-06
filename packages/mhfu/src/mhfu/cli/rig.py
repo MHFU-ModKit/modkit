@@ -8,22 +8,32 @@
     mhfu rig summon --distance 500
     mhfu rig pin --seconds 60
     mhfu rig speed fast
+    mhfu rig points --map maps/snow                   # the named points of a map document
+    mhfu rig goto wall --map maps/snow                # one area change, then onto the floor
+    mhfu rig walk camp_gate wall --map maps/snow      # walked, exit to exit
 
-A cold boot into a quest is `mhfu go-on-quest`, which fast-forwards too.
+A cold boot into a quest is `mhfu go-on-quest`, which fast-forwards too. A map document is the
+studio's (`map.toml` or its folder), by default `MHFU_MAP`.
 """
 
 from __future__ import annotations
 
 import argparse
 import math
+import os
 import sys
 import time
+from contextlib import ExitStack
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ppsspp_debug import DebuggerError
 
-from ..live import boot
+from .. import points as P
+from ..files import Extracted
+from ..live import boot, navigation, route, survival
 from ..live.rig import OffFloor, Rig, big_monsters, floor
+from ..points import Point
 from ..stage import NotLoaded, map_manager
 from .live import launcher, launcher_args
 
@@ -66,6 +76,19 @@ def register(sub: Subparsers) -> None:
     c = command("speed", "fast-forward, or the game's own rate")
     c.add_argument("speed", choices=("fast", "normal"))
     c.set_defaults(run=speed)
+    c = cmds.add_parser("points", help="the named points of a map document")
+    _map_args(c)
+    c.set_defaults(run=points)
+    c = command("goto", "put the player at a named point, changing area first if need be")
+    c.add_argument("point", nargs="?", help="a point's name in the map document")
+    c.add_argument("--at", nargs=4, type=float, metavar=("STAGE", "X", "Y", "Z"), help="or here")
+    _map_args(c)
+    c.set_defaults(run=goto)
+    c = command("walk", "walk the player to named points in turn, exit to exit")
+    c.add_argument("point", nargs="+", help="points' names in the map document, in order")
+    c.add_argument("--no-guard", dest="guard", action="store_false", help="leave HP and monsters")
+    _map_args(c)
+    c.set_defaults(run=walk)
 
 
 def _fail(args: argparse.Namespace, e: Exception) -> int:
@@ -177,4 +200,78 @@ def speed(args: argparse.Namespace) -> int:
                 return _fail(args, RuntimeError("this PPSSPP cannot; the modkit's build can"))
     except ConnectionError as e:
         return _fail(args, e)
+    return 0
+
+
+def _map_args(c: argparse.ArgumentParser) -> None:
+    c.add_argument("--map", type=Path, help="map document, map.toml or its folder (MHFU_MAP)")
+    c.add_argument("--data", type=Path, help="extracted game (default: $MHFU_DATA)")
+
+
+def _points(args: argparse.Namespace) -> list[Point]:
+    where = args.map or os.environ.get("MHFU_MAP")
+    if where is None:
+        raise FileNotFoundError("no map document: pass --map or set MHFU_MAP")
+    return P.load(where)
+
+
+def points(args: argparse.Namespace) -> int:
+    try:
+        found = _points(args)
+    except (OSError, P.PointError) as e:
+        return _fail(args, e)
+    for p in found:
+        x, y, z = p.at
+        kind = f"climb {p.heading:.0f}" if p.kind == "climb" else p.kind
+        note = f"  {p.note}" if p.note else ""
+        print(f"{p.name:<20} st{p.stage:03d} ({x:.0f}, {y:.0f}, {z:.0f}) {kind}{note}")
+    return 0
+
+
+def _plan(rig: Rig, args: argparse.Namespace) -> route.Map:
+    return route.Map.live(rig.s, Extracted.find(args.data))
+
+
+def goto(args: argparse.Namespace) -> int:
+    try:
+        if args.at is not None:
+            stage, x, y, z = args.at
+            point = Point("--at", int(stage), (x, y, z))
+        elif args.point is not None:
+            point = P.find(_points(args), args.point)
+        else:
+            return _fail(args, ValueError("name a point or give --at"))
+        with Rig.attach(launcher(args)) as rig:
+            x, y, z = rig.goto(point, _plan(rig, args), log=print)
+    except (OSError, KeyError, LookupError, P.PointError, RuntimeError, DebuggerError) as e:
+        return _fail(args, e)
+    print(f"player -> ({x:.0f}, {y:.1f}, {z:.0f})")
+    return 0
+
+
+def walk(args: argparse.Namespace) -> int:
+    start = time.monotonic()
+
+    def log(line: str) -> None:
+        print(f"[{time.monotonic() - start:5.1f}s] {line}", flush=True)
+
+    try:
+        known = _points(args)
+        targets = [P.find(known, name) for name in args.point]
+        climbs = [p for p in known if p.kind == "climb"]
+        with Rig.attach(launcher(args)) as rig, ExitStack() as guard:
+            if args.guard:
+                guard.enter_context(survival.Guard(rig.s))
+            plan = _plan(rig, args)
+            for point in targets:
+                log(f"to {point.name}")
+                result = rig.walk(point, plan, climbs, log=log)
+                if not result.reached:
+                    log(f"{point.name}: {result.reason}, {result.remaining:.0f} short")
+                    return 1
+            p = navigation.pose(rig.s)
+            x, y, z = p.x, p.y, p.z
+    except (OSError, KeyError, LookupError, P.PointError, RuntimeError, DebuggerError) as e:
+        return _fail(args, e)
+    log(f"at ({x:.0f}, {y:.0f}, {z:.0f})")
     return 0

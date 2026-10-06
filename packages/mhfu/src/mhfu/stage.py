@@ -88,6 +88,7 @@ class Exit(View):
     height = f32(a.STAGE_EXIT.HEIGHT)
     dest = vec3(a.STAGE_EXIT.DEST)
     yaw = u16(a.STAGE_EXIT.YAW)
+    end = vec3(a.STAGE_EXIT.END)
 
 
 class Sphere(View):
