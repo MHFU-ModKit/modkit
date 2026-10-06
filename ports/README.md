@@ -22,12 +22,15 @@ stick's `mods/lib/` (`--lib` elsewhere). The built files are game data: never co
 
 Every clip of the donor's moveset goes into the port, each in an executor entry: the action id
 (`a1`) that plays it. A donor clip is known by its MHP3rd id, `stream * 100 + slot`, so a
-stream-0 id is its slot. `[clips.<name>]` names a clip and places it:
+stream-0 id is its slot. `[clips.<name>]` names a clip, and with a `slot` places it too:
 
 ```toml
+[clips.howl]
+source = 2      # the MHP3rd clip; the packer gives it its entry
+
 [clips.dash]
-slot = 3        # the executor entry
-source = 205    # the MHP3rd clip; without it, the one numbered like the entry
+slot = 3        # the executor entry it is pinned in
+source = 205    # without it, the clip numbered like the entry
 ```
 
 The builder packs the rest: a clip whose id is under the host's entry count into the entry of its
@@ -38,10 +41,10 @@ body parts only (the Tigrex's 24 and 25, head and neck over an idle body). An en
 takes stays empty on a port with its own skeleton, where the host's clips do not fit, and keeps
 the host's clip on a port that rides the host's skeleton.
 
-A `[clips.<name>]` pins its clip on top of that packing: the clip the packer had in its entry
-takes the entry the pin freed. So naming a clip where it is moves nothing, and placing one
-elsewhere swaps it with the clip there. The studio's Clips panel lists every clip by MHP3rd id
-and names and places them.
+A `slot` pins its clip on top of that packing: the clip the packer had in its entry takes the
+entry the pin freed, so placing a clip swaps it with the clip there. A name without one pins
+nothing and moves nothing. The studio's Clips panel lists every clip by MHP3rd id and names and
+places them.
 
 `<name>_clips.lua` maps each clip's name (the manifest's, else `clip_<entry>`) to its entry, and
 `mhfu_port.lua`'s `P.define` reads it as the port's clips, so no mod keeps a copy of the layout.
