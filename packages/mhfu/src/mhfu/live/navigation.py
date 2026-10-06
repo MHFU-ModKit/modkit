@@ -33,6 +33,7 @@ DETOUR_DISTANCE = 100.0  # how far a detour goes, so a fast-forwarded game goes 
 DETOUR_SECONDS = 0.7  # the most a detour lasts, where the hunter is wedged and cannot go far
 CAMERA_EVERY = 4  # walk ticks between camera reads
 STICK_EPS = 0.05  # stick change worth re-sending
+WALK = 0.7  # stick magnitude of a walk (about 70 units/s); 0.5 and less do not move the hunter
 
 
 class Camera(View):
@@ -136,7 +137,8 @@ def walk_to(
     After `patience` ticks without it the walk strafes off the line, alternating sides, and
     gives up as "blocked" after `max_detours`. It is no pathfinder: give `walk_path` waypoints
     round real corners. The player is about 100 units wide, so a `tolerance` under 40
-    oscillates; inside `slow_radius` the stick eases off so the walk does not overshoot.
+    oscillates; inside `slow_radius` the hunter walks instead of running so the walk does not
+    overshoot.
     """
     target = (x, z)
     start = s.now()
@@ -176,7 +178,7 @@ def walk_to(
                 best, stalled = distance(where(s), target), 0
                 yaw, age = camera.yaw, 0
                 continue
-            magnitude = 1.0 if remaining >= slow_radius else max(0.35, remaining / slow_radius)
+            magnitude = 1.0 if remaining >= slow_radius else WALK
             stick.toward(world_angle(here, target), yaw, magnitude)
             s.sleep(tick)
         here = where(s)
