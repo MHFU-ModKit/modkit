@@ -11,6 +11,8 @@
  * the move enters its back pair), after LENGTH frames, or when anything else changes the pair, a
  * reaction first of all. With SKIP the host AI step does not run while the clip plays, except
  * on a frame with a hit pending, so the brain cannot cut in; the host still takes the damage.
+ * While a move plays, the host's animation events for the entry its clip sits in (attacks and
+ * effects at the host clip's frames) are skipped, unless HOST_ATTACKS keeps them.
  *
  * It runs on em_vhook's slot-29 step (mhfu_em_step), so the species must be wrapped
  * (mhfu_em_installed). The calls only write the move block: safe from any thread. */
@@ -44,6 +46,8 @@ typedef struct {
     uint8_t  attack_count;
     mhfu_move_attack_t attacks[MHFU_MOVE_MAX_ATTACKS];
     uint32_t spawner;                     /* 0 = MHFU_TIGREX_ATTACK_SPAWN */
+    uint8_t  host_attacks;                /* 1 keeps the host entry's animation events */
+    uint8_t  _pad[3];
 } mhfu_move_t;
 
 /* MOVE_STATE.STATE */

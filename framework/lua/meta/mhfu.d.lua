@@ -444,6 +444,7 @@ mhfu.EM_UNLIMITED = -1 -- MHFU_EM_UNLIMITED
 ---@field sub_last_sub integer
 ---@field sub_last_mode integer
 ---@field brain_fires integer rule fires
+---@field events_muted integer animation-event steps a move skipped (its host_attacks off)
 ---@field req_pending integer 1 while a request waits for its AI frame
 ---@field req_done integer requests entered
 ---@field req_main integer the last request's pair
@@ -635,6 +636,7 @@ function mhfu.move_block() end
 ---@field part? integer body part whose cursor times the attacks, default 0
 ---@field attacks? integer[][] up to 4 { frame, id, end? }: attack id spawned at clip frame `frame`, its node ended at `end` (or when the move ends first); without `end` it lives as its record says
 ---@field spawner? integer the species' attack spawner, default the Tigrex's
+---@field host_attacks? boolean keep the host entry's own attacks and effects at its clip frames (MONSTER_VTABLE.ANIM_EVENTS); default off while the move plays
 
 ---What `mhfu.move_status()` returns.
 ---@class mhfu.MoveStatus

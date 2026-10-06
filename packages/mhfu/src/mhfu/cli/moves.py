@@ -51,6 +51,9 @@ def register(sub: Subparsers) -> None:
     c.add_argument("--length", type=int, default=0, help="AI frames; default the clip's")
     c.add_argument("--skip", action="store_true", help="no host AI step while the clip plays")
     c.add_argument("--part", type=int, default=0, help="body part whose cursor times attacks")
+    c.add_argument(
+        "--host-attacks", action="store_true", help="keep the host entry's own attacks and effects"
+    )
     c.add_argument("--slot", type=int, help="the monster's registry slot (default the first)")
     c.add_argument("--after", type=float, default=8.0, help="seconds watched after the end")
     c.add_argument("--hp", type=int, help="set the hunter's HP and its caps to this first")
@@ -162,6 +165,7 @@ def play(args: argparse.Namespace) -> int:
         args.length,
         args.skip,
         args.part,
+        host_attacks=args.host_attacks,
     )
     ends: dict[str, int] = {}
     size = _log_size(args)

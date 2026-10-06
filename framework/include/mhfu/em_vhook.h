@@ -56,6 +56,7 @@ typedef struct {
     uint32_t rule_fired[MHFU_EM_RULES];
     uint32_t rule_left[MHFU_EM_RULES];
     uint32_t sub_left[MHFU_EM_SUBS];
+    uint32_t events_muted;       /* animation-event steps skipped (mhfu_em_mute_events) */
 } mhfu_em_status_t;
 
 /* 1 while a big monster's vtable is wrapped (from its spawn to the next quest_beginning). */
@@ -77,6 +78,10 @@ void mhfu_em_rule(int slot, const mhfu_em_rule_t *r);
  * the quest's end. */
 typedef uint32_t (*mhfu_em_step_fn)(uint32_t entity);
 void mhfu_em_step(mhfu_em_step_fn fn);
+
+/* The animation events (MONSTER_VTABLE.ANIM_EVENTS: the playing entry's attacks, effects and
+ * sounds at clip frames) of entity are skipped until this is called again; 0 skips none. */
+void mhfu_em_mute_events(uint32_t entity);
 
 /* Drop every substitution, rule and pending request. */
 void mhfu_em_clear(void);

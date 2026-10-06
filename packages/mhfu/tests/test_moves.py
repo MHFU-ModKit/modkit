@@ -20,7 +20,8 @@ def test_pack_follows_the_table() -> None:
 
 def test_no_back_pair_is_ff() -> None:
     raw = moves.Move(46).pack()
-    assert raw[a.MOVE.BACK_MAIN] == moves.NO_PAIR
+    assert raw[a.MOVE.BACK_MAIN] == moves.NO_PAIR and raw[a.MOVE.HOST_ATTACKS] == 0
+    assert moves.Move(46, host_attacks=True).pack()[a.MOVE.HOST_ATTACKS] == 1
 
 
 def test_attack_word() -> None:

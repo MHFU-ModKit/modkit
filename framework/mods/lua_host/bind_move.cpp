@@ -30,6 +30,9 @@ static void spec_of(lua_State *L, int t, mhfu_move_t *mv)
     lua_getfield(L, t, "skip");
     mv->skip = (uint8_t)lua_toboolean(L, -1);
     lua_pop(L, 1);
+    lua_getfield(L, t, "host_attacks");
+    mv->host_attacks = (uint8_t)lua_toboolean(L, -1);
+    lua_pop(L, 1);
     if (lua_getfield(L, t, "carrier") == LUA_TTABLE) {
         int c = lua_gettop(L);
         mv->carrier_main = (uint8_t)list_at(L, c, 1, 0);

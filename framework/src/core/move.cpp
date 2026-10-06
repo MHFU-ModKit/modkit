@@ -45,6 +45,7 @@ static_assert(offsetof(mhfu_move_t, back_mode) == MHFU_MOVE_BACK_MODE, "MOVE lay
 static_assert(offsetof(mhfu_move_t, attack_count) == MHFU_MOVE_ATTACK_COUNT, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, attacks) == MHFU_MOVE_ATTACKS, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, spawner) == MHFU_MOVE_SPAWNER, "MOVE layout");
+static_assert(offsetof(mhfu_move_t, host_attacks) == MHFU_MOVE_HOST_ATTACKS, "MOVE layout");
 static_assert(MHFU_MOVE_ATTACKS_COUNT == MHFU_MOVE_MAX_ATTACKS, "MOVE layout");
 static_assert(sizeof(mhfu_move_state_t) == MHFU_MOVE_STATE_SIZE, "MOVE_STATE layout");
 static_assert(offsetof(mhfu_move_state_t, state) == MHFU_MOVE_STATE_STATE, "MOVE_STATE layout");
@@ -150,6 +151,7 @@ static void end_attacks(uint32_t ent)
 static void finish(int why, uint32_t pair)
 {
     end_attacks(S->entity);
+    mhfu_em_mute_events(0);
     S->end = (uint8_t)why;
     S->end_pair = (uint16_t)pair;
     S->end_frame = S->frames;
@@ -182,8 +184,12 @@ static void start(uint32_t ent)
     }
     enter(ent, S->move.carrier_main, S->move.carrier_sub, 0);
     uint32_t now = pair_of(ent);
-    if (now != carrier()) finish(MHFU_MOVE_END_REFUSED, now);
-    else S->state = MHFU_MOVE_ENTERING;
+    if (now != carrier()) {
+        finish(MHFU_MOVE_END_REFUSED, now);
+        return;
+    }
+    S->state = MHFU_MOVE_ENTERING;
+    if (!S->move.host_attacks) mhfu_em_mute_events(ent);
 }
 
 /* the host step ran the carrier's phase 0 last frame; now the clip goes in */
@@ -256,6 +262,7 @@ static uint32_t play(uint32_t ent)
         }
         /* the host step runs the carrier's last phase now; AFTER reads what it picked */
         end_attacks(ent);
+        mhfu_em_mute_events(0);
         S->end = MHFU_MOVE_END_CLIP;
         S->end_frame = S->frames;
         S->skipping = 0;

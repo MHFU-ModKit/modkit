@@ -35,6 +35,8 @@ class Move(ctypes.Structure):
         ("attack_count", ctypes.c_uint8),
         ("attacks", ctypes.c_uint16 * 16),
         ("spawner", ctypes.c_uint32),
+        ("host_attacks", ctypes.c_uint8),
+        ("_pad", ctypes.c_uint8 * 3),
     ]
 
 
@@ -125,7 +127,7 @@ def g(lib: ctypes.CDLL) -> Game:
 def test_enters_the_carrier_then_plays_the_entry(g: Game) -> None:
     g.play(46)
     g.frame()
-    assert g.calls() == [("E", ENT, 0, 1, 0)] and g.pair == (0, 1)
+    assert g.calls() == [("E", ENT, 0, 1, 0), ("M", ENT, 0, 0, 0)] and g.pair == (0, 1)
     g.frame()
     assert g.calls() == [("X", ENT, 46, 0, 0)]
     assert g.state("STATE", "B") == (2,)
@@ -252,3 +254,20 @@ def test_node_no_longer_ours_is_left_alone(g: Game) -> None:
         g.frame()
     assert not [c for c in g.calls() if c[0] == "K"]
     assert g.state("ENDED_STATE", "B") == (0xFF,)
+
+
+def test_host_events_are_muted_while_the_move_plays(g: Game) -> None:
+    g.play(46)
+    while g.state("STATE", "B")[0] != 3:
+        g.frame()
+    mutes = [c[1] for c in g.calls() if c[0] == "M"]
+    assert mutes == [ENT, 0]
+
+
+def test_host_attacks_keeps_them(g: Game) -> None:
+    g.play(46, host_attacks=1)
+    for _ in range(5):
+        g.frame()
+    g.pair = (4, 1)
+    g.frame()
+    assert [c[1] for c in g.calls() if c[0] == "M"] == [0]  # only the end's clear

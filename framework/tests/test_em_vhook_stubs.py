@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""em_vhook's two stubs, assembled on the host and checked word by word, and the slot-29 one run
-in unicorn: a stub bug shows up in the game as a spin, not a crash."""
+"""em_vhook's stubs, assembled on the host and checked word by word, and the slot-29 and slot-30
+ones run in unicorn: a stub bug shows up in the game as a spin, not a crash."""
 
 import ctypes
 from collections.abc import Callable
@@ -30,6 +30,10 @@ int act(uint32_t *o, uint32_t cfg, uint32_t orig, int *ov)
 { return emv_build_act_stub(o, STUB_ACT_INSNS, cfg, orig, ov); }
 int cfg_size(void) { return CFG_SIZE; }
 int cfg_step(void) { return CFG_STEP_FN; }
+int evt(uint32_t *o, uint32_t cfg, uint32_t orig, uint32_t ret, int *ov)
+{ return emv_build_events_stub(o, STUB_EVT_INSNS, cfg, orig, ret, ov); }
+int cfg_mute(void) { return CFG_MUTE_ENT; }
+int cfg_muted(void) { return CFG_MUTED; }
 int act_frame(void) { return ACT_FRAME; }
 }
 """
@@ -153,3 +157,37 @@ def test_config_offsets_in_block(stubs: Stubs) -> None:
         for w, i in zip(words, _ins(words), strict=True):
             if (i.doesLoad() or i.doesStore()) and (w >> 21) & 31 == T7:
                 assert 0 <= _imm(w) < stubs.cfg_size
+
+
+def _run_events(stubs: Stubs, mips: Any, muted: int) -> tuple[Any, int]:
+    out, ov = (ctypes.c_uint32 * 64)(), ctypes.c_int(0)
+    n = stubs.lib.evt(out, RUN_CFG, RUN_ORIG, RUN_RET, ctypes.byref(ov))
+    assert not ov.value
+    words = list(out[:n])
+    assert not any(i.isBranch() for i in _ins(words)) and _sp_uses(words) == []
+    m = mips()
+    m.write(STUB, words)
+    m.write(RUN_RET, [mips.jr("ra"), mips.NOP])
+    m.write(RUN_CFG, [0] * (stubs.cfg_size // 4))
+    m.write(RUN_CFG + stubs.lib.cfg_mute(), [muted])
+    m.set_reg("a0", ENTITY)
+    m.set_reg("ra", CALLER)
+    went: list[int] = []
+    for stop in (RUN_ORIG, CALLER):
+        m.at(stop, lambda mm, s=stop: (went.append(s), mm.uc.emu_stop()))
+    with suppress(UcError):
+        m.uc.emu_start(STUB, 0xFFFFFFF0, count=200)
+    assert len(went) == 1
+    return m, went[0]
+
+
+def test_events_stub_skips_the_muted_entity(stubs: Stubs, mips: Any) -> None:
+    m, went = _run_events(stubs, mips, ENTITY)
+    assert went == CALLER and m.read(RUN_CFG + stubs.lib.cfg_muted()) == [1]
+
+
+def test_events_stub_runs_any_other(stubs: Stubs, mips: Any) -> None:
+    for muted in (0, ENTITY + 0x800):
+        m, went = _run_events(stubs, mips, muted)
+        assert went == RUN_ORIG and m.reg("a0") == ENTITY
+        assert m.read(RUN_CFG + stubs.lib.cfg_muted()) == [0]

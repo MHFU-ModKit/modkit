@@ -71,6 +71,8 @@ class Move:
     skip: bool = False
     part: int = 0
     spawner: int = 0
+    host_attacks: bool = False
+    """Keep the host entry's own attacks and effects (MONSTER_VTABLE.ANIM_EVENTS)."""
 
     def pack(self) -> bytes:
         """struct MOVE."""
@@ -89,6 +91,7 @@ class Move:
             struct.pack_into("<HH", out, at + a.MOVE_ATTACK.FRAME, atk.frame, atk.id)
             struct.pack_into("<H", out, at + a.MOVE_ATTACK.END, atk.end or 0)
         struct.pack_into("<I", out, f.SPAWNER, self.spawner)
+        struct.pack_into("<B", out, f.HOST_ATTACKS, int(self.host_attacks))
         return bytes(out)
 
 

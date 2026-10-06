@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
- * em_vhook's two stubs, assembled word by word. Plain C with no PSP SDK (only
+ * em_vhook's three stubs, assembled word by word. Plain C with no PSP SDK (only
  * <stdint.h>, mhfu/mips.h and addresses.gen.h), so the same builders also compile
  * on the host, where a check disassembles the words and asserts:
  *   - no branch in either stub: every decision is a MOVN/MOVZ select, so the JIT
@@ -88,7 +88,10 @@
 /* the C step (mhfu_em_step) */
 #define CFG_STEP_FN     0x158  /* u32  fn(entity) called each AI step while set; 0 = none */
 #define CFG_SKIP        0x15C  /* u32  1 = the step took this frame: the host step is skipped */
-#define CFG_SIZE        0x160
+/* the animation events (MONSTER_VTABLE.ANIM_EVENTS) */
+#define CFG_MUTE_ENT    0x160  /* u32  entity whose events are skipped; 0 = none */
+#define CFG_MUTED       0x164  /* u32  event steps skipped */
+#define CFG_SIZE        0x168
 
 #define SUB_ANY         0xFEu
 #define PATCH_OFF_MASK  0x7FCu   /* the entity is 0x800 bytes: bound + align every store */
@@ -96,6 +99,7 @@
 /* slot sizes, in instructions. The check asserts the builders fit. */
 #define STUB_AI_INSNS   480
 #define STUB_ACT_INSNS  200
+#define STUB_EVT_INSNS  16
 
 /* -------------------------------------------------------------------------- */
 /* register aliases used below */
@@ -537,6 +541,33 @@ static inline int emv_build_act_stub(uint32_t *out, int cap, uint32_t cfg,
     E(mips_sw(R_ZERO, CFG_SUB_PENDING, R_T7));
 
     E(mips_jr(R_RA));
+    E(MIPS_NOP);
+
+    if (overflow) *overflow = A.overflow;
+    return A.i;
+}
+
+/* --- the animation events: skipped for one entity, else the original. ---------
+ * One jr, to the original or to the ret stub (which returns to the engine); frame-free. */
+static inline int emv_build_events_stub(uint32_t *out, int cap, uint32_t cfg,
+                                        uint32_t original, uint32_t ret_stub, int *overflow)
+{
+    emv_asm_t A = { out, 0, cap, 0 };
+    emv_asm_t *a = &A;
+
+    emv_load_cfg(a, cfg);
+    E(mips_lw(R_T0, CFG_MUTE_ENT, R_T7));
+    E(mips_xor(R_T0, R_T0, R_A0));
+    E(mips_sltiu(R_T0, R_T0, 1));                      /* 1 iff this entity is muted */
+    E(mips_lw(R_T1, CFG_MUTED, R_T7));
+    E(mips_addu(R_T1, R_T1, R_T0));
+    E(mips_sw(R_T1, CFG_MUTED, R_T7));
+    E(mips_lui(R_T9, (uint16_t)(original >> 16)));
+    E(mips_ori(R_T9, R_T9, (uint16_t)original));
+    E(mips_lui(R_T6, (uint16_t)(ret_stub >> 16)));
+    E(mips_ori(R_T6, R_T6, (uint16_t)ret_stub));
+    E(mips_movn(R_T9, R_T6, R_T0));
+    E(mips_jr(R_T9));
     E(MIPS_NOP);
 
     if (overflow) *overflow = A.overflow;

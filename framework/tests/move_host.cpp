@@ -39,6 +39,7 @@ float    mhfu_mem_read_f32(uint32_t a) { float v = 0; uint8_t *p = at(a, 4); if 
 void mhfu_log(const char *, ...) {}
 int  mhfu_em_installed(void) { return 1; }
 void mhfu_em_step(mhfu_em_step_fn fn) { g_step = fn; }
+void mhfu_em_mute_events(uint32_t entity) { record('M', entity, 0, 0, 0); }
 
 /* the engine: what the test arranged happens, and every call is kept */
 void mhfu_host_enter(uint32_t e, uint32_t m, uint32_t s, uint32_t mode)
