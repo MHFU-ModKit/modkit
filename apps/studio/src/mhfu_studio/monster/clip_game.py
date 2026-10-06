@@ -1,45 +1,48 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""Play in game: an executor entry forced on the running game's big monster and held by the
-framework's `cli_bridge.lua`, as `mhfu shell`'s `anim play` does (`mhfu.live.shell_anim`)."""
+"""Play in game: an executor entry held on the running game's big monster by the framework's
+`cli_bridge.lua`, through `mhfu.live.clips`, which restarts an idle monster's action so the
+entry shows at once."""
 
 from __future__ import annotations
 
-import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
 from mhfu import inject
+from mhfu.live import clips
+from mhfu.live.clips import Played
 from mhfu.live.session import Session
-from mhfu.live.shell_anim import ACK_TIMEOUT, STALLED, Bridge, Op
 from mhfu.live.survival import BIG_MONSTER_VTABLES
-from mhfu.memory import Memory, Unmapped
+from mhfu.memory import Memory
 from mhfu.structs import Game
 
-UNREACHABLE = (
-    "the bridge is not up: it needs the framework's memory=64 and cli_bridge.lua in the stick's"
-    " mods, from a cold boot"
-)
-POLL = 0.05
-__all__ = ["STALLED", "Sent", "attached", "force", "release", "send", "target"]
+__all__ = ["Held", "attached", "force", "release", "target"]
 
 
 @dataclass(frozen=True)
-class Sent:
+class Held:
     slot: int
     """The monster's registry slot."""
-    seq: int
-    acked: bool
+    played: Played
+
+    def says(self) -> str:
+        """How many body parts play the entry, for the status line."""
+        took = sum(p.taken and p.resolved for p in self.played.parts)
+        how = f"{took} of {len(self.played.parts)} body parts play it"
+        if not self.played.dispatched:
+            how = "the monster has not taken it yet"
+        return f"anim {self.played.entry} held on monster {self.slot} until Release: {how}"
 
 
 @contextmanager
-def attached(timeout: float = 3.0) -> Iterator[Memory]:
-    """The running game's memory: `$MHFU_LANE`'s PPSSPP, else the one on this machine."""
+def attached(timeout: float = 3.0) -> Iterator[Session]:
+    """The running game: `$MHFU_LANE`'s PPSSPP, else the one on this machine."""
     lane = inject.lane()
     s = Session.attach(None if lane is None else lane.port, timeout=timeout, wait_for_game=False)
     try:
-        yield s.mem
+        yield s
     finally:
         s.close()
 
@@ -55,33 +58,13 @@ def target(mem: Memory, species: int | None) -> int:
     raise LookupError("no big monster in the entity registry: is a quest with it running?")
 
 
-def _bridge(mem: Memory) -> Bridge:
-    bridge = Bridge(mem)
-    try:
-        up = bridge.reachable()
-    except Unmapped:
-        up = False
-    if not up:
-        raise LookupError(UNREACHABLE)
-    return bridge
+def force(s: Session, entry: int, species: int | None) -> Held:
+    """Holds executor entry `entry` until `release`, and what each body part then plays."""
+    slot = target(s.mem, species)
+    return Held(slot, clips.play(s, entry, slot=slot, link=clips.bridge(s)))
 
 
-def send(mem: Memory, op: Op, species: int | None, arg: int = 0, wait: float = ACK_TIMEOUT) -> Sent:
-    """`op` for the big monster, and whether the script acked it within `wait` seconds."""
-    bridge = _bridge(mem)
-    slot = target(mem, species)
-    seq = bridge.send(op, slot, arg)
-    for _ in range(round(wait / POLL)):
-        if bridge.block.ack == seq:
-            break
-        time.sleep(POLL)
-    return Sent(slot, seq, bridge.block.ack == seq)
-
-
-def force(mem: Memory, entry: int, species: int | None, wait: float = ACK_TIMEOUT) -> Sent:
-    """Holds executor entry `entry` until `release`."""
-    return send(mem, Op.FORCE_ACTION, species, entry, wait)
-
-
-def release(mem: Memory, species: int | None, wait: float = ACK_TIMEOUT) -> Sent:
-    return send(mem, Op.CLEAR, species, 0, wait)
+def release(s: Session, species: int | None) -> tuple[int, bool]:
+    """Ends the hold: the slot, and whether the script acked."""
+    slot = target(s.mem, species)
+    return slot, clips.release(s, slot, clips.bridge(s))

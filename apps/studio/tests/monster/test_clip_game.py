@@ -5,40 +5,28 @@ from contextlib import nullcontext
 
 import pytest
 from mhfu import addresses as a
-from mhfu.live.shell_anim import MAGIC, Op
+from mhfu.live import clips
 from mhfu.memory import Image, Space
 from mhfu_studio.monster import clip_game
 from mhfu_studio.monster.workspace import MonsterWorkspace
 
 MON = a.RAM.start + 0x90_0000  # entities inside the fake's memory
-B = a.CLI_BRIDGE
 
 
 class Fake(Space):
-    """The registry, two entities and the bridge block; with `ack`, cli_bridge.lua's side."""
+    """The registry, two entities and, with `bridge`, the bridge block."""
 
-    def __init__(self, bridge: bool = True, ack: bool = True) -> None:
+    def __init__(self, bridge: bool = True) -> None:
         images = [Image(bytes(4 * 21), a.ENTITY_REGISTRY), Image(bytes(0x1000 * 5), MON)]
         if bridge:
             images.append(Image(bytes(0x40), a.CLI_BRIDGE_BLOCK))
         super().__init__(images)
-        self.ack = ack
 
     def monster(self, slot: int, species: int, vtable: int = 0) -> None:
         base = MON + 0x1000 * (slot - 1)
         self.write_u32(a.ENTITY_REGISTRY + 4 * slot, base)
         self.write_u32(base + a.ENTITY.VTABLE, vtable)
         self.write_u8(base + a.ENTITY.SPECIES, species)
-
-    def write(self, address: int, data: bytes) -> None:
-        super().write(address, data)
-        if self.ack and address == a.CLI_BRIDGE_BLOCK and len(data) > B.SEQ:
-            self.write_u32(address + B.ACK, self.u32(address + B.SEQ))
-
-    def command(self) -> tuple[int, int, int, int]:
-        """MAGIC, CMD, SLOT, ARG."""
-        at = a.CLI_BRIDGE_BLOCK
-        return tuple(self.u32(at + f) for f in (B.MAGIC, B.CMD, B.SLOT, B.ARG))  # type: ignore[return-value]
 
 
 @pytest.fixture
@@ -49,17 +37,50 @@ def game() -> Fake:
     return g
 
 
-def test_force(game):
-    sent = clip_game.force(game, 100, 75)
-    assert sent == clip_game.Sent(3, 1, True)
-    assert game.command() == (MAGIC, Op.FORCE_ACTION, 3, 100)
-    assert clip_game.force(game, 7, 75).seq == 2
+class Live:
+    """A session on a fake's memory."""
+
+    def __init__(self, mem: Fake) -> None:
+        self.mem = mem
 
 
-def test_release(game):
-    game.write_u32(a.CLI_BRIDGE_BLOCK + B.STATUS, 100)
-    assert clip_game.release(game, 75).acked
-    assert game.command()[1:3] == (Op.CLEAR, 3) and game.u32(a.CLI_BRIDGE_BLOCK + B.STATUS) == 0
+def played(entry: int, dispatched: bool = True) -> clips.Played:
+    parts = tuple(
+        clips.Part(k, True, (2 * k, entry), ((2 * k, entry),), False, 9.0, 2.0, 1.0, True)
+        for k in range(3)
+    )
+    return clips.Played(entry, parts, dispatched, False, 0.1, (1, 0))
+
+
+@pytest.fixture
+def calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, int]]:
+    """What `mhfu.live.clips` was asked to play and release, by entry and slot."""
+    seen: list[tuple[str, int]] = []
+
+    def play(s: Live, entry: int, *, slot: int, link: object) -> clips.Played:
+        seen.append(("play", entry, slot))  # type: ignore[arg-type]
+        return played(entry)
+
+    def release(s: Live, slot: int, link: object) -> bool:
+        seen.append(("release", slot))
+        return True
+
+    monkeypatch.setattr(clips, "play", play)
+    monkeypatch.setattr(clips, "release", release)
+    return seen
+
+
+def test_force(game, calls):
+    held = clip_game.force(Live(game), 50, 75)  # type: ignore[arg-type]
+    assert held.slot == 3 and calls == [("play", 50, 3)]
+    assert held.says() == "anim 50 held on monster 3 until Release: 3 of 3 body parts play it"
+    late = clip_game.Held(3, played(50, dispatched=False))
+    assert late.says().endswith("the monster has not taken it yet")
+
+
+def test_release(game, calls):
+    assert clip_game.release(Live(game), 75) == (3, True)  # type: ignore[arg-type]
+    assert calls == [("release", 3)]
 
 
 def test_target():
@@ -72,39 +93,31 @@ def test_target():
         clip_game.target(Fake(), 75)
 
 
-def test_refusals():
-    with pytest.raises(LookupError, match="memory=64"):
-        clip_game.force(Fake(bridge=False), 1, 75)
-    stalled = Fake(ack=False)
-    stalled.monster(1, 75)
-    assert not clip_game.force(stalled, 1, 75, wait=0.1).acked
-
-
-def test_play_button(games, ports, tmp_path, game):
-    """The picked clip's anim reaches the bridge; a clip moved since the save does not."""
+def test_play_button(games, ports, tmp_path, game, calls):
+    """The picked clip's anim reaches the game; a clip moved since the save does not."""
     path = tmp_path / "zinogre.toml"
     shutil.copy(ports / "zinogre.toml", path)
     ws = MonsterWorkspace(games)
     ws.intel_cache[75] = None
     ws.open(path)
-    ws.game_memory = lambda: nullcontext(game)
+    ws.game_session = lambda: nullcontext(Live(game))  # type: ignore[assignment,arg-type,return-value]
     ws.play_source(248)
     ws.play_in_game()
-    assert game.command() == (MAGIC, Op.FORCE_ACTION, 3, 50)
-    assert ws.message == "anim 50 held on monster 3 until Release"
+    assert calls[-1] == ("play", 50, 3)
+    assert ws.message == "anim 50 held on monster 3 until Release: 3 of 3 body parts play it"
     ws.play_source(2)
     ws.play_in_game()
-    assert game.command()[3] == 2
+    assert calls[-1] == ("play", 2, 3)
     ws.play_source(248)
     ws.place_clip(7)
     ws.play_in_game()
-    assert "save, then build and inject" in ws.message and game.command()[3] == 2
+    assert "save, then build and inject" in ws.message and calls[-1] == ("play", 2, 3)
     ws.release_in_game()
-    assert game.command()[1] == Op.CLEAR and ws.message == "monster 3 released"
-    ws.game_memory = lambda: nullcontext(Fake(bridge=False))
+    assert calls[-1] == ("release", 3) and ws.message == "monster 3 released"
+    ws.game_session = lambda: nullcontext(Live(Fake(bridge=False)))  # type: ignore[assignment,arg-type,return-value]
     ws.save()
     ws.play_in_game()
-    assert ws.message.startswith("not played in the game: the bridge is not up")
+    assert ws.message.startswith("not played in the game: ")
 
 
 def test_attached_reads_the_lane(monkeypatch):
@@ -123,6 +136,6 @@ def test_attached_reads_the_lane(monkeypatch):
 
     monkeypatch.setattr(clip_game, "Session", Session)
     monkeypatch.setenv("MHFU_LANE", "3")
-    with clip_game.attached() as mem:
-        assert mem == "memory"
+    with clip_game.attached() as s:
+        assert s.mem == "memory"
     assert seen == {"port": 45103, "closed": True}

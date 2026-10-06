@@ -60,7 +60,7 @@ from mhfu_studio.shell.workspace import (
 
 if TYPE_CHECKING:
     import moderngl
-    from mhfu.memory import Memory
+    from mhfu.live.session import Session
     from mhfu_port.model import Clip as SceneClip
 
     from mhfu_studio.monster.render.hitboxes import HitboxOverlay
@@ -152,8 +152,8 @@ class MonsterWorkspace(Workspace):
         self.hosts: list[HostSummary] | None = None
         self._survey: Future[list[HostSummary]] | None = None
         self._pool: ThreadPoolExecutor | None = None
-        #: the running game's memory, for Play in game
-        self.game_memory: Callable[[], AbstractContextManager[Memory]] = clip_game.attached
+        #: the running game, for Play in game
+        self.game_session: Callable[[], AbstractContextManager[Session]] = clip_game.attached
         self._reset()
 
     def _reset(self) -> None:
@@ -1456,24 +1456,22 @@ class MonsterWorkspace(Workspace):
         """Holds the picked clip's anim on the running game's big monster (`clip_game`)."""
         try:
             entry = self.game_entry()
-            with self.game_memory() as mem:
-                sent = clip_game.force(mem, entry, self.host_species)
+            with self.game_session() as s:
+                held = clip_game.force(s, entry, self.host_species)
         except (LookupError, OSError, ValueError, DebuggerError) as e:
             self.message = f"not played in the game: {e}"
             return
-        ack = "" if sent.acked else f"; no ack: {clip_game.STALLED}"
-        self.message = f"anim {entry} held on monster {sent.slot} until Release{ack}"
+        self.message = held.says()
 
     def release_in_game(self) -> None:
         """Lets the big monster's own brain pick again."""
         try:
-            with self.game_memory() as mem:
-                sent = clip_game.release(mem, self.host_species)
+            with self.game_session() as s:
+                slot, acked = clip_game.release(s, self.host_species)
         except (LookupError, OSError, ValueError, DebuggerError) as e:
             self.message = f"not released: {e}"
             return
-        ack = "" if sent.acked else f"; no ack: {clip_game.STALLED}"
-        self.message = f"monster {sent.slot} released{ack}"
+        self.message = f"monster {slot} released" + ("" if acked else "; no ack")
 
 
 def _roots() -> tuple[Path | None, ...]:

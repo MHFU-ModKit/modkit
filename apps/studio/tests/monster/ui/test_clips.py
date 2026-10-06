@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from mhfu.live.clips import Played
 from mhfu_studio.monster import clip_game, clips
 from mhfu_studio.monster.panels.clips import ClipsPanel
 from mhfu_studio.monster.workspace import MonsterWorkspace
@@ -149,12 +150,12 @@ def test_place(zinogre: ClipsPanel) -> None:
 def test_play_in_game(zinogre: ClipsPanel, monkeypatch: pytest.MonkeyPatch) -> None:
     p, ws, sent = zinogre, zinogre.ws, []
 
-    def force(mem: object, entry: int, species: int | None) -> clip_game.Sent:
+    def force(s: object, entry: int, species: int | None) -> clip_game.Held:
         sent.append((entry, species))
-        return clip_game.Sent(3, 1, True)
+        return clip_game.Held(3, Played(entry, (), True, False, 0.1, (1, 0)))
 
     monkeypatch.setattr(clip_game, "force", force)
-    ws.game_memory = lambda: nullcontext(None)  # type: ignore[assignment,arg-type,return-value]
+    ws.game_session = lambda: nullcontext(None)  # type: ignore[assignment,arg-type,return-value]
     p.table.cellClicked.emit(ids(p).index("248"), 0)
     p.in_game.click()
-    assert sent == [(50, 75)] and ws.message == "anim 50 held on monster 3 until Release"
+    assert sent == [(50, 75)] and ws.message.startswith("anim 50 held on monster 3 until Release")
