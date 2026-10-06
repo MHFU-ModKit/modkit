@@ -28,7 +28,9 @@ def register(sub: Subparsers) -> None:
     b.add_argument("--data", type=Path, help="extracted MHFU EU (default: $MHFU_DATA)")
     b.add_argument("--jp", type=Path, help="extracted MHP2G (default: $MHP2G_DATA)")
     b.add_argument("--decomp", type=Path, help="mhp2g-decomp checkout (default: $MHP2G_DECOMP)")
-    b.add_argument("-o", "--output", type=Path, help=f"default: {symbols.names_path()}")
+    b.add_argument(
+        "-o", "--output", type=Path, help="default: $MHFU_NAMES, else in ~/.cache/modkit"
+    )
     b.set_defaults(run=build)
 
     s = cmd.add_parser("show", help="what an address is called, or the names holding TEXT")
