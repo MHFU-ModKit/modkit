@@ -22,6 +22,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING
 
+from PIL import Image, ImageDraw, ImageFont
 from ppsspp_debug import DebuggerError, Disconnected, Lane, find_debuggers
 
 from .. import addresses as a
@@ -47,6 +48,8 @@ BEARING_STEP = 30.0
 """Degrees a summon turns when the floor ends along its bearing."""
 DRAWN_FOR = 0.5
 """Seconds SKIP_DRAW must stay clear before a summon counts as drawn."""
+SHEET_COLUMNS = 6
+"""Frames across a film's contact sheet."""
 
 
 class OffFloor(ValueError):
@@ -314,3 +317,105 @@ class Rig:
         from . import route
 
         return route.walk(self.s, point, plan, climbs, log=log)
+
+    def shot(self, path: str | Path, scale: int = 1) -> Path:
+        return shot(self.s, path, scale)
+
+    def film(
+        self,
+        folder: str | Path,
+        seconds: float,
+        fps: float,
+        *,
+        scale: int = 1,
+        columns: int = SHEET_COLUMNS,
+    ) -> Film:
+        return film(self.s, folder, seconds, fps, scale=scale, columns=columns)
+
+
+def shot(s: Session, path: str | Path, scale: int = 1) -> Path:
+    """The frame on screen as a PNG at `path`, while the game runs: at most `scale` times
+    480x272, 0 for the render size. PPSSPP on this machine or in a lane; the modkit's build."""
+    out = Path(path).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    s.client.save_screenshot(out, scale)
+    return out
+
+
+@dataclass(frozen=True)
+class Film:
+    frames: list[Path]
+    times: list[float]
+    """Seconds from the first frame, when each was asked for."""
+    costs: list[float]
+    """Seconds each shot took to answer."""
+    speed: float
+    """The game's speed as a multiple of real time over PPSSPP's last whole second of rates:
+    the last second of filming, in a film of 2 s or more."""
+    sheet: Path
+
+    @property
+    def fps(self) -> float:
+        """Frames per second achieved."""
+        span = self.times[-1] - self.times[0] if len(self.times) > 1 else 0.0
+        return (len(self.times) - 1) / span if span else 0.0
+
+
+def film(
+    s: Session,
+    folder: str | Path,
+    seconds: float,
+    fps: float,
+    *,
+    scale: int = 1,
+    columns: int = SHEET_COLUMNS,
+) -> Film:
+    """`seconds` of shots `1 / fps` apart in `folder` (0000.png, ...), and sheet.png of them all.
+
+    A shot answering late skips the slots that pass meanwhile; `Film.fps` is the rate achieved.
+    """
+    if seconds <= 0 or fps <= 0:
+        raise ValueError("a film needs seconds and fps above 0")
+    out = Path(folder).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    frames: list[Path] = []
+    times: list[float] = []
+    costs: list[float] = []
+    start, slot = s.now(), 0
+    while (due := slot / fps) < seconds:
+        if (wait := start + due - s.now()) > 0:
+            s.sleep(wait)
+        asked = s.now()
+        frames.append(shot(s, out / f"{len(frames):04d}.png", scale))
+        times.append(asked - start)
+        costs.append(s.now() - asked)
+        slot = max(slot + 1, round((s.now() - start) * fps))
+    speed = s.client.frame_stats().speed
+    labels = [f"{k}  {t:.2f}s" for k, t in enumerate(times)]
+    sheet = contact_sheet(frames, out / "sheet.png", labels, columns)
+    return Film(frames, times, costs, speed, sheet)
+
+
+def contact_sheet(
+    frames: Sequence[Path], out: Path, labels: Sequence[str], columns: int = SHEET_COLUMNS
+) -> Path:
+    """`frames` in rows of `columns` on one PNG, each labelled in its top left corner."""
+    images: list[Image.Image] = []
+    for f in frames:
+        with Image.open(f) as opened:
+            images.append(opened.convert("RGB"))
+    w, h = images[0].size
+    gap = 2
+    cols = min(columns, len(images))
+    rows = math.ceil(len(images) / cols)
+    sheet = Image.new("RGB", (cols * (w + gap) - gap, rows * (h + gap) - gap))
+    draw = ImageDraw.Draw(sheet)
+    font = ImageFont.load_default(size=max(12, h // 12))
+    for k, (image, label) in enumerate(zip(images, labels, strict=True)):
+        x, y = k % cols * (w + gap), k // cols * (h + gap)
+        sheet.paste(image, (x, y))
+        left, top, right, bottom = draw.textbbox((x + 4, y + 3), label, font=font)
+        draw.rectangle((left - 3, top - 2, right + 3, bottom + 2), fill="black")
+        draw.text((x + 4, y + 3), label, fill="white", font=font)
+    sheet.save(out)
+    return out
