@@ -45,6 +45,7 @@ slot = 6
 frames = 100
 loop = true
 impact_frame = 62
+turn = -66.5
 label = "a \\"quoted\\" label\\nwith a newline"
 labelled_build = "x.bin@0"
 
@@ -151,6 +152,7 @@ def test_round_trip():
     m = M.loads(FULL)
     assert M.loads(M.dumps(m)) == m
     assert m.clips["run"].label == 'a "quoted" label\nwith a newline'
+    assert (m.clips["run"].turn, m.clips["stop"].turn) == (-66.5, None)
     assert m.hurtboxes[0].radius == 230.0 and m.hurtboxes[0].offset == [0.0, 0.0, 0.0]
     assert m.rules[0].dist == (250.0, 1000.0)
     assert m.moves["run"].claim == M.Claim([0, 1], sub=7)
