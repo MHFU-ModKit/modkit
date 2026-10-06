@@ -29,7 +29,8 @@ XZ = tuple[float, float]
 
 PROGRESS = 4.0  # units of closing distance that count as progress
 DETOUR = math.radians(70.0)  # off the direct line, to clear a corner after a stall
-DETOUR_SECONDS = 0.7
+DETOUR_DISTANCE = 100.0  # how far a detour goes, so a fast-forwarded game goes no further
+DETOUR_SECONDS = 0.7  # the most a detour lasts, where the hunter is wedged and cannot go far
 CAMERA_EVERY = 4  # walk ticks between camera reads
 STICK_EPS = 0.05  # stick change worth re-sending
 
@@ -171,7 +172,7 @@ def walk_to(
                 detours += 1
                 side = -side
                 stick.toward(world_angle(here, target) + side * DETOUR, yaw)
-                s.sleep(DETOUR_SECONDS)
+                detour(s, here, tick)
                 best, stalled = distance(where(s), target), 0
                 yaw, age = camera.yaw, 0
                 continue
@@ -185,17 +186,44 @@ def walk_to(
             stick.release()
 
 
+def detour(s: Session, origin: XZ, tick: float) -> None:
+    """Hold the stick as set until the hunter is DETOUR_DISTANCE from `origin`, at most
+    DETOUR_SECONDS: a distance, not a time, so fast-forward does not stretch it."""
+    end = s.now() + DETOUR_SECONDS
+    while s.now() < end:
+        s.sleep(tick)
+        if distance(where(s), origin) >= DETOUR_DISTANCE:
+            return
+
+
 def walk_path(
-    s: Session, points: Iterable[XZ], *, tolerance: float = 60.0, timeout: float = 40.0
+    s: Session,
+    points: Iterable[XZ],
+    *,
+    tolerance: float = 60.0,
+    timeout: float = 40.0,
+    until: Callable[[], object] | None = None,
+    patience: int = 14,
+    max_detours: int = 4,
 ) -> Walk:
-    """Walk waypoints in order, stopping at the first that is not reached."""
+    """Walk waypoints in order, stopping at the first that is not reached or once `until`."""
     points = list(points)
     if not points:
         raise ValueError("no waypoints")
     for i, (x, z) in enumerate(points):
         last = i == len(points) - 1
-        walk = walk_to(s, x, z, tolerance=tolerance, timeout=timeout, release=last)
-        if not walk.reached:
+        walk = walk_to(
+            s,
+            x,
+            z,
+            tolerance=tolerance,
+            timeout=timeout,
+            release=last,
+            until=until,
+            patience=patience,
+            max_detours=max_detours,
+        )
+        if not walk.reached or walk.reason == "until":
             if not last:
                 Stick(s).release()
             break

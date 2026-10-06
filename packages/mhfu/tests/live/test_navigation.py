@@ -142,3 +142,18 @@ def test_climb_grabs_with_circle(s, fake, clock):
     assert fake.presses == ["circle"]
     assert after.z > before.z
     assert stick(fake) == (0.0, 0.0)
+
+
+def test_detour_is_a_distance_under_fast_forward(s, fake, clock):
+    world = World(s, fake, clock, speed=1400.0, blocked=lambda x, z: x > 300)
+    widest = []
+    fake.on_read.append(lambda addr: widest.append(abs(world.z)))
+    nav.walk_to(s, 1000.0, 0.0, max_detours=1)
+    assert 0 < max(widest) < nav.DETOUR_DISTANCE + 0.12 * 1400
+
+
+def test_path_stops_on_until(s, fake, clock):
+    World(s, fake, clock)
+    walk = nav.walk_path(s, [(1000.0, 0.0), (1000.0, 1000.0)], until=lambda: clock.now > 3)
+    assert walk.reason == "until" and walk.at[1] < 1
+    assert stick(fake) == (0.0, 0.0)
