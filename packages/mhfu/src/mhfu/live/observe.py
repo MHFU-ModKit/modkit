@@ -392,7 +392,13 @@ class Observer:
         `(offset, size)` spans, and with `marks` the pair changes; snapshot the monster `rate`
         times a second (0: at the ends only) for `seconds` of emulated time; `state` is loaded
         first."""
-        holders = dict(engine) if isinstance(engine, Mapping) else dict.fromkeys(engine, "a0")
+        targets = tuple(int(t) for t in targets)
+        holders = (
+            {int(k): v for k, v in engine.items()}
+            if isinstance(engine, Mapping)
+            else dict.fromkeys((int(k) for k in engine), "a0")
+        )
+        writes = tuple((int(offset), int(size)) for offset, size in writes)
         if overlap := set(targets) & set(holders):
             raise ValueError(f"traced both as callee and engine function: {sorted(overlap)}")
         client = self.s.client
@@ -404,7 +410,7 @@ class Observer:
             if not found:
                 raise ValueError(f"no em{self.species} monster in the entity registry")
             entity = found[0]
-        run = Run(entity, tuple(targets), tuple(indirect), tuple(holders), tuple(writes))
+        run = Run(entity, targets, tuple(int(i) for i in indirect), tuple(holders), writes)
         start = self.usec()
 
         def take(sink: list[Any], convert: Callable[[Call], Any]) -> Callable[[Hit], None]:

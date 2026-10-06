@@ -827,6 +827,8 @@ class AsyncClient:
                             log_format=log_format,
                         )
                         spanned.append((start, size))
+                    if armed:
+                        await self._retranslate(armed[0])
                 yield Stream(sub, match)
             finally:
                 with suppress(Disconnected):
@@ -835,6 +837,16 @@ class AsyncClient:
                             await self.remove_breakpoint(address)
                         for start, size in spanned:
                             await self.remove_watchpoint(start, size)
+
+    async def _retranslate(self, at: int) -> None:
+        """Have the JIT drop all its code at the next frame.
+
+        PPSSPP retranslates only the last address a breakpoint change touched in a frame, so of
+        several breakpoints armed in one stop the others never fire in code already translated.
+        A watchpoint change drops everything; this one is gone before the CPU runs again.
+        """
+        await self.add_watchpoint(at, 1, stop=False)
+        await self.remove_watchpoint(at, 1)
 
     def _hit_source(self, stop: bool, log_format: str | None) -> set[str]:
         """The broadcasts a breakpoint's hits arrive as."""
