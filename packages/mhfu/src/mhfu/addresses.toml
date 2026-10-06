@@ -521,6 +521,7 @@ EXIT_COUNT = { offset = 0x3D, type = "u8", doc = "number of EXITS records" }
 SPHERE_COUNT = { offset = 0x3E, type = "u8", doc = "number of SPHERES records" }
 OBJECT_A_COUNT = { offset = 0x3F, type = "u8", doc = "number of OBJECTS_A records" }
 OBJECT_B_COUNT = { offset = 0x40, type = "u8", doc = "number of OBJECTS_B records" }
+WALL_CLASSES = { offset = 0x00, type = "u32[3]", doc = "wall class per surface id: the wall resolver reads byte 0 of P + 4 * surface id; bit 2 is the wall a Tigrex sticks to" }
 
 [struct.STAGE_EXIT]
 doc = "one area transition of a stage: a trigger cylinder here and a landing point in the target stage"

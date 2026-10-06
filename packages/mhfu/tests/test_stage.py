@@ -298,3 +298,11 @@ def test_triangle_flags():
     mem.write_u32(at, 0x0101_0A02)
     tri = next(S.Floor.read(mem, 98).triangles())
     assert (tri.surface, tri.material, tri.exclude) == (2, 10, 0x101)
+
+
+def test_wall_class():
+    base = a.USER_RAM + 0x100
+    mem = Image(struct.pack("<3I", 0, 1, 0x0102), base)
+    params = S.StageParams(mem, base)
+    assert params.wall_classes == (0, 1, 0x0102)
+    assert [params.wall_class(k) for k in range(3)] == [0, 1, 2]

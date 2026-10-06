@@ -22,7 +22,7 @@ from .files import Extracted
 from .memory import Image, Memory, Unmapped
 from .mips import Code, Gpr
 from .overlay import Overlay
-from .views import View, f32, ptr, ptrs, u8, u16, u16s, u32, vec3
+from .views import View, f32, ptr, ptrs, u8, u16, u16s, u32, u32s, vec3
 
 R = TypeVar("R", bound=View)
 
@@ -71,6 +71,12 @@ class StageParams(View):
     env = u8(a.STAGE_PARAMS.ENV)
     exit_count = u8(a.STAGE_PARAMS.EXIT_COUNT)
     sphere_count = u8(a.STAGE_PARAMS.SPHERE_COUNT)
+    wall_classes = u32s(a.STAGE_PARAMS.WALL_CLASSES)
+
+    def wall_class(self, surface: int) -> int:
+        """The class the wall resolver reads for a triangle's surface id: byte 0 of the word at
+        4 * surface, past WALL_CLASSES for an id over 2 as the engine reads it."""
+        return self.mem.u8(self.base + a.STAGE_PARAMS.WALL_CLASSES + 4 * surface)
 
 
 class Exit(View):
