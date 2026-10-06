@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
+from mhfu.stage import FLOOR_CHUNK
 
 from mhfu_studio.shell.input import Button, Key, Mod, Pointer
 from mhfu_studio.shell.manipulator import Manipulation, Manipulator, Operation
@@ -37,8 +38,8 @@ from .render.stage_mesh import HL_HOVER
 if TYPE_CHECKING:
     from .workspace import MapWorkspace
 
-SELECT, MOVE, ROTATE, SCALE = "select", "move", "rotate", "scale"
-TOOLS = (SELECT, MOVE, ROTATE, SCALE)
+SELECT, MOVE, ROTATE, SCALE, POINT = "select", "move", "rotate", "scale", "point"
+TOOLS = (SELECT, MOVE, ROTATE, SCALE, POINT)
 OPERATIONS: dict[str, Operation] = {MOVE: "translate", ROTATE: "rotate", SCALE: "scale"}
 VERBS = {MOVE: "move", ROTATE: "turn", SCALE: "resize"}
 SNAP, LOCAL, LAYER = "snap", "local", "collision layer"
@@ -81,6 +82,11 @@ GROUPS = (
                 SCALE, "Scale", "R", "ph.arrows-out",
                 "Drag a box handle to stretch the selection along that axis, or the centre box"
                 " to grow it (drag right) or shrink it (drag left) evenly.",
+            ),
+            Tool(
+                POINT, "Point", "P", "ph.map-pin",
+                "Click the ground to set a named point there, a place `mhfu rig goto` and"
+                " `mhfu rig walk` take the hunter to. The Points panel names and edits it.",
             ),
         ),
     ),
@@ -161,7 +167,7 @@ class ViewportTools:
 
     @property
     def gizmo_visible(self) -> bool:
-        if self.tool == SELECT:
+        if self.tool in (SELECT, POINT):
             return False
         if self.kind == COLLISION:
             return self.layer_shown and not self.ws.col_sel.empty
@@ -263,6 +269,8 @@ class ViewportTools:
         """What the mouse does now, for the HUD."""
         if self.tool == SELECT:
             return "click picks, shift adds, drag boxes; Alt-drag orbits, right-drag pans"
+        if self.tool == POINT:
+            return "click the ground to set a point; drag orbits, right-drag pans"
         verb = VERBS[self.tool]
         if self.gizmo_visible:
             return f"drag a handle to {verb}; drag elsewhere orbits, right-drag pans"
@@ -329,6 +337,8 @@ class ViewportTools:
             o.rect((x0, y0), (x1, y1), color=Ink.BOX)
 
     def _move(self, ev: Pointer) -> None:
+        if self.tool == POINT:
+            return
         if self._press is not None and Button.LEFT in ev.buttons and self.tool == SELECT:
             px, py = self._press
             if abs(ev.x - px) > CLICK_SLOP or abs(ev.y - py) > CLICK_SLOP:
@@ -371,6 +381,21 @@ class ViewportTools:
         if vp.collision is not None and not vp.collision.show_class.get(klass, True):
             return None
         return hit[0], hit[1]
+
+    def ground(self, o: Array, d: Array) -> tuple[float, float, float] | None:
+        """Where the ray meets the walkable floor (the collision's floor chunk), else the
+        drawn mesh; None for neither."""
+        sc = self.ws.scene
+        assert sc is not None
+        hit = pick_collision(sc, o, d, chunks=[FLOOR_CHUNK])
+        if hit is not None:
+            x, y, z = (np.asarray(o, np.float64) + np.asarray(d, np.float64) * hit[2]).tolist()
+            return x, y, z
+        mesh = self._pick_mesh(o, d)
+        if mesh is None:
+            return None
+        x, y, z = mesh.point.tolist()
+        return x, y, z
 
     def _pick_mesh(self, o: Array, d: Array) -> Hit | None:
         vp, sc = self.ws.viewport, self.ws.scene
@@ -432,6 +457,9 @@ class ViewportTools:
         vp, sc = ws.viewport, ws.scene
         assert vp is not None and sc is not None
         o, d = vp.camera.ray(mouse[0], mouse[1], size)
+        if self.tool == POINT:
+            ws.place_point(self.ground(o, d))
+            return
         if self.kind == COLLISION:
             pair = self._pick_col(o, d)
             if pair is None:

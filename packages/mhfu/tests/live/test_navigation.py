@@ -21,9 +21,9 @@ class World:
     """The player walks along the stick at `speed` units/s under a camera at `yaw` radians;
     `blocked(x, z)` walls off ground. Time is the test clock, so walks advance on sleeps."""
 
-    def __init__(self, s, fake, clock, x=0.0, z=0.0, yaw=0.0, speed=140.0, blocked=None):
+    def __init__(self, s, fake, clock, x=0.0, z=0.0, yaw=0.0, speed=140.0, blocked=None, dead=0.0):
         self.fake, self.clock = fake, clock
-        self.speed = speed
+        self.speed, self.dead = speed, dead
         self.blocked = blocked or (lambda x, z: False)
         self.then, self.stick = clock.now, (0.0, 0.0)
         self.look(yaw)
@@ -54,7 +54,7 @@ class World:
     def advance(self):
         dt, self.then = self.clock.now - self.then, self.clock.now
         magnitude = math.hypot(*self.stick)
-        if not magnitude:
+        if magnitude <= self.dead:
             return
         heading = self.yaw - math.atan2(*self.stick)
         step = self.speed * magnitude * dt
@@ -142,3 +142,41 @@ def test_climb_grabs_with_circle(s, fake, clock):
     assert fake.presses == ["circle"]
     assert after.z > before.z
     assert stick(fake) == (0.0, 0.0)
+
+
+def test_detour_is_a_distance_under_fast_forward(s, fake, clock):
+    world = World(s, fake, clock, speed=1400.0, blocked=lambda x, z: x > 300)
+    widest = []
+    fake.on_read.append(lambda addr: widest.append(abs(world.z)))
+    nav.walk_to(s, 1000.0, 0.0, max_detours=1)
+    assert 0 < max(widest) < nav.DETOUR_DISTANCE + 0.12 * 1400
+
+
+def test_path_stops_on_until(s, fake, clock):
+    World(s, fake, clock)
+    walk = nav.walk_path(s, [(1000.0, 0.0), (1000.0, 1000.0)], until=lambda: clock.now > 3)
+    assert walk.reason == "until" and walk.at[1] < 1
+    assert stick(fake) == (0.0, 0.0)
+
+
+def test_walk_arrives_past_the_dead_zone(s, fake, clock):
+    World(s, fake, clock, dead=0.5)  # a quest hunter does not move on a stick of 0.5 or less
+    walk = nav.walk_to(s, 1000.0, 0.0)
+    assert walk.reached and walk.remaining <= 60.0
+
+
+def test_climb_stops_holding_on_top(s, fake, clock):
+    grabbed = []
+    fake.on_press.append(grabbed.append)
+    world = World(s, fake, clock, speed=1400.0, blocked=lambda x, z: z > 100 and not grabbed)
+    up = world.place
+
+    def place(x, z, heading=None):  # fast-forwarded, onto a ledge 200 up past z = 100
+        up(x, z, heading)
+        fake.poke("f", PLAYER_AT + 4, 200.0 if z > 100 else 0.0)
+
+    world.place = place
+    start = clock.now
+    before, after = nav.climb(s, 0.0, hold=5.0)
+    assert grabbed == ["circle"] and after.y - before.y == 200
+    assert after.z < 1000 and clock.now - start < 3

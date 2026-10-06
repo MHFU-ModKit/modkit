@@ -19,6 +19,7 @@ from mhfu_studio.map.tools import (
     MOVE,
     OPTIONS,
     PICK,
+    POINT,
     ROTATE,
     SCALE,
     SNAP,
@@ -113,7 +114,7 @@ def test_tool_groups(ws: MapWorkspace) -> None:
     assert [g.id for g in ws.tool_groups()] == [TOOL, PICK, OPTIONS]
     tools = [t for g in GROUPS for t in g.tools]
     keys = [t.key for t in tools if t.key]
-    assert keys == ["Q", "W", "E", "R", "1", "2", "3", "4", "C"]
+    assert keys == ["Q", "W", "E", "R", "P", "1", "2", "3", "4", "C"]
     assert all(t.tip and t.icon.startswith("ph.") for t in tools)
     assert ws.tool_on(TOOL, "select") and ws.tool_on(PICK, OBJECT)
     ws.set_tool(TOOL, ROTATE)
@@ -428,3 +429,26 @@ def test_open_and_reveal(ws: MapWorkspace, doc_dir: Path) -> None:
     assert ws.take_focus() == "Collision"
     ws.reveal("nothing")
     assert ws.scene.stage == 98
+
+
+def test_point_tool(ws: MapWorkspace) -> None:
+    assert ws.scene is not None
+    ws.set_tool(TOOL, POINT)
+    assert "Click the ground" in ws.hint() and not ws.tools.gizmo_visible
+    assert click(ws, screen(ws, (1200.0, 0.0, 1500.0))) == Gesture.NONE
+    (p,) = ws.doc.points
+    assert p.stage == ws.scene.stage and p.at == pytest.approx((1200.0, 0.0, 1500.0), abs=5.0)
+    assert ws.point == p.name and ws.points_here() == [p] and ws.doc.dirty
+    rec = Recorder(SIZE)
+    ws.paint(rec)
+    assert p.name in rec.texts() and "circle" in rec.kinds()
+    assert ws.place_point(None) is None  # a click on nothing
+    assert len(ws.doc.points) == 1 and "no ground" in ws.message
+    assert ws.edit_point(p.name, name="ledge", kind="climb") is None
+    assert ws.doc.point("ledge").heading == 0.0 and ws.point == "ledge"
+    assert ws.edit_point("ledge", kind="point") is None
+    assert ws.doc.point("ledge").heading is None
+    ws.place_point((0.0, 0.0, 0.0))
+    assert "already named" in (ws.edit_point("point_1", name="ledge") or "")
+    ws.remove_point("ledge")
+    assert [q.name for q in ws.doc.points] == ["point_1"]

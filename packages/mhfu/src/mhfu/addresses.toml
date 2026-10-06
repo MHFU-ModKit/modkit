@@ -27,6 +27,9 @@ MAP_SUBSECTION = { eu = 0x08A8DE4C, type = "u8", doc = "sub-area byte; collides 
 SCREEN_STATE_MIRROR = { eu = 0x08ACCA48, type = "u8", doc = "mirror of SCREEN_STATE (+0x40000), lags it by 50-100 ms" }
 MAP_SUBSECTION_MIRROR = { eu = 0x08ACDE4C, type = "u8", doc = "mirror of MAP_SUBSECTION (+0x40000)" }
 AREA_INDEX = { eu = 0x08B0C7DC, type = "u16", doc = "visible map-section index, equal to the stage number; ENTITY.SECTION uses the same encoding" }
+INTERSECTING_EXIT = { eu = 0x088C72B0, type = "fn", doc = "StageManager::intersecting_exit(manager, vec3*): the STAGE_EXIT whose trigger holds the point, else 0" }
+EXIT_CHECK = { eu = 0x09A631A8, type = "fn", doc = "game_task: the player's per-frame exit test; stores INTERSECTING_EXIT(ENTITY.POSITION) in MONSTER_MANAGER.EXIT, every frame" }
+AREA_CHANGE_POLL = { eu = 0x09A60730, type = "code", doc = "game_task: the in-area update's branch whose delay slot reads MONSTER_MANAGER.REQUESTS; stopped here, a request is taken before EXIT_CHECK rewrites EXIT" }
 
 # --- menus and dialogue ---
 MAIN_MENU_HIGHLIGHT = { eu = 0x08A8CADE, type = "u16", doc = "main-menu highlight bar Y in the German UI (68 + 32*row); draw memory that moves with the language (English: 100 + 32*row elsewhere)" }
@@ -383,6 +386,10 @@ doc = "big-monster manager singleton at MONSTER_MANAGER_SINGLETON"
 [struct.MONSTER_MANAGER.fields]
 PROCESSOR = { offset = 0x0C, type = "ptr", doc = "per-monster processor the per-frame drive calls; a data word, so swapping it is JIT-safe" }
 FRAME_COUNTER = { offset = 0x30, type = "u32", doc = "incremented once per drive, i.e. once per frame" }
+LANDING = { offset = 0x20, type = "vec3", doc = "where the hunter lands after an area change, copied from STAGE_EXIT.DEST" }
+LANDING_YAW = { offset = 0x2C, type = "u16", doc = "the hunter's facing on landing, copied from STAGE_EXIT.YAW" }
+EXIT = { offset = 0x4C, type = "ptr", doc = "the STAGE_EXIT an area change goes through; EXIT_CHECK rewrites it every frame" }
+REQUESTS = { offset = 0x54, type = "u32", doc = "bit 0: change area through EXIT on this update (EXIT_CHECK sets it, HUNTER.EXITING with it)" }
 
 [struct.QUEST]
 doc = "Quest singleton at QUEST_SINGLETON"
@@ -547,6 +554,7 @@ EXIT_COUNT = { offset = 0x3D, type = "u8", doc = "number of EXITS records" }
 SPHERE_COUNT = { offset = 0x3E, type = "u8", doc = "number of SPHERES records" }
 OBJECT_A_COUNT = { offset = 0x3F, type = "u8", doc = "number of OBJECTS_A records" }
 OBJECT_B_COUNT = { offset = 0x40, type = "u8", doc = "number of OBJECTS_B records" }
+WALL_CLASSES = { offset = 0x00, type = "u32[3]", doc = "wall class per surface id: the wall resolver reads byte 0 of P + 4 * surface id; bit 2 is the wall a Tigrex sticks to" }
 
 [struct.STAGE_EXIT]
 doc = "one area transition of a stage: a trigger cylinder here and a landing point in the target stage"
@@ -559,6 +567,7 @@ RADIUS = { offset = 0x10, type = "f32", doc = "trigger radius" }
 HEIGHT = { offset = 0x14, type = "f32", doc = "trigger height" }
 DEST = { offset = 0x24, type = "vec3", doc = "where the hunter lands in the target stage" }
 YAW = { offset = 0x30, type = "u16", doc = "facing on landing, 0x10000 = one turn" }
+END = { offset = 0x18, type = "vec3", doc = "with FLAG 1 the trigger is a capsule from TRIGGER to here, RADIUS wide; FLAG 0 is the cylinder" }
 
 [struct.STAGE_SPHERE]
 doc = "one sphere of a stage overlay's sphere list; what it marks is not decoded"
@@ -619,3 +628,8 @@ PIVOT = { offset = 0x50, type = "vec3", doc = "pivot the eye orbits, copied from
 doc = "CAM_ORBIT_UPDATE's stack frame at CAM_ORBIT_INPUTS"
 [struct.CAM_ORBIT_FRAME.fields]
 ANGLES = { offset = 0x17C, type = "f32[3]", doc = "orbit euler angles in radians, derived before the rotation is built" }
+
+[struct.HUNTER]
+doc = "the player combat entity PLAYER_ENTITY beyond the ENTITY fields it shares"
+[struct.HUNTER.fields]
+EXITING = { offset = 0x2A4, type = "u8", doc = "1 while leaving through an exit; without it an area change loads the stage and leaves the hunter frozen where he stood" }

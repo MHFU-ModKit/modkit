@@ -277,3 +277,32 @@ def test_floor_not_loaded():
         S.Floor.read(resident_stage(98), 99)
     with pytest.raises(S.NotLoaded, match="not fixed up"):
         S.Floor.read(resident_stage(98, fixed=False), 98)
+
+
+def test_floor_triangles():
+    mem = resident_stage(98)
+    floor = S.Floor.read(mem, 98, chunk=S.FLOOR_CHUNK)
+    tris = list(floor.triangles())
+    assert len(tris) == 3
+    assert tris[0].v1 == (0, 100, 400) and tris[0].normal[1] == pytest.approx(1)
+    assert tris[2].normal[1] == pytest.approx(0) and tris[2].material == 0
+    assert tris[1].address == tris[0].address + 56
+    with pytest.raises(S.NotLoaded, match="chunk 0"):
+        S.Floor.read(mem, 98, chunk=S.WALL_CHUNK)
+
+
+def test_triangle_flags():
+    mem = resident_stage(98)
+    floor = S.Floor.read(mem, 98)
+    at = next(floor.triangles()).address
+    mem.write_u32(at, 0x0101_0A02)
+    tri = next(S.Floor.read(mem, 98).triangles())
+    assert (tri.surface, tri.material, tri.exclude) == (2, 10, 0x101)
+
+
+def test_wall_class():
+    base = a.USER_RAM + 0x100
+    mem = Image(struct.pack("<3I", 0, 1, 0x0102), base)
+    params = S.StageParams(mem, base)
+    assert params.wall_classes == (0, 1, 0x0102)
+    assert [params.wall_class(k) for k in range(3)] == [0, 1, 2]

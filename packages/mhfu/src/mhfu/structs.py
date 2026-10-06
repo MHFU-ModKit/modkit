@@ -379,3 +379,25 @@ class ClipBlock(View):
     def of(cls, mem: Memory, entity: int, part: int) -> ClipBlock:
         assert a.CLIP_BLOCK.size
         return cls(mem, entity + a.ENTITY.CLIP_BLOCKS + part * a.CLIP_BLOCK.size)
+
+
+# --- areas ---
+
+
+class AreaChange(View):
+    """The area-change half of MONSTER_MANAGER_SINGLETON: a pending exit and where it lands."""
+
+    struct = a.MONSTER_MANAGER
+
+    landing = vec3(a.MONSTER_MANAGER.LANDING)
+    landing_yaw = u16(a.MONSTER_MANAGER.LANDING_YAW)
+    exit = ptr(a.MONSTER_MANAGER.EXIT)
+    requests = u32(a.MONSTER_MANAGER.REQUESTS)
+
+
+class Hunter(View):
+    """PLAYER_ENTITY's own fields."""
+
+    struct = a.HUNTER
+
+    exiting = u8(a.HUNTER.EXITING)
