@@ -5,7 +5,9 @@
  * A move rides a native CARRIER pair, entered through the engine's enter-action so the host
  * provisions it and its handler runs; on the next AI step the move's entry goes to the executor,
  * which puts the clip on every body part. Each attack spawns when the timing part's cursor
- * crosses its frame. The move ends when its clip does (the carrier hands off to the brain, or
+ * crosses its frame, and an attack with an end frame is ended there (or when the move ends
+ * first) through the node's own end state; without one it lives as long as its record says. The
+ * move ends when its clip does (the carrier hands off to the brain, or
  * the move enters its back pair), after LENGTH frames, or when anything else changes the pair, a
  * reaction first of all. With SKIP the host AI step does not run while the clip plays, except
  * on a frame with a hit pending, so the brain cannot cut in; the host still takes the damage.
@@ -28,6 +30,8 @@ extern "C" {
 typedef struct {
     uint16_t frame;   /* clip frame */
     uint16_t id;      /* the species' attack record */
+    uint16_t end;     /* clip frame the node is ended at; 0 = its own life */
+    uint16_t _pad;
 } mhfu_move_attack_t;
 
 typedef struct {
@@ -69,6 +73,9 @@ typedef struct {
     uint32_t spawn_node[MHFU_MOVE_MAX_ATTACKS];
     mhfu_move_t move, next;
     uint32_t next_entity;
+    uint32_t node_vtable[MHFU_MOVE_MAX_ATTACKS];
+    uint32_t ended_frame[MHFU_MOVE_MAX_ATTACKS];
+    uint8_t  ended_state[MHFU_MOVE_MAX_ATTACKS];
 } mhfu_move_state_t;
 
 /* entry on the carrier (0,2), em75's alert hub (one dispatch, then the brain once the clip

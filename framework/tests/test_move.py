@@ -17,6 +17,8 @@ SPEED = 2.0
 NO_PAIR = 0xFF
 CLIP, BACK, PAIR, STOPPED, REPLACED, REFUSED, LOST = range(1, 8)
 DONE = 4
+NEVER = 0xFFFF_FFFF
+NODE6 = BASE + 0x3000 + 0x600  # move_host.cpp's node for attack 6
 
 
 class Move(ctypes.Structure):
@@ -31,7 +33,7 @@ class Move(ctypes.Structure):
         ("skip", ctypes.c_uint8),
         ("part", ctypes.c_uint8),
         ("attack_count", ctypes.c_uint8),
-        ("attacks", ctypes.c_uint16 * 8),
+        ("attacks", ctypes.c_uint16 * 16),
         ("spawner", ctypes.c_uint32),
     ]
 
@@ -91,8 +93,9 @@ class Game:
             if k == "attacks":
                 continue
             setattr(mv, k, v)
-        for i, (frame, id_) in enumerate(kw.get("attacks", ())):  # type: ignore[attr-defined]
-            mv.attacks[2 * i], mv.attacks[2 * i + 1] = frame, id_
+        for i, (frame, id_, *end) in enumerate(kw.get("attacks", ())):  # type: ignore[attr-defined]
+            mv.attacks[4 * i], mv.attacks[4 * i + 1] = frame, id_
+            mv.attacks[4 * i + 2] = end[0] if end else 0
             mv.attack_count = i + 1
         assert self.lib.mhfu_move_play(ENT, ctypes.byref(mv)) == 1
 
@@ -150,7 +153,8 @@ def test_attack_spawns_when_the_cursor_crosses_its_frame(g: Game) -> None:
     spawns = [c for c in g.calls() if c[0] == "S"]
     assert spawns == [("S", int(a.TIGREX_ATTACK_SPAWN), ENT, 6, 0)]
     assert g.state("SPAWN_FRAME") == (28,) and g.state("SPAWN_CURSOR", "f") == (56.0,)
-    assert g.state("SPAWN_NODE") == (0x1006,)
+    assert g.state("SPAWN_NODE") == (NODE6,)
+    assert g.state("ENDED_FRAME") == (NEVER,)  # no end frame: the node's own life
 
 
 def test_a_reaction_ends_the_move(g: Game) -> None:
@@ -207,3 +211,44 @@ def test_stop_and_replace(g: Game) -> None:
     g.frame()
     assert g.state("END", "B") == (STOPPED,)
     assert not g.lib.host_has_step()
+
+
+def test_window_ends_the_node_at_its_end_frame(g: Game) -> None:
+    g.play(46, attacks=[(56, 6, 80)])  # type: ignore[arg-type]
+    for _ in range(60):
+        g.frame()
+    ends = [c for c in g.calls() if c[0] == "K"]
+    assert ends == [("K", NODE6, 0x1234, 0, 0)]
+    assert g.state("ENDED_FRAME") == (40,) and g.state("ENDED_STATE", "B") == (2,)
+
+
+def test_window_still_open_ends_with_the_move(g: Game) -> None:
+    g.play(46, attacks=[(56, 6, 200)])  # type: ignore[arg-type]
+    for _ in range(40):
+        g.frame()
+    g.pair = (4, 1)
+    g.frame()
+    assert [c[0] for c in g.calls()].count("K") == 1
+    assert g.state("ENDED_FRAME") == (39,)
+
+
+def test_node_that_ended_itself_is_left_alone(g: Game) -> None:
+    g.play(46, attacks=[(56, 6, 80)])  # type: ignore[arg-type]
+    for _ in range(35):
+        g.frame()
+    g.mem[NODE6 - BASE + a.ATTACK_NODE.STATE] = 0
+    for _ in range(10):
+        g.frame()
+    assert not [c for c in g.calls() if c[0] == "K"]
+    assert g.state("ENDED_STATE", "B") == (0,)
+
+
+def test_node_no_longer_ours_is_left_alone(g: Game) -> None:
+    g.play(46, attacks=[(56, 6, 80)])  # type: ignore[arg-type]
+    for _ in range(35):
+        g.frame()
+    struct.pack_into("<I", g.mem, NODE6 - BASE, 0x5678)  # freed: the base class's vtable
+    for _ in range(10):
+        g.frame()
+    assert not [c for c in g.calls() if c[0] == "K"]
+    assert g.state("ENDED_STATE", "B") == (0xFF,)

@@ -7,7 +7,13 @@
  *               phase 0, which dispatches the carrier's own clip
  *   frame 1:    the move's entry to the executor: our clip on every part
  *   frame 2..:  attacks at their frames, the end checks, SKIP's choice
- *   end:        the step comes out once nothing is pending
+ *   end:        windowed attacks still live are ended; the step comes out once nothing is
+ *               pending
+ *
+ * An attack node is ended through its own end state (ATTACK_NODE_VTABLE.END): it stops being
+ * tested at once, and the collision world deletes it on its next update. Only a node that is
+ * still ours is touched: the vtable read at the spawn, our entity as owner, live, and not the
+ * address a later spawn of this move got.
  *
  * The block lives in partition memory, like em_vhook's, because thread stacks reach into the
  * PRX image; nothing but its pointer is kept here. The step never logs: it runs inside the
@@ -32,6 +38,7 @@
 
 static_assert(sizeof(mhfu_move_attack_t) == MHFU_MOVE_ATTACK_SIZE, "MOVE_ATTACK layout");
 static_assert(offsetof(mhfu_move_attack_t, id) == MHFU_MOVE_ATTACK_ID, "MOVE_ATTACK layout");
+static_assert(offsetof(mhfu_move_attack_t, end) == MHFU_MOVE_ATTACK_END, "MOVE_ATTACK layout");
 static_assert(sizeof(mhfu_move_t) == MHFU_MOVE_SIZE, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, carrier_main) == MHFU_MOVE_CARRIER_MAIN, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, back_mode) == MHFU_MOVE_BACK_MODE, "MOVE layout");
@@ -50,6 +57,9 @@ static_assert(offsetof(mhfu_move_state_t, spawn_node) == MHFU_MOVE_STATE_SPAWN_N
 static_assert(offsetof(mhfu_move_state_t, move) == MHFU_MOVE_STATE_MOVE, "MOVE_STATE layout");
 static_assert(offsetof(mhfu_move_state_t, next) == MHFU_MOVE_STATE_NEXT, "MOVE_STATE layout");
 static_assert(offsetof(mhfu_move_state_t, next_entity) == MHFU_MOVE_STATE_NEXT_ENTITY, "MOVE_STATE layout");
+static_assert(offsetof(mhfu_move_state_t, node_vtable) == MHFU_MOVE_STATE_NODE_VTABLE, "MOVE_STATE layout");
+static_assert(offsetof(mhfu_move_state_t, ended_frame) == MHFU_MOVE_STATE_ENDED_FRAME, "MOVE_STATE layout");
+static_assert(offsetof(mhfu_move_state_t, ended_state) == MHFU_MOVE_STATE_ENDED_STATE, "MOVE_STATE layout");
 
 /* --- the engine ------------------------------------------------------------------------- */
 
@@ -72,13 +82,20 @@ static uint32_t spawn(uint32_t spawner, uint32_t ent, uint32_t id)
 {
     return ((spawn_fn)spawner)(mhfu_mem_read_u32(MHFU_COLLISION_WORLD_PTR), ent, id);
 }
+typedef void (*node_fn)(uint32_t);
+static void end_node(uint32_t node, uint32_t vtable)
+{
+    ((node_fn)mhfu_mem_read_u32(vtable + MHFU_ATTACK_NODE_VTABLE_END))(node);
+}
 #else
 extern "C" void     mhfu_host_enter(uint32_t ent, uint32_t m, uint32_t s, uint32_t mode);
 extern "C" void     mhfu_host_execute(uint32_t ent, uint32_t entry);
 extern "C" uint32_t mhfu_host_spawn(uint32_t spawner, uint32_t ent, uint32_t id);
+extern "C" void     mhfu_host_end(uint32_t node, uint32_t vtable);
 static void     enter(uint32_t e, uint32_t m, uint32_t s, uint32_t mode) { mhfu_host_enter(e, m, s, mode); }
 static void     execute(uint32_t e, uint32_t entry) { mhfu_host_execute(e, entry); }
 static uint32_t spawn(uint32_t sp, uint32_t e, uint32_t id) { return mhfu_host_spawn(sp, e, id); }
+static void     end_node(uint32_t node, uint32_t vtable) { mhfu_host_end(node, vtable); }
 #endif
 
 static volatile mhfu_move_state_t *S;
@@ -105,8 +122,34 @@ static void step_out(void)
     if (S->pending) mhfu_em_step(step);   /* a play() that raced in keeps its step */
 }
 
+/* attack i's node, if it is still ours and live, through its end state */
+static void end_attack(int i, uint32_t ent)
+{
+    uint32_t node = S->spawn_node[i];
+    if (!node || S->ended_frame[i] != NEVER) return;
+    S->ended_frame[i] = S->frames;
+    uint8_t state = 0xFF;
+    int reused = 0;
+    for (int j = 0; j < S->move.attack_count; j++)
+        if (j != i && S->spawn_node[j] == node && S->spawn_frame[j] != NEVER
+            && S->spawn_frame[j] > S->spawn_frame[i])
+            reused = 1;
+    if (!reused && mhfu_mem_read_u32(node) == S->node_vtable[i]
+        && mhfu_mem_read_u32(node + MHFU_ATTACK_NODE_OWNER) == ent)
+        state = mhfu_mem_read_u8(node + MHFU_ATTACK_NODE_STATE);
+    S->ended_state[i] = state;
+    if (state != 0 && state != 0xFF) end_node(node, S->node_vtable[i]);
+}
+
+static void end_attacks(uint32_t ent)
+{
+    for (int i = 0; i < S->move.attack_count; i++)
+        if (S->move.attacks[i].end) end_attack(i, ent);
+}
+
 static void finish(int why, uint32_t pair)
 {
+    end_attacks(S->entity);
     S->end = (uint8_t)why;
     S->end_pair = (uint16_t)pair;
     S->end_frame = S->frames;
@@ -132,9 +175,10 @@ static void start(uint32_t ent)
         S->clip_end[k] = S->peak[k] = -1.0f;
     }
     for (int i = 0; i < MHFU_MOVE_MAX_ATTACKS; i++) {
-        S->spawn_frame[i] = NEVER;
+        S->spawn_frame[i] = S->ended_frame[i] = NEVER;
         S->spawn_cursor[i] = -1.0f;
-        S->spawn_node[i] = 0;
+        S->spawn_node[i] = S->node_vtable[i] = 0;
+        S->ended_state[i] = 0;
     }
     enter(ent, S->move.carrier_main, S->move.carrier_sub, 0);
     uint32_t now = pair_of(ent);
@@ -155,15 +199,26 @@ static void dispatch(uint32_t ent)
     S->state = MHFU_MOVE_PLAYING;
 }
 
+static int crosses(float prev, float cursor, uint16_t frame)
+{
+    float f = (float)frame;
+    return prev < f && f <= cursor;
+}
+
 static void attacks(uint32_t ent, float prev, float cursor)
 {
     for (int i = 0; i < S->move.attack_count; i++) {
-        float f = (float)S->move.attacks[i].frame;
-        if (S->spawn_frame[i] != NEVER || !(prev < f && f <= cursor)) continue;
-        uint32_t spawner = S->move.spawner ? S->move.spawner : MHFU_TIGREX_ATTACK_SPAWN;
-        S->spawn_node[i] = spawn(spawner, ent, S->move.attacks[i].id);
-        S->spawn_frame[i] = S->frames;
-        S->spawn_cursor[i] = cursor;
+        const mhfu_move_attack_t *at = (const mhfu_move_attack_t *)&S->move.attacks[i];
+        if (S->spawn_frame[i] == NEVER && crosses(prev, cursor, at->frame)) {
+            uint32_t spawner = S->move.spawner ? S->move.spawner : MHFU_TIGREX_ATTACK_SPAWN;
+            uint32_t node = spawn(spawner, ent, at->id);
+            S->spawn_node[i] = node;
+            S->node_vtable[i] = node ? mhfu_mem_read_u32(node) : 0;
+            S->spawn_frame[i] = S->frames;
+            S->spawn_cursor[i] = cursor;
+        }
+        if (at->end && S->spawn_frame[i] != NEVER && crosses(prev, cursor, at->end))
+            end_attack(i, ent);
     }
 }
 
@@ -200,6 +255,7 @@ static uint32_t play(uint32_t ent)
             return 0;
         }
         /* the host step runs the carrier's last phase now; AFTER reads what it picked */
+        end_attacks(ent);
         S->end = MHFU_MOVE_END_CLIP;
         S->end_frame = S->frames;
         S->skipping = 0;

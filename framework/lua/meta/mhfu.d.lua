@@ -633,7 +633,7 @@ function mhfu.move_block() end
 ---@field back? integer[] { main, sub, mode } entered at the end, default none
 ---@field skip? boolean the host AI step skips while the clip plays, except on a hit
 ---@field part? integer body part whose cursor times the attacks, default 0
----@field attacks? integer[][] up to 4 { frame, id }: attack id spawned at that clip frame
+---@field attacks? integer[][] up to 4 { frame, id, end? }: attack id spawned at clip frame `frame`, its node ended at `end` (or when the move ends first); without `end` it lives as its record says
 ---@field spawner? integer the species' attack spawner, default the Tigrex's
 
 ---What `mhfu.move_status()` returns.
@@ -658,3 +658,5 @@ function mhfu.move_block() end
 ---@field frame integer AI frame of the spawn, -1 if it never spawned
 ---@field cursor number the timing part's cursor then
 ---@field node integer the attack node, 0 out of section
+---@field ended integer AI frame the move ended the node at, -1 if it did not
+---@field ended_state integer the node's state then: 1 or 2 ended, 0 it had ended itself, 255 no longer the move's

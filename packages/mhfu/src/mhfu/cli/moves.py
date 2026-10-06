@@ -6,6 +6,7 @@ framework's move player (`mhfu.live.moves`), and what came of it.
     make -C framework                              # the PRX with the move player
     mhfu move ride zinogre                         # it, the bridge and the port; cold boot
     mhfu move play 46 --attack 6@56                # stamp_right_claw, attack 6 at frame 56
+    mhfu move play 46 --attack 6@56-90             # ... ended at frame 90
     mhfu move play 46 --attack 6@56 --repeat 10    # a soak
 """
 
@@ -44,7 +45,7 @@ def register(sub: Subparsers) -> None:
     c = cmds.add_parser("play", help="play a move and report every part, attack and HP write")
     launcher_args(c)
     c.add_argument("entry", type=int, help="executor entry: the clip")
-    c.add_argument("--attack", action="append", default=[], metavar="ID@FRAME", type=_attack)
+    c.add_argument("--attack", action="append", default=[], metavar="ID@FRAME[-END]", type=_attack)
     c.add_argument("--carrier", type=_ints, default=(0, 2), metavar="MAIN,SUB")
     c.add_argument("--back", type=_ints, metavar="MAIN,SUB[,MODE]", help="entered at the end")
     c.add_argument("--length", type=int, default=0, help="AI frames; default the clip's")
@@ -62,10 +63,11 @@ def register(sub: Subparsers) -> None:
     c.set_defaults(run=stop)
 
 
-def _attack(word: str) -> tuple[int, int]:
-    """ID@FRAME -> (frame, id)."""
-    id_, _, frame = word.partition("@")
-    return int(frame), int(id_)
+def _attack(word: str) -> moves.Attack:
+    """ID@FRAME or ID@FRAME-END."""
+    id_, _, frames = word.partition("@")
+    frame, _, end = frames.partition("-")
+    return moves.Attack(int(id_), int(frame), int(end) if end else None)
 
 
 def _ints(word: str) -> tuple[int, ...]:
@@ -121,13 +123,17 @@ def report(r: moves.Played) -> list[str]:
             f"peak {p.peak:g} of {p.end:g}: {ok}"
         )
     for sp in r.spawns:
+        name = f"{sp.id}@{sp.frame}" + (f"-{sp.end}" if sp.end else "")
         if sp.at is None:
-            out.append(f"  attack {sp.id}@{sp.frame}: never spawned")
-        else:
-            out.append(
-                f"  attack {sp.id}@{sp.frame}: AI frame {sp.at}, cursor {sp.cursor:g}, "
-                f"node 0x{sp.node:08X}"
-            )
+            out.append(f"  attack {name}: never spawned")
+            continue
+        ended = ""
+        if sp.ended is not None:
+            how = {0: "it had ended itself", 0xFF: "no longer ours"}.get(sp.ended_state, "ended")
+            ended = f"; at AI frame {sp.ended}: {how}"
+        out.append(
+            f"  attack {name}: AI frame {sp.at}, cursor {sp.cursor:g}, node 0x{sp.node:08X}{ended}"
+        )
     for w, drop in r.damage():
         late = [
             f"AI frame {w.frame}, {w.frame - sp.at:+d} from the spawn"

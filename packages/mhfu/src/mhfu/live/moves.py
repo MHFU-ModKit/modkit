@@ -5,7 +5,7 @@ and what came of it: each body part's clip, each attack's spawn, the hunter's HP
 the clip's phase, and the pairs the monster went through after.
 
     with Rig.attach() as rig:
-        r = play(rig.s, Move(46, attacks=((56, 6),)))
+        r = play(rig.s, Move(46, attacks=(Attack(6, 56, 90),)))
         r.parts[0].played, r.spawns[0].at, r.hits
 
 It asks through the debug bridge (`cli_bridge.lua`, CMD 4), so the game needs the framework,
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 from .. import addresses as a
 from ..entries import entry_clip
-from ..views import View, f32s, ptr, ptrs, u8, u16, u32, u32s
+from ..views import View, f32s, ptr, ptrs, u8, u8s, u16, u32, u32s
 from .clips import Pack, bridge, monster
 from .session import Session
 from .shell_anim import Bridge, Op
@@ -47,14 +47,24 @@ Pair = tuple[int, int]
 
 
 @dataclass(frozen=True)
+class Attack:
+    """Attack record `id` spawned at clip frame `frame`, its node ended at clip frame `end`;
+    without `end` the node lives as long as its record says."""
+
+    id: int
+    frame: int
+    end: int | None = None
+
+
+@dataclass(frozen=True)
 class Move:
-    """What `mhfu_move_t` holds: an entry, its attacks as (clip frame, attack id), the carrier
+    """What `mhfu_move_t` holds: an entry, its attacks, the carrier
     pair it rides, the pair entered at the end (None: the carrier hands off itself). The
     default carrier (0,2) is em75's alert hub: one dispatch, then the brain once the clip ends;
     (0,1) is not entered as itself when ENTITY+0x4B9 is set (the translator makes it (0,2))."""
 
     entry: int
-    attacks: tuple[tuple[int, int], ...] = ()
+    attacks: tuple[Attack, ...] = ()
     carrier: Pair = (0, 2)
     back: tuple[int, int, int] | None = None
     length: int = 0
@@ -74,9 +84,10 @@ class Move:
         struct.pack_into("<HH", out, f.ENTRY, self.entry, self.length)
         struct.pack_into("<BBBBB", out, f.CARRIER_MAIN, *self.carrier, *back)
         struct.pack_into("<BBB", out, f.SKIP, int(self.skip), self.part, len(self.attacks))
-        for i, (frame, id_) in enumerate(self.attacks):
+        for i, atk in enumerate(self.attacks):
             at = f.ATTACKS + i * a.MOVE_ATTACK.size
-            struct.pack_into("<HH", out, at + a.MOVE_ATTACK.FRAME, frame, id_)
+            struct.pack_into("<HH", out, at + a.MOVE_ATTACK.FRAME, atk.frame, atk.id)
+            struct.pack_into("<H", out, at + a.MOVE_ATTACK.END, atk.end or 0)
         struct.pack_into("<I", out, f.SPAWNER, self.spawner)
         return bytes(out)
 
@@ -101,6 +112,8 @@ class MoveState(View):
     spawn_frame = u32s(a.MOVE_STATE.SPAWN_FRAME)
     spawn_cursor = f32s(a.MOVE_STATE.SPAWN_CURSOR)
     spawn_node = ptrs(a.MOVE_STATE.SPAWN_NODE)
+    ended_frame = u32s(a.MOVE_STATE.ENDED_FRAME)
+    ended_state = u8s(a.MOVE_STATE.ENDED_STATE)
 
 
 @dataclass(frozen=True)
@@ -129,6 +142,12 @@ class Spawn:
     cursor: float
     node: int
     """The attack node; 0 when the spawner refused (out of section)."""
+    end: int | None = None
+    """The clip frame it was to be ended at."""
+    ended: int | None = None
+    """AI frame the move ended it; None if it did not."""
+    ended_state: int = 0
+    """ATTACK_NODE.STATE then: 1 or 2 ended by the move, 0 it had ended itself, 0xFF gone."""
 
 
 @dataclass(frozen=True)
@@ -273,9 +292,24 @@ def play(
         for k_, (node, end, peak) in enumerate(zip(st.node, st.clip_end, st.peak, strict=True))
     )
     spawns = tuple(
-        Spawn(id_, frame, None if at == NEVER else at, cur, node)
-        for (frame, id_), at, cur, node in zip(
-            move.attacks, st.spawn_frame, st.spawn_cursor, st.spawn_node, strict=False
+        Spawn(
+            atk.id,
+            atk.frame,
+            None if at == NEVER else at,
+            cur,
+            node,
+            atk.end,
+            None if ended == NEVER else ended,
+            how,
+        )
+        for atk, at, cur, node, ended, how in zip(
+            move.attacks,
+            st.spawn_frame,
+            st.spawn_cursor,
+            st.spawn_node,
+            st.ended_frame,
+            st.ended_state,
+            strict=False,
         )
     )
     return Played(

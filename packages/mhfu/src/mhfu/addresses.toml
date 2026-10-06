@@ -619,6 +619,13 @@ OWNER = { offset = 0x10, type = "ptr", doc = "the attacking entity" }
 RECORD = { offset = 0x1C, type = "bytes", doc = "verbatim copy of the ATTACK_RECORD" }
 VOLUME_SET = { offset = 0x34, type = "ptr", doc = "the HIT_VOLUME set the record's VOLUME_SET selects; the overlay stores it right after the setter call" }
 POSITION = { offset = 0x40, type = "vec3", doc = "the node's own position; bones 126 and 127 test against it" }
+STATE = { offset = 0x14, type = "u8", doc = "0 ended, 1 waiting out the record's LEAD frames, 2 active (COLLISION_TEST tests only these) for the record's UNKNOWN_01 frames, counted down in place" }
+STATE_FN = { offset = 0x78, type = "bytes", doc = "pointer to the member function (3 words) the node runs each frame; COLLISION_WORLD's update deletes a node once it is null" }
+
+[struct.ATTACK_NODE_VTABLE]
+doc = "an attack node's vtable (ATTACK_NODE word 0); offsets from the vtable pointer, as STATE_FN names them"
+[struct.ATTACK_NODE_VTABLE.fields]
+END = { offset = 0x28, type = "ptr", doc = "the end state (node): STATE = 0, then a last state that clears STATE_FN, so the node is deleted on the next update; the base class's +0x30 and +0x34 jump here" }
 
 [struct.CAM_ORBIT]
 doc = "the quest orbit camera CAM_ORBIT_UPDATE works on; CAM_EYE and CAM_PIVOT are its EYE and PIVOT"
@@ -637,15 +644,16 @@ doc = "the player combat entity PLAYER_ENTITY beyond the ENTITY fields it shares
 EXITING = { offset = 0x2A4, type = "u8", doc = "1 while leaving through an exit; without it an area change loads the stage and leaves the hunter frozen in place" }
 
 [struct.MOVE_ATTACK]
-doc = "one attack of a MOVE: spawned when the timing part's clip cursor crosses FRAME"
-size = 0x4
+doc = "one attack of a MOVE: spawned when the timing part's clip cursor crosses FRAME, ended when it crosses END"
+size = 0x8
 [struct.MOVE_ATTACK.fields]
 FRAME = { offset = 0x0, type = "u16", doc = "clip frame" }
 ID = { offset = 0x2, type = "u16", doc = "attack id: the species' ATTACK_RECORD" }
+END = { offset = 0x4, type = "u16", doc = "clip frame the attack node is ended at (ATTACK_NODE_VTABLE.END), or when the move ends first; 0 = the node's own life" }
 
 [struct.MOVE]
 doc = "a move for the framework's move player (move.h mhfu_move_t): one executor entry played on a native carrier pair"
-size = 0x20
+size = 0x30
 [struct.MOVE.fields]
 ENTRY = { offset = 0x00, type = "u16", doc = "executor entry: the clip" }
 LENGTH = { offset = 0x02, type = "u16", doc = "AI frames from the clip's dispatch to the end; 0 = until the clip ends" }
@@ -658,11 +666,11 @@ SKIP = { offset = 0x09, type = "u8", doc = "1: the host AI step does not run whi
 PART = { offset = 0x0A, type = "u8", doc = "body part whose clip cursor times the attacks" }
 ATTACK_COUNT = { offset = 0x0B, type = "u8", doc = "attacks in ATTACKS" }
 ATTACKS = { offset = 0x0C, type = "MOVE_ATTACK[4]", doc = "attacks, spawned once each" }
-SPAWNER = { offset = 0x1C, type = "ptr", doc = "the species' attack spawner; 0 = TIGREX_ATTACK_SPAWN" }
+SPAWNER = { offset = 0x2C, type = "ptr", doc = "the species' attack spawner; 0 = TIGREX_ATTACK_SPAWN" }
 
 [struct.MOVE_STATE]
 doc = "the move player's block in partition memory (move.cpp): the move it runs and what happened, read by mhfu.live.moves"
-size = 0xBC
+size = 0x100
 [struct.MOVE_STATE.fields]
 MAGIC = { offset = 0x00, type = "u32", doc = "0x4D4F5650 (MOVP)" }
 STARTED = { offset = 0x04, type = "u32", doc = "moves started since boot" }
@@ -682,5 +690,8 @@ SPAWN_FRAME = { offset = 0x48, type = "u32[4]", doc = "FRAMES at each attack's s
 SPAWN_CURSOR = { offset = 0x58, type = "f32[4]", doc = "the timing part's cursor at each spawn" }
 SPAWN_NODE = { offset = 0x68, type = "ptr[4]", doc = "what the spawner returned: the ATTACK_NODE, 0 out of section" }
 MOVE = { offset = 0x78, type = "MOVE", doc = "the move running" }
-NEXT = { offset = 0x98, type = "MOVE", doc = "the move asked for, taken at the next AI step" }
-NEXT_ENTITY = { offset = 0xB8, type = "ptr", doc = "NEXT's monster" }
+NEXT = { offset = 0xA8, type = "MOVE", doc = "the move asked for, taken at the next AI step" }
+NEXT_ENTITY = { offset = 0xD8, type = "ptr", doc = "NEXT's monster" }
+NODE_VTABLE = { offset = 0xDC, type = "ptr[4]", doc = "each spawned node's vtable right after the spawn, which ending it checks" }
+ENDED_FRAME = { offset = 0xEC, type = "u32[4]", doc = "FRAMES when the move ended each attack's node; 0xFFFFFFFF = not ended by the move" }
+ENDED_STATE = { offset = 0xFC, type = "u8[4]", doc = "the node's ATTACK_NODE.STATE then: 1 or 2 ended by the move, 0 it had ended itself, 0xFF no longer the move's (left alone)" }

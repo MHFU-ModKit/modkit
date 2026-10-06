@@ -8,6 +8,7 @@
 #include "addresses.gen.h"
 
 #define BASE 0x09000000u   /* the fake game memory; noaddr */
+#define NODE_VTABLE 0x1234u
 #define SIZE 0x4000u
 
 static uint8_t g_mem[SIZE];
@@ -60,7 +61,24 @@ void mhfu_host_execute(uint32_t e, uint32_t entry)
         memcpy(at(b + MHFU_CLIP_BLOCK_FLAGS, 2), &playing, 2);
     }
 }
-uint32_t mhfu_host_spawn(uint32_t sp, uint32_t e, uint32_t id) { record('S', sp, e, id, 0); return 0x1000u + id; }
+/* a node: in the game memory, owner e, live with the test's vtable */
+uint32_t mhfu_host_spawn(uint32_t sp, uint32_t e, uint32_t id)
+{
+    record('S', sp, e, id, 0);
+    uint32_t node = BASE + 0x3000u + 0x100u * (id & 7u);
+    uint32_t vt = NODE_VTABLE;
+    uint8_t active = 2;
+    memcpy(at(node, 4), &vt, 4);
+    memcpy(at(node + MHFU_ATTACK_NODE_OWNER, 4), &e, 4);
+    memcpy(at(node + MHFU_ATTACK_NODE_STATE, 1), &active, 1);
+    return node;
+}
+void mhfu_host_end(uint32_t node, uint32_t vtable)
+{
+    record('K', node, vtable, 0, 0);
+    uint8_t ended = 0;
+    memcpy(at(node + MHFU_ATTACK_NODE_STATE, 1), &ended, 1);
+}
 
 uint8_t *host_mem(void) { return g_mem; }
 void     host_set(int lands, float clip_end) { g_lands = lands; g_clip_end = clip_end; g_n = 0; g_step = 0; }

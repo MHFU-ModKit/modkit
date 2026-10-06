@@ -52,6 +52,7 @@ static void spec_of(lua_State *L, int t, mhfu_move_t *mv)
                 mhfu_move_attack_t *at = &mv->attacks[mv->attack_count++];
                 at->frame = (uint16_t)list_at(L, one, 1, 0);
                 at->id = (uint16_t)list_at(L, one, 2, 0);
+                at->end = (uint16_t)list_at(L, one, 3, 0);
             }
             lua_pop(L, 1);
         }
@@ -117,11 +118,13 @@ int lb_move_status(lua_State *L)
     push_floats(L, s->clip_end, 3, "clip_end");
     lua_createtable(L, s->move.attack_count, 0);
     for (int i = 0; i < s->move.attack_count && i < MHFU_MOVE_MAX_ATTACKS; i++) {
-        lua_createtable(L, 0, 3);
+        lua_createtable(L, 0, 5);
         SF_INT("frame", s->spawn_frame[i] == 0xFFFFFFFFu ? -1 : (lua_Integer)s->spawn_frame[i]);
         lua_pushnumber(L, s->spawn_cursor[i]);
         lua_setfield(L, -2, "cursor");
         SF_INT("node", s->spawn_node[i]);
+        SF_INT("ended", s->ended_frame[i] == 0xFFFFFFFFu ? -1 : (lua_Integer)s->ended_frame[i]);
+        SF_INT("ended_state", s->ended_state[i]);
         lua_rawseti(L, -2, i + 1);
     }
     lua_setfield(L, -2, "spawns");
