@@ -471,5 +471,6 @@ extern "C" int mhfu_em_init(void)
     mhfu_log("[%s] ready; cfg @0x%08X, stubs @0x%08X / 0x%08X", OWNER,
              (unsigned)(uintptr_t)g_cfgp,
              (unsigned)(uintptr_t)g_stub_ai, (unsigned)(uintptr_t)g_stub_act);
+    mhfu_move_init();
     return 0;
 }

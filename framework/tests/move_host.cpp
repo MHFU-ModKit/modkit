@@ -1,0 +1,70 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sp00ktober */
+/* The game for move.cpp on the host: game memory is one array, the engine calls are recorded. */
+#include <stdint.h>
+#include <string.h>
+#include "mhfu/em_vhook.h"
+#include "mhfu/move.h"
+#include "addresses.gen.h"
+
+#define BASE 0x09000000u   /* the fake game memory; noaddr */
+#define SIZE 0x4000u
+
+static uint8_t g_mem[SIZE];
+static mhfu_em_step_fn g_step;
+static uint32_t g_calls[64][5];
+static int g_n;
+static int g_lands = 1;          /* enter-action writes the pair cells */
+static float g_clip_end = 228;   /* what the executor installs on every part */
+
+static uint8_t *at(uint32_t a, uint32_t n)
+{
+    return (a >= BASE && a + n <= BASE + SIZE) ? g_mem + (a - BASE) : 0;
+}
+
+static void record(uint32_t kind, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
+{
+    if (g_n < 64) {
+        uint32_t *r = g_calls[g_n++];
+        r[0] = kind; r[1] = a; r[2] = b; r[3] = c; r[4] = d;
+    }
+}
+
+extern "C" {
+uint8_t  mhfu_mem_read_u8(uint32_t a)  { uint8_t *p = at(a, 1); return p ? *p : 0; }
+uint16_t mhfu_mem_read_u16(uint32_t a) { uint16_t v = 0; uint8_t *p = at(a, 2); if (p) memcpy(&v, p, 2); return v; }
+uint32_t mhfu_mem_read_u32(uint32_t a) { uint32_t v = 0; uint8_t *p = at(a, 4); if (p) memcpy(&v, p, 4); return v; }
+float    mhfu_mem_read_f32(uint32_t a) { float v = 0; uint8_t *p = at(a, 4); if (p) memcpy(&v, p, 4); return v; }
+void mhfu_log(const char *, ...) {}
+int  mhfu_em_installed(void) { return 1; }
+void mhfu_em_step(mhfu_em_step_fn fn) { g_step = fn; }
+
+/* the engine: what the test arranged happens, and every call is kept */
+void mhfu_host_enter(uint32_t e, uint32_t m, uint32_t s, uint32_t mode)
+{
+    record('E', e, m, s, mode);
+    uint8_t *cell = at(e + MHFU_ENTITY_MAIN_STATE, 2);
+    if (g_lands && cell) { cell[0] = (uint8_t)m; cell[1] = (uint8_t)s; }
+}
+void mhfu_host_execute(uint32_t e, uint32_t entry)
+{
+    record('X', e, entry, 0, 0);
+    for (uint32_t k = 0; k < MHFU_ENTITY_CLIP_BLOCKS_COUNT; k++) {
+        uint32_t b = e + MHFU_ENTITY_CLIP_BLOCKS + k * MHFU_CLIP_BLOCK_SIZE;
+        uint32_t node = 0x5000u + entry;
+        float zero = 0;
+        uint16_t playing = 1;
+        memcpy(at(b + MHFU_CLIP_BLOCK_NODE, 4), &node, 4);
+        memcpy(at(b + MHFU_CLIP_BLOCK_END, 4), &g_clip_end, 4);
+        memcpy(at(b + MHFU_CLIP_BLOCK_PHASE, 4), &zero, 4);
+        memcpy(at(b + MHFU_CLIP_BLOCK_FLAGS, 2), &playing, 2);
+    }
+}
+uint32_t mhfu_host_spawn(uint32_t sp, uint32_t e, uint32_t id) { record('S', sp, e, id, 0); return 0x1000u + id; }
+
+uint8_t *host_mem(void) { return g_mem; }
+void     host_set(int lands, float clip_end) { g_lands = lands; g_clip_end = clip_end; g_n = 0; g_step = 0; }
+int      host_has_step(void) { return g_step != 0; }
+int      host_calls(uint32_t *out) { memcpy(out, g_calls, sizeof(g_calls)); int n = g_n; g_n = 0; return n; }
+uint32_t host_frame(uint32_t ent) { return g_step ? g_step(ent) : 0xFFFFFFFFu; }
+}

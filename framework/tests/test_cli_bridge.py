@@ -10,7 +10,8 @@ from mhfu import addresses as a
 
 SCRIPT = Path(__file__).parents[1] / "lua" / "tools" / "cli_bridge.lua"
 MAGIC = 0x4D484252
-FORCE, FREEZE, CLEAR = 1, 2, 3
+FORCE, FREEZE, CLEAR, MOVE = 1, 2, 3, 4
+MOVE_BLOCK = 0x09F00000  # noaddr
 FREEZE_BITS = 0x10100
 OTHER_BITS = 0x7
 GATE = a.ENTITY.FREEZE_GATE
@@ -27,6 +28,9 @@ class Game:
         self.lua = LuaRuntime()
         g = self.lua.globals()
         self.handlers: list[object] = []
+        self.moves: list[tuple[int, int]] = []
+        self.stops = 0
+        self.wrapped = True
         g.mhfu = self.lua.table_from(
             {
                 "addr": self.lua.execute(a.render_lua(a.table())),
@@ -35,11 +39,22 @@ class Game:
                 "entity_at": lambda slot: self.slots.get(slot, 0),
                 "on_bigmonster_action": lambda fn, _pri: self.handlers.append(fn),
                 "log": lambda _msg: None,
+                "move_play": self._move_play,
+                "move_stop": self._move_stop,
+                "move_block": lambda: MOVE_BLOCK,
             }
         )
         if port_lib is not None:
             self.lua.execute(f"package.loaded.mhfu_port = {port_lib}")
         self.lua.execute(SCRIPT.read_text())
+
+    def _move_play(self, ent: int, spec: int) -> bool:
+        self.moves.append((ent, spec))
+        return self.wrapped
+
+    def _move_stop(self) -> bool:
+        self.stops += 1
+        return True
 
     def gate(self, slot: int) -> int:
         return self.mem.get(self.slots[slot] + GATE, 0)
@@ -123,3 +138,17 @@ def test_freezing_another_slot_frees_the_first(game):
     assert (game.gate(1), game.gate(2)) == (0, FREEZE_BITS)
     game.send(CLEAR, slot=2)
     assert (game.gate(1), game.gate(2)) == (0, 0)
+
+
+def test_move_plays_the_block_spec_on_the_slot(game):
+    game.send(MOVE, slot=2)
+    assert game.moves == [(game.slots[2], BR + CB.MOVE)]
+    assert game.mem[BR + CB.MOVE_STATE] == MOVE_BLOCK
+    game.send(CLEAR)
+    assert game.stops == 1
+
+
+def test_refused_move_publishes_zero(game):
+    game.wrapped = False
+    game.send(MOVE)
+    assert game.mem[BR + CB.MOVE_STATE] == 0
