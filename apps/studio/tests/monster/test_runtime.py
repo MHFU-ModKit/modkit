@@ -328,3 +328,11 @@ def test_a_failing_guard_writes_nothing(lua, make, games, em75):
 def test_old_export_is_ignored(lua):
     lua.execute('P = require("mhfu_port"); P.hit("t", { species = 75, volumes = {} }); mhfu_tick()')
     assert any("re-export" in x for x in lua.eval("mhfu.logs").values())
+
+
+def test_notes_reach_the_log(lua, make):
+    m = hurt(make())
+    m.hurtboxes *= 2
+    logs = run(lua, RT.lua_hit_module(m, HOST))
+    assert any("hit tables: hurtboxes: 4 volume(s), the host's set holds 3" in x for x in logs)
+    assert any("NOT written: hurtboxes: 0x" in x for x in logs), "the empty game fails a guard"

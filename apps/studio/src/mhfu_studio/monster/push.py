@@ -5,8 +5,8 @@ writes the memory stick's module carries, written and read back. Nothing goes on
 
 Every guard is read before anything is written, and one that fails refuses the whole push. A
 record lever applies from the next attack a move spawns (`ATTACK_TABLE_SETTER` copies the
-record then); a volume or grid edit from the next hit. A reload of the overlay (the next quest)
-puts the game's own tables back.
+record then); volume sets and grids are read where they lie (an attack node keeps a pointer to
+its set). A reload of the overlay (the next quest) puts the game's own tables back.
 """
 
 from __future__ import annotations
