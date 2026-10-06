@@ -79,6 +79,7 @@ and constants; the commands below are built on it.
 | `mhfu stage ids\|maps\|exits\|surfaces` | Stage files, the map table, area exits, surface tables |
 | `mhfu stage spots\|spawns` | In the running game: the quest's gathering spots and small-monster spawns |
 | `mhfu inject FILE_ID FILE` | Places a finished file for the framework's live injection |
+| `mhfu names build\|show\|coverage` | Names for EU code, matched from the MHP2G decomp's JP symbols (needs the JP disc, for research) |
 
 ## The running game
 
@@ -101,10 +102,14 @@ with Session.launch(cold=True) as s:  # PPSSPP here, or in the modkit container
 | `mhfu go-on-quest --rank R --quest NAME` | Cold boot to standing in the quest |
 | `mhfu start`, `mhfu stop` | The game with its debugger open, or stopped |
 | `mhfu shell` | A debug shell on the running game: player, monsters, animations, hit volumes |
+| `mhfu rig load\|save\|where\|teleport\|summon\|pin\|speed` | Set up a live experiment: savestates, the player on the floor at x, z, a big monster beside the player, pinned HP, fast-forward |
+| `mhfu observe trace\|cost` | Which engine functions a big monster's overlay calls in each of its states, and how often, without stopping the game |
 
 PPSSPP must open its debugger at startup (`RemoteDebuggerOnStartup = True` in `ppsspp.ini`).
 `MHFU_ISO` names the game image, `MHFU_PPSSPP` a PPSSPP binary not on `PATH`, and
 `MHFU_LAUNCHER=docker` (with `MHFU_CONTAINER`) uses the container from `ppsspp/`.
+`--lane N` (`MHFU_LANE`) runs a hidden PPSSPP of its own, so several run side by side
+([`ppsspp/README.md`](../../ppsspp/README.md)).
 
 ## Status
 

@@ -116,7 +116,7 @@ def summon(
     bearing: float | None = None,
     timeout: float = 3.0,
 ) -> Summoned:
-    """Move a big monster (the first by default) `distance` from the player, facing him.
+    """Move a big monster (the first by default) `distance` from the player, facing the player.
 
     `bearing` is degrees in the game's atan2(dx, dz), by default the way the player faces;
     where the floor ends along it the bearing turns in BEARING_STEP steps. One relocation and
@@ -161,7 +161,7 @@ def _drawn(s: Session, monster: BigMonster, timeout: float) -> bool:
 
 
 def pin_hp(s: Session, hp: int | None = None, *, tick: float = 0.5) -> survival.Guard:
-    """A Guard holding the player's HP (his maximum by default) and the quest clock; enter it
+    """A Guard holding the player's HP (the maximum by default) and the quest clock; enter it
     to start, leave it to stop. Monsters stay free to attack."""
     pinned = _player(s).max_hp if hp is None else hp
     return survival.Guard(s, hp=pinned, calm_monsters=False, tick=tick)

@@ -98,13 +98,15 @@ class Launcher:
     def local_emulator(
         self, state: str | os.PathLike[str] | None = None
     ) -> LocalEmulator | AppEmulator:
-        """PPSSPP on this machine, in its lane if it has one; `state` loads at launch and skips
-        the cold boot."""
-        if self.iso is None:
+        """PPSSPP on this machine, in its lane if it has one (whose own image serves without
+        MHFU_ISO); `state` loads at launch and skips the cold boot."""
+        lane = Lane(self.lane) if self.lane is not None else None
+        iso = self.iso or (lane.game if lane and lane.game.exists() else None)
+        if iso is None:
             raise FileNotFoundError("no game image; set MHFU_ISO or pass iso=")
-        if self.lane is not None:
-            return Lane(self.lane).prepare(self.iso).emulator(self.binary(), state=state)
-        return LocalEmulator(self.binary(), self.iso, state=state)
+        if lane is not None:
+            return lane.prepare(iso).emulator(self.binary(), state=state)
+        return LocalEmulator(self.binary(), iso, state=state)
 
     def stop(self) -> int:
         """Stop the container's emulator, this lane's, or every PPSSPP on this machine outside a

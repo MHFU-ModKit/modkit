@@ -46,7 +46,7 @@ def register(sub: Subparsers) -> None:
     c = command("save", "save a savestate")
     c.add_argument("state", help="slot number on the lane's stick, or a path")
     c.set_defaults(run=save)
-    command("where", "the stage, the player, the floor under him, the big monsters").set_defaults(
+    command("where", "the stage, the player and the floor below, the big monsters").set_defaults(
         run=where
     )
     c = command("teleport", "put the player on the floor at x, z of this stage")
@@ -60,7 +60,7 @@ def register(sub: Subparsers) -> None:
     c.add_argument("--slot", type=int, help="its entity-registry slot; default the first")
     c.set_defaults(run=summon)
     c = command("pin", "hold the player's HP and the quest clock until ctrl-c")
-    c.add_argument("--hp", type=int, help="default his maximum")
+    c.add_argument("--hp", type=int, help="default: the maximum")
     c.add_argument("--seconds", type=float, help="stop after this long")
     c.set_defaults(run=pin)
     c = command("speed", "fast-forward, or the game's own rate")

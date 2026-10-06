@@ -35,6 +35,9 @@ async with AsyncClient.connect(port=12345) as ppsspp:
             print(call.message)
 ```
 
+`trace(addresses)` arms many such log-only breakpoints in one stop and yields their hits as one
+stream: a call trace of a running game.
+
 Turn the debugger on in PPSSPP with Settings > Tools > Developer tools > Allow remote debugger,
 which also sets `RemoteDebuggerOnStartup = True` in `ppsspp.ini` so it opens at every start.
 
@@ -70,6 +73,9 @@ with LocalEmulator("/path/to/PPSSPPSDL", "/path/to/game.iso") as emu:
 ([`ppsspp/`](../../ppsspp)) through its `ppsspp-ctl`, relaunches it when it dies right after
 reporting ready, and captures its display with `screenshot()`. A `state=` launch skips the cold
 boot, so PRX plugins do not load.
+
+`Lane(n).prepare(game).emulator(binary)` is a PPSSPP of its own: its own HOME (memory stick),
+game image and debugger port 45100 + n, hidden on macOS, so several run side by side.
 
 ## Patched PPSSPP
 
