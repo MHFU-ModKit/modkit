@@ -83,10 +83,10 @@ def pac_clip_table(pac: bytes) -> dict[int, Fingerprint]:
 
 def source_clip_table(moveset: bytes) -> dict[int, Fingerprint]:
     """MHP3rd clip id -> fingerprint of a donor moveset, every stream."""
-    return {cid: _print(c) for cid, c in motion.moveset(moveset).items()}
+    return {cid: fingerprint(c) for cid, c in motion.moveset(moveset).items()}
 
 
-def _print(clip: anim.Clip) -> Fingerprint:
+def fingerprint(clip: anim.Clip) -> Fingerprint:
     frames, loop = slots.fingerprint(clip)
     return frames, bool(loop)
 
@@ -202,11 +202,11 @@ def coverage(
         else:
             kind = HOST if host_table.get(slot) == fp else ALTERED
         cid = layout.get(slot)
-        fp_src = _print(donor[cid]) if cid is not None and cid in donor else None
+        fp_src = fingerprint(donor[cid]) if cid is not None and cid in donor else None
         cov.slots[slot] = SlotCoverage(slot, kind, fp[0], fp[1], fp_src, cid)
     if host is not None:
         placed = set(layout.values())
-        cov.dropped = {cid: _print(c) for cid, c in donor.items() if cid not in placed}
+        cov.dropped = {cid: fingerprint(c) for cid, c in donor.items() if cid not in placed}
     return cov
 
 

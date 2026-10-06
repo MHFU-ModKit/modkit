@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
+import shutil
+from contextlib import nullcontext
+from pathlib import Path
 from typing import Any
 
-from mhfu_studio.monster import clips
+import pytest
+from mhfu_studio.monster import clip_game, clips
 from mhfu_studio.monster.panels.clips import ClipsPanel
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
@@ -85,3 +89,72 @@ def test_filler_is_loud(workspace: MonsterWorkspace, qtbot: Any) -> None:
     p.filter.setText("")
     p.table.cellClicked.emit(1, 0)
     assert p.why.property("level") == "warning"
+
+
+# ---- the Zinogre: every clip of the original by MHP3rd id ----
+
+
+@pytest.fixture
+def zinogre(games: Any, ports: Path, tmp_path: Path, qtbot: Any) -> ClipsPanel:
+    path = tmp_path / "zinogre.toml"
+    shutil.copy(ports / "zinogre.toml", path)
+    ws = MonsterWorkspace(games)
+    ws.intel_cache[75] = None
+    ws.open(path)
+    return build(ws, qtbot)
+
+
+def ids(p: ClipsPanel) -> list[str]:
+    return [p.table.item(r, 0).text() for r in range(p.table.rowCount())]
+
+
+def test_every_clip(zinogre: ClipsPanel) -> None:
+    p = zinogre
+    assert p.table.rowCount() == 102 and not p.table.isColumnHidden(0)
+    assert p.count.text() == "102 clips in 3 streams, 21 named" and kit.missing_tips(p) == []
+    assert ids(p)[:3] == ["1", "2", "4"] and p.table.item(101, 1).text() == "103"
+    p.filter.setText("stream 2")
+    assert p.table.rowCount() == 39
+    p.filter.setText("unnamed")
+    assert p.table.rowCount() == 81
+
+
+def test_name_and_next(zinogre: ClipsPanel) -> None:
+    """Return in Shows applies and plays the next clip, its name ready to type over."""
+    p, ws = zinogre, zinogre.ws
+    p.table.setCurrentCell(0, 0)
+    assert ws.edit_clip == 1 and p.name.text() == "clip_01" and p.anim.value() == 1
+    p.name.setText("idle")
+    p.label.setText("stands and breathes")
+    p.label.returnPressed.emit()
+    assert ws.doc.manifest.clips["idle"].slot == 1 and ws.doc.manifest.clips["idle"].label
+    assert ws.edit_clip == 2 and p.name.text() == "welcome_howl"
+    assert p.label.text() == "the howling he does when he notices you"
+    p.name.setText("welcome howl")
+    p.label.returnPressed.emit()
+    assert ws.edit_clip == 2 and "not a name" in ws.message, "a refusal stays on the clip"
+
+
+def test_place(zinogre: ClipsPanel) -> None:
+    p, ws = zinogre, zinogre.ws
+    row = ids(p).index("248")
+    p.table.cellClicked.emit(row, 0)
+    assert ws.edit_clip == 248 and p.anim.value() == 100
+    p.anim.setValue(7)
+    p.place.click()
+    assert ws.message == "clip 7 anim 7 -> anim 100; clip 248 anim 100 -> anim 7"
+    assert p.table.item(row, 1).text() == "7" and ws.doc.manifest.clips["clip_07"].source == 248
+
+
+def test_play_in_game(zinogre: ClipsPanel, monkeypatch: pytest.MonkeyPatch) -> None:
+    p, ws, sent = zinogre, zinogre.ws, []
+
+    def force(mem: object, entry: int, species: int | None) -> clip_game.Sent:
+        sent.append((entry, species))
+        return clip_game.Sent(3, 1, True)
+
+    monkeypatch.setattr(clip_game, "force", force)
+    ws.game_memory = lambda: nullcontext(None)  # type: ignore[assignment,arg-type,return-value]
+    p.table.cellClicked.emit(ids(p).index("248"), 0)
+    p.in_game.click()
+    assert sent == [(100, 75)] and ws.message == "anim 100 held on monster 3 until Release"

@@ -40,6 +40,17 @@ uv run studio port hit ports/zinogre.toml --deploy   # zinogre_hit.lua onto the 
 
 `--help` on any of them says more.
 
+## Naming a port's clips
+
+The Clips panel lists every clip of the original by MHP3rd id (`stream * 100 + slot`) with the
+anim (executor entry) that plays it. Click a clip or step with the arrow keys and it plays; type
+a name, Return, what it shows, Return: the manifest has it and the next clip plays. Naming moves
+no clip. Place moves one to another anim, swapping with the clip there, and builds the port
+again. Play in game holds the clip's anim on the running game's big monster through
+`cli_bridge.lua` (`MHFU_LANE`'s PPSSPP, else the one running); Release lets it go. The game
+plays the build last injected, so a clip placed since the manifest was saved is refused until it
+is saved and injected again (`mhfu-port inject`).
+
 ## Tests
 
 `uv run pytest apps/studio` runs offscreen; the Qt tests skip without the `qt` group, and the
