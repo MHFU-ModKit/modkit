@@ -80,7 +80,7 @@ def show(args: argparse.Namespace) -> int:
 
 
 def coverage(args: argparse.Namespace) -> int:
-    table = _table()
+    table, game = _table(), Extracted.find(args.data)
     head = f"{'module':<10} {'JP fns':>7} {'EU fns':>7} {'matched':>8} {'named':>6} {'mapped':>7}"
     print(head)
     for module, c in table["coverage"].items():
@@ -92,7 +92,6 @@ def coverage(args: argparse.Namespace) -> int:
             )
     calls = table["coverage"]["calls"]
     print("call sites of same-code pairs: " + ", ".join(f"{v} {k}" for k, v in calls.items()))
-    game = Extracted.find(args.data)
     targets = names.outbound(game.em(args.em))
     sites = sum(targets.values())
     print(f"em{args.em:02d} outbound: {len(targets)} targets, {sites} call sites")
