@@ -58,6 +58,20 @@ async def test_patched_commands(client):
     assert await client.read_u8(BASE) == 7
 
 
+@patched_only
+async def test_save_screenshot(client, tmp_path):
+    await client.save_screenshot(tmp_path / "a.png")
+    assert (tmp_path / "a.png").read_bytes().startswith(b"\x89PNG")
+    with pytest.raises(DebuggerError, match="write"):
+        await client.save_screenshot(tmp_path / "missing" / "b.png")
+
+
+async def test_save_screenshot_on_stock(tmp_path):
+    async with FakePPSSPP() as stock, AsyncClient.connect(port=stock.port) as c:
+        with pytest.raises(Unsupported):
+            await c.save_screenshot(tmp_path / "a.png")
+
+
 async def test_pause_and_resume(client, fake):
     assert (await client.pause()).pc == fake.pc
     assert await client.pause() == Stepping(fake.pc, fake.ticks, None, None, requested=True)
