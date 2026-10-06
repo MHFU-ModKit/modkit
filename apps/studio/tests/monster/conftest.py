@@ -341,3 +341,14 @@ def workspace(
     ws.host_scenes[75] = Scene.from_bytes(synthetic_pac, "em75")
     yield ws
     ws.close()
+
+
+@pytest.fixture
+def zinogre_toml(ports: Path, tmp_path: Path) -> Path:
+    """A copy of the Zinogre's manifest named only welcome_howl and the clips its moves play: the
+    shipped names change as the owner names clips, so the tests keep their own."""
+    m = manifest.load(ports / "zinogre.toml")
+    howl = manifest.Clip(source=2, label="the howling he does when he notices you")
+    used = {mv.clip for mv in m.moves.values()}
+    m.clips = {"welcome_howl": howl, **{n: c for n, c in m.clips.items() if n in used}}
+    return manifest.save(m, tmp_path / "zinogre.toml")

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import random
-import shutil
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -24,11 +23,9 @@ def open_port(games: Data, path: Path) -> MonsterWorkspace:
 
 
 @pytest.fixture
-def zinogre(games: Data, ports: Path, tmp_path: Path) -> Iterator[MonsterWorkspace]:
+def zinogre(games: Data, zinogre_toml: Path) -> Iterator[MonsterWorkspace]:
     """The Zinogre opened from a copy of its manifest."""
-    path = tmp_path / "zinogre.toml"
-    shutil.copy(ports / "zinogre.toml", path)
-    ws = open_port(games, path)
+    ws = open_port(games, zinogre_toml)
     yield ws
     ws.close()
 
@@ -121,12 +118,11 @@ def test_place_refusals(zinogre):
     assert "past the host's 123" in ws.message and entries(ws) == before
 
 
-def test_unplaced(games, ports, tmp_path, monkeypatch):
+def test_unplaced(games, ports, tmp_path, monkeypatch, zinogre_toml):
     """A host with 100 anims leaves 4 Zinogre clips out: listed, played from a preview, named
     without an anim; a placement over a pinned clip has nowhere to send it."""
     monkeypatch.setitem(layout.ENTRIES, 75, 100)
-    path = tmp_path / "zinogre.toml"
-    shutil.copy(ports / "zinogre.toml", path)
+    path = zinogre_toml
     ws = open_port(games, path)
     out = [r.id for r in ws.source_rows() if r.entry is None]
     assert len(out) == 4 and len(ws.scene.clips) == 98
@@ -176,15 +172,14 @@ def _clip(frames: int) -> Clip:
     return Clip([Track([Channel(0x008, [Keyframe(0, 0), Keyframe(0, frames)])])])
 
 
-def test_place_every_clip(games, ports, tmp_path):
+def test_place_every_clip(games, ports, tmp_path, zinogre_toml):
     """All 102 placed into a shuffled layout, one after another: each lands where it was put
     and stays, the saved manifest loads on that layout, and the port builds on it."""
     from mhfu_port import build, manifest
     from mhfu_studio.monster.clips import pac_clip_table
     from mhfu_studio.monster.document import PortDocument
 
-    path = tmp_path / "zinogre.toml"
-    shutil.copy(ports / "zinogre.toml", path)
+    path = zinogre_toml
     doc = PortDocument.open(path)
     d, h = build.donor(doc.manifest, games), build.host(doc.manifest, games)
     br = B.ClipBrowser(doc, d.clips, h.anim)
@@ -203,11 +198,10 @@ def test_place_every_clip(games, ports, tmp_path):
     assert all(table[e] == br.prints[cid] for cid, e in want.items())
 
 
-def test_view_follows_a_placement(gl, games, ports, tmp_path):
+def test_view_follows_a_placement(gl, games, ports, tmp_path, zinogre_toml):
     """On a viewport: the placed clip plays on in its new anim, and undo brings the old build
     back on screen."""
-    path = tmp_path / "zinogre.toml"
-    shutil.copy(ports / "zinogre.toml", path)
+    path = zinogre_toml
     ws = MonsterWorkspace(games)
     ws.intel_cache[75] = None
     ws.setup(gl)
