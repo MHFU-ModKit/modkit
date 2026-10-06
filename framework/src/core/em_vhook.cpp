@@ -26,6 +26,8 @@
  *                 player at [lo,hi), receding -> enter Q", cooldown, budget.
  *   BUDGET        slot-32 post + slot-29 one-shot: the ENTITY.ACTION_BUDGET
  *                 override; the stubs carry it, but nothing arms it.
+ *   STEP          slot-29 pre: a C function per AI frame (mhfu_em_step), which may
+ *                 take the frame from the host step; the move player's seam (move.cpp).
  *
  * The pre-hook rewrites the arguments, not the cells: act_set is the only writer
  * of the cells and runs from the (rewritten) arguments; neither the enter-action
@@ -84,6 +86,7 @@ typedef struct {
     uint32_t ring_idx;                              /* +0x94 */
     uint32_t ring[MHFU_EM_RING];                   /* +0x98 */
     cfg_rule_t rules[MHFU_EM_RULES];               /* +0xB8 */
+    uint32_t step_fn, skip;                         /* +0x158 */
 } em_vhook_cfg_t;
 
 static_assert(offsetof(em_vhook_cfg_t, prev_pair)   == CFG_PREV,        "cfg layout");
@@ -105,6 +108,8 @@ static_assert(offsetof(em_vhook_cfg_t, rules)       == CFG_RULE_BASE,   "cfg lay
 static_assert(sizeof(cfg_rule_t)                    == RULE_STRIDE,     "cfg layout");
 static_assert(offsetof(cfg_rule_t, min_frames)      == RULE_MIN_FRAMES, "cfg layout");
 static_assert(offsetof(cfg_rule_t, cooldown)        == RULE_COOLDOWN,   "cfg layout");
+static_assert(offsetof(em_vhook_cfg_t, step_fn)     == CFG_STEP_FN,     "cfg layout");
+static_assert(offsetof(em_vhook_cfg_t, skip)        == CFG_SKIP,        "cfg layout");
 static_assert(sizeof(em_vhook_cfg_t)                == CFG_SIZE,        "cfg layout");
 
 #define CFG_CANARY_VAL 0x5645484Bu   /* 'VEHK' */
@@ -129,6 +134,7 @@ static void cfg_reset_live(void)
     g_cfgp->frames = 0;
     g_cfgp->d2 = g_cfgp->d2_prev = 0;
     g_cfgp->sub_pending = g_cfgp->sub_to_pending = 0;
+    g_cfgp->skip = 0;
 }
 
 static int alloc_block(void)
@@ -203,8 +209,8 @@ static void build_ai_stub(uint32_t original)
         return;
     }
     for (int k = n; k < STUB_AI_INSNS; k++) g_stub_ai[k] = MIPS_NOP;
-    mhfu_log("[%s] ai stub: request + %d rules + one-shot budget, %d insns, frame-free",
-             OWNER, MHFU_EM_RULES, n);
+    mhfu_log("[%s] ai stub: request + %d rules + C step + one-shot budget, %d insns, "
+             "frame-free", OWNER, MHFU_EM_RULES, n);
 }
 
 /* --- slot 32: substitution pre part, the original, the budget post part. ---
@@ -270,6 +276,11 @@ extern "C" void mhfu_em_substitute(int slot, uint8_t from_mask, uint8_t from_sub
                  count == MHFU_EM_UNLIMITED ? "standing" : "n");
     else
         mhfu_log("[%s] substitute[%d]: cleared", OWNER, slot);
+}
+
+extern "C" void mhfu_em_step(mhfu_em_step_fn fn)
+{
+    if (g_cfgp) g_cfgp->step_fn = (uint32_t)(uintptr_t)fn;
 }
 
 /* A pair to enter on the next AI frame, through the engine's dispatcher. */
@@ -416,6 +427,7 @@ static void uninstall(void)
     if (!g_installed) return;
     mhfu_hook_release(OWNER);
     g_installed = 0;
+    g_cfgp->step_fn = 0;
     mhfu_em_clear();
     mhfu_log("[%s] restored vtable 0x%08X (ai_ticks=%u act_enters=%u sub %u/%u "
              "req %u brain %u)", OWNER, (unsigned)g_vtable,

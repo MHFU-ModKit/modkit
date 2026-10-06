@@ -1,15 +1,18 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""em_vhook's two stubs, assembled on the host and checked word by word: a stub bug shows up
-in the game as a spin, not a crash."""
+"""em_vhook's two stubs, assembled on the host and checked word by word, and the slot-29 one run
+in unicorn: a stub bug shows up in the game as a spin, not a crash."""
 
 import ctypes
 from collections.abc import Callable
+from contextlib import suppress
+from typing import Any
 
 import pytest
 from mhfu import addresses
 from mhfu.mips import decode
 from rabbitizer import Instruction
+from unicorn import UcError
 
 BASE = int(addresses.USER_RAM) + 0x100000  # where the words are decoded
 CFG = BASE + 0x4000
@@ -26,14 +29,16 @@ int ai(uint32_t *o, uint32_t cfg, uint32_t orig, uint32_t ret, int *ov)
 int act(uint32_t *o, uint32_t cfg, uint32_t orig, int *ov)
 { return emv_build_act_stub(o, STUB_ACT_INSNS, cfg, orig, ov); }
 int cfg_size(void) { return CFG_SIZE; }
+int cfg_step(void) { return CFG_STEP_FN; }
 int act_frame(void) { return ACT_FRAME; }
 }
 """
 
 
 class Stubs:
-    def __init__(self, ai: list[int], act: list[int], cfg_size: int, act_frame: int) -> None:
-        self.ai, self.act, self.cfg_size, self.act_frame = ai, act, cfg_size, act_frame
+    def __init__(self, lib: ctypes.CDLL, ai: list[int], act: list[int]) -> None:
+        self.lib, self.ai, self.act = lib, ai, act
+        self.cfg_size, self.act_frame = lib.cfg_size(), lib.act_frame()
 
 
 @pytest.fixture(scope="module")
@@ -46,7 +51,7 @@ def stubs(host_lib: Callable[..., ctypes.CDLL], tmp_path_factory: pytest.TempPat
     ai = list(out[:n_ai])
     n_act = lib.act(out, CFG, ORIG_ACT, ctypes.byref(ov))
     assert not ov.value, "a stub outgrew its slot"
-    return Stubs(ai, list(out[:n_act]), lib.cfg_size(), lib.act_frame())
+    return Stubs(lib, ai, list(out[:n_act]))
 
 
 def _ins(words: list[int]) -> list[Instruction]:
@@ -77,14 +82,60 @@ def test_branchless(stubs: Stubs) -> None:
         assert not any(i.isBranch() for i in _ins(words))
 
 
-def test_ai_stub_is_frame_free_and_tail_calls(stubs: Stubs) -> None:
+def test_ai_stub_is_frame_free_and_ends_in_one_jr(stubs: Stubs) -> None:
     assert _sp_uses(stubs.ai) == []
     ins = _ins(stubs.ai)
-    jumps = [i.getInstrIndexAsVram() for i in ins if i.isJumpWithAddress()]
-    assert jumps == [ORIG_AI] and ins[-2].isJumpWithAddress() and ins[-1].isNop()
+    assert not any(i.isJumpWithAddress() for i in ins)
+    assert ins[-2].isJump() and not ins[-2].isJrRa() and ins[-1].isNop()
     for k, i in enumerate(ins):
-        if i.isJump() and not i.isJumpWithAddress():  # the conditional call's jalr
+        if i.isJump():  # the calls' jalr and the tail's jr
             assert ins[k + 1].isNop()
+
+
+# the slot-29 stub run in unicorn, at addresses inside the machine
+STUB, RUN_CFG, RUN_RET, RUN_ORIG = 0x10000, 0x14000, 0x13000, 0x20000
+STEP, SEEN, ENTITY, CALLER = 0x30000, 0x7F00, 0x40000, 0x50000  # SEEN: a 16-bit offset
+
+
+def _run_ai(stubs: Stubs, mips: Any, step: int | None) -> tuple[Any, int]:
+    """Runs the stub as the engine calls the AI step; returns the machine and where it went."""
+    out, ov = (ctypes.c_uint32 * 1024)(), ctypes.c_int(0)
+    n = stubs.lib.ai(out, RUN_CFG, RUN_ORIG, RUN_RET, ctypes.byref(ov))
+    m = mips()
+    player = int(addresses.PLAYER_ENTITY) & ~0xFFF
+    m.uc.mem_map(player, 0x1000)
+    m.write(STUB, list(out[:n]))
+    m.write(RUN_RET, [mips.jr("ra"), mips.NOP])
+    m.write(RUN_CFG, [0] * (stubs.cfg_size // 4))
+    if step is not None:  # v0 = step; remember a0
+        m.write(STEP, [mips.sw("a0", SEEN, "zero"), mips.jr("ra"), mips.addiu("v0", "zero", step)])
+        m.write(RUN_CFG + stubs.lib.cfg_step(), [STEP])
+    for reg, v in (("a0", ENTITY), ("a1", 0x11), ("a2", 0x22), ("a3", 0x33), ("ra", CALLER)):
+        m.set_reg(reg, v)
+    m.set_reg("sp", 0x3F000)
+    went: list[int] = []
+    for stop in (RUN_ORIG, CALLER):
+        m.at(stop, lambda mm, s=stop: (went.append(s), mm.uc.emu_stop()))
+    with suppress(UcError):
+        m.uc.emu_start(STUB, 0xFFFFFFF0, count=5000)
+    assert len(went) == 1
+    return m, went[0]
+
+
+def test_ai_stub_without_a_step_tail_calls_the_original(stubs: Stubs, mips: Any) -> None:
+    m, went = _run_ai(stubs, mips, None)
+    assert went == RUN_ORIG
+    assert [m.reg(r) for r in ("a0", "a1", "a2", "a3", "ra")] == [ENTITY, 0x11, 0x22, 0x33, CALLER]
+
+
+def test_ai_stub_step_that_declines_runs_the_original(stubs: Stubs, mips: Any) -> None:
+    m, went = _run_ai(stubs, mips, 0)
+    assert went == RUN_ORIG and m.read(SEEN) == [ENTITY] and m.reg("a0") == ENTITY
+
+
+def test_ai_stub_step_that_takes_the_frame_returns(stubs: Stubs, mips: Any) -> None:
+    m, went = _run_ai(stubs, mips, 1)
+    assert went == CALLER and m.read(SEEN) == [ENTITY] and m.reg("v0") == 0
 
 
 def test_act_stub_uses_only_its_frame(stubs: Stubs) -> None:
