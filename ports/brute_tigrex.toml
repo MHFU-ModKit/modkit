@@ -16,7 +16,7 @@ source_skeleton = true
 skin = "source"
 
 [clips.charge]
-slot = 61
+source = 61
 frames = 382
 loop = false
 label = "crazy forward charge"

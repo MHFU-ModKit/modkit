@@ -104,7 +104,8 @@ def test_clips(games, ports, tmp_path, capsys):
     assert main([*args, "--write"]) == 0
     m = manifest.load(path)
     assert m.clips["clip_07"].labelled_build.startswith("unrecorded: l.txt")
-    assert (m.clips["clip_03"].source, m.clips["clip_07"].source) == (24, None)
+    assert (m.clips["clip_03"].source, m.clips["clip_07"].source) == (24, 7)
+    assert m.clips["clip_07"].slot is None, "a name pins nothing"
 
 
 def test_ports_check(games, ports, tmp_path, monkeypatch, capsys):

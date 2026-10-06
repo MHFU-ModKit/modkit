@@ -147,8 +147,8 @@ class ClipsPanel(kit.Panel):
         form.row("Name", self.name)
         form.row("Shows", self.label)
         self.anim = kit.integer(
-            tip="The anim (executor entry) to play this clip in. Place moves it there; a named clip"
-            " already there swaps into this one's anim, an unnamed one takes the anim this frees.",
+            tip="The anim (executor entry) to play this clip in. Place pins it there; a clip"
+            " pinned there swaps into this one's anim, any other takes the anim this frees.",
             lo=0,
             hi=0,
         )
@@ -230,10 +230,10 @@ class ClipsPanel(kit.Panel):
 
     def _apply_next(self) -> None:
         """Apply, then the next row plays, the name box ready for it."""
-        name, label, slot = self.name.text().strip(), self.label.text(), self.ws.edit_slot
+        name, label = self.name.text().strip(), self.label.text()
         self._apply()
-        found = None if slot is None else self.ws.manifest_clip(slot)
-        if found is None or found[0] != name or found[1].label != label:
+        c = None if self.ws.manifest is None else self.ws.manifest.clips.get(name)
+        if c is None or c.label != label:
             return  # refused: stay on the clip
         keys = [r.key for r in self._rows]
         if self._picked in keys and keys.index(self._picked) + 1 < len(keys):
@@ -385,7 +385,7 @@ class ClipsPanel(kit.Panel):
         elif row is None:
             self.edit_hint.setText("Click a clip above to play it and name it.")
         elif row.entry is None:
-            self.edit_hint.setText("Place it in an anim to name it and play it in the game.")
+            self.edit_hint.setText("Place it in an anim to play it in the game.")
         self.edit_hint.setVisible(not editing or (row is not None and row.entry is None))
         if not editing or row is None:
             return
@@ -402,8 +402,7 @@ class ClipsPanel(kit.Panel):
         self.slot_kind.setText(kind_text(cov))
         self.why.setText(cov.why() if cov else UNPLACED if row.entry is None else "Kind unknown.")
         self.why.set_level(level_of(cov))
-        for w in (self.name, self.label, self.apply, self.in_game):
-            w.setEnabled(row.entry is not None)
+        self.in_game.setEnabled(row.entry is not None)
         br = ws.browser()
         if placeable and br is not None:
             self.anim.setMaximum(max(br.layout().capacity - 1, 0))

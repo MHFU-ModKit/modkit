@@ -253,7 +253,7 @@ class MonsterWorkspace(Workspace):
         self._sent = None
         self.undriven = undriven_geometry(scene)
         if doc is not None:
-            doc.pac = scene.pac
+            doc.pac, doc.sources = scene.pac, self.sources()
             doc.intel = self.host_intel()
         if self.vp is not None:
             self.vp.set_scene(scene)
@@ -475,7 +475,11 @@ class MonsterWorkspace(Workspace):
         section, key = target
         m = self.manifest
         if section == "clips" and isinstance(key, str) and key in m.clips:
-            self.play_slot(m.clips[key].slot)
+            at = clips.at(m.clips[key], self.sources())
+            if at is None:
+                self.play_source(m.clips[key].id)
+            else:
+                self.play_slot(at)
             self.focus("Clips")
         elif section == "moves" and isinstance(key, str) and key in m.moves:
             self.select_action(m.moves[key].main, m.moves[key].sub, key)
@@ -910,9 +914,14 @@ class MonsterWorkspace(Workspace):
             self._vocab = clips.survey(self.manifest, self.clip_table(), cov, build, notes)
         return self._vocab
 
+    def sources(self) -> dict[int, int]:
+        """The open build's layout, entry -> MHP3rd id; empty without one (the pins say)."""
+        sc = self.scene
+        return {} if sc is None else {e: cid for cid, e in sc.placed.items()}
+
     def manifest_clip(self, slot: int) -> tuple[str, ManifestClip] | None:
         m = self.manifest
-        return None if m is None else clips.entry(m, slot)
+        return None if m is None else clips.entry(m, slot, self.sources())
 
     def pick_clip(self, slot: int) -> None:
         """Selects `slot` for naming and loads its name and label into the boxes."""
@@ -935,7 +944,12 @@ class MonsterWorkspace(Workspace):
         self.recompute_alignment()
 
     def label(self) -> None:
-        s = self.label_session
+        """Names the picked clip: the one in the picked anim, else a clip in none (by id)."""
+        s, br, cid = self.label_session, self.browser(), self.edit_clip
+        if self.edit_slot is None and br is not None and cid is not None:
+            build = None if self.scene is None else self.scene.build_id
+            self.edit("", lambda: br.name(cid, self.name_buf, self.label_buf, build))
+            return
         if s is None or self.edit_slot is None:
             self.message = "no manifest to write to"
             return
@@ -1038,7 +1052,7 @@ class MonsterWorkspace(Workspace):
             self.alignment, self.markers = None, []
             return
         clip = None if self.vp is None else self.vp.clip
-        found = None if clip is None else clips.entry(m, clip.slot)
+        found = None if clip is None else self.manifest_clip(clip.slot)
         mv = m.moves.get(self.move or "")
         self.alignment = align.align_pair(
             m,
@@ -1354,7 +1368,9 @@ class MonsterWorkspace(Workspace):
             return
         assert self.scene is not None
         self._travel.setdefault(clip.slot, root_travel(self.scene, clip))
-        self.edit_slot, self.name_buf, self.label_buf = None, "", ""
+        held = None if self.manifest is None else layout.holder(self.manifest, cid)
+        c = None if held is None or self.manifest is None else self.manifest.clips[held]
+        self.edit_slot, self.name_buf, self.label_buf = None, held or "", c.label if c else ""
         if self.vp is not None:
             self.vp.play_clip(clip)
             self.vp.playback.play()
@@ -1419,7 +1435,7 @@ class MonsterWorkspace(Workspace):
         cid = self.playing_clip()
         self.scene = self._built_for = scene
         if self.doc is not None:
-            self.doc.pac = scene.pac
+            self.doc.pac, self.doc.sources = scene.pac, self.sources()
         self.undriven = undriven_geometry(scene)
         self._coverage = self._vocab = self._labels = self._rows = self._counts = None
         self._travel, self._previews = {}, {}
