@@ -87,16 +87,16 @@ def test_indirect():
 def test_field_name():
     assert ob.field_name(a.ENTITY.POSITION) == "POSITION"
     assert ob.field_name(a.ENTITY.POSITION + 8) == "POSITION+0x8"
-    assert ob.field_name(0x27E) == "+0x27E"
+    assert ob.field_name(0x27C) == "+0x27C"
 
 
 def test_writes_report():
     r = ob.Run(ENT, ())
     r.writes = [ob.Write(0x200, OUT1 + 4, OUT1, (1, 4), 1)] * 2
-    r.writes.append(ob.Write(0x27E, OUT2, None, (0, 6), 2))
+    r.writes.append(ob.Write(0x27C, OUT2, None, (0, 6), 2))
     text = ob.writes_report([r])
     assert f"(1,4) writes\n  POSITION: {OUT1:08X} - @{OUT1 + 4:08X} x2" in text
-    assert f"(0,6) writes\n  +0x27E: ? @{OUT2:08X} x1" in text
+    assert f"(0,6) writes\n  +0x27C: ? @{OUT2:08X} x1" in text
 
 
 def test_diff_names_fields_and_words():
