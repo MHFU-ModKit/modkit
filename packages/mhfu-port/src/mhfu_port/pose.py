@@ -67,7 +67,9 @@ def compare(
 ) -> Poses:
     """Each donor clip, by the port's executor entry it goes to, posed on the donor's rig (bone
     -> record `record_of`) against the port's clip in that entry on the port's rig, joint by
-    joint under the correspondence.
+    joint under the correspondence: the joints below the port's root, about its body joint (the
+    root's first child), the port's turned by the turn `travel.carry` put on its root; joint 0
+    and the root hold travel and height either way.
 
     Raises ValueError when the correspondence places too few donor bones to judge."""
     c = correspondence(donor, port.skeleton)
@@ -81,10 +83,13 @@ def compare(
         len(c.joint_of), n, c.pad, sorted(set(range(n)) - set(c.joint_of)), compared=len(c.tree)
     )
     rig = fk.Rig.from_skeleton(donor)
-    tree = c.tree
+    parents = list(port.rig.parents)
+    proot = parents.index(0) if 0 in parents else 0
+    body = parents.index(proot) if proot in parents[1:] else proot
+    tree = {b: j for b, j in c.tree.items() if j not in (0, proot)}
     bones = np.array(list(tree), dtype=np.intp)
     joints = np.array(list(tree.values()), dtype=np.intp)
-    root = 0  # where the correspondence's walk starts
+    anchor = next((b for b, j in c.joint_of.items() if j == body), 0)
     for slot, clip in sorted(clips.items()):
         built = port.clip(slot)
         if built is None:
@@ -100,9 +105,20 @@ def compare(
             continue
         frame = float(keys[len(keys) // 2])
         ws = rig.world(*want.at(frame))[:, :3, 3]
-        wb = port.rig.world(*have.at(frame))[:, :3, 3]
-        lift = float(wb[c.joint_of[root], 1] - ws[root, 1])
-        d = np.sort(np.linalg.norm(ws[bones] + (0.0, lift, 0.0) - wb[joints], axis=1))
+        rot, loc = have.at(frame)
+        wb = port.rig.world(rot, loc)[:, :3, 3]
+        lift = float(wb[body, 1] - ws[anchor, 1])
+        th = -rot[proot, 1]
+        rel = wb[joints] - wb[body]
+        turned = np.stack(
+            [
+                rel[:, 0] * np.cos(th) + rel[:, 2] * np.sin(th),
+                rel[:, 1],
+                -rel[:, 0] * np.sin(th) + rel[:, 2] * np.cos(th),
+            ],
+            axis=1,
+        )
+        d = np.sort(np.linalg.norm(ws[bones] - ws[anchor] - turned, axis=1))
         out.slots.append(
             SlotPose(
                 slot,

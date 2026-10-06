@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,7 +16,7 @@ from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Skeleton
 
 from .. import data, layout, manifest, motion, travel
-from ..build import build
+from ..build import authored, build
 from ..model import ANIMATION, SKELETON
 
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ def register(sub: Subparsers) -> None:
     p.add_argument("port", type=Path, help="a manifest (built here) or a model PAC")
     p.add_argument("clips", nargs="*", help="entries or clip names (default: those that move)")
     p.add_argument("--all", action="store_true", help="every filled entry, standing ones too")
-    p.add_argument("--carry", action="store_true", help="as `travel.carry` leaves the build")
+    p.add_argument("--carry", action="store_true", help="a PAC as `travel.carry` leaves it")
     p.add_argument("--scale", type=float, default=1.0, help="the monster's size (ENTITY+0x220)")
     p.add_argument("--speed", type=float, default=travel.SPEED, help="clip frames per AI frame")
     p.add_argument(
@@ -43,12 +44,13 @@ def register(sub: Subparsers) -> None:
 
 
 def run(args: argparse.Namespace) -> int:
-    pac, names = _open(args)
+    pac, names, authored = _open(args)
     entries = Pac.from_bytes(pac).entries
     skeleton = Skeleton.from_bytes(entries[SKELETON])
     anim = fu.Anim.from_bytes(entries[ANIMATION])
     if args.carry:
         anim = travel.carry(anim, skeleton)
+    turns = travel.turns(anim, skeleton, authored)
     if args.against:
         return _against(anim, skeleton, args.against, names)
     by_name = {n: e for e, n in names.items()}
@@ -58,25 +60,30 @@ def run(args: argparse.Namespace) -> int:
     wanted = [int(c) if c.isdigit() else by_name[c] for c in args.clips] or None
     rows = travel.of(anim, skeleton, wanted)
     if wanted is None and not args.all:
-        rows = [t for t in rows if _moves(t)]
+        rows = [t for t in rows if _moves(t, turns.get(t.entry))]
     k = args.scale
     print(
-        f"root joint {travel.root(skeleton)}; units x{k:g}, z forward; turn in degrees;"
-        f" seconds at {args.speed:g}"
+        f"root joint {travel.root(skeleton)}; units x{k:g}, z forward; seconds at {args.speed:g};"
+        " degrees: the body's turn left in the clip, the turn carried out of it, the manifest's,"
+        " what YAW turns"
     )
     print(
         f"{'entry':>5} {'clip':34} {'frames':>6} loop {'x':>6} {'z':>6} {'dist':>6}"
-        f" {'drawn x':>7} {'drawn z':>7} {'turn':>5} {'s':>5}"
+        f" {'drawn x':>7} {'drawn z':>7} {'body':>5} {'data':>5} {'given':>5} {'yaw':>5}"
+        f" {'s':>5}"
     )
     for t in rows:
         loop = "yes" if t.loop else "no"
+        turn = turns.get(t.entry)
+        given = turn.authored if turn is not None else None
         print(
             f"{t.entry:5d} {names.get(t.entry, ''):34.34} {t.frames:6d} {loop:4}"
             f" {t.carried[0] * k:6.0f} {t.carried[1] * k:6.0f} {t.distance * k:6.0f}"
-            f" {t.drawn[0] * k:7.0f} {t.drawn[1] * k:7.0f} {t.turn * 360 / travel.TURN:5.0f}"
-            f" {t.seconds(args.speed):5.2f}"
+            f" {t.drawn[0] * k:7.0f} {t.drawn[1] * k:7.0f} {_deg(t.turn):5.0f}"
+            f" {_deg(turn.data if turn else 0):5.0f} {'-' if given is None else f'{given:.0f}':>5}"
+            f" {_deg(turn.keys[-1] if turn else 0):5.0f} {t.seconds(args.speed):5.2f}"
         )
-    lost = [t.entry for t in rows if abs(t.drawn[1]) >= MOVES or abs(t.drawn[0]) >= MOVES]
+    lost = [t.entry for t in rows if MOVES <= math.hypot(*t.drawn) > t.distance]
     if lost:
         print(
             f"{len(lost)} entries keep travel on joint 0, which the engine draws and drops: "
@@ -85,9 +92,13 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _moves(t: travel.Travel) -> bool:
-    turn = abs(t.turn) * 360 / travel.TURN
-    return max(t.distance, abs(t.drawn[0]), abs(t.drawn[1])) >= MOVES or turn >= TURNS
+def _deg(yaw: float) -> float:
+    return yaw * 360 / travel.TURN
+
+
+def _moves(t: travel.Travel, turn: travel.Turn | None) -> bool:
+    turned = max(abs(_deg(t.turn)), abs(_deg(turn.keys[-1])) if turn else 0.0)
+    return max(t.distance, abs(t.drawn[0]), abs(t.drawn[1])) >= MOVES or turned >= TURNS
 
 
 def _against(anim: fu.Anim, skeleton: Skeleton, csv: Path, names: dict[int, str]) -> int:
@@ -118,10 +129,11 @@ def _step(anim: fu.Anim, skeleton: Skeleton, entry: int, f: observe.Frame) -> fl
     return f.scale * float(np.hypot(*(b - a)))
 
 
-def _open(args: argparse.Namespace) -> tuple[bytes, dict[int, str]]:
-    """The PAC and entry -> clip name: a manifest is built, a PAC read."""
+def _open(args: argparse.Namespace) -> tuple[bytes, dict[int, str], dict[int, float]]:
+    """The PAC, entry -> clip name and entry -> authored turn: a manifest is built, a PAC
+    read."""
     if args.port.suffix != ".toml":
-        return args.port.read_bytes(), {}
+        return args.port.read_bytes(), {}, {}
     m = manifest.load(args.port)
     built = build(m, data.from_arguments(args))
-    return built.pac, layout.names(m, built.layout)
+    return built.pac, layout.names(m, built.layout), authored(m, built.layout)

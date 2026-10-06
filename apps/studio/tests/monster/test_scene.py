@@ -3,10 +3,11 @@
 import numpy as np
 import pytest
 from mhfu.files import monster_pac
-from mhfu_port import layout, manifest, verify
+from mhfu_port import layout, manifest, travel, verify
 from mhfu_port.model import MHFU, MHP3RD, ModelError
 from mhfu_studio.monster import inputs
 from mhfu_studio.monster.core.scene import Scene, open_scene
+from mhfu_studio.monster.render.playback import pose_at
 from mhp_formats import Pac
 
 NAMES = "\n[clips.walk]\nslot = 1\nframes = 10\nloop = true\n\n[clips.nod]\nslot = 2\nframes = 9\n"
@@ -79,7 +80,9 @@ def test_tigrex(games):
 )
 def test_donor_matches_port(games, built, ports, name, joints, groups, vertices, pad):
     """The donor read as the porter reads it is the geometry the port carries, and the port
-    plays its donor's moveset joint for joint."""
+    plays its donor's moveset joint for joint as the game draws it: below its root, about the
+    body joint, YAW turned by the turn the build took out of the clip, standing `ground_lift`
+    higher; within 0.2 units, as a rotation key holds a 16384th of a turn."""
     m = manifest.load(ports / f"{name}.toml")
     src = Scene.from_manifest(m, side="source", data=games)
     port = Scene.from_bytes(built(name), name, manifest=m)
@@ -98,19 +101,25 @@ def test_donor_matches_port(games, built, ports, name, joints, groups, vertices,
         assert np.allclose(a.positions, b.positions, atol=1e-6) and a.texture == b.texture
     c = verify.correspondence(src.skeleton, port.skeleton)
     assert c.pad == pad
-    s_idx = np.array(sorted(c.tree))
+    root = travel.root(port.skeleton)
+    body = port.skeleton.bones[root].child
+    anchor = next(b for b, j in c.tree.items() if j == body)
+    s_idx = np.array(sorted(b for b, j in c.tree.items() if j not in (0, root)))
     p_idx = np.array([c.tree[i] for i in s_idx])
     worst, compared = 0.0, 0
     for clip in src.clips:
         pc = port._by_slot[entry[clip.slot]]
         assert pc.whole_rig
         for frame in (clip.frames // 4, clip.frames // 2):
-            a = src.pose(clip, frame).joints[s_idx]
-            b = port.pose(pc, frame).joints[p_idx]
-            a[:, 1] += m.build.ground_lift
-            worst = max(worst, float(np.linalg.norm(a - b, axis=1).max()))
+            a = src.pose(clip, frame).joints
+            b = pose_at(port, pc, frame).joints
+            lift = b[body, 1] - a[anchor, 1]
+            off = (a[s_idx] - a[anchor]) - (b[p_idx] - b[body])
+            worst = max(
+                worst, float(np.linalg.norm(off, axis=1).max()), abs(lift - m.build.ground_lift)
+            )
             compared += 1
-    assert compared == 2 * len(src.clips) and worst < 0.05, (compared, worst)
+    assert compared == 2 * len(src.clips) and worst < 0.2, (compared, worst)
 
 
 def test_manifest_port(games, ports):

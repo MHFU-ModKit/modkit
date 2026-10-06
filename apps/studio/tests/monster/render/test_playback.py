@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
+import math
 from pathlib import Path
 
 import numpy as np
 import pytest
+from mhfu_port.model import MHFU
+from mhfu_port.model import Clip as Slot
 from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.render.playback import (
     GAME_HZ,
@@ -13,8 +16,12 @@ from mhfu_studio.monster.render.playback import (
     root_joints,
     root_travel,
     travel_joints,
+    turn_of,
     wall_clock,
 )
+from mhp_formats.anim import Channel, Keyframe, Track, quantize
+from mhp_formats.anim import Clip as AnimClip
+from mhp_formats.skeleton import Bone, Skeleton
 
 
 def test_gate_before_the_step() -> None:
@@ -141,3 +148,18 @@ def test_tigrex_travel(mhfu_data: Path) -> None:
         return float(np.linalg.norm(c - c[0], axis=1).max())
 
     assert drift(True) < drift(False) * 0.25
+
+
+def test_a_carried_turn_is_shown_as_yaw() -> None:
+    """The root turns back what YAW turns in the game: the preview shows the body as before."""
+    skeleton = Skeleton(
+        [Bone(child=1), Bone(parent=0, child=2), Bone(parent=1, position=(0.0, 0.0, 50.0))]
+    )
+    back = [Keyframe(0, 0), Keyframe(quantize("rot", -math.pi / 3), 20)]
+    source = AnimClip([Track(), Track([Channel(0x010, back)]), Track()])
+    slot = Slot(5, 20, False, 3, (1,), source)
+    sc = Scene("t", MHFU, skeleton, [], [], [slot])
+    turn = turn_of(sc, slot)
+    assert turn is not None and turn.keys[-1] == pytest.approx(0x10000 / 6, abs=2)
+    assert np.allclose(pose_at(sc, slot, 20.0).joints[2], (0.0, 0.0, 50.0), atol=0.1)
+    assert np.allclose(sc.pose(slot, 20.0).joints[2], (-43.3, 0.0, 25.0), atol=0.1)
