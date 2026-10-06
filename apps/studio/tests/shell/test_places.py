@@ -6,6 +6,7 @@ import pytest
 from mhfu import inject
 from mhfu_studio.shell import places, settings
 from mhfu_studio.shell.places import MEMSTICK, MHFU, MHP3RD, Missing
+from ppsspp_debug import Lane
 
 
 def extraction(at: Path) -> Path:
@@ -17,6 +18,7 @@ def extraction(at: Path) -> Path:
 def _none(monkeypatch: pytest.MonkeyPatch) -> None:
     for p in places.PLACES:
         monkeypatch.delenv(p.env, raising=False)
+    monkeypatch.delenv(inject.LANE_ENV, raising=False)
     monkeypatch.setattr(inject, "MEMSTICK_ROOTS", ())
 
 
@@ -68,6 +70,18 @@ def test_memstick(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     places.remember(MEMSTICK, None)
     assert places.find(MEMSTICK).source == "found"
     assert places.environ() == {inject.MEMSTICK_ENV: str(tmp_path / "found")}
+
+
+def test_memstick_lane(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lane = tmp_path / "2/.config/ppsspp/PSP"
+    (lane / inject.MODS_SUBDIR).mkdir(parents=True)
+    monkeypatch.setattr(inject, "Lane", lambda n: Lane(n, root=tmp_path))
+    places.remember(MEMSTICK, tmp_path)
+    monkeypatch.setenv(inject.MEMSTICK_ENV, str(tmp_path))
+    monkeypatch.setenv(inject.LANE_ENV, "2")
+    got = places.find(MEMSTICK)
+    assert (got.path, got.source) == (lane, "lane") and "from MHFU_LANE" in got.says()
+    assert places.mods_dir() == lane / inject.MODS_SUBDIR
 
 
 def test_the_wrong_game(tmp_path: Path) -> None:
