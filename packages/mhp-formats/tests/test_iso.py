@@ -25,8 +25,8 @@ def _iso(path, files):
     return path
 
 
-def _game_iso(path, code=b"ULES-01213"):
-    data = encrypt(DataBin(_FILES).to_bytes(), Game.MHFU)
+def _game_iso(path, code=b"ULES-01213", game=Game.MHFU):
+    data = encrypt(DataBin(_FILES).to_bytes(), game)
     return _iso(
         path,
         {
@@ -37,11 +37,13 @@ def _game_iso(path, code=b"ULES-01213"):
     )
 
 
-def test_extract(tmp_path):
+@pytest.mark.parametrize("game", [Game.MHFU, Game.MHP2G])
+def test_extract(tmp_path, game):
     steps = []
     out = tmp_path / "out"
-    assert extract(_game_iso(tmp_path / "game.iso"), out, steps.append) is Game.MHFU
-    assert (out / "UMD_DATA.BIN").read_bytes().startswith(b"ULES-01213|")
+    code = game.value.encode()
+    assert extract(_game_iso(tmp_path / "game.iso", code, game), out, steps.append) is game
+    assert (out / "UMD_DATA.BIN").read_bytes().startswith(code + b"|")
     assert (out / "PSP_GAME/SYSDIR/BOOT.BIN").read_bytes() == b"\x7fELF"
     assert not (out / DATA_BIN).exists()
     names = ["00000.tmh", "00001.pmf", "00002.bin", "00003.wav", "00004.vag", "00005.bin"]

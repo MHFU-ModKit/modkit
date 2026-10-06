@@ -53,3 +53,19 @@ def generated() -> dict[int, dict[str, Any]]:
         return {}
     data = json.loads(path.read_text(encoding="utf-8"))
     return {int(va, 16): entry for va, entry in data["names"].items()}
+
+
+def own(va: int) -> str | None:
+    """The addresses.toml name of `va` alone."""
+    return _own().get(va)
+
+
+@functools.cache
+def functions() -> dict[int, dict[str, Any]]:
+    """Every function the names table matched to the JP build, named or not, by address:
+    `jp` (its address in the MHP2G decomp), `module`, `how`."""
+    path = names_path()
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {int(va, 16): entry for va, entry in data.get("functions", {}).items()}
