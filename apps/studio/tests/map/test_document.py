@@ -5,7 +5,9 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from mhfu import points
 from mhfu.files import Extracted
+from mhfu.points import Point
 from mhfu_studio.map.core.atlas import Atlas
 from mhfu_studio.map.core.edit import EditSession, Selection, compose
 from mhfu_studio.map.core.scene import MapScene
@@ -198,3 +200,37 @@ def test_export(game: Extracted, scene: MapScene, doc_dir: Path, tmp_path: Path)
     col = json.loads((out / "st139_collision.json").read_text())
     assert len(col["added"]) == 4 and all(a["chunk"] in (0, 1) for a in col["added"])
     assert json.loads((out / "export.json").read_text())["name"] == "e"
+
+
+def test_points_round_trip(tmp_path: Path):
+    doc = MapDocument("snow", None, tmp_path / "snow")
+    wall = Point("wall", 97, (10900.0, 325.0, 9200.0), note="the Tigrex sticks here")
+    doc.put_point(wall)
+    doc.put_point(Point("ledge", 99, (1.0, 2.0, 3.0), "climb", 157.0))
+    assert doc.dirty and doc.new_point_name() == "point_1"
+    p = doc.save()
+    assert tomllib.loads(p.read_text())["point"][0] == {
+        "name": "wall",
+        "stage": 97,
+        "at": [10900.0, 325.0, 9200.0],
+        "note": "the Tigrex sticks here",
+    }
+    back = MapDocument.load(p)
+    assert back.points == doc.points and not back.dirty
+    assert points.load(p) == doc.points  # what `mhfu rig goto` reads
+    back.put_point(Point("tigrex_wall", 97, wall.at), replacing="wall")
+    assert [q.name for q in back.points] == ["tigrex_wall", "ledge"] and back.dirty
+    back.remove_point("ledge")
+    assert back.point("ledge") is None and back.findings() == []
+
+
+def test_points_refused(tmp_path: Path):
+    doc = MapDocument("snow", None, tmp_path)
+    doc.put_point(Point("a", 97, (0.0, 0.0, 0.0)))
+    with pytest.raises(points.PointError, match="already named a"):
+        doc.put_point(Point("a", 98, (0.0, 0.0, 0.0)))
+    with pytest.raises(points.PointError, match="heading"):
+        doc.put_point(Point("b", 97, (0.0, 0.0, 0.0), "climb"))
+    (tmp_path / "map.toml").write_text('[map]\nname = "x"\n[[point]]\nname = "a"\nstage = 97\n')
+    with pytest.raises(DocumentError, match="at = "):
+        MapDocument.load(tmp_path)

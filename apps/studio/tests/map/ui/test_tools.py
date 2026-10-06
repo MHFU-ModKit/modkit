@@ -17,7 +17,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QToolButton, QWidget
 
-LABELS = ["Select", "Move", "Rotate", "Scale", "Groups", "Objects", "Faces", "Collision"]
+LABELS = ["Select", "Move", "Rotate", "Scale", "Point", "Groups", "Objects", "Faces", "Collision"]
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ def test_toolbar(window: Window) -> None:
     assert [b.text() for b in buttons if b.property("toggle")] == toggles
     assert len([w for w in window.tools.findChildren(QWidget) if w.objectName() == "Seg"]) == 2
     keys = [action(window, t).shortcut().toString() for t in LABELS]
-    assert keys == ["Q", "W", "E", "R", "1", "2", "3", "4"]
+    assert keys == ["Q", "W", "E", "R", "P", "1", "2", "3", "4"]
     assert "(W)" in action(window, "Move").toolTip()
     assert all(not a.icon().isNull() for _, _, a in window._tool_actions)
     assert checked(window) == ["Select", "Objects"]
