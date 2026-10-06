@@ -42,6 +42,8 @@ FIELDS = (
     "moved",
     "kicked",
     "waited",
+    "pair",
+    "tries",
     "verdict",
 )
 
@@ -139,6 +141,8 @@ def _rows(p: clips.Played, expect: clips.Expect | None) -> list[list[object]]:
             int(q.moved),
             int(p.kicked),
             f"{p.waited:.1f}",
+            "{},{}".format(*p.pair),
+            p.tries,
             bad,
         ]
         for q in p.parts
@@ -198,9 +202,9 @@ def sweep(args: argparse.Namespace) -> int:
                 good, bad = good + (not wrong), bad + bool(wrong)
                 frames = "/".join(f"{q.end:g}" for q in p.parts)
                 where = " ".join(f"{s_}:{i}" for q in p.parts for s_, i in q.held[:1])
-                print(
-                    f"{p.entry:4d}  {frames:<14} {where:<16} {'; '.join(wrong) or 'ok'}", flush=True
-                )
+                tries = f" (try {p.tries})" if p.tries > 1 else ""
+                say = "; ".join(wrong) or "ok"
+                print(f"{p.entry:4d}  {frames:<14} {where:<16} {say}{tries}", flush=True)
                 if out:
                     out.writerows(_rows(p, expect.get(p.entry)))
     except KeyboardInterrupt:

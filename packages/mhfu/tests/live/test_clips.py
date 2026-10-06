@@ -164,8 +164,8 @@ def test_sweep_releases(s, engine):
 
 def test_sweep_plays_a_head_only_dispatch_again(s, engine):
     played = list(clips.sweep(s, [3, 25]))
-    assert engine.forced == [3, 25, 25, -1]
-    assert [all(q.taken for q in p.parts) for p in played] == [True, False]
+    assert engine.forced == [3, 25, -1, 25, -1, 25, -1]
+    assert [(p.tries, all(q.taken for q in p.parts)) for p in played] == [(1, True), (3, False)]
 
 
 def test_read_expect(tmp_path):

@@ -20,7 +20,7 @@ from __future__ import annotations
 import csv
 import struct
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ppsspp_debug import Lane
@@ -50,6 +50,9 @@ SETTLE = 0.15
 sets the blocks up."""
 WATCH = 0.4
 """Seconds between the two reads that tell a playing clip from a stopped one."""
+TRIES = 3
+RECOVER = 1.0
+"""Seconds the brain runs free between two tries of an entry."""
 CHECKOUT = Path(__file__).resolve().parents[5]
 LUA = CHECKOUT / "framework" / "lua"
 BRIDGE_LUA = LUA / "tools" / "cli_bridge.lua"
@@ -140,6 +143,9 @@ class Played:
     kicked: bool
     """The current action was restarted to get a dispatch."""
     waited: float
+    pair: tuple[int, int]
+    """The behaviour pair (ENTITY.MAIN_STATE, SUB_STATE) at the read."""
+    tries: int = 1
 
 
 @dataclass(frozen=True)
@@ -257,6 +263,7 @@ def play(
     waited = s.now() - start
     s.sleep(SETTLE)
     taken = _taken(m, entry)
+    pair = (m.main_state, m.sub_state)
     blocks = [b for b in blocks if b.node]
     phases = [b.phase for b in blocks]
     s.sleep(WATCH)
@@ -276,7 +283,7 @@ def play(
                 phase != phases[p] or phase >= end,
             )
         )
-    return Played(entry, tuple(parts), done, kicked, waited)
+    return Played(entry, tuple(parts), done, kicked, waited, pair)
 
 
 def release(s: Session, slot: int | None = None, link: Bridge | None = None) -> bool:
@@ -293,20 +300,23 @@ def sweep(
     kick_after: float = 2.0,
     timeout: float = 6.0,
 ) -> Iterator[Played]:
-    """`play` each entry in turn, once more where some part did not take it (a handler may put
-    the body back on its idle after the dispatch); the hold ends when the sweep does."""
+    """`play` each entry in turn, again after a pause where some part did not take it or does
+    not move: a handler may put the body back on its idle after the dispatch, or dispatch every
+    frame, which restarts a held clip each time. The hold ends when the sweep does."""
     _, m = monster(s, slot)
     link = bridge(s)
     pack = Pack.read(s.mem, m.action_table)
     try:
         for e in entries:
-            for _ in range(2):
+            for n in range(1, TRIES + 1):
                 p = play(
                     s, e, slot=slot, link=link, pack=pack, kick_after=kick_after, timeout=timeout
                 )
-                if all(q.taken for q in p.parts):
+                if all(q.taken and q.moved for q in p.parts) or n == TRIES:
                     break
-            yield p
+                release(s, slot, link)
+                s.sleep(RECOVER)
+            yield replace(p, tries=n)
     finally:
         release(s, slot, link)
 
