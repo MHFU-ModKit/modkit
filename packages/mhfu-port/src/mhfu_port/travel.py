@@ -13,7 +13,7 @@ YAW is the AI's. `carry` moves a donor's travel to where the engine takes it.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import numpy as np
@@ -21,6 +21,7 @@ from mhfu.entries import PART_STREAMS
 from mhp_formats import fu
 from mhp_formats.anim import CHANNEL_BITS, Channel, Clip, Keyframe, Track
 from mhp_formats.skeleton import Skeleton
+from numpy.typing import ArrayLike
 
 from . import fk, motion
 
@@ -91,7 +92,7 @@ def of(anim: fu.Anim, skeleton: Skeleton, entries: Iterable[int] | None = None) 
     return out
 
 
-def path(anim: fu.Anim, skeleton: Skeleton, entry: int, frames: Sequence[float]) -> fk.Floats:
+def path(anim: fu.Anim, skeleton: Skeleton, entry: int, frames: ArrayLike) -> fk.Floats:
     """`(len(frames), 2)`: the root's (x, z) at those clip frames, model units."""
     clip = fk.rig_clip(anim, entry, skeleton)
     if clip is None:

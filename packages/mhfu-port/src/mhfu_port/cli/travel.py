@@ -8,11 +8,13 @@ import argparse
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
+from mhfu.live import observe
 from mhp_formats import fu
 from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Skeleton
 
-from .. import data, layout, manifest, travel
+from .. import data, layout, manifest, motion, travel
 from ..build import build
 from ..model import ANIMATION, SKELETON
 
@@ -31,6 +33,9 @@ def register(sub: Subparsers) -> None:
     p.add_argument("--carry", action="store_true", help="as `travel.carry` leaves the build")
     p.add_argument("--scale", type=float, default=1.0, help="the monster's size (ENTITY+0x220)")
     p.add_argument("--speed", type=float, default=travel.SPEED, help="clip frames per AI frame")
+    p.add_argument(
+        "--against", type=Path, help="`mhfu observe path --csv` of the game: measured travel"
+    )
     data.add_arguments(p)
     p.set_defaults(run=run)
 
@@ -42,6 +47,8 @@ def run(args: argparse.Namespace) -> int:
     anim = fu.Anim.from_bytes(entries[ANIMATION])
     if args.carry:
         anim = travel.carry(anim, skeleton)
+    if args.against:
+        return _against(anim, skeleton, args.against, names)
     by_name = {n: e for e, n in names.items()}
     for c in args.clips:
         if not c.isdigit() and c not in by_name:
@@ -68,6 +75,29 @@ def run(args: argparse.Namespace) -> int:
         print(
             f"{len(lost)} entries keep travel on joint 0, which the engine draws and drops: "
             "rebuild with the travel carried (--carry previews it)"
+        )
+    return 0
+
+
+def _against(anim: fu.Anim, skeleton: Skeleton, csv: Path, names: dict[int, str]) -> int:
+    """Each clip played in the game against its root path. A frame's position holds the root
+    motion up to its cursor less one frame's speed; a leg is compared up to its first wall."""
+    filled = set(motion.filled(anim))
+    print(f"{'entry':>5} {'clip':34} {'from':>6} {'to':>6} {'game':>6} {'expect':>6} ratio  wall")
+    for leg in observe.legs(observe.read_frames(csv)):
+        hit = leg.wall
+        fs = leg.frames if hit is None else leg.frames[: leg.frames.index(hit)]
+        if len(fs) < 2 or leg.entry not in filled:
+            continue
+        lo, hi = max(fs[0].clip - fs[0].speed, 0.0), fs[-1].clip - fs[-1].speed
+        pts = travel.path(anim, skeleton, leg.entry, np.linspace(lo, hi, 200))
+        want = fs[0].scale * float(np.linalg.norm(np.diff(pts, axis=0), axis=1).sum())
+        got = observe.Leg(leg.entry, tuple(fs)).path
+        ratio = f"{got / want:5.3f}" if want >= MOVES else "    -"
+        wall = f"{hit.walls:#010x} class {2 if hit.stuck else 1} at {hit.clip:g}" if hit else "-"
+        print(
+            f"{leg.entry:5d} {names.get(leg.entry, ''):34.34} {lo:6.1f} {hi:6.1f}"
+            f" {got:6.0f} {want:6.0f} {ratio}  {wall}"
         )
     return 0
 

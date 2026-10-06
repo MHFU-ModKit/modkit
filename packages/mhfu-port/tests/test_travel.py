@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import numpy as np
 import pytest
+from mhfu.live import observe
 from mhfu_port import fk, travel
 from mhfu_port.cli import main
 from mhfu_port.model import ANIMATION, SKELETON
@@ -84,14 +85,32 @@ def test_carry_keeps_shared_clips_shared():
     assert after.streams[0][0] is after.streams[0][1]
 
 
-def test_cli(tmp_path, capsys):
-    anim = pack(dash([loc(2, (0, 0), (40, 1000))], []))
+def pac(tmp_path, anim: fu.Anim):
     path = tmp_path / "port.bin"
     entries = [b""] * 4
     entries[SKELETON], entries[ANIMATION] = rig().to_bytes(), anim.to_bytes()
     path.write_bytes(Pac(entries).to_bytes())
+    return path
+
+
+def test_cli(tmp_path, capsys):
+    path = pac(tmp_path, pack(dash([loc(2, (0, 0), (40, 1000))], [])))
     assert main(["travel", str(path), "--scale", "0.5"]) == 0
     out = capsys.readouterr().out
     assert "    0" in out and "500" in out and "joint 0" in out
     assert main(["travel", str(path), "--carry"]) == 0
     assert "joint 0" not in capsys.readouterr().out
+
+
+def test_against_a_game_trace(tmp_path, capsys):
+    anim = pack(dash([], [loc(2, (0, 0), (40, 1000))]))
+    path = pac(tmp_path, anim)
+    root_z = travel.path(anim, rig(), 0, [c - 2 for c in range(2, 22, 2)])[:, 1]
+    frames = [
+        observe.Frame(i / 30, 1, 4, 0.0, 0.0, 0.5 * z, 0, 0, 0, c, 2.0, 0, 0.5)
+        for i, (c, z) in enumerate(zip(range(2, 22, 2), root_z, strict=True))
+    ]
+    csv = tmp_path / "game.csv"
+    observe.write_frames(frames, csv)
+    assert main(["travel", str(path), "--against", str(csv)]) == 0
+    assert " 1.000 " in capsys.readouterr().out
