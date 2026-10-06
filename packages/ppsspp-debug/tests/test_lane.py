@@ -5,7 +5,7 @@ import sys
 import time
 
 import pytest
-from ppsspp_debug import Lane, emulators
+from ppsspp_debug import Lane, _lane, emulators
 from ppsspp_debug._lane import settings
 
 
@@ -82,3 +82,8 @@ def test_lane_processes_are_not_free_emulators(monkeypatch, tmp_path):
     assert launch._in_lane(["PPSSPPSDL", str(tmp_path / "lanes/1/game.iso")])
     assert not launch._in_lane(["PPSSPPSDL", str(tmp_path / "game.iso")])
     assert all(p.pid for p in emulators())
+
+
+def test_hide_without_osascript(monkeypatch):
+    monkeypatch.setenv("PATH", "")
+    assert _lane.hide(1) is False

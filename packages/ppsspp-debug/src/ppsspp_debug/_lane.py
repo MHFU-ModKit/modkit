@@ -3,7 +3,8 @@
 """Several PPSSPPs on one machine, each with its own memory stick, debugger port and game image.
 
 PPSSPP keeps its memory stick in `$HOME/.config/ppsspp` on macOS and Linux, so a lane is a HOME
-of its own. On macOS a lane starts hidden through LaunchServices and never takes focus. A process
+of its own. On macOS a lane starts through LaunchServices, never takes focus, and is hidden once
+its window is up (`open -j` alone leaves a cold boot's window on screen). A process
 started that way cannot read ~/Desktop, ~/Documents or ~/Downloads without a permission prompt
 nobody sees (PPSSPP reports the game as an empty file), so the lane boots its own clone of the
 game image.
@@ -106,8 +107,8 @@ class Lane:
 
 
 class AppEmulator:
-    """PPSSPP started hidden through LaunchServices (`open -j -g -n`), found again by its
-    arguments since `open` returns before the app runs."""
+    """PPSSPP started in the background through LaunchServices (`open -j -g -n`), found again by
+    its arguments since `open` returns before the app runs, and hidden once it listens."""
 
     host = "127.0.0.1"
 
@@ -164,6 +165,7 @@ class AppEmulator:
             if not self.running():
                 raise RuntimeError("PPSSPP exited")
             if ports := sorted(_listening(self._proc)):
+                hide(self._proc.pid)
                 return ports[0]
             if time.monotonic() > deadline:
                 raise TimeoutError(
@@ -209,6 +211,19 @@ def settings(ini: str, values: Mapping[str, str]) -> str:
 
 def _empty(path: Path) -> bool:
     return not path.exists() or (path.is_dir() and not any(path.iterdir()))
+
+
+def hide(pid: int) -> bool:
+    """Hides an app's windows, as Command-H does; False where macOS refuses (no Automation
+    permission for System Events). A hidden lane runs and answers at full speed."""
+    script = (
+        'tell application "System Events" to set visible of '
+        f"(first process whose unix id is {pid}) to false"
+    )
+    try:
+        return subprocess.run(["osascript", "-e", script], capture_output=True).returncode == 0
+    except OSError:
+        return False
 
 
 def _bundle(binary: StrPath) -> Path | None:
