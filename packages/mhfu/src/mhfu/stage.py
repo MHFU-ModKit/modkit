@@ -406,6 +406,8 @@ FLOOR_CHUNK = 1
 WALL_CHUNK = 0
 HITS_TAG = b"HITS"
 HITS_GRID_AT = 0x28
+HITS_BASE = 8
+"""In a stage file, a HITS chunk's offsets count from its start + this."""
 """Where a chunk's grid starts; the loader's fixup points the header's grid word here."""
 _PAC_ROW = struct.Struct("<II")
 _HITS_HEAD = struct.Struct("<4sIIIIIiiII")
@@ -441,6 +443,29 @@ class Triangle(NamedTuple):
     address: int
 
 
+def fix_up(chunk: bytes, at: int) -> bytes:
+    """A HITS chunk as the loader leaves it at address `at`: its two header offsets and every
+    grid word made addresses (offsets count from the chunk + HITS_BASE), and every list word
+    (a triangle index * 56) the triangle's address."""
+    out = bytearray(chunk)
+    head = list(_HITS_HEAD.unpack_from(out, 0))
+    nx, nz, grid, tris = head[4], head[5], head[8], head[9]
+    tris_at = at + HITS_BASE + tris
+    head[8], head[9] = at + HITS_BASE + grid, tris_at
+    _HITS_HEAD.pack_into(out, 0, *head)
+    lists = set()
+    for k in range(nx * nz):
+        pos = HITS_GRID_AT + 4 * k
+        lst = _U32.unpack_from(out, pos)[0]
+        _U32.pack_into(out, pos, at + HITS_BASE + lst)
+        lists.add(HITS_BASE + lst)
+    for i in lists:  # once each: cells may share a list
+        while (w := _U32.unpack_from(out, i)[0]) != LIST_END:
+            _U32.pack_into(out, i, tris_at + w)
+            i += 4
+    return bytes(out)
+
+
 class Floor:
     """A stage's walkable floor as the loader left it: the chunk read once, its grid, lists
     and list entries absolute addresses. An address outside the chunk (a collision push's
@@ -466,6 +491,19 @@ class Floor:
         if tag != HITS_TAG or grid != at + HITS_GRID_AT:
             raise NotLoaded(f"st{stage:03d}'s {what} at 0x{at:08X} is not fixed up")
         return cls(mem, Image(mem.read(at, size), at), stage)
+
+    @classmethod
+    def from_file(cls, game: Extracted, stage: int, chunk: int = FLOOR_CHUNK) -> Floor:
+        """The chunk out of the extracted `st<NNN>.pac`, fixed up as the loader does, at the
+        address it has in the file (the stage PAC's own offsets)."""
+        pac = game.read(files.stage_pac(stage))
+        coll = _PAC_ROW.unpack_from(pac, 4 + 8 * COLLISION_ENTRY)[0]
+        if not coll or _U32.unpack_from(pac, coll)[0] <= chunk:
+            raise NotLoaded(f"st{stage:03d} has no collision chunk {chunk}")
+        at = coll + _PAC_ROW.unpack_from(pac, coll + 4 + 8 * chunk)[0]
+        size = _HITS_HEAD.unpack_from(pac, at)[1]
+        image = Image(fix_up(pac[at : at + size], at), at)
+        return cls(image, image, stage)
 
     def triangles(self) -> Iterator[Triangle]:
         """The chunk's own triangle array, in file order; a push's added triangles are not

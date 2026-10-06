@@ -306,3 +306,44 @@ def test_wall_class():
     params = S.StageParams(mem, base)
     assert params.wall_classes == (0, 1, 0x0102)
     assert [params.wall_class(k) for k in range(3)] == [0, 1, 2]
+
+
+def on_disk(mem: Space) -> bytes:
+    """`resident_stage`'s PAC as the file holds it: the chunk's words offsets again."""
+    pac = bytearray(mem.read(PAC_AT, 0x60 + mem.u32(PAC_AT + 0x60 + 4)))
+    chunk = 0x60
+    base = PAC_AT + chunk + S.HITS_BASE
+    head = list(struct.unpack_from("<4sIIIIIiiII", pac, chunk))
+    tris = head[9]
+    head[8], head[9] = head[8] - base, head[9] - base
+    struct.pack_into("<4sIIIIIiiII", pac, chunk, *head)
+    for k in range(4):
+        at = chunk + S.HITS_GRID_AT + 4 * k
+        (lst,) = struct.unpack_from("<I", pac, at)
+        struct.pack_into("<I", pac, at, lst - base)
+    i = chunk + S.HITS_GRID_AT + 16
+    while (w := struct.unpack_from("<I", pac, i)[0]) != S.LIST_END:
+        struct.pack_into("<I", pac, i, w - tris)
+        i += 4
+    return bytes(pac)
+
+
+def test_floor_from_file(tmp_path):
+    mem = resident_stage(98)
+    data = tmp_path / "data_files"
+    data.mkdir()
+    (data / f"file_{files.stage_pac(98):05d}.bin").write_bytes(on_disk(mem))
+    game = files.Extracted.find(tmp_path)
+    live, offline = S.Floor.read(mem, 98), S.Floor.from_file(game, 98)
+    assert offline.chunk.data == S.fix_up(on_disk(mem)[0x60:], 0x60)
+    assert offline.heights(100, 100) == pytest.approx(live.heights(100, 100))
+    assert [t.v1 for t in offline.triangles()] == [t.v1 for t in live.triangles()]
+    with pytest.raises(S.NotLoaded, match="chunk 3"):
+        S.Floor.from_file(game, 98, chunk=3)
+
+
+def test_fix_up_matches_the_loader():
+    mem = resident_stage(98)
+    size = mem.u32(PAC_AT + 0x60 + 4)
+    loaded = mem.read(PAC_AT + 0x60, size)
+    assert S.fix_up(on_disk(mem)[0x60 : 0x60 + size], PAC_AT + 0x60) == loaded
