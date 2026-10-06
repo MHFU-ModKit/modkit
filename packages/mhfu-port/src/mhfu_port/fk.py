@@ -33,7 +33,8 @@ FU_PART_STREAM = 2
 `FU_PART_STREAM - 1` after it, one bank of `ENTRY_BANK` executor entries each."""
 ENTRY_BANK = 100
 """Executor entries per stream: entry e of part k plays slot `e % ENTRY_BANK` of stream
-`FU_PART_STREAM * k + e // ENTRY_BANK` (the resolver's `input % 1000`, hundreds the stream)."""
+`FU_PART_STREAM * k + e // ENTRY_BANK`, both halves in the game. `mhfu.structs.entry_clip` is
+the same arithmetic; this module stays importable without mhfu, for the Blender bundle."""
 
 _KINDS = ("rot", "loc")
 
