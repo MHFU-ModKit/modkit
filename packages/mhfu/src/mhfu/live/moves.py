@@ -166,6 +166,8 @@ class Played:
     t_end: float
     hp_after: int
     """The hunter's HP once the watch was over."""
+    start: int
+    """The emulated clock at the ask, in microseconds cut to 32 bits: the zero of every `t`."""
 
     @property
     def reason(self) -> str:
@@ -291,6 +293,7 @@ def play(
         tuple(pairs),
         t_end,
         s.mem.u16(hp),
+        start,
     )
 
 

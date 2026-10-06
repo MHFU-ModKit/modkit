@@ -40,6 +40,7 @@ def test_report_times_the_hit_against_the_spawn() -> None:
         ((0.0, (1, 3)), (0.1, (0, 1))),
         3.9,
         141,
+        0,
     )
     text = "\n".join(cli.report(r))
     assert "played to its end" in text
