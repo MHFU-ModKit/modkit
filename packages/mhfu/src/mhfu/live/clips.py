@@ -20,7 +20,9 @@ from __future__ import annotations
 import csv
 import struct
 from collections.abc import Iterable, Iterator
+from contextlib import suppress
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 
 from ppsspp_debug import Lane
@@ -53,6 +55,8 @@ WATCH = 0.4
 TRIES = 3
 RECOVER = 1.0
 """Seconds the brain runs free between two tries of an entry."""
+LEAVE = 5.0
+"""Seconds a retry waits for the brain to leave the pair of the try before."""
 CHECKOUT = Path(__file__).resolve().parents[5]
 LUA = CHECKOUT / "framework" / "lua"
 BRIDGE_LUA = LUA / "tools" / "cli_bridge.lua"
@@ -218,6 +222,10 @@ def bridge(s: Session) -> Bridge:
     return b
 
 
+def _left(m: BigMonster, pair: tuple[int, int]) -> bool:
+    return (m.main_state, m.sub_state) != pair
+
+
 def _taken(m: BigMonster, entry: int) -> list[bool]:
     """Per part, whether its input reads `entry`."""
     return [input_action(v, k) == entry for k, v in enumerate(m.anim_input)]
@@ -300,9 +308,10 @@ def sweep(
     kick_after: float = 2.0,
     timeout: float = 6.0,
 ) -> Iterator[Played]:
-    """`play` each entry in turn, again after a pause where some part did not take it or does
-    not move: a handler may put the body back on its idle after the dispatch, or dispatch every
-    frame, which restarts a held clip each time. The hold ends when the sweep does."""
+    """`play` each entry in turn, again where some part did not take it or does not move, once
+    the brain has left the pair it was in: a handler may put the body back on its idle after the
+    dispatch (the Tigrex's (0,8) and (0,9)), or dispatch every frame, which restarts a held clip
+    each time. The hold ends when the sweep does."""
     _, m = monster(s, slot)
     link = bridge(s)
     pack = Pack.read(s.mem, m.action_table)
@@ -316,6 +325,8 @@ def sweep(
                     break
                 release(s, slot, link)
                 s.sleep(RECOVER)
+                with suppress(TimeoutError):
+                    s.wait(partial(_left, m, p.pair), LEAVE, "another pair")
             yield replace(p, tries=n)
     finally:
         release(s, slot, link)
