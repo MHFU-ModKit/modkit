@@ -2,7 +2,6 @@
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* mhfu.move_* bindings over the move player (src/core/move.cpp); declared in lua/meta/mhfu.d.lua. */
 #include "mhfu/mhfu.h"
-#include "mhfu/move.h"
 #include "lua_host.h"
 
 static int opt_field(lua_State *L, int t, const char *k, int def)

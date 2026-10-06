@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
-from typing import cast
 
 from .. import addresses as a
 from ..entries import entry_clip
@@ -25,8 +24,6 @@ from .clips import Pack, bridge, monster
 from .session import Session
 from .shell_anim import Bridge, Op
 
-CMD_MOVE = 4
-"""cli_bridge.lua's CMD_MOVE."""
 NO_PAIR = 0xFF
 DONE = 4
 """MOVE_STATE.STATE once the move is over."""
@@ -211,7 +208,7 @@ def ask(s: Session, move: Move, slot: int, link: Bridge, st: MoveState) -> None:
     """Write `move` into the bridge and have it played on `slot`'s monster."""
     before = st.started
     s.mem.write(a.CLI_BRIDGE_BLOCK + a.CLI_BRIDGE.MOVE, move.pack())
-    if not link.request(s, cast(Op, CMD_MOVE), slot)[1]:
+    if not link.request(s, Op.MOVE, slot)[1]:
         raise TimeoutError("no ack: the game is paused or cli_bridge.lua is not loaded")
     if not st.pending and st.started == before:
         raise RuntimeError("move refused: no big monster vtable is wrapped (em_vhook)")

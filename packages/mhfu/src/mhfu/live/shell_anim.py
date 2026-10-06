@@ -49,6 +49,8 @@ class Op(IntEnum):
     FORCE_ACTION = 1
     FREEZE = 2
     CLEAR = 3
+    MOVE = 4
+    """Play CLI_BRIDGE.MOVE (`mhfu.live.moves`)."""
 
 
 class BridgeBlock(View):
