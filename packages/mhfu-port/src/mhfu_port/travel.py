@@ -34,6 +34,8 @@ own percentage (the Tigrex charge plays at 2.4)."""
 _LOC = {axis: bit for bit, (kind, axis) in CHANNEL_BITS.items() if kind == "loc"}
 _ROT = {bit for bit, (kind, _) in CHANNEL_BITS.items() if kind == "rot"}
 X, Y, Z = 0, 1, 2
+TURN = 0x10000
+"""YAW units in a full turn."""
 
 Vec2 = tuple[float, float]
 
@@ -49,6 +51,9 @@ class Travel:
     """(x, z) the root moves over the clip: what the monster travels."""
     drawn: Vec2
     """(x, z) the joints above the root move: drawn, then dropped when the clip ends."""
+    turn: int = 0
+    """YAW units the body (the root's child) turns over the clip, its Euler y: the model faces
+    that way at the end and snaps back with the next clip unless YAW turns as much."""
 
     @property
     def distance(self) -> float:
@@ -69,6 +74,7 @@ def root(skeleton: Skeleton) -> int:
 def of(anim: fu.Anim, skeleton: Skeleton, entries: Iterable[int] | None = None) -> list[Travel]:
     """Each entry's travel (every filled entry by default)."""
     r = root(skeleton)
+    body = skeleton.bones[r].child
     rig = fk.Rig.from_skeleton(skeleton)
     above = _above(skeleton, r)
     out = []
@@ -77,9 +83,10 @@ def of(anim: fu.Anim, skeleton: Skeleton, entries: Iterable[int] | None = None) 
         if clip is None:
             continue
         n = motion.frames(clip)
-        _, loc = fk.Curves(clip, rig).at(np.array([0.0, n]))
+        rot, loc = fk.Curves(clip, rig).at(np.array([0.0, n]))
         moved = loc[1] - loc[0]
         drawn = moved[above].sum(axis=0)
+        turn = (rot[1, body, Y] - rot[0, body, Y]) if 0 <= body < rig.n else 0.0
         out.append(
             Travel(
                 e,
@@ -87,6 +94,7 @@ def of(anim: fu.Anim, skeleton: Skeleton, entries: Iterable[int] | None = None) 
                 bool(clip.loop),
                 (float(moved[r, X]), float(moved[r, Z])),
                 (float(drawn[X]), float(drawn[Z])),
+                round(float(turn) / math.tau * TURN),
             )
         )
     return out

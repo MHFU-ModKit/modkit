@@ -50,6 +50,7 @@ def test_travel_on_joint0_is_drawn():
     anim = pack(dash([loc(2, (0, 0), (40, 1000))], [loc(1, (0, 200), (40, 220))]))
     (t,) = travel.of(anim, rig())
     assert (t.entry, t.frames, t.carried, t.drawn) == (0, 40, (0.0, 0.0), (0.0, 1000.0))
+    assert t.turn == 900 * 4  # raw rotation is 8192 a quarter turn, YAW 0x4000
     assert t.seconds() == pytest.approx(40 / 2 / 30)
 
 

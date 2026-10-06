@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 
 MOVES = 50.0
 """Units under which an entry counts as standing, without --all."""
+TURNS = 20.0
+"""Degrees under which it counts as facing where it did."""
 
 
 def register(sub: Subparsers) -> None:
@@ -56,19 +58,23 @@ def run(args: argparse.Namespace) -> int:
     wanted = [int(c) if c.isdigit() else by_name[c] for c in args.clips] or None
     rows = travel.of(anim, skeleton, wanted)
     if wanted is None and not args.all:
-        rows = [t for t in rows if max(t.distance, abs(t.drawn[0]), abs(t.drawn[1])) >= MOVES]
+        rows = [t for t in rows if _moves(t)]
     k = args.scale
-    print(f"root joint {travel.root(skeleton)}; units x{k:g}, z forward; seconds at {args.speed:g}")
+    print(
+        f"root joint {travel.root(skeleton)}; units x{k:g}, z forward; turn in degrees;"
+        f" seconds at {args.speed:g}"
+    )
     print(
         f"{'entry':>5} {'clip':34} {'frames':>6} loop {'x':>6} {'z':>6} {'dist':>6}"
-        f" {'drawn x':>7} {'drawn z':>7} {'s':>5}"
+        f" {'drawn x':>7} {'drawn z':>7} {'turn':>5} {'s':>5}"
     )
     for t in rows:
         loop = "yes" if t.loop else "no"
         print(
             f"{t.entry:5d} {names.get(t.entry, ''):34.34} {t.frames:6d} {loop:4}"
             f" {t.carried[0] * k:6.0f} {t.carried[1] * k:6.0f} {t.distance * k:6.0f}"
-            f" {t.drawn[0] * k:7.0f} {t.drawn[1] * k:7.0f} {t.seconds(args.speed):5.2f}"
+            f" {t.drawn[0] * k:7.0f} {t.drawn[1] * k:7.0f} {t.turn * 360 / travel.TURN:5.0f}"
+            f" {t.seconds(args.speed):5.2f}"
         )
     lost = [t.entry for t in rows if abs(t.drawn[1]) >= MOVES or abs(t.drawn[0]) >= MOVES]
     if lost:
@@ -77,6 +83,11 @@ def run(args: argparse.Namespace) -> int:
             "rebuild with the travel carried (--carry previews it)"
         )
     return 0
+
+
+def _moves(t: travel.Travel) -> bool:
+    turn = abs(t.turn) * 360 / travel.TURN
+    return max(t.distance, abs(t.drawn[0]), abs(t.drawn[1])) >= MOVES or turn >= TURNS
 
 
 def _against(anim: fu.Anim, skeleton: Skeleton, csv: Path, names: dict[int, str]) -> int:
