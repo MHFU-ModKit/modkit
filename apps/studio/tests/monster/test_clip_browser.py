@@ -49,9 +49,13 @@ def test_rows(zinogre):
     assert named["welcome_howl"] == 2 and len(named) == len(zinogre.doc.manifest.clips)
 
 
+def pins(ws: MonsterWorkspace) -> list[str]:
+    return sorted(n for n, c in ws.doc.manifest.clips.items() if c.slot is not None)
+
+
 def test_name_every_clip(zinogre):
-    """All 102 named, one after another, from their own rows: no entry moves, and the saved
-    manifest opens on the same layout and names."""
+    """All 102 named, one after another, from their own rows: none pinned, no entry moves, the
+    saved manifest opens on the same layout and names; then a placement pins only itself."""
     ws, before = zinogre, entries(zinogre)
     for r in ws.source_rows():
         ws.play_source(r.id)
@@ -60,12 +64,18 @@ def test_name_every_clip(zinogre):
         ws.label()
         assert ws.message == f"clips.c{r.id}", ws.message
     m = ws.doc.manifest
-    assert entries(ws) == before and len(m.clips) == 102
-    assert all(m.clips[f"c{cid}"].slot == e for e, cid in before.items())
+    assert entries(ws) == before and len(m.clips) == 102 and pins(ws) == []
     ws.save()
     again = open_port(ws.games(), ws.doc.path)
     assert entries(again) == before and again.doc.manifest == m
     assert {r.name for r in again.source_rows()} == {f"c{cid}" for cid in before.values()}
+    assert "slot" not in again.doc.path.read_text(encoding="utf-8").split("[clips.")[1]
+    ws.play_source(248)
+    ws.place_clip(2)
+    assert ws.message == "clip 2 anim 2 -> anim 50; clip 248 anim 50 -> anim 2"
+    assert pins(ws) == ["c248"] and entries(ws) == {**before, 2: 248, 50: 2}
+    ws.save()
+    assert entries(open_port(ws.games(), ws.doc.path)) == entries(ws)
 
 
 def test_place(zinogre):
@@ -79,11 +89,8 @@ def test_place(zinogre):
     now = entries(ws)
     assert now == {**before, 2: 248, 50: 2}
     m = ws.doc.manifest
-    assert (m.clips["slam"].slot, m.clips["slam"].source, m.clips["welcome_howl"].slot) == (
-        2,
-        248,
-        50,
-    )
+    assert (m.clips["slam"].slot, m.clips["slam"].source, pins(ws)) == (2, 248, ["slam"])
+    assert ws.manifest_clip(50)[0] == "welcome_howl", "the packer moved the name with its clip"
     assert (ws.scene.clip(2).frames, ws.scene.clip(2).loop) == ws.browser().prints[248]
     assert ws.source_clip(248).slot == 2, "the rebuilt port plays it"
     ws.save()
@@ -115,8 +122,8 @@ def test_place_refusals(zinogre):
 
 
 def test_unplaced(games, ports, tmp_path, monkeypatch):
-    """A host with 100 anims leaves 4 Zinogre clips out: listed, played from a preview, not
-    nameable until placed."""
+    """A host with 100 anims leaves 4 Zinogre clips out: listed, played from a preview, named
+    without an anim; a placement over a pinned clip has nowhere to send it."""
     monkeypatch.setitem(layout.ENTRIES, 75, 100)
     path = tmp_path / "zinogre.toml"
     shutil.copy(ports / "zinogre.toml", path)
@@ -128,10 +135,17 @@ def test_unplaced(games, ports, tmp_path, monkeypatch):
     clip = ws.source_clip(cid)
     assert clip.slot == B.preview_slot(cid) and ws.edit_slot is None and ws.edit_clip == cid
     assert ws.travel(clip.slot)[1] >= 0.0
-    ws.place_clip(5)
-    assert "holds clips.stop_walk_forward" in ws.message, "a named clip has nowhere to go"
+    ws.name_buf, ws.label_buf = "spare", "a clip with no anim"
+    ws.label()
+    assert ws.doc.manifest.clips["spare"].slot is None and ws.doc.manifest.clips["spare"].id == cid
+    ws.play_source(7)
     ws.place_clip(7)
-    assert ws.browser().layout().ids[cid] == 7 and 7 in ws.browser().layout().unplaced
+    ws.play_source(cid)
+    ws.place_clip(7)
+    assert "holds clips.clip_07, and clip" in ws.message, "a pinned clip has nowhere to go"
+    ws.place_clip(5)
+    lay = ws.browser().layout()
+    assert lay.ids[cid] == 5 and 5 in lay.unplaced and pins(ws) == ["clip_07", "spare"]
 
 
 def test_preview_matches_the_build(zinogre):
@@ -154,7 +168,7 @@ def test_browser_place_alone(doc):
     assert br.layout().entries == {1: 1, 2: 2, 3: 205}
     assert br.place(205, 1, "dash") == "clip 1 anim 1 -> anim 3; clip 205 anim 3 -> anim 1"
     assert d.manifest.clips["run"] == Named(3, source=1) and d.manifest.clips["dash"].frames == 30
-    with pytest.raises(ManifestError, match="clips.run already places clip 1"):
+    with pytest.raises(ManifestError, match="clips.run already names clip 1"):
         br.place(2, 4, "run")
 
 

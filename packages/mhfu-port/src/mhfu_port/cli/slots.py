@@ -72,7 +72,9 @@ def run_slots(args: argparse.Namespace) -> int:
     port = slots.anim_of(args.port.read_bytes()) if args.port else None
     donor = motion.moveset(d.p3rd.read(args.donor)) if args.donor is not None else None
     placed = _layout(m, donor, host, args.host) if donor is not None else None
-    names = {c.slot: name for name, c in sorted(m.clips.items())} if m is not None else {}
+    ids = {cid: e for e, cid in (placed or {}).items()}
+    named = sorted(m.clips.items()) if m is not None else []
+    names = {e: n for n, c in named if (e := layout.where(c, ids)) is not None}
     rows = slots.catalog(host, drivers, port, donor, placed, names)
     with _output(args.out) as out:
         slots.write_catalog(rows, out)

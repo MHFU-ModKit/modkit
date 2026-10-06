@@ -3,9 +3,9 @@
 """Every donor clip by MHP3rd id (`stream * 100 + slot`): the executor entry the document's
 layout gives it, its name and what it shows; placing one is a document edit.
 
-A name pins a clip where the layout has it, which moves no other clip (`clips.LabelSession`);
-placing swaps (`mhfu_port.layout.place`). A clip the layout leaves out plays from a build of its
-own (`preview`), on the port's rig.
+A name pins nothing, so it moves no clip (`name`, `clips.LabelSession`); placing pins and swaps
+(`mhfu_port.layout.place`). A clip the layout leaves out plays from a build of its own
+(`preview`), on the port's rig.
 """
 
 from __future__ import annotations
@@ -83,9 +83,25 @@ class ClipBrowser:
             out.append(SourceClip(cid, ids.get(cid), frames, loop, name, label))
         return [*out, *others]
 
+    def name(self, cid: int, name: str, label: str, build: str | None = None) -> str:
+        """Names clip `cid` without pinning it, its fingerprint the original's."""
+        if cid not in self.donor:
+            raise ManifestError(f"the original has no clip {cid}")
+        name = clips.check_name(name)
+
+        def change(m: Manifest) -> None:
+            layout.name_clip(m, name, cid)
+            c = m.clips[name]
+            c.frames, c.loop = self.prints[cid]
+            c.label, c.labelled_build = label, build
+
+        self.doc.edit(change)
+        return f"clips.{name}"
+
     def place(self, cid: int, entry: int, name: str) -> str:
-        """Moves clip `cid` to `entry`, under its own name or else `name`; a named clip there
-        swaps into its entry. Says what moved."""
+        """Pins clip `cid` in `entry`, under its own name or else `name`: a clip pinned there
+        swaps into its entry, one the packer put there takes the entry the pin frees. Says what
+        moved."""
         if cid not in self.donor:
             raise ManifestError(f"the original has no clip {cid}")
         before = self.layout()

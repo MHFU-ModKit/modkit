@@ -193,6 +193,17 @@ def _manifest(path: Path) -> Manifest:
     return manifest.load(path)
 
 
+def _sources(args: argparse.Namespace, m: Manifest) -> dict[int, int]:
+    """The manifest's layout, entry -> MHP3rd id; its pins alone without the games."""
+    from mhfu_studio.monster.inputs import placed
+
+    try:
+        games = _games(args)
+    except FileNotFoundError:
+        games = None
+    return placed(m, games).entries
+
+
 def _built(args: argparse.Namespace, m: Manifest) -> Built:
     from mhfu_studio.monster.inputs import built
 
@@ -284,7 +295,8 @@ def run_clips(args: argparse.Namespace) -> int:
     if args.slots:
         for slot in sorted(table):
             c = cov.slots[slot]
-            named = ",".join(n for n, cl in m.clips.items() if cl.slot == slot) or "-"
+            got = cov.sources()
+            named = ",".join(n for n, cl in m.clips.items() if clips.at(cl, got) == slot) or "-"
             print(f"a1 {slot:<4d} {c.kind:<8} {named:<14} {c.why()}")
         return 0
     print(clips.report(m.port.name, clips.survey(m, table, cov, b.id)))
@@ -299,9 +311,10 @@ def run_align(args: argparse.Namespace) -> int:
     ends = None
     if args.pac:
         ends = {s: fp[0] for s, fp in clips.pac_clip_table(args.pac.read_bytes()).items()}
+    sources = _sources(args, m)
     if args.pair:
         main, sub = (int(x) for x in args.pair.split(","))
-        found = clips.entry(m, args.slot) if args.slot is not None else None
+        found = clips.entry(m, args.slot, sources) if args.slot is not None else None
         impact = (
             args.impact if args.impact is not None else found[1].impact_frame if found else None
         )
@@ -322,8 +335,10 @@ def run_align(args: argparse.Namespace) -> int:
         return 0
     for name in [args.move] if args.move else sorted(m.moves):
         c = m.clips.get(m.moves[name].clip or "")
-        end = None if ends is None or c is None else ends.get(c.slot)
-        print(align.align(m, name, intel, end).report() + "\n")
+        at = None if c is None else clips.at(c, sources)
+        end = None if ends is None or at is None else ends.get(at)
+        ids = {cid: e for e, cid in sources.items()}
+        print(align.align(m, name, intel, end, ids=ids).report() + "\n")
     return 0
 
 
@@ -336,8 +351,12 @@ def run_check(args: argparse.Namespace) -> int:
     status = 0
     for path in args.manifest:
         m = _manifest(path)
-        pac = None if args.no_pac else _built(args, m).pac
-        found = validate.validate(m, pac, _intel(args, m.port.host_species))
+        b = None if args.no_pac else _built(args, m)
+        pac, sources = None, {}
+        if b is not None:
+            pac = b.pac
+            sources = b.layout.entries if b.layout is not None else _sources(args, m)
+        found = validate.validate(m, pac, _intel(args, m.port.host_species), sources)
         print(f"== {path} ({m.port.name} on em{m.port.host_species:02d})")
         print(validate.report(found) + "\n")
         level = worst(found)

@@ -155,7 +155,7 @@ def plays_now(
         claimed = move is not None
     if m is not None and move is not None:
         mv = m.moves[move]
-        slot = m.clips[mv.clip].slot if mv.clip else mv.anim
+        slot = clips.at(m.clips[mv.clip], cov.sources()) if mv.clip else mv.anim
         return _plays(m, slot, cov, move, claimed)
     a1 = () if p is None else p.a1
     if not a1:
@@ -173,7 +173,7 @@ def _plays(
     if slot is None:
         return Plays(None, move=move, claimed=claimed)
     sc = cov.slots.get(slot)
-    found = None if m is None else clips.entry(m, slot)
+    found = None if m is None else clips.entry(m, slot, cov.sources())
     if sc is None:
         kind = clips.MISSING if cov.slots else None
         why = f"Anim {slot} is not in this build." if cov.slots else ""

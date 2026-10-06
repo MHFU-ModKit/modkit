@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from mhfu.em.intel import PairIntel, SpeciesIntel
+from mhfu_port import layout
 from mhfu_port.manifest import Manifest
 
 from mhfu_studio.monster import species
@@ -109,9 +110,11 @@ def align(
     intel: SpeciesIntel | None = None,
     clip_frames: int | None = None,
     rig: PortRig | None = None,
+    ids: Mapping[int, int] | None = None,
 ) -> Alignment:
-    """What the host pair of `move` expects, against its clip; `clip_frames` from the build
-    wins over the manifest's `frames`, since a rebuild moves clips."""
+    """What the host pair of `move` expects, against its clip in the anim `ids` (MHP3rd id ->
+    anim, a layout's) or its pin gives it; `clip_frames` from the build wins over the
+    manifest's `frames`, since a rebuild moves clips."""
     mv = m.moves.get(move)
     if mv is None:
         raise KeyError(f"no move named {move!r} (have: {', '.join(sorted(m.moves)) or 'none'})")
@@ -123,7 +126,7 @@ def align(
         intel,
         move=move,
         clip=mv.clip,
-        slot=c.slot if c else mv.anim,
+        slot=layout.where(c, ids or {}) if c else mv.anim,
         clip_frames=clip_frames if clip_frames is not None else (c.frames if c else None),
         impact=c.impact_frame if c else None,
         allow_unentered=mv.allow_unentered,
@@ -178,13 +181,15 @@ def align_all(
     intel: SpeciesIntel | None = None,
     clip_frames: Mapping[int, int] | None = None,
     rig: PortRig | None = None,
+    ids: Mapping[int, int] | None = None,
 ) -> list[Alignment]:
-    """Every move; `clip_frames` maps slot to last keyframe."""
+    """Every move; `clip_frames` maps slot to last keyframe, `ids` as `align`."""
     out = []
     for name, mv in sorted(m.moves.items()):
         c = m.clips.get(mv.clip) if mv.clip else None
-        end = None if clip_frames is None or c is None else clip_frames.get(c.slot)
-        out.append(align(m, name, intel, end, rig))
+        at = None if c is None else layout.where(c, ids or {})
+        end = None if clip_frames is None or at is None else clip_frames.get(at)
+        out.append(align(m, name, intel, end, rig, ids))
     return out
 
 

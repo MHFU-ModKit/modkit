@@ -423,7 +423,8 @@ class Studio:
                 self.message = f"not saved: {e}"
             else:
                 if path is not None:
-                    ws.refresh()
+                    with self.gl_current():
+                        ws.refresh()
                     self._record(ws, f"open:{Path(where).resolve()}", Path(where))
                 self.findings.stale()
                 self.message = f"saved {where}"
@@ -446,7 +447,8 @@ class Studio:
             self.message = ""
         else:
             try:
-                ws.revert()
+                with self.gl_current():
+                    ws.revert()
             except Exception as e:
                 self.message = f"not reverted: {e}"
             else:
@@ -541,7 +543,8 @@ class Studio:
                 doc.undo()
             else:
                 doc.redo()
-            self.active.refresh()
+            with self.gl_current():  # a workspace may rebuild GL objects for the change
+                self.active.refresh()
             self.findings.stale()
             self.message = which
         self.changed()

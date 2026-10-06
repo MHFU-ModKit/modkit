@@ -216,7 +216,7 @@ def test_bad_section():
 def test_missing():
     with pytest.raises(ManifestError, match="port.pac: missing"):
         M.loads(MINIMAL.replace('pac = "x.bin"', ""))
-    with pytest.raises(ManifestError, match="clips.a.slot: missing"):
+    with pytest.raises(ManifestError, match="clips.a: needs a source or a slot"):
         M.loads(_with("[clips.a]\nframes = 1\n"))
 
 

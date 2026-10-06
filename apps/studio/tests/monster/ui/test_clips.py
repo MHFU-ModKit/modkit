@@ -128,7 +128,8 @@ def test_name_and_next(zinogre: ClipsPanel) -> None:
     p.name.setText("idle")
     p.label.setText("stands and breathes")
     p.label.returnPressed.emit()
-    assert ws.doc.manifest.clips["idle"].slot == 1 and ws.doc.manifest.clips["idle"].label
+    idle = ws.doc.manifest.clips["idle"]
+    assert (idle.slot, idle.id, idle.label) == (None, 1, "stands and breathes")
     assert ws.edit_clip == 2 and p.name.text() == "welcome_howl"
     assert p.label.text() == "the howling he does when he notices you"
     p.name.setText("welcome howl")

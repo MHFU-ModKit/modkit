@@ -21,56 +21,56 @@ skin = "source"
 ground_lift = 165.3
 
 [clips.welcome_howl]
-slot = 2
+source = 2
 frames = 252
 loop = false
 label = "the howling he does when he notices you"
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.start_walk_forward]
-slot = 4
+source = 4
 frames = 264
 loop = true
 label = "starts to slowly walk forward"
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.standing_charge_up]
-slot = 10
+source = 10
 frames = 408
 loop = true
 label = "standing in place and charging up i think"
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.howl_eat_from_ground]
-slot = 12
+source = 12
 frames = 380
 loop = true
 label = "howling and ripping some flesh out of something on the ground"
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.crouch_charge_up]
-slot = 18
+source = 18
 frames = 242
 loop = false
 label = "i think charging up again but crouched"
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.step_forward_houwl]
-slot = 19
+source = 19
 frames = 344
 loop = false
 label = "houwling loudly after stepping forward"
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.stop_walk_forward]
-slot = 5
+source = 5
 frames = 132
 loop = false
 label = "stops to walk forward"
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.lunge_forward]
-slot = 6
+source = 6
 frames = 100
 loop = true
 impact_frame = 62
@@ -78,40 +78,40 @@ label = "fast running forward, briefly hitting with horns"
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.turn_right]
-slot = 8
+source = 8
 frames = 100
 loop = false
 label = "turning right in standing position"
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.turn_left]
-slot = 9
+source = 9
 frames = 100
 loop = false
 label = "turning left in standing position"
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.fall_asleep]
-slot = 14
+source = 14
 frames = 340
 loop = false
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.jump_high_forward]
-slot = 15
+source = 15
 frames = 68
 loop = false
 impact_frame = 62
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.landing_after_forward_jump]
-slot = 17
+source = 17
 frames = 64
 loop = false
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.dash_forward]
-slot = 20
+source = 20
 frames = 82
 loop = false
 impact_frame = 28
@@ -119,7 +119,7 @@ label = "dash forward a long distance"
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.dash_forward_stop]
-slot = 21
+source = 21
 frames = 66
 loop = false
 impact_frame = 27
@@ -127,21 +127,21 @@ label = "short forward dash or stop"
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.look_left_walk]
-slot = 40
+source = 40
 frames = 206
 loop = false
 label = "short walk forwards looking left"
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.look_right_walk]
-slot = 41
+source = 41
 frames = 206
 loop = false
 label = "short walk forwards looking right"
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.horn_hit_left_right_downwards]
-slot = 42
+source = 42
 frames = 92
 loop = false
 impact_frame = 20
@@ -149,19 +149,19 @@ label = "hit with horns from upper left to down right"
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.jump_out_of_map]
-slot = 61
+source = 61
 frames = 64
 loop = false
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.jumping_out_of_map]
-slot = 62
+source = 62
 frames = 22
 loop = true
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.walk_forwards_faster]
-slot = 65
+source = 65
 frames = 162
 loop = true
 labelled_build = "zinogre_v10.bin@09091d56"

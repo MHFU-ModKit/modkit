@@ -98,7 +98,9 @@ def test_label(doc):
     s.label(5, "walk", "slow walk", impact_frame=40)
     c = d.manifest.clips["walk"]
     assert (c.frames, c.loop, c.labelled_build, c.impact_frame) == (120, True, "new.bin@2", 40)
-    assert (c.slot, c.source, d.manifest.clips["charge"].source) == (5, 205, None)
+    assert (c.slot, c.source, d.manifest.clips["charge"].slot) == (None, 205, 61), (
+        "names pin nothing"
+    )
     s.label(61, "rush")
     assert "charge" not in d.manifest.clips and d.manifest.moves["charge"].clip == "rush"
     assert d.manifest.clips["rush"].label == ""
@@ -203,7 +205,8 @@ def test_zinogre(games, built, ports):
     cov = C.coverage(port, host, donor, layout.of(m, donor, host).entries)
     n = cov.counts()
     assert len(cov.slots) == n[C.CARRIED] == 102 and n[C.FILLER] == n[C.DROPPED] == 0
-    assert all(t.trusted for t in C.track_labels(m, C.clip_table(port)))
+    assert all(t.trusted for t in C.track_labels(m, C.clip_table(port), sources=cov.sources()))
+    assert {t.status for t in C.track_labels(m, C.clip_table(port))} == {C.UNCHECKABLE}
 
 
 def test_brute(built):

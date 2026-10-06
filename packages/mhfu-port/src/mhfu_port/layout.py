@@ -7,9 +7,10 @@ The packer alone puts every clip whose id is under the host's capacity in the en
 (entry 100 + s plays slot s of streams 1, 3 and 5) and the rest, by id, in the free entries:
 first those the host fills, which its own brain asks for, then the others from 0 up. No whole
 clip goes to an entry the host plays on some body parts only (the Tigrex's 24 and 25), where it
-would move one part. A manifest clip pins MHP3rd clip `source` (default: `slot`) in entry
-`slot`; the clip the packer had there takes the entry the pin freed, so a pin moves only the
-clips it touches. What fills the entries left over is `motion.build`'s.
+would move one part. A manifest clip with a `slot` pins MHP3rd clip `source` (default: `slot`)
+in that entry; the clip the packer had there takes the entry the pin freed, so a pin moves only
+the clips it touches. A manifest clip without one only names its clip. What fills the entries
+left over is `motion.build`'s.
 """
 
 from __future__ import annotations
@@ -99,10 +100,12 @@ def plan(
     cap = capacity(host, species)
     part = partial(host, cap)
     pins: dict[int, int] = {}
-    for name, c in sorted(clips.items(), key=lambda kv: kv[1].slot):
+    for name, c in sorted(clips.items()):
         where = f"clips.{name}"
         if c.id not in ids:
             raise LayoutError(f"{where}: the donor has no clip {c.id}")
+        if c.slot is None:
+            continue
         if not 0 <= c.slot < cap:
             raise LayoutError(f"{where}: entry {c.slot} is past the host's {cap}")
         if c.slot in part:
@@ -168,30 +171,51 @@ def _freed(at: int, pins: Mapping[int, int], home: Mapping[int, int]) -> int | N
     raise AssertionError("a chain of pins that loops through a clip nobody pinned")
 
 
-def pin(m: manifest.Manifest, name: str, cid: int, entry: int) -> None:
-    """Places donor clip `cid` in `entry` as `clips.<name>`, renaming the clip that already
-    places it; raises `ManifestError` for a name another clip has."""
-    held = next((n for n, c in m.clips.items() if c.id == cid), None)
+def pinned(m: manifest.Manifest) -> Layout:
+    """The manifest's pins alone: all that is known of a layout without the donor and host."""
+    return Layout({c.slot: c.id for c in m.clips.values() if c.slot is not None})
+
+
+def where(c: manifest.Clip, ids: Mapping[int, int]) -> int | None:
+    """Clip `c`'s entry: what a layout's `ids` say, else its pin."""
+    return ids.get(c.id, c.slot)
+
+
+def holder(m: manifest.Manifest, cid: int) -> str | None:
+    """The name of the manifest clip that names donor clip `cid`."""
+    return next((n for n, c in m.clips.items() if c.id == cid), None)
+
+
+def name_clip(m: manifest.Manifest, name: str, cid: int) -> None:
+    """Names donor clip `cid` `clips.<name>`, renaming the clip that already names it and
+    keeping its pin; a new name pins nothing. Raises `ManifestError` for a name another clip
+    has."""
+    held = holder(m, cid)
     if name in m.clips and name != held:
-        raise manifest.ManifestError(f"clips.{name} already places clip {m.clips[name].id}")
+        raise manifest.ManifestError(f"clips.{name} already names clip {m.clips[name].id}")
     if held is None:
-        m.clips[name] = manifest.Clip(entry)
+        m.clips[name] = manifest.Clip(source=cid)
     elif held != name:
         m.rename_clip(held, name)
+
+
+def pin(m: manifest.Manifest, name: str, cid: int, entry: int) -> None:
+    """Places donor clip `cid` in `entry` as `clips.<name>` (`name_clip`, then the pin)."""
+    name_clip(m, name, cid)
     c = m.clips[name]
     c.slot, c.source = entry, None if cid == entry else cid
 
 
 def place(m: manifest.Manifest, now: Layout, cid: int, entry: int, name: str) -> None:
-    """`pin`s `cid` in `entry`; a named clip there swaps into `cid`'s entry in `now`, an
-    unnamed one takes it from the packer."""
+    """`pin`s `cid` in `entry`. A clip pinned there swaps into `cid`'s entry in `now`; one the
+    packer put there takes the entry the pin frees."""
     there = now.entries.get(entry)
-    named = next((n for n, c in m.clips.items() if c.id == there), None)
-    if there is not None and there != cid and named is not None:
+    held = None if there is None or there == cid else holder(m, there)
+    if there is not None and held is not None and m.clips[held].slot is not None:
         back = now.ids.get(cid)
         if back is None:
-            raise LayoutError(f"entry {entry} holds clips.{named}, and clip {cid} has no entry")
-        pin(m, named, there, back)
+            raise LayoutError(f"entry {entry} holds clips.{held}, and clip {cid} has no entry")
+        pin(m, held, there, back)
     pin(m, name, cid, entry)
 
 
@@ -208,7 +232,7 @@ def of(m: manifest.Manifest, ids: Collection[int], host: AnimPack) -> Layout:
 
 def names(m: manifest.Manifest, layout: Layout) -> dict[int, str]:
     """Entry -> the clip's name: the manifest's, else `clip_key(entry)` where no clip has it."""
-    given = {c.slot: n for n, c in m.clips.items() if c.slot in layout.entries}
+    given = {e: n for n, c in m.clips.items() if (e := layout.ids.get(c.id)) is not None}
     taken = set(given.values())
     out = {}
     for e in layout.entries:
