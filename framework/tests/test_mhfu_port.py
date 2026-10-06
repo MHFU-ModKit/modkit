@@ -83,6 +83,34 @@ def test_play_fallback(lua: Any) -> None:
     assert lua.eval("port.ports.x.clip") == 61
 
 
+def test_layout_module(lua: Any, tmp_path: Path) -> None:
+    """P.define takes its clips from the module mhfu-port generates, unless given its own."""
+    from mhfu_port import layout, manifest
+
+    m = manifest.loads(
+        '[port]\nname = "z"\nhost_species = 75\npac = "z.bin"\n[source]\nmodel = 5339\n'
+        "[clips.howl]\nslot = 2\n"
+    )
+    (tmp_path / layout.module_name(m)).write_text(layout.lua(m, layout.Layout({2: 2, 100: 205})))
+    lua.execute(f"package.path = package.path .. ';' .. {str(tmp_path / '?.lua')!r}")
+    lua.execute(
+        """
+        mhfu.entities_of_type = function() return {} end
+        local port = require("mhfu_port")
+        z = port.define{ name = "z", species = 75 }
+        x = port.define{ name = "x", species = 75, clips = { a = 1 } }
+        y = port.define{ name = "y", species = 75 }
+        port.define{ name = "y", species = 75 }
+        mhfu_tick()
+        """
+    )
+    assert dict(lua.eval("z.clips").items()) == {"howl": 2, "clip_100": 100}
+    assert dict(lua.eval("x.clips").items()) == {"a": 1}
+    assert dict(lua.eval("y.clips").items()) == {}
+    missing = [line for line in lua.eval("mhfu.logs").values() if "no clip layout" in line]
+    assert len(missing) == 1 and "y_clips.lua" in missing[0]
+
+
 def test_api_version(lua: Any) -> None:
     lua.execute("mhfu.api_version = 0")
     with pytest.raises(LuaError, match=r"api_version >= 1"):

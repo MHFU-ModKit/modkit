@@ -5,7 +5,8 @@
 --
 -- A big monster runs on two channels: the executor's action id picks the CLIP, the behaviour pair
 -- (ENTITY.MAIN_STATE, SUB_STATE) picks the MOVE, whose handler owns hitbox and damage. A port's
--- clips sit in the host's slots by position, not meaning, so a port declares the mapping
+-- clips sit in the executor entries its manifest gives them (<name>_clips.lua, P.layout), not by
+-- meaning, so a port declares which clip each move shows
 --
 --   moves = { charge = { main = 3, sub = 6, clip = "charge", after = "skid", hold_max = 8 },
 --             skid   = { main = 0, sub = 3, clip = "stop" } }
@@ -180,6 +181,19 @@ Port.__index = Port
 -- the brain), and the hit tables in the game belong to the entity, not to the declaration.
 local KEEP = { "ent", "_hit_id", "_hit_last", "_hit_cap", "_atk_caps" }
 
+--- A port's clips, name -> executor entry, from mods/lib/<name>_clips.lua: `mhfu-port inject`
+--- generates it from the manifest with the PAC, so the two agree. Empty, logged once, without it.
+function P.layout(name)
+  local ok, t = pcall(require, name .. "_clips")
+  if ok and type(t) == "table" then return t end
+  if not P._once["layout:" .. name] then
+    P._once["layout:" .. name] = true
+    log("[port:%s] no clip layout, so no clip names (mhfu-port inject writes %s_clips.lua): %s",
+        name, name, tostring(t))
+  end
+  return {}
+end
+
 --- Declare a ported monster.
 --
 --   name    identifier, also the hot-reload key
@@ -188,7 +202,8 @@ local KEEP = { "ent", "_hit_id", "_hit_last", "_hit_cap", "_atk_caps" }
 --   orig    the original PAC it replaces, same directory
 --   fid     cosmetic file id for the injector (matching is by content)
 --   replace list of quest monster ids to swap for `species`
---   clips   name -> executor a1, the port's own animation vocabulary
+--   clips   name -> executor a1, the port's own animation vocabulary; by default every clip of
+--           its source, from the module `mhfu-port inject` writes (P.layout)
 --   moves   name -> { main, sub, clip }: which host behaviour runs and which of the port's
 --           clips is shown while it does. `claim = { main = 1 }` (or `{ main = {0, 1}, sub = 7 }`)
 --           enters this move in place of every host-brain pair in that set, so a port with one
@@ -200,7 +215,7 @@ function P.define(spec)
   local self = setmetatable({
     name    = spec.name,
     species = spec.species,
-    clips   = spec.clips or {},
+    clips   = spec.clips or P.layout(spec.name),
     moves   = spec.moves or {},
     replace = spec.replace or {},
     ent     = 0,
