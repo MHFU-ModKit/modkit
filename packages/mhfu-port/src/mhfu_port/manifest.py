@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import tomli_w
 from mhfu import addresses, files, hitzone, inject
-from mhfu.live import monster_events
 
 from .records import ANIM, GEO
 
@@ -36,8 +35,8 @@ Shape = Literal["sphere", "capsule"]
 SHAPES: tuple[Shape, ...] = typing.get_args(Shape)
 Turn = Literal["clip", "still", "hunter", "away", "fixed"]
 TURNS: tuple[Turn, ...] = typing.get_args(Turn)
-Event = monster_events.Kind
-EVENTS: tuple[Event, ...] = monster_events.KINDS
+Event = str
+EVENTS: tuple[Event, ...] = addresses.MONSTER_EVENT_KIND.names
 """A monster event's name, as the framework takes it in a rule's `on`."""
 PART_EVENTS: tuple[Event, ...] = ("flinch", "part_broken")
 """The events a rule's `part` narrows."""
@@ -612,6 +611,7 @@ def _validate(m: Manifest) -> None:
         _need(r.count is None or r.count >= 1, w, "count is at least 1; leave it out for always")
         trigger = r.from_move is not None or bool(r.from_main) or r.on is not None
         _need(trigger, w, "needs from, from_main or on")
+        _need(r.on in (None, *EVENTS), w, "on is one of " + ", ".join(map(repr, EVENTS)))
         _need(r.part is None or r.on in PART_EVENTS, w, "part goes with a flinch or break")
         _need(r.part in (None, *PARTS), w, f"part {r.part} is not a part")
         _need(not (r.receding and r.closing), w, "cannot be receding and closing")

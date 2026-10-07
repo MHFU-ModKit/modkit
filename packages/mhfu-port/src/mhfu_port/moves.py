@@ -115,7 +115,7 @@ def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) 
         out.append(f"moves: the own moves' turns need {pool} keys, the framework holds {POOL}")
     flinch = set()
     for r in m.rules:
-        if r.on == "flinch":
+        if r.on == "flinch" and r.play in m.moves:
             try:
                 flinch.add(carrier(m, r.play))
             except ManifestError:

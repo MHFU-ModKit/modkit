@@ -9,17 +9,14 @@ refusal is the manifest's own `ManifestError`: its checks are the only ones.
 from __future__ import annotations
 
 import dataclasses
-import functools
 from typing import Any
 
 from mhfu_port import manifest
-from mhfu_port.manifest import UNLIMITED_DIST, Event, Manifest, ManifestError, Move, Rule
+from mhfu_port.manifest import UNLIMITED_DIST, Event, Manifest, ManifestError, Rule
 
 from mhfu_studio.monster.document import PortDocument
 
 FIELDS = tuple(f.name for f in dataclasses.fields(Rule))
-FORCE = "force" in FIELDS
-"""The schema carries `Rule.force`; the editor shows it only then."""
 FORCE_TIP = (
     "A move asked while the monster has noticed the hunter but is not yet in combat waits for"
     ' combat, so the "!" and the howl play out; force plays it at once.'
@@ -35,29 +32,13 @@ EVENT_WORDS: dict[str, str] = {
 }
 
 
-def forced(r: Rule) -> bool:
-    """`r.force`, False where the schema has none."""
-    return bool(vars(r).get("force", False))
-
-
 def event_words(on: str) -> str:
     return EVENT_WORDS.get(on, on.replace("_", " "))
 
 
-@functools.cache
 def takes_part(on: Event | None) -> bool:
-    """Whether a rule on `on` may name a part: asked of the manifest's own checks."""
-    probe = Manifest(
-        manifest.Port("p", 0, "p.bin"),
-        manifest.Source(0),
-        moves={"m": Move(anim=0)},
-        rules=[Rule("m", on=on, part=0)],
-    )
-    try:
-        manifest.check(probe)
-    except ManifestError:
-        return False
-    return True
+    """Whether a rule on `on` may name a part."""
+    return on in manifest.PART_EVENTS
 
 
 def rule(m: Manifest, index: int) -> Rule:
@@ -134,7 +115,7 @@ def sentence(r: Rule, m: Manifest) -> str:
     out.append(
         f"play {r.play}"
         + (f" in mode {r.mode}" if r.mode else "")
-        + (" right away" if forced(r) else "")
+        + (" right away" if r.force else "")
     )
     if r.cooldown:
         out.append(f"then wait {r.cooldown} frames")

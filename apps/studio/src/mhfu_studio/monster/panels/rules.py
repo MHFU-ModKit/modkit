@@ -236,9 +236,7 @@ class RulesSection(QWidget):
         kit.put(self.cooldown, r.cooldown)
         kit.put(self.times, r.count or 0)
         kit.put(self.label, r.label)
-        self.force.setVisible(rules.FORCE)
-        self.force_label.setVisible(rules.FORCE)
-        kit.put(self.force, rules.forced(r))
+        kit.put(self.force, r.force)
         key = tuple(found)
         if key != self._found_key:
             self._found_key = key

@@ -893,3 +893,7 @@ doc = "em_vhook's config block in partition memory, which its stubs read by the 
 size = 0x360
 [struct.EM_CFG.fields]
 RULES = { offset = 0xE0, type = "EM_RULE[16]", doc = "the brain's rules: their count is the capacity a port's manifest and mhfu_port.lua read" }
+
+[enum.MONSTER_EVENT_KIND]
+doc = "the framework's monster events (MONSTER_EVENT.KIND), a manifest rule's on"
+names = ["noticed", "combat_entered", "combat_left", "flinch", "part_broken", "tail_cut"]

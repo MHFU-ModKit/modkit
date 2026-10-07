@@ -19,7 +19,7 @@ import functools
 import re
 import sys
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -29,6 +29,7 @@ REGION = "eu"
 RAM = range(0x0800_0000, 0x0C00_0000)  # noaddr: user RAM and the extra-RAM window
 
 _NAME = re.compile(r"[A-Z][A-Z0-9_]*\Z")
+_LOWER = re.compile(r"[a-z][a-z0-9_]*\Z")
 _BASE_TYPES = frozenset("u8 u16 u32 s8 s16 s32 f32 vec3 ptr vtable fn code bytes".split())
 # a base type or a struct name, optionally [n] of them
 _TYPE = re.compile(r"(\w+)(?:\[([1-9][0-9]*)\])?\Z")
@@ -96,9 +97,22 @@ class Struct:
 
 
 @dataclass(frozen=True)
+class Enum:
+    """Names numbered from 1 (`[enum.X] names`): MHFU_X_<NAME> in C, a list in Lua."""
+
+    name: str
+    doc: str
+    names: tuple[str, ...]
+
+    def number(self, name: str) -> int:
+        return self.names.index(name) + 1
+
+
+@dataclass(frozen=True)
 class Table:
     addresses: dict[str, Address]
     structs: dict[str, Struct]
+    enums: dict[str, Enum] = field(default_factory=dict)
 
 
 def load(path: Path | None = None) -> Table:
@@ -116,7 +130,7 @@ def table() -> Table:
 def parse(data: dict[str, Any]) -> Table:
     """Build a table from parsed TOML; raises ValueError listing every problem."""
     problems: list[str] = []
-    unknown = set(data) - {"address", "struct"}
+    unknown = set(data) - {"address", "struct", "enum"}
     if unknown:
         problems.append(f"unknown top-level tables: {sorted(unknown)}")
 
@@ -173,9 +187,31 @@ def parse(data: dict[str, Any]) -> Table:
         if m and m[1] not in _BASE_TYPES and m[1] not in structs:
             problems.append(f"{where}: unknown type {named.type!r}")
 
+    enums: dict[str, Enum] = {}
+    for name, entry in data.get("enum", {}).items():
+        where = f"enum.{name}"
+        if not _NAME.match(name):
+            problems.append(f"{where}: names are UPPER_SNAKE_CASE")
+        if not isinstance(entry, dict) or set(entry) != {"names", "doc"}:
+            problems.append(f"{where}: expects exactly names and doc")
+            continue
+        names = entry["names"]
+        if (
+            not isinstance(names, list)
+            or not names
+            or not all(isinstance(n, str) and _LOWER.match(n) for n in names)
+            or len(set(names)) != len(names)
+        ):
+            problems.append(f"{where}: names are distinct lower_snake_case strings")
+            continue
+        if _doc_ok(where, entry["doc"], problems):
+            enums[name] = Enum(name, entry["doc"], tuple(names))
+
     # every generated name (Python and Lua namespace, C macro) must be unique
     for name in addresses.keys() & structs.keys():
         problems.append(f"{name}: is both an address and a struct")
+    for name in enums.keys() & (addresses.keys() | structs.keys()):
+        problems.append(f"{name}: is an enum and an address or struct")
     macros: dict[str, str] = {}
     members = [(f"address.{n}", n) for n in addresses]
     members += [(f"address.{n}_COUNT", f"{n}_COUNT") for n, a in addresses.items() if a.count]
@@ -183,6 +219,9 @@ def parse(data: dict[str, Any]) -> Table:
         names = [*s.fields, *(["SIZE"] if s.size else []), *(["STRIDE"] if s.stride else [])]
         names += [f"{f}_COUNT" for f, v in s.fields.items() if v.count]
         members += [(f"struct.{s.name}.{m}", f"{s.name}_{m}") for m in names]
+    for e in enums.values():
+        names = [*(n.upper() for n in e.names), "COUNT", "NAMES"]
+        members += [(f"enum.{e.name}.{m}", f"{e.name}_{m}") for m in names]
     for where, macro in members:
         if macro in macros:
             problems.append(f"{where}: MHFU_{macro} clashes with {macros[macro]}")
@@ -190,7 +229,7 @@ def parse(data: dict[str, Any]) -> Table:
 
     if problems:
         raise ValueError("addresses.toml:\n  " + "\n  ".join(problems))
-    return Table(addresses, structs)
+    return Table(addresses, structs, enums)
 
 
 def _entry_ok(where: str, name: str, entry: Any, key: str, problems: list[str]) -> bool:
@@ -246,6 +285,11 @@ def render_c(t: Table) -> str:
             out += [f"/* {f.type}: {f.doc} */", f"#define MHFU_{s.name}_{f.name} 0x{int(f):X}u"]
             if f.count:
                 out.append(f"#define MHFU_{s.name}_{f.name}_COUNT {f.count}")
+    for e in t.enums.values():
+        out += ["", f"/* enum {e.name}: {e.doc} */"]
+        out += [f"#define MHFU_{e.name}_{n.upper()} {k}" for k, n in enumerate(e.names, 1)]
+        out.append(f"#define MHFU_{e.name}_COUNT {len(e.names)}")
+        out.append(f"#define MHFU_{e.name}_NAMES " + ", ".join(f'"{n}"' for n in e.names))
     out += ["", "#endif", ""]
     return "\n".join(out)
 
@@ -277,6 +321,9 @@ def render_lua(t: Table) -> str:
             if f.count:
                 out += [f"        ---elements in {f.name}", f"        {f.name}_COUNT = {f.count},"]
         out.append("    },")
+    for e in t.enums.values():
+        out += [f"    ---enum, numbered from 1: {e.doc}"]
+        out.append(f"    {e.name} = {{ " + ", ".join(f'"{n}"' for n in e.names) + " },")
     out += ["}", "", "return addr", ""]
     return "\n".join(out)
 
@@ -290,12 +337,14 @@ def __getattr__(name: str) -> Any:
         return t.addresses[name]
     if name in t.structs:
         return t.structs[name]
+    if name in t.enums:
+        return t.enums[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__() -> list[str]:
     t = table()
-    return sorted({*globals(), *t.addresses, *t.structs})
+    return sorted({*globals(), *t.addresses, *t.structs, *t.enums})
 
 
 def main(argv: list[str] | None = None) -> int:

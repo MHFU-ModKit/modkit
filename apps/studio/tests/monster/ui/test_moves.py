@@ -4,7 +4,6 @@ from typing import Any
 
 import pytest
 from mhfu_port.manifest import SEAM_RULES, Rule, Steer
-from mhfu_studio.monster import rules
 from mhfu_studio.monster import validate as V
 from mhfu_studio.monster.panels.moves import MovesPanel
 from mhfu_studio.monster.workspace import MonsterWorkspace
@@ -169,6 +168,7 @@ def test_rules(panel: MovesPanel, workspace: MonsterWorkspace) -> None:
     )
     assert kit.missing_tips(panel) == []
     r.list.picked.emit(0)
+    r.on.activated.emit(r.on.findData("noticed"))  # a flinch rule plays only an own move
     r.play.activated.emit(r.play.findData("charge"))
     assert r.mode.isVisible() and workspace.manifest.rules[0].play == "charge"
     r.delete.click()
@@ -187,21 +187,13 @@ def test_rule_findings(
     assert alerts == ["the game cannot"] and panel.rules.found.isVisible()
 
 
-@pytest.mark.skipif(not rules.FORCE, reason="the schema has no Rule.force yet")
 def test_rule_force(panel: MovesPanel, workspace: MonsterWorkspace) -> None:
     panel.new.click()
     panel.rules.new.click()
     assert panel.rules.force.isVisible() and '"!"' in panel.rules.force.toolTip()
     panel.rules.force.click()
-    assert rules.forced(workspace.manifest.rules[0])  # type: ignore[union-attr]
+    assert workspace.manifest.rules[0].force  # type: ignore[union-attr]
     assert panel.rules.list.item(0).text() == "on noticing the hunter, play walk right away, once"
-
-
-@pytest.mark.skipif(rules.FORCE, reason="the schema has Rule.force")
-def test_no_rule_force_without_the_schema(panel: MovesPanel) -> None:
-    panel.new.click()
-    panel.rules.new.click()
-    assert not panel.rules.force.isVisible() and not panel.rules.force_label.isVisible()
 
 
 def test_play_in_game_button(qtbot: Any, workspace: MonsterWorkspace) -> None:

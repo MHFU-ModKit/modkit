@@ -43,7 +43,7 @@ static_assert(MHFU_EVENT_BIGMONSTER_TAIL_CUT - MHFU_EVENT_BIGMONSTER_NOTICED
 static volatile mhfu_monster_events_t *B;
 
 extern "C" const char *const mhfu_monster_event_names[] = {
-    "noticed", "combat_entered", "combat_left", "flinch", "part_broken", "tail_cut", 0,
+    MHFU_MONSTER_EVENT_KIND_NAMES, 0,
 };
 static_assert(sizeof(mhfu_monster_event_names) / sizeof(mhfu_monster_event_names[0]) - 1
               == MHFU_MONSTER_TAIL_CUT, "a name per kind");

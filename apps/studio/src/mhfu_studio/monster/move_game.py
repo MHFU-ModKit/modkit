@@ -24,9 +24,9 @@ if TYPE_CHECKING:
 def deploy(m: Manifest, games: Data, mods: Path) -> list[Path]:
     """`m` built as it is, its modules written into `mods/lib`, and `mhfu_port.lua` kept in
     step; what was written. The game re-runs a changed module."""
-    from mhfu_port.cli.build import _modules  # the writer `mhfu-port inject` uses
+    from mhfu_port.cli.build import modules  # the writer `mhfu-port inject` uses
 
-    out = _modules(m, build.build(m, games), mods / layout.LIB, games)
+    out = modules(m, build.build(m, games), mods / layout.LIB, games)
     lib = runtime.sync_library(mods, runtime.library())
     return out if lib is None else [*out, lib]
 
@@ -36,10 +36,7 @@ def play_own(s: Session, name: str, force: bool = False) -> bool:
     move `name`; `force` plays it at once even before combat. The seam the tests fake."""
     from mhfu.live import moves
 
-    fn = getattr(moves, "play_own", None)
-    if fn is None:
-        raise LookupError("this modkit's mhfu.live.moves has no play_own")
-    return bool(fn(s, name, force=True) if force else fn(s, name))
+    return moves.play_own(s, name, force=force)
 
 
 class Running:

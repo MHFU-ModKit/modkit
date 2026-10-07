@@ -249,9 +249,10 @@ def test_own_moves(make, species, synthetic_pac):
 
 
 def test_own_rules_refused(make):
-    m = make(OWN + '\n[[rule]]\non = "flinch"\npart = 0\nplay = "o"\n')
-    f = found(V.validate(m, sources={1: 1}), "OWN_MOVE_REFUSED")
-    assert (f.where, f.target, f.focus) == ("rule[0]", ("rule", 0), V.RULES)
+    two = "\n[moves.p]\nanim = 1\ncarrier = [0, 1]\n"
+    rules = '[[rule]]\non = "flinch"\nplay = "o"\n[[rule]]\non = "flinch"\nplay = "p"\n'
+    f = found(V.validate(make(OWN + two + rules), sources={1: 1}), "OWN_MOVE_REFUSED")
+    assert (f.where, f.focus) == ("rule", V.RULES) and "carriers" in f.message
 
 
 def test_own_move_in_no_anim(make, synthetic_pac):

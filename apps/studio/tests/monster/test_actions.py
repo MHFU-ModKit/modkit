@@ -172,7 +172,6 @@ def test_lua_round_trips(make: Any) -> None:
     assert A.lua_moves(make("")) == ""
 
 
-@pytest.mark.xfail(strict=True, reason="mhfu_port.moves.lua_key writes a Lua keyword bare")
 def test_lua_keyword_names(make: Any) -> None:
     text = A.lua_moves(make(LUA.replace('"halt"', '"end"').replace("moves.halt", "moves.end")))
     assert '["end"] = ' in text

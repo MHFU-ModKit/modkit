@@ -19,20 +19,22 @@
 
 #include <stdint.h>
 
+#include "addresses.gen.h"
 #include "mhfu/events.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* mhfu_monster_event_t.kind; MHFU_EVENT_BIGMONSTER_NOTICED + kind - 1 is its event */
+/* mhfu_monster_event_t.kind (enum MONSTER_EVENT_KIND in addresses.toml);
+ * MHFU_EVENT_BIGMONSTER_NOTICED + kind - 1 is its event */
 enum {
-    MHFU_MONSTER_NOTICED = 1,
-    MHFU_MONSTER_COMBAT_ENTERED,
-    MHFU_MONSTER_COMBAT_LEFT,
-    MHFU_MONSTER_FLINCH,
-    MHFU_MONSTER_PART_BROKEN,
-    MHFU_MONSTER_TAIL_CUT,
+    MHFU_MONSTER_NOTICED        = MHFU_MONSTER_EVENT_KIND_NOTICED,
+    MHFU_MONSTER_COMBAT_ENTERED = MHFU_MONSTER_EVENT_KIND_COMBAT_ENTERED,
+    MHFU_MONSTER_COMBAT_LEFT    = MHFU_MONSTER_EVENT_KIND_COMBAT_LEFT,
+    MHFU_MONSTER_FLINCH         = MHFU_MONSTER_EVENT_KIND_FLINCH,
+    MHFU_MONSTER_PART_BROKEN    = MHFU_MONSTER_EVENT_KIND_PART_BROKEN,
+    MHFU_MONSTER_TAIL_CUT       = MHFU_MONSTER_EVENT_KIND_TAIL_CUT,
 };
 
 /* the kinds' names, MHFU_MONSTER_NOTICED's first, then NULL: Lua's and a manifest's `on` */

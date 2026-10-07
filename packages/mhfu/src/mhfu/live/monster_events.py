@@ -17,17 +17,14 @@ from __future__ import annotations
 
 import struct
 import time
-import typing
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import Literal
 
 from .. import addresses as a
 from ..memory import Memory
 from .session import Session
 
-Kind = Literal["noticed", "combat_entered", "combat_left", "flinch", "part_broken", "tail_cut"]
-KINDS: tuple[Kind, ...] = typing.get_args(Kind)
+KINDS: tuple[str, ...] = a.MONSTER_EVENT_KIND.names
 """MONSTER_EVENT.KIND 1.. in order: the names Lua and a port's manifest use."""
 NO_PART = 0xFF
 DEAD = 5
