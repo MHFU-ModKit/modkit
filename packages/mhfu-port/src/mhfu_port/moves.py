@@ -201,11 +201,15 @@ def _rule(r: Rule) -> dict[str, Any]:
 
 
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_KEYWORDS = frozenset(
+    "and break do else elseif end false for function goto if in local nil not or repeat "
+    "return then true until while".split()
+)
 
 
 def lua_key(k: str) -> str:
     """`k` as a Lua table key."""
-    return k if _IDENT.fullmatch(k) else f"[{_str(k)}]"
+    return k if _IDENT.fullmatch(k) and k not in _KEYWORDS else f"[{_str(k)}]"
 
 
 def _str(s: str) -> str:

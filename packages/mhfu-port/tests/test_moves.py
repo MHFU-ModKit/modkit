@@ -176,3 +176,12 @@ def test_zinogre(data):
     assert stamp + ", carrier = { 0, 2 }" in text
     assert 'after = "dash_stop"' in text and 'turn = "fixed", total = 90.0, frames = 50' in text
     assert '{ play = "stamp", from = "dash", min_frames = 10' in text
+
+
+def test_lua_key():
+    assert [moves.lua_key(k) for k in ("stamp", "end", "a b", "repeat_")] == [
+        "stamp",
+        '["end"]',
+        '["a b"]',
+        "repeat_",
+    ]
