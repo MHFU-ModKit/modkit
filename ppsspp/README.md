@@ -1,6 +1,6 @@
 # PPSSPP for automation
 
-PPSSPP v1.20.4 with five patches for scripted debugging, and a container that runs it headless,
+PPSSPP v1.20.4 with six patches for scripted debugging, and a container that runs it headless,
 watchable in a browser. [`ppsspp-debug`](../packages/ppsspp-debug) works with stock PPSSPP as well;
 it uses what the patches add where the emulator has it.
 
@@ -11,8 +11,9 @@ it uses what the patches add where the emulator has it.
 | `0003-debugger-log-to-every-connection` | Every debugger connection gets the log, and closing one no longer stops it for the rest |
 | `0004-debugger-stepping-reason` | `cpu.stepping` says why the CPU stopped |
 | `0005-debugger-game-speed` | `game.speed.get` and `game.speed.set`, to run faster or slower than real time |
+| `0006-debugger-screenshot-save` | `screenshot.save`, the frame on screen to a PNG file while the game runs, in a hidden lane too |
 
-The last three are backports from PPSSPP's master branch and go when the pin moves to a release
+0003 to 0005 are backports from PPSSPP's master branch and go when the pin moves to a release
 that has them.
 
 ## Build

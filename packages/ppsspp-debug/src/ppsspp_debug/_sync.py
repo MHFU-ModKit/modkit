@@ -287,3 +287,4 @@ class Client:
 
     save_state = _blocking(AsyncClient.save_state)
     load_state = _blocking(AsyncClient.load_state)
+    save_screenshot = _blocking(AsyncClient.save_screenshot)

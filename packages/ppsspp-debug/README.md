@@ -83,8 +83,9 @@ The modkit's PPSSPP build ([`ppsspp/`](../../ppsspp)) fixes the first two rows o
 `save_state()` and `load_state()` need it; `speed()` and `set_speed()` need it or a PPSSPP newer
 than 1.20.4. Stock 1.20.4 raises `Unsupported` for them.
 
-`screenshot()` depends on the GPU backend: PPSSPP 1.20.4 with Vulkan answers "Could not
-download output" whether the game runs or is stopped.
+`save_screenshot()` needs it too: it writes the frame on screen to a PNG while the game runs, in
+a lane as well. `screenshot()` depends on the GPU backend: PPSSPP 1.20.4 with Vulkan answers
+"Could not download output" whether the game runs or is stopped.
 
 ## Tests
 
@@ -106,8 +107,9 @@ PPSSPP_BINARY=/path/to/PPSSPPSDL PPSSPP_GAME=/path/to/game.iso uv run pytest pac
 
 ## Status
 
-Works with stock and patched PPSSPP 1.20.4; `save_state()`, `load_state()` and the speed calls
-need the patched build, and `screenshot()` fails under Vulkan.
+Works with stock and patched PPSSPP 1.20.4; `save_state()`, `load_state()`,
+`save_screenshot()` and the speed calls need the patched build, and `screenshot()` fails under
+Vulkan (use `save_screenshot()`).
 
 ## Licence
 

@@ -444,6 +444,7 @@ mhfu.EM_UNLIMITED = -1 -- MHFU_EM_UNLIMITED
 ---@field sub_last_sub integer
 ---@field sub_last_mode integer
 ---@field brain_fires integer rule fires
+---@field events_muted integer animation-event steps a move skipped (its host_attacks off)
 ---@field req_pending integer 1 while a request waits for its AI frame
 ---@field req_done integer requests entered
 ---@field req_main integer the last request's pair
@@ -601,3 +602,75 @@ function mhfu.on_bigmonster_action(fn, priority) end
 ---@field type integer monster type
 ---@field slot integer the slot the loop started from
 ---@field count integer body slots
+
+-- the move player (bind_move.cpp) ----------------------------------------------------------
+-- A big monster plays one of its executor entries as a move of its own, on the AI step em_vhook
+-- wraps: the clip on every body part, attacks at clip frames, the native AI back at the end.
+
+---Starts a move on ent at its next AI step, ending one it plays; false while nothing is wrapped.
+---`spec` is a table, or the address of a MOVE struct in memory (the debug bridge's).
+---@param ent integer
+---@param spec mhfu.Move|integer
+---@return boolean
+function mhfu.move_play(ent, spec) end
+
+---Ends the running move at the next AI step; the carrier pair keeps running and hands off itself.
+---@return true
+function mhfu.move_stop() end
+
+---The move player's state: the move it runs or ran last, and what happened.
+---@return mhfu.MoveStatus
+function mhfu.move_status() end
+
+---The move player's block (struct MOVE_STATE), for a debugger; 0 before the framework's init.
+---@return integer
+function mhfu.move_block() end
+
+---A move for `mhfu.move_play`; every field but `entry` is optional.
+---@class mhfu.Move
+---@field entry integer executor entry: the clip
+---@field length? integer AI frames from the clip's dispatch, default 0 = until the clip ends
+---@field carrier? integer[] { main, sub } the native pair the move rides, default { 0, 2 }
+---@field back? integer[] { main, sub, mode } entered at the end, default none
+---@field skip? boolean the host AI step skips while the clip plays, except on a hit
+---@field part? integer body part whose cursor times the attacks, default 0
+---@field attacks? integer[][] up to 4 { frame, id, end? }: attack id spawned at clip frame `frame`, its node ended at `end` (or when the move ends first); without `end` it lives as its record says
+---@field spawner? integer the species' attack spawner, default the Tigrex's
+---@field host_attacks? boolean keep the host entry's own attacks and effects at its clip frames (MONSTER_VTABLE.ANIM_EVENTS); default off while the move plays
+---@field steer? mhfu.MoveSteer how it turns and stops; default no turn, no walls
+
+---How a move turns and stops (mhfu/steer.h); every field is optional.
+---@class mhfu.MoveSteer
+---@field curve? string YAW while the clip plays: the entry's string in the clips module's `_turns`
+---@field turn? "still"|"hunter"|"away"|"fixed" also: toward or away from the hunter at `rate`, or `total` over `frames`
+---@field rate? integer YAW units an AI frame toward or away, default 64 (the Tigrex charge's)
+---@field total? number degrees for "fixed", positive the way YAW grows
+---@field frames? integer AI frames "fixed" spreads `total` over
+---@field walls? boolean a wall ahead ends the move; a class-2 one enters `stuck`
+---@field dir? number degrees of the travel against YAW, which sectors count as ahead; default 0
+---@field stuck? integer[] { main, sub, mode } entered on a class-2 wall, default { 0, 6, 1 }
+
+---What `mhfu.move_status()` returns.
+---@class mhfu.MoveStatus
+---@field started integer moves started since boot
+---@field pending integer 1 while a move waits for its AI step
+---@field state integer 0 idle, 1 entering the carrier, 2 playing, 3 reading the successor, 4 done
+---@field end_reason integer 1 clip done, 2 back pair, 3 pair changed, 4 stopped, 5 replaced, 6 refused, 7 lost, 8 a wall ahead, 9 a class-2 wall (stuck pair entered)
+---@field entity integer
+---@field entry integer
+---@field frames integer AI frames since the clip's dispatch
+---@field skipped integer host AI steps skipped
+---@field end_main integer the pair after the end
+---@field end_sub integer
+---@field end_frame integer
+---@field peak number[] per body part, the furthest cursor of the move's clip
+---@field clip_end number[] per body part, the clip's last frame
+---@field spawns mhfu.MoveSpawn[] one per attack, in order
+
+---A spawned attack in `mhfu.MoveStatus.spawns`.
+---@class mhfu.MoveSpawn
+---@field frame integer AI frame of the spawn, -1 if it never spawned
+---@field cursor number the timing part's cursor then
+---@field node integer the attack node, 0 out of section
+---@field ended integer AI frame the move ended the node at, -1 if it did not
+---@field ended_state integer the node's state then: 1 or 2 ended, 0 it had ended itself, 255 no longer the move's

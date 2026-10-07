@@ -416,6 +416,7 @@ name = "mhfu"
 version = "0.1.0"
 source = { editable = "packages/mhfu" }
 dependencies = [
+    { name = "pillow" },
     { name = "ppsspp-debug" },
     { name = "psutil" },
     { name = "pyelftools" },
@@ -424,6 +425,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "pillow", specifier = ">=11" },
     { name = "ppsspp-debug", editable = "packages/ppsspp-debug" },
     { name = "psutil", specifier = ">=6" },
     { name = "pyelftools", specifier = ">=0.31" },

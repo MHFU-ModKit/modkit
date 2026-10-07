@@ -7,7 +7,7 @@ description = "Monster Hunter Freedom Unite (PSP) at runtime: addresses, live st
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-dependencies = ["ppsspp-debug", "rabbitizer>=1.16", "pyelftools>=0.31", "psutil>=6"]
+dependencies = ["ppsspp-debug", "rabbitizer>=1.16", "pyelftools>=0.31", "psutil>=6", "pillow>=11"]
 classifiers = ["Typing :: Typed"]
 
 [project.scripts]

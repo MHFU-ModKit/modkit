@@ -8,7 +8,8 @@
  *   request       a pair entered on the game thread in the next AI frame, through
  *                 MHFU_ENTER_ACTION;
  *   rules         a 30 Hz brain: "in pair P for >= N frames, player distance in [lo, hi),
- *                 receding or closing -> enter (main, sub, mode)", with cooldown and budget.
+ *                 receding or closing -> enter (main, sub, mode)", with cooldown and budget;
+ *   step          a C function on every AI frame, on the game thread, before the host step.
  *
  * Every call only writes the config block the stubs read, so it is safe from any thread,
  * and a no-op returning 0 while no vtable is wrapped. */
@@ -55,6 +56,7 @@ typedef struct {
     uint32_t rule_fired[MHFU_EM_RULES];
     uint32_t rule_left[MHFU_EM_RULES];
     uint32_t sub_left[MHFU_EM_SUBS];
+    uint32_t events_muted;       /* animation-event steps skipped (mhfu_em_mute_events) */
 } mhfu_em_status_t;
 
 /* 1 while a big monster's vtable is wrapped (from its spawn to the next quest_beginning). */
@@ -70,6 +72,16 @@ int  mhfu_em_request(uint8_t main_state, uint8_t sub_state, uint8_t mode);
 
 /* Rule slot (0..MHFU_EM_RULES-1); NULL clears it. */
 void mhfu_em_rule(int slot, const mhfu_em_rule_t *r);
+
+/* fn(entity) runs at each AI step of the wrapped species, on the game thread, before the host
+ * step; nonzero skips the host step this frame. One step at a time; 0 clears it, and so does
+ * the quest's end. */
+typedef uint32_t (*mhfu_em_step_fn)(uint32_t entity);
+void mhfu_em_step(mhfu_em_step_fn fn);
+
+/* The animation events (MONSTER_VTABLE.ANIM_EVENTS: the playing entry's attacks, effects and
+ * sounds at clip frames) of entity are skipped until this is called again; 0 skips none. */
+void mhfu_em_mute_events(uint32_t entity);
 
 /* Drop every substitution, rule and pending request. */
 void mhfu_em_clear(void);

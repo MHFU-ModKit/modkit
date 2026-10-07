@@ -10,11 +10,13 @@ frames per game frame, set by the ACTION (2.0 and 2.4 both seen on one monster),
 
 from __future__ import annotations
 
+import math
 from typing import Protocol
+from weakref import WeakKeyDictionary
 
 import numpy as np
-from mhfu_port import records
-from mhfu_port.model import Clip
+from mhfu_port import layout, records, travel
+from mhfu_port.model import MHFU, Clip
 
 from mhfu_studio.monster.core.pose import Pose
 from mhfu_studio.monster.core.scene import Scene
@@ -166,8 +168,9 @@ def travel_joints(scene: Scene) -> tuple[int, ...]:
 
 
 def pose_at(scene: Scene, clip: Clip | None, frame: float, *, strip_root: bool = False) -> Pose:
-    """The rig at `frame`; `strip_root` holds the travel joints' location at frame 0, so the
-    clip plays in place without dropping the animal to its bind height."""
+    """The rig at `frame`, turned as YAW turns while the clip plays (`turn_of`); `strip_root`
+    holds the travel joints' location at frame 0, so the clip plays in place without dropping
+    the animal to its bind height."""
     if clip is None:
         return scene.bind_pose()
     curves = scene.curves(clip)
@@ -177,7 +180,40 @@ def pose_at(scene: Scene, clip: Clip | None, frame: float, *, strip_root: bool =
         if js:
             loc = loc.copy()
             loc[js] = curves.at(0.0)[1][js]
-    return Pose(scene.rig, float(frame), scene.rig.world(rot, loc), clip.slot)
+    world = scene.rig.world(rot, loc)
+    turn = turn_of(scene, clip)
+    if turn is not None:
+        th = float(turn.at(float(frame)) - turn.keys[0]) / travel.TURN * math.tau
+        yaw = np.eye(4)
+        yaw[0, 0] = yaw[2, 2] = math.cos(th)
+        yaw[0, 2], yaw[2, 0] = math.sin(th), -math.sin(th)
+        world = yaw @ world
+    return Pose(scene.rig, float(frame), world, clip.slot)
+
+
+_TURNS: WeakKeyDictionary[Scene, dict[tuple[int, float | None], travel.Turn | None]] = (
+    WeakKeyDictionary()
+)
+
+
+def turn_of(scene: Scene, clip: Clip) -> travel.Turn | None:
+    """What YAW turns while a port's `clip` plays (`travel.turn_of`): the turn the build took
+    out of it, or the manifest's; None on a donor or a rig without a root."""
+    if scene.game != MHFU or clip.joint_tracks is not None:
+        return None
+    m = scene.manifest
+    authored = None
+    if m is not None:
+        given = (c.turn for c in m.clips.values() if layout.where(c, scene.placed) == clip.slot)
+        authored = next((t for t in given if t is not None), None)
+    cache = _TURNS.setdefault(scene, {})
+    key = (clip.slot, authored)
+    if key not in cache:
+        try:
+            cache[key] = travel.turn_of(clip.source, scene.skeleton, authored)
+        except ValueError:
+            cache[key] = None
+    return cache[key]
 
 
 def root_travel(scene: Scene, clip: Clip) -> tuple[float, float]:

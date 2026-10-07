@@ -26,6 +26,7 @@ from . import manifest
 from .fk import entry_slot, part_clip
 from .model import clip_key
 from .motion import filled
+from .travel import KEY_STEP, Turn
 
 ENTRIES = {75: 123}
 """Executor entries per host species: the rows of its overlay's descriptor table (em75: dumped
@@ -49,6 +50,8 @@ class Layout:
     """Entries the host plays on some body parts only."""
     unplaced: tuple[int, ...] = ()
     """Clips no entry was left for."""
+    turns: dict[int, Turn] = field(default_factory=dict)
+    """Entry -> what YAW turns while it plays; the build sets it."""
     ids: dict[int, int] = field(init=False, repr=False, compare=False)
     """MHP3rd clip id -> executor entry."""
 
@@ -248,6 +251,8 @@ def module_name(m: manifest.Manifest) -> str:
 
 
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+TURNS = "_turns"
+"""The clips module's key for `Layout.turns`; no clip may take the name."""
 
 
 def lua(m: manifest.Manifest, layout: Layout) -> str:
@@ -264,6 +269,16 @@ def lua(m: manifest.Manifest, layout: Layout) -> str:
         name = named.get(e)
         if name is None:
             continue
+        if name == TURNS:
+            raise LayoutError(f"clip name {TURNS} is the module's own key")
         key = name if _IDENT.fullmatch(name) else f'["{name}"]'
         out.append(f"  {key} = {e},  -- MHP3rd {cid}")
+    if layout.turns:
+        out.append(
+            f"  -- entry -> YAW while it plays: 4 hex digits (0x10000 a turn) every {KEY_STEP}"
+            " clip frames, the last at its end"
+        )
+        out.append(f"  {TURNS} = {{")
+        out += [f'    [{e}] = "{t.lua()}",' for e, t in sorted(layout.turns.items())]
+        out.append("  },")
     return "\n".join([*out, "}", ""])

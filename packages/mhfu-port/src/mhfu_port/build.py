@@ -8,6 +8,7 @@ test can stop at any of them.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -18,7 +19,7 @@ from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Skeleton
 from mhp_formats.tmh import Tmh
 
-from . import constraints, mesh, motion, records, retarget
+from . import constraints, mesh, motion, records, retarget, travel
 from . import layout as layouts
 from . import rig as rigs
 from . import skin as skins
@@ -230,7 +231,8 @@ def animation(
     lift: float = 0.0,
 ) -> fu.Anim:
     """The donor's moveset on the rig's joints in the entries `placed` gives it, its pelvis
-    raised by `lift` world units. Entries it leaves keep the host's clips on the host's rig."""
+    raised by `lift` world units, and on its own rig its travel and turns where the engine takes
+    them (`travel.carry`). Entries it leaves keep the host's clips on the host's rig."""
     clips: Mapping[int, Clip] = d.clips
     if lift:
         bone_of_record = {r: bone for bone, r in record_of.items()}
@@ -241,7 +243,17 @@ def animation(
     # records are not positional in either mode: joint -> donor bone -> record
     track_of = {j: record_of.get(bone) for j, bone in bind.bone_of.items() if bone is not None}
     keep = bind.mode == "retarget"
-    return motion.build(clips, placed.entries, h.anim, bind.rig.streams, track_of, keep)
+    out = motion.build(clips, placed.entries, h.anim, bind.rig.streams, track_of, keep)
+    return out if keep else travel.carry(out, bind.rig.skeleton)
+
+
+def authored(m: Manifest, placed: Layout) -> dict[int, float]:
+    """Entry -> the manifest's `turn` of the clip it holds."""
+    return {
+        placed.ids[c.id]: c.turn
+        for c in m.clips.values()
+        if c.turn is not None and c.id in placed.ids
+    }
 
 
 # 6. the PAC
@@ -271,6 +283,8 @@ def build(m: Manifest, data: Data) -> Built:
     model = mesh.build(skinned, d.model.scale)
     placed = layout(m, d, h)
     anim = animation(d, h, bind, record_of, placed, m.build.ground_lift)
+    turned = travel.turns(anim, bind.rig.skeleton, authored(m, placed))
+    placed = dataclasses.replace(placed, turns=turned)
     out = pac(h, bind.rig, model, d.textures, anim)
     summary = Summary(
         mode=bind.mode,

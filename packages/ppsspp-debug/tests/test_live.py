@@ -229,6 +229,24 @@ def test_screenshot_while_stopped(ppsspp):
     report(f"screenshot while stopped: {shot.width}x{shot.height}, {len(shot.png)} bytes")
 
 
+def test_save_screenshot_during_play(ppsspp, emulator, tmp_path):
+    if isinstance(emulator, DockerEmulator):
+        pytest.skip("the file lands in the container")
+    shots = [tmp_path / f"{n}.png" for n in range(2)]
+    try:
+        start = time.perf_counter()
+        ppsspp.save_screenshot(shots[0])
+    except Unsupported:
+        report("stock PPSSPP: screenshot.save raises Unsupported")
+        return
+    took = time.perf_counter() - start
+    time.sleep(1)
+    ppsspp.save_screenshot(shots[1])
+    first, second = (s.read_bytes() for s in shots)
+    assert first.startswith(b"\x89PNG") and second.startswith(b"\x89PNG")
+    report(f"screenshot.save during play in {ms(took)}, a second later the same: {first == second}")
+
+
 def test_speed(ppsspp):
     try:
         doubled = ppsspp.set_speed(200)

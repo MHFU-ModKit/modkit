@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
- * em_vhook's two stubs, assembled word by word. Plain C with no PSP SDK (only
+ * em_vhook's three stubs, assembled word by word. Plain C with no PSP SDK (only
  * <stdint.h>, mhfu/mips.h and addresses.gen.h), so the same builders also compile
  * on the host, where a check disassembles the words and asserts:
  *   - no branch in either stub: every decision is a MOVN/MOVZ select, so the JIT
  *     sees one basic block and armed and unarmed runs execute the same words;
  *   - the slot-29 stub never touches $sp: ra and the step's arguments are spilled
- *     to config words for its one call;
+ *     to config words for its calls, and it ends in one jr: the original, or a return
+ *     when the C step took the frame;
  *   - the slot-32 stub's only stack use is its 16-byte frame (see build_act_stub);
  *   - each fits its slot (STUB_AI_INSNS / STUB_ACT_INSNS).
  *
@@ -84,7 +85,13 @@
 #define RULE_FIRED      0x18   /* u32 */
 #define RULE_LAST_FIRE  0x1C   /* u32  ai_ticks at the last fire */
 #define RULE_COOLDOWN   0x20   /* u32  frames */
-#define CFG_SIZE        (CFG_RULE_BASE + 4 * RULE_STRIDE)   /* 0x158 */
+/* the C step (mhfu_em_step) */
+#define CFG_STEP_FN     0x158  /* u32  fn(entity) called each AI step while set; 0 = none */
+#define CFG_SKIP        0x15C  /* u32  1 = the step took this frame: the host step is skipped */
+/* the animation events (MONSTER_VTABLE.ANIM_EVENTS) */
+#define CFG_MUTE_ENT    0x160  /* u32  entity whose events are skipped; 0 = none */
+#define CFG_MUTED       0x164  /* u32  event steps skipped */
+#define CFG_SIZE        0x168
 
 #define SUB_ANY         0xFEu
 #define PATCH_OFF_MASK  0x7FCu   /* the entity is 0x800 bytes: bound + align every store */
@@ -92,6 +99,7 @@
 /* slot sizes, in instructions. The check asserts the builders fit. */
 #define STUB_AI_INSNS   480
 #define STUB_ACT_INSNS  200
+#define STUB_EVT_INSNS  16
 
 /* -------------------------------------------------------------------------- */
 /* register aliases used below */
@@ -112,6 +120,7 @@
 #define R_T9 MIPS_REG_T9
 #define R_SP MIPS_REG_SP
 #define R_RA MIPS_REG_RA
+#define R_V0 MIPS_REG_V0
 
 typedef struct {
     uint32_t *s;
@@ -324,6 +333,20 @@ static inline int emv_build_ai_stub(uint32_t *out, int cap, uint32_t cfg,
         emv_cond_call(a, cfg, ret_stub);
     }
 
+    /* ---- the C step: fn(entity) on the game thread, its v0 = skip the host step. The
+     * jalr always runs, to fn or to the ret stub, which leaves v0 = 0. ---- */
+    E(mips_lw(R_T6, CFG_STEP_FN, R_T7));
+    E(mips_lui(R_T9, (uint16_t)(ret_stub >> 16)));
+    E(mips_ori(R_T9, R_T9, (uint16_t)ret_stub));
+    E(mips_movn(R_T9, R_T6, R_T6));
+    E(mips_addu(R_V0, R_ZERO, R_ZERO));
+    E(mips_jalr(R_T9));
+    E(MIPS_NOP);
+    emv_load_cfg(a, cfg);
+    E(mips_lw(R_A0, CFG_A0_SPILL, R_T7));
+    E(mips_sltu(R_V0, R_ZERO, R_V0));
+    E(mips_sw(R_V0, CFG_SKIP, R_T7));
+
     /* ---- the one-shot budget seam, on the pair as it stands now ---- */
     E(mips_lbu(R_T0, MHFU_ENTITY_MAIN_STATE, R_A0));
     E(mips_lbu(R_T1, MHFU_ENTITY_SUB_STATE,  R_A0));
@@ -364,12 +387,20 @@ static inline int emv_build_ai_stub(uint32_t *out, int cap, uint32_t cfg,
     E(mips_movn(R_T6, R_T4, R_T2));
     E(mips_sw(R_T5, 0, R_T6));
 
-    /* restore the step's arguments and our caller's ra, then tail-call */
+    /* restore the step's arguments and our caller's ra, then tail-call the original, or
+     * return to the caller when the C step took the frame */
     E(mips_lw(R_A1, CFG_A1_SPILL, R_T7));
     E(mips_lw(R_A2, CFG_A2_SPILL, R_T7));
     E(mips_lw(R_A3, CFG_A3_SPILL, R_T7));
     E(mips_lw(R_RA, CFG_RA_SPILL, R_T7));
-    E(mips_j(original));
+    E(mips_lw(R_T2, CFG_SKIP, R_T7));
+    E(mips_lui(R_T9, (uint16_t)(original >> 16)));
+    E(mips_ori(R_T9, R_T9, (uint16_t)original));
+    E(mips_lui(R_T6, (uint16_t)(ret_stub >> 16)));
+    E(mips_ori(R_T6, R_T6, (uint16_t)ret_stub));
+    E(mips_movn(R_T9, R_T6, R_T2));
+    E(mips_addu(R_V0, R_ZERO, R_ZERO));
+    E(mips_jr(R_T9));
     E(MIPS_NOP);
 
     if (overflow) *overflow = A.overflow;
@@ -510,6 +541,33 @@ static inline int emv_build_act_stub(uint32_t *out, int cap, uint32_t cfg,
     E(mips_sw(R_ZERO, CFG_SUB_PENDING, R_T7));
 
     E(mips_jr(R_RA));
+    E(MIPS_NOP);
+
+    if (overflow) *overflow = A.overflow;
+    return A.i;
+}
+
+/* --- the animation events: skipped for one entity, else the original. ---------
+ * One jr, to the original or to the ret stub (which returns to the engine); frame-free. */
+static inline int emv_build_events_stub(uint32_t *out, int cap, uint32_t cfg,
+                                        uint32_t original, uint32_t ret_stub, int *overflow)
+{
+    emv_asm_t A = { out, 0, cap, 0 };
+    emv_asm_t *a = &A;
+
+    emv_load_cfg(a, cfg);
+    E(mips_lw(R_T0, CFG_MUTE_ENT, R_T7));
+    E(mips_xor(R_T0, R_T0, R_A0));
+    E(mips_sltiu(R_T0, R_T0, 1));                      /* 1 iff this entity is muted */
+    E(mips_lw(R_T1, CFG_MUTED, R_T7));
+    E(mips_addu(R_T1, R_T1, R_T0));
+    E(mips_sw(R_T1, CFG_MUTED, R_T7));
+    E(mips_lui(R_T9, (uint16_t)(original >> 16)));
+    E(mips_ori(R_T9, R_T9, (uint16_t)original));
+    E(mips_lui(R_T6, (uint16_t)(ret_stub >> 16)));
+    E(mips_ori(R_T6, R_T6, (uint16_t)ret_stub));
+    E(mips_movn(R_T9, R_T6, R_T0));
+    E(mips_jr(R_T9));
     E(MIPS_NOP);
 
     if (overflow) *overflow = A.overflow;

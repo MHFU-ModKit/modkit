@@ -7,7 +7,8 @@ from mhfu import addresses as a
 from mhfu.cli import main
 from mhfu.live import Launcher, Session, rig
 from mhfu.structs import DRAW_GATE, SKIP_DRAW
-from ppsspp_debug import Lane
+from PIL import Image
+from ppsspp_debug import DebuggerError, Lane
 
 TIGREX, MAP_MANAGER = a.RAM.start + 0x90_0000, a.RAM.start + 0x91_0000  # heap in `fake`
 AREA = 109
@@ -122,6 +123,32 @@ def test_open_from_a_state(fake, game, clock, monkeypatch):
     assert not fake.fast_forward
 
 
+@pytest.mark.parametrize("fake", [True], indirect=True)
+def test_open_launches_a_state_and_reads_it_stopped(fake, game, clock, monkeypatch):
+    monkeypatch.setattr(rig, "running", lambda launcher: False)
+    launched = []
+
+    def launch(*args, state=None, **kw):
+        launched.append(state)
+        s = Session.attach(fake.port, timeout=5)
+        pause, refusals = s.client.pause, [DebuggerError("cpu.stepping", "CPU not started")]
+
+        def refused_once():
+            if refusals:
+                raise refusals.pop()
+            return pause()
+
+        monkeypatch.setattr(s.client, "pause", refused_once)
+        return s
+
+    monkeypatch.setattr(Session, "launch", launch)
+    stopped = []
+    fake.on_read.append(lambda address: stopped.append(fake.stepping))
+    with rig.Rig.open(Launcher(lane=1), state=6):
+        assert launched == [rig.state_file(6, 1)]
+        assert stopped and all(stopped) and not fake.stepping
+
+
 @pytest.fixture
 def cli(fake, game, clock, monkeypatch):
     """`mhfu rig ...` against the fake game, attached rather than launched."""
@@ -146,3 +173,47 @@ def test_cli_not_drawn(cli, game, capsys):
     game.on_read.clear()
     assert cli("summon") == 1
     assert "NOT drawn" in capsys.readouterr().out
+
+
+patched = pytest.mark.parametrize("fake", [True], indirect=True)
+
+
+@patched
+def test_shot(s, tmp_path):
+    assert rig.shot(s, tmp_path / "a" / "b.png").read_bytes().startswith(b"\x89PNG")
+
+
+@patched
+def test_film(s, tmp_path):
+    got = rig.film(s, tmp_path, 1, 5, columns=2)
+    assert [f.name for f in got.frames] == [f"{k:04d}.png" for k in range(5)]
+    assert got.times == pytest.approx([0, 0.2, 0.4, 0.6, 0.8]) and got.fps == pytest.approx(5)
+    assert got.speed == pytest.approx(1)
+    with Image.open(got.sheet) as sheet:
+        assert sheet.size == (2 * 1 + 2, 3 * 1 + 2 * 2)  # 1x1 frames, 2 px apart
+
+
+@patched
+def test_film_skips_slots_a_late_shot_passed(s, clock, tmp_path, monkeypatch):
+    save = s.client.save_screenshot
+
+    def slow(path, scale=1):
+        save(path, scale)
+        clock.sleep(0.25)
+
+    monkeypatch.setattr(s.client, "save_screenshot", slow)
+    got = rig.film(s, tmp_path, 1, 10)
+    assert got.times == pytest.approx([0, 0.25, 0.5, 0.8])
+
+
+def test_shot_on_stock_ppsspp(cli, tmp_path, capsys):
+    assert cli("shot", str(tmp_path / "a.png")) == 1
+    assert "modkit's build" in capsys.readouterr().err
+
+
+@patched
+def test_cli_film(cli, tmp_path, capsys):
+    assert cli("film", str(tmp_path), "--seconds", "1", "--fps", "2") == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("2 frames at 2.0 fps") and out[0].endswith("the game at 1.00x")
+    assert out[1] == str(tmp_path / "sheet.png")

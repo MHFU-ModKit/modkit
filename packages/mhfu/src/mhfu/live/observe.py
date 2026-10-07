@@ -22,6 +22,8 @@ from one read of the entity each, which stops the CPU for one request.
 from __future__ import annotations
 
 import collections
+import csv
+import math
 import statistics
 import struct
 import threading
@@ -29,6 +31,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from functools import cache
+from pathlib import Path
 from types import TracebackType
 from typing import Any
 
@@ -37,6 +40,7 @@ from ppsspp_debug import Disconnected, FrameStats, Hit, SyncStream
 from .. import addresses as a
 from .. import symbols
 from ..em.abi import Engine
+from ..entries import input_action
 from ..mips import Code
 from ..views import layout
 from .session import Session
@@ -687,4 +691,194 @@ def changes_report(changes: Sequence[PairChange]) -> str:
         lines.extend(f"  {c.name} {_show(c.before)} -> {_show(c.after)}" for c in stable)
         if noisy:
             lines.append("  churning: " + " ".join(noisy))
+    return "\n".join(lines)
+
+
+# --- a big monster's path, one AI frame at a time ---
+
+_STUCK_WORD = a.ENTITY.STUCK_WALL & ~3
+_PHASE = a.ENTITY.CLIP_BLOCKS + a.CLIP_BLOCK.PHASE
+_SPEED = a.ENTITY.CLIP_BLOCKS + a.CLIP_BLOCK.SPEED
+_FRAME_REFS = (
+    (a.ENTITY.MAIN_STATE, 2),
+    (a.ENTITY.POSITION, 4),
+    (a.ENTITY.POSITION + 4, 4),
+    (a.ENTITY.POSITION + 8, 4),
+    (a.ENTITY.YAW, 2),
+    (a.ENTITY.WALL_SECTORS, 4),
+    (_STUCK_WORD, 4),
+    (_PHASE, 4),
+    (_SPEED, 4),
+    (a.ENTITY.ANIM_INPUT, 2),
+    (a.ENTITY.RENDER_SCALE, 4),
+)
+FRAME_FIELDS: tuple[str, ...] = ("t", "main", "sub", "x", "y", "z", "yaw", "walls", "stuck")
+FRAME_FIELDS += ("clip", "speed", "entry", "scale")
+
+
+def _f32(word: int) -> float:
+    return float(struct.unpack("<f", struct.pack("<I", word))[0])
+
+
+@dataclass(frozen=True)
+class Frame:
+    """A big monster as MONSTER_STEP calls its AI step: the position, walls and clip the frame
+    before left, which is what a step running there reads."""
+
+    t: float
+    """Emulated seconds since the first frame."""
+    main: int
+    sub: int
+    x: float
+    y: float
+    z: float
+    yaw: int
+    walls: int
+    stuck: int
+    clip: float
+    """Part 0's clip cursor."""
+    speed: float
+    entry: int
+    """The executor entry part 0 plays."""
+    scale: float
+
+
+def frame_format(entity: int) -> str:
+    """What the frame breakpoint logs: the clock and each field of `Frame`, in hex."""
+    return " ".join(["{usec}", *(f"{{[{entity + off:#x},{n}]}}" for off, n in _FRAME_REFS)])
+
+
+def parse_frame(hit: Hit, start: int) -> Frame | None:
+    """A hit logged in `frame_format`; None for any other line."""
+    try:
+        usec, pair, x, y, z, yaw, walls, stuck, clip, speed, entry, scale = (
+            int(f, 16) for f in (hit.message or "").split()
+        )
+    except ValueError:
+        return None
+    shift = 8 * (a.ENTITY.STUCK_WALL - _STUCK_WORD)
+    main, sub = _unpair(pair)
+    return Frame(
+        ((usec - start) % WRAP) / 1e6,
+        main,
+        sub,
+        _f32(x),
+        _f32(y),
+        _f32(z),
+        yaw,
+        walls,
+        (stuck >> shift) & 0xFF,
+        _f32(clip),
+        _f32(speed),
+        input_action(entry, 0),
+        _f32(scale),
+    )
+
+
+def track(s: Session, entity: int, seconds: float) -> list[Frame]:
+    """Every AI frame of big monster `entity` for `seconds` emulated seconds, from one log-only
+    breakpoint: the game keeps running."""
+    out: list[Frame] = []
+    start = s.client.evaluate("usec")
+    condition = f"s2 == {entity:#x}"
+    with s.client.trace(
+        [a.MONSTER_AI_STEP_CALL], condition=condition, log_format=frame_format(entity)
+    ) as hits:
+        while not out or out[-1].t < seconds:
+            try:
+                hit = hits.next(DRAIN)
+            except (TimeoutError, Disconnected):
+                if (s.client.evaluate("usec") - start) % WRAP > (seconds + 1) * 1e6:
+                    break
+                continue
+            f = parse_frame(hit, start)
+            if f is not None:
+                out.append(f)
+    return out
+
+
+@dataclass(frozen=True)
+class Leg:
+    """Consecutive frames playing one entry, its cursor rising: one play of a clip."""
+
+    entry: int
+    frames: tuple[Frame, ...]
+
+    @property
+    def path(self) -> float:
+        """Units travelled in x and z."""
+        fs = self.frames
+        return sum(math.hypot(q.x - p.x, q.z - p.z) for p, q in zip(fs, fs[1:], strict=False))
+
+    @property
+    def turn(self) -> int:
+        """YAW units turned, signed, the short way each frame."""
+        fs = self.frames
+        return sum(
+            ((q.yaw - p.yaw + 0x8000) & 0xFFFF) - 0x8000 for p, q in zip(fs, fs[1:], strict=False)
+        )
+
+    @property
+    def wall(self) -> Frame | None:
+        """The first frame with a wall touched."""
+        return next((f for f in self.frames if f.walls), None)
+
+
+def legs(frames: Sequence[Frame]) -> list[Leg]:
+    """`frames` cut wherever the entry changes or its clip restarts."""
+    out: list[list[Frame]] = []
+    for f in frames:
+        last = out[-1][-1] if out else None
+        if last is None or f.entry != last.entry or f.clip < last.clip:
+            out.append([f])
+        else:
+            out[-1].append(f)
+    return [Leg(fs[0].entry, tuple(fs)) for fs in out]
+
+
+def write_frames(frames: Iterable[Frame], path: Path) -> None:
+    with path.open("w", newline="") as f:
+        out = csv.writer(f)
+        out.writerow(FRAME_FIELDS)
+        for fr in frames:
+            out.writerow([getattr(fr, name) for name in FRAME_FIELDS])
+
+
+def read_frames(path: Path) -> list[Frame]:
+    """`write_frames`' file."""
+    with path.open(newline="") as f:
+        return [_frame(r) for r in csv.DictReader(f)]
+
+
+def _frame(r: Mapping[str, str]) -> Frame:
+    i, x = int, float
+    return Frame(
+        x(r["t"]),
+        i(r["main"]),
+        i(r["sub"]),
+        x(r["x"]),
+        x(r["y"]),
+        x(r["z"]),
+        i(r["yaw"]),
+        i(r["walls"]),
+        i(r["stuck"]),
+        x(r["clip"]),
+        x(r["speed"]),
+        i(r["entry"]),
+        x(r["scale"]),
+    )
+
+
+def legs_report(found: Sequence[Leg]) -> str:
+    """One line per leg: entry, cursor span, frames, path, turn, the first wall touched."""
+    lines = ["entry  clip from->to  frames   path  turn deg  pairs        wall"]
+    for leg in found:
+        fs = leg.frames
+        pairs = " ".join(dict.fromkeys(_pair((f.main, f.sub)) for f in fs))
+        w = leg.wall
+        wall = f"{w.walls:#010x} class {2 if w.stuck else 1} at {w.clip:g}" if w else "-"
+        lines.append(
+            f"{leg.entry:5d}  {fs[0].clip:6.1f}->{fs[-1].clip:<6.1f} {len(fs):6d} {leg.path:6.0f}"
+            f"  {leg.turn * 360 / 0x10000:8.1f}  {pairs:12} {wall}"
+        )
     return "\n".join(lines)

@@ -5,7 +5,7 @@
 -- The shell (`mhfu shell`, `mhfu clips`) writes a command block (struct CLI_BRIDGE) in extra
 -- RAM; this script polls it each tick and applies holds a debugger cannot do smoothly: force a
 -- big monster's action (held coherently through the executor hook), freeze or unfreeze its AI,
--- and clear.
+-- play a move (the move player, `mhfu move`), and clear.
 --
 -- Deploy: copy to ms0:/PSP/PLUGINS/mhfu_framework/mods/cli_bridge.lua; it hot-reloads. Needs
 -- memory=64 (the block is in extra RAM) and a big monster.
@@ -24,6 +24,7 @@ local HOLD      = 0x3FFFFFFF          -- latch uses: held until cleared
 local CMD_FORCE = 1
 local CMD_FREEZE = 2
 local CMD_CLEAR = 3
+local CMD_MOVE  = 4                   -- the MOVE struct in the block, on SLOT's monster
 
 -- loaded before the tick is wrapped below, so the library's mhfu_tick is the one wrapped
 local has_port, port_lib = pcall(require, "mhfu_port")
@@ -121,7 +122,12 @@ function cli_bridge_tick()
         unforce()
         g_freeze = false
         release(a0)
+        mhfu.move_stop()
         mhfu.write_u32(BR + CB.STATUS, 0)   -- nothing held
+      elseif cmd == CMD_MOVE then
+        local ent = entity(a0)
+        -- a refused move leaves the block's PENDING and STARTED as they were
+        if ent ~= nil then mhfu.move_play(ent, BR + CB.MOVE) end
       end
       mhfu.write_u32(BR + CB.ACK, seq)
       mhfu.log(string.format("[cli_bridge] cmd=%d slot=%d a1=%d (seq=%d)%s", cmd, a0, a1, seq,
@@ -159,5 +165,6 @@ if not _G.__cli_bridge_installed then
   end
 end
 
+mhfu.write_u32(BR + CB.MOVE_STATE, mhfu.move_block())
 mhfu.log(string.format("[cli_bridge] ready, polling 0x%08X%s", BR,
                        PORTS and "; ported monsters through mhfu_port" or ""))

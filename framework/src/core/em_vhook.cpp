@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
- * em_vhook: takes over a big monster's AI by wrapping two slots of its species
+ * em_vhook: takes over a big monster's AI by wrapping three slots of its species
  * vtable. A species' AI is an overlay reached through a vtable in the EBOOT; the
  * slots are writable and re-read on every dispatch, and a wrapper that tail-calls
  * the original is indistinguishable from the original. Only a word is written.
@@ -9,6 +9,8 @@
  *   slot 29, MONSTER_VTABLE.AI_STEP       the per-frame AI step, ~30.8/s
  *   slot 32, MONSTER_VTABLE.ENTER_ACTION  enters a behaviour pair:
  *                                         (entity, main, id, mode)
+ *   slot 30, MONSTER_VTABLE.ANIM_EVENTS   the playing entry's events at clip frames:
+ *                                         attacks, effects, sounds
  *
  * The stubs read a config block on every dispatch, so all of this is retargetable
  * from Lua without a rebuild (public surface: mhfu/em_vhook.h):
@@ -26,6 +28,10 @@
  *                 player at [lo,hi), receding -> enter Q", cooldown, budget.
  *   BUDGET        slot-32 post + slot-29 one-shot: the ENTITY.ACTION_BUDGET
  *                 override; the stubs carry it, but nothing arms it.
+ *   STEP          slot-29 pre: a C function per AI frame (mhfu_em_step), which may
+ *                 take the frame from the host step; the move player's seam (move.cpp).
+ *   MUTE          slot 30: one entity's animation events skipped (mhfu_em_mute_events),
+ *                 so a clip of a port's own does not fire the host entry's attacks.
  *
  * The pre-hook rewrites the arguments, not the cells: act_set is the only writer
  * of the cells and runs from the (rewritten) arguments; neither the enter-action
@@ -84,6 +90,8 @@ typedef struct {
     uint32_t ring_idx;                              /* +0x94 */
     uint32_t ring[MHFU_EM_RING];                   /* +0x98 */
     cfg_rule_t rules[MHFU_EM_RULES];               /* +0xB8 */
+    uint32_t step_fn, skip;                         /* +0x158 */
+    uint32_t mute_ent, muted;                       /* +0x160 */
 } em_vhook_cfg_t;
 
 static_assert(offsetof(em_vhook_cfg_t, prev_pair)   == CFG_PREV,        "cfg layout");
@@ -105,6 +113,10 @@ static_assert(offsetof(em_vhook_cfg_t, rules)       == CFG_RULE_BASE,   "cfg lay
 static_assert(sizeof(cfg_rule_t)                    == RULE_STRIDE,     "cfg layout");
 static_assert(offsetof(cfg_rule_t, min_frames)      == RULE_MIN_FRAMES, "cfg layout");
 static_assert(offsetof(cfg_rule_t, cooldown)        == RULE_COOLDOWN,   "cfg layout");
+static_assert(offsetof(em_vhook_cfg_t, step_fn)     == CFG_STEP_FN,     "cfg layout");
+static_assert(offsetof(em_vhook_cfg_t, skip)        == CFG_SKIP,        "cfg layout");
+static_assert(offsetof(em_vhook_cfg_t, mute_ent)    == CFG_MUTE_ENT,    "cfg layout");
+static_assert(offsetof(em_vhook_cfg_t, muted)       == CFG_MUTED,       "cfg layout");
 static_assert(sizeof(em_vhook_cfg_t)                == CFG_SIZE,        "cfg layout");
 
 #define CFG_CANARY_VAL 0x5645484Bu   /* 'VEHK' */
@@ -113,10 +125,12 @@ static_assert(sizeof(em_vhook_cfg_t)                == CFG_SIZE,        "cfg lay
  * stacks inside it, and stubs near its top were overwritten under heavy activity.
  * They come from the user partition, and only pointers live here. */
 #define RET_INSNS   4     /* jr ra; nop, padded to 16 bytes */
-#define BLOCK_BYTES ((STUB_AI_INSNS + STUB_ACT_INSNS + RET_INSNS) * 4 + CFG_SIZE + 128)
+#define STUBS       (STUB_AI_INSNS + STUB_ACT_INSNS + STUB_EVT_INSNS + RET_INSNS)
+#define BLOCK_BYTES (STUBS * 4 + CFG_SIZE + 128)
 
 static uint32_t *g_stub_ai;
 static uint32_t *g_stub_act;
+static uint32_t *g_stub_evt;
 static uint32_t *g_stub_ret;
 static em_vhook_cfg_t *g_cfgp;
 static SceUID g_block = -1;
@@ -129,6 +143,8 @@ static void cfg_reset_live(void)
     g_cfgp->frames = 0;
     g_cfgp->d2 = g_cfgp->d2_prev = 0;
     g_cfgp->sub_pending = g_cfgp->sub_to_pending = 0;
+    g_cfgp->skip = 0;
+    g_cfgp->mute_ent = 0;
 }
 
 static int alloc_block(void)
@@ -154,8 +170,9 @@ static int alloc_block(void)
     base = (uint8_t *)(((uintptr_t)base + 63) & ~(uintptr_t)63);
     g_stub_ai  = (uint32_t *)base;
     g_stub_act = (uint32_t *)(base + STUB_AI_INSNS * 4);
-    g_stub_ret = (uint32_t *)(base + (STUB_AI_INSNS + STUB_ACT_INSNS) * 4);
-    g_cfgp     = (em_vhook_cfg_t *)(base + (STUB_AI_INSNS + STUB_ACT_INSNS + RET_INSNS) * 4);
+    g_stub_evt = (uint32_t *)(base + (STUB_AI_INSNS + STUB_ACT_INSNS) * 4);
+    g_stub_ret = (uint32_t *)(base + (STUBS - RET_INSNS) * 4);
+    g_cfgp     = (em_vhook_cfg_t *)(base + STUBS * 4);
     for (unsigned k = 0; k < sizeof(*g_cfgp) / 4; k++)
         ((uint32_t *)g_cfgp)[k] = 0;
     cfg_reset_live();
@@ -167,6 +184,7 @@ static int alloc_block(void)
 static uint32_t g_vtable;            /* the species vtable we latched onto */
 static uint32_t g_orig_ai;
 static uint32_t g_orig_act;
+static uint32_t g_orig_evt;
 static int      g_installed;
 
 /* --- slot 29: count, request, rules, one-shot budget, then tail-call. ------
@@ -203,8 +221,8 @@ static void build_ai_stub(uint32_t original)
         return;
     }
     for (int k = n; k < STUB_AI_INSNS; k++) g_stub_ai[k] = MIPS_NOP;
-    mhfu_log("[%s] ai stub: request + %d rules + one-shot budget, %d insns, frame-free",
-             OWNER, MHFU_EM_RULES, n);
+    mhfu_log("[%s] ai stub: request + %d rules + C step + one-shot budget, %d insns, "
+             "frame-free", OWNER, MHFU_EM_RULES, n);
 }
 
 /* --- slot 32: substitution pre part, the original, the budget post part. ---
@@ -244,6 +262,20 @@ static void build_act_stub(uint32_t original)
              "%d insns, frame 0x%X", OWNER, MHFU_EM_SUBS, n, ACT_FRAME);
 }
 
+/* --- slot 30: skipped for the muted entity. --- */
+static void build_events_stub(uint32_t original)
+{
+    int overflow = 0;
+    int n = emv_build_events_stub(g_stub_evt, STUB_EVT_INSNS, (uint32_t)(uintptr_t)g_cfgp,
+                                  original, (uint32_t)(uintptr_t)g_stub_ret, &overflow);
+    if (overflow) {
+        g_stub_evt[0] = mips_j(original);
+        g_stub_evt[1] = MIPS_NOP;
+        return;
+    }
+    for (int k = n; k < STUB_EVT_INSNS; k++) g_stub_evt[k] = MIPS_NOP;
+}
+
 /* ------------------------------------------------------------ public API */
 
 extern "C" int mhfu_em_installed(void) { return g_installed; }
@@ -270,6 +302,16 @@ extern "C" void mhfu_em_substitute(int slot, uint8_t from_mask, uint8_t from_sub
                  count == MHFU_EM_UNLIMITED ? "standing" : "n");
     else
         mhfu_log("[%s] substitute[%d]: cleared", OWNER, slot);
+}
+
+extern "C" void mhfu_em_step(mhfu_em_step_fn fn)
+{
+    if (g_cfgp) g_cfgp->step_fn = (uint32_t)(uintptr_t)fn;
+}
+
+extern "C" void mhfu_em_mute_events(uint32_t entity)
+{
+    if (g_cfgp) g_cfgp->mute_ent = entity;
 }
 
 /* A pair to enter on the next AI frame, through the engine's dispatcher. */
@@ -355,6 +397,7 @@ extern "C" void mhfu_em_status(mhfu_em_status_t *out)
     out->sub_landed  = g_cfgp->sub_landed;
     out->sub_last_in = g_cfgp->sub_last_in;
     out->brain_fires = g_cfgp->brain_fires;
+    out->events_muted = g_cfgp->muted;
     out->req_pending = g_cfgp->req_pending;
     out->req_done    = g_cfgp->req_done;
     out->req_result  = g_cfgp->req_result;
@@ -383,12 +426,14 @@ static void install_for(uint32_t entity)
     g_vtable  = vt;
     g_orig_ai  = mhfu_mem_read_u32(vt + MHFU_MONSTER_VTABLE_AI_STEP);
     g_orig_act = mhfu_mem_read_u32(vt + MHFU_MONSTER_VTABLE_ENTER_ACTION);
+    g_orig_evt = mhfu_mem_read_u32(vt + MHFU_MONSTER_VTABLE_ANIM_EVENTS);
 
     cfg_reset_live();
     emv_build_ret_stub(g_stub_ret);
     g_stub_ret[2] = MIPS_NOP; g_stub_ret[3] = MIPS_NOP;
     build_ai_stub(g_orig_ai);
     build_act_stub(g_orig_act);
+    build_events_stub(g_orig_evt);
     mhfu_hook_flush_caches();
 
     /* data writes, not code patches: they take outside the JIT-cold window */
@@ -397,6 +442,9 @@ static void install_for(uint32_t entity)
     if (rc == MHFU_HOOK_OK)
         rc = mhfu_hook_vtable(vt + MHFU_MONSTER_VTABLE_ENTER_ACTION,
                               (uint32_t)(uintptr_t)g_stub_act, OWNER);
+    if (rc == MHFU_HOOK_OK)
+        rc = mhfu_hook_vtable(vt + MHFU_MONSTER_VTABLE_ANIM_EVENTS,
+                              (uint32_t)(uintptr_t)g_stub_evt, OWNER);
     if (rc != MHFU_HOOK_OK) {
         mhfu_hook_release(OWNER);
         mhfu_log("[%s] vtable 0x%08X: slot claim failed (rc=%d), not installed",
@@ -405,10 +453,11 @@ static void install_for(uint32_t entity)
     }
     g_installed = 1;
 
-    mhfu_log("[%s] vtable 0x%08X: slot29 0x%08X -> 0x%08X, slot32 0x%08X -> 0x%08X",
-             OWNER, (unsigned)vt, (unsigned)g_orig_ai,
+    mhfu_log("[%s] vtable 0x%08X: slot29 0x%08X -> 0x%08X, slot32 0x%08X -> 0x%08X, "
+             "slot30 0x%08X -> 0x%08X", OWNER, (unsigned)vt, (unsigned)g_orig_ai,
              (unsigned)(uintptr_t)g_stub_ai, (unsigned)g_orig_act,
-             (unsigned)(uintptr_t)g_stub_act);
+             (unsigned)(uintptr_t)g_stub_act, (unsigned)g_orig_evt,
+             (unsigned)(uintptr_t)g_stub_evt);
 }
 
 static void uninstall(void)
@@ -416,6 +465,7 @@ static void uninstall(void)
     if (!g_installed) return;
     mhfu_hook_release(OWNER);
     g_installed = 0;
+    g_cfgp->step_fn = 0;
     mhfu_em_clear();
     mhfu_log("[%s] restored vtable 0x%08X (ai_ticks=%u act_enters=%u sub %u/%u "
              "req %u brain %u)", OWNER, (unsigned)g_vtable,
@@ -439,6 +489,7 @@ static void on_quest(const mhfu_event_ctx_t *ctx)
     uninstall();
     g_cfgp->ai_ticks = g_cfgp->act_enters = 0;
     g_cfgp->sub_hits = g_cfgp->sub_landed = g_cfgp->brain_fires = 0;
+    g_cfgp->muted = 0;
     g_cfgp->req_done = 0;
 }
 
@@ -459,5 +510,6 @@ extern "C" int mhfu_em_init(void)
     mhfu_log("[%s] ready; cfg @0x%08X, stubs @0x%08X / 0x%08X", OWNER,
              (unsigned)(uintptr_t)g_cfgp,
              (unsigned)(uintptr_t)g_stub_ai, (unsigned)(uintptr_t)g_stub_act);
+    mhfu_move_init();
     return 0;
 }

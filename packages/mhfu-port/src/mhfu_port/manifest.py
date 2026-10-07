@@ -141,6 +141,9 @@ class Clip:
     frames: int | None = None
     loop: bool | None = None
     impact_frame: int | None = None
+    turn: float | None = None
+    """Degrees YAW turns while the clip plays, positive the way YAW grows: toward the
+    monster's +x, its left. None: the turn its own body makes (`mhfu_port.travel`)."""
     label: str = ""
     labelled_build: str | None = None
 

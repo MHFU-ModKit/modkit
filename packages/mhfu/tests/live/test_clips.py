@@ -232,4 +232,4 @@ def test_ride_deploys_to_the_launchers_lane(monkeypatch):
     monkeypatch.setattr(clips.Rig, "open", no_boot)
     with pytest.raises(RuntimeError):
         clips.ride("zin", launcher=Launcher(lane=3))
-    assert seen == [("zin", None, clips.TIGREX, (clips.GIADROME,), Lane(3).stick)]
+    assert seen == [("zin", None, clips.TIGREX, (clips.GIADROME,), Lane(3).stick, None)]

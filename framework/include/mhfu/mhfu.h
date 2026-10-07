@@ -21,6 +21,7 @@
 #include "bigmon_overlay.h"
 #include "ovl_reloc.h"
 #include "em_vhook.h"
+#include "move.h"
 #include "mips.h"
 #include "mod.h"
 
