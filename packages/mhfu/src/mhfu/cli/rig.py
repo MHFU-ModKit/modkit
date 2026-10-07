@@ -6,7 +6,9 @@
     mhfu rig where
     mhfu rig teleport 6400 7800
     mhfu rig summon --distance 500
-    mhfu rig pin --seconds 60
+    mhfu rig pin --seconds 60 --cull                  # and no small monster in the section
+    mhfu rig hold                                     # its AI script waits; reactions play
+    mhfu rig aim 44                                   # the player before that bone, facing it
     mhfu rig speed fast
     mhfu rig points --map maps/snow                   # the named points of a map document
     mhfu rig goto wall --map maps/snow                # one area change, then onto the floor
@@ -34,9 +36,10 @@ from ppsspp_debug import DebuggerError, Unsupported
 from .. import points as P
 from ..files import Extracted
 from ..live import boot, navigation, route, survival
-from ..live.rig import SHEET_COLUMNS, OffFloor, Rig, big_monsters, floor
+from ..live.rig import AIM_DISTANCE, SHEET_COLUMNS, OffFloor, Rig, big_monsters, floor
 from ..points import Point
 from ..stage import NotLoaded, map_manager
+from ..structs import BigMonster
 from .live import launcher, launcher_args
 
 if TYPE_CHECKING:
@@ -69,11 +72,21 @@ def register(sub: Subparsers) -> None:
     c = command("summon", "move a big monster next to the player and check it is drawn")
     c.add_argument("--distance", type=float, default=600.0)
     c.add_argument("--bearing", type=float, help="degrees; default the way the player faces")
-    c.add_argument("--slot", type=int, help="its entity-registry slot; default the first")
+    _slot_arg(c)
     c.set_defaults(run=summon)
+    c = command("hold", "stop a big monster's AI script choosing; its next reaction ends it")
+    _slot_arg(c)
+    c.set_defaults(run=hold)
+    c = command("aim", "put the player before a big monster's bone, facing it")
+    c.add_argument("bone", type=int)
+    c.add_argument("--distance", type=float, default=AIM_DISTANCE)
+    c.add_argument("--no-turn", dest="turn", action="store_false", help="leave the monster's yaw")
+    _slot_arg(c)
+    c.set_defaults(run=aim)
     c = command("pin", "hold the player's HP and the quest clock until ctrl-c")
     c.add_argument("--hp", type=int, help="default: the maximum")
     c.add_argument("--seconds", type=float, help="stop after this long")
+    _cull_arg(c)
     c.set_defaults(run=pin)
     c = command("speed", "fast-forward, or the game's own rate")
     c.add_argument("speed", choices=("fast", "normal"))
@@ -92,6 +105,7 @@ def register(sub: Subparsers) -> None:
     c.add_argument(
         "--calm", action="store_true", help="also calm big monsters (their sight stays zero after)"
     )
+    _cull_arg(c)
     _map_args(c)
     c.set_defaults(run=walk)
     c = command("shot", "the frame on screen to a PNG, while the game runs")
@@ -105,6 +119,27 @@ def register(sub: Subparsers) -> None:
     c.add_argument("--columns", type=int, default=SHEET_COLUMNS, help="frames across the sheet")
     _scale_arg(c)
     c.set_defaults(run=film)
+
+
+def _slot_arg(c: argparse.ArgumentParser) -> None:
+    c.add_argument("--slot", type=int, help="its entity-registry slot; default the first")
+
+
+def _cull_arg(c: argparse.ArgumentParser) -> None:
+    c.add_argument(
+        "--cull", action="store_true", help="hold small monsters' HP at 0 in the player's section"
+    )
+
+
+def _monster(rig: Rig, slot: int | None) -> BigMonster | None:
+    """The big monster in registry `slot`; None (the first) without one."""
+    if slot is None:
+        return None
+    found = {m.base: m for m in big_monsters(rig.s)}
+    base = rig.s.game.registry[slot]
+    if base not in found:
+        raise LookupError(f"slot {slot} holds no big monster")
+    return found[base]
 
 
 def _fail(args: argparse.Namespace, e: Exception) -> int:
@@ -176,14 +211,7 @@ def teleport(args: argparse.Namespace) -> int:
 def summon(args: argparse.Namespace) -> int:
     try:
         with Rig.attach(launcher(args)) as rig:
-            monster = None
-            if args.slot is not None:
-                found = {m.base: m for m in big_monsters(rig.s)}
-                base = rig.s.game.registry[args.slot]
-                if base not in found:
-                    return _fail(args, LookupError(f"slot {args.slot} holds no big monster"))
-                monster = found[base]
-            got = rig.summon(monster, distance=args.distance, bearing=args.bearing)
+            got = rig.summon(_monster(rig, args.slot), distance=args.distance, bearing=args.bearing)
             name = got.monster.name
     except (ConnectionError, LookupError, OffFloor, NotLoaded, RuntimeError) as e:
         return _fail(args, e)
@@ -193,9 +221,31 @@ def summon(args: argparse.Namespace) -> int:
     return 0 if got.drawn else 1
 
 
+def hold(args: argparse.Namespace) -> int:
+    try:
+        with Rig.attach(launcher(args)) as rig:
+            m = rig.hold(_monster(rig, args.slot))
+            print(f"{m.name} held: its AI script waits {m.script_wait} AI frames")
+    except (ConnectionError, LookupError, RuntimeError) as e:
+        return _fail(args, e)
+    return 0
+
+
+def aim(args: argparse.Namespace) -> int:
+    try:
+        with Rig.attach(launcher(args)) as rig:
+            x, y, z = rig.aim(
+                args.bone, _monster(rig, args.slot), distance=args.distance, turn=args.turn
+            )
+    except (ConnectionError, LookupError, OffFloor, NotLoaded, RuntimeError) as e:
+        return _fail(args, e)
+    print(f"player -> ({x:.0f}, {y:.1f}, {z:.0f}), bone {args.bone} {args.distance:.0f} ahead")
+    return 0
+
+
 def pin(args: argparse.Namespace) -> int:
     try:
-        with Rig.attach(launcher(args)) as rig, rig.pin_hp(args.hp) as guard:
+        with Rig.attach(launcher(args)) as rig, rig.pin_hp(args.hp, cull=args.cull) as guard:
             print(f"HP pinned at {guard.hp}; ctrl-c stops", flush=True)
             end = time.monotonic() + (args.seconds if args.seconds is not None else math.inf)
             try:
@@ -276,8 +326,10 @@ def walk(args: argparse.Namespace) -> int:
         targets = [P.find(known, name) for name in args.point]
         climbs = [p for p in known if p.kind == "climb"]
         with Rig.attach(launcher(args)) as rig, ExitStack() as guard:
-            if args.guard or args.calm:
-                guard.enter_context(survival.Guard(rig.s, calm_monsters=args.calm))
+            if args.guard or args.calm or args.cull:
+                guard.enter_context(
+                    survival.Guard(rig.s, calm_monsters=args.calm, cull_small=args.cull)
+                )
             plan = _plan(rig, args)
             for point in targets:
                 log(f"to {point.name}")

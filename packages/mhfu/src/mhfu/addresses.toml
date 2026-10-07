@@ -200,7 +200,7 @@ EM_FACTORY = { eu = 0x09AB15D8, type = "fn", doc = "big-monster entity factory f
 ATTACK_SPAWNERS = { eu = 0x09B63000, type = "code", doc = "start of game_task's attack-node constructors, one per species (TIGREX_ATTACK_SPAWN among them), (?, entity, attack id)" }
 ATTACK_SPAWNERS_END = { eu = 0x09B66B00, type = "code", doc = "end of the ATTACK_SPAWNERS run" }
 REACTION_CHECK = { eu = 0x09AC7908, type = "fn", doc = "(entity, out): applies PENDING_DAMAGE while HIT_PENDING and returns the reaction a species AI step enters: 0 none, 2 dead, 12 flinch, 14 hit only, 15/16 damage types 26..30" }
-EM75_REACTIONS = { eu = 0x09D62B00, type = "ptr[19]", doc = "em75 AI step's jump table over REACTION_CHECK codes; each case enters vt+0x88(entity, 4, 5 or 6, sub, mode 2)" }
+EM75_REACTIONS = { eu = 0x09D62B00, type = "ptr[19]", doc = "em75 AI step's jump table over REACTION_CHECK codes; each case enters vt+0x88(entity, 4, 5 or 6, sub, mode 2); code 11, the tail cut, enters (4,4)" }
 EM75_ATTACK_NODE_INIT = { eu = 0x09D4B318, type = "fn", doc = "(node, entity, attack id): fills the ATTACK_NODE, links it at COLLISION_WORLD.LIST_HEAD, clears the owner's COMBAT_ENGAGED and COMBAT_REGISTERED" }
 SET_COMBAT_MODE = { eu = 0x09AC92B0, type = "fn", doc = "(entity, mode, frames): ENTITY.COMBAT_MODE = mode; 0 also forgets ENTITY.AWARE. The AI script sets 1 in the hub after the roar; a hit sets it too" }
 AWARENESS_ADD = { eu = 0x09AD29F8, type = "fn", doc = "(entity, amount, cap, hunter index): adds to ENTITY.AWARENESS; at 9000, with the hunter in the monster's section, sets its ENTITY.AWARE bit (the notice) and refills AWARE_TIMERS with SPECIES.AWARE_TIME" }
@@ -339,7 +339,7 @@ STEER = { offset = 0x637, type = "u8", doc = "big monsters: set by a charge's tr
 RUN_BUDGET = { offset = 0x76C, type = "f32", doc = "big monsters: distance a run move may still travel; BUDGET_STEP subtracts the clip's root motion, the translator seeds it" }
 CLIP_BLOCKS = { offset = 0x080, type = "CLIP_BLOCK[3]", doc = "big monsters: one clip player per body part (Bone.stream); CLIP and CLIP_FLAGS are part 0's" }
 SCRIPT_WAKE = { offset = 0x4B5, type = "u8", doc = "big monsters: set as the brain hubs (0,1)/(0,2) run; SCRIPT_TICK runs the AI script and clears it. A pair entered from outside with it set is cut short by the script's next pair" }
-SCRIPT_WAIT = { offset = 0x778, type = "s16", doc = "big monsters: AI frames SCRIPT_TICK waits before it may run the AI script" }
+SCRIPT_WAIT = { offset = 0x778, type = "s16", doc = "big monsters: AI frames SCRIPT_TICK waits before it may run the AI script; a reaction zeroes it (the tail cut, measured)" }
 HUNTER_INDEX = { offset = 0x1E6, type = "u16", doc = "hunters: 0 the player, 1 the Felyne; the bit a big monster's AWARE and COMBAT_SEEN keep for it" }
 MOST_DAMAGED_PART = { offset = 0x286, type = "u8", doc = "big monsters: the part with the most PENDING_DAMAGE in the last frame with a hit; picks the flinch pair" }
 SEVERED = { offset = 0x2B8, type = "u8", doc = "big monsters: bit 0 once the tail is cut, which the hurtbox walk skips; em75 sets it entering (4,4), the tail-cut reaction" }

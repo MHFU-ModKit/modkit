@@ -6,7 +6,9 @@ the player and a big monster put where the test needs them, the player kept aliv
     with Rig.open(state=6) as rig:    # MHFU_LANE's PPSSPP_STATE/ULES01213_1.01_6.ppst
         rig.teleport(6400, 7800)
         tigrex = rig.summon(distance=600)
-        with rig.pin_hp():
+        with rig.pin_hp(cull=True):
+            rig.hold()                # its AI script waits; reactions still play
+            rig.aim(44)               # the tail tip straight ahead, then press triangle
             ...
 
 Every write to a monster here is one-shot: a big monster maintained per tick stops fighting.
@@ -45,6 +47,12 @@ TURN = 0x10000
 """ENTITY.YAW units in a full turn."""
 SUMMON_DISTANCE = 600.0
 """Inside a Tigrex's charge reach (645), outside its body."""
+AIM_DISTANCE = 170.0
+"""From the player to the bone `aim` puts ahead: a weapon's first swing reaches it."""
+HOLD = 0x7FFF
+"""ENTITY.SCRIPT_WAIT `hold` writes: AI frames, ~18 minutes."""
+SETTLE = 0.3
+"""Seconds for the pose to follow a monster's turned YAW."""
 BEARING_STEP = 30.0
 """Degrees a summon turns when the floor ends along its bearing."""
 DRAWN_FOR = 0.5
@@ -101,10 +109,17 @@ def big_monsters(s: Session) -> list[BigMonster]:
     """Registry entities of a quest target species or a known big-monster class."""
     targets = s.game.quest.target_species - {0}
     return [
-        BigMonster(s.mem, e.base)
-        for e in s.game.monsters().values()
-        if e.species in targets or e.vtable in survival.BIG_MONSTER_VTABLES
+        BigMonster(s.mem, e.base) for e in s.game.monsters().values() if survival.is_big(e, targets)
     ]
+
+
+def _first(s: Session, monster: BigMonster | None) -> BigMonster:
+    if monster is not None:
+        return monster
+    found = big_monsters(s)
+    if not found:
+        raise LookupError("no big monster in the entity registry")
+    return found[0]
 
 
 @dataclass(frozen=True)
@@ -132,11 +147,7 @@ def summon(
     one visibility fix (ENTITY.SECTION, DRAW_GATE), then the draw is read back from memory.
     """
     player = _player(s)
-    if monster is None:
-        found = big_monsters(s)
-        if not found:
-            raise LookupError("no big monster in the entity registry")
-        monster = found[0]
+    monster = _first(s, monster)
     px, py, pz = player.position
     ground = floor(s)
     start = math.degrees(player.facing) if bearing is None else bearing
@@ -169,11 +180,50 @@ def _drawn(s: Session, monster: BigMonster, timeout: float) -> bool:
     return True
 
 
-def pin_hp(s: Session, hp: int | None = None, *, tick: float = 0.5) -> survival.Guard:
-    """A Guard holding the player's HP (the maximum by default) and the quest clock; enter it
-    to start, leave it to stop. Monsters stay free to attack."""
+def hold(s: Session, monster: BigMonster | None = None) -> BigMonster:
+    """Stop a big monster's AI script choosing its next move (the first by default).
+
+    It ends what it is doing and waits in a hub; its reactions (flinch, break, tail cut) still
+    play, and the first one ends the hold: the reaction zeroes SCRIPT_WAIT.
+    """
+    monster = _first(s, monster)
+    monster.script_wait = HOLD
+    return monster
+
+
+def aim(
+    s: Session,
+    bone: int,
+    monster: BigMonster | None = None,
+    *,
+    distance: float = AIM_DISTANCE,
+    turn: bool = True,
+) -> Vec3:
+    """Put the player `distance` before a big monster's `bone`, facing it.
+
+    A teleport keeps the player's facing, so the bone ends up straight ahead. With `turn` the
+    monster is turned first so the bone is on the player's side of its body (a tail end-on).
+    """
+    player, monster = _player(s), _first(s, monster)
+    f = player.facing
+    if turn:
+        mx, _, mz = monster.position
+        bx, _, bz = monster.joint(bone)
+        miss = f + math.pi - math.atan2(bx - mx, bz - mz)
+        monster.yaw = (monster.yaw + round(miss / math.tau * TURN)) % TURN
+        s.sleep(SETTLE)
+    bx, _, bz = monster.joint(bone)
+    return teleport(s, bx - distance * math.sin(f), bz - distance * math.cos(f))
+
+
+def pin_hp(
+    s: Session, hp: int | None = None, *, tick: float = 0.5, cull: bool = False
+) -> survival.Guard:
+    """A Guard holding the player's HP (the maximum by default) and the quest clock, and with
+    `cull` no small monster in the player's section; enter it to start, leave it to stop. Big
+    monsters stay free to attack."""
     pinned = _player(s).max_hp if hp is None else hp
-    return survival.Guard(s, hp=pinned, calm_monsters=False, tick=tick)
+    return survival.Guard(s, hp=pinned, calm_monsters=False, cull_small=cull, tick=tick)
 
 
 # After a launch with a state, memory is read only with the CPU stopped: PPSSPP deadlocks on a
@@ -312,9 +362,24 @@ class Rig:
     ) -> Summoned:
         return summon(self.s, monster, distance=distance, bearing=bearing)
 
-    def pin_hp(self, hp: int | None = None, *, tick: float = 0.5) -> survival.Guard:
+    def hold(self, monster: BigMonster | None = None) -> BigMonster:
+        return hold(self.s, monster)
+
+    def aim(
+        self,
+        bone: int,
+        monster: BigMonster | None = None,
+        *,
+        distance: float = AIM_DISTANCE,
+        turn: bool = True,
+    ) -> Vec3:
+        return aim(self.s, bone, monster, distance=distance, turn=turn)
+
+    def pin_hp(
+        self, hp: int | None = None, *, tick: float = 0.5, cull: bool = False
+    ) -> survival.Guard:
         """`pin_hp`, stopped with the rig if it is still running."""
-        guard = pin_hp(self.s, hp, tick=tick)
+        guard = pin_hp(self.s, hp, tick=tick, cull=cull)
         self.guards.append(guard)
         return guard
 

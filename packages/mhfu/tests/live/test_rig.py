@@ -11,7 +11,9 @@ from PIL import Image
 from ppsspp_debug import DebuggerError, Lane
 
 TIGREX, MAP_MANAGER = a.RAM.start + 0x90_0000, a.RAM.start + 0x91_0000  # heap in `fake`
+JOINTS = a.RAM.start + 0x92_0000
 AREA = 109
+TAIL = 44
 
 
 class Ground:
@@ -98,7 +100,32 @@ def test_summon_without_a_monster(s, game):
 
 def test_pin_hp(s, game):
     guard = rig.pin_hp(s, tick=0.01)
-    assert guard.hp == 150 and not guard.calm_monsters
+    assert guard.hp == 150 and not guard.calm_monsters and not guard.cull_small
+    assert rig.pin_hp(s, cull=True).cull_small
+
+
+def test_hold(s, game):
+    assert rig.hold(s).base == TIGREX
+    assert game.peek("h", TIGREX + a.ENTITY.SCRIPT_WAIT) == (rig.HOLD,)
+
+
+@pytest.fixture
+def tail(game):
+    """The Tigrex at (600, 5, 0), facing +z, its tail tip posed 300 behind it."""
+    game.poke("3f", TIGREX + a.ENTITY.POSITION, 600.0, 5.0, 0.0)
+    game.poke("I", TIGREX + a.ENTITY.JOINTS, JOINTS)
+    game.poke("3f", JOINTS + TAIL * a.JOINT.size + a.JOINT.POSITION, 600.0, 5.0, -300.0)
+    return game
+
+
+def test_aim(s, tail):
+    assert rig.aim(s, TAIL) == pytest.approx((430, 5.0, -300))  # 170 short of it along +x
+    assert tail.peek("H", TIGREX + a.ENTITY.YAW) == (0x4000,), "turned a quarter, tail to us"
+
+
+def test_aim_without_turn(s, tail):
+    assert rig.aim(s, TAIL, distance=100, turn=False) == pytest.approx((500, 5.0, -300))
+    assert tail.peek("H", TIGREX + a.ENTITY.YAW) == (0,)
 
 
 def test_state_path():
@@ -167,6 +194,18 @@ def test_cli(cli, capsys):
     assert out[2] == f"stage st{AREA}, area {AREA}, screen 0"
     assert out[:2] == ["player -> (300, 5.0, -40)", "Tigrex -> (800, 5, -40), 500 away, drawn"]
     assert out[-1] == f"Tigrex 0x{TIGREX:08X} (800, 5, -40), 500 away, section {AREA}, drawn"
+
+
+def test_cli_hold_and_aim(cli, tail, capsys):
+    assert cli("hold") == 0
+    assert cli("aim", str(TAIL), "--no-turn") == 0
+    assert cli("hold", "--slot", "5") == 1
+    out = capsys.readouterr()
+    assert out.out.splitlines() == [
+        f"Tigrex held: its AI script waits {rig.HOLD} AI frames",
+        f"player -> (430, 5.0, -300), bone {TAIL} 170 ahead",
+    ]
+    assert "slot 5 holds no big monster" in out.err
 
 
 def test_cli_not_drawn(cli, game, capsys):

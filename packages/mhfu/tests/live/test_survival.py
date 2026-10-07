@@ -6,6 +6,8 @@ from mhfu import addresses as a
 from mhfu.live import survival
 
 TIGREX, POPO = a.RAM.start + 0x90_0000, a.RAM.start + 0x90_2000  # heap addresses in `fake`
+FAR_POPO = a.RAM.start + 0x90_4000
+AREA = 106
 
 
 def spawn(fake):
@@ -35,6 +37,24 @@ def test_levers(s, fake):
     assert fake.peek("H", a.PLAYER_ENTITY + a.ENTITY.HP) == (150,)
     assert fake.peek("f", TIGREX + a.ENTITY.ENGAGE) == (0.0,)
     assert s.game.species(0x4B).sight_radius == 0.0
+
+
+def test_cull(s, fake):
+    spawn(fake)
+    fake.poke("21I", a.ENTITY_REGISTRY, *[0, 0, 0, POPO, FAR_POPO, 0, 0, 0, 0, TIGREX] + [0] * 11)
+    fake.poke("H", a.AREA_INDEX, AREA)
+    for e, section in ((POPO, AREA), (FAR_POPO, AREA + 1), (TIGREX, AREA)):
+        fake.poke("H", e + a.ENTITY.SECTION, section)
+        fake.poke("H", e + a.ENTITY.HP, 120)
+    assert survival.cull(s) == 1 and survival.cull(s) == 0
+    hp = [fake.peek("H", e + a.ENTITY.HP)[0] for e in (POPO, FAR_POPO, TIGREX)]
+    assert hp == [0, 120, 120], "the one in the player's section, never the big one"
+    with survival.Guard(s, tick=0.01, calm_monsters=False, cull_small=True) as guard:
+        fake.poke("H", POPO + a.ENTITY.HP, 50)
+        deadline = time.monotonic() + 5
+        while guard.culled < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+    assert guard.culled == 1 and "1 small monster(s) culled" in guard.report()
 
 
 def test_guard(s, fake):
