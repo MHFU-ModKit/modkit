@@ -159,6 +159,28 @@ class ClipsPanel(kit.Panel):
             icon="ph.swap",
         )
         form.row("Anim", kit.row(self.anim, self.place, stretch=True))
+        self.turn = kit.number(
+            tip="Degrees the monster turns over the clip, + the way YAW grows (to its left):"
+            " clips like a turn on the spot carry none of their own. The ring in the view"
+            " drags it too.",
+            lo=-359,
+            hi=359,
+            suffix="\u00b0",
+            on=lambda v: self.studio.act("clip turn", lambda: self.ws.set_clip_turn(v))(),
+        )
+        self.own_turn = kit.button(
+            "Its own",
+            tip="Drops the turn set here: the clip turns as its own body does",
+            on=self.studio.act("clip turn", lambda: self.ws.set_clip_turn(None)),
+            icon="ph.arrow-counter-clockwise",
+        )
+        self.gizmo = kit.check(
+            "Ring",
+            tip="Shows the turn gizmo on the floor of the view (T)",
+            on=lambda on: self.studio.act("turn gizmo", lambda: self._gizmo(on))(),
+            checked=True,
+        )
+        self.turn_label = form.row("Turn", kit.row(self.turn, self.own_turn, self.gizmo))
         self.editor.body.addWidget(form)
         self.apply = kit.button(
             "Apply",
@@ -179,7 +201,16 @@ class ClipsPanel(kit.Panel):
             on=self.studio.act("release", self.ws.release_in_game),
             icon="ph.square",
         )
-        self.editor.body.addWidget(kit.row(self.apply, self.in_game, self.release, stretch=True))
+        self.new_move = kit.button(
+            "New move",
+            tip="Makes an own move that plays this clip, in Moves: its attacks, turn and what"
+            " follows it",
+            on=self.studio.act("new move", self._new_move),
+            icon="ph.plus",
+        )
+        self.editor.body.addWidget(
+            kit.row(self.apply, self.in_game, self.release, self.new_move, stretch=True)
+        )
         self.edit_hint = kit.label(role="muted")
         self.editor.body.addWidget(self.edit_hint)
         lay.addWidget(self.editor)
@@ -242,6 +273,15 @@ class ClipsPanel(kit.Panel):
         self.label.setText(self.ws.label_buf)
         self.name.setFocus()
         self.name.selectAll()
+
+    def _gizmo(self, on: bool) -> None:
+        self.ws.turn.shown = on
+
+    def _new_move(self) -> None:
+        before = self.ws.manifest
+        self.ws.new_move()
+        if self.ws.manifest is not before:
+            self.ws.focus("Moves")
 
     def _place(self) -> None:
         def run() -> None:
@@ -403,6 +443,7 @@ class ClipsPanel(kit.Panel):
         self.why.setText(cov.why() if cov else UNPLACED if row.entry is None else "Kind unknown.")
         self.why.set_level(level_of(cov))
         self.in_game.setEnabled(row.entry is not None)
+        self._turn()
         br = ws.browser()
         if placeable and br is not None:
             self.anim.setMaximum(max(br.layout().capacity - 1, 0))
@@ -411,6 +452,19 @@ class ClipsPanel(kit.Panel):
             self._loaded = row.key
             kit.put(self.name, ws.name_buf)
             kit.put(self.label, ws.label_buf)
+
+    def _turn(self) -> None:
+        """The clip on screen's turn: the one set here, else its own body's."""
+        got = self.ws.clip_turn()
+        for w in (self.turn, self.own_turn, self.gizmo, self.turn_label):
+            w.setVisible(got is not None)
+        if got is None:
+            return
+        deg, given = got
+        kit.put(self.turn, deg)
+        kit.put(self.gizmo, self.ws.turn.shown)
+        self.own_turn.setEnabled(given)
+        self.turn_label.setText("Turn" if given else "Turn (own)")
 
 
 def kind_text(cov: SlotCoverage | None) -> str:

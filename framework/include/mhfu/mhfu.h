@@ -10,6 +10,7 @@
 #include "types.h"
 #include "log.h"
 #include "memory.h"
+#include "call.h"
 #include "world.h"
 #include "ids.h"
 #include "entity.h"
@@ -22,6 +23,7 @@
 #include "ovl_reloc.h"
 #include "em_vhook.h"
 #include "move.h"
+#include "monster_events.h"
 #include "mips.h"
 #include "mod.h"
 

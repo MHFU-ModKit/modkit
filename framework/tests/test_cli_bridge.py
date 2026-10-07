@@ -35,6 +35,7 @@ class Game:
             {
                 "addr": self.lua.execute(a.render_lua(a.table())),
                 "read_u32": lambda at: self.mem.get(at, 0),
+                "read_u8": lambda at: self.mem.get(at, 0) & 0xFF,
                 "write_u32": self.mem.__setitem__,
                 "entity_at": lambda slot: self.slots.get(slot, 0),
                 "on_bigmonster_action": lambda fn, _pri: self.handlers.append(fn),
@@ -59,10 +60,11 @@ class Game:
     def gate(self, slot: int) -> int:
         return self.mem.get(self.slots[slot] + GATE, 0)
 
-    def send(self, cmd: int, slot: int = 1, arg: int = 0) -> None:
+    def send(self, cmd: int, slot: int = 1, arg: int = 0, arg2: int = 0) -> None:
         """Write one command and run a tick; the script acks it."""
         self.seq += 1
         words = {CB.MAGIC: MAGIC, CB.SEQ: self.seq, CB.CMD: cmd, CB.SLOT: slot, CB.ARG: arg}
+        words[CB.ARG2] = arg2
         self.mem.update({BR + at: value for at, value in words.items()})
         self.tick()
         assert self.mem[BR + CB.ACK] == self.seq
@@ -94,7 +96,12 @@ def test_clear_releases_the_action(game):
 
 PORT_LIB = """{ ports = { zin = { name = "zin", ent = %d, log = {},
   latch = function(self, a1, uses) self.log[#self.log + 1] = a1 .. "x" .. uses end,
-  release = function(self) self.log[#self.log + 1] = "release" end } } }"""
+  release = function(self) self.log[#self.log + 1] = "release" end,
+  move = function(self, name, opts)
+    self.log[#self.log + 1] = "move " .. name .. (opts.force and " forced" or "")
+    if opts.build ~= 0 and opts.build ~= 7 then return false, "stale" end
+    return name == "stamp"
+  end } } }"""
 
 
 def test_a_ported_monster_is_forced_through_its_port():
@@ -146,3 +153,26 @@ def test_move_plays_the_block_spec_on_the_slot(game):
     assert game.moves == [(game.slots[2], BR + CB.MOVE)]
     game.send(CLEAR)
     assert game.stops == 1
+
+
+def test_own_move_by_name_through_the_port():
+    game = Game(PORT_LIB % Game().slots[1])
+
+    def own(name: str, slot: int = 1, arg: int = 1, build: int = 0) -> int:
+        raw = name.encode().ljust(CB.NAME.count or 0, b"\0")
+        game.mem.update({BR + CB.NAME + i: c for i, c in enumerate(raw)})
+        game.send(MOVE, slot=slot, arg=arg, arg2=build)
+        return game.mem[BR + CB.RESULT]
+
+    assert (own("stamp"), own("nope"), own("stamp", slot=2), own("stamp", arg=3)) == (1, 0, 0, 1)
+    assert (own("stamp", build=7), own("stamp", build=8)) == (1, 2)
+    log = game.lua.eval("package.loaded.mhfu_port.ports.zin.log")
+    assert list(log.values())[:3] == ["move stamp", "move nope", "move stamp forced"]
+    assert game.moves == []
+
+
+def test_a_reload_applies_nothing_twice(game):
+    game.send(MOVE, slot=2)
+    game.lua.execute(SCRIPT.read_text())
+    game.tick()
+    assert game.moves == [(game.slots[2], BR + CB.MOVE)]

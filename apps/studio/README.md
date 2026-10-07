@@ -54,6 +54,31 @@ builds the port again. Play in game holds the clip's anim on the running game's 
 plays the build last injected, so a clip placed since the manifest was saved is refused until it
 is saved and injected again (`mhfu-port inject`).
 
+## A port's own moves
+
+An own move plays one clip on every body part through the framework's move player, with attacks of
+its own. In Moves (View > Panels), New from the clip on screen makes one (Clips has New move too);
+its fields are the manifest's: length, carrier, the base monster's attacks kept or not, what follows
+it, and how it turns. The Timeline draws its attacks in lanes under the clip: drag on the empty lane
+to add one (a click adds one without an end), drag an edge or the span to move it; the playhead
+lights the attacks that are out, and their hit group in the view when hit groups are shown. The ring
+on the floor of the view (T hides it) is the turn: an arrow for frame 0, one for the facing now, and
+a handle for the end, which drags the clip's `turn`, or a fixed steer's angle, in whole degrees
+(Shift: 15). Every edit is one undo step.
+
+Play in game saves, writes the port's clips and moves modules to the memory stick's `mods/lib` as
+`mhfu-port inject` does, and asks the running port to play the move by name; it refuses a move
+whose clip sits in another anim than in the saved manifest, since the game holds the build
+injected from the file. It writes only the modules that changed, and asks for the move from the
+moves module just built, so a new or edited move plays once the game has re-run that module.
+A move asked while the monster has noticed the hunter but is not yet in combat waits for combat,
+so the "!" and the howl play out; Force beside the button plays it at once.
+
+Under the moves are the rules (`[[rule]]`), each read as a sentence ("after the lunge for 20
+frames, within 1200, play stamp"): New rule plays the picked move once when the monster notices
+the hunter, and every field is a control, the part only for a flinch or a break, the mode only
+for a pair move, `force` as above. A refusal is the manifest's own words, in the status line.
+
 ## Tests
 
 `uv run pytest apps/studio` runs offscreen; the Qt tests skip without the `qt` group, and the

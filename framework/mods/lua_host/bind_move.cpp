@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
-/* mhfu.move_* bindings over the move player (src/core/move.cpp); declared in lua/meta/mhfu.d.lua. */
+/* mhfu.move_* bindings over the move player (src/core/move.cpp), and mhfu.em_move, the own move
+ * registry's, which takes the same spec; declared in lua/meta/mhfu.d.lua. */
 #include "mhfu/mhfu.h"
 #include "lua_host.h"
 
@@ -21,6 +22,7 @@ static int list_at(lua_State *L, int t, int i, int def)
     return v;
 }
 
+/* the move spec (lua/meta/mhfu.d.lua mhfu.Move), the one parser of it */
 static void spec_of(lua_State *L, int t, mhfu_move_t *mv)
 {
     mhfu_move_init_spec(mv, (uint16_t)opt_field(L, t, "entry", 0));
@@ -123,17 +125,52 @@ int lb_move_play(lua_State *L)
     mhfu_move_t mv;
     if (lua_istable(L, 2)) {
         spec_of(L, 2, &mv);
+        mv.force = (uint8_t)lua_toboolean(L, 3);
         mhfu_steer_spec_t sp;
         steer_of(L, 2, &sp);
         mhfu_move_steer(&sp);
     } else {
-        /* a MOVE struct the debugger wrote, word by word; it wrote STEER_STATE.NEXT itself */
+        /* a MOVE struct the debugger wrote, word by word, FORCE included; it wrote
+         * STEER_STATE.NEXT itself */
         uint32_t at = (uint32_t)luaL_checkinteger(L, 2);
         luaL_argcheck(L, (at & 3) == 0, 2, "a MOVE struct is word aligned");
         uint32_t *w = (uint32_t *)&mv;
         for (unsigned k = 0; k < sizeof(mv) / 4; k++) w[k] = mhfu_mem_read_u32(at + 4 * k);
     }
     lua_pushboolean(L, mhfu_move_play(ent, &mv));
+    return 1;
+}
+
+/* an own move: the spec and `after`, the slot played when it ends (mhfu.OwnMove) */
+int lb_em_move(lua_State *L)
+{
+    int slot = (int)luaL_checkinteger(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    mhfu_move_t mv;
+    spec_of(L, 2, &mv);
+    mhfu_steer_spec_t sp;
+    steer_of(L, 2, &sp);
+    uint8_t after = (uint8_t)opt_field(L, 2, "after", MHFU_EM_NO_MOVE);
+    lua_pushboolean(L, mhfu_em_move(slot, &mv, &sp, after));
+    return 1;
+}
+
+static const char *const REACTS[] = {"flinch", NULL};
+
+int lb_move_react(lua_State *L)
+{
+    int kind = luaL_checkoption(L, 1, NULL, REACTS);
+    uint32_t ent = (uint32_t)luaL_checkinteger(L, 2);
+    if (lua_isnoneornil(L, 3)) {
+        lua_pushboolean(L, mhfu_move_react(kind, ent, NULL, NULL));
+        return 1;
+    }
+    luaL_checktype(L, 3, LUA_TTABLE);
+    mhfu_move_t mv;
+    spec_of(L, 3, &mv);
+    mhfu_steer_spec_t sp;
+    steer_of(L, 3, &sp);
+    lua_pushboolean(L, mhfu_move_react(kind, ent, &mv, &sp));
     return 1;
 }
 
@@ -174,6 +211,13 @@ int lb_move_status(lua_State *L)
     SF_INT("end_main", s->end_pair >> 8);
     SF_INT("end_sub", s->end_pair & 0xFF);
     SF_INT("end_frame", s->end_frame);
+    SF_INT("waited", s->waited);
+    SF_INT("reactions", s->reactions);
+    SF_INT("react_entity", s->react_entity);
+    SF_INT("react_parts", s->react_parts);
+    SF_INT("react_part", s->react_part);
+    SF_INT("react_main", (s->react_pair >> 8) & 0xFF);
+    SF_INT("react_sub", s->react_pair & 0xFF);
     push_floats(L, s->peak, 3, "peak");
     push_floats(L, s->clip_end, 3, "clip_end");
     lua_createtable(L, s->move.attack_count, 0);

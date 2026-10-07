@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""What the monster panels share, toolkit-free: data colours and the bone-span format."""
+"""What the monster panels share, toolkit-free: data colours, the bone-span format and a
+move's kind."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+
+from mhfu_port.manifest import Move
 
 RGBA = tuple[float, float, float, float]
 #: FILLER is the loud one: a successful override onto idle looks exactly like a failed one
@@ -22,6 +25,8 @@ MARKERS: dict[str, RGBA] = {
     "ours": (0.55, 0.90, 0.60, 0.95),
     "impact": (0.98, 0.35, 0.38, 1.0),
 }
+#: an own move's attack window on the Timeline
+ATTACK: RGBA = (0.94, 0.42, 0.36, 0.85)
 
 
 def bone_span(bones: Sequence[int]) -> str:
@@ -37,3 +42,8 @@ def bone_span(bones: Sequence[int]) -> str:
         if b is not None:
             start = prev = b
     return ", ".join(out)
+
+
+def kind(mv: Move) -> str:
+    """`own move`, or the base monster's pair it rides."""
+    return "own move" if mv.pair is None else f"({mv.main},{mv.sub})"

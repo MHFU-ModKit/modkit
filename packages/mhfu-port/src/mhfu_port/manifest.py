@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import tomli_w
-from mhfu import files, hitzone, inject
+from mhfu import addresses, files, hitzone, inject
 
 from .records import ANIM, GEO
 
@@ -33,11 +33,22 @@ Skin = Literal["auto", "transfer", "source"]
 SKINS: tuple[Skin, ...] = typing.get_args(Skin)
 Shape = Literal["sphere", "capsule"]
 SHAPES: tuple[Shape, ...] = typing.get_args(Shape)
+Turn = Literal["clip", "still", "hunter", "away", "fixed"]
+TURNS: tuple[Turn, ...] = typing.get_args(Turn)
+Event = str
+EVENTS: tuple[Event, ...] = addresses.MONSTER_EVENT_KIND.names
+"""A monster event's name, as the framework takes it in a rule's `on`."""
+PART_EVENTS: tuple[Event, ...] = ("flinch", "part_broken")
+"""The events a rule's `part` narrows."""
 
 MAIN_STATES = range(8)
 """A big monster's behaviour main states."""
-SEAM_RULES = 4
+SEAM_RULES: int = addresses.EM_CFG.RULES.count or 0
 """Rules the framework's native brain seam holds."""
+MOVE_ATTACKS: int = addresses.MOVE.ATTACKS.count or 0
+"""Attacks the move player holds per move."""
+OWN_MOVES: int = addresses.EM_MOVES.MOVES.count or 0
+"""Own moves the framework holds per port."""
 PARTS = range(hitzone.PART_MASK + 1)
 ROWS = range(hitzone.MAX_ROW + 1)
 BYTE = range(0x100)
@@ -173,16 +184,48 @@ class Claim:
 
 
 @dataclass
-class Move:
-    """A host behaviour pair `(main, sub)` and the clip painted while it runs.
+class AttackWindow:
+    """Attack record `id`, spawned when the clip reaches `frame` and ended at `end` (None: it
+    lives as its record says)."""
 
-    The pair owns the hitbox, damage and effects; `clip` (a name in `clips`) or `anim` (a raw
-    a1) only the animation. `after` is the move handed to when this one ends or has stood
-    `hold_max` ticks; `claim` substitutes it for the host brain's own picks.
+    id: int
+    frame: int
+    end: int | None = None
+    label: str = ""
+
+
+@dataclass
+class Steer:
+    """How an own move turns, and whether a wall ends it."""
+
+    turn: Turn = "clip"
+    """`clip` follows the clip's turn, `hunter` and `away` turn at `rate`, `fixed` turns
+    `angle` degrees over `frames` AI frames, `still` not at all."""
+    rate: int | None = None
+    """YAW units an AI frame for `hunter` and `away`; None: the host charge's."""
+    angle: float | None = None
+    frames: int | None = None
+    walls: bool = True
+    dir: float = 0.0
+    """Degrees of the travel against the facing, which walls count as ahead (180: backwards)."""
+
+
+@dataclass
+class Move:
+    """A host behaviour pair `(main, sub)` and the clip painted while it runs, or, without a
+    pair, an own move the framework's move player plays.
+
+    On a pair, the pair owns the hitbox, damage and effects; `clip` (a name in `clips`) or
+    `anim` (a raw a1) only the animation. `after` is the move handed to when this one ends or
+    has stood `hold_max` ticks; `claim` substitutes it for the host brain's own picks.
+
+    An own move plays its clip on every body part, riding `carrier` (None: the host's hub),
+    spawns `attacks` at its clip frames and turns as `steer` says; the host's attacks for the
+    clip's entry are muted unless `host_attacks`.
     """
 
-    main: int
-    sub: int
+    main: int | None = None
+    sub: int | None = None
     clip: str | None = None
     anim: int | None = None
     latch: int = 1
@@ -194,16 +237,41 @@ class Move:
     after: str | None = None
     hold_max: int | None = None
     claim: Claim | None = None
+    attacks: list[AttackWindow] = field(default_factory=list, metadata=_toml("attack"))
+    steer: Steer = field(default_factory=Steer)
+    length: int | None = None
+    """AI frames from the clip's dispatch; None: until the clip ends."""
+    carrier: tuple[int, int] | None = None
+    host_attacks: bool = False
     label: str = ""
+
+    @property
+    def own(self) -> bool:
+        """Played by the move player, not on a host pair."""
+        return self.main is None
+
+    @property
+    def pair(self) -> tuple[int, int] | None:
+        """The host pair; None for an own move."""
+        return None if self.main is None or self.sub is None else (self.main, self.sub)
 
 
 @dataclass
 class Rule:
-    """A trigger the native seam evaluates every frame: when the live pair is in `from_move` or
-    `from_main`, has stood `min_frames`, the hunter is within `dist` and receding or closing as
-    asked, play `play`; then wait `cooldown` frames, at most `count` times (None: unlimited)."""
+    """A trigger the native seam evaluates every frame: when the live pair is `from_move`'s or in
+    `from_main` and has stood `min_frames` (or own move `from_move` has played that long), the
+    hunter is within `dist` and receding or closing as asked, play `play`, a pair or an own move;
+    then wait `cooldown` frames, at most `count` times (None: unlimited). A pair rule waits while
+    an own move plays.
+
+    With `on`, the rule fires on that monster event instead (`part`: only the flinch or break of
+    that part), under the same distance, cooldown and count; `on = "flinch"` plays its move in
+    place of the host's flinch. An own move asked while the monster's notice runs waits for
+    combat (else it cuts off the "!" and the roar) unless `force`."""
 
     play: str
+    on: Event | None = None
+    part: int | None = None
     from_move: str | None = field(default=None, metadata=_toml("from"))
     from_main: list[int] = field(default_factory=list)
     min_frames: int = 0
@@ -213,6 +281,7 @@ class Rule:
     mode: int = 0
     cooldown: int = 0
     count: int | None = None
+    force: bool = False
     label: str = ""
 
 
@@ -445,6 +514,23 @@ def _vec3(v: list[float] | None, where: str) -> None:
     _need(v is None or len(v) == 3, where, "needs x, y, z")
 
 
+def _own_move(mv: Move, w: str) -> None:
+    _need(mv.claim is None and mv.hold_max is None, w, "an own move has no claim or hold_max")
+    _need(len(mv.attacks) <= MOVE_ATTACKS, w, f"the move player holds {MOVE_ATTACKS} attacks")
+    for i, a in enumerate(mv.attacks):
+        _need(a.id >= 0 and a.frame >= 0, f"{w}.attack[{i}]", "id and frame are 0 or more")
+        _need(a.end is None or a.end > a.frame, f"{w}.attack[{i}]", "end is after frame")
+    _need(mv.length is None or mv.length >= 1, w, "length is at least 1 AI frame")
+    _need(mv.carrier is None or mv.carrier[0] in MAIN_STATES, w, "carrier main is a main state")
+    s = mv.steer
+    fixed = s.turn == "fixed"
+    _need(fixed == (s.angle is not None), f"{w}.steer", "angle goes with turn = fixed")
+    _need(fixed == (s.frames is not None), f"{w}.steer", "frames goes with turn = fixed")
+    _need(s.frames is None or 1 <= s.frames <= 0x7FFF, f"{w}.steer", "frames is 1..32767")
+    _need(s.angle is None or abs(s.angle) < 360, f"{w}.steer", "angle is under one turn")
+    _need(s.rate is None or 1 <= s.rate <= 0xFFFF, f"{w}.steer", "rate is 1..65535")
+
+
 def _validate(m: Manifest) -> None:
     """The rules the types cannot say: bounds and cross-references."""
     slots: dict[int, str] = {}
@@ -467,6 +553,17 @@ def _validate(m: Manifest) -> None:
         _need(mv.after is None or mv.after in m.moves, w, f"after {mv.after!r} is not in moves")
         _need(mv.after != name, w, "after names the move itself")
         _need(mv.hold_max is None or mv.hold_max >= 1, w, "hold_max is at least 1 tick")
+        _need((mv.main is None) == (mv.sub is None), w, "needs both main and sub, or neither")
+        if mv.own:
+            _own_move(mv, w)
+        else:
+            plain = Move(mv.main, mv.sub)
+            _need(
+                (mv.attacks, mv.steer, mv.length, mv.carrier, mv.host_attacks)
+                == (plain.attacks, plain.steer, plain.length, plain.carrier, plain.host_attacks),
+                w,
+                "attack, steer, length, carrier and host_attacks are for an own move",
+            )
         if mv.claim is not None:
             _need(bool(mv.claim.mains), w, "claim needs a main")
             for k in mv.claim.mains:
@@ -503,6 +600,8 @@ def _validate(m: Manifest) -> None:
             _need(lever in (None, *BYTE), w, f"{lever} is not a byte")
     for i, e in enumerate(m.effects):
         _need(e.move in m.moves, f"effect[{i}]", f"move {e.move!r} is not in moves")
+    own = sum(mv.own for mv in m.moves.values())
+    _need(own <= OWN_MOVES, "moves", f"{own} own moves, the framework holds {OWN_MOVES}")
     _need(len(m.rules) <= SEAM_RULES, "rule", f"the seam holds {SEAM_RULES}")
     for i, r in enumerate(m.rules):
         w = f"rule[{i}]"
@@ -510,11 +609,19 @@ def _validate(m: Manifest) -> None:
         _need(0 <= lo < hi, w, "dist needs 0 <= lo < hi")
         _need(all(k in MAIN_STATES for k in r.from_main), w, "from_main is not a main state")
         _need(r.count is None or r.count >= 1, w, "count is at least 1; leave it out for always")
-        _need(r.from_move is not None or bool(r.from_main), w, "needs from or from_main")
+        trigger = r.from_move is not None or bool(r.from_main) or r.on is not None
+        _need(trigger, w, "needs from, from_main or on")
+        _need(r.on in (None, *EVENTS), w, "on is one of " + ", ".join(map(repr, EVENTS)))
+        _need(r.part is None or r.on in PART_EVENTS, w, "part goes with a flinch or break")
+        _need(r.part in (None, *PARTS), w, f"part {r.part} is not a part")
         _need(not (r.receding and r.closing), w, "cannot be receding and closing")
         _need(r.play in m.moves, w, f"play {r.play!r} is not in moves")
         _need(r.from_move in (None, *m.moves), w, f"from {r.from_move!r} is not in moves")
         _need(r.from_move != r.play, w, "from and play are the same move")
+        if r.play in m.moves and m.moves[r.play].own:
+            _need(r.mode == 0, w, "mode is a pair's: an own move enters its carrier")
+        elif r.on == "flinch":
+            _need(False, w, "on = flinch plays an own move, in place of the host's reaction")
 
 
 def loads(text: str, path: str | Path | None = None) -> Manifest:

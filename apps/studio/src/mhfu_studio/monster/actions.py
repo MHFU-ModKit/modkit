@@ -10,12 +10,12 @@ Actions panel shows the rows.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from mhfu.em.intel import AttackIntel, PairIntel, SpeciesIntel
 from mhfu_port import layout
-from mhfu_port.manifest import Claim, Manifest, Move
+from mhfu_port.manifest import Manifest
+from mhfu_port.moves import lua_key, lua_value, pair_move
 
 from mhfu_studio.monster import clips
 from mhfu_studio.monster.align import Timing, timing
@@ -24,11 +24,6 @@ Pair = tuple[int, int]
 #: row groups, in the order they are listed
 MOVE, ATTACK, ENTERED = "move", "attack", "entered"
 NONE = "–"
-LUA_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-LUA_KEYWORDS = frozenset(
-    "and break do else elseif end false for function goto if in local nil not or repeat return"
-    " then true until while".split()
-)
 
 
 @dataclass(frozen=True)
@@ -243,12 +238,13 @@ def rows(
         return None if intel is None else intel.pair(main, sub)
 
     out = [
-        row(m, pair_of(mv.main, mv.sub), mv.main, mv.sub, MOVE, cov, attacks, species, name)
+        row(m, pair_of(*pr), *pr, MOVE, cov, attacks, species, name)
         for name, mv in m.moves.items()
+        if (pr := mv.pair) is not None
     ]
     if intel is None:
         return out
-    bound = {(mv.main, mv.sub) for mv in m.moves.values()}
+    bound = {mv.pair for mv in m.moves.values()}
     hubs = set(intel.hubs)
     groups: dict[object, list[PairIntel]] = {}
     for p in sorted(intel, key=lambda p: (p.main, p.sub)):
@@ -271,41 +267,12 @@ def rows(
 # the moves as a mod's Lua declares them
 
 
-def _lua_key(name: str) -> str:
-    return name if LUA_NAME.fullmatch(name) and name not in LUA_KEYWORDS else f'["{name}"]'
-
-
-def _lua_str(s: str) -> str:
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-def _lua_claim(c: Claim) -> str:
-    mains = str(c.mains[0]) if len(c.mains) == 1 else "{ " + ", ".join(map(str, c.mains)) + " }"
-    return "{ main = " + mains + ("" if c.sub is None else f", sub = {c.sub}") + " }"
-
-
-def lua_move(mv: Move) -> str:
-    """One move's table: the fields `mhfu_port.lua` reads, defaults left out."""
-    bits = [f"main = {mv.main}", f"sub = {mv.sub}"]
-    if mv.clip is not None:
-        bits.append(f"clip = {_lua_str(mv.clip)}")
-    if mv.anim is not None:
-        bits.append(f"anim = {mv.anim}")
-    if mv.latch != 1:
-        bits.append(f"latch = {mv.latch}")
-    if mv.after is not None:
-        bits.append(f"after = {_lua_str(mv.after)}")
-    if mv.hold_max is not None:
-        bits.append(f"hold_max = {mv.hold_max}")
-    if mv.claim is not None:
-        bits.append(f"claim = {_lua_claim(mv.claim)}")
-    return "{ " + ", ".join(bits) + " }"
-
-
 def lua_moves(m: Manifest) -> str:
-    """The `moves` field of a mod's `P.define{…}`; empty without moves. Its clips come from the
-    layout module `mhfu-port inject` writes with the PAC, not from a copy here."""
-    if not m.moves:
+    """The `moves` field of a mod's `P.define{…}` with the pair moves; empty without one. Its
+    clips come from the layout module `mhfu-port inject` writes with the PAC, not from a copy
+    here; own moves come from the module mhfu-port generates for them."""
+    pairs = {n: mv for n, mv in m.moves.items() if mv.pair is not None}
+    if not pairs:
         return ""
     source = m.path.name if m.path is not None else m.port.name
     return "\n".join(
@@ -313,7 +280,7 @@ def lua_moves(m: Manifest) -> str:
             f"-- from {source}, for your mod's P.define{{ ... }}; the clips are in "
             f"{layout.module_name(m)}",
             "moves = {",
-            *(f"  {_lua_key(n)} = {lua_move(mv)}," for n, mv in m.moves.items()),
+            *(f"  {lua_key(n)} = {lua_value(pair_move(mv))}," for n, mv in pairs.items()),
             "},",
         ]
     )

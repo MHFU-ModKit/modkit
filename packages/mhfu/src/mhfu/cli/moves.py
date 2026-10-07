@@ -10,6 +10,10 @@ framework's move player (`mhfu.live.moves`), and what came of it.
     mhfu move play 46 --attack 6@56 --repeat 10    # a soak
     mhfu move play 20 --curve zinogre --walls      # the dash, its turn on YAW, ended by a wall
     mhfu move play 9 --turn fixed --total 90 --frames 50
+    mhfu move ride zinogre --brain                 # with its manifest's moves and rules
+    mhfu move play --own stamp                     # the riding port's own move, by name
+    mhfu move play --own howl --force              # ... at once, even during the notice
+    mhfu move watch --repeat 5                     # the next moves its rules or brain play
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ from ..live.rig import Rig
 from .live import launcher, launcher_args
 
 if TYPE_CHECKING:
+    from ..live.session import Session
     from . import Subparsers
 
 LOG = "PLUGINS/mhfu_framework/framework.log"
@@ -43,11 +48,18 @@ def register(sub: Subparsers) -> None:
     c.add_argument("--prx", type=Path, default=clips.PRX, help="the framework (default: built)")
     c.add_argument("--quest", default="Giadrome", help="substring of the quest's name")
     c.add_argument("--rank", type=int, default=1, help="0 = 1 star ...")
+    c.add_argument(
+        "--brain", action="store_true", help="keep the port's manifest moves, claims and rules"
+    )
     c.set_defaults(run=ride)
 
     c = cmds.add_parser("play", help="play a move and report every part, attack and HP write")
     launcher_args(c)
-    c.add_argument("entry", type=int, help="executor entry: the clip")
+    c.add_argument("entry", type=int, nargs="?", help="executor entry: the clip")
+    c.add_argument("--own", metavar="NAME", help="the riding port's own move instead of an entry")
+    c.add_argument(
+        "--force", action="store_true", help="play while the monster's notice runs, not after"
+    )
     c.add_argument("--attack", action="append", default=[], metavar="ID@FRAME[-END]", type=_attack)
     c.add_argument("--carrier", type=_ints, default=(0, 2), metavar="MAIN,SUB")
     c.add_argument("--back", type=_ints, metavar="MAIN,SUB[,MODE]", help="entered at the end")
@@ -72,6 +84,14 @@ def register(sub: Subparsers) -> None:
     c.add_argument("--dir", type=float, default=0.0, help="degrees of the travel against YAW")
     c.add_argument("--stuck", type=_ints, default=(0, 6, 1), metavar="MAIN,SUB,MODE")
     c.set_defaults(run=play)
+
+    c = cmds.add_parser("watch", help="report the next moves something else plays")
+    launcher_args(c)
+    c.add_argument("--slot", type=int, help="the monster's registry slot (default the first)")
+    c.add_argument("--after", type=float, default=3.0, help="seconds watched after each end")
+    c.add_argument("--timeout", type=float, default=60.0, help="seconds to wait for each start")
+    c.add_argument("--repeat", type=int, default=1, help="moves to watch")
+    c.set_defaults(run=watch)
 
     c = cmds.add_parser("stop", help="end the running move")
     launcher_args(c)
@@ -109,6 +129,7 @@ def ride(args: argparse.Namespace) -> int:
             launcher=launcher(args),
             log=log,
             prx=args.prx,
+            brain=args.brain,
         )
         with rig:
             slot, m = clips.monster(rig.s)
@@ -171,10 +192,25 @@ def report(r: moves.Played) -> list[str]:
     return out
 
 
+def _start(
+    args: argparse.Namespace, s: Session, mv: moves.Move, steer: moves.Steer
+) -> moves.Played:
+    if not args.own:
+        return moves.play(s, mv, slot=args.slot, after=args.after, steer=steer)
+
+    def ask() -> None:
+        if not moves.play_own(s, args.own, args.slot, args.force):
+            raise LookupError(f"no port rides the monster, or it has no own move {args.own!r}")
+
+    return moves.watch(s, ask, slot=args.slot, after=args.after)
+
+
 def play(args: argparse.Namespace) -> int:
+    if (args.entry is None) == (args.own is None):
+        return _fail(args, ValueError("give an entry or --own NAME"))
     back = tuple(args.back) + (0,) * (3 - len(args.back)) if args.back else None
     mv = moves.Move(
-        args.entry,
+        args.entry or 0,
         tuple(args.attack),
         (args.carrier[0], args.carrier[1]),
         (back[0], back[1], back[2]) if back else None,
@@ -182,6 +218,7 @@ def play(args: argparse.Namespace) -> int:
         args.skip,
         args.part,
         host_attacks=args.host_attacks,
+        force=args.force,
     )
     curve: tuple[int, ...] = ()
     if args.curve:
@@ -208,7 +245,7 @@ def play(args: argparse.Namespace) -> int:
                 if args.hp:
                     p = s.game.player
                     p.hp_cap, p.max_hp, p.hp = args.hp, args.hp, args.hp
-                r = moves.play(s, mv, slot=args.slot, after=args.after, steer=steer)
+                r = _start(args, s, mv, steer)
                 ends[r.reason] = ends.get(r.reason, 0) + 1
                 if args.repeat > 1:
                     print(f"--- move {n}/{args.repeat}")
@@ -220,6 +257,21 @@ def play(args: argparse.Namespace) -> int:
         print("ends: " + ", ".join(f"{k} x{v}" for k, v in sorted(ends.items())))
     if size is not None and grew is not None:
         print(f"framework.log {size} -> {grew} bytes")
+    return 0
+
+
+def watch(args: argparse.Namespace) -> int:
+    try:
+        with Rig.attach(launcher(args)) as rig:
+            for n in range(1, args.repeat + 1):
+                r = moves.watch(
+                    rig.s, lambda: None, slot=args.slot, after=args.after, timeout=args.timeout
+                )
+                if args.repeat > 1:
+                    print(f"--- move {n}/{args.repeat}")
+                print("\n".join(report(r)), flush=True)
+    except (ConnectionError, DebuggerError, LookupError, RuntimeError, TimeoutError) as e:
+        return _fail(args, e)
     return 0
 
 

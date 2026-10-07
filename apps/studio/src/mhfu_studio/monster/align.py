@@ -118,11 +118,12 @@ def align(
     mv = m.moves.get(move)
     if mv is None:
         raise KeyError(f"no move named {move!r} (have: {', '.join(sorted(m.moves)) or 'none'})")
+    if mv.pair is None:
+        raise KeyError(f"{move!r} is an own move: it rides no host action")
     c = m.clips.get(mv.clip) if mv.clip else None
     return align_pair(
         m,
-        mv.main,
-        mv.sub,
+        *mv.pair,
         intel,
         move=move,
         clip=mv.clip,

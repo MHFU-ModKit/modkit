@@ -16,8 +16,11 @@ from weakref import WeakKeyDictionary
 
 import numpy as np
 from mhfu_port import layout, records, travel
+from mhfu_port.manifest import Clip as ManifestClip
+from mhfu_port.manifest import Steer
 from mhfu_port.model import MHFU, Clip
 
+from mhfu_studio.monster.clip_browser import preview_slot
 from mhfu_studio.monster.core.pose import Pose
 from mhfu_studio.monster.core.scene import Scene
 
@@ -167,8 +170,16 @@ def travel_joints(scene: Scene) -> tuple[int, ...]:
     return leading_chain(scene.rig.parents) or root_joints(scene)
 
 
-def pose_at(scene: Scene, clip: Clip | None, frame: float, *, strip_root: bool = False) -> Pose:
-    """The rig at `frame`, turned as YAW turns while the clip plays (`turn_of`); `strip_root`
+def pose_at(
+    scene: Scene,
+    clip: Clip | None,
+    frame: float,
+    *,
+    strip_root: bool = False,
+    steer: Steer | None = None,
+    speed: float = DEFAULT_SPEED,
+) -> Pose:
+    """The rig at `frame`, turned as YAW turns while the clip plays (`yaw_at`); `strip_root`
     holds the travel joints' location at frame 0, so the clip plays in place without dropping
     the animal to its bind height."""
     if clip is None:
@@ -181,14 +192,44 @@ def pose_at(scene: Scene, clip: Clip | None, frame: float, *, strip_root: bool =
             loc = loc.copy()
             loc[js] = curves.at(0.0)[1][js]
     world = scene.rig.world(rot, loc)
-    turn = turn_of(scene, clip)
-    if turn is not None:
-        th = float(turn.at(float(frame)) - turn.keys[0]) / travel.TURN * math.tau
-        yaw = np.eye(4)
-        yaw[0, 0] = yaw[2, 2] = math.cos(th)
-        yaw[0, 2], yaw[2, 0] = math.sin(th), -math.sin(th)
-        world = yaw @ world
+    th = yaw_at(scene, clip, frame, steer, speed)
+    if th:
+        world = yaw_matrix(th) @ world
     return Pose(scene.rig, float(frame), world, clip.slot)
+
+
+def yaw_matrix(th: float) -> np.ndarray:
+    """A turn of `th` radians about y, positive the way YAW grows: +z toward +x."""
+    yaw = np.eye(4)
+    yaw[0, 0] = yaw[2, 2] = math.cos(th)
+    yaw[0, 2], yaw[2, 0] = math.sin(th), -math.sin(th)
+    return yaw
+
+
+def yaw_at(
+    scene: Scene,
+    clip: Clip,
+    frame: float,
+    steer: Steer | None = None,
+    speed: float = DEFAULT_SPEED,
+) -> float:
+    """Radians YAW has turned at clip `frame`: the clip's turn (`turn_of`), or an own move's
+    `steer` as the move player turns it (`fixed` evenly over its AI frames; `still`, `hunter`
+    and `away` not at all here, as the studio has no hunter)."""
+    if steer is None or steer.turn == "clip":
+        t = turn_of(scene, clip)
+        return 0.0 if t is None else float(t.at(float(frame)) - t.keys[0]) / travel.TURN * math.tau
+    if steer.turn == "fixed" and steer.angle is not None and steer.frames:
+        ai = min(float(frame) / max(speed, 1e-6), float(steer.frames))
+        return math.radians(steer.angle) * ai / steer.frames
+    return 0.0
+
+
+def end_turn(scene: Scene, clip: Clip, steer: Steer | None = None) -> float:
+    """Degrees YAW has turned when `clip` ends (`yaw_at`); a fixed steer's whole angle."""
+    if steer is not None and steer.turn == "fixed":
+        return float(steer.angle or 0.0)
+    return math.degrees(yaw_at(scene, clip, float(clip.frames), steer))
 
 
 _TURNS: WeakKeyDictionary[Scene, dict[tuple[int, float | None], travel.Turn | None]] = (
@@ -204,7 +245,7 @@ def turn_of(scene: Scene, clip: Clip) -> travel.Turn | None:
     m = scene.manifest
     authored = None
     if m is not None:
-        given = (c.turn for c in m.clips.values() if layout.where(c, scene.placed) == clip.slot)
+        given = (c.turn for c in m.clips.values() if _plays(c, scene, clip.slot))
         authored = next((t for t in given if t is not None), None)
     cache = _TURNS.setdefault(scene, {})
     key = (clip.slot, authored)
@@ -214,6 +255,11 @@ def turn_of(scene: Scene, clip: Clip) -> travel.Turn | None:
         except ValueError:
             cache[key] = None
     return cache[key]
+
+
+def _plays(c: ManifestClip, scene: Scene, slot: int) -> bool:
+    """`c` is the clip in anim `slot`, or the preview of a clip in none (`preview_slot`)."""
+    return layout.where(c, scene.placed) == slot or (slot < 0 and preview_slot(c.id) == slot)
 
 
 def root_travel(scene: Scene, clip: Clip) -> tuple[float, float]:

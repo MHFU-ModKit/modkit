@@ -23,15 +23,17 @@ from mhfu_studio.monster.clips import check_name
 from mhfu_studio.monster.document import PortDocument
 
 SUGGESTED = {
-    1: "head",
+    0: "head",
+    1: "neck",
     2: "body",
     3: "tail",
-    4: "left_wing",
-    5: "left_leg",
-    6: "right_wing",
-    7: "right_leg",
+    4: "left_foreleg",
+    5: "left_hindleg",
+    6: "right_foreleg",
+    7: "right_hindleg",
 }
-"""Names for the eight accumulators where MH's own are obvious; slot 0 is nobody."""
+"""The Tigrex's eight parts, measured by the flinch each region's hits count down; one index
+space with the hurtboxes' parts and the flinch and break events."""
 STATE_NAMES = ("normal", "enraged", "third")
 ADOPTED = "adopted from the host species; the port inherits these at runtime either way"
 U16 = range(0x10000)

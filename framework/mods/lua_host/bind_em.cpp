@@ -68,6 +68,15 @@ int lb_em_rule(lua_State *L)
     r.dist_hi    = (float)tbl_num(L, 2, "dist_hi", 1.0e9);
     r.cooldown   = (uint32_t)tbl_int(L, 2, "cooldown", 0);
     r.count      = (uint32_t)tbl_int(L, 2, "count", (lua_Integer)MHFU_EM_UNLIMITED);
+    r.from_move  = (uint8_t)(tbl_int(L, 2, "from_move", -1) + 1);
+    r.play_move  = (uint8_t)(tbl_int(L, 2, "play_move", -1) + 1);
+    lua_getfield(L, 2, "on");
+    r.on = lua_isnil(L, -1) ? 0
+         : (uint8_t)(luaL_checkoption(L, -1, NULL, mhfu_monster_event_names) + MHFU_MONSTER_NOTICED);
+    lua_pop(L, 1);
+    r.part       = (uint8_t)tbl_int(L, 2, "part", MHFU_EM_ANY_PART);
+    r.force      = (uint8_t)tbl_bool(L, 2, "force");
+    r._pad       = 0;
     mhfu_em_rule(slot, &r);
     lua_pushboolean(L, 1);
     return 1;
@@ -123,6 +132,46 @@ int lb_em_status(lua_State *L)
     lua_newtable(L);
     for (int i = 0; i < MHFU_EM_SUBS; i++) { lua_pushinteger(L, (lua_Integer)st.sub_left[i]); lua_rawseti(L, -2, i + 1); }
     lua_setfield(L, -2, "sub_left");
+#undef SF_INT
+    return 1;
+}
+
+/* --- own moves (mhfu.em_move is in bind_move.cpp, beside the move spec it reads) --- */
+
+int lb_em_moves_clear(lua_State *L)
+{
+    mhfu_em_moves_clear();
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+int lb_em_play(lua_State *L)
+{
+    lua_pushboolean(L, mhfu_em_play((uint32_t)luaL_checkinteger(L, 1),
+                                    (int)luaL_checkinteger(L, 2), lua_toboolean(L, 3)));
+    return 1;
+}
+
+int lb_em_playing(lua_State *L)
+{
+    lua_pushinteger(L, mhfu_em_playing());
+    return 1;
+}
+
+int lb_em_moves_status(lua_State *L)
+{
+    const volatile mhfu_em_moves_t *r = mhfu_em_moves();
+    lua_newtable(L);
+    if (!r) return 1;
+#define SF_INT(name, v) do { lua_pushinteger(L, (lua_Integer)(v)); lua_setfield(L, -2, name); } while (0)
+    SF_INT("block", (uintptr_t)r);
+    SF_INT("playing", mhfu_em_playing());
+    const volatile mhfu_move_state_t *m = mhfu_move_state();
+    int ours = m && r->tag_slot != MHFU_EM_NO_MOVE && m->started == r->tag_started;
+    SF_INT("last", ours ? (lua_Integer)r->tag_slot : -1);
+    SF_INT("plays", r->plays);
+    SF_INT("chained", r->chained);
+    SF_INT("keys", r->key_top);
 #undef SF_INT
     return 1;
 }

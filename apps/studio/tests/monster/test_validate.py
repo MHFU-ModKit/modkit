@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import pytest
-from mhfu_port import manifest
+from mhfu_port import manifest, moves
+from mhfu_port.layout import Layout
+from mhfu_port.manifest import ManifestError
 from mhfu_studio.monster import validate as V
 
 CLIP = "\n[clips.c]\nslot = 61\nframes = 382\nloop = false\n"
@@ -219,3 +221,43 @@ def test_ports(name, ports, built, em75):
     m = manifest.load(ports / f"{name}.toml")
     out = V.validate(m, built(name), em75)
     assert not [f for f in out if f.level == "error"], [str(f) for f in out]
+
+
+OWN = (
+    '\n[clips.walk]\nslot = 1\n\n[moves.o]\nclip = "walk"\n'
+    "[[moves.o.attack]]\nid = 1\nframe = 2\nend = 30\n"
+    "[[moves.o.attack]]\nid = 7\nframe = 10\n"
+)
+
+
+def test_own_moves(make, species, synthetic_pac):
+    """The moves module's own refusal, one per move, and the studio's past-the-clip warning."""
+    intel = species([], attacks=ATTACKS)
+    out = [f for f in V.validate(make(OWN), synthetic_pac, intel) if f.code[:4] == "OWN_"]
+    assert [(f.code, f.level, f.where) for f in out] == [
+        ("OWN_MOVE_REFUSED", "error", "moves.o.attack[0]"),
+        ("OWN_WINDOW_PAST_CLIP", "warning", "moves.o"),
+    ], [str(f) for f in out]
+    assert all(f.target == ("moves", "o") and f.focus == V.MOVE_WINDOWS for f in out)
+    with pytest.raises(ManifestError) as refused:
+        moves.check(make(OWN), Layout({1: 1}), set())
+    assert out[0].message == str(refused.value).partition(": ")[2], "the module's own words"
+    unchecked = V.validate(make(OWN), synthetic_pac)
+    assert found(unchecked, "OWN_ATTACKS_UNCHECKED").level == "warning"
+    f = found(unchecked, "OWN_MOVE_REFUSED")
+    assert f.where == "moves.o.attack[1]" and "past the clip's 10" in f.message, "then the frames"
+
+
+def test_own_rules_refused(make):
+    two = "\n[moves.p]\nanim = 1\ncarrier = [0, 1]\n"
+    rules = '[[rule]]\non = "flinch"\nplay = "o"\n[[rule]]\non = "flinch"\nplay = "p"\n'
+    f = found(V.validate(make(OWN + two + rules), sources={1: 1}), "OWN_MOVE_REFUSED")
+    assert (f.where, f.focus) == ("rule", V.RULES) and "carriers" in f.message
+
+
+def test_own_move_in_no_anim(make, synthetic_pac):
+    m = make('\n[clips.gone]\nslot = 9\n\n[moves.o]\nclip = "gone"\n')
+    f = found(V.validate(m, synthetic_pac, sources={1: 1}), "OWN_MOVE_REFUSED")
+    assert f.level == "error" and f.focus == V.MOVE_CLIP and "no executor entry" in f.message
+    named = make('\n[clips.gone]\nsource = 9\n\n[moves.o]\nclip = "gone"\n')
+    assert "OWN_MOVE_REFUSED" not in found(V.validate(named)), "no layout: not known"

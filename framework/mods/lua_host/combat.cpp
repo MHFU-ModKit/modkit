@@ -7,11 +7,10 @@
 #include "wrap.h"
 #include "lua_host.h"
 
-typedef void (*mhfu_attack_resolver_fn)(uint32_t entity);
 int lb_resolve_attack(lua_State *L)
 {
     uint32_t e = (uint32_t)luaL_checkinteger(L, 1);
-    if (e >= MHFU_MAIN_RAM && e < MHFU_EXTRA_RAM_END) ((mhfu_attack_resolver_fn)MHFU_ATTACK_RESOLVER)(e);
+    if (e >= MHFU_MAIN_RAM && e < MHFU_EXTRA_RAM_END) mhfu_call(MHFU_ATTACK_RESOLVER, e);
     return 0;
 }
 
@@ -30,9 +29,6 @@ int lb_resolve_attack(lua_State *L)
  * enough is open. A per-frame driver on the ai_step prefix is withheld until shown safe;
  * the frame-accurate spawn a moveset wants (MHFU_EFFECT_SPAWN_FRAMED) is reached by
  * wrapping an em-overlay vtable slot, not an AI-tick prefix. */
-typedef uint32_t (*mhfu_fx_owner_fn)(uint32_t entity);
-typedef int (*mhfu_fx_spawn_fn)(uint32_t entity, int effect_id, int base_species,
-                                uint32_t owner, int bone, const float *pos, int mode);
 
 static const float *mhfu_bone_world(uint32_t ent, int bone)
 {
@@ -60,8 +56,10 @@ static int mhfu_fx_spawn(uint32_t ent, int eid, int bone)
     float pos[3] = { p[0], p[1], p[2] };
     uint8_t species = mhfu_mem_read_u8(ent + MHFU_ENTITY_SPECIES);
     int base = *(volatile int8_t *)(MHFU_BASE_SPECIES + species);
-    uint32_t owner = ((mhfu_fx_owner_fn)MHFU_EFFECT_OWNER)(ent);
-    return ((mhfu_fx_spawn_fn)MHFU_EFFECT_SPAWN)(ent, eid, base, owner, bone, pos, 3);
+    uint32_t owner = mhfu_call(MHFU_EFFECT_OWNER, ent);
+    /* (entity, effect id, base species, owner, bone, const float *pos, mode) */
+    return (int)mhfu_call(MHFU_EFFECT_SPAWN, ent, (uint32_t)eid, (uint32_t)base, owner,
+                          (uint32_t)bone, (uint32_t)(uintptr_t)pos, 3);
 }
 
 int lb_spawn_effect(lua_State *L)
@@ -77,7 +75,6 @@ int lb_spawn_effect(lua_State *L)
  * a clone in extra RAM roams without attacking. This ai_step prefix, fired for
  * the native on the game thread, runs each clone's AI tick and attack resolver
  * inline, the same cadence the native gets. */
-typedef void (*mhfu_entity_tick_fn)(uint32_t entity);
 
 /* The live clones, pushed from Lua each tick (mhfu.clones_set); read by the
  * driver and the combat-node dispatch. */
@@ -104,8 +101,8 @@ static void clone_combat_step(const mhfu_bigmonster_ai_step_ctx_t *ctx)
             uint8_t ai0 = mhfu_mem_read_u8(c + MHFU_ENTITY_ANIM_SPEED);
             /* the clone's own AI picks and drives its attacks; the resolver lands
              * the active one. Do not force a fixed action. */
-            ((mhfu_entity_tick_fn)MHFU_AI_TICK)(c);              /* AI: aggro + attack patterns */
-            ((mhfu_attack_resolver_fn)MHFU_ATTACK_RESOLVER)(c); /* resolve active attack -> damage */
+            mhfu_call(MHFU_AI_TICK, c);           /* AI: aggro + attack patterns */
+            mhfu_call(MHFU_ATTACK_RESOLVER, c);   /* resolve active attack -> damage */
             if (log_now && i == 0)
                 mhfu_log("[clonecmb]  c0=0x%08X AISTATE %d->%d 0x33C=%d eng=%d",
                          (unsigned)c, ai0, mhfu_mem_read_u8(c + MHFU_ENTITY_ANIM_SPEED),
@@ -153,7 +150,6 @@ int lb_clones_set(lua_State *L)
  * field of the monster manager. Swapping that field is a data write, so it takes
  * without a JIT-cold window: it points at a wrapper that calls the processor, then
  * builds and populates the clones' nodes in the same frame. */
-typedef void (*mhfu_combat_build_fn)(uint32_t g, uint32_t entity, uint32_t idx);
 #define COMBAT_IDX 0x0Eu            /* the idx the native's own call passes */
 static volatile int g_combat_nodes = 0;
 
@@ -210,7 +206,7 @@ static void combat_node_post(mhfu_regs_t *regs)
         uint32_t c = g_clones[i];
         if (c < MHFU_USER_RAM_END || c >= MHFU_EXTRA_RAM_END) continue;
         uint32_t cn = find_node(g, c);
-        if (!cn) { ((mhfu_combat_build_fn)MHFU_TIGREX_ATTACK_SPAWN)(g, c, COMBAT_IDX); cn = find_node(g, c); }
+        if (!cn) { mhfu_call(MHFU_TIGREX_ATTACK_SPAWN, g, c, COMBAT_IDX); cn = find_node(g, c); }
         if (!cn || cn == natn) continue;
         /* the bare builder leaves the node without the hitbox fields: copy the
          * native's, keep this node's links, rebind entity and position */

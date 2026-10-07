@@ -2,8 +2,10 @@
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* Big-monster AI events (mhfu/ai.h): dispatchers over the action picker, the slot loops, the
  * action executor and the AI tick, the hook the registry installs for each event's first
- * subscriber, and the spawn, damage and death edges of the registry poll. */
+ * subscriber, the spawn, damage and death edges of the registry poll, and the poll's raising of
+ * the monster events (mhfu/monster_events.h). */
 #include "mhfu/ai.h"
+#include "mhfu/monster_events.h"
 #include "mhfu/mips.h"
 #include "mhfu/log.h"
 #include "mhfu/entity.h"
@@ -358,9 +360,11 @@ extern "C" void mhfu_ai_on_monster_spawn(int slot, uint32_t entity, uint8_t type
     for (int i = 0; i < n; i++) ((mhfu_bigmonster_spawn_cb_t)h[i].fn)(&c);
 }
 
-/* An HP drop fires on_damaged, HP reaching 0 fires on_death. */
+/* An HP drop fires on_damaged, HP reaching 0 fires on_death; the monster events the move
+ * player's step found are raised first. */
 extern "C" void mhfu_ai_poll_death(void)
 {
+    mhfu_monster_events_drain();
     int n_damaged = mhfu_event_count(MHFU_EVENT_BIGMONSTER_DAMAGED);
     int n_death   = mhfu_event_count(MHFU_EVENT_BIGMONSTER_DEATH);
     if (n_death == 0 && n_damaged == 0) return;

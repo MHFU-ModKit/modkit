@@ -137,3 +137,20 @@ def test_ported_brute_loads_on_mhfu_port(lua: Any) -> None:
     fid, pac, orig = calls(m, "inject_relocate")[0]
     assert fid == 6186
     assert pac.endswith("/brute_tigrex.bin") and orig.endswith("/file_06185.bin.orig")
+
+
+def test_ported_zinogre_dashes_at_a_far_hunter(lua: Any, tmp_path: Path) -> None:
+    (tmp_path / "zinogre_moves.lua").write_text(
+        "return { moves = { dash = { entry = 20, carrier = { 0, 2 }, steer = { walls = true },"
+        ' after = "dash_stop" }, dash_stop = { entry = 21 } }, rules = {} }\n'
+    )
+    lua.execute(f"package.path = package.path .. ';' .. {str(tmp_path / '?.lua')!r}")
+    m = run(lua, "ported_zinogre")
+    zin = lua.eval('require("mhfu_port").ports.zinogre')
+    m.em_installed = lambda: True
+    zin.ent, zin._native_armed = ENT, True
+    state = {"native": True, "dist": 2000.0, "px": 1.0, "pz": 2.0, "tick": 100}
+    zin._brain(lua.table_from({**state, "dist": 900.0}))
+    zin._brain(lua.table_from(state))
+    zin._brain(lua.table_from({**state, "tick": 110}))  # within the gap
+    assert calls(m, "em_play") == [(ENT, 0, False)]

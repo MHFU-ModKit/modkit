@@ -11,6 +11,7 @@
 typedef unsigned int SceSize;   /* host tests compile the core's pure parts */
 #endif
 #include "mhfu/events.h"
+#include "mhfu/move.h"
 #include "wrap.h"
 
 #ifdef __cplusplus
@@ -115,6 +116,18 @@ void mhfu_capture_configure(int scale, int interval_ms, const char *path);
 /* --- move player (move.cpp) --- */
 /* Its block and its quest handler; em_vhook's init calls it. */
 int  mhfu_move_init(void);
+/* The brain's rules on the flinch (em_vhook.cpp) own the reaction replacement through these: a
+ * flinch of entity in parts (ENTITY.FLINCH_MASK bits) enters the carrier; entity 0 turns it off.
+ * The move is not armed: the brain hands it over at the hit, while a replaced reaction waits for
+ * the step. */
+void mhfu_move_react_arm(uint32_t entity, uint8_t parts, uint8_t carrier_main,
+                         uint8_t carrier_sub);
+int  mhfu_move_react_pending(uint32_t entity);
+void mhfu_move_react_take(const mhfu_move_t *mv, const volatile mhfu_steer_spec_t *s);
+
+/* --- monster events (monster_events.cpp) --- */
+/* Its block and its quest handler; the move player's init calls it. */
+int  mhfu_monster_events_init(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

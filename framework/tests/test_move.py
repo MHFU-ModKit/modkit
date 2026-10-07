@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The move player's step (move.cpp) on the host, one AI frame per call, against a host engine
-(move_host.cpp) that lands pairs and installs clips; each frame then advances the clip."""
+(move_host.cpp) that lands pairs, installs clips and replaces reactions as em_vhook does; each
+frame then advances the clip."""
 
 import ctypes
 import struct
@@ -16,6 +17,7 @@ CLIP_END = 228.0
 SPEED = 2.0
 NO_PAIR = 0xFF
 CLIP, BACK, PAIR, STOPPED, REPLACED, REFUSED, LOST = range(1, 8)
+REACTION = 10
 DONE = 4
 NEVER = 0xFFFF_FFFF
 NODE6 = BASE + 0x3000 + 0x600  # move_host.cpp's node for attack 6
@@ -36,7 +38,8 @@ class Move(ctypes.Structure):
         ("attacks", ctypes.c_uint16 * 16),
         ("spawner", ctypes.c_uint32),
         ("host_attacks", ctypes.c_uint8),
-        ("_pad", ctypes.c_uint8 * 3),
+        ("force", ctypes.c_uint8),
+        ("_pad", ctypes.c_uint8 * 2),
     ]
 
 
@@ -101,10 +104,19 @@ class Game:
             mv.attack_count = i + 1
         assert self.lib.mhfu_move_play(ENT, ctypes.byref(mv)) == 1
 
+    def react(self, entry: int = 59) -> None:
+        mv = Move(entry=entry, carrier_main=0, carrier_sub=2, back_main=NO_PAIR)
+        assert self.lib.mhfu_move_react(0, ENT, ctypes.byref(mv), None) == 1
+
 
 @pytest.fixture(scope="module")
 def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
-    lib = host_lib("src/core/move.cpp", "src/core/steer.cpp", "tests/move_host.cpp")
+    lib = host_lib(
+        "src/core/move.cpp",
+        "src/core/steer.cpp",
+        "src/core/monster_events.cpp",
+        "tests/move_host.cpp",
+    )
     lib.host_mem.restype = ctypes.c_void_p
     lib.host_frame.restype = ctypes.c_uint32
     lib.host_frame.argtypes = [ctypes.c_uint32]
@@ -113,6 +125,8 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     lib.mhfu_move_play.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
     lib.mhfu_move_steer.argtypes = [ctypes.c_void_p]
     lib.mhfu_steer_init_spec.argtypes = [ctypes.c_void_p]
+    lib.mhfu_move_react.argtypes = [ctypes.c_int, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p]
+    lib.host_react_enter.argtypes = [ctypes.c_uint32] * 3
     return lib
 
 
@@ -147,7 +161,7 @@ def test_clip_end_hands_off_and_reads_the_successor(g: Game) -> None:
     assert g.state("STATE", "B") == (DONE,) and g.state("END", "B") == (CLIP,)
     assert g.state("END_PAIR", "H") == (0x0202,)
     assert g.state("PEAK", "fff") == (CLIP_END,) * 3
-    assert not g.lib.host_has_step()
+    assert g.lib.host_has_step()  # it stays, for the monster events
 
 
 def test_attack_spawns_when_the_cursor_crosses_its_frame(g: Game) -> None:
@@ -168,7 +182,6 @@ def test_a_reaction_ends_the_move(g: Game) -> None:
     g.pair = (4, 1)
     g.frame()
     assert g.state("END", "B") == (PAIR,) and g.state("END_PAIR", "H") == (0x0401,)
-    assert not g.lib.host_has_step()
 
 
 def test_skip_takes_the_frame_except_on_a_hit(g: Game) -> None:
@@ -214,7 +227,6 @@ def test_stop_and_replace(g: Game) -> None:
     g.lib.mhfu_move_stop()
     g.frame()
     assert g.state("END", "B") == (STOPPED,)
-    assert not g.lib.host_has_step()
 
 
 def test_window_ends_the_node_at_its_end_frame(g: Game) -> None:
@@ -374,3 +386,102 @@ def test_walls_off_or_beside_do_not_end_it(g: Game) -> None:
     for _ in range(4):
         g.frame()
     assert g.state("STATE", "B") == (2,)
+
+
+def notice(g: Game, combat: int) -> None:
+    g.poke(a.ENTITY.AWARE, "B", 1)
+    g.poke(a.ENTITY.COMBAT_MODE, "B", combat)
+
+
+def test_a_move_waits_for_the_notice(g: Game) -> None:
+    notice(g, 0)
+    g.play(46)
+    for _ in range(5):
+        g.frame()
+    assert g.calls() == [] and g.state("WAITED") == (5,)
+    notice(g, 1)
+    g.frame()
+    assert g.calls()[0] == ("E", ENT, 0, 1, 0)
+
+
+def test_a_forced_move_does_not_wait(g: Game) -> None:
+    notice(g, 0)
+    g.poke(a.ENTITY.SCRIPT_WAKE, "B", 1)
+    g.play(46, force=1)
+    g.frame()
+    assert g.calls()[0] == ("E", ENT, 0, 1, 0)
+    assert g.peek(a.ENTITY.SCRIPT_WAKE, "B") == (0,)  # the notice's pair would cut the carrier
+
+
+def test_the_script_keeps_its_wake_in_combat(g: Game) -> None:
+    notice(g, 1)
+    g.poke(a.ENTITY.SCRIPT_WAKE, "B", 1)
+    g.play(46)
+    g.frame()
+    assert g.peek(a.ENTITY.SCRIPT_WAKE, "B") == (1,)
+
+
+def test_the_wait_has_an_end(g: Game) -> None:
+    notice(g, 0)
+    g.play(46)
+    for _ in range(450):  # MHFU_MOVE_WAIT
+        g.frame()
+    assert g.calls() == []
+    g.frame()
+    assert g.calls()[0] == ("E", ENT, 0, 1, 0)
+
+
+def flinch(g: Game, sub: int = 1, mask: int = 1) -> None:
+    """The engine's flinch: REACTION_CHECK set FLINCH_MASK, then its reaction's enter-action ran
+    and the host step ran the entered pair's phase 0."""
+    g.poke(a.ENTITY.FLINCH_MASK, "B", mask)
+    g.lib.host_react_enter(ENT, 4, sub)
+    g.poke(a.ENTITY.PHASE, "B", 1)
+
+
+def test_a_replaced_flinch_plays_the_move_next_frame(g: Game) -> None:
+    g.react(59)
+    g.play(46)
+    for _ in range(5):
+        g.frame()
+    g.calls()
+    flinch(g)
+    assert g.pair == (0, 2)
+    g.frame()
+    assert g.calls() == [
+        ("E", ENT, 0, 2, 2),
+        ("M", 0, 0, 0, 0),
+        ("M", ENT, 0, 0, 0),
+        ("X", ENT, 59, 0, 0),
+    ]
+    assert g.state("END", "B") == (0,) and g.state("STATE", "B") == (2,)
+    assert g.state("REACTIONS") == (1,) and g.state("REACT_PAIR") == (0x20401,)
+    assert g.state("REACT_PARTS", "B") == (1,)
+
+
+def test_a_reaction_ends_the_move_it_replaces(g: Game) -> None:
+    g.react(59)
+    g.play(46)
+    for _ in range(5):
+        g.frame()
+    flinch(g)
+    g.poke(a.ENTITY.PHASE, "B", 0)  # the carrier's phase 0 still to run
+    g.frame()
+    assert g.state("STATE", "B") == (1,) and g.state("STARTED") == (2,)
+    g.frame()
+    assert ("X", ENT, 59, 0, 0) in g.calls() and g.state("STATE", "B") == (2,)
+
+
+def test_a_flinch_frame_is_needed(g: Game) -> None:
+    g.react(59)
+    flinch(g, mask=0)
+    assert g.pair == (4, 1)
+    flinch(g, sub=4)  # the tail cut keeps its own reaction
+    assert g.pair == (4, 4)
+
+
+def test_react_off(g: Game) -> None:
+    g.react(59)
+    assert g.lib.mhfu_move_react(0, ENT, None, None) == 1
+    flinch(g)
+    assert g.pair == (4, 1)

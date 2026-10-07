@@ -13,7 +13,8 @@ from RAM, say which stream and slot NODE is.
 
 `deploy` and `ride` set a port up for it: the bridge, the runtime and a rider mod on the lane's
 stick (and the framework's PRX, when given one), and a cold boot into the quest where the port
-replaces a monster.
+replaces a monster. The rider has no brain: the host's AI alone, unless `brain` keeps the
+manifest's moves, claims and rules (`<name>_moves.lua`).
 """
 
 from __future__ import annotations
@@ -332,20 +333,29 @@ def sweep(
 # --- a port in the lane's game ---
 
 
-def rider(name: str, pac: str, host: int = TIGREX, replace: Iterable[int] = (GIADROME,)) -> str:
+def rider(
+    name: str,
+    pac: str,
+    host: int = TIGREX,
+    replace: Iterable[int] = (GIADROME,),
+    brain: bool = False,
+) -> str:
     """A mod that injects port `name` (its PAC `pac`) on `host` in place of `replace`, with no
-    brain."""
+    brain, or with its manifest's moves and rules."""
     frame = files.monster_pac(host)
     victims = ", ".join(map(str, replace))
+    what = "its manifest's moves and rules" if brain else "no brain"
+    none = "" if brain else ", moves = {}, rules = {}"
     return "\n".join(
         [
             f"-- {name}{RIDER}, {GENERATED}: the {name} port on em {host} in",
-            f"-- place of em {victims}, with no brain; cli_bridge.lua plays its clips.",
+            f"-- place of em {victims}, with {what}; cli_bridge.lua plays its clips.",
             'local port = require("mhfu_port")',
             f'port.mod("{name}_rig", function(P)',
             f'  P.define{{ name = "{name}", species = {host}, replace = {{ {victims} }},',
             f'            pac = "{pac}", orig = "{inject.orig_filename(frame)}",',
-            f"            fid = {files.engine_id(frame)} }}",
+            f"            fid = {files.engine_id(frame)}{none}",
+            "  }",
             "end)",
             "",
         ]
@@ -359,6 +369,7 @@ def deploy(
     replace: Iterable[int] = (GIADROME,),
     stick: Path | None = None,
     prx: Path | None = None,
+    brain: bool = False,
 ) -> list[Path]:
     """Put the bridge, the port runtime and a rider for port `name` into the stick's mods (the
     lane's with MHFU_LANE), in place of any rider for another port, and `prx` as the framework;
@@ -367,14 +378,16 @@ def deploy(
     root = inject.memstick(stick)
     mods = root / inject.MODS_SUBDIR
     built = root / inject.INJECT_SUBDIR / pac
-    clips = mods / LIB / f"{name}_clips.lua"
-    for need in (built, clips):
+    needed = [built, mods / LIB / f"{name}_clips.lua"]
+    if brain:
+        needed.append(mods / LIB / f"{name}_moves.lua")
+    for need in needed:
         if not need.is_file():
             raise FileNotFoundError(f"no {need}: run `mhfu-port inject ports/{name}.toml` first")
     out = {
         mods / BRIDGE_LUA.name: BRIDGE_LUA.read_text(encoding="utf-8"),
         mods / LIB / RUNTIME_LUA.name: RUNTIME_LUA.read_text(encoding="utf-8"),
-        mods / f"{name}{RIDER}": rider(name, pac, host, replace),
+        mods / f"{name}{RIDER}": rider(name, pac, host, replace, brain),
     }
     for old in mods.glob(f"*{RIDER}"):
         if old not in out and GENERATED in old.read_text(encoding="utf-8", errors="replace"):
@@ -401,13 +414,14 @@ def ride(
     launcher: Launcher | None = None,
     log: Log | None = None,
     prx: Path | None = None,
+    brain: bool = False,
 ) -> Rig:
     """A cold boot into `quest` at `rank` with port `name` deployed (`deploy`) on the launcher's
     lane, once its monster and the bridge are up; the emulator keeps running when the rig
     closes."""
     launcher = launcher or Launcher.from_env()
     stick = Lane(launcher.lane).stick if launcher.lane is not None else None
-    deploy(name, pac, host, replace, stick, prx)
+    deploy(name, pac, host, replace, stick, prx, brain=brain)
     rig = Rig.open(launcher, quest=quest, rank=rank, log=log)
     try:
         s = rig.s

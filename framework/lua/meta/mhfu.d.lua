@@ -394,7 +394,8 @@ function mhfu.em_request(main, sub, mode) end
 ---@return true
 function mhfu.em_substitute(slot, from_mask, from_sub, to_main, to_sub, count) end
 
----Rule slot 0..3: a brain rule the AI step checks every frame (30 Hz), with no Lua in the loop.
+---Rule slot 0..mhfu.addr.EM_CFG.RULES_COUNT-1: a brain rule the AI step checks every frame (30 Hz),
+---with no Lua in the loop.
 ---@param slot integer
 ---@param rule mhfu.EmRule? nil clears the slot
 ---@return true
@@ -428,6 +429,8 @@ mhfu.EM_UNLIMITED = -1 -- MHFU_EM_UNLIMITED
 ---@field closing? boolean only while the distance shrinks
 ---@field cooldown? integer frames between two fires, default 0
 ---@field count? integer fires allowed, default mhfu.EM_UNLIMITED
+---@field from_move? integer own move slot (`mhfu.em_move`): fires while it plays, its AI frames the dwell; a pair rule waits while any move plays
+---@field play_move? integer own move slot played instead of entering (to_main, to_sub)
 
 ---What `mhfu.em_status()` returns.
 ---@class mhfu.EmStatus
@@ -608,11 +611,14 @@ function mhfu.on_bigmonster_action(fn, priority) end
 -- wraps: the clip on every body part, attacks at clip frames, the native AI back at the end.
 
 ---Starts a move on ent at its next AI step, ending one it plays; false while nothing is wrapped.
----`spec` is a table, or the address of a MOVE struct in memory (the debug bridge's).
+---`spec` is a table, or the address of a MOVE struct in memory (the debug bridge's, FORCE in it).
+---Asked while the monster's notice runs (`mhfu.monster_state(ent).noticing`), it waits up to 450
+---AI frames for the roar and combat entry, unless `force`.
 ---@param ent integer
 ---@param spec mhfu.Move|integer
+---@param force? boolean
 ---@return boolean
-function mhfu.move_play(ent, spec) end
+function mhfu.move_play(ent, spec, force) end
 
 ---Ends the running move at the next AI step; the carrier pair keeps running and hands off itself.
 ---@return true
@@ -655,7 +661,7 @@ function mhfu.move_block() end
 ---@field started integer moves started since boot
 ---@field pending integer 1 while a move waits for its AI step
 ---@field state integer 0 idle, 1 entering the carrier, 2 playing, 3 reading the successor, 4 done
----@field end_reason integer 1 clip done, 2 back pair, 3 pair changed, 4 stopped, 5 replaced, 6 refused, 7 lost, 8 a wall ahead, 9 a class-2 wall (stuck pair entered)
+---@field end_reason integer a MOVE_END code: its name is mhfu.addr.MOVE_END[end_reason]
 ---@field entity integer
 ---@field entry integer
 ---@field frames integer AI frames since the clip's dispatch
@@ -666,6 +672,13 @@ function mhfu.move_block() end
 ---@field peak number[] per body part, the furthest cursor of the move's clip
 ---@field clip_end number[] per body part, the clip's last frame
 ---@field spawns mhfu.MoveSpawn[] one per attack, in order
+---@field waited integer AI frames the last move asked for waited for the monster's notice
+---@field reactions integer reactions replaced since boot (`mhfu.move_react`)
+---@field react_entity integer the monster whose reaction is replaced, 0 none
+---@field react_parts integer ENTITY.FLINCH_MASK of the last replaced reaction
+---@field react_part integer ENTITY.MOST_DAMAGED_PART then
+---@field react_main integer the pair the engine would have entered
+---@field react_sub integer
 
 ---A spawned attack in `mhfu.MoveStatus.spawns`.
 ---@class mhfu.MoveSpawn
@@ -674,3 +687,135 @@ function mhfu.move_block() end
 ---@field node integer the attack node, 0 out of section
 ---@field ended integer AI frame the move ended the node at, -1 if it did not
 ---@field ended_state integer the node's state then: 1 or 2 ended, 0 it had ended itself, 255 no longer the move's
+
+-- own moves: a port's moves by slot, played by the move player (bind_em.cpp) ------------------
+-- The em_vhook brain plays one, in C on the AI step, when asked (em_play), when the move before
+-- it ends and names it (`after`), or when a rule says (EmRule.play_move).
+
+---Own move slot 0..15 plays `spec`; `spec.after` is the slot played when it ends on its clip, its
+---length or a wall. False for a bad slot or no room left for its turn keys.
+---@param slot integer
+---@param spec mhfu.OwnMove
+---@return boolean
+function mhfu.em_move(slot, spec) end
+
+---Empties every own move slot.
+---@return true
+function mhfu.em_moves_clear() end
+
+---Plays own move `slot` on ent at its next AI step; false while nothing is wrapped or the slot is
+---empty. `force` starts it while the monster's notice runs, as `mhfu.move_play`'s.
+---@param ent integer
+---@param slot integer
+---@param force? boolean
+---@return boolean
+function mhfu.em_play(ent, slot, force) end
+
+---The slot of the own move the move player is playing, -1 if none of ours.
+---@return integer
+function mhfu.em_playing() end
+
+---The own moves' state.
+---@return mhfu.OwnMovesStatus
+function mhfu.em_moves_status() end
+
+---An own move for `mhfu.em_move`: a `mhfu.Move` and the slot after it.
+---@class mhfu.OwnMove: mhfu.Move
+---@field after? integer own move slot played when this one ends on its clip, its length or a wall
+
+---What `mhfu.em_moves_status()` returns.
+---@class mhfu.OwnMovesStatus
+---@field block integer the registry (struct EM_MOVES)
+---@field playing integer the slot the move player is playing, -1 none of ours
+---@field last integer the slot of its current or last move, -1 none of ours
+---@field plays integer own moves started
+---@field chained integer of them by `after`
+---@field keys integer turn keys in use
+
+-- reactions and monster events (bind_move.cpp, bind_monster_events.cpp) ----------------------
+
+---Plays `spec` in place of the monster's reaction `kind` from the next one on, until called again;
+---no spec stops it. The engine's reaction runs up to its enter-action (flinch counters, pending
+---damage into HP), which then enters the move's carrier; the move plays from the next AI step.
+---"flinch" is em75's flinch pairs (4, 0|1|5|6|8). Needs the wrapped species (cold boot).
+---@param kind "flinch"
+---@param ent integer
+---@param spec? mhfu.Move
+---@return boolean
+function mhfu.move_react(kind, ent, spec) end
+
+---Calls fn when a big monster notices the player (its ENTITY.AWARE bit for the player rises).
+---Monster events come from em_vhook's brain on the wrapped species, one AI frame after the
+---engine's change, and are raised on the 5 Hz registry poll. Register at load.
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_noticed(fn, priority) end
+
+---Calls fn when the player's yellow eye comes on for a big monster: in combat with the player.
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_combat_entered(fn, priority) end
+
+---Calls fn when the player's yellow eye goes off for a big monster: it lost the player, the player
+---left its section, or it died.
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_combat_left(fn, priority) end
+
+---Calls fn when parts of a big monster flinch; ev.part is the lowest, ev.data all of them, and
+---ev.main/ev.sub the reaction the engine entered (or the replacing move's carrier).
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_flinch(fn, priority) end
+
+---Calls fn when a part of a big monster breaks; ev.part is the flinching part that broke, ev.data
+---the new ENTITY.BROKEN bits.
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_part_broken(fn, priority) end
+
+---Calls fn when a big monster's tail is cut; ev.data is its tail-cut count.
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_tail_cut(fn, priority) end
+
+---The monster-event block (struct MONSTER_EVENTS), for a debugger; 0 before the framework's init.
+---@return integer
+function mhfu.monster_events_block() end
+
+---One monster event.
+---@class mhfu.MonsterEvent
+---@field entity integer
+---@field kind "noticed"|"combat_entered"|"combat_left"|"flinch"|"part_broken"|"tail_cut"
+---@field frame integer the monster's AI frame the change was seen in
+---@field usec integer the emulated clock then
+---@field delay integer microseconds from then to this call
+---@field main integer the monster's pair then
+---@field sub integer
+---@field data integer flinch: the flinched parts; part_broken: the new broken bits; noticed: the aware bits; combat: 1 entered, 0 left; tail_cut: the cut count
+---@field part? integer flinch, part_broken: the lowest flinched part
+
+---A big monster now, read from its cells (the monster events' own reads): whether it noticed the
+---player, is in combat, runs its notice; nil for no entity. Any thread.
+---@param ent integer
+---@return mhfu.MonsterState?
+function mhfu.monster_state(ent) end
+
+---What `mhfu.monster_state` returns.
+---@class mhfu.MonsterState
+---@field aware boolean the player's ENTITY.AWARE bit: it noticed the player
+---@field combat boolean the player's yellow eye is on for it
+---@field noticing boolean aware, COMBAT_MODE still 0: its notice runs, and a move asked now waits unless forced
+---@field dead boolean
+---@field severed boolean the tail is cut
+---@field main integer its pair
+---@field sub integer
+---@field flinched integer ENTITY.FLINCH_MASK: the parts that flinched this AI frame
+---@field broken integer ENTITY.BROKEN
+
+-- brain rules on monster events (bind_em.cpp) ----------------------------------------------------
+
+---@class mhfu.EmRule
+---@field on? "noticed"|"combat_entered"|"combat_left"|"flinch"|"part_broken"|"tail_cut" fires in the AI frame the event is seen, `from_*` and the distance still gating; "flinch" plays its own move (`play_move`) in place of the host's reaction
+---@field part? integer "flinch", "part_broken": only that part's (an ENTITY.FLINCH_MASK bit); default any
+---@field force? boolean `play_move` starts while the monster's notice runs (a rule on "noticed" needs it)

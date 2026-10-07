@@ -3,7 +3,8 @@
 from typing import Any
 
 import pytest
-from mhfu_studio.monster.panels.timeline import STRIP_TIP, TimelinePanel
+from mhfu_port.manifest import AttackWindow
+from mhfu_studio.monster.panels.timeline import LANE_H, STRIP_TIP, TimelinePanel
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.ui import kit, theme
@@ -143,3 +144,70 @@ def test_labels_read_in_a_light_theme(qtbot: Any, workspace: MonsterWorkspace) -
         assert under.lightnessF() < strip.lightnessF() - 0.2
     finally:
         theme.apply(theme.theme("Ember", True))
+
+
+def lane_drag(p: TimelinePanel, lane: int, a: float, b: float) -> None:
+    lanes = p.lanes
+    y = round((lane + 0.5) * LANE_H)
+    pa, pb = QPoint(round(lanes.x_of(a)), y), QPoint(round(lanes.x_of(b)), y)
+    QTest.mousePress(lanes, LEFT, Qt.KeyboardModifier.NoModifier, pa)
+    QTest.mouseMove(lanes, (pa + pb) / 2)
+    QTest.mouseMove(lanes, pb)
+    QTest.mouseRelease(lanes, LEFT, Qt.KeyboardModifier.NoModifier, pb)
+
+
+@pytest.fixture
+def own(qtbot: Any, workspace: MonsterWorkspace) -> TimelinePanel:
+    """The walk made an own move, paused at frame 0."""
+    workspace.play_slot(1)
+    workspace.new_move("stamp")
+    workspace.vp.playback.pause()  # type: ignore[union-attr]
+    return make(qtbot, workspace)
+
+
+def test_no_lanes_without_an_own_move(panel: TimelinePanel) -> None:
+    assert not panel.lanes.isVisibleTo(panel) and not panel.attack_row.isVisibleTo(panel)
+
+
+def test_lanes_for_an_own_move(own: TimelinePanel) -> None:
+    assert own.lanes.isVisible() and own.attack_row.isVisible() and kit.missing_tips(own) == []
+    assert own.lanes.height() == int(LANE_H) + 2, "the lane to add on"
+
+
+def test_two_windows_by_drag(own: TimelinePanel, workspace: MonsterWorkspace) -> None:
+    own.attack_id.setValue(6)
+    lane_drag(own, 0, 2.0, 5.0)
+    own.sync()
+    own.attack_id.setValue(7)
+    assert workspace.own_move().attacks[0].id == 7, "the picked one's id"  # type: ignore[union-attr]
+    workspace.picked_window = None
+    own.sync()
+    own.attack_id.setValue(6)
+    lane_drag(own, 1, 9.0, 6.0)
+    mv = workspace.own_move()
+    assert mv is not None and mv.attacks == [AttackWindow(7, 2, 5), AttackWindow(6, 6, 9)]
+    assert own.lanes.height() == int(LANE_H * 3) + 2
+    lane_drag(own, 1, 9.0, 10.0)
+    assert workspace.own_move().attacks[1] == AttackWindow(6, 6, 10)  # type: ignore[union-attr]
+    workspace.set_move(length=3)
+    own.lanes.grab()  # paints, the length too
+
+
+def test_playhead_shows_what_is_out(own: TimelinePanel, workspace: MonsterWorkspace) -> None:
+    own.attack_id.setValue(6)
+    lane_drag(own, 0, 2.0, 5.0)
+    workspace.seek(3.0)
+    own.sync()
+    assert own.attack_live.text() == "out: 6"
+    workspace.seek(6.0)
+    own.sync()
+    assert own.attack_live.text() == "no attack out"
+    assert "power 64, hit group 2" in own.attack_what.text()
+
+
+def test_delete_key_removes(own: TimelinePanel, workspace: MonsterWorkspace) -> None:
+    lane_drag(own, 0, 2.0, 5.0)
+    assert workspace.picked_window == 0
+    own.lanes.setFocus()
+    QTest.keyClick(own.lanes, Qt.Key.Key_Delete)
+    assert workspace.own_move().attacks == []  # type: ignore[union-attr]

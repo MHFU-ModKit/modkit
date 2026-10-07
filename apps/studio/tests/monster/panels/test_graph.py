@@ -81,8 +81,9 @@ def test_em75_lays_the_zinogre_chain_out(em75: SpeciesIntel, ports: Any) -> None
     m = manifest.load(ports / "zinogre.toml")
     lay = graph.build(em75, m.moves, (1, 4), "moves")
     layers = {k: n.layer for k, n in lay.nodes.items()}
-    assert layers[(1, 4)] == 0 and layers[(0, 3)] == 1 and layers[(0, 1)] == 2
+    assert layers[(1, 4)] == 0 and layers[(0, 3)] == 1
     assert lay.nodes[(1, 4)].move == "lunge"
+    assert layers[(0, 1)] == 0 and lay.nodes[(0, 1)].move == "idle", "a bound hub is a root"
     big = graph.build(em75, m.moves, None, "attacks")
     assert 20 <= len(big.nodes) <= 60 and len(big.arrows) < 400
 

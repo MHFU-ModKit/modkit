@@ -24,6 +24,9 @@ def constants(t: addresses.Table) -> dict[str, int]:
             out[f"{s.name}_SIZE"] = s.size
         if s.stride:
             out[f"{s.name}_STRIDE"] = s.stride
+    for e in t.enums.values():
+        out |= {f"{e.name}_{n.upper()}": k for k, n in enumerate(e.names, 1)}
+        out[f"{e.name}_COUNT"] = len(e.names)
     return out
 
 
@@ -49,6 +52,10 @@ def in_lua(t: addresses.Table) -> dict[str, int]:
     out |= {f"{name}_COUNT": addr[f"{name}_COUNT"] for name, a in t.addresses.items() if a.count}
     for s in t.structs.values():
         out |= {f"{s.name}_{f}": v for f, v in addr[s.name].items()}
+    for e in t.enums.values():
+        names = list(addr[e.name].values())
+        out |= {f"{e.name}_{n.upper()}": k for k, n in enumerate(names, 1)}
+        out[f"{e.name}_COUNT"] = len(names)
     return out
 
 
@@ -105,6 +112,14 @@ def test_an_array_carries_its_count(tmp_path):
     for found in (in_c(t, tmp_path), in_lua(t)):
         assert (found["ROWS_COUNT"], found["WORDS_COUNT"], found["HOLDER_ROWS_COUNT"]) == (3, 5, 2)
         assert "ROW_F_COUNT" not in found
+
+
+def test_an_enum_numbers_its_names_from_one(tmp_path):
+    t = addresses.parse({"enum": {"KIND": {"doc": "d", "names": ["a_b", "c"]}}})
+    assert t.enums["KIND"].names == ("a_b", "c") and t.enums["KIND"].number("c") == 2
+    for found in (in_c(t, tmp_path), in_lua(t)):
+        assert (found["KIND_A_B"], found["KIND_C"], found["KIND_COUNT"]) == (1, 2, 2)
+    assert '#define MHFU_KIND_NAMES "a_b", "c"' in addresses.render_c(t)
 
 
 def test_unknown_names_raise():
@@ -178,6 +193,15 @@ def entry_field(offset=0):
             "clashes",
         ),
         ({"regions": {}}, "unknown top-level"),
+        ({"enum": {"K": {"doc": "d", "names": ["A"]}}}, "lower_snake_case"),
+        ({"enum": {"K": {"doc": "d", "names": ["a", "a"]}}}, "distinct"),
+        ({"enum": {"K": {"doc": "d", "names": []}}}, "distinct"),
+        ({"enum": {"K": {"names": ["a"]}}}, "expects exactly"),
+        ({"address": {"K": entry()}, "enum": {"K": {"doc": "d", "names": ["a"]}}}, "an enum and"),
+        (
+            {"address": {"K_A": entry()}, "enum": {"K": {"doc": "d", "names": ["a"]}}},
+            "clashes",
+        ),
     ],
 )
 def test_parse_rejects(data, problem):

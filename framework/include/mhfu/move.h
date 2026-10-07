@@ -14,14 +14,26 @@
  * While a move plays, the host's animation events for the entry its clip sits in (attacks and
  * effects at the host clip's frames) are skipped, unless HOST_ATTACKS keeps them.
  *
+ * A move asked for while the monster's notice runs (the player's ENTITY.AWARE bit set,
+ * COMBAT_MODE still 0: the roar, the hub, the AI script's combat entry) waits for it, up to
+ * MHFU_MOVE_WAIT AI frames, unless the call FORCEs it.
+ *
+ * A reaction can be replaced by a move (mhfu_move_react): the engine's own reaction runs up to
+ * its enter-action (FLINCH_PARTS counters, pending damage into HP), which then enters the move's
+ * carrier instead; the move plays from the next AI step.
+ *
  * It runs on em_vhook's slot-29 step (mhfu_em_step), so the species must be wrapped
- * (mhfu_em_installed). The calls only write the move block: safe from any thread. */
+ * (mhfu_em_installed); the step is in from the species' spawn. A brain rule on the flinch
+ * (mhfu_em_rule) takes the reaction replacement over. The calls only write the move block: safe
+ * from any thread. */
 #ifndef MHFU_MOVE_H
 #define MHFU_MOVE_H
 
 #include <stdint.h>
 
+#include "addresses.gen.h"
 #include "mhfu/steer.h"
+#include "mhfu/monster_events.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,22 +61,19 @@ typedef struct {
     mhfu_move_attack_t attacks[MHFU_MOVE_MAX_ATTACKS];
     uint32_t spawner;                     /* 0 = MHFU_TIGREX_ATTACK_SPAWN */
     uint8_t  host_attacks;                /* 1 keeps the host entry's animation events */
-    uint8_t  _pad[3];
+    uint8_t  force;                       /* this call: 1 starts while the monster's notice runs */
+    uint8_t  _pad[2];
 } mhfu_move_t;
 
 /* MOVE_STATE.STATE */
 enum { MHFU_MOVE_IDLE, MHFU_MOVE_ENTERING, MHFU_MOVE_PLAYING, MHFU_MOVE_AFTER, MHFU_MOVE_DONE };
-/* MOVE_STATE.END */
+/* MOVE_STATE.END: MHFU_MOVE_END_* from addresses.toml's [enum.MOVE_END] */
+
+#define MHFU_MOVE_WAIT 450      /* AI frames a move waits for the monster's notice to run */
+
+/* mhfu_move_react kinds */
 enum {
-    MHFU_MOVE_END_CLIP = 1,   /* the clip ended; the carrier handed off */
-    MHFU_MOVE_END_BACK,       /* the clip or LENGTH ended; the back pair was entered */
-    MHFU_MOVE_END_PAIR,       /* the pair changed under the move */
-    MHFU_MOVE_END_STOPPED,
-    MHFU_MOVE_END_REPLACED,
-    MHFU_MOVE_END_REFUSED,    /* enter-action did not land the carrier */
-    MHFU_MOVE_END_LOST,       /* another dispatch replaced the clip */
-    MHFU_MOVE_END_WALL,       /* a wall ahead (mhfu/steer.h); the carrier or back pair takes over */
-    MHFU_MOVE_END_STUCK,      /* a class-2 wall ahead: the spec's stuck pair was entered */
+    MHFU_REACT_FLINCH,        /* em75's flinch pairs (4, 0|1|5|6|8) in an AI frame with FLINCH_MASK */
 };
 
 /* struct MOVE_STATE in addresses.toml */
@@ -85,6 +94,15 @@ typedef struct {
     uint32_t ended_frame[MHFU_MOVE_MAX_ATTACKS];
     uint8_t  ended_state[MHFU_MOVE_MAX_ATTACKS];
     mhfu_steer_state_t steer;
+    mhfu_move_t react;                    /* the move that replaces REACT_KIND on REACT_ENTITY */
+    mhfu_steer_spec_t react_steer;
+    uint32_t react_entity;                /* 0: no reaction is replaced */
+    uint8_t  react_kind, react_parts, react_part, _pad2;  /* FLINCH_MASK and MOST_DAMAGED_PART */
+    uint32_t reactions;                   /* reactions replaced */
+    uint32_t react_seen;                  /* mhfu_em_react_hits taken */
+    uint32_t react_pair;                  /* the replaced enter-action: (mode<<16)|(main<<8)|sub */
+    uint32_t waited;                      /* AI frames NEXT waited for the notice */
+    uint32_t events;                      /* the monster-event block (MONSTER_EVENTS) */
 } mhfu_move_state_t;
 
 /* entry on the carrier (0,2), em75's alert hub (one dispatch, then the brain once the clip
@@ -103,6 +121,12 @@ void mhfu_move_steer(const mhfu_steer_spec_t *s);
 
 /* The block, or 0 before the framework's init. */
 const volatile mhfu_move_state_t *mhfu_move_state(void);
+
+/* Replaces reaction `kind` of entity with mv (and steer, NULL for none) from the next one on, until
+ * called again or a brain rule on the flinch is installed; mv NULL stops it. 0 while nothing is
+ * wrapped. */
+int  mhfu_move_react(int kind, uint32_t entity, const mhfu_move_t *mv,
+                     const mhfu_steer_spec_t *steer);
 
 #ifdef __cplusplus
 }

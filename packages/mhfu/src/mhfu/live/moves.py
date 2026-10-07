@@ -9,37 +9,43 @@ the clip's phase, and the pairs the monster went through after.
         r.parts[0].played, r.spawns[0].at, r.hits
 
 It asks through the debug bridge (`cli_bridge.lua`, CMD 4), so the game needs the framework,
-the bridge and a monster whose vtable em_vhook wrapped: a cold boot (`clips.ride`).
+the bridge and a monster whose vtable em_vhook wrapped: a cold boot (`clips.ride`). `watch`
+follows a move something else starts, a port's own move from Lua or a rule among them;
+`play_own` asks the riding port for one of its own moves by name.
 """
 
 from __future__ import annotations
 
 import re
 import struct
-from dataclasses import dataclass
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 
 from .. import addresses as a
 from ..entries import entry_clip
 from ..views import View, f32s, ptr, ptrs, u8, u8s, u16, u32, u32s
 from .clips import Pack, bridge, monster
 from .session import Session
-from .shell_anim import Bridge, Op
+from .shell_anim import STALLED, Bridge, Op
 
 NO_PAIR = 0xFF
 DONE = 4
 """MOVE_STATE.STATE once the move is over."""
 NEVER = 0xFFFF_FFFF
-ENDS = {
-    1: "clip done",
-    2: "back pair",
-    3: "pair changed",
-    4: "stopped",
-    5: "replaced",
-    6: "carrier refused",
-    7: "clip lost",
-    8: "a wall ahead",
-    9: "a class-2 wall: stuck",
+WORDS = {
+    "clip": "clip done",
+    "back": "back pair",
+    "pair": "pair changed",
+    "refused": "carrier refused",
+    "lost": "clip lost",
+    "wall": "a wall ahead",
+    "stuck": "a class-2 wall: stuck",
+    "reaction": "a reaction's move",
 }
+"""How a MOVE_END name reads, where its name alone does not say it."""
+ENDS: dict[int, str] = {a.MOVE_END.number(n): WORDS.get(n, n) for n in a.MOVE_END.names}
+"""MOVE_STATE.END in words."""
 TURNS = ("still", "hunter", "away", "fixed")
 """STEER_PARAMS.TURN by name."""
 FULL_TURN = 0x10000
@@ -47,6 +53,9 @@ FULL_TURN = 0x10000
 SPEED = 2.0
 """Clip frames a forced clip's cursor moves per AI frame (CLIP_BLOCK.SPEED)."""
 POLL = 0.2
+OWN, FORCE = 1, 2
+"""CLI_BRIDGE.ARG bits with CMD 4: play the riding port's own move CLI_BRIDGE.NAME instead of
+MOVE, past the monster's notice."""
 WRAP = 1 << 32
 """The emulated clock a log line carries is cut to 32 bits."""
 
@@ -80,6 +89,36 @@ class Move:
     spawner: int = 0
     host_attacks: bool = False
     """Keep the host entry's own attacks and effects (MONSTER_VTABLE.ANIM_EVENTS)."""
+    force: bool = False
+    """Start while the monster's notice runs instead of waiting for combat (MOVE.FORCE)."""
+
+    @classmethod
+    def unpack(cls, raw: bytes) -> Move:
+        """struct MOVE, as the move player holds it."""
+        f = a.MOVE
+        entry, length = struct.unpack_from("<HH", raw, f.ENTRY)
+        cm, cs, bm, bs, bmode = struct.unpack_from("<BBBBB", raw, f.CARRIER_MAIN)
+        skip, part, n = struct.unpack_from("<BBB", raw, f.SKIP)
+        assert a.MOVE_ATTACK.size
+        attacks = []
+        for i in range(min(n, a.MOVE.ATTACKS.count or 0)):
+            at = f.ATTACKS + i * a.MOVE_ATTACK.size
+            frame, id_ = struct.unpack_from("<HH", raw, at + a.MOVE_ATTACK.FRAME)
+            (end,) = struct.unpack_from("<H", raw, at + a.MOVE_ATTACK.END)
+            attacks.append(Attack(id_, frame, end or None))
+        (spawner,) = struct.unpack_from("<I", raw, f.SPAWNER)
+        return cls(
+            entry,
+            tuple(attacks),
+            (cm, cs),
+            None if bm == NO_PAIR else (bm, bs, bmode),
+            length,
+            bool(skip),
+            part,
+            spawner,
+            bool(raw[f.HOST_ATTACKS]),
+            bool(raw[f.FORCE]),
+        )
 
     def pack(self) -> bytes:
         """struct MOVE."""
@@ -98,7 +137,7 @@ class Move:
             struct.pack_into("<HH", out, at + a.MOVE_ATTACK.FRAME, atk.frame, atk.id)
             struct.pack_into("<H", out, at + a.MOVE_ATTACK.END, atk.end or 0)
         struct.pack_into("<I", out, f.SPAWNER, self.spawner)
-        struct.pack_into("<B", out, f.HOST_ATTACKS, int(self.host_attacks))
+        struct.pack_into("<BB", out, f.HOST_ATTACKS, int(self.host_attacks), int(self.force))
         return bytes(out)
 
 
@@ -281,10 +320,12 @@ def _usec(s: Session) -> int:
     return s.client.evaluate("usec")
 
 
-def _parse(message: str | None, start: int) -> HpWrite | None:
+def _parse(message: str | None, start: int, part: int = 0) -> HpWrite | None:
+    """A `_hp_format` line; `part`'s cursor is the phase."""
     try:
-        usec, pc, ra, phase, hp, pair, frame = (int(f, 16) for f in (message or "").split())
-    except ValueError:
+        usec, pc, ra, *phases, hp, pair, frame = (int(f, 16) for f in (message or "").split())
+        phase = phases[part]
+    except (ValueError, IndexError):
         return None
     (cursor,) = struct.unpack("<f", struct.pack("<I", phase & 0xFFFF_FFFF))
     # the logged pair is the u16 at MAIN_STATE: main in the low byte
@@ -314,6 +355,54 @@ def ask(
         raise RuntimeError("move refused: no big monster vtable is wrapped (em_vhook)")
 
 
+class Stale(LookupError):
+    """The port's moves module is not the build asked for: the game has not re-run the module
+    sent, or could not compile it (framework.log says which)."""
+
+
+STALE = 2
+"""CLI_BRIDGE.RESULT for a moves module of another build."""
+RELOAD_WAIT = 10.0
+"""Seconds a module just written takes at most to reach the port: lua_host's 2 Hz scan, its
+compile and the relink on the next tick."""
+
+
+def play_own(
+    s: Session,
+    name: str,
+    slot: int | None = None,
+    force: bool = False,
+    build: int = 0,
+    wait: float = RELOAD_WAIT,
+) -> bool:
+    """Ask the port riding `slot`'s monster (else the first big monster's) to play its own move
+    `name` (`mhfu_port`'s `port:move`, through the bridge); `force` plays it while the monster's
+    notice runs instead of waiting for combat; `build` (not 0, `mhfu_port.moves.build_of`) only
+    from that moves module, asked again for `wait` seconds until the port runs it, else `Stale`.
+    False when no port rides it or it has no such own move; raises like `play` when the bridge
+    does not answer."""
+    try:
+        k, _ = monster(s, slot)
+    except LookupError:
+        return False
+    raw = name.encode("utf-8")
+    size = a.CLI_BRIDGE.NAME.count or 0
+    if not raw or len(raw) >= size or b"\0" in raw:
+        return False
+    link = bridge(s)
+    s.mem.write(a.CLI_BRIDGE_BLOCK + a.CLI_BRIDGE.NAME, raw.ljust(size, b"\0"))
+    until = time.monotonic() + wait
+    while True:
+        if not link.request(s, Op.MOVE, k, OWN | (FORCE if force else 0), build)[1]:
+            raise TimeoutError(f"no ack: {STALLED}")
+        result = s.mem.u32(a.CLI_BRIDGE_BLOCK + a.CLI_BRIDGE.RESULT)
+        if result != STALE:
+            return result == 1
+        if time.monotonic() >= until:
+            raise Stale(f"the port does not run moves module build {build:08X}: see framework.log")
+        time.sleep(0.25)
+
+
 def play(
     s: Session,
     move: Move,
@@ -326,49 +415,67 @@ def play(
 ) -> Played:
     """Play `move` on a big monster (`slot`'s, else the first) and watch it to its end and
     `after` seconds more, the hunter's HP writes logged throughout without stopping the game."""
-    k, m = monster(s, slot)
+    k, _ = monster(s, slot)
     link = link or bridge(s)
+    st = block(s)
+    played = watch(
+        s, lambda: ask(s, move, k, link, st, steer), slot=slot, after=after, timeout=timeout
+    )
+    return replace(played, steer=steer)
+
+
+def watch(
+    s: Session,
+    start: Callable[[], object],
+    *,
+    slot: int | None = None,
+    after: float = 8.0,
+    timeout: float = 30.0,
+) -> Played:
+    """Call `start`, then follow the next move the move player starts on a big monster (`slot`'s,
+    else the first) to its end and `after` seconds more, as `play` does; the move is read back
+    from the block."""
+    _, m = monster(s, slot)
     pack = Pack.read(s.mem, m.action_table)
-    assert a.CLIP_BLOCK.size
-    phase = m.base + a.ENTITY.CLIP_BLOCKS + move.part * a.CLIP_BLOCK.size + a.CLIP_BLOCK.PHASE
     hp = a.PLAYER_ENTITY + a.ENTITY.HP
     cells = m.base + a.ENTITY.MAIN_STATE
     st = block(s)
     frames = st.base + a.MOVE_STATE.FRAMES
-    fmt = (
-        f"{{usec}} {{pc}} {{ra}} {{[{phase:#x},4]}} {{[{hp:#x},2]}} {{[{cells:#x},2]}}"
-        f" {{[{frames:#x},4]}}"
-    )
+    assert a.CLIP_BLOCK.size
     pairs: list[tuple[float, Pair]] = []
     raw: list[str | None] = []
-    with s.client.trace(writes=[(hp, 2)], log_format=fmt) as stream:
-        start = _usec(s)
+    before = st.started
+    phase = 0
+    with s.client.trace(writes=[(hp, 2)], log_format=_hp_format(m.base, 0, cells, frames)) as h:
+        t0 = _usec(s)
 
         def note() -> int:
             now = _usec(s)
             pair = (m.main_state, m.sub_state)
             if not pairs or pairs[-1][1] != pair:
-                pairs.append((((now - start) % WRAP) / 1e6, pair))
+                pairs.append((((now - t0) % WRAP) / 1e6, pair))
             return now
 
         note()
-        ask(s, move, k, link, st, steer)
-        s.wait(lambda: not st.pending, 5.0, "the move's AI step")
+        start()
+        s.wait(lambda: st.started != before and not st.pending, timeout, "the move's start")
+        move = Move.unpack(s.mem.read(st.base + a.MOVE_STATE.MOVE, a.MOVE.size or 0))
+        phase = move.part
         deadline = s.now() + timeout
         while st.state != DONE and s.now() < deadline:
             note()
             s.sleep(POLL)
-        t_end = ((note() - start) % WRAP) / 1e6
-        stop = s.now() + after
-        while s.now() < stop:
+        t_end = ((note() - t0) % WRAP) / 1e6
+        stop_at = s.now() + after
+        while s.now() < stop_at:
             note()
             s.sleep(POLL)
         while True:
             try:
-                raw.append(stream.next(0.5).message)
+                raw.append(h.next(0.5).message)
             except TimeoutError:
                 break
-    hits = tuple(h for h in (_parse(r, start) for r in raw) if h is not None)
+    hits = tuple(w for w in (_parse(r, t0, phase) for r in raw) if w is not None)
     parts = tuple(
         Part(k_, entry_clip(move.entry, k_), pack.holding(node), end, peak)
         for k_, (node, end, peak) in enumerate(zip(st.node, st.clip_end, st.peak, strict=True))
@@ -394,6 +501,7 @@ def play(
             strict=False,
         )
     )
+    sst = SteerState(s.mem, st.base + a.MOVE_STATE.STEER)
     return Played(
         move,
         st.end,
@@ -406,10 +514,23 @@ def play(
         tuple(pairs),
         t_end,
         s.mem.u16(hp),
-        start,
-        steer,
-        (sst := SteerState(s.mem, st.base + a.MOVE_STATE.STEER)).yaw0,
+        t0,
+        NO_STEER,
+        sst.yaw0,
         sst.yaw,
+    )
+
+
+def _hp_format(ent: int, part: int, cells: int, frames: int) -> str:
+    """A HP write's log line: the clock, pc, ra, every part's cursor, HP, the pair, FRAMES."""
+    assert a.CLIP_BLOCK.size
+    cursors = " ".join(
+        f"{{[{ent + a.ENTITY.CLIP_BLOCKS + k * a.CLIP_BLOCK.size + a.CLIP_BLOCK.PHASE:#x},4]}}"
+        for k in range(a.ENTITY.CLIP_BLOCKS.count or 0)
+    )
+    hp = a.PLAYER_ENTITY + a.ENTITY.HP
+    return (
+        f"{{usec}} {{pc}} {{ra}} {cursors} {{[{hp:#x},2]}} {{[{cells:#x},2]}} {{[{frames:#x},4]}}"
     )
 
 

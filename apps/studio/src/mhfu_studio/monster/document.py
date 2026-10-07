@@ -57,7 +57,7 @@ class PortDocument:
     def dirty(self) -> bool:
         return self._history.dirty
 
-    def edit(self, change: Callable[[Manifest], None]) -> None:
+    def edit(self, change: Callable[[Manifest], object]) -> None:
         """Runs `change` on a copy and commits it; raises `ManifestError` and keeps the current
         state when the result would not load."""
         m = copy.deepcopy(self.manifest)
