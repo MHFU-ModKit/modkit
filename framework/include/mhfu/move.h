@@ -112,6 +112,7 @@ typedef struct {
     uint32_t react_seen;                  /* mhfu_em_react_hits taken */
     uint32_t react_pair;                  /* the replaced enter-action: (mode<<16)|(main<<8)|sub */
     uint32_t waited;                      /* AI frames NEXT waited for the notice */
+    uint32_t events;                      /* the monster-event block (MONSTER_EVENTS) */
 } mhfu_move_state_t;
 
 /* entry on the carrier (0,2), em75's alert hub (one dispatch, then the brain once the clip

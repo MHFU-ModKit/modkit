@@ -705,7 +705,7 @@ EAGER = { offset = 0x31, type = "u8", doc = "1 starts while the monster's notice
 
 [struct.MOVE_STATE]
 doc = "the move player's block in partition memory (move.cpp): the move it runs and what happened, read by mhfu.live.moves"
-size = 0x79C
+size = 0x7A0
 [struct.MOVE_STATE.fields]
 MAGIC = { offset = 0x00, type = "u32", doc = "0x4D4F5650 (MOVP)" }
 STARTED = { offset = 0x04, type = "u32", doc = "moves started since boot" }
@@ -741,6 +741,7 @@ REACTIONS = { offset = 0x78C, type = "u32", doc = "reactions replaced since boot
 REACT_SEEN = { offset = 0x790, type = "u32", doc = "em_vhook's replaced enter-actions the step has taken" }
 REACT_PAIR = { offset = 0x794, type = "u32", doc = "the replaced enter-action: (mode << 16) | (main << 8) | sub" }
 WAITED = { offset = 0x798, type = "u32", doc = "AI frames NEXT waited for the monster's notice" }
+EVENTS = { offset = 0x79C, type = "ptr", doc = "the monster-event block (struct MONSTER_EVENTS)" }
 
 [struct.STEER_PARAMS]
 doc = "how a move turns and stops (steer.h mhfu_steer_t)"

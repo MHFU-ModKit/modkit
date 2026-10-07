@@ -78,6 +78,7 @@ static_assert(offsetof(mhfu_move_state_t, react_part) == MHFU_MOVE_STATE_REACT_P
 static_assert(offsetof(mhfu_move_state_t, reactions) == MHFU_MOVE_STATE_REACTIONS, "MOVE_STATE layout");
 static_assert(offsetof(mhfu_move_state_t, react_pair) == MHFU_MOVE_STATE_REACT_PAIR, "MOVE_STATE layout");
 static_assert(offsetof(mhfu_move_state_t, waited) == MHFU_MOVE_STATE_WAITED, "MOVE_STATE layout");
+static_assert(offsetof(mhfu_move_state_t, events) == MHFU_MOVE_STATE_EVENTS, "MOVE_STATE layout");
 static_assert(sizeof(mhfu_steer_spec_t) == MHFU_STEER_SPEC_SIZE, "STEER_SPEC layout");
 static_assert(offsetof(mhfu_steer_spec_t, key_count) == MHFU_STEER_SPEC_KEY_COUNT, "STEER_SPEC layout");
 static_assert(offsetof(mhfu_steer_spec_t, stuck_main) == MHFU_STEER_SPEC_STUCK_MAIN, "STEER_SPEC layout");
@@ -508,7 +509,9 @@ extern "C" int mhfu_move_init(void)
         || mhfu_on_monster_spawned(on_spawn, 0, OWNER) != MHFU_HOOK_OK)
         mhfu_log("[%s] event registration failed", OWNER);
     mhfu_log("[%s] block @0x%08X", OWNER, (unsigned)at);
-    return mhfu_monster_events_init();
+    int rc = mhfu_monster_events_init();
+    S->events = (uint32_t)(uintptr_t)mhfu_monster_events();
+    return rc;
 }
 #else
 static mhfu_move_state_t g_host_block;
@@ -521,6 +524,7 @@ extern "C" int mhfu_move_init(void)
     mhfu_steer_init_spec((mhfu_steer_spec_t *)&S->steer.next);
     return mhfu_monster_events_init();
 }
+
 /* host tests drive the step directly and reset between cases */
 extern "C" uint32_t mhfu_move_host_step(uint32_t ent) { return step(ent); }
 extern "C" void mhfu_move_host_quest(void) { on_quest(0); }
