@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from mhfu import addresses
 from mhfu_port import manifest as M
 from mhfu_port.manifest import ManifestError
 
@@ -254,8 +255,8 @@ walls = false
 
 
 def test_rule_on_an_event():
-    m = M.loads(_with(OWN + "eager = true\n[[rule]]\non = 'flinch'\npart = 0\nplay = 'o'\n"))
-    assert (m.rules[0].on, m.rules[0].part, m.moves["o"].eager) == ("flinch", 0, True)
+    m = M.loads(_with(OWN + "[[rule]]\non = 'flinch'\npart = 0\nplay = 'o'\nforce = true\n"))
+    assert (m.rules[0].on, m.rules[0].part, m.rules[0].force) == ("flinch", 0, True)
     assert M.loads(M.dumps(m)) == m
 
 
@@ -295,7 +296,7 @@ def test_own_move():
         (MOVE + RULE + "dist = [5, 5]\n", "lo < hi"),
         (MOVE + RULE + "count = 0\n", "count"),
         (MOVE + RULE + "receding = true\nclosing = true\n", "and closing"),
-        (MOVE + RULE * 5, "holds 4"),
+        (MOVE + RULE * (M.SEAM_RULES + 1), f"holds {M.SEAM_RULES}"),
         ("[moves.m]\nmain = 1\nanim = 1\n", "both main and sub"),
         (MOVE + "length = 9\n", "for an own move"),
         (MOVE + "[[moves.m.attack]]\nid = 6\nframe = 1\n", "for an own move"),
@@ -311,6 +312,7 @@ def test_own_move():
         (OWN + "[[rule]]\non = 'roared'\nplay = 'o'\n", "one of"),
         (OWN + "[[rule]]\non = 'noticed'\npart = 0\nplay = 'o'\n", "part goes with"),
         (OWN + "[[rule]]\non = 'flinch'\npart = 8\nplay = 'o'\n", "not a part"),
+        (MOVE + "[[rule]]\non = 'flinch'\nplay = 'm'\n", "flinch plays an own move"),
     ],
 )
 def test_invalid(extra, why):
@@ -368,3 +370,18 @@ def test_ports(name):
     assert m.port.name == name and m.port.pac == f"{name}.bin"
     assert M.dumps(m) == path.read_text(encoding="utf-8")
     assert not m.hitzones
+
+
+def test_rule_capacity_is_the_frameworks():
+    assert M.SEAM_RULES == addresses.EM_CFG.RULES.count and M.SEAM_RULES >= 8
+
+
+def test_part_events():
+    assert set(M.PART_EVENTS) < set(M.EVENTS)
+    for event in M.EVENTS:
+        rule = f"[[rule]]\non = '{event}'\npart = 1\nplay = 'o'\n"
+        if event in M.PART_EVENTS:
+            M.loads(_with(OWN + rule))
+        else:
+            with pytest.raises(ManifestError, match="part goes with"):
+                M.loads(_with(OWN + rule))

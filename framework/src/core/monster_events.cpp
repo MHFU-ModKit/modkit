@@ -42,6 +42,12 @@ static_assert(MHFU_EVENT_BIGMONSTER_TAIL_CUT - MHFU_EVENT_BIGMONSTER_NOTICED
 
 static volatile mhfu_monster_events_t *B;
 
+extern "C" const char *const mhfu_monster_event_names[] = {
+    "noticed", "combat_entered", "combat_left", "flinch", "part_broken", "tail_cut", 0,
+};
+static_assert(sizeof(mhfu_monster_event_names) / sizeof(mhfu_monster_event_names[0]) - 1
+              == MHFU_MONSTER_TAIL_CUT, "a name per kind");
+
 /* --- the step side ----------------------------------------------------------------------- */
 
 /* the player's bit in a monster's AWARE */
@@ -59,6 +65,24 @@ static uint8_t in_combat(uint32_t ent, uint8_t aware)
                == mhfu_mem_read_u16(MHFU_PLAYER_ENTITY + MHFU_ENTITY_SECTION)
         && (mhfu_mem_read_u32(ent + MHFU_ENTITY_FLAGS) & CAUSE_FLAG)
         && mhfu_mem_read_u8(ent + MHFU_ENTITY_MAIN_STATE) != DEAD;
+}
+
+extern "C" int mhfu_monster_state(uint32_t ent, mhfu_monster_state_t *out)
+{
+    uint8_t *b = (uint8_t *)out;
+    for (unsigned k = 0; k < sizeof(*out); k++) b[k] = 0;
+    if (!ent) return 0;
+    uint8_t aware = mhfu_mem_read_u8(ent + MHFU_ENTITY_AWARE);
+    out->aware = (aware & player_bit()) != 0;
+    out->combat = in_combat(ent, aware);
+    out->main_state = mhfu_mem_read_u8(ent + MHFU_ENTITY_MAIN_STATE);
+    out->sub_state = mhfu_mem_read_u8(ent + MHFU_ENTITY_SUB_STATE);
+    out->dead = out->main_state == DEAD;
+    out->noticing = out->aware && !mhfu_mem_read_u8(ent + MHFU_ENTITY_COMBAT_MODE) && !out->dead;
+    out->flinched = mhfu_mem_read_u8(ent + MHFU_ENTITY_FLINCH_MASK);
+    out->severed = (mhfu_mem_read_u8(ent + MHFU_ENTITY_SEVERED) & TAIL_BIT) != 0;
+    out->broken = mhfu_mem_read_u16(ent + MHFU_ENTITY_BROKEN);
+    return 1;
 }
 
 static volatile mhfu_monster_watch_t *watch_of(uint32_t ent, int *fresh)
@@ -103,9 +127,10 @@ static uint8_t lowest(uint16_t bits)
     return MHFU_MONSTER_NO_PART;
 }
 
-extern "C" void mhfu_monster_events_frame(uint32_t ent, int stale)
+extern "C" uint16_t mhfu_monster_events_frame(uint32_t ent, int stale, uint8_t *parts)
 {
-    if (!B || !ent) return;
+    if (parts) *parts = 0;
+    if (!B || !ent) return 0;
     int fresh;
     volatile mhfu_monster_watch_t *w = watch_of(ent, &fresh);
     w->frames++;
@@ -115,6 +140,7 @@ extern "C" void mhfu_monster_events_frame(uint32_t ent, int stale)
     uint8_t severed = (uint8_t)(mhfu_mem_read_u8(ent + MHFU_ENTITY_SEVERED) & TAIL_BIT);
     uint16_t broken = mhfu_mem_read_u16(ent + MHFU_ENTITY_BROKEN);
     uint8_t flinched = stale ? 0 : mhfu_mem_read_u8(ent + MHFU_ENTITY_FLINCH_MASK);
+    if (parts) *parts = flinched;
     if (!fresh) {
         uint32_t usec = now_usec();
         uint8_t part = lowest(flinched);
@@ -134,6 +160,7 @@ extern "C" void mhfu_monster_events_frame(uint32_t ent, int stale)
     w->combat = combat;
     w->severed = severed;
     w->broken = broken;
+    return w->edges;
 }
 
 /* --- the poll side ----------------------------------------------------------------------- */

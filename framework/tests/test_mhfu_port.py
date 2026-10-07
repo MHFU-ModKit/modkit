@@ -462,7 +462,10 @@ local SEAM = { moves = {}, rules = {}, plays = {}, playing = -1 }
 function mhfu.em_installed() return true end
 function mhfu.em_move(slot, t) SEAM.moves[slot] = t; return true end
 function mhfu.em_moves_clear() SEAM.moves = {}; return true end
-function mhfu.em_play(ent, slot) SEAM.plays[#SEAM.plays + 1] = { ent, slot }; return true end
+function mhfu.em_play(ent, slot, force)
+  SEAM.plays[#SEAM.plays + 1] = { ent, slot, force }
+  return true
+end
 function mhfu.em_playing() return SEAM.playing end
 function mhfu.em_rule(slot, r) SEAM.rules[slot] = r; return true end
 local HOOK
@@ -479,15 +482,22 @@ assert(st.entry == 46 and st.after == 0 and st.attacks[1][1] == 56 and st.steer.
 assert(da.after == nil and da.back[1] == 1 and da.back[2] == 4 and da.steer.turn == "hunter")
 assert(SEAM.moves[1].after == nil and SEAM.moves[1].back == nil)
 
--- rules: from a pair to an own move, from an own move to a pair
+-- rules: from a pair to an own move, from an own move to a pair, on monster events
 local r0, r1 = SEAM.rules[0], SEAM.rules[1]
 assert(r0.from_mask == 1 and r0.play_move == 2 and r0.from_move == nil and r0.cooldown == 300)
 assert(r1.from_move == 0 and r1.from_mask == 0 and r1.to_main == 1 and r1.to_sub == 4)
 assert(r1.receding and r1.count == 2 and r1.play_move == nil)
+local r2, r3 = SEAM.rules[2], SEAM.rules[3]
+assert(r2.on == "flinch" and r2.part == 0 and r2.play_move == 1 and r2.from_mask == 0)
+assert(r3.on == "noticed" and r3.part == nil and r3.to_main == 1 and r3.force)
+assert(not r2.force)
+assert(SEAM.rules[4] == nil and SEAM.rules[mhfu.addr.EM_CFG.RULES_COUNT - 1] == nil)
 
 -- port:move plays the slot and drops any latch; a pair move is not one
 z.clip, z._clip_uses = 99, 1
 assert(z:move("stamp") and SEAM.plays[1][2] == 2 and z.clip == nil and z.own == "stamp")
+assert(SEAM.plays[1][3] == false and z:move("spin", { force = true }) and SEAM.plays[2][3] == true)
+table.remove(SEAM.plays)
 assert(not z:move("lunge") and z:play("dash") and SEAM.plays[2][2] == 0)
 
 -- the executor hook leaves the move player's dispatch alone
@@ -520,6 +530,8 @@ def test_own_moves(lua: Any, tmp_path: Path) -> None:
         "[moves.spin]\nanim = 9\n"
         "[[rule]]\nplay = 'stamp'\nfrom_main = [0]\ncooldown = 300\n"
         "[[rule]]\nplay = 'lunge'\nfrom = 'dash'\nreceding = true\ncount = 2\n"
+        "[[rule]]\nplay = 'spin'\non = 'flinch'\npart = 0\n"
+        "[[rule]]\nplay = 'lunge'\non = 'noticed'\nforce = true\n"
     )
     turn = travel.Turn(4, (0, 0x2000, 0x4000), 0x4000, None)
     lay = layout.Layout({20: 20, 46: 200, 9: 9}, turns={46: turn})
@@ -528,3 +540,33 @@ def test_own_moves(lua: Any, tmp_path: Path) -> None:
     lua.execute(f"package.path = package.path .. ';' .. {str(tmp_path / '?.lua')!r}")
     memory(lua)
     lua.execute(OWN)
+
+
+RELINK = """
+local SEAM = { moves = {}, rules = {} }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) SEAM.moves[slot] = t; return true end
+function mhfu.em_moves_clear() SEAM.moves = {}; return true end
+function mhfu.em_play(ent, slot) return SEAM.moves[slot] ~= nil end
+function mhfu.em_rule(slot, r) SEAM.rules[slot] = r; return true end
+package.loaded.z_moves = { moves = { stamp = { entry = 46 } }, rules = {} }
+local P = require("mhfu_port")
+P.mod("z_rig", function(P) P.define{ name = "z", species = 75 } end)
+P.ports.z.ent = ENT
+ticks(1)
+assert(not P.ports.z:move("probe"))
+-- a new build's module re-ran in place: the next tick redefines the port from it and re-arms
+package.loaded.z_moves = { moves = { stamp = { entry = 46 }, probe = { entry = 47 } }, rules = {} }
+ticks(2)
+local z = P.ports.z
+assert(z.ent == ENT and count("moves module changed") == 1)
+assert(SEAM.moves[z._slot.probe].entry == 47)
+assert(z:move("probe"))
+ticks(2)
+assert(count("moves module changed") == 1, "once per new module")
+"""
+
+
+def test_a_new_moves_module_relinks_the_port(lua: Any) -> None:
+    memory(lua)
+    lua.execute(RELINK)

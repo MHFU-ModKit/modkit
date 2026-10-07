@@ -104,7 +104,8 @@ its clip sits in are skipped (`host_attacks = true` keeps them). It runs in C on
 em_vhook wraps (`include/mhfu/move.h`), so it needs a cold boot and a spawned big monster. From
 the debugger: `mhfu move ride <port>`, then `mhfu move play 46 --attack 6@56-80`. A move asked
 for while the monster's notice runs (it knows the player, not yet in combat) waits for the roar
-and the combat entry; `eager = true` starts it at once.
+and the combat entry; the call's `force` starts it at once (`mhfu.move_play(ent, spec, true)`).
+`mhfu.monster_state(ent)` says whether it noticed the player, is in combat, runs its notice.
 
 ## Monster events
 
@@ -125,6 +126,15 @@ ends on its clip, its length or a wall and names it as its `after`, or when a ru
 (`play_move`, and `from_move` to fire while one plays). `mhfu_port.lua` does all of it from the
 port's generated `<name>_moves.lua`: `port:move("stamp")` (`ports/README.md` "Moves and
 rules").
+
+## Rules on monster events
+
+A brain rule (`mhfu.em_rule`) with `on = "<event>"` fires in C in the AI frame the event is seen,
+`part` narrowing a flinch or a break; capacity `mhfu.addr.EM_CFG.RULES_COUNT`. A rule on the
+flinch owns the reaction replacement while installed: a flinch of its part, in a frame its gates
+hold, enters its own move's carrier instead of `(4,x)`, and the move plays from the next AI
+frame. `force = true` plays a rule's move past the notice wait. `ports/README.md` "Moves and
+rules" has the manifest's side.
 
 ## Tests
 

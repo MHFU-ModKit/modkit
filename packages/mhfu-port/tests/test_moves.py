@@ -136,8 +136,13 @@ def test_hub():
             None,
             "the clip's turn has 301 keys, a move holds 256",
         ),
-        (OWN + "[[rule]]\non = 'flinch'\nplay = 'stamp'\n", LAYOUT, None, "`on` does not reach"),
-        (OWN.replace("[moves.stamp]\n", "[moves.stamp]\neager = true\n"), LAYOUT, None, "`eager`"),
+        (
+            OWN
+            + "[[rule]]\non = 'flinch'\nplay = 'stamp'\n[[rule]]\non = 'flinch'\nplay = 'spin'\n",
+            LAYOUT,
+            None,
+            "ride 2 carriers",
+        ),
     ],
 )
 def test_check(extra, lay, known, why):
@@ -169,10 +174,49 @@ def test_zinogre(data):
     b = build.build(m, data)
     text = moves.lua(m, b.layout, moves.records(data.fu, 75))
     own = {n: moves.entry(m, n, b.layout) for n, mv in m.moves.items() if mv.own}
-    assert own == {"stamp": 46, "dash": 20, "dash_stop": 21, "turn_left_90": 9}
+    assert own == {
+        "stamp": 46,
+        "dash": 20,
+        "dash_stop": 21,
+        "turn_left_90": 9,
+        "flinch_head": 101,
+        "tail_cut": 111,
+        "break_howl": 112,
+        "notice_howl": 2,
+    }
     assert b.layout.frames[46] == 228 and 6 in moves.records(data.fu, 75)
     assert f'curve = "{b.layout.turns[46].lua()}"' in text
     stamp = 'stamp = { entry = 46, clip = "stamp_right_claw", attacks = { { 56, 6, 80 } }'
     assert stamp + ", carrier = { 0, 2 }" in text
     assert 'after = "dash_stop"' in text and 'turn = "fixed", total = 90.0, frames = 50' in text
     assert '{ play = "stamp", from = "dash", min_frames = 10' in text
+    assert '{ play = "flinch_head", on = "flinch", part = 0' in text
+    assert '{ play = "notice_howl", on = "noticed", force = true' in text
+
+
+def test_lua_key():
+    assert [moves.lua_key(k) for k in ("stamp", "end", "a b", "repeat_")] == [
+        "stamp",
+        '["end"]',
+        '["a b"]',
+        "repeat_",
+    ]
+
+
+def test_events_and_force_reach_the_module():
+    extra = OWN + "[[rule]]\non = 'flinch'\npart = 0\nplay = 'stamp'\ncount = 3\n"
+    extra += "[[rule]]\non = 'noticed'\nplay = 'stamp'\nforce = true\n"
+    body = _body(moves.lua(_m(extra), LAYOUT))
+    assert body[-2:] == [
+        '{ play = "stamp", on = "flinch", part = 0, count = 3 },',
+        '{ play = "stamp", on = "noticed", force = true },',
+    ]
+
+
+def test_problems_lists_every_one():
+    bad = OWN.replace("frame = 56\nend = 80", "frame = 228\nend = 240")
+    found = moves.problems(_m(bad), layout.Layout({20: 20, 9: 9}), {7})
+    assert found == ["moves.stamp: clip 'stamp' has no executor entry in this build"]
+    found = moves.problems(_m(bad), LAYOUT, {7})
+    assert [p.split(":")[0] for p in found] == ["moves.stamp.attack[0]"] * 2
+    assert moves.problems(_m(), LAYOUT, {6}) == []

@@ -9,6 +9,7 @@ from collections.abc import Callable
 
 import pytest
 from mhfu import addresses as a
+from mhfu.live import monster_events
 
 BASE = 0x09000000  # move_host.cpp's memory; noaddr
 ENT = BASE + 0x1000
@@ -43,7 +44,8 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     )
     lib.host_mem.restype = ctypes.c_void_p
     lib.host_set.argtypes = [ctypes.c_int, ctypes.c_float]
-    lib.mhfu_monster_events_frame.argtypes = [ctypes.c_uint32, ctypes.c_int]
+    lib.mhfu_monster_events_frame.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_void_p]
+    lib.mhfu_monster_events_frame.restype = ctypes.c_uint16
     lib.mhfu_monster_events.restype = ctypes.c_void_p
     return lib
 
@@ -56,8 +58,11 @@ class Game:
     def poke(self, off: int, fmt: str, *values: int) -> None:
         struct.pack_into("<" + fmt, self.mem, ENT - BASE + off, *values)
 
-    def frame(self, stale: int = 0) -> None:
-        self.lib.mhfu_monster_events_frame(ENT, stale)
+    def frame(self, stale: int = 0) -> tuple[int, int]:
+        """(edges, parts) of one frame."""
+        parts = ctypes.c_uint8()
+        edges = self.lib.mhfu_monster_events_frame(ENT, stale, ctypes.byref(parts))
+        return int(edges), parts.value
 
     def raised(self) -> list[tuple[int, int, int, int]]:
         """(kind, part, data, frame) of each event the poll raises."""
@@ -136,3 +141,18 @@ def test_a_full_ring_drops(g: Game) -> None:
     block = int(g.lib.mhfu_monster_events())
     (dropped,) = struct.unpack_from("<I", ctypes.string_at(block + a.MONSTER_EVENTS.DROPPED, 4))
     assert len(g.raised()) == a.MONSTER_EVENTS.RING.count and dropped == 8
+
+
+def test_frame_returns_edges_and_parts(g: Game) -> None:
+    g.poke(a.ENTITY.FLINCH_MASK, "B", 0b100)
+    g.poke(a.ENTITY.BROKEN, "H", 2)
+    assert g.frame() == ((1 << FLINCH) | (1 << BROKEN), 0b100)
+    g.poke(a.ENTITY.FLINCH_MASK, "B", 0)
+    assert g.frame() == (0, 0)
+
+
+def test_the_names_are_the_hosts(lib: ctypes.CDLL) -> None:
+    """Lua takes a manifest's `on` by these names: they must be mhfu's, kind for kind."""
+    names = (ctypes.c_char_p * 8).in_dll(lib, "mhfu_monster_event_names")
+    got = tuple(n.decode() for n in names[: names[:].index(None)])
+    assert got == monster_events.KINDS

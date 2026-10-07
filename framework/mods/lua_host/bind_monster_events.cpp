@@ -10,9 +10,7 @@
 
 static int r_kind[KINDS] = {LUA_NOREF, LUA_NOREF, LUA_NOREF, LUA_NOREF, LUA_NOREF, LUA_NOREF};
 
-static const char *const k_name[KINDS] = {
-    "noticed", "combat_entered", "combat_left", "flinch", "part_broken", "tail_cut",
-};
+static const char *const *const k_name = mhfu_monster_event_names;
 
 static void set_int(lua_State *L, const char *k, lua_Integer v)
 {
@@ -74,6 +72,27 @@ int lb_on_bigmonster_combat_left(lua_State *L)    { return on(L, MHFU_MONSTER_CO
 int lb_on_bigmonster_flinch(lua_State *L)         { return on(L, MHFU_MONSTER_FLINCH); }
 int lb_on_bigmonster_part_broken(lua_State *L)    { return on(L, MHFU_MONSTER_PART_BROKEN); }
 int lb_on_bigmonster_tail_cut(lua_State *L)       { return on(L, MHFU_MONSTER_TAIL_CUT); }
+
+/* mhfu.MonsterState of ent, nil for none */
+int lb_monster_state(lua_State *L)
+{
+    mhfu_monster_state_t st;
+    if (!mhfu_monster_state((uint32_t)luaL_checkinteger(L, 1), &st)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, 0, 9);
+    lua_pushboolean(L, st.aware);    lua_setfield(L, -2, "aware");
+    lua_pushboolean(L, st.combat);   lua_setfield(L, -2, "combat");
+    lua_pushboolean(L, st.noticing); lua_setfield(L, -2, "noticing");
+    lua_pushboolean(L, st.dead);     lua_setfield(L, -2, "dead");
+    lua_pushboolean(L, st.severed);  lua_setfield(L, -2, "severed");
+    set_int(L, "main", st.main_state);
+    set_int(L, "sub", st.sub_state);
+    set_int(L, "flinched", st.flinched);
+    set_int(L, "broken", st.broken);
+    return 1;
+}
 
 /* the block (struct MONSTER_EVENTS), for a debugger */
 int lb_monster_events_block(lua_State *L)

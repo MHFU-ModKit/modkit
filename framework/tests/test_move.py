@@ -38,7 +38,7 @@ class Move(ctypes.Structure):
         ("attacks", ctypes.c_uint16 * 16),
         ("spawner", ctypes.c_uint32),
         ("host_attacks", ctypes.c_uint8),
-        ("eager", ctypes.c_uint8),
+        ("force", ctypes.c_uint8),
         ("_pad", ctypes.c_uint8 * 2),
     ]
 
@@ -404,11 +404,21 @@ def test_a_move_waits_for_the_notice(g: Game) -> None:
     assert g.calls()[0] == ("E", ENT, 0, 1, 0)
 
 
-def test_an_eager_move_does_not_wait(g: Game) -> None:
+def test_a_forced_move_does_not_wait(g: Game) -> None:
     notice(g, 0)
-    g.play(46, eager=1)
+    g.poke(a.ENTITY.SCRIPT_WAKE, "B", 1)
+    g.play(46, force=1)
     g.frame()
     assert g.calls()[0] == ("E", ENT, 0, 1, 0)
+    assert g.peek(a.ENTITY.SCRIPT_WAKE, "B") == (0,)  # the notice's pair would cut the carrier
+
+
+def test_the_script_keeps_its_wake_in_combat(g: Game) -> None:
+    notice(g, 1)
+    g.poke(a.ENTITY.SCRIPT_WAKE, "B", 1)
+    g.play(46)
+    g.frame()
+    assert g.peek(a.ENTITY.SCRIPT_WAKE, "B") == (1,)
 
 
 def test_the_wait_has_an_end(g: Game) -> None:

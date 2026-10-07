@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import tomli_w
 from mhfu import addresses, files, hitzone, inject
+from mhfu.live import monster_events
 
 from .records import ANIM, GEO
 
@@ -35,12 +36,15 @@ Shape = Literal["sphere", "capsule"]
 SHAPES: tuple[Shape, ...] = typing.get_args(Shape)
 Turn = Literal["clip", "still", "hunter", "away", "fixed"]
 TURNS: tuple[Turn, ...] = typing.get_args(Turn)
-Event = Literal["noticed", "combat_entered", "combat_left", "flinch", "part_broken", "tail_cut"]
-EVENTS: tuple[Event, ...] = typing.get_args(Event)
+Event = monster_events.Kind
+EVENTS: tuple[Event, ...] = monster_events.KINDS
+"""A monster event's name, as the framework takes it in a rule's `on`."""
+PART_EVENTS: tuple[Event, ...] = ("flinch", "part_broken")
+"""The events a rule's `part` narrows."""
 
 MAIN_STATES = range(8)
 """A big monster's behaviour main states."""
-SEAM_RULES = 4
+SEAM_RULES: int = addresses.EM_CFG.RULES.count or 0
 """Rules the framework's native brain seam holds."""
 MOVE_ATTACKS: int = addresses.MOVE.ATTACKS.count or 0
 """Attacks the move player holds per move."""
@@ -240,9 +244,6 @@ class Move:
     """AI frames from the clip's dispatch; None: until the clip ends."""
     carrier: tuple[int, int] | None = None
     host_attacks: bool = False
-    eager: bool = False
-    """Start at once even while the monster has noticed the hunter but not yet entered combat,
-    instead of waiting for it (a move asked in that span would cut off the "!" and the howl)."""
     label: str = ""
 
     @property
@@ -266,7 +267,8 @@ class Rule:
 
     With `on`, the rule fires on that monster event instead (`part`: only the flinch or break of
     that part), under the same distance, cooldown and count; `on = "flinch"` plays its move in
-    place of the host's flinch."""
+    place of the host's flinch. An own move asked while the monster's notice runs waits for
+    combat (else it cuts off the "!" and the roar) unless `force`."""
 
     play: str
     on: Event | None = None
@@ -280,6 +282,7 @@ class Rule:
     mode: int = 0
     cooldown: int = 0
     count: int | None = None
+    force: bool = False
     label: str = ""
 
 
@@ -609,11 +612,7 @@ def _validate(m: Manifest) -> None:
         _need(r.count is None or r.count >= 1, w, "count is at least 1; leave it out for always")
         trigger = r.from_move is not None or bool(r.from_main) or r.on is not None
         _need(trigger, w, "needs from, from_main or on")
-        _need(
-            r.part is None or r.on in ("flinch", "part_broken"),
-            w,
-            "part goes with a flinch or break",
-        )
+        _need(r.part is None or r.on in PART_EVENTS, w, "part goes with a flinch or break")
         _need(r.part in (None, *PARTS), w, f"part {r.part} is not a part")
         _need(not (r.receding and r.closing), w, "cannot be receding and closing")
         _need(r.play in m.moves, w, f"play {r.play!r} is not in moves")
@@ -621,6 +620,8 @@ def _validate(m: Manifest) -> None:
         _need(r.from_move != r.play, w, "from and play are the same move")
         if r.play in m.moves and m.moves[r.play].own:
             _need(r.mode == 0, w, "mode is a pair's: an own move enters its carrier")
+        elif r.on == "flinch":
+            _need(False, w, "on = flinch plays an own move, in place of the host's reaction")
 
 
 def loads(text: str, path: str | Path | None = None) -> Manifest:

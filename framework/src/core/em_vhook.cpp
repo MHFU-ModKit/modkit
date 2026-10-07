@@ -24,12 +24,17 @@
  *   REQUEST       slot-29 pre: a pair Lua wants entered now, issued on the game
  *                 thread in the next AI frame through the engine's dispatcher
  *                 (MHFU_ENTER_ACTION), so it is provisioned too.
- *   BRAIN         slot-29 pre, in C (brain()): the pair's dwell and the hunter's
- *                 distance, then at most one of: an own move asked for, the AFTER
- *                 of one of ours that ended, a rule ("in pair P or own move M for N
- *                 frames, player at [lo,hi), receding -> enter Q or play own move M'",
- *                 cooldown, budget). Own moves sit in a registry by slot (mhfu_em_move)
- *                 and play through the move player (move.cpp) that same AI frame.
+ *   BRAIN         slot-29 pre, in C (brain()): the pair's dwell, the hunter's
+ *                 distance and the monster events (monster_events.cpp), then at most
+ *                 one of: an own move asked for, the move of a rule on the flinch (or on
+ *                 the break it made) whose reaction was replaced, the AFTER of one of
+ *                 ours that ended, a rule
+ *                 ("in pair P or own move M for N frames, or on event E, player at
+ *                 [lo,hi), receding -> enter Q or play own move M'", cooldown, budget);
+ *                 last, the rules on the flinch arm the reaction replacement for the
+ *                 host step that follows. Own moves sit in a registry by slot
+ *                 (mhfu_em_move) and play through the move player (move.cpp) that same
+ *                 AI frame.
  *   BUDGET        slot-32 post + slot-29 one-shot: the ENTITY.ACTION_BUDGET
  *                 override; the stubs carry it, but nothing arms it.
  *   STEP          slot-29 pre: a C function per AI frame (mhfu_em_step), which may
@@ -67,6 +72,7 @@
 #include "mhfu/log.h"
 #include "mhfu/memory.h"
 #include "mhfu/move.h"
+#include "mhfu/monster_events.h"
 #include "internal.h"
 #include "em_vhook_stubs.h"
 #include <stddef.h>
@@ -86,7 +92,7 @@ typedef struct {
     uint8_t  from_mask, from_sub, to_main, to_sub, mode, flags;
     uint8_t  from_move, play_move;   /* own move slot + 1, 0 none (mhfu_em_rule_t) */
     uint32_t min_frames, d2_lo, d2_hi, left, fired, last_fire, cooldown;
-    uint32_t spare;                  /* room for one more trigger kind */
+    uint8_t  on, part, force, _pad;  /* a monster event, 0 none; its part or MHFU_EM_ANY_PART */
 } cfg_rule_t;
 typedef struct {
     uint8_t  want_main, want_sub, armed, arm29;    /* +0x00 */
@@ -105,12 +111,12 @@ typedef struct {
     uint32_t sub_pending, sub_to_pending;           /* +0x8C */
     uint32_t ring_idx;                              /* +0x94 */
     uint32_t ring[MHFU_EM_RING];                   /* +0x98 */
-    cfg_rule_t rules[MHFU_EM_RULES];               /* +0xB8 */
-    uint32_t step_fn, skip;                         /* +0x158 */
-    uint32_t mute_ent, muted;                       /* +0x160 */
-    uint32_t react_ent, react_mask;                 /* +0x168 */
-    uint8_t  react_main, react_to_main, react_to_sub, _pad2;  /* +0x170 */
-    uint32_t react_gate, react_hits, react_last;    /* +0x174 */
+    uint32_t step_fn, skip;                         /* +0xB8 */
+    uint32_t mute_ent, muted;                       /* +0xC0 */
+    uint32_t react_ent, react_mask;                 /* +0xC8 */
+    uint8_t  react_main, react_to_main, react_to_sub, react_parts;  /* +0xD0 */
+    uint32_t react_gate, react_hits, react_last;    /* +0xD4 */
+    cfg_rule_t rules[MHFU_EM_RULES];               /* +0xE0 */
 } em_vhook_cfg_t;
 
 static_assert(offsetof(em_vhook_cfg_t, prev_pair)   == CFG_PREV,        "cfg layout");
@@ -138,9 +144,18 @@ static_assert(offsetof(em_vhook_cfg_t, react_ent)   == CFG_REACT_ENT,   "cfg lay
 static_assert(offsetof(em_vhook_cfg_t, react_mask)  == CFG_REACT_MASK,  "cfg layout");
 static_assert(offsetof(em_vhook_cfg_t, react_main)  == CFG_REACT_MAIN,  "cfg layout");
 static_assert(offsetof(em_vhook_cfg_t, react_to_sub) == CFG_REACT_TO_SUB, "cfg layout");
+static_assert(offsetof(em_vhook_cfg_t, react_parts) == CFG_REACT_PARTS, "cfg layout");
 static_assert(offsetof(em_vhook_cfg_t, react_gate)  == CFG_REACT_GATE,  "cfg layout");
 static_assert(offsetof(em_vhook_cfg_t, react_last)  == CFG_REACT_LAST,  "cfg layout");
 static_assert(sizeof(em_vhook_cfg_t)                == CFG_SIZE,        "cfg layout");
+static_assert(offsetof(cfg_rule_t, min_frames) == MHFU_EM_RULE_MIN_FRAMES, "EM_RULE layout");
+static_assert(offsetof(cfg_rule_t, d2_lo)      == MHFU_EM_RULE_D2_LO,      "EM_RULE layout");
+static_assert(offsetof(cfg_rule_t, left)       == MHFU_EM_RULE_LEFT,       "EM_RULE layout");
+static_assert(offsetof(cfg_rule_t, last_fire)  == MHFU_EM_RULE_LAST_FIRE,  "EM_RULE layout");
+static_assert(offsetof(cfg_rule_t, cooldown)   == MHFU_EM_RULE_COOLDOWN,   "EM_RULE layout");
+static_assert(offsetof(cfg_rule_t, on)         == MHFU_EM_RULE_ON,         "EM_RULE layout");
+static_assert(offsetof(cfg_rule_t, part)       == MHFU_EM_RULE_PART,       "EM_RULE layout");
+static_assert(offsetof(cfg_rule_t, force)      == MHFU_EM_RULE_FORCE,      "EM_RULE layout");
 
 #define CFG_CANARY_VAL 0x5645484Bu   /* 'VEHK' */
 
@@ -172,6 +187,7 @@ static_assert(offsetof(mhfu_em_moves_t, key_top) == MHFU_EM_MOVES_KEY_TOP, "EM_M
 static_assert(offsetof(mhfu_em_moves_t, moves) == MHFU_EM_MOVES_MOVES, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, keys) == MHFU_EM_MOVES_KEYS, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, scratch) == MHFU_EM_MOVES_SCRATCH, "EM_MOVES layout");
+static_assert(offsetof(mhfu_em_moves_t, req_force) == MHFU_EM_MOVES_REQ_FORCE, "EM_MOVES layout");
 static_assert(MHFU_EM_MOVES_MOVES_COUNT == MHFU_EM_MOVES, "EM_MOVES layout");
 static_assert(MHFU_EM_MOVES_KEYS_COUNT == MHFU_EM_KEYS, "EM_MOVES layout");
 
@@ -264,10 +280,12 @@ static int      g_installed;
 
 /* --- the brain: slot 29 calls it every AI frame, between the request and the C step. ----
  *
- * It keeps the pair's dwell and the hunter's distance, then plays or enters at most one thing:
- * an own move asked for (mhfu_em_play), else the AFTER of the registry's move that just ended on
- * its clip, its length or a wall, else the first rule that holds. An own move goes to the move
- * player here, and its step, called right after, enters the carrier the same AI frame. Runs
+ * It keeps the pair's dwell, the hunter's distance and the monster events, then plays or enters
+ * at most one thing: an own move asked for (mhfu_em_play), else the move of the rule on the flinch
+ * whose reaction the last host step replaced, else the AFTER of the registry's move that just
+ * ended on its clip, its length or a wall, else the first rule that holds. Last, the rules on the
+ * flinch arm the reaction replacement for the host step that follows. An own move goes to the
+ * move player here, and its step, called right after, enters the carrier the same AI frame. Runs
  * inside the engine's AI step: it never logs. */
 
 #ifndef MHFU_HOST
@@ -310,10 +328,9 @@ static int ours(const volatile mhfu_move_state_t *m)
     return (int)R->tag_slot;
 }
 
-static int play_slot(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m)
+/* slot's steering in the registry's scratch, keys and all */
+static const volatile mhfu_steer_spec_t *steer_of(const volatile mhfu_em_own_t *o)
 {
-    if (slot >= MHFU_EM_MOVES || !R->moves[slot].valid) return 0;
-    const volatile mhfu_em_own_t *o = &R->moves[slot];
     volatile mhfu_steer_spec_t *sp = &R->scratch;
     copy_words(&sp->steer, &o->steer, sizeof(mhfu_steer_t));
     sp->key_count = o->key_count;
@@ -322,27 +339,42 @@ static int play_slot(uint32_t ent, uint32_t slot, const volatile mhfu_move_state
     sp->stuck_mode = o->stuck_mode;
     for (unsigned k = 0; k < o->key_count && k < MHFU_STEER_KEYS; k++)
         sp->keys[k] = R->keys[o->key_at + k];
-    mhfu_move_steer((const mhfu_steer_spec_t *)sp);
-    if (!mhfu_move_play(ent, (const mhfu_move_t *)&o->move)) return 0;
+    return sp;
+}
+
+/* the move player's next move is slot's: what ours() reads */
+static void tag(uint32_t slot, const volatile mhfu_move_state_t *m)
+{
     R->tag_slot = slot;
     R->tag_started = m->started + 1;   /* the step starts it right after us */
     R->plays++;
+}
+
+static int play_slot(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m, int force)
+{
+    if (slot >= MHFU_EM_MOVES || !R->moves[slot].valid) return 0;
+    const volatile mhfu_em_own_t *o = &R->moves[slot];
+    mhfu_move_t mv;
+    copy_words(&mv, &o->move, sizeof(mv));
+    mv.force = (uint8_t)(force != 0);
+    mhfu_move_steer((const mhfu_steer_spec_t *)steer_of(o));
+    if (!mhfu_move_play(ent, &mv)) return 0;
+    tag(slot, m);
     return 1;
 }
 
-/* rule r's trigger holds on ent this frame */
-static int holds(const cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_state_t *m)
+/* rule r's pair or own move, dwell, distance and cooldown hold on ent this frame */
+static int gates(const cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_state_t *m)
 {
-    uint32_t dwell;
+    uint32_t dwell = g_cfgp->frames;
     if (r->from_move) {
         if (ours(m) != r->from_move - 1 || m->state != MHFU_MOVE_PLAYING || m->entity != ent)
             return 0;
         dwell = m->frames;
-    } else {
+    } else if (r->from_mask) {
         uint32_t pair = pair_of(ent);
         if (busy(m) || !((r->from_mask >> (pair >> 8)) & 1)) return 0;
         if (r->from_sub != MHFU_EM_SUB_ANY && r->from_sub != (pair & 0xFF)) return 0;
-        dwell = g_cfgp->frames;
     }
     /* distances squared as f32 bits: non-negative floats order like unsigned ints */
     uint32_t d2 = g_cfgp->d2, prev = g_cfgp->d2_prev;
@@ -352,19 +384,146 @@ static int holds(const cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_sta
     return g_cfgp->ai_ticks - r->last_fire >= r->cooldown;
 }
 
-static int fire(cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_state_t *m)
+static int part_of(const cfg_rule_t *r, uint8_t parts)
 {
-    if (r->play_move) {
-        if (!play_slot(ent, r->play_move - 1u, m)) return 0;
-    } else {
-        enter(ent, r->to_main, r->to_sub, r->mode);
-    }
+    return r->part == MHFU_EM_ANY_PART || (r->part < 8 && ((parts >> r->part) & 1));
+}
+
+/* rule r fires on ent this frame; edges: what the monster events raised, parts: what flinched */
+static int holds(const cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_state_t *m,
+                 uint16_t edges, uint8_t parts)
+{
+    if (r->on == MHFU_MONSTER_FLINCH) return 0;   /* through the reaction replacement */
+    if (r->on && (!((edges >> r->on) & 1) || !part_of(r, parts))) return 0;
+    return gates(r, ent, m);
+}
+
+static void count_fire(cfg_rule_t *r)
+{
     if (r->left != MHFU_EM_UNLIMITED) r->left--;
     r->fired++;
     r->last_fire = g_cfgp->ai_ticks;
     g_cfgp->brain_fires++;
     g_cfgp->frames = 0;
+}
+
+static int fire(cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_state_t *m)
+{
+    if (r->play_move) {
+        if (!play_slot(ent, r->play_move - 1u, m, r->force)) return 0;
+    } else {
+        enter(ent, r->to_main, r->to_sub, r->mode);
+    }
+    count_fire(r);
     return 1;
+}
+
+/* a live rule's own move, if it plays one */
+static const volatile mhfu_em_own_t *rule_move(const cfg_rule_t *r)
+{
+    if (!r->left || !r->play_move || r->play_move > MHFU_EM_MOVES
+        || !R->moves[r->play_move - 1].valid)
+        return 0;
+    return &R->moves[r->play_move - 1];
+}
+
+/* a rule on the flinch with a move to play: what the replacement may enter */
+static const volatile mhfu_em_own_t *flinch_move(const cfg_rule_t *r)
+{
+    return r->on == MHFU_MONSTER_FLINCH ? rule_move(r) : 0;
+}
+
+static int g_reacts;        /* the brain owns the reaction replacement */
+static uint32_t g_armed;    /* bit i: rule i's gates held when it was armed */
+
+/* The replacement entered the carrier in place of a flinch in the last host step: a rule on the
+ * break that flinch made, whose gates hold and whose own move rides that carrier, else the first
+ * rule armed for it whose part flinched, hands the move player its move, which the step starts. */
+static int react_take(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_t edges)
+{
+    if (!g_reacts || !mhfu_move_react_pending(ent)) return 0;
+    uint8_t flinched = mhfu_mem_read_u8(ent + MHFU_ENTITY_FLINCH_MASK);
+    cfg_rule_t *first = 0;
+    for (int i = 0; i < MHFU_EM_RULES && ((edges >> MHFU_MONSTER_PART_BROKEN) & 1); i++) {
+        cfg_rule_t *r = &g_cfgp->rules[i];
+        const volatile mhfu_em_own_t *o = rule_move(r);
+        if (r->on == MHFU_MONSTER_PART_BROKEN && o && part_of(r, flinched) && gates(r, ent, m)
+            && o->move.carrier_main == g_cfgp->react_to_main
+            && o->move.carrier_sub == g_cfgp->react_to_sub) {
+            first = r;
+            break;
+        }
+    }
+    for (int i = 0; i < MHFU_EM_RULES && !first; i++) {
+        cfg_rule_t *r = &g_cfgp->rules[i];
+        if (((g_armed >> i) & 1) && flinch_move(r) && part_of(r, flinched)) first = r;
+    }
+    if (!first) return 1;   /* the rules went meanwhile: the carrier runs as it is */
+    const volatile mhfu_em_own_t *o = &R->moves[first->play_move - 1];
+    mhfu_move_react_take((const mhfu_move_t *)&o->move, steer_of(o));
+    tag(first->play_move - 1u, m);
+    count_fire(first);
+    return 1;
+}
+
+/* The parts the rules on the flinch take in the host step that follows, with their gates as they
+ * stand now, on the first such rule's carrier. Off once no rule on the flinch is installed. */
+static void react_arm(uint32_t ent, const volatile mhfu_move_state_t *m)
+{
+    int any = 0, have = 0;
+    uint8_t parts = 0, cm = 0, cs = 0;
+    g_armed = 0;
+    for (int i = 0; i < MHFU_EM_RULES; i++) {
+        const cfg_rule_t *r = &g_cfgp->rules[i];
+        if (r->on != MHFU_MONSTER_FLINCH || !r->left) continue;
+        any = 1;
+        const volatile mhfu_em_own_t *o = flinch_move(r);
+        if (!o || !gates(r, ent, m)) continue;
+        if (!have) {
+            cm = o->move.carrier_main;
+            cs = o->move.carrier_sub;
+            have = 1;
+        } else if (o->move.carrier_main != cm || o->move.carrier_sub != cs) {
+            continue;
+        }
+        parts |= r->part == MHFU_EM_ANY_PART ? 0xFF : (uint8_t)(1u << (r->part & 7));
+        g_armed |= 1u << i;
+    }
+    if (!any) {
+        if (g_reacts) mhfu_move_react_arm(0, 0, 0, 0);
+        g_reacts = 0;
+        return;
+    }
+    em_vhook_cfg_t *c = g_cfgp;
+    if (!g_reacts || c->react_ent != ent || c->react_parts != parts
+        || (have && (c->react_to_main != cm || c->react_to_sub != cs)))
+        mhfu_move_react_arm(ent, parts, have ? cm : c->react_to_main,
+                            have ? cs : c->react_to_sub);
+    g_reacts = 1;
+}
+
+/* at most one thing played or entered; 1 when a replaced reaction waits for the step */
+static int act(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_t edges, uint8_t parts)
+{
+    if (R->req_ent == ent) {
+        R->req_ent = 0;
+        play_slot(ent, R->req_slot, m, (int)R->req_force);
+        return 0;
+    }
+    if (react_take(ent, m, edges)) return 1;
+    int k = ours(m);
+    if (k >= 0 && m->state == MHFU_MOVE_DONE && m->entity == ent
+        && (m->end == MHFU_MOVE_END_BACK || m->end == MHFU_MOVE_END_WALL)
+        && R->moves[k].after != MHFU_EM_NO_MOVE) {
+        if (play_slot(ent, R->moves[k].after, m, m->move.force)) R->chained++;
+        else R->tag_slot = MHFU_EM_NO_MOVE;   /* an empty AFTER: not again */
+        return 0;
+    }
+    for (int i = 0; i < MHFU_EM_RULES; i++) {
+        cfg_rule_t *r = &g_cfgp->rules[i];
+        if (r->left && holds(r, ent, m, edges, parts) && fire(r, ent, m)) break;
+    }
+    return 0;
 }
 
 static uint32_t brain(uint32_t ent)
@@ -380,23 +539,9 @@ static uint32_t brain(uint32_t ent)
     c->d2 = f32_bits(dx * dx + dz * dz);
     const volatile mhfu_move_state_t *m = mhfu_move_state();
     if (!m || !R) return 0;
-    if (R->req_ent == ent) {
-        R->req_ent = 0;
-        play_slot(ent, R->req_slot, m);
-        return 0;
-    }
-    int k = ours(m);
-    if (k >= 0 && m->state == MHFU_MOVE_DONE && m->entity == ent
-        && (m->end == MHFU_MOVE_END_BACK || m->end == MHFU_MOVE_END_WALL)
-        && R->moves[k].after != MHFU_EM_NO_MOVE) {
-        if (play_slot(ent, R->moves[k].after, m)) R->chained++;
-        else R->tag_slot = MHFU_EM_NO_MOVE;   /* an empty AFTER: not again */
-        return 0;
-    }
-    for (int i = 0; i < MHFU_EM_RULES; i++) {
-        cfg_rule_t *r = &c->rules[i];
-        if (r->left && holds(r, ent, m) && fire(r, ent, m)) break;
-    }
+    uint8_t parts;
+    uint16_t edges = mhfu_monster_events_frame(ent, m->entity == ent && m->skipping, &parts);
+    if (!act(ent, m, edges, parts)) react_arm(ent, m);
     return 0;
 }
 
@@ -556,10 +701,14 @@ extern "C" void mhfu_em_rule(int slot, const mhfu_em_rule_t *r)
     if (!g_cfgp || slot < 0 || slot >= MHFU_EM_RULES) return;
     cfg_rule_t *c = &g_cfgp->rules[slot];
     c->left = 0;                                    /* off while we write */
-    if (!r || r->count == 0 || (r->from_mask == 0 && r->from_move == 0)) {
+    int bad_on = r && (r->on > MHFU_MONSTER_TAIL_CUT
+                       || (r->on == MHFU_MONSTER_FLINCH && !r->play_move));
+    if (!r || r->count == 0 || bad_on || (!r->from_mask && !r->from_move && !r->on)) {
         c->from_mask = 0;
         c->from_move = 0;
-        mhfu_log("[%s] rule[%d]: cleared", OWNER, slot);
+        c->on = 0;
+        mhfu_log("[%s] rule[%d]: cleared%s", OWNER, slot,
+                 bad_on ? " (an event it cannot take; the flinch plays an own move)" : "");
         return;
     }
     float lo = r->dist_lo < 0 ? 0 : r->dist_lo;
@@ -572,6 +721,9 @@ extern "C" void mhfu_em_rule(int slot, const mhfu_em_rule_t *r)
     c->flags      = r->flags;
     c->from_move  = r->from_move;
     c->play_move  = r->play_move;
+    c->on         = r->on;
+    c->part       = r->part;
+    c->force      = r->force;
     c->min_frames = r->min_frames;
     c->d2_lo      = f32_bits(lo * lo);
     c->d2_hi      = f32_bits(hi * hi);
@@ -579,9 +731,10 @@ extern "C" void mhfu_em_rule(int slot, const mhfu_em_rule_t *r)
     c->fired      = 0;
     c->last_fire  = 0;
     c->left       = r->count;
-    mhfu_log("[%s] rule[%d]: from main mask 0x%02X sub %s / own move %d, >=%u frames, "
-             "d in [%d,%d)%s%s -> enter (%u,%u,m%u) / own move %d, cooldown %u, x%s",
-             OWNER, slot, r->from_mask,
+    mhfu_log("[%s] rule[%d]: on %s part %d, from main mask 0x%02X sub %s / own move %d, "
+             ">=%u frames, d in [%d,%d)%s%s -> enter (%u,%u,m%u) / own move %d, cooldown %u, x%s",
+             OWNER, slot, r->on ? mhfu_monster_event_names[r->on - 1] : "-",
+             r->part == MHFU_EM_ANY_PART ? -1 : (int)r->part, r->from_mask,
              r->from_sub == MHFU_EM_SUB_ANY ? "any" : "exact", (int)r->from_move - 1,
              (unsigned)r->min_frames, (int)lo, (int)hi,
              (r->flags & MHFU_EM_RULE_RECEDING) ? ", receding" : "",
@@ -597,7 +750,9 @@ extern "C" void mhfu_em_clear(void)
     if (R) R->req_ent = 0;
     for (int i = 0; i < MHFU_EM_SUBS; i++)  { g_cfgp->subs[i].left = 0; g_cfgp->subs[i].from_mask = 0; }
     for (int i = 0; i < MHFU_EM_RULES; i++) { g_cfgp->rules[i].left = 0; g_cfgp->rules[i].from_mask = 0;
-                                               g_cfgp->rules[i].from_move = 0; }
+                                               g_cfgp->rules[i].from_move = 0; g_cfgp->rules[i].on = 0; }
+    if (g_reacts) mhfu_move_react_arm(0, 0, 0, 0);
+    g_reacts = 0;
 }
 
 /* --- own moves --- */
@@ -644,12 +799,14 @@ extern "C" int mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_sp
     return 1;
 }
 
-extern "C" int mhfu_em_play(uint32_t entity, int slot)
+extern "C" int mhfu_em_play(uint32_t entity, int slot, int force)
 {
     if (!R || !g_installed || !entity || slot < 0 || slot >= MHFU_EM_MOVES
         || !R->moves[slot].valid)
         return 0;
+    R->req_ent = 0;
     R->req_slot = (uint32_t)slot;
+    R->req_force = (uint32_t)(force != 0);
     R->req_ent = entity;
     return 1;
 }
@@ -699,13 +856,14 @@ extern "C" void mhfu_em_status(mhfu_em_status_t *out)
 /* --- the reaction replacement: one entry, owned by the move player (move.cpp) ---------- */
 
 extern "C" void mhfu_em_react(uint32_t entity, uint8_t main_state, uint32_t sub_mask,
-                              uint16_t gate, uint8_t to_main, uint8_t to_sub)
+                              uint16_t gate, uint8_t parts, uint8_t to_main, uint8_t to_sub)
 {
     if (!g_cfgp) return;
     g_cfgp->react_ent = 0;                          /* off while we write */
     g_cfgp->react_main = main_state;
     g_cfgp->react_mask = sub_mask;
     g_cfgp->react_gate = gate;
+    g_cfgp->react_parts = parts;
     g_cfgp->react_to_main = to_main;
     g_cfgp->react_to_sub = to_sub;
     g_cfgp->react_ent = entity;
@@ -855,5 +1013,21 @@ extern "C" void mhfu_em_host_quest(void)
 {
     mhfu_em_clear();
     R->tag_slot = MHFU_EM_NO_MOVE;
+}
+
+/* the engine's reaction entering (main, sub) mode 2 through the slot-32 stub's replacement,
+ * modelled (test_em_vhook_stubs.py runs the stub itself) */
+extern "C" void mhfu_em_host_reaction(uint32_t ent, uint8_t main_state, uint8_t sub)
+{
+    em_vhook_cfg_t *c = g_cfgp;
+    uint8_t gate = mhfu_mem_read_u8(ent + (c->react_gate & 0x7FF));
+    if (c->react_ent == ent && main_state == c->react_main && sub < 32
+        && ((c->react_mask >> sub) & 1) && (gate & c->react_parts)) {
+        c->react_hits++;
+        c->react_last = (2u << 16) | ((uint32_t)main_state << 8) | sub;
+        main_state = c->react_to_main;
+        sub = c->react_to_sub;
+    }
+    enter(ent, main_state, sub, 2);
 }
 #endif

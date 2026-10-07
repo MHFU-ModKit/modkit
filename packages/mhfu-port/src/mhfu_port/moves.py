@@ -82,40 +82,57 @@ def records(game: Extracted, species: int) -> frozenset[int]:
     return frozenset(r.index - off for r in ([] if t is None else t.attacks) if any(r.raw))
 
 
-def check(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> None:
-    """Raise `ManifestError` for an own move the module cannot carry: a clip with no entry, an
-    attack past its clip or with no record in `known` (the host's, when given), more turn keys
-    than the framework holds, no carrier."""
+def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> list[str]:
+    """Every own move or rule the module cannot carry: a clip with no entry, an attack past its
+    clip or with no record in `known` (the host's, when given), more turn keys than the framework
+    holds, no carrier; rules on the flinch whose moves ride different carriers."""
+    out: list[str] = []
     pool = 0
     for name, mv in m.moves.items():
         if not mv.own:
             continue
         w = f"moves.{name}"
-        e = entry(m, name, layout)
-        carrier(m, name)
+        try:
+            e = entry(m, name, layout)
+            carrier(m, name)
+        except ManifestError as err:
+            out.append(str(err))
+            continue
         frames = layout.frames.get(e)
         for i, a in enumerate(mv.attacks):
             if known is not None and a.id not in known:
-                raise ManifestError(
+                out.append(
                     f"{w}.attack[{i}]: host species {m.port.host_species} has no "
                     f"attack record {a.id}"
                 )
             if frames is not None and a.frame >= frames:
-                raise ManifestError(f"{w}.attack[{i}]: frame {a.frame} is past the clip's {frames}")
+                out.append(f"{w}.attack[{i}]: frame {a.frame} is past the clip's {frames}")
         keys = len(curve(m, name, layout) or "") // 4
         if keys > KEYS:
-            raise ManifestError(f"{w}: the clip's turn has {keys} keys, a move holds {KEYS}")
+            out.append(f"{w}: the clip's turn has {keys} keys, a move holds {KEYS}")
         pool += keys
     if pool > POOL:
-        raise ManifestError(
-            f"moves: the own moves' turns need {pool} keys, the framework holds {POOL}"
+        out.append(f"moves: the own moves' turns need {pool} keys, the framework holds {POOL}")
+    flinch = set()
+    for r in m.rules:
+        if r.on == "flinch":
+            try:
+                flinch.add(carrier(m, r.play))
+            except ManifestError:
+                pass  # its move's own problem, above
+    if len(flinch) > 1:
+        out.append(
+            f"rule: the moves of the rules on the flinch ride {len(flinch)} carriers; the "
+            "reaction replacement enters one"
         )
-    for i, r in enumerate(m.rules):
-        if r.on is not None:
-            raise ManifestError(f"rule[{i}]: `on` does not reach the game yet")
-    for name, mv in m.moves.items():
-        if mv.eager:
-            raise ManifestError(f"moves.{name}: `eager` does not reach the game yet")
+    return out
+
+
+def check(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> None:
+    """Raise `ManifestError` with the first of `problems`."""
+    found = problems(m, layout, known)
+    if found:
+        raise ManifestError(found[0])
 
 
 def pair_move(mv: Move) -> dict[str, Any]:
@@ -179,6 +196,10 @@ def _own_move(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
 
 def _rule(r: Rule) -> dict[str, Any]:
     out: dict[str, Any] = {"play": r.play}
+    if r.on is not None:
+        out["on"] = r.on
+    if r.part is not None:
+        out["part"] = r.part
     if r.from_move is not None:
         out["from"] = r.from_move
     if r.from_main:
@@ -195,17 +216,23 @@ def _rule(r: Rule) -> dict[str, Any]:
             out[k] = getattr(r, k)
     if r.count is not None:
         out["count"] = r.count
+    if r.force:
+        out["force"] = True
     if r.label:
         out["label"] = r.label
     return out
 
 
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_KEYWORDS = frozenset(
+    "and break do else elseif end false for function goto if in local nil not or repeat "
+    "return then true until while".split()
+)
 
 
 def lua_key(k: str) -> str:
     """`k` as a Lua table key."""
-    return k if _IDENT.fullmatch(k) else f"[{_str(k)}]"
+    return k if _IDENT.fullmatch(k) and k not in _KEYWORDS else f"[{_str(k)}]"
 
 
 def _str(s: str) -> str:

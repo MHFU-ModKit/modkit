@@ -1,9 +1,10 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
-/* Monster events: the moments a big monster's state changes that a mod may answer. The move
- * player's step (mhfu/move.h) reads the engine's own cells every AI frame of the species em_vhook
- * wrapped, before the host step, so a change the engine made in one AI frame is seen in the next;
- * the registry poll (5 Hz) raises it with that frame and the emulated clock.
+/* Monster events: the moments a big monster's state changes that a mod may answer. em_vhook's
+ * brain reads the engine's own cells every AI frame of the species it wrapped, before the host
+ * step, so a change the engine made in one AI frame is seen in the next, where the brain's rules
+ * on it fire (mhfu_em_rule); the registry poll (5 Hz) raises it with that frame and the emulated
+ * clock.
  *
  *   NOTICED          the player's ENTITY.AWARE bit rises: the notice (AWARENESS_ADD)
  *   COMBAT_ENTERED   the player's yellow eye comes on for this monster: COMBAT_MODE 1, the
@@ -33,6 +34,9 @@ enum {
     MHFU_MONSTER_PART_BROKEN,
     MHFU_MONSTER_TAIL_CUT,
 };
+
+/* the kinds' names, MHFU_MONSTER_NOTICED's first, then NULL: Lua's and a manifest's `on` */
+extern const char *const mhfu_monster_event_names[];
 
 #define MHFU_MONSTER_EVENT_RING  32
 #define MHFU_MONSTER_EVENT_WATCH 2    /* monsters of the wrapped species followed at once */
@@ -84,9 +88,26 @@ static inline mhfu_hook_rc_t mhfu_on_monster_event(mhfu_event_id_t id, mhfu_mons
     return mhfu_event_on(id, (mhfu_event_fn_t)cb, priority, owner);
 }
 
-/* The step's call, each AI frame of entity before the host step; stale: the host step did not
- * run in the frame before, so the per-frame cells are left over from an earlier one. */
-void mhfu_monster_events_frame(uint32_t entity, int stale);
+/* A big monster now, from the cells the events step reads: what a mod asks before it plays. */
+typedef struct {
+    uint8_t  aware;      /* the player's ENTITY.AWARE bit: it has noticed the player */
+    uint8_t  combat;     /* the player's yellow eye is on for it (EYE_UPDATE's rule) */
+    uint8_t  noticing;   /* aware, COMBAT_MODE still 0: the notice runs; a move asked waits */
+    uint8_t  dead;
+    uint8_t  main_state, sub_state;
+    uint8_t  flinched;   /* ENTITY.FLINCH_MASK: the parts that flinched this AI frame */
+    uint8_t  severed;    /* the tail is cut */
+    uint16_t broken;     /* ENTITY.BROKEN */
+    uint16_t _pad;
+} mhfu_monster_state_t;
+
+/* 0 (and *out zeroed) for no entity. Any thread; it only reads. */
+int mhfu_monster_state(uint32_t entity, mhfu_monster_state_t *out);
+
+/* The brain's call, each AI frame of entity before the host step; stale: the host step did not
+ * run in the frame before, so the per-frame cells are left over from an earlier one. Returns
+ * what this frame raised (bit kind) and the parts that flinched in *parts. */
+uint16_t mhfu_monster_events_frame(uint32_t entity, int stale, uint8_t *parts);
 
 /* Raises what the step found, oldest first; the registry poll calls it. */
 void mhfu_monster_events_drain(void);

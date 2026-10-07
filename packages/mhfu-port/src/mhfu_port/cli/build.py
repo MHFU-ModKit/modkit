@@ -40,7 +40,7 @@ def run_build(args: argparse.Namespace) -> int:
     games = data.from_arguments(args)
     built = build(m, games)
     out: Path = args.out or Path(m.port.pac)
-    written = _modules(m, built, out.parent, games)
+    written = modules(m, built, out.parent, games)
     out.write_bytes(built.pac)
     print(f"wrote {out}, {', '.join(map(str, written))}\n{built.summary.text()}")
     return 0
@@ -51,7 +51,7 @@ def run_inject(args: argparse.Namespace) -> int:
     games = data.from_arguments(args)
     built = build(m, games)
     lib = args.lib or inject.memstick() / inject.MODS_SUBDIR / layout.LIB
-    written = _modules(m, built, lib, games)
+    written = modules(m, built, lib, games)
     host = m.port.host_frame
     path = inject.write_relocate_bytes(
         built.pac, host, args.dir, orig=games.fu.read(host), name=m.port.pac
@@ -60,7 +60,7 @@ def run_inject(args: argparse.Namespace) -> int:
     return 0
 
 
-def _modules(m: manifest.Manifest, built: Built, where: Path, games: data.Data) -> list[Path]:
+def modules(m: manifest.Manifest, built: Built, where: Path, games: data.Data) -> list[Path]:
     """Write the port's clips and moves modules into `where`, each whole: the game reloads a
     module on change. Raises `ManifestError` for a move the moves module cannot carry, before
     either is written."""

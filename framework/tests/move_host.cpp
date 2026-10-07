@@ -47,11 +47,12 @@ void mhfu_em_mute_events(uint32_t entity) { record('M', entity, 0, 0, 0); }
 
 /* em_vhook's reaction entry, as its slot-32 stub applies it (tests/test_em_vhook_stubs.py runs
  * the stub itself) */
-static uint32_t g_react[6], g_react_hits, g_react_last;
-void mhfu_em_react(uint32_t e, uint8_t m, uint32_t mask, uint16_t gate, uint8_t tm, uint8_t ts)
+static uint32_t g_react[7], g_react_hits, g_react_last;
+void mhfu_em_react(uint32_t e, uint8_t m, uint32_t mask, uint16_t gate, uint8_t parts, uint8_t tm,
+                   uint8_t ts)
 {
     g_react[0] = e; g_react[1] = m; g_react[2] = mask; g_react[3] = gate;
-    g_react[4] = tm; g_react[5] = ts;
+    g_react[4] = tm; g_react[5] = ts; g_react[6] = parts;
 }
 uint32_t mhfu_em_react_hits(uint32_t *last) { if (last) *last = g_react_last; return g_react_hits; }
 
@@ -110,7 +111,8 @@ void mhfu_host_end(uint32_t node, uint32_t vtable)
 void host_react_enter(uint32_t e, uint32_t m, uint32_t s)
 {
     uint8_t *gate = at(e + (g_react[3] & 0x7FF), 1);
-    if (g_react[0] == e && m == g_react[1] && s < 32 && (g_react[2] >> s) & 1 && gate && *gate) {
+    if (g_react[0] == e && m == g_react[1] && s < 32 && (g_react[2] >> s) & 1 && gate
+        && (*gate & g_react[6])) {
         g_react_hits++;
         g_react_last = (2u << 16) | (m << 8) | s;
         m = g_react[4];

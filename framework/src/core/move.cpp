@@ -10,9 +10,10 @@
  *   end:        windowed attacks still live are ended; the step comes out once nothing is
  *               pending
  *
- * The step is in from the wrapped species' spawn: each AI frame it first finds the monster
- * events (monster_events.cpp), then takes a reaction em_vhook replaced (mhfu_em_react) by starting
- * the registered move on the carrier the replacement entered, then runs the move player.
+ * The step is in from the wrapped species' spawn: each AI frame it takes a reaction em_vhook
+ * replaced (mhfu_em_react) by starting the registered move on the carrier the replacement
+ * entered, then runs the move player. The brain, right before it, finds the monster events and
+ * may hand the replaced reaction another move (mhfu_move_react_take).
  *
  * An attack node is ended through its own end state (ATTACK_NODE_VTABLE.END): it stops being
  * tested at once, and the collision world deletes it on its next update. Only a node that is
@@ -39,10 +40,10 @@
 #define MAGIC 0x4D4F5650u   /* 'MOVP' */
 #define NEVER 0xFFFFFFFFu
 #define STOP  2u            /* PENDING: end the running move */
-#define DEAD  5             /* MAIN_STATE of a dead monster */
 #define REACT_MAIN 4        /* em75's reactions */
 /* em75's flinch pairs: REACTION_CHECK code 12 by part and posture */
 #define FLINCH_SUBS ((1u << 0) | (1u << 1) | (1u << 5) | (1u << 6) | (1u << 8))
+#define ALL_PARTS 0xFFu
 
 static_assert(sizeof(mhfu_move_attack_t) == MHFU_MOVE_ATTACK_SIZE, "MOVE_ATTACK layout");
 static_assert(offsetof(mhfu_move_attack_t, id) == MHFU_MOVE_ATTACK_ID, "MOVE_ATTACK layout");
@@ -54,7 +55,7 @@ static_assert(offsetof(mhfu_move_t, attack_count) == MHFU_MOVE_ATTACK_COUNT, "MO
 static_assert(offsetof(mhfu_move_t, attacks) == MHFU_MOVE_ATTACKS, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, spawner) == MHFU_MOVE_SPAWNER, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, host_attacks) == MHFU_MOVE_HOST_ATTACKS, "MOVE layout");
-static_assert(offsetof(mhfu_move_t, eager) == MHFU_MOVE_EAGER, "MOVE layout");
+static_assert(offsetof(mhfu_move_t, force) == MHFU_MOVE_FORCE, "MOVE layout");
 static_assert(MHFU_MOVE_ATTACKS_COUNT == MHFU_MOVE_MAX_ATTACKS, "MOVE layout");
 static_assert(sizeof(mhfu_move_state_t) == MHFU_MOVE_STATE_SIZE, "MOVE_STATE layout");
 static_assert(offsetof(mhfu_move_state_t, state) == MHFU_MOVE_STATE_STATE, "MOVE_STATE layout");
@@ -169,14 +170,11 @@ static int steer(uint32_t ent)
 
 static uint32_t step(uint32_t ent);
 
-/* the player's bit set and COMBAT_MODE 0: the roar, the hub and the AI script's combat entry
- * still to come (SET_COMBAT_MODE) */
+/* the roar, the hub and the AI script's combat entry still to come (SET_COMBAT_MODE) */
 static int noticing(uint32_t ent)
 {
-    uint32_t bit = 1u << (mhfu_mem_read_u16(MHFU_PLAYER_ENTITY + MHFU_ENTITY_HUNTER_INDEX) & 7);
-    return (mhfu_mem_read_u8(ent + MHFU_ENTITY_AWARE) & bit)
-        && !mhfu_mem_read_u8(ent + MHFU_ENTITY_COMBAT_MODE)
-        && mhfu_mem_read_u8(ent + MHFU_ENTITY_MAIN_STATE) != DEAD;
+    mhfu_monster_state_t st;
+    return mhfu_monster_state(ent, &st) && st.noticing;
 }
 
 /* attack i's node, if it is still ours and live, through its end state */
@@ -256,7 +254,11 @@ static void start(uint32_t ent)
 {
     copy_words(&S->move, &S->next, sizeof(mhfu_move_t));
     S->pending = 0;
+    int quiet = noticing(ent);
     enter(ent, S->next.carrier_main, S->next.carrier_sub, 0);
+    /* the notice has woken the AI script, whose next pair would cut the carrier at once: quiet it,
+     * as the stuck end does; the hub wakes it again once the carrier ends */
+    if (quiet) mhfu_mem_write_u8(ent + MHFU_ENTITY_SCRIPT_WAKE, 0);
     begin(ent);
 }
 
@@ -374,7 +376,6 @@ static uint32_t play(uint32_t ent)
 
 static uint32_t step(uint32_t ent)
 {
-    mhfu_monster_events_frame(ent, ent == S->entity && S->skipping);
     uint32_t original;
     uint32_t hits = mhfu_em_react_hits(&original);
     if (ent == S->react_entity && hits != S->react_seen) {
@@ -388,7 +389,7 @@ static uint32_t step(uint32_t ent)
         if (S->state == MHFU_MOVE_ENTERING || S->state == MHFU_MOVE_PLAYING)
             finish(MHFU_MOVE_END_STOPPED, pair_of(S->entity));
     } else if (S->pending && ent == S->next_entity) {
-        if (!S->next.eager && noticing(ent) && S->waited < MHFU_MOVE_WAIT) {
+        if (!S->next.force && noticing(ent) && S->waited < MHFU_MOVE_WAIT) {
             S->waited++;
         } else {
             if (S->state == MHFU_MOVE_ENTERING || S->state == MHFU_MOVE_PLAYING)
@@ -455,7 +456,7 @@ extern "C" int mhfu_move_react(int kind, uint32_t entity, const mhfu_move_t *mv,
 {
     if (!S || kind != MHFU_REACT_FLINCH) return 0;
     S->react_entity = 0;
-    mhfu_em_react(0, 0, 0, 0, 0, 0);
+    mhfu_em_react(0, 0, 0, 0, 0, 0, 0);
     if (!mv || !entity) return 1;
     if (!mhfu_em_installed()) return 0;
     copy_words(&S->react, mv, sizeof(mhfu_move_t));
@@ -464,10 +465,39 @@ extern "C" int mhfu_move_react(int kind, uint32_t entity, const mhfu_move_t *mv,
     S->react_kind = (uint8_t)kind;
     S->react_seen = mhfu_em_react_hits(0);
     S->react_entity = entity;
-    mhfu_em_react(entity, REACT_MAIN, FLINCH_SUBS, MHFU_ENTITY_FLINCH_MASK, mv->carrier_main,
-                  mv->carrier_sub);
+    mhfu_em_react(entity, REACT_MAIN, FLINCH_SUBS, MHFU_ENTITY_FLINCH_MASK, ALL_PARTS,
+                  mv->carrier_main, mv->carrier_sub);
     mhfu_em_step(step);
     return 1;
+}
+
+extern "C" void mhfu_move_react_arm(uint32_t entity, uint8_t parts, uint8_t carrier_main,
+                                    uint8_t carrier_sub)
+{
+    if (!S) return;
+    if (!entity) {
+        S->react_entity = 0;
+        mhfu_em_react(0, 0, 0, 0, 0, 0, 0);
+        return;
+    }
+    if (!S->react_entity) S->react_seen = mhfu_em_react_hits(0);
+    S->react_kind = MHFU_REACT_FLINCH;
+    S->react_entity = entity;
+    mhfu_em_react(entity, REACT_MAIN, FLINCH_SUBS, MHFU_ENTITY_FLINCH_MASK, parts, carrier_main,
+                  carrier_sub);
+    mhfu_em_step(step);
+}
+
+extern "C" int mhfu_move_react_pending(uint32_t entity)
+{
+    return S && entity && entity == S->react_entity && mhfu_em_react_hits(0) != S->react_seen;
+}
+
+extern "C" void mhfu_move_react_take(const mhfu_move_t *mv, const volatile mhfu_steer_spec_t *s)
+{
+    if (!S) return;
+    copy_words(&S->react, mv, sizeof(mhfu_move_t));
+    copy_words(&S->react_steer, s, sizeof(mhfu_steer_spec_t));
 }
 
 /* em_vhook latched onto the species at this spawn (its handler runs first): the step goes in */
@@ -485,7 +515,7 @@ static void on_quest(const mhfu_event_ctx_t *ctx)
     S->state = MHFU_MOVE_IDLE;
     S->entity = S->next_entity = 0;
     S->react_entity = 0;
-    mhfu_em_react(0, 0, 0, 0, 0, 0);
+    mhfu_em_react(0, 0, 0, 0, 0, 0, 0);
 }
 
 #ifndef MHFU_HOST

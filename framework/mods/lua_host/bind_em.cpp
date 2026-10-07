@@ -70,6 +70,13 @@ int lb_em_rule(lua_State *L)
     r.count      = (uint32_t)tbl_int(L, 2, "count", (lua_Integer)MHFU_EM_UNLIMITED);
     r.from_move  = (uint8_t)(tbl_int(L, 2, "from_move", -1) + 1);
     r.play_move  = (uint8_t)(tbl_int(L, 2, "play_move", -1) + 1);
+    lua_getfield(L, 2, "on");
+    r.on = lua_isnil(L, -1) ? 0
+         : (uint8_t)(luaL_checkoption(L, -1, NULL, mhfu_monster_event_names) + MHFU_MONSTER_NOTICED);
+    lua_pop(L, 1);
+    r.part       = (uint8_t)tbl_int(L, 2, "part", MHFU_EM_ANY_PART);
+    r.force      = (uint8_t)tbl_bool(L, 2, "force");
+    r._pad       = 0;
     mhfu_em_rule(slot, &r);
     lua_pushboolean(L, 1);
     return 1;
@@ -129,114 +136,7 @@ int lb_em_status(lua_State *L)
     return 1;
 }
 
-/* --- own moves --- */
-
-/* t[i] of an integer list, def where missing */
-static int list_at(lua_State *L, int t, int i, int def)
-{
-    lua_rawgeti(L, t, i);
-    int v = lua_isnil(L, -1) ? def : (int)luaL_checkinteger(L, -1);
-    lua_pop(L, 1);
-    return v;
-}
-
-/* the move table mhfu.move_play takes (lua/meta/mhfu.d.lua mhfu.Move) */
-static void own_move(lua_State *L, int t, mhfu_move_t *mv)
-{
-    mhfu_move_init_spec(mv, (uint16_t)tbl_int(L, t, "entry", 0));
-    mv->length = (uint16_t)tbl_int(L, t, "length", 0);
-    mv->part = (uint8_t)tbl_int(L, t, "part", 0);
-    mv->spawner = (uint32_t)tbl_int(L, t, "spawner", 0);
-    mv->skip = (uint8_t)tbl_bool(L, t, "skip");
-    mv->host_attacks = (uint8_t)tbl_bool(L, t, "host_attacks");
-    if (lua_getfield(L, t, "carrier") == LUA_TTABLE) {
-        int c = lua_gettop(L);
-        mv->carrier_main = (uint8_t)list_at(L, c, 1, 0);
-        mv->carrier_sub = (uint8_t)list_at(L, c, 2, 2);
-    }
-    lua_pop(L, 1);
-    if (lua_getfield(L, t, "back") == LUA_TTABLE) {
-        int b = lua_gettop(L);
-        mv->back_main = (uint8_t)list_at(L, b, 1, 0);
-        mv->back_sub = (uint8_t)list_at(L, b, 2, 0);
-        mv->back_mode = (uint8_t)list_at(L, b, 3, 0);
-    }
-    lua_pop(L, 1);
-    if (lua_getfield(L, t, "attacks") == LUA_TTABLE) {
-        int a = lua_gettop(L);
-        int n = (int)luaL_len(L, a);
-        for (int i = 1; i <= n && mv->attack_count < MHFU_MOVE_MAX_ATTACKS; i++) {
-            if (lua_rawgeti(L, a, i) == LUA_TTABLE) {
-                int one = lua_gettop(L);
-                mhfu_move_attack_t *at = &mv->attacks[mv->attack_count++];
-                at->frame = (uint16_t)list_at(L, one, 1, 0);
-                at->id = (uint16_t)list_at(L, one, 2, 0);
-                at->end = (uint16_t)list_at(L, one, 3, 0);
-            }
-            lua_pop(L, 1);
-        }
-    }
-    lua_pop(L, 1);
-}
-
-static const char *const TURNS[] = {"still", "hunter", "away", "fixed", NULL};
-
-static int hex(int c)
-{
-    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
-}
-
-/* t.steer (lua/meta/mhfu.d.lua mhfu.MoveSteer) */
-static void own_steer(lua_State *L, int t, mhfu_steer_spec_t *sp)
-{
-    mhfu_steer_init_spec(sp);
-    if (lua_getfield(L, t, "steer") != LUA_TTABLE) {
-        lua_pop(L, 1);
-        return;
-    }
-    int s = lua_gettop(L);
-    lua_getfield(L, s, "turn");
-    if (!lua_isnil(L, -1)) sp->steer.turn = (uint8_t)luaL_checkoption(L, -1, NULL, TURNS);
-    lua_pop(L, 1);
-    sp->steer.walls = (uint8_t)tbl_bool(L, s, "walls");
-    sp->steer.rate = (uint16_t)tbl_int(L, s, "rate", 64);
-    sp->steer.frames = (uint16_t)tbl_int(L, s, "frames", 1);
-    sp->steer.total = (int32_t)(tbl_num(L, s, "total", 0) * MHFU_STEER_TURN / 360);
-    sp->steer.dir = (uint16_t)(int32_t)(tbl_num(L, s, "dir", 0) * MHFU_STEER_TURN / 360);
-    if (lua_getfield(L, s, "stuck") == LUA_TTABLE) {
-        int k = lua_gettop(L);
-        sp->stuck_main = (uint8_t)list_at(L, k, 1, sp->stuck_main);
-        sp->stuck_sub = (uint8_t)list_at(L, k, 2, sp->stuck_sub);
-        sp->stuck_mode = (uint8_t)list_at(L, k, 3, sp->stuck_mode);
-    }
-    lua_pop(L, 1);
-    size_t n = 0;
-    lua_getfield(L, s, "curve");
-    const char *c = lua_isstring(L, -1) ? lua_tolstring(L, -1, &n) : NULL;
-    for (size_t i = 0; c && i + 4 <= n && sp->key_count < MHFU_STEER_KEYS; i += 4) {
-        int v = 0;
-        for (size_t j = 0; j < 4; j++) {
-            int d = hex(c[i + j]);
-            luaL_argcheck(L, d >= 0, 2, "steer.curve is hex digits, 4 a key");
-            v = v * 16 + d;
-        }
-        sp->keys[sp->key_count++] = (uint16_t)v;
-    }
-    lua_pop(L, 2);
-}
-
-int lb_em_move(lua_State *L)
-{
-    int slot = (int)luaL_checkinteger(L, 1);
-    luaL_checktype(L, 2, LUA_TTABLE);
-    mhfu_move_t mv;
-    own_move(L, 2, &mv);
-    mhfu_steer_spec_t sp;
-    own_steer(L, 2, &sp);
-    uint8_t after = (uint8_t)tbl_int(L, 2, "after", MHFU_EM_NO_MOVE);
-    lua_pushboolean(L, mhfu_em_move(slot, &mv, &sp, after));
-    return 1;
-}
+/* --- own moves (mhfu.em_move is in bind_move.cpp, beside the move spec it reads) --- */
 
 int lb_em_moves_clear(lua_State *L)
 {
@@ -248,7 +148,7 @@ int lb_em_moves_clear(lua_State *L)
 int lb_em_play(lua_State *L)
 {
     lua_pushboolean(L, mhfu_em_play((uint32_t)luaL_checkinteger(L, 1),
-                                    (int)luaL_checkinteger(L, 2)));
+                                    (int)luaL_checkinteger(L, 2), lua_toboolean(L, 3)));
     return 1;
 }
 

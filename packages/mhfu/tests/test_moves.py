@@ -5,6 +5,7 @@
 import struct
 
 from mhfu import addresses as a
+from mhfu.cli import main
 from mhfu.cli import moves as cli
 from mhfu.live import moves
 
@@ -22,6 +23,8 @@ def test_no_back_pair_is_ff() -> None:
     raw = moves.Move(46).pack()
     assert raw[a.MOVE.BACK_MAIN] == moves.NO_PAIR and raw[a.MOVE.HOST_ATTACKS] == 0
     assert moves.Move(46, host_attacks=True).pack()[a.MOVE.HOST_ATTACKS] == 1
+    raw = moves.Move(46, force=True).pack()
+    assert raw[a.MOVE.FORCE] == 1 and moves.Move.unpack(raw).force
 
 
 def test_attack_word() -> None:
@@ -75,3 +78,9 @@ def test_hp_line_takes_the_timing_part() -> None:
     w = moves._parse(line, 0x1000 - 2_000_000, part=1)
     assert w is not None and (w.phase, w.hp, w.pair, w.frame) == (57.0, 150, (1, 2), 28)
     assert w.t == 2.0 and moves._parse("junk", 0) is None
+
+
+def test_play_wants_an_entry_or_own(capsys) -> None:
+    assert main(["move", "play", "46", "--own", "stamp"]) == 1
+    assert main(["move", "play"]) == 1
+    assert "an entry or --own" in capsys.readouterr().err
