@@ -617,8 +617,8 @@ def _parts(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
         w = f"hurtbox[{i}]"
         if h.part is None:
             msg = (
-                "no `part`, so a hit here counts toward no breakable part (0). The damage row,"
-                " `hitzone_row`, is another field."
+                "no `part`, so it ships as part 0 and a hit here counts toward part 0. The"
+                " damage row, `hitzone_row`, is another field."
             )
             out.append(_f("warning", "HURTBOX_NO_PART", w, msg))
         elif m.parts and h.part not in named:
@@ -651,8 +651,7 @@ def _parts(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
         out.append(_f("warning", "HURTBOX_OVER_CAPACITY", "hurtbox", msg, ("hurtbox", cap)))
     if m.hurtboxes and not m.parts:
         msg = f"{len(m.hurtboxes)} hurtbox(es) and no [parts] naming their parts."
-        used = sorted({h.part for h in m.hurtboxes if h.part})
-        # part 0 is nobody: with no other, a hurtbox needs a part before a name helps
+        used = sorted({h.part for h in m.hurtboxes if h.part is not None})
         at, focus = (("part", used[0]), PART_NAME) if used else (("hurtbox", 0), HURT_PART)
         out.append(_f("warning", "PARTS_UNNAMED", "parts", msg, at, focus))
     return out
