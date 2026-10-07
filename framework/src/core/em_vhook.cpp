@@ -26,8 +26,9 @@
  *                 (MHFU_ENTER_ACTION), so it is provisioned too.
  *   BRAIN         slot-29 pre, in C (brain()): the pair's dwell, the hunter's
  *                 distance and the monster events (monster_events.cpp), then at most
- *                 one of: an own move asked for, the move of a rule on the flinch whose
- *                 reaction was replaced, the AFTER of one of ours that ended, a rule
+ *                 one of: an own move asked for, the move of a rule on the flinch (or on
+ *                 the break it made) whose reaction was replaced, the AFTER of one of
+ *                 ours that ended, a rule
  *                 ("in pair P or own move M for N frames, or on event E, player at
  *                 [lo,hi), receding -> enter Q or play own move M'", cooldown, budget);
  *                 last, the rules on the flinch arm the reaction replacement for the
@@ -412,31 +413,45 @@ static int fire(cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_state_t *m
     return 1;
 }
 
+/* a live rule's own move, if it plays one */
+static const volatile mhfu_em_own_t *rule_move(const cfg_rule_t *r)
+{
+    if (!r->left || !r->play_move || r->play_move > MHFU_EM_MOVES
+        || !R->moves[r->play_move - 1].valid)
+        return 0;
+    return &R->moves[r->play_move - 1];
+}
+
 /* a rule on the flinch with a move to play: what the replacement may enter */
 static const volatile mhfu_em_own_t *flinch_move(const cfg_rule_t *r)
 {
-    if (r->on != MHFU_MONSTER_FLINCH || !r->left || !r->play_move
-        || r->play_move > MHFU_EM_MOVES || !R->moves[r->play_move - 1].valid)
-        return 0;
-    return &R->moves[r->play_move - 1];
+    return r->on == MHFU_MONSTER_FLINCH ? rule_move(r) : 0;
 }
 
 static int g_reacts;        /* the brain owns the reaction replacement */
 static uint32_t g_armed;    /* bit i: rule i's gates held when it was armed */
 
-/* The replacement entered the carrier in place of a flinch in the last host step: the first rule
- * armed for it whose part flinched hands the move player its move, which the step starts. */
-static int react_take(uint32_t ent, const volatile mhfu_move_state_t *m)
+/* The replacement entered the carrier in place of a flinch in the last host step: a rule on the
+ * break that flinch made, whose gates hold and whose own move rides that carrier, else the first
+ * rule armed for it whose part flinched, hands the move player its move, which the step starts. */
+static int react_take(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_t edges)
 {
     if (!g_reacts || !mhfu_move_react_pending(ent)) return 0;
     uint8_t flinched = mhfu_mem_read_u8(ent + MHFU_ENTITY_FLINCH_MASK);
     cfg_rule_t *first = 0;
-    for (int i = 0; i < MHFU_EM_RULES; i++) {
+    for (int i = 0; i < MHFU_EM_RULES && ((edges >> MHFU_MONSTER_PART_BROKEN) & 1); i++) {
         cfg_rule_t *r = &g_cfgp->rules[i];
-        if (((g_armed >> i) & 1) && flinch_move(r) && part_of(r, flinched)) {
+        const volatile mhfu_em_own_t *o = rule_move(r);
+        if (r->on == MHFU_MONSTER_PART_BROKEN && o && part_of(r, flinched) && gates(r, ent, m)
+            && o->move.carrier_main == g_cfgp->react_to_main
+            && o->move.carrier_sub == g_cfgp->react_to_sub) {
             first = r;
             break;
         }
+    }
+    for (int i = 0; i < MHFU_EM_RULES && !first; i++) {
+        cfg_rule_t *r = &g_cfgp->rules[i];
+        if (((g_armed >> i) & 1) && flinch_move(r) && part_of(r, flinched)) first = r;
     }
     if (!first) return 1;   /* the rules went meanwhile: the carrier runs as it is */
     const volatile mhfu_em_own_t *o = &R->moves[first->play_move - 1];
@@ -490,7 +505,7 @@ static int act(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_t edges
         play_slot(ent, R->req_slot, m);
         return 0;
     }
-    if (react_take(ent, m)) return 1;
+    if (react_take(ent, m, edges)) return 1;
     int k = ours(m);
     if (k >= 0 && m->state == MHFU_MOVE_DONE && m->entity == ent
         && (m->end == MHFU_MOVE_END_BACK || m->end == MHFU_MOVE_END_WALL)

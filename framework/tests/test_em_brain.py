@@ -418,3 +418,19 @@ def test_every_rule_slot_holds_one(g: Game) -> None:
     g.rule(n, from_mask=1 << 1, to_main=2, to_sub=9)  # past the end: ignored
     g.frame()
     assert g.entered() == [(3, n)]
+
+
+def test_a_flinch_that_breaks_plays_the_break_rule(g: Game) -> None:
+    g.own(0, 59)
+    g.own(1, 61)
+    g.rule(0, on=FLINCH, part=0, play_move=1)
+    g.rule(1, on=BROKEN, play_move=2, count=1)
+    g.frame()
+    g.poke(a.ENTITY.BROKEN, "H", 2)
+    g.flinch(0b001)
+    g.frame()
+    assert ("X", ENT, 61, 0, 0) in g.calls() and g.lib.mhfu_em_playing() == 1
+    g.frames(int(CLIP_END / SPEED) + 2)
+    g.flinch(0b001)
+    g.frame()
+    assert ("X", ENT, 59, 0, 0) in g.calls()  # no new break: the flinch rule's
