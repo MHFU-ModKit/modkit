@@ -31,3 +31,9 @@ SPDX-FileCopyrightText = [
     "2026 sp00ktober",
 ]
 SPDX-License-Identifier = "BSD-3-Clause"
+
+# TLSF 3.1, github.com/mattconte/tlsf at deff9ab509341f264addbd3c8ada533678591905, unchanged
+[[annotations]]
+path = "framework/third_party/tlsf/**"
+SPDX-FileCopyrightText = "2006-2016 Matthew Conte"
+SPDX-License-Identifier = "BSD-3-Clause"

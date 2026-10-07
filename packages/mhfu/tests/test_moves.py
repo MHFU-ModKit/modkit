@@ -63,8 +63,8 @@ def test_steer_packs_as_the_spec():
     assert struct.unpack_from("<3H", b, a.STEER_SPEC.KEYS) == (0, 0x2000, 0xFFFF)
 
 
-def test_turns_of_a_clips_module():
-    text = 'return {\n  dash = 20,\n  _turns = {\n    [46] = "00001000ffff",\n  },\n}\n'
+def test_turns_of_a_turns_module():
+    text = 'return {\n  [46] = "00001000ffff",\n}\n'
     assert moves.turns_of(text) == {46: (0, 0x1000, 0xFFFF)}
 
 

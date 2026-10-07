@@ -27,13 +27,18 @@ objs_in    = $(patsubst %,$(OBJDIR)/%.o,$(basename $(sort $(wildcard $(addsuffix
 CORE_OBJS := $(call objs_in,src/core)
 MOD_OBJS  := $(foreach m,$(MODS),$(call objs_in,mods/$(m)))
 ALL_MODS  := $(call objs_in,$(wildcard mods/*))
+# TLSF, the Lua slab's allocator, without its asserts
+ifneq ($(filter lua_host,$(MODS)),)
+MOD_OBJS  += $(OBJDIR)/third_party/tlsf/tlsf.o
+endif
+$(OBJDIR)/third_party/%.o: CFLAGS += -DNDEBUG
 OBJS       = $(CORE_OBJS) $(MOD_OBJS)
 
-INCDIR   = include src/core $(GEN)
+INCDIR   = include src/core $(GEN) third_party/tlsf
 CFLAGS   = -Os -G0 -Wall -fno-strict-aliasing
 # no exceptions, RTTI or static guards: the objects need no libstdc++ runtime
 CXXFLAGS = -std=gnu++17 -fno-exceptions -fno-rtti -fno-threadsafe-statics
-# .incbin in a mod's .S finds the generated prelude and address table
+# .incbin in a mod's .S finds the generated prelude
 ASFLAGS  = -Wa,-I$(GEN)
 # a Lua binding defined but not declared in lua/meta/mhfu.d.lua fails here; declared but not
 # defined fails the link

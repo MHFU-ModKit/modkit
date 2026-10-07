@@ -65,12 +65,13 @@ def _listed(written: list[Path]) -> str:
 
 
 def modules(m: manifest.Manifest, built: Built, where: Path, games: data.Data) -> list[Path]:
-    """Write the port's clips and moves modules into `where`, each whole and only when it
+    """Write the port's clips, turns and moves modules into `where`, each whole and only when it
     changed, since the game re-runs a module that changed on disk; those written. Raises
-    `ManifestError` for a move the moves module cannot carry, before either is written."""
+    `ManifestError` for a move the moves module cannot carry, before any is written."""
     known = moves.records(games.fu, m.port.host_species)
     texts = {
         layout.module_name(m): layout.lua(m, built.layout),
+        layout.turns_module_name(m): layout.turns_lua(m, built.layout),
         moves.module_name(m): moves.lua(m, built.layout, known),
     }
     where.mkdir(parents=True, exist_ok=True)

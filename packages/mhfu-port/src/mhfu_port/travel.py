@@ -338,7 +338,7 @@ class Turn:
         return _curve(_grid(self.frames), np.asarray(self.keys, dtype=np.float64))(frame)
 
     def lua(self) -> str:
-        """The keys as 4 hex digits each, YAW's own 16 bits: the clips module's `_turns`."""
+        """The keys as 4 hex digits each, YAW's own 16 bits: the port's turns module."""
         return "".join(f"{k & 0xFFFF:04x}" for k in self.keys)
 
 

@@ -17,7 +17,7 @@ import zlib
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from mhfu import addresses, hitbox
+from mhfu import addresses, hitbox, inject
 from mhfu.files import Extracted, em_overlay
 
 from .layout import Layout
@@ -41,7 +41,7 @@ def hub(species: int) -> Pair | None:
 
 def module_name(m: Manifest) -> str:
     """The Lua module `P.define` requires for the port's moves and rules."""
-    return f"{m.port.name}_moves.lua"
+    return inject.port_module(m.port.name, "moves")
 
 
 BUILD = re.compile(r"^  build = 0x([0-9A-F]{8}),$", re.M)

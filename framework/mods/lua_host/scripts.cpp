@@ -3,7 +3,6 @@
 /* Mods are .lua files in LUA_MODS_DIR: run at boot, re-run when one changes. Libraries are
  * .lua files in its lib/ subdirectory, run only through require and re-run in place when one
  * that has been required changes. */
-#include <pspsysmem.h>
 #include <pspiofilemgr.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -14,13 +13,6 @@
 
 #define LUA_MODS_DIR "ms0:/PSP/PLUGINS/mhfu_framework/mods"
 #define LIB_PREFIX   "lib/"
-/* Per-file read buffer, allocated at init to keep it off the PRX load image.
- * A script over this size is skipped with only one boot-log line; keep every
- * script (and the port runtime library) under 96 KB. */
-#define G_FILEBUF_SZ (96 * 1024)
-static char  *g_filebuf;
-static SceUID g_filebuf_uid = -1;
-
 /* Hot reload tracks MAX_TRACKED scripts and libraries with names (lib/ included) under NAME_CAP
  * bytes; any other script never runs, since an untracked one would re-run on every scan. */
 #define MAX_TRACKED 16
@@ -31,16 +23,6 @@ typedef char script_path_t[sizeof(LUA_MODS_DIR) + NAME_CAP];
 static void script_path(script_path_t &out, const char *name)
 {
     snprintf(out, sizeof(out), "%s/%.*s", LUA_MODS_DIR, NAME_CAP - 1, name);
-}
-
-void mhfu_lua_scripts_init(void)
-{
-    g_filebuf_uid = sceKernelAllocPartitionMemory(
-        2 /* PSP_MEMORY_PARTITION_USER */, "mhfu_lua_filebuf",
-        PSP_SMEM_Low, G_FILEBUF_SZ, 0);
-    g_filebuf = (g_filebuf_uid >= 0) ? (char *)sceKernelGetBlockHeadAddr(g_filebuf_uid) : 0;
-    if (!g_filebuf) mhfu_log("[lua_host] filebuf alloc FAILED rc=0x%08X — scripts won't load",
-                             (unsigned)g_filebuf_uid);
 }
 
 static int ends_with_lua(const char *s)
@@ -54,38 +36,55 @@ static int ends_with_lua(const char *s)
         && (s[n-1]|0x20) == 'a';
 }
 
-/* Read one script (a basename, or lib/<name>.lua) into g_filebuf; its length, or -1. */
-static int read_script(const char *name)
+/* Scripts compile straight from the file through this buffer, so no whole script is held in
+ * memory (the slab has that room, vm.cpp). The VM lock serialises every compile. */
+static char g_readbuf[2048];
+
+typedef struct { SceUID fd; int total; int err; } reader_t;
+
+static const char *read_chunk(lua_State *L, void *ud, size_t *size)
+{
+    (void)L;
+    reader_t *r = (reader_t *)ud;
+    int n = sceIoRead(r->fd, g_readbuf, sizeof(g_readbuf));
+    if (n < 0) r->err = n;
+    if (n <= 0) { *size = 0; return 0; }
+    r->total += n;
+    *size = (size_t)n;
+    return g_readbuf;
+}
+
+/* Compile one script (a basename, or lib/<name>.lua), leaving its chunk on the stack; its size,
+ * or -1 on failure (logged). */
+static int compile_script(lua_State *L, const char *name)
 {
     script_path_t path;
     script_path(path, name);
-    if (!g_filebuf) { mhfu_log("[lua_host] no file scratch — skip %s", name); return -1; }
-    SceUID fd = sceIoOpen(path, PSP_O_RDONLY, 0);
-    if (fd < 0) { mhfu_log("[lua_host] open FAILED %s rc=0x%08X", path, (unsigned)fd); return -1; }
-    int n = sceIoRead(fd, g_filebuf, G_FILEBUF_SZ - 1);
-    sceIoClose(fd);
-    if (n < 0) { mhfu_log("[lua_host] read FAILED %s rc=0x%08X", name, (unsigned)n); return -1; }
-    if (n >= (int)(G_FILEBUF_SZ - 1)) {
-        mhfu_log("[lua_host] %s too big (>%uB) — skipped", name, (unsigned)(G_FILEBUF_SZ - 1));
-        return -1;
-    }
-    g_filebuf[n] = 0;
-    return n;
-}
-
-/* Read and compile one script, leaving its chunk on the stack; -1 on failure (logged). */
-static int compile_script(lua_State *L, const char *name)
-{
-    int n = read_script(name);
-    if (n < 0) return -1;
+    reader_t r = { sceIoOpen(path, PSP_O_RDONLY, 0), 0, 0 };
+    if (r.fd < 0) { mhfu_log("[lua_host] open FAILED %s rc=0x%08X", path, (unsigned)r.fd); return -1; }
     char chunk[NAME_CAP + 1];
     snprintf(chunk, sizeof(chunk), "@%.*s", NAME_CAP - 1, name);   /* '@': a file name */
-    if (luaL_loadbuffer(L, g_filebuf, (size_t)n, chunk) != LUA_OK) {
-        mhfu_log("[lua_host] compile FAILED %s: %s", name, lua_tostring(L, -1));
+    int rc = lua_load(L, read_chunk, &r, chunk, 0);
+    sceIoClose(r.fd);
+    if (r.err < 0) {
+        mhfu_log("[lua_host] read FAILED %s rc=0x%08X", name, (unsigned)r.err);
         lua_pop(L, 1);
         return -1;
     }
-    return n;
+    if (rc != LUA_OK) {
+        mhfu_log("[lua_host] compile FAILED %s: %s (largest free block %uB)",
+                 name, lua_tostring(L, -1), mhfu_lua_slab_largest());
+        lua_pop(L, 1);
+        return -1;
+    }
+    return r.total;
+}
+
+/* What the VM holds once a script has run, for the log. */
+static unsigned live_after(lua_State *L)
+{
+    lua_gc(L, LUA_GCCOLLECT, 0);
+    return mhfu_lua_slab_live();
 }
 
 /* Read, compile and run one mod by basename. The caller holds the VM (setup
@@ -99,7 +98,7 @@ static int load_lua_file(lua_State *L, const char *name)
         lua_pop(L, 1);
         return -1;
     }
-    mhfu_log("[lua_host] loaded mod %s (%dB)", name, n);
+    mhfu_log("[lua_host] loaded mod %s (%dB), live=%uB", name, n, live_after(L));
     return 0;
 }
 
@@ -159,6 +158,17 @@ static int restat(tracked_t *t)
     return changed;
 }
 
+/* require's loader for a library: its chunk, then the log line a mod gets. */
+static int run_library(lua_State *L)
+{
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_insert(L, 1);
+    lua_call(L, lua_gettop(L) - 1, 1);
+    mhfu_log("[lua_host] loaded %s (%dB), live=%uB", lua_tostring(L, lua_upvalueindex(3)),
+             (int)lua_tointeger(L, lua_upvalueindex(2)), live_after(L));
+    return 1;
+}
+
 /* ------------------------------------------------------------ require
  * package.searchers is {preload, lib_searcher}: require("name") runs mods/lib/name.lua once
  * and caches what it returns in package.loaded. Outside the boot load a library is read only
@@ -196,8 +206,11 @@ static int lib_searcher(lua_State *L)
                           name, MAX_TRACKED);
     }
     restat(&g_tracked[idx]);
-    if (compile_script(L, name) < 0)
-        return luaL_error(L, "mods/%s did not load (framework.log has why)", name);
+    int n = compile_script(L, name);
+    if (n < 0) return luaL_error(L, "mods/%s did not load (framework.log has why)", name);
+    lua_pushinteger(L, n);
+    lua_pushstring(L, name);
+    lua_pushcclosure(L, run_library, 3);
     lua_pushstring(L, path);
     return 2;
 }

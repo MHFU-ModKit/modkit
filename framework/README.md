@@ -18,7 +18,7 @@ make -C framework clean
 | `build/mhfu_framework.prx` | the plugin |
 | `build/mhfu_boot.prx` | the real-PSP loader: a kernel plugin that loads the framework from its own directory once the game shows the title or a menu |
 | `build/*.elf` | the same with symbols and relocations |
-| `build/gen/addresses.gen.h`, `.lua` | the address map, rendered from `packages/mhfu`; Lua reads it as `mhfu.addr` |
+| `build/gen/addresses.gen.h`, `addresses_table.gen.inc` | the address map, rendered from `packages/mhfu`; Lua reads it as `mhfu.addr`, an entry built when first read |
 | `build/gen/lua_api.gen.h`, `.inc` | the `mhfu` table's C side, rendered from `lua/meta/mhfu.d.lua` |
 
 `mods.manifest` lists the mods linked into the plugin, one directory under `mods/` per line; `#`
@@ -86,6 +86,9 @@ A library in `mods/lib/` runs once, when a mod first requires it:
 `local port = require("mhfu_port")`. Require at a mod's top level; later, while the Memory Stick
 may be busy, `require` refuses to read a new library. A mod that needs a newer API checks
 `mhfu.api_version`. Errors from the boot load are written to `framework.log` right after it.
+
+Mods share one 350 KB Lua heap. `framework.log` gives `live=` after each mod and library loads,
+and `VM ready` the largest free block, which bounds what a hot reload can compile.
 
 An editor with the Lua language server (VS Code's Lua extension) gets completion and hover docs
 from `.luarc.json` at the repo root; `mhfu.addr` needs `make -C framework

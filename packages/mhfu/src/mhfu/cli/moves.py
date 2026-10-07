@@ -224,7 +224,8 @@ def play(args: argparse.Namespace) -> int:
     if args.curve:
         lane = launcher(args).lane
         stick = Lane(lane).stick if lane is not None else None
-        module = inject.memstick(stick) / inject.MODS_SUBDIR / clips.LIB / f"{args.curve}_clips.lua"
+        module = inject.memstick(stick) / inject.MODS_SUBDIR / inject.LIB
+        module /= inject.port_module(args.curve, "turns")
         curve = moves.turns_of(module.read_text(encoding="utf-8")).get(args.entry, ())
     steer = moves.Steer(
         curve,
