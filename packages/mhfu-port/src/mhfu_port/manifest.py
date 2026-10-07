@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import tomli_w
 from mhfu import addresses, files, hitzone, inject
+from mhfu.live import monster_events
 
 from .records import ANIM, GEO
 
@@ -35,12 +36,13 @@ Shape = Literal["sphere", "capsule"]
 SHAPES: tuple[Shape, ...] = typing.get_args(Shape)
 Turn = Literal["clip", "still", "hunter", "away", "fixed"]
 TURNS: tuple[Turn, ...] = typing.get_args(Turn)
-Event = Literal["noticed", "combat_entered", "combat_left", "flinch", "part_broken", "tail_cut"]
-EVENTS: tuple[Event, ...] = typing.get_args(Event)
+Event = monster_events.Kind
+EVENTS: tuple[Event, ...] = monster_events.KINDS
+"""A monster event's name, as the framework takes it in a rule's `on`."""
 
 MAIN_STATES = range(8)
 """A big monster's behaviour main states."""
-SEAM_RULES = 4
+SEAM_RULES: int = addresses.EM_CFG.RULES.count or 0
 """Rules the framework's native brain seam holds."""
 MOVE_ATTACKS: int = addresses.MOVE.ATTACKS.count or 0
 """Attacks the move player holds per move."""
@@ -621,6 +623,8 @@ def _validate(m: Manifest) -> None:
         _need(r.from_move != r.play, w, "from and play are the same move")
         if r.play in m.moves and m.moves[r.play].own:
             _need(r.mode == 0, w, "mode is a pair's: an own move enters its carrier")
+        elif r.on == "flinch":
+            _need(False, w, "on = flinch plays an own move, in place of the host's reaction")
 
 
 def loads(text: str, path: str | Path | None = None) -> Manifest:

@@ -85,7 +85,8 @@ def records(game: Extracted, species: int) -> frozenset[int]:
 def check(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> None:
     """Raise `ManifestError` for an own move the module cannot carry: a clip with no entry, an
     attack past its clip or with no record in `known` (the host's, when given), more turn keys
-    than the framework holds, no carrier."""
+    than the framework holds, no carrier; or rules on the flinch whose moves ride different
+    carriers."""
     pool = 0
     for name, mv in m.moves.items():
         if not mv.own:
@@ -110,12 +111,12 @@ def check(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> 
         raise ManifestError(
             f"moves: the own moves' turns need {pool} keys, the framework holds {POOL}"
         )
-    for i, r in enumerate(m.rules):
-        if r.on is not None:
-            raise ManifestError(f"rule[{i}]: `on` does not reach the game yet")
-    for name, mv in m.moves.items():
-        if mv.eager:
-            raise ManifestError(f"moves.{name}: `eager` does not reach the game yet")
+    flinch = {carrier(m, r.play) for r in m.rules if r.on == "flinch"}
+    if len(flinch) > 1:
+        raise ManifestError(
+            f"rule: the moves of the rules on the flinch ride {len(flinch)} carriers; the "
+            "reaction replacement enters one"
+        )
 
 
 def pair_move(mv: Move) -> dict[str, Any]:
@@ -171,6 +172,8 @@ def _own_move(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
         out["length"] = mv.length
     if mv.host_attacks:
         out["host_attacks"] = True
+    if mv.eager:
+        out["eager"] = True
     out["steer"] = _steer(m, name, layout)
     if mv.after is not None:
         out["after"] = mv.after
@@ -179,6 +182,10 @@ def _own_move(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
 
 def _rule(r: Rule) -> dict[str, Any]:
     out: dict[str, Any] = {"play": r.play}
+    if r.on is not None:
+        out["on"] = r.on
+    if r.part is not None:
+        out["part"] = r.part
     if r.from_move is not None:
         out["from"] = r.from_move
     if r.from_main:
