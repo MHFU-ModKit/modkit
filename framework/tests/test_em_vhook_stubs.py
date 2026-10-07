@@ -35,6 +35,8 @@ int evt(uint32_t *o, uint32_t cfg, uint32_t orig, uint32_t ret, int *ov)
 int cfg_mute(void) { return CFG_MUTE_ENT; }
 int cfg_muted(void) { return CFG_MUTED; }
 int act_frame(void) { return ACT_FRAME; }
+int cfg_react(void) { return CFG_REACT_ENT; }
+int cfg_sub(void) { return CFG_SUB_BASE; }
 }
 """
 
@@ -191,3 +193,45 @@ def test_events_stub_runs_any_other(stubs: Stubs, mips: Any) -> None:
         m, went = _run_events(stubs, mips, muted)
         assert went == RUN_ORIG and m.reg("a0") == ENTITY
         assert m.read(RUN_CFG + stubs.lib.cfg_muted()) == [0]
+
+
+def _run_act(
+    stubs: Stubs, mips: Any, sub: int, gate: int, table: bool = False
+) -> tuple[Any, list[int]]:
+    """Runs the slot-32 stub on an enter-action (ENTITY, 4, sub, 2) with the reaction entry armed
+    for ENTITY's flinch; returns the machine and the (main, sub) the original got."""
+    out, ov = (ctypes.c_uint32 * 1024)(), ctypes.c_int(0)
+    n = stubs.lib.act(out, RUN_CFG, RUN_ORIG, ctypes.byref(ov))
+    m = mips()
+    m.write(STUB, list(out[:n]))
+    m.write(RUN_ORIG, [mips.jr("ra"), mips.NOP])
+    m.write(RUN_CFG, [0] * (stubs.cfg_size // 4))
+    r = RUN_CFG + stubs.lib.cfg_react()
+    gate_off = int(addresses.ENTITY.FLINCH_MASK)
+    m.write(r, [ENTITY, 0b100100011, 4 | (0 << 8) | (2 << 16), gate_off])  # ent, mask, main/to
+    m.uc.mem_write(ENTITY + gate_off, bytes([gate]))
+    if table:  # a standing substitution of main 4, any sub, to (1, 3)
+        m.write(RUN_CFG + stubs.lib.cfg_sub(), [0x0301FE10, 0xFFFFFFFF])
+    got: list[int] = []
+    m.at(RUN_ORIG, lambda mm: got.extend([mm.reg("a1"), mm.reg("a2")]))
+    for reg, v in (("a0", ENTITY), ("a1", 4), ("a2", sub), ("a3", 2), ("ra", CALLER)):
+        m.set_reg(reg, v)
+    m.set_reg("sp", 0x3F000)
+    m.run(STUB, CALLER, count=2000)
+    return m, got
+
+
+def test_act_stub_replaces_a_flinch(stubs: Stubs, mips: Any) -> None:
+    m, got = _run_act(stubs, mips, 1, 1)
+    hits, last = m.read(RUN_CFG + stubs.lib.cfg_react() + 0x10, 2)
+    assert got == [0, 2] and (hits, last) == (1, 0x20401)
+
+
+def test_act_stub_leaves_the_rest(stubs: Stubs, mips: Any) -> None:
+    for sub, gate, table, want in (
+        (1, 0, False, [4, 1]),
+        (4, 1, False, [4, 4]),
+        (1, 1, True, [1, 3]),
+    ):
+        m, got = _run_act(stubs, mips, sub, gate, table)
+        assert got == want and m.read(RUN_CFG + stubs.lib.cfg_react() + 0x10) == [0]

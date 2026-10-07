@@ -33,6 +33,9 @@ static void spec_of(lua_State *L, int t, mhfu_move_t *mv)
     lua_getfield(L, t, "host_attacks");
     mv->host_attacks = (uint8_t)lua_toboolean(L, -1);
     lua_pop(L, 1);
+    lua_getfield(L, t, "eager");
+    mv->eager = (uint8_t)lua_toboolean(L, -1);
+    lua_pop(L, 1);
     if (lua_getfield(L, t, "carrier") == LUA_TTABLE) {
         int c = lua_gettop(L);
         mv->carrier_main = (uint8_t)list_at(L, c, 1, 0);
@@ -137,6 +140,25 @@ int lb_move_play(lua_State *L)
     return 1;
 }
 
+static const char *const REACTS[] = {"flinch", NULL};
+
+int lb_move_react(lua_State *L)
+{
+    int kind = luaL_checkoption(L, 1, NULL, REACTS);
+    uint32_t ent = (uint32_t)luaL_checkinteger(L, 2);
+    if (lua_isnoneornil(L, 3)) {
+        lua_pushboolean(L, mhfu_move_react(kind, ent, NULL, NULL));
+        return 1;
+    }
+    luaL_checktype(L, 3, LUA_TTABLE);
+    mhfu_move_t mv;
+    spec_of(L, 3, &mv);
+    mhfu_steer_spec_t sp;
+    steer_of(L, 3, &sp);
+    lua_pushboolean(L, mhfu_move_react(kind, ent, &mv, &sp));
+    return 1;
+}
+
 int lb_move_stop(lua_State *L)
 {
     mhfu_move_stop();
@@ -174,6 +196,13 @@ int lb_move_status(lua_State *L)
     SF_INT("end_main", s->end_pair >> 8);
     SF_INT("end_sub", s->end_pair & 0xFF);
     SF_INT("end_frame", s->end_frame);
+    SF_INT("waited", s->waited);
+    SF_INT("reactions", s->reactions);
+    SF_INT("react_entity", s->react_entity);
+    SF_INT("react_parts", s->react_parts);
+    SF_INT("react_part", s->react_part);
+    SF_INT("react_main", (s->react_pair >> 8) & 0xFF);
+    SF_INT("react_sub", s->react_pair & 0xFF);
     push_floats(L, s->peak, 3, "peak");
     push_floats(L, s->clip_end, 3, "clip_end");
     lua_createtable(L, s->move.attack_count, 0);

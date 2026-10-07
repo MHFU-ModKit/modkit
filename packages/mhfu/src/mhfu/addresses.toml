@@ -701,16 +701,17 @@ ATTACK_COUNT = { offset = 0x0B, type = "u8", doc = "attacks in ATTACKS" }
 ATTACKS = { offset = 0x0C, type = "MOVE_ATTACK[4]", doc = "attacks, spawned once each" }
 SPAWNER = { offset = 0x2C, type = "ptr", doc = "the species' attack spawner; 0 = TIGREX_ATTACK_SPAWN" }
 HOST_ATTACKS = { offset = 0x30, type = "u8", doc = "1 keeps the host entry's animation events (MONSTER_VTABLE.ANIM_EVENTS) while the move plays; 0 skips them" }
+EAGER = { offset = 0x31, type = "u8", doc = "1 starts while the monster's notice runs (the player's ENTITY.AWARE bit, COMBAT_MODE 0); 0 waits up to 450 AI frames for its roar and combat entry" }
 
 [struct.MOVE_STATE]
 doc = "the move player's block in partition memory (move.cpp): the move it runs and what happened, read by mhfu.live.moves"
-size = 0x53C
+size = 0x79C
 [struct.MOVE_STATE.fields]
 MAGIC = { offset = 0x00, type = "u32", doc = "0x4D4F5650 (MOVP)" }
 STARTED = { offset = 0x04, type = "u32", doc = "moves started since boot" }
 PENDING = { offset = 0x08, type = "u32", doc = "1 while NEXT waits for its entity's next AI step" }
 STATE = { offset = 0x0C, type = "u8", doc = "0 idle, 1 entering the carrier, 2 playing, 3 reading the successor, 4 done" }
-END = { offset = 0x0D, type = "u8", doc = "why the last move ended: 1 clip done, 2 back pair entered, 3 pair changed, 4 stopped, 5 replaced, 6 carrier refused, 7 clip lost, 8 a wall ahead, 9 a class-2 wall: the stuck pair entered" }
+END = { offset = 0x0D, type = "u8", doc = "why the last move ended: 1 clip done, 2 back pair entered, 3 pair changed, 4 stopped, 5 replaced, 6 carrier refused, 7 clip lost, 8 a wall ahead, 9 a class-2 wall: the stuck pair entered, 10 a replaced reaction started its move" }
 SKIPPING = { offset = 0x0E, type = "u8", doc = "1 when the move skipped this frame's host AI step" }
 ENTITY = { offset = 0x10, type = "ptr", doc = "the monster the move runs on" }
 FRAMES = { offset = 0x14, type = "u32", doc = "AI frames since the clip's dispatch" }
@@ -730,6 +731,16 @@ NODE_VTABLE = { offset = 0xE4, type = "ptr[4]", doc = "each spawned node's vtabl
 ENDED_FRAME = { offset = 0xF4, type = "u32[4]", doc = "FRAMES when the move ended each attack's node; 0xFFFFFFFF = not ended by the move" }
 ENDED_STATE = { offset = 0x104, type = "u8[4]", doc = "the node's ATTACK_NODE.STATE then: 1 or 2 ended by the move, 0 it had ended itself, 0xFF no longer the move's (left alone)" }
 STEER = { offset = 0x108, type = "STEER_STATE", doc = "the move's steering: its turn curve, its mode and walls (mhfu/steer.h)" }
+REACT = { offset = 0x53C, type = "MOVE", doc = "the move that replaces REACT_KIND on REACT_ENTITY (mhfu_move_react)" }
+REACT_STEER = { offset = 0x570, type = "STEER_SPEC", doc = "REACT's steering" }
+REACT_ENTITY = { offset = 0x784, type = "ptr", doc = "the monster whose reaction is replaced; 0 = none" }
+REACT_KIND = { offset = 0x788, type = "u8", doc = "0 the flinch" }
+REACT_PARTS = { offset = 0x789, type = "u8", doc = "ENTITY.FLINCH_MASK of the last replaced reaction" }
+REACT_PART = { offset = 0x78A, type = "u8", doc = "ENTITY.MOST_DAMAGED_PART then" }
+REACTIONS = { offset = 0x78C, type = "u32", doc = "reactions replaced since boot" }
+REACT_SEEN = { offset = 0x790, type = "u32", doc = "em_vhook's replaced enter-actions the step has taken" }
+REACT_PAIR = { offset = 0x794, type = "u32", doc = "the replaced enter-action: (mode << 16) | (main << 8) | sub" }
+WAITED = { offset = 0x798, type = "u32", doc = "AI frames NEXT waited for the monster's notice" }
 
 [struct.STEER_PARAMS]
 doc = "how a move turns and stops (steer.h mhfu_steer_t)"
@@ -783,3 +794,39 @@ COUNT = { offset = 0x2, type = "u8", doc = "FLINCH_PART.COUNT that breaks it" }
 HITZONE_STATE = { offset = 0x3, type = "u8", doc = "1: the break sets ENTITY.HITZONE_STATE = 1" }
 BONE = { offset = 0x4, type = "s16", doc = "bone of the break effect; -1 none" }
 BREAK_ID = { offset = 0x6, type = "u16", doc = "bit set in ENTITY.BROKEN; 0xFFFF none (em75: parts 4 and 6 at their first flinch bit 1, part 0 at its second bit 2)" }
+
+[struct.MONSTER_EVENT]
+doc = "one record of the framework's monster events (monster_events.h mhfu_monster_event_t)"
+size = 0x14
+[struct.MONSTER_EVENT.fields]
+ENTITY = { offset = 0x00, type = "ptr", doc = "the monster" }
+FRAME = { offset = 0x04, type = "u32", doc = "its MONSTER_WATCH.FRAMES the change was seen in: the AI frame after the engine's" }
+USEC = { offset = 0x08, type = "u32", doc = "the emulated clock then (sceKernelGetSystemTimeLow)" }
+KIND = { offset = 0x0C, type = "u8", doc = "1 noticed, 2 combat entered, 3 combat left, 4 flinch, 5 part broken, 6 tail cut" }
+PART = { offset = 0x0D, type = "u8", doc = "flinch, part broken: the lowest part in ENTITY.FLINCH_MASK; else 0xFF" }
+MAIN = { offset = 0x0E, type = "u8", doc = "ENTITY.MAIN_STATE then: for a flinch, the reaction the engine entered" }
+SUB = { offset = 0x0F, type = "u8", doc = "ENTITY.SUB_STATE then" }
+DATA = { offset = 0x10, type = "u16", doc = "flinch: FLINCH_MASK; part broken: the new BROKEN bits; noticed: AWARE; combat: 1 entered, 0 left; tail cut: SEVER_COUNT" }
+
+[struct.MONSTER_WATCH]
+doc = "what the monster-event step compares against, per monster"
+size = 0x10
+[struct.MONSTER_WATCH.fields]
+ENTITY = { offset = 0x0, type = "ptr", doc = "the monster; 0 = free" }
+FRAMES = { offset = 0x4, type = "u32", doc = "its AI frames the step saw" }
+AWARE = { offset = 0x8, type = "u8", doc = "ENTITY.AWARE last frame" }
+COMBAT = { offset = 0x9, type = "u8", doc = "1 when the player's yellow eye was on for it last frame" }
+SEVERED = { offset = 0xA, type = "u8", doc = "ENTITY.SEVERED bit 0 last frame" }
+BROKEN = { offset = 0xC, type = "u16", doc = "ENTITY.BROKEN last frame" }
+EDGES = { offset = 0xE, type = "u16", doc = "bit KIND: what the last frame raised" }
+
+[struct.MONSTER_EVENTS]
+doc = "the framework's monster-event block in partition memory (monster_events.cpp): the ring the step writes and the registry poll raises"
+size = 0x2B0
+[struct.MONSTER_EVENTS.fields]
+MAGIC = { offset = 0x00, type = "u32", doc = "0x45564E54 (EVNT)" }
+HEAD = { offset = 0x04, type = "u32", doc = "records written; RING[HEAD % 32] is the next" }
+TAIL = { offset = 0x08, type = "u32", doc = "records raised" }
+DROPPED = { offset = 0x0C, type = "u32", doc = "records lost to a full ring" }
+WATCH = { offset = 0x10, type = "MONSTER_WATCH[2]", doc = "the monsters followed" }
+RING = { offset = 0x30, type = "MONSTER_EVENT[32]", doc = "the records" }

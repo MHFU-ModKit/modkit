@@ -638,6 +638,7 @@ function mhfu.move_block() end
 ---@field spawner? integer the species' attack spawner, default the Tigrex's
 ---@field host_attacks? boolean keep the host entry's own attacks and effects at its clip frames (MONSTER_VTABLE.ANIM_EVENTS); default off while the move plays
 ---@field steer? mhfu.MoveSteer how it turns and stops; default no turn, no walls
+---@field eager? boolean start while the monster's notice runs (the player's ENTITY.AWARE bit, COMBAT_MODE 0); by default the move waits up to 450 AI frames for its roar and combat entry
 
 ---How a move turns and stops (mhfu/steer.h); every field is optional.
 ---@class mhfu.MoveSteer
@@ -655,7 +656,7 @@ function mhfu.move_block() end
 ---@field started integer moves started since boot
 ---@field pending integer 1 while a move waits for its AI step
 ---@field state integer 0 idle, 1 entering the carrier, 2 playing, 3 reading the successor, 4 done
----@field end_reason integer 1 clip done, 2 back pair, 3 pair changed, 4 stopped, 5 replaced, 6 refused, 7 lost, 8 a wall ahead, 9 a class-2 wall (stuck pair entered)
+---@field end_reason integer 1 clip done, 2 back pair, 3 pair changed, 4 stopped, 5 replaced, 6 refused, 7 lost, 8 a wall ahead, 9 a class-2 wall (stuck pair entered), 10 a replaced reaction started its move
 ---@field entity integer
 ---@field entry integer
 ---@field frames integer AI frames since the clip's dispatch
@@ -666,6 +667,13 @@ function mhfu.move_block() end
 ---@field peak number[] per body part, the furthest cursor of the move's clip
 ---@field clip_end number[] per body part, the clip's last frame
 ---@field spawns mhfu.MoveSpawn[] one per attack, in order
+---@field waited integer AI frames the last move asked for waited for the monster's notice
+---@field reactions integer reactions replaced since boot (`mhfu.move_react`)
+---@field react_entity integer the monster whose reaction is replaced, 0 none
+---@field react_parts integer ENTITY.FLINCH_MASK of the last replaced reaction
+---@field react_part integer ENTITY.MOST_DAMAGED_PART then
+---@field react_main integer the pair the engine would have entered
+---@field react_sub integer
 
 ---A spawned attack in `mhfu.MoveStatus.spawns`.
 ---@class mhfu.MoveSpawn
@@ -674,3 +682,66 @@ function mhfu.move_block() end
 ---@field node integer the attack node, 0 out of section
 ---@field ended integer AI frame the move ended the node at, -1 if it did not
 ---@field ended_state integer the node's state then: 1 or 2 ended, 0 it had ended itself, 255 no longer the move's
+
+-- reactions and monster events (bind_move.cpp, bind_monster_events.cpp) ----------------------
+
+---Plays `spec` in place of the monster's reaction `kind` from the next one on, until called again;
+---no spec stops it. The engine's reaction runs up to its enter-action (flinch counters, pending
+---damage into HP), which then enters the move's carrier; the move plays from the next AI step.
+---"flinch" is em75's flinch pairs (4, 0|1|5|6|8). Needs the wrapped species (cold boot).
+---@param kind "flinch"
+---@param ent integer
+---@param spec? mhfu.Move
+---@return boolean
+function mhfu.move_react(kind, ent, spec) end
+
+---Calls fn when a big monster notices the player (its ENTITY.AWARE bit for the player rises).
+---Monster events come from the move player's step on the wrapped species, one AI frame after the
+---engine's change, and are raised on the 5 Hz registry poll. Register at load.
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_noticed(fn, priority) end
+
+---Calls fn when the player's yellow eye comes on for a big monster: in combat with the player.
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_combat_entered(fn, priority) end
+
+---Calls fn when the player's yellow eye goes off for a big monster: it lost the player, the player
+---left its section, or it died.
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_combat_left(fn, priority) end
+
+---Calls fn when parts of a big monster flinch; ev.part is the lowest, ev.data all of them, and
+---ev.main/ev.sub the reaction the engine entered (or the replacing move's carrier).
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_flinch(fn, priority) end
+
+---Calls fn when a part of a big monster breaks; ev.part is the flinching part that broke, ev.data
+---the new ENTITY.BROKEN bits.
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_part_broken(fn, priority) end
+
+---Calls fn when a big monster's tail is cut; ev.data is its tail-cut count.
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_tail_cut(fn, priority) end
+
+---The monster-event block (struct MONSTER_EVENTS), for a debugger; 0 before the framework's init.
+---@return integer
+function mhfu.monster_events_block() end
+
+---One monster event.
+---@class mhfu.MonsterEvent
+---@field entity integer
+---@field kind "noticed"|"combat_entered"|"combat_left"|"flinch"|"part_broken"|"tail_cut"
+---@field frame integer the monster's AI frame the change was seen in
+---@field usec integer the emulated clock then
+---@field delay integer microseconds from then to this call
+---@field main integer the monster's pair then
+---@field sub integer
+---@field data integer flinch: the flinched parts; part_broken: the new broken bits; noticed: the aware bits; combat: 1 entered, 0 left; tail_cut: the cut count
+---@field part? integer flinch, part_broken: the lowest flinched part

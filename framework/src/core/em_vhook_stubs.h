@@ -91,14 +91,23 @@
 /* the animation events (MONSTER_VTABLE.ANIM_EVENTS) */
 #define CFG_MUTE_ENT    0x160  /* u32  entity whose events are skipped; 0 = none */
 #define CFG_MUTED       0x164  /* u32  event steps skipped */
-#define CFG_SIZE        0x168
+/* the reaction replacement (mhfu_em_react, move.cpp's): one entry the C side owns */
+#define CFG_REACT_ENT     0x168  /* u32  the entity; 0 = off                       */
+#define CFG_REACT_MASK    0x16C  /* u32  bit k: sub k of REACT_MAIN is replaced    */
+#define CFG_REACT_MAIN    0x170  /* u8                                              */
+#define CFG_REACT_TO_MAIN 0x171  /* u8   entered instead                           */
+#define CFG_REACT_TO_SUB  0x172  /* u8                                              */
+#define CFG_REACT_GATE    0x174  /* u32  entity byte that must be nonzero, & 0x7FF   */
+#define CFG_REACT_HITS    0x178  /* u32  enter-actions replaced                     */
+#define CFG_REACT_LAST    0x17C  /* u32  (mode<<16)|(main<<8)|sub of the last one   */
+#define CFG_SIZE        0x180
 
 #define SUB_ANY         0xFEu
 #define PATCH_OFF_MASK  0x7FCu   /* the entity is 0x800 bytes: bound + align every store */
 
 /* slot sizes, in instructions. The check asserts the builders fit. */
 #define STUB_AI_INSNS   480
-#define STUB_ACT_INSNS  200
+#define STUB_ACT_INSNS  240
 #define STUB_EVT_INSNS  16
 
 /* -------------------------------------------------------------------------- */
@@ -407,6 +416,45 @@ static inline int emv_build_ai_stub(uint32_t *out, int cap, uint32_t cfg,
     return A.i;
 }
 
+/* The reaction replacement, after the substitution table (t8 = it took the call), with t0/t1
+ * the main and id as passed and t4 the ring entry: when the entity, main and a sub in the mask
+ * match, the gate byte of the entity is nonzero and the table did not take the call, a1/a2 become
+ * the replacement pair. Clobbers t5, t6, t9. */
+static inline void emv_react(emv_asm_t *a)
+{
+    E(mips_lw(R_T5, CFG_REACT_ENT, R_T7));
+    E(mips_xor(R_T5, R_T5, R_A0));
+    E(mips_sltiu(R_T5, R_T5, 1));                      /* the entity */
+    E(mips_lbu(R_T6, CFG_REACT_MAIN, R_T7));
+    E(mips_xor(R_T6, R_T6, R_T0));
+    E(mips_sltiu(R_T6, R_T6, 1));
+    E(mips_and(R_T5, R_T5, R_T6));                     /* its main */
+    E(mips_lw(R_T6, CFG_REACT_MASK, R_T7));
+    E(mips_srlv(R_T6, R_T6, R_T1));
+    E(mips_andi(R_T6, R_T6, 1));
+    E(mips_sltiu(R_T9, R_T1, 32));
+    E(mips_and(R_T6, R_T6, R_T9));
+    E(mips_and(R_T5, R_T5, R_T6));                     /* a sub in the mask */
+    E(mips_lw(R_T6, CFG_REACT_GATE, R_T7));
+    E(mips_andi(R_T6, R_T6, 0x7FF));
+    E(mips_addu(R_T6, R_A0, R_T6));
+    E(mips_lbu(R_T6, 0, R_T6));
+    E(mips_sltu(R_T6, R_ZERO, R_T6));
+    E(mips_and(R_T5, R_T5, R_T6));                     /* the gate byte */
+    E(mips_xori(R_T6, R_T8, 1));
+    E(mips_and(R_T5, R_T5, R_T6));                     /* the table left it */
+    E(mips_lbu(R_T6, CFG_REACT_TO_MAIN, R_T7));
+    E(mips_movn(R_A1, R_T6, R_T5));
+    E(mips_lbu(R_T6, CFG_REACT_TO_SUB, R_T7));
+    E(mips_movn(R_A2, R_T6, R_T5));
+    E(mips_lw(R_T6, CFG_REACT_HITS, R_T7));
+    E(mips_addu(R_T6, R_T6, R_T5));
+    E(mips_sw(R_T6, CFG_REACT_HITS, R_T7));
+    E(mips_lw(R_T6, CFG_REACT_LAST, R_T7));
+    E(mips_movn(R_T6, R_T4, R_T5));
+    E(mips_sw(R_T6, CFG_REACT_LAST, R_T7));
+}
+
 /* --- slot 32: substitution pre part, the original, the budget post part. --- */
 #define ACT_FRAME   0x10
 #define ACT_SP_ENT  0x00
@@ -469,6 +517,7 @@ static inline int emv_build_act_stub(uint32_t *out, int cap, uint32_t cfg,
         E(mips_subu(R_T6, R_T6, R_T5));
         E(mips_sw(R_T6, B + SUB_LEFT, R_T7));
     }
+    emv_react(a);
     /* bookkeeping on the whole table */
     E(mips_lw(R_T6, CFG_SUB_HITS, R_T7));
     E(mips_addu(R_T6, R_T6, R_T8));
