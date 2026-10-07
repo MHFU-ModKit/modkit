@@ -50,8 +50,9 @@ FULL_TURN = 0x10000
 SPEED = 2.0
 """Clip frames a forced clip's cursor moves per AI frame (CLIP_BLOCK.SPEED)."""
 POLL = 0.2
-OWN = 1
-"""CLI_BRIDGE.ARG with CMD 4: play the riding port's own move CLI_BRIDGE.NAME instead of MOVE."""
+OWN, FORCE = 1, 2
+"""CLI_BRIDGE.ARG bits with CMD 4: play the riding port's own move CLI_BRIDGE.NAME instead of
+MOVE, past the monster's notice."""
 WRAP = 1 << 32
 """The emulated clock a log line carries is cut to 32 bits."""
 
@@ -85,6 +86,8 @@ class Move:
     spawner: int = 0
     host_attacks: bool = False
     """Keep the host entry's own attacks and effects (MONSTER_VTABLE.ANIM_EVENTS)."""
+    force: bool = False
+    """Start while the monster's notice runs instead of waiting for combat (MOVE.FORCE)."""
 
     @classmethod
     def unpack(cls, raw: bytes) -> Move:
@@ -111,6 +114,7 @@ class Move:
             part,
             spawner,
             bool(raw[f.HOST_ATTACKS]),
+            bool(raw[f.FORCE]),
         )
 
     def pack(self) -> bytes:
@@ -130,7 +134,7 @@ class Move:
             struct.pack_into("<HH", out, at + a.MOVE_ATTACK.FRAME, atk.frame, atk.id)
             struct.pack_into("<H", out, at + a.MOVE_ATTACK.END, atk.end or 0)
         struct.pack_into("<I", out, f.SPAWNER, self.spawner)
-        struct.pack_into("<B", out, f.HOST_ATTACKS, int(self.host_attacks))
+        struct.pack_into("<BB", out, f.HOST_ATTACKS, int(self.host_attacks), int(self.force))
         return bytes(out)
 
 
@@ -348,10 +352,11 @@ def ask(
         raise RuntimeError("move refused: no big monster vtable is wrapped (em_vhook)")
 
 
-def play_own(s: Session, name: str, slot: int | None = None) -> bool:
+def play_own(s: Session, name: str, slot: int | None = None, force: bool = False) -> bool:
     """Ask the port riding `slot`'s monster (else the first big monster's) to play its own move
-    `name` (`mhfu_port`'s `port:move`, through the bridge). False when no port rides it or it has
-    no such own move; raises like `play` when the bridge does not answer."""
+    `name` (`mhfu_port`'s `port:move`, through the bridge); `force` plays it while the monster's
+    notice runs instead of waiting for combat. False when no port rides it or it has no such own
+    move; raises like `play` when the bridge does not answer."""
     try:
         k, _ = monster(s, slot)
     except LookupError:
@@ -362,7 +367,7 @@ def play_own(s: Session, name: str, slot: int | None = None) -> bool:
         return False
     link = bridge(s)
     s.mem.write(a.CLI_BRIDGE_BLOCK + a.CLI_BRIDGE.NAME, raw.ljust(size, b"\0"))
-    if not link.request(s, Op.MOVE, k, OWN)[1]:
+    if not link.request(s, Op.MOVE, k, OWN | (FORCE if force else 0))[1]:
         raise TimeoutError(f"no ack: {STALLED}")
     return s.mem.u32(a.CLI_BRIDGE_BLOCK + a.CLI_BRIDGE.RESULT) == 1
 

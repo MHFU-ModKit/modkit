@@ -12,6 +12,7 @@ framework's move player (`mhfu.live.moves`), and what came of it.
     mhfu move play 9 --turn fixed --total 90 --frames 50
     mhfu move ride zinogre --brain                 # with its manifest's moves and rules
     mhfu move play --own stamp                     # the riding port's own move, by name
+    mhfu move play --own howl --force              # ... at once, even during the notice
     mhfu move watch --repeat 5                     # the next moves its rules or brain play
 """
 
@@ -56,6 +57,9 @@ def register(sub: Subparsers) -> None:
     launcher_args(c)
     c.add_argument("entry", type=int, nargs="?", help="executor entry: the clip")
     c.add_argument("--own", metavar="NAME", help="the riding port's own move instead of an entry")
+    c.add_argument(
+        "--force", action="store_true", help="play while the monster's notice runs, not after"
+    )
     c.add_argument("--attack", action="append", default=[], metavar="ID@FRAME[-END]", type=_attack)
     c.add_argument("--carrier", type=_ints, default=(0, 2), metavar="MAIN,SUB")
     c.add_argument("--back", type=_ints, metavar="MAIN,SUB[,MODE]", help="entered at the end")
@@ -195,7 +199,7 @@ def _start(
         return moves.play(s, mv, slot=args.slot, after=args.after, steer=steer)
 
     def ask() -> None:
-        if not moves.play_own(s, args.own, args.slot):
+        if not moves.play_own(s, args.own, args.slot, args.force):
             raise LookupError(f"no port rides the monster, or it has no own move {args.own!r}")
 
     return moves.watch(s, ask, slot=args.slot, after=args.after)
@@ -214,6 +218,7 @@ def play(args: argparse.Namespace) -> int:
         args.skip,
         args.part,
         host_attacks=args.host_attacks,
+        force=args.force,
     )
     curve: tuple[int, ...] = ()
     if args.curve:

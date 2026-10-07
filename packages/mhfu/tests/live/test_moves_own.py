@@ -16,7 +16,7 @@ class Bridge:
 
     def __init__(self, fake, own: set[str], acks: bool = True) -> None:
         self.fake, self.own, self.acks = fake, own, acks
-        self.asked: list[tuple[int, str]] = []
+        self.asked: list[tuple[int, str, bool]] = []
         fake.memory.extend(bytes(BR + 0x100 - fake.base - len(fake.memory)))
         fake.poke("I", a.ENTITY_REGISTRY + 4, MON)
         fake.poke("I", MON + a.ENTITY.VTABLE, a.TIGREX_VTABLE)
@@ -29,8 +29,8 @@ class Bridge:
         magic, seq, cmd, slot, arg = f.peek("5I", BR)
         if magic == MAGIC and f.peek("I", BR + CB.ACK) != (seq,):
             name = bytes(f.peek(f"{CB.NAME.count}s", BR + CB.NAME)[0]).split(b"\0")[0].decode()
-            if cmd == Op.MOVE and arg == moves.OWN:
-                self.asked.append((slot, name))
+            if cmd == Op.MOVE and arg & moves.OWN:
+                self.asked.append((slot, name, bool(arg & moves.FORCE)))
                 f.poke("I", BR + CB.RESULT, int(name in self.own))
             f.poke("I", BR + CB.ACK, seq)
 
@@ -38,8 +38,8 @@ class Bridge:
 def test_play_own(s, fake):
     game = Bridge(fake, {"stamp"})
     assert moves.play_own(s, "stamp")
-    assert not moves.play_own(s, "howl")
-    assert game.asked == [(1, "stamp"), (1, "howl")]
+    assert not moves.play_own(s, "howl", force=True)
+    assert game.asked == [(1, "stamp", False), (1, "howl", True)]
 
 
 def test_no_monster_or_bad_name(s, fake):

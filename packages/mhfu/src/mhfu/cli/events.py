@@ -6,6 +6,7 @@ the notice, combat entered and left, flinches, part breaks and the tail cut, one
     mhfu move ride zinogre          # the framework, the bridge and a port; cold boot
     mhfu events                     # what the ring still holds
     mhfu events --follow 60         # and what happens in the next minute
+    mhfu events --state             # each big monster now: noticed, in combat, its notice
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from typing import TYPE_CHECKING
 from ppsspp_debug import DebuggerError
 
 from ..live import monster_events
-from ..live.rig import Rig
+from ..live.rig import Rig, big_monsters
 from .live import launcher, launcher_args
 
 if TYPE_CHECKING:
@@ -28,12 +29,17 @@ def register(sub: Subparsers) -> None:
     p = sub.add_parser("events", help="a big monster's notice, combat, flinches, breaks, tail cut")
     launcher_args(p)
     p.add_argument("--follow", type=float, metavar="SECONDS", help="then print new ones this long")
+    p.add_argument("--state", action="store_true", help="each big monster's state instead")
     p.set_defaults(run=run)
 
 
 def run(args: argparse.Namespace) -> int:
     try:
         with Rig.attach(launcher(args)) as rig:
+            if args.state:
+                for m in big_monsters(rig.s):
+                    print(f"0x{m.base:08X} {monster_events.state(rig.s.mem, m.base)}")
+                return 0
             _, found = monster_events.read(rig.s.mem)
             for ev in found:
                 print(ev)
