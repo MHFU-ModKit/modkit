@@ -254,11 +254,7 @@ static void start(uint32_t ent)
 {
     copy_words(&S->move, &S->next, sizeof(mhfu_move_t));
     S->pending = 0;
-    int quiet = noticing(ent);
     enter(ent, S->next.carrier_main, S->next.carrier_sub, 0);
-    /* the notice has woken the AI script, whose next pair would cut the carrier at once: quiet it,
-     * as the stuck end does; the hub wakes it again once the carrier ends */
-    if (quiet) mhfu_mem_write_u8(ent + MHFU_ENTITY_SCRIPT_WAKE, 0);
     begin(ent);
 }
 
