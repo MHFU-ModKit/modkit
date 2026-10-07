@@ -158,6 +158,10 @@ class RulesSection(QWidget):
         )
         self.times.setSpecialValueText("every time")
         form.row("Times", self.times)
+        self.force = kit.check(
+            "Right away", tip=rules.FORCE_TIP, on=lambda on: setter("force", force=on)
+        )
+        self.force_label = form.row("Force", self.force)
         self.label = kit.text_field(
             tip="A note for people; the game does not read it", placeholder="what it is for"
         )
@@ -232,6 +236,9 @@ class RulesSection(QWidget):
         kit.put(self.cooldown, r.cooldown)
         kit.put(self.times, r.count or 0)
         kit.put(self.label, r.label)
+        self.force.setVisible(rules.FORCE)
+        self.force_label.setVisible(rules.FORCE)
+        kit.put(self.force, rules.forced(r))
         key = tuple(found)
         if key != self._found_key:
             self._found_key = key

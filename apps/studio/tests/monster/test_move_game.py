@@ -26,12 +26,14 @@ def mods(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def asked() -> list[str]:
+def asked() -> list[tuple[str, bool]]:
     return []
 
 
 @pytest.fixture
-def zinogre(games: Data, zinogre_toml: Path, mods: Path, asked: list[str]) -> MonsterWorkspace:
+def zinogre(
+    games: Data, zinogre_toml: Path, mods: Path, asked: list[tuple[str, bool]]
+) -> MonsterWorkspace:
     """The Zinogre with a game that takes every own move asked of it."""
     ws = MonsterWorkspace(games)
     ws.intel_cache[75] = None
@@ -39,9 +41,9 @@ def zinogre(games: Data, zinogre_toml: Path, mods: Path, asked: list[str]) -> Mo
     ws.game_session = lambda: nullcontext("session")  # type: ignore[assignment,arg-type,return-value]
     ws.game_running = lambda: True
 
-    def play_own(s: Any, name: str) -> bool:
+    def play_own(s: Any, name: str, force: bool) -> bool:
         assert s == "session"
-        asked.append(name)
+        asked.append((name, force))
         return True
 
     ws.play_own = play_own
@@ -56,7 +58,9 @@ def own_and_pair(ws: MonsterWorkspace) -> tuple[str, str]:
     return own, pair
 
 
-def test_saves_deploys_and_asks(zinogre: MonsterWorkspace, mods: Path, asked: list[str]) -> None:
+def test_saves_deploys_and_asks(
+    zinogre: MonsterWorkspace, mods: Path, asked: list[tuple[str, bool]]
+) -> None:
     ws, doc = zinogre, zinogre.doc
     assert doc is not None
     name, _ = own_and_pair(ws)
@@ -64,7 +68,7 @@ def test_saves_deploys_and_asks(zinogre: MonsterWorkspace, mods: Path, asked: li
     assert ws.set_move(label="edited, unsaved") and doc.dirty
     assert ws.play_move_blocker() is None
     ws.play_move_in_game()
-    assert asked == [name] and not doc.dirty, ws.message
+    assert asked == [(name, False)] and not doc.dirty, ws.message
     m = manifest.load(doc.path)  # type: ignore[arg-type]
     assert m.moves[name].label == "edited, unsaved"
     lib = mods / layout.LIB
@@ -74,18 +78,20 @@ def test_saves_deploys_and_asks(zinogre: MonsterWorkspace, mods: Path, asked: li
     assert (lib / runtime.LIBRARY).read_bytes() == runtime.library().read_bytes()
     assert ws.message.startswith(f"{name} plays in the game; saved, ")
     assert moves.module_name(m) in ws.message
+    ws.play_move_in_game(force=True)
+    assert asked[-1] == (name, True)
 
 
 def test_not_taken(zinogre: MonsterWorkspace) -> None:
     name, _ = own_and_pair(zinogre)
     zinogre.select_move(name)
-    zinogre.play_own = lambda s, n: False
+    zinogre.play_own = lambda s, n, f: False
     zinogre.play_move_in_game()
     assert zinogre.message.startswith(f"the game did not take {name}: no port rides")
 
 
 def test_bridge_missing(zinogre: MonsterWorkspace) -> None:
-    def play_own(s: Any, name: str) -> bool:
+    def play_own(s: Any, name: str, force: bool) -> bool:
         raise TimeoutError("no ack from cli_bridge.lua")
 
     zinogre.select_move(own_and_pair(zinogre)[0])
@@ -109,7 +115,7 @@ def test_blocked(zinogre: MonsterWorkspace, mods: Path, monkeypatch: pytest.Monk
     assert "memory stick" in (ws.play_move_blocker() or "")
 
 
-def test_moved_clip_refused(zinogre: MonsterWorkspace, asked: list[str]) -> None:
+def test_moved_clip_refused(zinogre: MonsterWorkspace, asked: list[tuple[str, bool]]) -> None:
     """A move whose clip the unsaved layout put elsewhere: the game holds the injected build."""
     ws, doc = zinogre, zinogre.doc
     assert doc is not None
@@ -128,12 +134,16 @@ def test_moved_clip_refused(zinogre: MonsterWorkspace, asked: list[str]) -> None
 
 
 def test_the_seam(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen = []
-    monkeypatch.setattr(
-        live_moves, "play_own", lambda s, n: seen.append((s, n)) or True, raising=False
-    )
+    seen: list[tuple[object, ...]] = []
+
+    def play_own(s: object, name: str, **kw: bool) -> bool:
+        seen.append((s, name, kw))
+        return True
+
+    monkeypatch.setattr(live_moves, "play_own", play_own, raising=False)
     assert move_game.play_own("s", "stamp") is True  # type: ignore[arg-type]
-    assert seen == [("s", "stamp")]
+    assert move_game.play_own("s", "stamp", force=True) is True  # type: ignore[arg-type]
+    assert seen == [("s", "stamp", {}), ("s", "stamp", {"force": True})]
     monkeypatch.delattr(live_moves, "play_own")
     with pytest.raises(LookupError, match="no play_own"):
         move_game.play_own("s", "stamp")  # type: ignore[arg-type]

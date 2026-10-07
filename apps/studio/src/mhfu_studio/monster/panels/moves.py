@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from mhfu_port.manifest import MOVE_ATTACKS, TURNS, Move
 from PySide6.QtWidgets import QAbstractSpinBox, QSpinBox, QVBoxLayout, QWidget
 
+from mhfu_studio.monster import rules
 from mhfu_studio.monster import validate as V
 from mhfu_studio.monster.panels.common import kind
 from mhfu_studio.monster.panels.rules import RulesSection
@@ -34,11 +35,6 @@ TURN_WORDS = {
 GAME_NOTE = (
     "Own moves reach the game from the moves module mhfu-port generates from this file with the"
     " port, not through Copy Lua; a mod or a rule plays them by name."
-)
-EAGER_TIP = (
-    "Starts at once when asked, even while the monster has noticed the hunter but not yet"
-    ' entered combat. Without it the move waits for combat, so it does not cut off the "!" and'
-    " the howl."
 )
 
 
@@ -91,9 +87,10 @@ class MovesPanel(kit.Panel):
             "Play in game",
             tip="Saves, sends the port's clips and moves modules to the memory stick and asks the"
             " running game's port to play this move (MHFU_LANE's PPSSPP, else the one running)",
-            on=act("play move in game", ws.play_move_in_game),
+            on=act("play move in game", lambda: ws.play_move_in_game(self.force.isChecked())),
             icon="ph.game-controller",
         )
+        self.force = kit.check("Force", tip=rules.FORCE_TIP, on=lambda _on: None)
         self.game_hint = kit.label(role="muted")
         self.pair_note = kit.label(role="muted")
         form = kit.Form()
@@ -141,12 +138,6 @@ class MovesPanel(kit.Panel):
             on=lambda on: act("host attacks", lambda: ws.set_move(host_attacks=on))(),
         )
         form.row("Base attacks", self.host_attacks)
-        self.eager = kit.check(
-            "Start at once",
-            tip=EAGER_TIP,
-            on=lambda on: act("eager", lambda: ws.set_move(eager=on))(),
-        )
-        form.row("When noticed", self.eager)
         self.after = kit.choice(
             [],
             tip="The move played when this one ends; none: the base monster's brain picks",
@@ -239,7 +230,7 @@ class MovesPanel(kit.Panel):
             body.addWidget(w)
         top: tuple[QWidget, ...] = (
             self.title,
-            kit.row(self.clip, self.play_clip, self.in_game, stretch=True),
+            kit.row(self.clip, self.play_clip, self.in_game, self.force, stretch=True),
             self.game_hint,
             self.pair_note,
             self.own_body,
@@ -346,6 +337,7 @@ class MovesPanel(kit.Panel):
         self.play_clip.setVisible(own and not on_screen)
         why = ws.play_move_blocker()
         self.in_game.setEnabled(why is None)
+        self.force.setEnabled(why is None)
         self.game_hint.setText(f"Play in game: {why}" if why else "")
         self.game_hint.setVisible(why is not None)
         if name != self._loaded:
@@ -366,7 +358,6 @@ class MovesPanel(kit.Panel):
         self.main.setEnabled(mv.carrier is not None)
         self.sub.setEnabled(mv.carrier is not None)
         kit.put(self.host_attacks, mv.host_attacks)
-        kit.put(self.eager, mv.eager)
         others = [(n, f"{n} \u00b7 {kind(o)}") for n, o in m.moves.items() if n != name]
         kit.refill(self.after, [("", "the brain picks"), *others], mv.after or "")
         s = mv.steer

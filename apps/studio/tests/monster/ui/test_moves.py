@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 from mhfu_port.manifest import SEAM_RULES, Rule, Steer
+from mhfu_studio.monster import rules
 from mhfu_studio.monster import validate as V
 from mhfu_studio.monster.panels.moves import MovesPanel
 from mhfu_studio.monster.workspace import MonsterWorkspace
@@ -186,11 +187,21 @@ def test_rule_findings(
     assert alerts == ["the game cannot"] and panel.rules.found.isVisible()
 
 
-def test_eager(panel: MovesPanel, workspace: MonsterWorkspace) -> None:
+@pytest.mark.skipif(not rules.FORCE, reason="the schema has no Rule.force yet")
+def test_rule_force(panel: MovesPanel, workspace: MonsterWorkspace) -> None:
     panel.new.click()
-    assert '"!"' in panel.eager.toolTip()
-    panel.eager.click()
-    assert workspace.own_move().eager  # type: ignore[union-attr]
+    panel.rules.new.click()
+    assert panel.rules.force.isVisible() and '"!"' in panel.rules.force.toolTip()
+    panel.rules.force.click()
+    assert rules.forced(workspace.manifest.rules[0])  # type: ignore[union-attr]
+    assert panel.rules.list.item(0).text() == "on noticing the hunter, play walk right away, once"
+
+
+@pytest.mark.skipif(rules.FORCE, reason="the schema has Rule.force")
+def test_no_rule_force_without_the_schema(panel: MovesPanel) -> None:
+    panel.new.click()
+    panel.rules.new.click()
+    assert not panel.rules.force.isVisible() and not panel.rules.force_label.isVisible()
 
 
 def test_play_in_game_button(qtbot: Any, workspace: MonsterWorkspace) -> None:
@@ -200,10 +211,13 @@ def test_play_in_game_button(qtbot: Any, workspace: MonsterWorkspace) -> None:
     assert not p.in_game.isEnabled() and "rides the base monster's" in p.game_hint.text()
     p.new.click()
     assert not p.in_game.isEnabled() and "nothing to build" in p.game_hint.text()
-    played: list[str] = []
+    assert not p.force.isEnabled() and '"!"' in p.force.toolTip()
+    played: list[bool] = []
     workspace.play_move_blocker = lambda: None  # type: ignore[method-assign]
-    workspace.play_move_in_game = lambda: played.append("walk")  # type: ignore[method-assign]
+    workspace.play_move_in_game = played.append  # type: ignore[method-assign,assignment]
     q = make(qtbot, workspace)
-    assert q.in_game.isEnabled() and not q.game_hint.isVisible()
+    assert q.in_game.isEnabled() and q.force.isEnabled() and not q.game_hint.isVisible()
     q.in_game.click()
-    assert played == ["walk"]
+    q.force.click()
+    q.in_game.click()
+    assert played == [False, True]

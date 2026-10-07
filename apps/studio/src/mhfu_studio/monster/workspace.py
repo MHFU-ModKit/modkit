@@ -177,7 +177,7 @@ class MonsterWorkspace(Workspace):
         #: the running game, for Play in game
         self.game_session: Callable[[], AbstractContextManager[Session]] = clip_game.attached
         #: asks the running port for an own move (Play in game in Moves)
-        self.play_own: Callable[[Session, str], bool] = move_game.play_own
+        self.play_own: Callable[[Session, str, bool], bool] = move_game.play_own
         self.game_running: Callable[[], bool] = move_game.Running()
         self._reset()
 
@@ -1874,9 +1874,10 @@ class MonsterWorkspace(Workspace):
             return "no game running: start PPSSPP with the port in a quest"
         return None
 
-    def play_move_in_game(self) -> None:
+    def play_move_in_game(self, force: bool = False) -> None:
         """Saves, sends the port's clips and moves modules to the memory stick
-        (`move_game.deploy`) and asks the running port to play the selected own move."""
+        (`move_game.deploy`) and asks the running port to play the selected own move; `force`
+        plays it at once even before combat."""
         why = self.play_move_blocker()
         doc, name = self.doc, self.move
         if why is not None or doc is None or name is None:
@@ -1889,7 +1890,7 @@ class MonsterWorkspace(Workspace):
             doc.save()
             sent = move_game.deploy(doc.manifest, self.games(), self.mods_dir())
             with self.game_session() as s:
-                took = self.play_own(s, name)
+                took = self.play_own(s, name, force)
         except (LookupError, OSError, ValueError, DebuggerError) as e:
             self.message = f"not played in the game: {e}"
             return

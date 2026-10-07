@@ -31,15 +31,15 @@ def deploy(m: Manifest, games: Data, mods: Path) -> list[Path]:
     return out if lib is None else [*out, lib]
 
 
-def play_own(s: Session, name: str) -> bool:
+def play_own(s: Session, name: str, force: bool = False) -> bool:
     """`mhfu.live.moves.play_own`: False when no port rides the big monster or it has no own
-    move `name`. The seam the tests fake."""
+    move `name`; `force` plays it at once even before combat. The seam the tests fake."""
     from mhfu.live import moves
 
     fn = getattr(moves, "play_own", None)
     if fn is None:
         raise LookupError("this modkit's mhfu.live.moves has no play_own")
-    return bool(fn(s, name))
+    return bool(fn(s, name, force=True) if force else fn(s, name))
 
 
 class Running:

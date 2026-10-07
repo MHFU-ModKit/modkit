@@ -18,6 +18,12 @@ from mhfu_port.manifest import UNLIMITED_DIST, Event, Manifest, ManifestError, M
 from mhfu_studio.monster.document import PortDocument
 
 FIELDS = tuple(f.name for f in dataclasses.fields(Rule))
+FORCE = "force" in FIELDS
+"""The schema carries `Rule.force`; the editor shows it only then."""
+FORCE_TIP = (
+    "A move asked while the monster has noticed the hunter but is not yet in combat waits for"
+    ' combat, so the "!" and the howl play out; force plays it at once.'
+)
 #: an event after "on"
 EVENT_WORDS: dict[str, str] = {
     "noticed": "noticing the hunter",
@@ -27,6 +33,11 @@ EVENT_WORDS: dict[str, str] = {
     "part_broken": "a break",
     "tail_cut": "the tail cut",
 }
+
+
+def forced(r: Rule) -> bool:
+    """`r.force`, False where the schema has none."""
+    return bool(vars(r).get("force", False))
 
 
 def event_words(on: str) -> str:
@@ -120,7 +131,11 @@ def sentence(r: Rule, m: Manifest) -> str:
         out.append("while the hunter moves away")
     if r.closing:
         out.append("while the hunter closes in")
-    out.append(f"play {r.play}" + (f" in mode {r.mode}" if r.mode else ""))
+    out.append(
+        f"play {r.play}"
+        + (f" in mode {r.mode}" if r.mode else "")
+        + (" right away" if forced(r) else "")
+    )
     if r.cooldown:
         out.append(f"then wait {r.cooldown} frames")
     if r.count is not None:
