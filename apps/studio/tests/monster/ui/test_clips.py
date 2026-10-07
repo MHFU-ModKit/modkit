@@ -160,3 +160,19 @@ def test_play_in_game(zinogre: ClipsPanel, monkeypatch: pytest.MonkeyPatch) -> N
     p.table.cellClicked.emit(ids(p).index("248"), 0)
     p.in_game.click()
     assert sent == [(50, 75)] and ws.message.startswith("anim 50 held on monster 3 until Release")
+
+
+def test_turn_and_new_move(carried: MonsterWorkspace, qtbot: Any) -> None:
+    ws, p = carried, build(carried, qtbot)
+    p.table.cellClicked.emit(0, 0)
+    assert p.turn_label.text() == "Turn (own)" and p.turn.value() == 0.0
+    assert not p.own_turn.isEnabled() and kit.missing_tips(p) == []
+    p.turn.setValue(-90.0)
+    assert ws.manifest is not None and ws.manifest.clips["walk"].turn == -90.0
+    assert p.turn_label.text() == "Turn" and p.own_turn.isEnabled()
+    p.own_turn.click()
+    assert ws.manifest.clips["walk"].turn is None
+    p.gizmo.click()
+    assert not ws.turn.shown
+    p.new_move.click()
+    assert ws.move == "walk" and ws.own_move() is not None and ws.take_focus() == "Moves"

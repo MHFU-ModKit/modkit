@@ -163,3 +163,27 @@ def test_a_carried_turn_is_shown_as_yaw() -> None:
     assert turn is not None and turn.keys[-1] == pytest.approx(0x10000 / 6, abs=2)
     assert np.allclose(pose_at(sc, slot, 20.0).joints[2], (0.0, 0.0, 50.0), atol=0.1)
     assert np.allclose(sc.pose(slot, 20.0).joints[2], (-43.3, 0.0, 25.0), atol=0.1)
+
+
+def test_own_moves_steer_the_preview() -> None:
+    """`fixed` spreads its angle over its AI frames; `still` and the hunter's do not turn here."""
+    from mhfu_port import manifest
+    from mhfu_port.manifest import Steer
+    from mhfu_studio.monster.render.playback import end_turn, yaw_at
+
+    skeleton = Skeleton(
+        [Bone(child=1), Bone(parent=0, child=2), Bone(parent=1, position=(0.0, 0.0, 50.0))]
+    )
+    back = [Keyframe(0, 0), Keyframe(quantize("rot", -math.pi / 3), 20)]
+    slot = Slot(5, 20, False, 3, (1,), AnimClip([Track(), Track([Channel(0x010, back)]), Track()]))
+    sc = Scene("t", MHFU, skeleton, [], [], [slot])
+    assert math.degrees(yaw_at(sc, slot, 20.0)) == pytest.approx(60.0, abs=0.1)
+    fixed = Steer("fixed", angle=90.0, frames=5)
+    assert math.degrees(yaw_at(sc, slot, 4.0, fixed, 2.0)) == pytest.approx(36.0)
+    assert math.degrees(yaw_at(sc, slot, 20.0, fixed, 2.0)) == pytest.approx(90.0)
+    assert end_turn(sc, slot, fixed) == 90.0 and end_turn(sc, slot) == pytest.approx(60, abs=0.1)
+    for s in (Steer("still"), Steer("hunter"), Steer("away", rate=64)):
+        assert yaw_at(sc, slot, 20.0, s) == 0.0
+    port = '[port]\nname = "t"\nhost_species = 75\npac = "t.bin"\n[source]\nmodel = 1\n'
+    sc.attach_manifest(manifest.loads(port + "[clips.c]\nslot = 5\nturn = -45.0\n"))
+    assert end_turn(sc, slot) == pytest.approx(-45.0, abs=0.1), "the manifest's turn wins"

@@ -54,6 +54,18 @@ builds the port again. Play in game holds the clip's anim on the running game's 
 plays the build last injected, so a clip placed since the manifest was saved is refused until it
 is saved and injected again (`mhfu-port inject`).
 
+## A port's own moves
+
+An own move plays one clip on every body part through the framework's move player, with attacks of
+its own. In Moves (View > Panels), New from the clip on screen makes one (Clips has New move too);
+its fields are the manifest's: length, carrier, the base monster's attacks kept or not, what follows
+it, and how it turns. The Timeline draws its attacks in lanes under the clip: drag on the empty lane
+to add one (a click adds one without an end), drag an edge or the span to move it; the playhead
+lights the attacks that are out, and their hit group in the view when hit groups are shown. The ring
+on the floor of the view (T hides it) is the turn: an arrow for frame 0, one for the facing now, and
+a handle for the end, which drags the clip's `turn`, or a fixed steer's angle, in whole degrees
+(Shift: 15). Every edit is one undo step.
+
 ## Tests
 
 `uv run pytest apps/studio` runs offscreen; the Qt tests skip without the `qt` group, and the

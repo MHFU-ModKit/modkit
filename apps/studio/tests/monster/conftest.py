@@ -113,8 +113,19 @@ def synthetic_pac() -> bytes:
     """An MHFU model PAC: 3 joints in two parts (0, 0, 1), one textured group of 3 vertices,
     a 2x2 texture; slot 1 plays on both parts and turns joint 1 by 90 degrees about Y by frame 10,
     slot 2 only on part 1."""
+    return _pac()
+
+
+@pytest.fixture
+def carried_pac() -> bytes:
+    """`synthetic_pac` as a carried build has it: joint 0's child is the root the engine moves
+    by (joint 1), and slot 1 leaves the turn to YAW, so it carries none."""
+    return _pac(carried=True)
+
+
+def _pac(carried: bool = False) -> bytes:
     bones = [
-        Bone(parent=-1, position=(0.0, 0.0, 0.0), stream=0),
+        Bone(parent=-1, child=1 if carried else -1, position=(0.0, 0.0, 0.0), stream=0),
         Bone(parent=0, position=(0.0, 100.0, 0.0), stream=0),
         Bone(parent=1, position=(0.0, 0.0, 50.0), stream=1),
     ]
@@ -131,7 +142,7 @@ def synthetic_pac() -> bytes:
     )
     model = mesh.build([Skinned(part, part.influences)], (256.0, 256.0, 256.0))
     image = TmhImage(3, 2, 2, bytes(range(16)))
-    turn = [Keyframe(0, 0), Keyframe(quantize("rot", 1.5707963), 10)]
+    turn = [Keyframe(0, 0), Keyframe(0 if carried else quantize("rot", 1.5707963), 10)]
     body = Clip(
         [Track([Channel(0x008, [Keyframe(0, 0), Keyframe(0, 10)])]), Track([Channel(0x010, turn)])],
         1,
@@ -314,6 +325,30 @@ def port_doc(tmp_path: Path) -> PortDocument:
     return PortDocument.open(path)
 
 
+def _workspace(
+    gl: Any,
+    doc: PortDocument,
+    pac: bytes,
+    intel: SpeciesIntel,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> Iterator[Any]:
+    from mhfu_studio.monster.workspace import MonsterWorkspace
+
+    monkeypatch.delenv("MHFU_DATA", raising=False)
+    monkeypatch.delenv("MHP3RD_DATA", raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    ws = MonsterWorkspace()
+    ws.intel_cache[75] = intel
+    ws.hosts = [HostSummary.of(intel)]
+    ws.setup(gl)
+    scene = Scene.from_bytes(pac, "t", manifest=doc.manifest, path=tmp_path / "t.bin")
+    ws.load(scene, doc)
+    ws.host_scenes[75] = Scene.from_bytes(pac, "em75")
+    yield ws
+    ws.close()
+
+
 @pytest.fixture
 def workspace(
     gl: Any,
@@ -325,22 +360,20 @@ def workspace(
 ) -> Iterator[Any]:
     """The workspace on a viewport, the port loaded, the host em75 its intel and its own PAC
     the synthetic one; no game data is looked for."""
-    from mhfu_studio.monster.workspace import MonsterWorkspace
+    yield from _workspace(gl, port_doc, synthetic_pac, intel75, monkeypatch, tmp_path)
 
-    monkeypatch.delenv("MHFU_DATA", raising=False)
-    monkeypatch.delenv("MHP3RD_DATA", raising=False)
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    ws = MonsterWorkspace()
-    ws.intel_cache[75] = intel75
-    ws.hosts = [HostSummary.of(intel75)]
-    ws.setup(gl)
-    scene = Scene.from_bytes(
-        synthetic_pac, "t", manifest=port_doc.manifest, path=tmp_path / "t.bin"
-    )
-    ws.load(scene, port_doc)
-    ws.host_scenes[75] = Scene.from_bytes(synthetic_pac, "em75")
-    yield ws
-    ws.close()
+
+@pytest.fixture
+def carried(
+    gl: Any,
+    port_doc: PortDocument,
+    carried_pac: bytes,
+    intel75: SpeciesIntel,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> Iterator[Any]:
+    """`workspace` on `carried_pac`: a rig YAW turns."""
+    yield from _workspace(gl, port_doc, carried_pac, intel75, monkeypatch, tmp_path)
 
 
 @pytest.fixture

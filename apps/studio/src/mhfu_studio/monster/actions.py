@@ -249,7 +249,7 @@ def rows(
     ]
     if intel is None:
         return out
-    bound = {(mv.main, mv.sub) for mv in m.moves.values()}
+    bound = {mv.pair for mv in m.moves.values()}
     hubs = set(intel.hubs)
     groups: dict[object, list[PairIntel]] = {}
     for p in sorted(intel, key=lambda p: (p.main, p.sub)):
@@ -304,9 +304,11 @@ def lua_move(mv: Move) -> str:
 
 
 def lua_moves(m: Manifest) -> str:
-    """The `moves` field of a mod's `P.define{…}`; empty without moves. Its clips come from the
-    layout module `mhfu-port inject` writes with the PAC, not from a copy here."""
-    if not m.moves:
+    """The `moves` field of a mod's `P.define{…}` with the pair moves; empty without one. Its
+    clips come from the layout module `mhfu-port inject` writes with the PAC, not from a copy
+    here; own moves come from the module mhfu-port generates for them."""
+    pairs = {n: mv for n, mv in m.moves.items() if mv.pair is not None}
+    if not pairs:
         return ""
     source = m.path.name if m.path is not None else m.port.name
     return "\n".join(
@@ -314,7 +316,7 @@ def lua_moves(m: Manifest) -> str:
             f"-- from {source}, for your mod's P.define{{ ... }}; the clips are in "
             f"{layout.module_name(m)}",
             "moves = {",
-            *(f"  {_lua_key(n)} = {lua_move(mv)}," for n, mv in m.moves.items()),
+            *(f"  {_lua_key(n)} = {lua_move(mv)}," for n, mv in pairs.items()),
             "},",
         ]
     )

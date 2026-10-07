@@ -160,6 +160,7 @@ def test_the_base_monsters_are_pickable_not_draggable(workspace: MonsterWorkspac
     assert ws.selected_attack_volume == i and ov.selected_volume == i, "picked and lit"
     assert ws.tools.target() is None and "Edit yours in Hitboxes" in ws.hint()
     rec = Recorder(VIEW)
+    ws.turn.shown = False
     ws.paint(rec)
     assert not rec.calls, "no gizmo"
     assert ws.key(Key("W")) and "read only" in ws.message

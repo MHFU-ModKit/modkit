@@ -21,18 +21,34 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from mhfu import files, hitzone
-from mhfu.em.intel import AttackIntel, HostSummary, PairIntel, PartIntel, SpeciesIntel
+from mhfu.em.intel import (
+    AttackIntel,
+    AttackRecord,
+    HostSummary,
+    PairIntel,
+    PartIntel,
+    SpeciesIntel,
+)
 from mhfu.files import Extracted
 from mhfu_port import layout, slots
 from mhfu_port.data import Data
+from mhfu_port.manifest import MOVE_ATTACKS, AttackWindow, Manifest, ManifestError, Move
 from mhfu_port.manifest import Clip as ManifestClip
-from mhfu_port.manifest import Manifest, ManifestError
 from mhfu_port.model import MHFU, clip_key
 from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Skeleton
 from ppsspp_debug import DebuggerError
 
-from mhfu_studio.monster import actions, align, clip_browser, clip_game, clips, inputs, species
+from mhfu_studio.monster import (
+    actions,
+    align,
+    authoring,
+    clip_browser,
+    clip_game,
+    clips,
+    inputs,
+    species,
+)
 from mhfu_studio.monster.attacks import AttackSession, hitbox_of
 from mhfu_studio.monster.clip_browser import ClipBrowser, SourceClip
 from mhfu_studio.monster.core.scene import Scene
@@ -41,6 +57,7 @@ from mhfu_studio.monster.panels.graph import MoveGraph
 from mhfu_studio.monster.parts import PartSession
 from mhfu_studio.monster.tools import HIT, HURT, NOUN, VolumeTools, describe
 from mhfu_studio.monster.tools import KEYS as VOLUME_KEYS
+from mhfu_studio.monster.turn import TURN_KEY, TurnGizmo
 from mhfu_studio.shell import places
 from mhfu_studio.shell.input import Key, Mod, Pointer
 from mhfu_studio.shell.overlay import Overlay
@@ -148,6 +165,8 @@ class MonsterWorkspace(Workspace):
         #: a finding's control for its panel to land on (`land`)
         self.landing = ""
         self.tools = VolumeTools(self)
+        self.turn = TurnGizmo(self)
+        self.windows = authoring.WindowDrag(self._window_dragged)
         self._seen: Manifest | None = None
         #: every overlay summarised, once surveyed
         self.hosts: list[HostSummary] | None = None
@@ -160,6 +179,12 @@ class MonsterWorkspace(Workspace):
     def _reset(self) -> None:
         """Per-document view state."""
         self.tools.reset()
+        self.turn.cancel()
+        self.windows.cancel()
+        #: the attack window picked on the Timeline, of the selected own move
+        self.picked_window: int | None = None
+        #: the attack id a window drawn on the Timeline gets; None: `window_id`'s default
+        self.next_window_id: int | None = None
         self.show_joint_ids = False
         self.undriven: dict[int, int] = {}
         self.markers: list[align.Marker] = []
@@ -351,6 +376,12 @@ class MonsterWorkspace(Workspace):
                 "Every anim, what is really in it, and the name it goes by.",
             ),
             Dock(
+                "Moves", "left", build("moves", "MovesPanel"),
+                "Your moves: on the base monster's actions, or your own, with their attacks and"
+                " turn.",
+                shown=False,
+            ),
+            Dock(
                 "Scene", "left", build("scene", "ScenePanel"),
                 "What the opened port holds: the model, its skeleton, clips and textures.",
                 shown=False,
@@ -395,6 +426,7 @@ class MonsterWorkspace(Workspace):
             self.sync()
         if self.vp is not None:
             self.vp.tick(dt)
+            self.light_live()
 
     def animating(self) -> bool:
         vp = self.vp
@@ -405,6 +437,8 @@ class MonsterWorkspace(Workspace):
 
     def refresh(self) -> None:
         self.tools.cancel()  # an undo under a drag: the drag's start is gone
+        self.turn.cancel()
+        self.windows.cancel()
         self.sync()
 
     def take_focus(self) -> str | None:
@@ -416,11 +450,21 @@ class MonsterWorkspace(Workspace):
         self._focus = dock
 
     def pointer(self, ev: Pointer) -> Gesture:
-        """Picking and the gizmo (`tools`); a drag off a handle stays the camera's."""
-        return self.tools.pointer(ev)
+        """The turn gizmo's handle, then picking and the volume gizmo (`tools`); a drag off a
+        handle stays the camera's."""
+        got = self.turn.pointer(ev)
+        return self.tools.pointer(ev) if got is None else got
 
     def key(self, ev: Key) -> bool:
-        """The picked volume's keys, then the transport's while a clip is on screen."""
+        """The turn gizmo's, the picked volume's keys, then the transport's while a clip is on
+        screen."""
+        if ev.mods == Mod.NONE and ev.name == "Escape" and self.turn.dragged is not None:
+            self.turn.cancel()
+            return True
+        if ev.mods == Mod.NONE and ev.name == TURN_KEY.keys[0]:
+            self.turn.shown = not self.turn.shown
+            self.turn.cancel()
+            return True
         if self.tools.key(ev):
             return True
         acts: dict[str, Callable[[], None]] = {
@@ -436,7 +480,7 @@ class MonsterWorkspace(Workspace):
         return True
 
     def shortcuts(self) -> Sequence[Shortcut]:
-        return (PLAY, STEP, REWIND, *VOLUME_KEYS)
+        return (PLAY, STEP, REWIND, TURN_KEY, *VOLUME_KEYS)
 
     def hint(self) -> str:
         sc, vp = self.scene, self.vp
@@ -456,16 +500,20 @@ class MonsterWorkspace(Workspace):
                 f"{keys(REWIND.keys)} rewind",
             ]
         picked = self.tools.hint()
+        t = self.turn.target()
         if picked:
             bits.append(picked)
         elif self.selected_set is not None:
             bits.append(f"hit group {self.selected_set}: pick one of its hitboxes in Hitboxes")
+        elif t is not None and t.writes is not None:
+            bits.append(f"drag the ring's handle to set the turn \u00b7 {keys(TURN_KEY.keys)} hide")
         return " \u00b7 ".join(bits)
 
     def paint(self, o: Overlay) -> None:
         from mhfu_studio.monster.panels import viewport
 
         viewport.joint_labels(self, o)
+        self.turn.paint(o)
         self.tools.paint(o)
 
     def reveal(self, target: Hashable, focus: str = "") -> None:
@@ -483,9 +531,8 @@ class MonsterWorkspace(Workspace):
                 self.play_slot(at)
             self.focus("Clips")
         elif section == "moves" and isinstance(key, str) and key in m.moves:
-            if (pr := m.moves[key].pair) is not None:
-                self.select_action(*pr, key)
-            self.focus("Actions")
+            self.select_move(key)
+            self.focus("Moves" if m.moves[key].own else "Actions")
         elif section == "hurtbox" and isinstance(key, int) and key < len(m.hurtboxes):
             self.show_parts, self.parts_source = True, PORT
             self.sync_hitboxes()
@@ -549,6 +596,12 @@ class MonsterWorkspace(Workspace):
         if self.scene is not None and m is not None:
             self.scene.attach_manifest(m)
         self._vocab = None
+        if self.pair is None and m is not None and self.move not in m.moves:
+            self.move = None  # an undo took the own move away
+        mv = self.own_move()
+        if mv is None or not 0 <= (self.picked_window or 0) < len(mv.attacks):
+            self.picked_window = None
+        self.sync_steer()
         self.sync_hitboxes()
         self.sync_attacks()
         self.recompute_alignment()
@@ -943,6 +996,7 @@ class MonsterWorkspace(Workspace):
             return
         self.vp.playback.play()
         self.pick_clip(slot)
+        self.sync_steer()
         self.recompute_alignment()
 
     def label(self) -> None:
@@ -1084,16 +1138,267 @@ class MonsterWorkspace(Workspace):
 
     def unbind(self) -> None:
         """Removes the selected move: the action plays the base monster's anim again."""
-        s, name, pair = self.label_session, self.move, self.pair
-        if s is None or name is None or pair is None:
+        doc, name, pair = self.doc, self.move, self.pair
+        if doc is None or name is None or pair is None:
             return
-        if self.edit("", lambda: s.unbind_move(name)):
+        if self.edit("", lambda: clips.drop_move(doc, name)):
             self.select_action(*pair)
 
     def rename_move(self, new: str) -> None:
-        s, old = self.label_session, self.move
-        if s is not None and old is not None and self.edit("", lambda: s.rename_move(old, new)):
-            self.move = new.strip()
+        doc, old = self.doc, self.move
+        if doc is not None and old is not None:
+            if self.edit("", lambda: clips.rename_move(doc, old, new)):
+                self.move = new.strip()
+
+    # own moves (the Moves panel, the Timeline's attack lanes, the turn gizmo)
+
+    def own_move(self) -> Move | None:
+        """The selected move when it is an own move."""
+        m, name = self.manifest, self.move
+        mv = None if m is None or name is None else m.moves.get(name)
+        return mv if mv is not None and mv.own else None
+
+    def move_slot(self, mv: Move) -> int | None:
+        """The anim `mv`'s clip plays in, or the preview of a clip in none (`preview_slot`)."""
+        m = self.manifest
+        if mv.clip is None or m is None or mv.clip not in m.clips:
+            return mv.anim
+        c = m.clips[mv.clip]
+        at = clips.at(c, self.sources())
+        return at if at is not None else clip_browser.preview_slot(c.id)
+
+    def own_move_on_screen(self) -> Move | None:
+        """The selected own move while its clip is the one on screen."""
+        mv, vp = self.own_move(), self.vp
+        if mv is None or vp is None or vp.clip is None:
+            return None
+        return mv if self.move_slot(mv) == vp.clip.slot else None
+
+    def clip_name_on_screen(self) -> str | None:
+        """The manifest's name for the clip on screen."""
+        vp, m = self.vp, self.manifest
+        if vp is None or vp.clip is None or m is None:
+            return None
+        if vp.clip.slot < 0:
+            return layout.holder(m, -1 - vp.clip.slot)
+        found = self.manifest_clip(vp.clip.slot)
+        return None if found is None else found[0]
+
+    def select_move(self, name: str) -> None:
+        """A move: a pair's as Actions picks it; an own one plays its clip, turning as it
+        steers."""
+        m = self.manifest
+        mv = None if m is None else m.moves.get(name)
+        if mv is None:
+            self.message = f"no move {name!r}"
+            return
+        if mv.pair is not None:
+            self.select_action(*mv.pair, name)
+            return
+        self.clear_pair()
+        self.move, self.picked_window, self.next_window_id = name, None, None
+        self.graph.picked = None
+        slot = self.move_slot(mv)
+        if slot is not None and slot < 0:
+            self.play_source(-1 - slot)
+        elif slot is not None:
+            self.play_slot(slot)
+        self.sync_steer()
+
+    def new_move(self, name: str = "") -> None:
+        """An own move playing the clip on screen, named after it unless `name`; selected."""
+        doc, vp, m = self.doc, self.vp, self.manifest
+        if doc is None or m is None or vp is None or vp.clip is None:
+            self.message = "play a clip first: a new move plays the clip on screen"
+            return
+        slot, held = vp.clip.slot, self.clip_name_on_screen()
+        base = held or (clip_key(slot) if slot >= 0 else "")
+        name = name.strip() or authoring.free_name(m, base or "move")
+        s = self.label_session
+        if slot >= 0 and s is not None:
+            done = self.edit("", lambda: s.own_move(name, slot))
+        elif held is not None:
+            done = self.edit("", lambda: authoring.new_move(doc, name, held))
+        else:
+            self.message = "this clip is in no anim: place it in Clips, then make a move of it"
+            return
+        if done:
+            self.select_move(name)
+
+    def delete_move(self) -> None:
+        """The selected move goes; refused while another move, a rule or an effect names it."""
+        doc, name, pair = self.doc, self.move, self.pair
+        if doc is None or name is None:
+            return
+        if self.edit("", lambda: clips.drop_move(doc, name)):
+            if pair is not None:
+                self.select_action(*pair)
+            else:
+                self.move = None
+                self.sync_steer()
+
+    def set_move(self, **fields: Any) -> bool:
+        """`authoring.FIELDS` of the selected own move, one undo step."""
+        doc, name = self.doc, self.move
+        if doc is None or name is None:
+            return False
+        return self.edit("", lambda: authoring.set_fields(doc, name, **fields))
+
+    def set_steer(self, **fields: Any) -> bool:
+        """The selected own move's steer, one undo step; `fixed` starts over the clip's AI
+        frames."""
+        doc, name, vp = self.doc, self.move, self.vp
+        if doc is None or name is None:
+            return False
+        hint = 1
+        if vp is not None and vp.clip is not None and vp.actor is not None:
+            hint = max(1, round(vp.clip.frames / max(vp.playback.speed, 1e-6)))
+        return self.edit("", lambda: authoring.set_steer(doc, name, hint, **fields))
+
+    def sync_steer(self) -> None:
+        """The view turns the port as the own move on screen steers, else as its clip does."""
+        if self.vp is not None:
+            mv = self.own_move_on_screen()
+            self.vp.set_steer(None if mv is None else mv.steer)
+
+    def clip_turn(self) -> tuple[float, bool] | None:
+        """Degrees the clip on screen turns YAW by its end, and whether the manifest sets it."""
+        from mhfu_studio.monster.render.playback import end_turn
+
+        vp, m, held = self.vp, self.manifest, self.clip_name_on_screen()
+        if vp is None or vp.clip is None or vp.scene is None:
+            return None
+        given = m is not None and held is not None and m.clips[held].turn is not None
+        return end_turn(vp.scene, vp.clip), given
+
+    def set_turn(self, deg: float | None) -> bool:
+        """The turn the gizmo shows: a fixed steer's angle, else the clip on screen's `turn`
+        (None: its own body's)."""
+        t = self.turn.target()
+        if t is not None and t.writes == "steer" and deg is not None:
+            return self.set_steer(angle=deg)
+        return self.set_clip_turn(deg)
+
+    def set_clip_turn(self, deg: float | None) -> bool:
+        """`[clips.x] turn` of the clip on screen, naming it when it has no name."""
+        doc, vp, held = self.doc, self.vp, self.clip_name_on_screen()
+        if doc is None or vp is None or vp.clip is None:
+            self.message = "no clip of a port on screen"
+            return False
+        if held is not None:
+
+            def change(m: Manifest) -> None:
+                m.clips[held].turn = deg
+
+            word = "its own body's" if deg is None else f"{deg:+g} degrees"
+            ok = self.edit(f"clips.{held}: turns {word}", lambda: doc.edit(change))
+        else:
+            s, slot = self.label_session, vp.clip.slot
+            if s is None or slot < 0 or deg is None:
+                self.message = "this clip is in no anim: place it in Clips first"
+                return False
+            ok = self.edit("", lambda: s.label(slot, s.default_name(slot), turn=deg))
+        if ok:
+            vp.repose()
+        return ok
+
+    # the attack windows of the selected own move
+
+    def window_frames(self) -> int:
+        """Clip frames the lanes span: the own move's clip, on screen."""
+        vp = self.vp
+        on = self.own_move_on_screen() is not None and vp is not None and vp.clip is not None
+        return vp.clip.frames if on and vp is not None and vp.clip is not None else 0
+
+    def window_id(self) -> int:
+        """The attack a new window gets: the one set for it, else the picked window's, else
+        the base monster's first record with a hit group."""
+        mv = self.own_move()
+        if self.next_window_id is not None:
+            return self.next_window_id
+        if mv is not None and mv.attacks:
+            i = self.picked_window
+            return mv.attacks[i if i is not None else -1].id
+        host = self.host_attacks()
+        off = None if host is None else host.id_offset(self.host_species or 0)
+        recs = [] if host is None or host.primary is None or off is None else host.primary.attacks
+        return next((r.id - (off or 0) for r in recs if not r.is_blank), 0)
+
+    def press_window(self, lane: int, frame: float, slop: float = 0.5) -> bool:
+        """A press on the Timeline's attack lanes, in clip frames (`authoring.WindowDrag`)."""
+        mv = self.own_move_on_screen()
+        if mv is None:
+            return False
+        self.windows.frames, self.windows.id = self.window_frames(), self.window_id()
+        if lane < len(mv.attacks):
+            self.picked_window = lane
+        if len(mv.attacks) >= MOVE_ATTACKS and lane >= len(mv.attacks):
+            self.message = f"the move player holds {MOVE_ATTACKS} attacks a move"
+            return False
+        return self.windows.press(mv.attacks, lane, frame, slop)
+
+    def _window_dragged(self, index: int | None, w: AttackWindow) -> None:
+        doc, name = self.doc, self.move
+        if doc is None or name is None:
+            return
+        if index is None:
+            if self.edit("", lambda: authoring.add_window(doc, name, w)):
+                mv = self.own_move()
+                self.picked_window = None if mv is None else len(mv.attacks) - 1
+                self.message = f"attack {w.id} from frame {w.frame}" + (
+                    "" if w.end is None else f" to {w.end}"
+                )
+            return
+        self.set_window(index, frame=w.frame, end=w.end)
+
+    def set_window(self, index: int, **fields: Any) -> bool:
+        doc, name = self.doc, self.move
+        if doc is None or name is None:
+            return False
+        return self.edit("", lambda: authoring.set_window(doc, name, index, **fields))
+
+    def remove_window(self, index: int | None = None) -> bool:
+        """The picked window, by default."""
+        doc, name = self.doc, self.move
+        i = self.picked_window if index is None else index
+        if doc is None or name is None or i is None:
+            return False
+        if self.edit("", lambda: authoring.remove_window(doc, name, i)):
+            self.picked_window = None
+            return True
+        return False
+
+    def live_windows(self) -> list[int]:
+        """The own move's windows whose attack is out at the playhead."""
+        mv, vp = self.own_move_on_screen(), self.vp
+        if mv is None or vp is None or vp.actor is None:
+            return []
+        return authoring.live(mv.attacks, vp.playback.phase)
+
+    def attack_record(self, attack: int) -> AttackRecord | None:
+        """The base monster's record `attack` a move spawns; None for none or a blank one."""
+        host = self.host_attacks()
+        recs = [] if host is None else host.records_for([attack], self.host_species)
+        return recs[0] if recs else None
+
+    def attack_set(self, attack: int) -> int | None:
+        """The hit group attack record `attack` spawns: the port's [[attack]] volume, else the
+        base monster's record's."""
+        m = self.manifest
+        mine = None if m is None else next((a for a in m.attacks if a.id == attack), None)
+        if mine is not None and mine.volume is not None:
+            return mine.volume
+        rec = self.attack_record(attack)
+        return None if rec is None else rec.volume
+
+    def light_live(self) -> None:
+        """While an own move plays with the hit groups shown, its live attack's group is lit."""
+        vp, mv = self.vp, self.own_move_on_screen()
+        ov = None if vp is None or not self.show_attacks else vp.attacks
+        if ov is None or mv is None or self.selected_set is not None:
+            return
+        sets = [self.attack_set(mv.attacks[i].id) for i in self.live_windows()]
+        ov.set_selected_group(next((s for s in sets if s is not None), None))
 
     def host_pair(self) -> PairIntel | None:
         """The selected pair's intel when it is the host's; None while browsing."""
@@ -1103,7 +1408,10 @@ class MonsterWorkspace(Workspace):
         return None if si is None else si.pair(*self.pair)
 
     def pair_sets(self) -> list[int]:
-        """The volume sets the selected pair's handler hits with."""
+        """The volume sets the selected pair's handler hits with, or the own move's attacks."""
+        mv = self.own_move()
+        if mv is not None:
+            return sorted({s for a in mv.attacks if (s := self.attack_set(a.id)) is not None})
         host, p = self.host_attacks(), self.host_pair()
         if host is None or p is None or not p.attack_ids:
             return []
@@ -1376,6 +1684,7 @@ class MonsterWorkspace(Workspace):
         if self.vp is not None:
             self.vp.play_clip(clip)
             self.vp.playback.play()
+        self.sync_steer()
         self.recompute_alignment()
 
     def playing_clip(self) -> int | None:

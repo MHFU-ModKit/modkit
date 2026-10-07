@@ -46,6 +46,7 @@ def test_drag_does_not_pick(workspace: MonsterWorkspace) -> None:
 
 def test_selected_joint_is_labelled(workspace: MonsterWorkspace) -> None:
     ws = workspace
+    ws.turn.shown = False
     o = Recorder(SIZE)
     ws.paint(o)
     assert o.calls == []
@@ -62,6 +63,7 @@ def test_joint_ids_label_every_joint(workspace: MonsterWorkspace) -> None:
     ws = workspace
     assert ws.vp is not None and ws.vp.skeleton is not None
     ws.show_joint_ids = True
+    ws.turn.shown = False
     o = Recorder(SIZE)
     ws.paint(o)
     _, ok = project(ws.vp.camera, ws.vp.skeleton.positions, SIZE)

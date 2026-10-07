@@ -13,6 +13,7 @@ from collections.abc import Iterable, Sequence
 
 import moderngl
 import numpy as np
+from mhfu_port.manifest import Steer
 from mhfu_port.model import Clip
 
 from mhfu_studio.monster.core.scene import Scene
@@ -62,10 +63,19 @@ class Actor:
         self.clip: Clip | None = None
         self.frame = 0.0
         self.strip_root = False
+        #: an own move's turn instead of the clip's
+        self.steer: Steer | None = None
 
     def pose(self, clip: Clip | None, frame: float = 0.0) -> None:
         self.clip, self.frame = clip, float(frame)
-        p = pose_at(self.scene, clip, frame, strip_root=self.strip_root)
+        p = pose_at(
+            self.scene,
+            clip,
+            frame,
+            strip_root=self.strip_root,
+            steer=self.steer,
+            speed=self.playback.speed,
+        )
         self.mesh.set_pose(None if clip is None else p)
         self.skeleton.set_positions(p.joints)
         for ov in (self.hitboxes, self.attacks):
@@ -241,6 +251,12 @@ class MonsterViewport(Viewport):
             self.actor.pose(None)
         if frame_camera:
             self.camera.frame(self.bounds()).look("three")
+
+    def set_steer(self, steer: Steer | None) -> None:
+        """The port turns as an own move's `steer` says, None as its clip does."""
+        if self.actor is not None and self.actor.steer != steer:
+            self.actor.steer = steer
+            self.actor.repose()
 
     def set_pose(self, clip: Clip | None, frame: float = 0.0) -> None:
         if self.actor is not None:
