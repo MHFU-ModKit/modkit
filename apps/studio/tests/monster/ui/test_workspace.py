@@ -24,7 +24,7 @@ def test_registers_its_docks() -> None:
     assert "monster" in discover(["monster"])
     ws = MonsterWorkspace()
     assert [d.label for d in ws.docks()] == list(DOCKS)
-    shown = ["Actions", "Clips", "Moves", "Hitboxes", "Timeline"]
+    shown = ["Actions", "Clips", "Hitboxes", "Timeline"]
     assert [d.label for d in ws.docks() if d.shown] == shown
     assert ws.tool_groups() == ()
 

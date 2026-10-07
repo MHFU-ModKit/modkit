@@ -379,6 +379,7 @@ class MonsterWorkspace(Workspace):
                 "Moves", "left", build("moves", "MovesPanel"),
                 "Your moves: on the base monster's actions, or your own, with their attacks and"
                 " turn.",
+                shown=False,
             ),
             Dock(
                 "Scene", "left", build("scene", "ScenePanel"),
