@@ -7,9 +7,10 @@
  *                 pair is provisioned like a native one;
  *   request       a pair entered on the game thread in the next AI frame, through
  *                 MHFU_ENTER_ACTION;
- *   rules         a 30 Hz brain in C: "in pair P (or own move M) for >= N frames, player
- *                 distance in [lo, hi), receding or closing -> enter (main, sub, mode) or play
- *                 own move M'", with cooldown and budget;
+ *   rules         a 30 Hz brain in C: "in pair P (or own move M) for >= N frames, or on a
+ *                 monster event, player distance in [lo, hi), receding or closing -> enter
+ *                 (main, sub, mode) or play own move M'", with cooldown and budget; a rule on the
+ *                 flinch plays its move in place of the host's reaction;
  *   own moves     a port's moves by slot, played by the move player (mhfu/move.h) when asked,
  *                 by a rule, or after the move before them;
  *   step          a C function on every AI frame, on the game thread, before the host step.
@@ -21,6 +22,7 @@
 
 #include <stdint.h>
 
+#include "addresses.gen.h"
 #include "mhfu/move.h"
 
 #ifdef __cplusplus
@@ -28,10 +30,11 @@ extern "C" {
 #endif
 
 #define MHFU_EM_SUBS   4    /* substitution entries */
-#define MHFU_EM_RULES  4    /* brain rules */
+#define MHFU_EM_RULES  MHFU_EM_CFG_RULES_COUNT   /* brain rules */
 #define MHFU_EM_RING   8    /* last enter-action dispatches kept */
 
 #define MHFU_EM_SUB_ANY   0xFEu        /* any sub state; 0xFF is the never-matching idle value */
+#define MHFU_EM_ANY_PART  0xFFu        /* mhfu_em_rule_t.part: any part */
 #define MHFU_EM_UNLIMITED 0xFFFFFFFFu  /* a fire budget that never runs out */
 
 /* mhfu_em_rule_t.flags */
@@ -50,6 +53,11 @@ typedef struct {
     float    dist_lo, dist_hi;   /* player XZ distance window [lo, hi) */
     uint32_t cooldown;     /* frames between two fires */
     uint32_t count;        /* fires allowed; MHFU_EM_UNLIMITED for a standing rule */
+    uint8_t  on;           /* MHFU_MONSTER_*: fires in the AI frame the event is seen, from_* and
+                            * the distance still gating; MHFU_MONSTER_FLINCH plays its own move
+                            * in place of the host's reaction; 0 none */
+    uint8_t  part;         /* FLINCH, PART_BROKEN: only that part's; MHFU_EM_ANY_PART */
+    uint8_t  _pad[2];
 } mhfu_em_rule_t;
 
 typedef struct {
@@ -78,7 +86,10 @@ void mhfu_em_substitute(int slot, uint8_t from_mask, uint8_t from_sub,
 /* Enter (main, sub, mode) on the next AI frame; 0 while nothing is wrapped. */
 int  mhfu_em_request(uint8_t main_state, uint8_t sub_state, uint8_t mode);
 
-/* Rule slot (0..MHFU_EM_RULES-1); NULL clears it. At most one rule fires an AI frame. */
+/* Rule slot (0..MHFU_EM_RULES-1); NULL clears it. At most one rule fires an AI frame. While a
+ * rule on the flinch is installed, the brain owns the reaction replacement (mhfu_move_react):
+ * a flinch of a part a rule takes, in a frame its gates hold, enters its move's carrier instead,
+ * and the move plays from the next AI frame (all such rules share the first's carrier). */
 void mhfu_em_rule(int slot, const mhfu_em_rule_t *r);
 
 /* fn(entity) runs at each AI step of the wrapped species, on the game thread, before the host
@@ -142,10 +153,11 @@ const volatile mhfu_em_moves_t *mhfu_em_moves(void);
 
 /* The reaction replacement, one entry, the move player's (mhfu_move_react): an enter-action of
  * entity with main_state and a sub in sub_mask (bit k = sub k), in an AI frame where the entity's
- * byte at offset gate is nonzero, enters (to_main, to_sub) instead, unless a substitution took
- * it. Everything the engine did before the enter-action stands. entity 0 turns it off. */
+ * byte at offset gate shares a bit with parts, enters (to_main, to_sub) instead, unless a
+ * substitution took it. Everything the engine did before the enter-action stands. entity 0 turns
+ * it off. */
 void mhfu_em_react(uint32_t entity, uint8_t main_state, uint32_t sub_mask, uint16_t gate,
-                   uint8_t to_main, uint8_t to_sub);
+                   uint8_t parts, uint8_t to_main, uint8_t to_sub);
 
 /* Enter-actions the entry replaced since boot; last gets the latest's original
  * (mode << 16) | (main << 8) | sub. */

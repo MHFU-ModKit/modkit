@@ -23,8 +23,9 @@
  * carrier instead; the move plays from the next AI step.
  *
  * It runs on em_vhook's slot-29 step (mhfu_em_step), so the species must be wrapped
- * (mhfu_em_installed); the step is in from the species' spawn, as it also finds the monster
- * events (mhfu/monster_events.h). The calls only write the move block: safe from any thread. */
+ * (mhfu_em_installed); the step is in from the species' spawn. A brain rule on the flinch
+ * (mhfu_em_rule) takes the reaction replacement over. The calls only write the move block: safe
+ * from any thread. */
 #ifndef MHFU_MOVE_H
 #define MHFU_MOVE_H
 
@@ -133,7 +134,8 @@ void mhfu_move_steer(const mhfu_steer_spec_t *s);
 const volatile mhfu_move_state_t *mhfu_move_state(void);
 
 /* Replaces reaction `kind` of entity with mv (and steer, NULL for none) from the next one on, until
- * called again; mv NULL stops it. 0 while nothing is wrapped. */
+ * called again or a brain rule on the flinch is installed; mv NULL stops it. 0 while nothing is
+ * wrapped. */
 int  mhfu_move_react(int kind, uint32_t entity, const mhfu_move_t *mv,
                      const mhfu_steer_spec_t *steer);
 

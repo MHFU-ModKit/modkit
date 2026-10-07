@@ -212,10 +212,10 @@ def test_events_stub_runs_any_other(stubs: Stubs, mips: Any) -> None:
 
 
 def _run_act(
-    stubs: Stubs, mips: Any, sub: int, gate: int, table: bool = False
+    stubs: Stubs, mips: Any, sub: int, gate: int, table: bool = False, parts: int = 0xFF
 ) -> tuple[Any, list[int]]:
     """Runs the slot-32 stub on an enter-action (ENTITY, 4, sub, 2) with the reaction entry armed
-    for ENTITY's flinch; returns the machine and the (main, sub) the original got."""
+    for ENTITY's flinch of `parts`; returns the machine and the (main, sub) the original got."""
     out, ov = (ctypes.c_uint32 * 1024)(), ctypes.c_int(0)
     n = stubs.lib.act(out, RUN_CFG, RUN_ORIG, ctypes.byref(ov))
     m = mips()
@@ -224,7 +224,8 @@ def _run_act(
     m.write(RUN_CFG, [0] * (stubs.cfg_size // 4))
     r = RUN_CFG + stubs.lib.cfg_react()
     gate_off = int(addresses.ENTITY.FLINCH_MASK)
-    m.write(r, [ENTITY, 0b100100011, 4 | (0 << 8) | (2 << 16), gate_off])  # ent, mask, main/to
+    to = 4 | (0 << 8) | (2 << 16) | (parts << 24)  # main, to (0, 2), parts
+    m.write(r, [ENTITY, 0b100100011, to, gate_off])
     m.uc.mem_write(ENTITY + gate_off, bytes([gate]))
     if table:  # a standing substitution of main 4, any sub, to (1, 3)
         m.write(RUN_CFG + stubs.lib.cfg_sub(), [0x0301FE10, 0xFFFFFFFF])
@@ -251,3 +252,9 @@ def test_act_stub_leaves_the_rest(stubs: Stubs, mips: Any) -> None:
     ):
         m, got = _run_act(stubs, mips, sub, gate, table)
         assert got == want and m.read(RUN_CFG + stubs.lib.cfg_react() + 0x10) == [0]
+
+
+def test_act_stub_takes_only_its_parts(stubs: Stubs, mips: Any) -> None:
+    for gate, parts, want in ((0b10, 0b01, [4, 1]), (0b11, 0b01, [0, 2]), (0b10, 0, [4, 1])):
+        _, got = _run_act(stubs, mips, 1, gate, parts=parts)
+        assert got == want

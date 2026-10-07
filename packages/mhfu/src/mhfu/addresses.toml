@@ -863,3 +863,31 @@ TAIL = { offset = 0x08, type = "u32", doc = "records raised" }
 DROPPED = { offset = 0x0C, type = "u32", doc = "records lost to a full ring" }
 WATCH = { offset = 0x10, type = "MONSTER_WATCH[2]", doc = "the monsters followed" }
 RING = { offset = 0x30, type = "MONSTER_EVENT[32]", doc = "the records" }
+
+[struct.EM_RULE]
+doc = "one brain rule in em_vhook's config block (em_vhook.cpp cfg_rule_t): a trigger and what it plays, evaluated each AI frame in C"
+size = 0x28
+[struct.EM_RULE.fields]
+FROM_MASK = { offset = 0x00, type = "u8", doc = "bit k: may fire while the live pair's main is k; 0 with FROM_MOVE 0: no pair gate" }
+FROM_SUB = { offset = 0x01, type = "u8", doc = "with FROM_MASK: the exact sub, or 0xFE any" }
+TO_MAIN = { offset = 0x02, type = "u8", doc = "the pair entered when PLAY_MOVE is 0" }
+TO_SUB = { offset = 0x03, type = "u8", doc = "with TO_MAIN" }
+MODE = { offset = 0x04, type = "u8", doc = "ENTER_ACTION mode for TO_MAIN, TO_SUB" }
+FLAGS = { offset = 0x05, type = "u8", doc = "1 only while the hunter recedes, 2 only while he closes" }
+FROM_MOVE = { offset = 0x06, type = "u8", doc = "own move slot + 1 that must be playing (its AI frames the dwell); 0 none" }
+PLAY_MOVE = { offset = 0x07, type = "u8", doc = "own move slot + 1 played instead of entering TO_MAIN, TO_SUB; 0 none" }
+MIN_FRAMES = { offset = 0x08, type = "u32", doc = "AI frames the pair (or FROM_MOVE) must have stood" }
+D2_LO = { offset = 0x0C, type = "u32", doc = "the hunter's XZ distance squared, f32 bits: at least this" }
+D2_HI = { offset = 0x10, type = "u32", doc = "...and under this" }
+LEFT = { offset = 0x14, type = "u32", doc = "fires left; 0 off, 0xFFFFFFFF standing" }
+FIRED = { offset = 0x18, type = "u32", doc = "fires so far" }
+LAST_FIRE = { offset = 0x1C, type = "u32", doc = "the block's AI tick of the last fire" }
+COOLDOWN = { offset = 0x20, type = "u32", doc = "AI ticks between two fires" }
+ON = { offset = 0x24, type = "u8", doc = "the monster event that fires it (MONSTER_EVENT.KIND), in the AI frame it is seen; 4, the flinch, replaces the host's reaction; 0 none" }
+PART = { offset = 0x25, type = "u8", doc = "ON 4 or 5: only a flinch or break of this part (ENTITY.FLINCH_MASK bit); 0xFF any" }
+
+[struct.EM_CFG]
+doc = "em_vhook's config block in partition memory, which its stubs read by the offsets in em_vhook_stubs.h; listed here: the rules"
+size = 0x360
+[struct.EM_CFG.fields]
+RULES = { offset = 0xE0, type = "EM_RULE[16]", doc = "the brain's rules: their count is the capacity a port's manifest and mhfu_port.lua read" }
