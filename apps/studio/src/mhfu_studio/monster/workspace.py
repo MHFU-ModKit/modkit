@@ -1897,7 +1897,7 @@ class MonsterWorkspace(Workspace):
         if not took:
             self.message = (
                 f"the game did not take {name}: no port rides its big monster, or the port has no"
-                " own move by that name (a port takes new moves when its mod reloads)"
+                " own move by that name"
             )
             return
         where = _home(sent[0].parent) if sent else "the memory stick"

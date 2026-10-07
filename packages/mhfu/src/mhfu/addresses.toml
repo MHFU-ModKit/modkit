@@ -335,7 +335,6 @@ WALL_SECTORS = { offset = 0x278, type = "u32", doc = "walls touched this frame, 
 STUCK_WALL = { offset = 0x27E, type = "u8", doc = "1 when this frame's wall is of class 2 (the stage parameter object's u32 at surface id * 4 has bit 2); EM75_COLLIDED needs it" }
 HIT_PENDING = { offset = 0x285, type = "u8", doc = "set when a hit lands; REACTION_CHECK then moves PENDING_DAMAGE into HP" }
 GROUND_Y = { offset = 0x2CC, type = "f32", doc = "floor height GROUND_QUERY found under POSITION this frame; MONSTER_STEP copies it into POSITION.y" }
-FLINCH = { offset = 0x580, type = "s16[8]", doc = "big monsters: flinch counters REACTION_CHECK counts down by part damage; at 0 the part flinches (code 12)" }
 STEER = { offset = 0x637, type = "u8", doc = "big monsters: set by a charge's translator; while set BUDGET_STEP turns with TURN_TOWARD" }
 RUN_BUDGET = { offset = 0x76C, type = "f32", doc = "big monsters: distance a run move may still travel; BUDGET_STEP subtracts the clip's root motion, the translator seeds it" }
 CLIP_BLOCKS = { offset = 0x080, type = "CLIP_BLOCK[3]", doc = "big monsters: one clip player per body part (Bone.stream); CLIP and CLIP_FLAGS are part 0's" }
@@ -834,7 +833,7 @@ doc = "one record of the framework's monster events (monster_events.h mhfu_monst
 size = 0x14
 [struct.MONSTER_EVENT.fields]
 ENTITY = { offset = 0x00, type = "ptr", doc = "the monster" }
-FRAME = { offset = 0x04, type = "u32", doc = "its MONSTER_WATCH.FRAMES the change was seen in: the AI frame after the engine's" }
+FRAME = { offset = 0x04, type = "u32", doc = "its MONSTER_WATCH.FRAMES the change was seen in: noticed the engine's own AI frame, the others the one after" }
 USEC = { offset = 0x08, type = "u32", doc = "the emulated clock then (sceKernelGetSystemTimeLow)" }
 KIND = { offset = 0x0C, type = "u8", doc = "1 noticed, 2 combat entered, 3 combat left, 4 flinch, 5 part broken, 6 tail cut" }
 PART = { offset = 0x0D, type = "u8", doc = "flinch, part broken: the lowest part in ENTITY.FLINCH_MASK; else 0xFF" }
