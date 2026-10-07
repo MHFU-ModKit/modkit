@@ -385,7 +385,7 @@ class MonsterWorkspace(Workspace):
             Dock(
                 "Moves", "left", build("moves", "MovesPanel"),
                 "Your moves: on the base monster's actions, or your own, with their attacks and"
-                " turn.",
+                " turn; and the rules that play them.",
                 shown=False,
             ),
             Dock(
@@ -540,6 +540,9 @@ class MonsterWorkspace(Workspace):
         elif section == "moves" and isinstance(key, str) and key in m.moves:
             self.select_move(key)
             self.focus("Moves" if m.moves[key].own else "Actions")
+        elif section == "rule" and isinstance(key, int) and key < len(m.rules):
+            self.picked_rule = key
+            self.focus("Moves")
         elif section == "hurtbox" and isinstance(key, int) and key < len(m.hurtboxes):
             self.show_parts, self.parts_source = True, PORT
             self.sync_hitboxes()

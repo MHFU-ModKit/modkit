@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The Moves dock: every move of the port, on a base monster's action or its own; an own move
-made from the clip on screen, renamed, deleted, and its fields and steer edited. Its attack
-windows are drawn on the Timeline."""
+made from the clip on screen, renamed, deleted, its fields and steer edited, and played in the
+running game. Its attack windows are drawn on the Timeline. Under them, the rules."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from mhfu_port.manifest import MOVE_ATTACKS, TURNS, Move
 from PySide6.QtWidgets import QAbstractSpinBox, QSpinBox, QVBoxLayout, QWidget
 
 from mhfu_studio.monster import validate as V
+from mhfu_studio.monster.panels.common import kind
+from mhfu_studio.monster.panels.rules import RulesSection
 from mhfu_studio.monster.panels.widgets import NoScene
 from mhfu_studio.shell.findings import Finding
 from mhfu_studio.shell.text import plain
@@ -33,16 +35,17 @@ GAME_NOTE = (
     "Own moves reach the game from the moves module mhfu-port generates from this file with the"
     " port, not through Copy Lua; a mod or a rule plays them by name."
 )
+EAGER_TIP = (
+    "Starts at once when asked, even while the monster has noticed the hunter but not yet"
+    ' entered combat. Without it the move waits for combat, so it does not cut off the "!" and'
+    " the howl."
+)
 
 
 def special(box: QSpinBox, text: str) -> QSpinBox:
     """`box` shows `text` at its lowest value, which means "none"."""
     box.setSpecialValueText(text)
     return box
-
-
-def kind(mv: Move) -> str:
-    return "own move" if mv.pair is None else f"({mv.main},{mv.sub})"
 
 
 class MovesPanel(kit.Panel):
@@ -84,6 +87,14 @@ class MovesPanel(kit.Panel):
             on=act("play move", lambda: ws.select_move(ws.move or "")),
             icon="ph.play",
         )
+        self.in_game = kit.button(
+            "Play in game",
+            tip="Saves, sends the port's clips and moves modules to the memory stick and asks the"
+            " running game's port to play this move (MHFU_LANE's PPSSPP, else the one running)",
+            on=act("play move in game", ws.play_move_in_game),
+            icon="ph.game-controller",
+        )
+        self.game_hint = kit.label(role="muted")
         self.pair_note = kit.label(role="muted")
         form = kit.Form()
         self.name = kit.text_field(
@@ -130,6 +141,12 @@ class MovesPanel(kit.Panel):
             on=lambda on: act("host attacks", lambda: ws.set_move(host_attacks=on))(),
         )
         form.row("Base attacks", self.host_attacks)
+        self.eager = kit.check(
+            "Start at once",
+            tip=EAGER_TIP,
+            on=lambda on: act("eager", lambda: ws.set_move(eager=on))(),
+        )
+        form.row("When noticed", self.eager)
         self.after = kit.choice(
             [],
             tip="The move played when this one ends; none: the base monster's brain picks",
@@ -222,7 +239,8 @@ class MovesPanel(kit.Panel):
             body.addWidget(w)
         top: tuple[QWidget, ...] = (
             self.title,
-            kit.row(self.clip, self.play_clip, stretch=True),
+            kit.row(self.clip, self.play_clip, self.in_game, stretch=True),
+            self.game_hint,
             self.pair_note,
             self.own_body,
             self.found,
@@ -230,6 +248,7 @@ class MovesPanel(kit.Panel):
         for w in top:
             self.editor.body.addWidget(w)
 
+        self.rules = RulesSection(ws, studio)
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -239,6 +258,7 @@ class MovesPanel(kit.Panel):
             self.table,
             kit.row(self.new, self.delete, stretch=True),
             self.editor,
+            self.rules,
             kit.label(GAME_NOTE, role="muted"),
         )
         for w in shown:
@@ -295,9 +315,13 @@ class MovesPanel(kit.Panel):
         picked = None if ws.move is None else m.moves.get(ws.move)
         self.delete.setEnabled(picked is not None)
         self.editor.setVisible(picked is not None)
-        if picked is None or ws.move is None:
-            return
-        self._sync_move(ws.move, picked)
+        if picked is not None and ws.move is not None:
+            self._sync_move(ws.move, picked)
+        self.rules.sync(self._checks())
+        findings.take(
+            ws,
+            {V.MOVE_WINDOWS: self.attacks, V.MOVE_CLIP: self.play_clip, V.RULES: self.rules.list},
+        )
 
     @staticmethod
     def _attacks(mv: Move) -> str:
@@ -320,6 +344,10 @@ class MovesPanel(kit.Panel):
         where = "" if slot is None else f" (anim {slot})" if slot >= 0 else " (in no anim)"
         self.clip.setText(f"Plays {mv.clip or 'anim'}{where}")
         self.play_clip.setVisible(own and not on_screen)
+        why = ws.play_move_blocker()
+        self.in_game.setEnabled(why is None)
+        self.game_hint.setText(f"Play in game: {why}" if why else "")
+        self.game_hint.setVisible(why is not None)
         if name != self._loaded:
             self._loaded = name
             kit.put(self.name, name)
@@ -338,6 +366,7 @@ class MovesPanel(kit.Panel):
         self.main.setEnabled(mv.carrier is not None)
         self.sub.setEnabled(mv.carrier is not None)
         kit.put(self.host_attacks, mv.host_attacks)
+        kit.put(self.eager, mv.eager)
         others = [(n, f"{n} \u00b7 {kind(o)}") for n, o in m.moves.items() if n != name]
         kit.refill(self.after, [("", "the brain picks"), *others], mv.after or "")
         s = mv.steer
@@ -372,15 +401,20 @@ class MovesPanel(kit.Panel):
         if ws.picked_window is not None and ws.picked_window < self.attacks.count():
             self.attacks.setCurrentRow(ws.picked_window)
 
-    def _findings(self, name: str) -> None:
-        """The checks on this move: what the game will refuse or never reach."""
-        ws, doc = self.ws, self.ws.doc
+    def _checks(self) -> list[Finding]:
+        """What the game will refuse or never reach in the own moves and rules, once per
+        manifest."""
+        doc = self.ws.doc
         if doc is None:
-            return
+            return []
         m = doc.manifest
         if self._checked[0] is not m:
             self._checked = (m, V.own_moves(m, doc.pac, doc.intel, doc.sources))
-        found = [f for f in self._checked[1] if f.target == ("moves", name)]
+        return self._checked[1]
+
+    def _findings(self, name: str) -> None:
+        """The checks on this move."""
+        found = [f for f in self._checks() if f.target == ("moves", name)]
         key = tuple(found)
         if key != self._found_key:
             self._found_key = key
@@ -392,4 +426,3 @@ class MovesPanel(kit.Panel):
                 a.setToolTip(f.code)
                 self.found_lay.addWidget(a)
         self.found.setVisible(bool(found))
-        findings.take(ws, {V.MOVE_WINDOWS: self.attacks, V.MOVE_CLIP: self.play_clip})

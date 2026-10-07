@@ -11,6 +11,7 @@ import pytest
 from mhfu_port import manifest
 from mhfu_port.manifest import EVENTS, SEAM_RULES, Manifest, ManifestError, Rule
 from mhfu_studio.monster import rules
+from mhfu_studio.monster import validate as V
 from mhfu_studio.monster.workspace import MonsterWorkspace
 
 
@@ -154,3 +155,12 @@ index = 0
 )
 def test_sentence(make: Callable[[str], Manifest], rule: Rule, words: str) -> None:
     assert rules.sentence(rule, make(SKID)) == words
+
+
+def test_a_finding_lands_on_its_rule(workspace: MonsterWorkspace) -> None:
+    ws = workspace
+    stamp(ws)
+    ws.new_rule()
+    ws.pick_rule(None)
+    ws.reveal(("rule", 0), V.RULES)
+    assert ws.picked_rule == 0 and ws.landing == V.RULES and ws.take_focus() == "Moves"
