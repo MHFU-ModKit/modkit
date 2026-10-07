@@ -118,7 +118,8 @@ def check(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> 
             raise ManifestError(f"moves.{name}: `eager` does not reach the game yet")
 
 
-def _pair_move(mv: Move) -> dict[str, Any]:
+def pair_move(mv: Move) -> dict[str, Any]:
+    """A pair move as `mhfu_port.lua` reads it, defaults left out."""
     out: dict[str, Any] = {"main": mv.main, "sub": mv.sub}
     if mv.clip is not None:
         out["clip"] = mv.clip
@@ -202,7 +203,8 @@ def _rule(r: Rule) -> dict[str, Any]:
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
-def _key(k: str) -> str:
+def lua_key(k: str) -> str:
+    """`k` as a Lua table key."""
     return k if _IDENT.fullmatch(k) else f"[{_str(k)}]"
 
 
@@ -210,7 +212,7 @@ def _str(s: str) -> str:
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
 
 
-def _lua(v: object) -> str:
+def lua_value(v: object) -> str:
     """`v` as a Lua expression, on one line."""
     if isinstance(v, bool):
         return "true" if v else "false"
@@ -219,9 +221,9 @@ def _lua(v: object) -> str:
     if isinstance(v, str):
         return _str(v)
     if isinstance(v, Mapping):
-        return "{ " + ", ".join(f"{_key(k)} = {_lua(x)}" for k, x in v.items()) + " }"
+        return "{ " + ", ".join(f"{lua_key(k)} = {lua_value(x)}" for k, x in v.items()) + " }"
     if isinstance(v, list | tuple):
-        return "{ " + ", ".join(map(_lua, v)) + " }"
+        return "{ " + ", ".join(map(lua_value, v)) + " }"
     raise TypeError(f"no Lua for {v!r}")
 
 
@@ -237,9 +239,9 @@ def lua(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> st
         "  moves = {",
     ]
     for name, mv in m.moves.items():
-        body = _own_move(m, name, layout) if mv.own else _pair_move(mv)
-        out.append(f"    {_key(name)} = {_lua(body)},")
+        body = _own_move(m, name, layout) if mv.own else pair_move(mv)
+        out.append(f"    {lua_key(name)} = {lua_value(body)},")
     out += ["  },", "  rules = {"]
-    out += [f"    {_lua(_rule(r))}," for r in m.rules]
+    out += [f"    {lua_value(_rule(r))}," for r in m.rules]
     out += ["  },", "}", ""]
     return "\n".join(out)
