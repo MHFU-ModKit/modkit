@@ -180,7 +180,7 @@ BUDGET_STEP = { eu = 0x09AD9A10, type = "fn", doc = "(entity, turn rate, flags):
 EM75_COLLIDED = { eu = 0x09D262C0, type = "fn", doc = "em75 overlay only: 1 when ENTITY.WALL_SECTORS has a wall ahead (& 0xC0000003) and ENTITY.STUCK_WALL is set, 0 for species 81" }
 MONSTER_STEP = { eu = 0x09AC5B30, type = "fn", doc = "(entity) per-frame step of a big monster: the slot-29 AI step, AI_TICK's root motion, WALL_COLLIDE, GROUND_QUERY, then POSITION.y = ENTITY.GROUND_Y" }
 ROOT_MOTION = { eu = 0x08863B70, type = "fn", doc = "(entity+0x80, out vec4, entity+0x10): this frame's root-motion delta of the playing clip in world axes; AI_TICK adds it to POSITION, which moves the monster" }
-TURN_TOWARD = { eu = 0x09AD9B50, type = "fn", doc = "(entity, most YAW units a call, flags): turns YAW toward the hunter (flags 2) or PURSUIT; flags 4 turns away; 1 if it turned" }
+TURN_TOWARD = { eu = 0x09AD9B50, type = "fn", doc = "(entity, most YAW units a call, flags): turns YAW toward PURSUIT (flags 0) or the hunter (2), away with 4; 1 skips unless +0x50A; once an AI frame; 1 once facing" }
 GROUND_QUERY = { eu = 0x09C3ED98, type = "fn", doc = "(HitManager singleton, actor, pos, out flags +0x290, out ground y, out surface y): the floor under an actor, run every frame by MONSTER_STEP" }
 WALL_COLLIDE = { eu = 0x09C416E0, type = "fn", doc = "(actor, keep): wall collision of a moving actor; keep 0 clears ENTITY.WALL_SECTORS first; a big monster's goes to MONSTER_WALL_RESOLVE" }
 MONSTER_WALL_RESOLVE = { eu = 0x09C391C8, type = "fn", doc = "(HitManager, new pos, old pos, exclude mask, $f12 radius, $t0 actor): sets ENTITY.WALL_SECTORS and STUCK_WALL per wall hit, pushes the actor out with WALL_PUSH_OUT" }
