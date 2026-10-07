@@ -182,7 +182,8 @@ def _build(
         return lay
     bound: dict[Pair, str] = {}
     for name in sorted(moves):
-        bound.setdefault((moves[name].main, moves[name].sub), name)
+        if (pr := moves[name].pair) is not None:
+            bound.setdefault(pr, name)
     hubs = set(intel.hubs)
     roots, siblings = _roots(intel, bound, selected, scope, extra_root)
     if not roots:

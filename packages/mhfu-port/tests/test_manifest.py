@@ -234,6 +234,32 @@ def test_bad_toml_names_path():
 
 MOVE = "[moves.m]\nmain = 1\nsub = 4\nanim = 17\n"
 RULE = "[[rule]]\nfrom_main = [1]\nplay = 'm'\n"
+OWN = "[moves.o]\nanim = 46\n"
+STAMP = (
+    OWN
+    + """carrier = [0, 2]
+length = 90
+host_attacks = true
+[[moves.o.attack]]
+id = 6
+frame = 56
+end = 80
+[moves.o.steer]
+turn = "fixed"
+angle = -90.0
+frames = 20
+walls = false
+"""
+)
+
+
+def test_own_move():
+    m = M.loads(_with(STAMP))
+    o = m.moves["o"]
+    assert o.own and o.pair is None and m.moves == M.loads(M.dumps(m)).moves
+    assert o.attacks == [M.AttackWindow(6, 56, 80)] and o.steer.angle == -90.0
+    assert not M.loads(_with(MOVE)).moves["m"].own
+    assert "steer" not in M.dumps(M.loads(_with(OWN)))
 
 
 @pytest.mark.parametrize(
@@ -264,6 +290,18 @@ RULE = "[[rule]]\nfrom_main = [1]\nplay = 'm'\n"
         (MOVE + RULE + "count = 0\n", "count"),
         (MOVE + RULE + "receding = true\nclosing = true\n", "and closing"),
         (MOVE + RULE * 5, "holds 4"),
+        ("[moves.m]\nmain = 1\nanim = 1\n", "both main and sub"),
+        (MOVE + "length = 9\n", "for an own move"),
+        (MOVE + "[[moves.m.attack]]\nid = 6\nframe = 1\n", "for an own move"),
+        (OWN + "hold_max = 9\n", "no claim or hold_max"),
+        (OWN + "[[moves.o.attack]]\nid = 6\nframe = 1\n" * 5, "holds 4 attacks"),
+        (OWN + "[[moves.o.attack]]\nid = 6\nframe = 9\nend = 9\n", "after frame"),
+        (OWN + "length = 0\n", "length"),
+        (OWN + "carrier = [9, 0]\n", "carrier main"),
+        (OWN + "[moves.o.steer]\nturn = 'fixed'\n", "angle goes with"),
+        (OWN + "[moves.o.steer]\nangle = 90.0\n", "angle goes with"),
+        (OWN + "[moves.o.steer]\nturn = 'spin'\n", "one of"),
+        (OWN + "[moves.o.steer]\nturn = 'hunter'\nrate = 0\n", "rate"),
     ],
 )
 def test_invalid(extra, why):

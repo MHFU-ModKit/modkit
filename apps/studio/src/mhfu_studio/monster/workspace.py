@@ -483,7 +483,8 @@ class MonsterWorkspace(Workspace):
                 self.play_slot(at)
             self.focus("Clips")
         elif section == "moves" and isinstance(key, str) and key in m.moves:
-            self.select_action(m.moves[key].main, m.moves[key].sub, key)
+            if (pr := m.moves[key].pair) is not None:
+                self.select_action(*pr, key)
             self.focus("Actions")
         elif section == "hurtbox" and isinstance(key, int) and key < len(m.hurtboxes):
             self.show_parts, self.parts_source = True, PORT
@@ -522,8 +523,8 @@ class MonsterWorkspace(Workspace):
             e = m.effects[key]
             if self.vp is not None:
                 self.vp.select_joint(e.bone)
-            if e.move in m.moves:
-                self.select_action(m.moves[e.move].main, m.moves[e.move].sub, e.move)
+            if e.move in m.moves and (pr := m.moves[e.move].pair) is not None:
+                self.select_action(*pr, e.move)
             self.focus("Actions")
 
     def close(self) -> None:

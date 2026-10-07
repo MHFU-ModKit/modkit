@@ -362,6 +362,8 @@ def _moves(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
             )
         )
     for name, mv in sorted(m.moves.items()):
+        if mv.main is None or mv.sub is None:
+            continue
         w = f"moves.{name}"
         pair = f"({mv.main},{mv.sub})"
         p = intel.pair(mv.main, mv.sub)

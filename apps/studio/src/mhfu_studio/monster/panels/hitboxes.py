@@ -60,7 +60,8 @@ def moves_hitting(ws: MonsterWorkspace, set_index: int) -> tuple[list[str], int]
     by_pair: dict[tuple[int, int], list[str]] = {}
     m = ws.manifest
     for name, mv in ({} if m is None else m.moves).items():
-        by_pair.setdefault((mv.main, mv.sub), []).append(name)
+        if mv.pair is not None:
+            by_pair.setdefault(mv.pair, []).append(name)
     names, others = [], 0
     for p in si.pairs_hitting_with(set_index, ws.host_species):
         got = by_pair.get((p.main, p.sub))

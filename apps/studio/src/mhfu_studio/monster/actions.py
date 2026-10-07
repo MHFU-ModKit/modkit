@@ -243,8 +243,9 @@ def rows(
         return None if intel is None else intel.pair(main, sub)
 
     out = [
-        row(m, pair_of(mv.main, mv.sub), mv.main, mv.sub, MOVE, cov, attacks, species, name)
+        row(m, pair_of(*pr), *pr, MOVE, cov, attacks, species, name)
         for name, mv in m.moves.items()
+        if (pr := mv.pair) is not None
     ]
     if intel is None:
         return out
