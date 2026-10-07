@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
-/* The game for move.cpp on the host: game memory is one array, the engine calls are recorded. */
+/* The game for move.cpp and monster_events.cpp on the host: game memory is one array, the engine
+ * calls and raised events are recorded, and em_vhook's reaction replacement is modelled. */
 #include <stdint.h>
 #include <string.h>
 #include "mhfu/em_vhook.h"
 #include "mhfu/move.h"
+#include "mhfu/monster_events.h"
 #include "addresses.gen.h"
 
 #define BASE 0x09000000u   /* the fake game memory; noaddr */
@@ -42,6 +44,27 @@ void mhfu_log(const char *, ...) {}
 int  mhfu_em_installed(void) { return 1; }
 void mhfu_em_step(mhfu_em_step_fn fn) { g_step = fn; }
 void mhfu_em_mute_events(uint32_t entity) { record('M', entity, 0, 0, 0); }
+
+/* em_vhook's reaction entry, as its slot-32 stub applies it (tests/test_em_vhook_stubs.py runs
+ * the stub itself) */
+static uint32_t g_react[6], g_react_hits, g_react_last;
+void mhfu_em_react(uint32_t e, uint8_t m, uint32_t mask, uint16_t gate, uint8_t tm, uint8_t ts)
+{
+    g_react[0] = e; g_react[1] = m; g_react[2] = mask; g_react[3] = gate;
+    g_react[4] = tm; g_react[5] = ts;
+}
+uint32_t mhfu_em_react_hits(uint32_t *last) { if (last) *last = g_react_last; return g_react_hits; }
+
+static uint32_t g_usec = 1000;
+uint32_t mhfu_host_usec(void) { return g_usec += 33; }
+
+static mhfu_monster_event_ctx_t g_raised[64];
+static int g_nraised;
+void mhfu_event_fire(mhfu_event_id_t id, const void *ctx)
+{
+    (void)id;
+    if (g_nraised < 64) memcpy(&g_raised[g_nraised++], ctx, sizeof(mhfu_monster_event_ctx_t));
+}
 
 /* the engine: what the test arranged happens, and every call is kept */
 void mhfu_host_enter(uint32_t e, uint32_t m, uint32_t s, uint32_t mode)
@@ -83,8 +106,32 @@ void mhfu_host_end(uint32_t node, uint32_t vtable)
     memcpy(at(node + MHFU_ATTACK_NODE_STATE, 1), &ended, 1);
 }
 
+/* the engine's reaction entering (main, sub) mode 2, through the replacement when it matches */
+void host_react_enter(uint32_t e, uint32_t m, uint32_t s)
+{
+    uint8_t *gate = at(e + (g_react[3] & 0x7FF), 1);
+    if (g_react[0] == e && m == g_react[1] && s < 32 && (g_react[2] >> s) & 1 && gate && *gate) {
+        g_react_hits++;
+        g_react_last = (2u << 16) | (m << 8) | s;
+        m = g_react[4];
+        s = g_react[5];
+    }
+    mhfu_host_enter(e, m, s, 2);
+}
+int host_raised(mhfu_monster_event_ctx_t *out)
+{
+    memcpy(out, g_raised, sizeof(g_raised));
+    int n = g_nraised;
+    g_nraised = 0;
+    return n;
+}
+
 uint8_t *host_mem(void) { return g_mem; }
-void     host_set(int lands, float clip_end) { g_lands = lands; g_clip_end = clip_end; g_n = 0; g_step = 0; }
+void     host_set(int lands, float clip_end)
+{
+    g_lands = lands; g_clip_end = clip_end; g_n = 0; g_step = 0; g_nraised = 0;
+    memset(g_react, 0, sizeof(g_react));
+}
 int      host_has_step(void) { return g_step != 0; }
 int      host_calls(uint32_t *out) { memcpy(out, g_calls, sizeof(g_calls)); int n = g_n; g_n = 0; return n; }
 uint32_t host_frame(uint32_t ent) { return g_step ? g_step(ent) : 0xFFFFFFFFu; }

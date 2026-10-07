@@ -108,6 +108,9 @@ typedef struct {
     cfg_rule_t rules[MHFU_EM_RULES];               /* +0xB8 */
     uint32_t step_fn, skip;                         /* +0x158 */
     uint32_t mute_ent, muted;                       /* +0x160 */
+    uint32_t react_ent, react_mask;                 /* +0x168 */
+    uint8_t  react_main, react_to_main, react_to_sub, _pad2;  /* +0x170 */
+    uint32_t react_gate, react_hits, react_last;    /* +0x174 */
 } em_vhook_cfg_t;
 
 static_assert(offsetof(em_vhook_cfg_t, prev_pair)   == CFG_PREV,        "cfg layout");
@@ -131,6 +134,12 @@ static_assert(offsetof(em_vhook_cfg_t, step_fn)     == CFG_STEP_FN,     "cfg lay
 static_assert(offsetof(em_vhook_cfg_t, skip)        == CFG_SKIP,        "cfg layout");
 static_assert(offsetof(em_vhook_cfg_t, mute_ent)    == CFG_MUTE_ENT,    "cfg layout");
 static_assert(offsetof(em_vhook_cfg_t, muted)       == CFG_MUTED,       "cfg layout");
+static_assert(offsetof(em_vhook_cfg_t, react_ent)   == CFG_REACT_ENT,   "cfg layout");
+static_assert(offsetof(em_vhook_cfg_t, react_mask)  == CFG_REACT_MASK,  "cfg layout");
+static_assert(offsetof(em_vhook_cfg_t, react_main)  == CFG_REACT_MAIN,  "cfg layout");
+static_assert(offsetof(em_vhook_cfg_t, react_to_sub) == CFG_REACT_TO_SUB, "cfg layout");
+static_assert(offsetof(em_vhook_cfg_t, react_gate)  == CFG_REACT_GATE,  "cfg layout");
+static_assert(offsetof(em_vhook_cfg_t, react_last)  == CFG_REACT_LAST,  "cfg layout");
 static_assert(sizeof(em_vhook_cfg_t)                == CFG_SIZE,        "cfg layout");
 
 #define CFG_CANARY_VAL 0x5645484Bu   /* 'VEHK' */
@@ -685,6 +694,28 @@ extern "C" void mhfu_em_status(mhfu_em_status_t *out)
     for (int i = 0; i < MHFU_EM_RULES; i++) { out->rule_fired[i] = g_cfgp->rules[i].fired;
                                                out->rule_left[i]  = g_cfgp->rules[i].left; }
     for (int i = 0; i < MHFU_EM_SUBS; i++)  out->sub_left[i] = g_cfgp->subs[i].left;
+}
+
+/* --- the reaction replacement: one entry, owned by the move player (move.cpp) ---------- */
+
+extern "C" void mhfu_em_react(uint32_t entity, uint8_t main_state, uint32_t sub_mask,
+                              uint16_t gate, uint8_t to_main, uint8_t to_sub)
+{
+    if (!g_cfgp) return;
+    g_cfgp->react_ent = 0;                          /* off while we write */
+    g_cfgp->react_main = main_state;
+    g_cfgp->react_mask = sub_mask;
+    g_cfgp->react_gate = gate;
+    g_cfgp->react_to_main = to_main;
+    g_cfgp->react_to_sub = to_sub;
+    g_cfgp->react_ent = entity;
+}
+
+extern "C" uint32_t mhfu_em_react_hits(uint32_t *last)
+{
+    if (!g_cfgp) return 0;
+    if (last) *last = g_cfgp->react_last;
+    return g_cfgp->react_hits;
 }
 
 /* ------------------------------------------------------------ latch */

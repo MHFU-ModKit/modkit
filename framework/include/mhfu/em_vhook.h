@@ -140,6 +140,17 @@ int  mhfu_em_playing(void);
 /* The registry, or 0 before the framework's init. */
 const volatile mhfu_em_moves_t *mhfu_em_moves(void);
 
+/* The reaction replacement, one entry, the move player's (mhfu_move_react): an enter-action of
+ * entity with main_state and a sub in sub_mask (bit k = sub k), in an AI frame where the entity's
+ * byte at offset gate is nonzero, enters (to_main, to_sub) instead, unless a substitution took
+ * it. Everything the engine did before the enter-action stands. entity 0 turns it off. */
+void mhfu_em_react(uint32_t entity, uint8_t main_state, uint32_t sub_mask, uint16_t gate,
+                   uint8_t to_main, uint8_t to_sub);
+
+/* Enter-actions the entry replaced since boot; last gets the latest's original
+ * (mode << 16) | (main << 8) | sub. */
+uint32_t mhfu_em_react_hits(uint32_t *last);
+
 #ifdef __cplusplus
 }
 #endif

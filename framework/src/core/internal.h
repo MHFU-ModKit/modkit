@@ -116,6 +116,10 @@ void mhfu_capture_configure(int scale, int interval_ms, const char *path);
 /* Its block and its quest handler; em_vhook's init calls it. */
 int  mhfu_move_init(void);
 
+/* --- monster events (monster_events.cpp) --- */
+/* Its block and its quest handler; the move player's init calls it. */
+int  mhfu_monster_events_init(void);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
