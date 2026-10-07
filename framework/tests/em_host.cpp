@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "addresses.gen.h"
+#include "mhfu/events.h"
 
 #define BASE 0x09000000u   /* the fake game memory; noaddr */
 #define SIZE 0x4000u
@@ -40,6 +41,8 @@ float    mhfu_mem_read_f32(uint32_t a) { float v = 0; uint8_t *p = at(a, 4); if 
 void     mhfu_mem_write_u8(uint32_t a, uint8_t v) { uint8_t *p = at(a, 1); if (p) *p = v; }
 void    *mhfu_host_at(uint32_t a) { return at(a, 4); }
 void mhfu_log(const char *, ...) {}
+uint32_t mhfu_host_usec(void) { return 0; }
+void mhfu_event_fire(mhfu_event_id_t, const void *) {}
 
 void mhfu_host_enter(uint32_t e, uint32_t m, uint32_t s, uint32_t mode)
 {

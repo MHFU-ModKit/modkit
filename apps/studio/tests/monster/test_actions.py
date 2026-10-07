@@ -168,7 +168,7 @@ def test_lua_round_trips(make: Any) -> None:
     assert "claim = { main = { 0, 1 }, sub = 7 }" in text and "label" not in text
     clips, moves = back(define(text))
     assert clips == {} and "clips =" not in text, "the clips come from the layout module"
-    assert moves == {n: lua_fields(mv) for n, mv in m.moves.items()}
+    assert moves == {n: lua_fields(mv) for n, mv in m.moves.items() if not mv.own}
     assert A.lua_moves(make("")) == ""
 
 
@@ -178,4 +178,4 @@ def test_lua_of_the_zinogre(ports: Path) -> None:
     assert text.startswith("-- from zinogre.toml") and "are in zinogre_clips.lua" in text
     clips, moves = back(define(text))
     assert clips == {}
-    assert moves == {n: lua_fields(mv) for n, mv in m.moves.items()}
+    assert moves == {n: lua_fields(mv) for n, mv in m.moves.items() if not mv.own}

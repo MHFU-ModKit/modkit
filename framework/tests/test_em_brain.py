@@ -141,7 +141,11 @@ class Game:
 @pytest.fixture(scope="module")
 def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     lib = host_lib(
-        "src/core/em_vhook.cpp", "src/core/move.cpp", "src/core/steer.cpp", "tests/em_host.cpp"
+        "src/core/em_vhook.cpp",
+        "src/core/move.cpp",
+        "src/core/steer.cpp",
+        "src/core/monster_events.cpp",
+        "tests/em_host.cpp",
     )
     for name in ("host_mem", "host_hunter", "mhfu_move_state", "mhfu_em_moves"):
         getattr(lib, name).restype = ctypes.c_void_p
