@@ -35,9 +35,6 @@ static void spec_of(lua_State *L, int t, mhfu_move_t *mv)
     lua_getfield(L, t, "host_attacks");
     mv->host_attacks = (uint8_t)lua_toboolean(L, -1);
     lua_pop(L, 1);
-    lua_getfield(L, t, "eager");
-    mv->eager = (uint8_t)lua_toboolean(L, -1);
-    lua_pop(L, 1);
     if (lua_getfield(L, t, "carrier") == LUA_TTABLE) {
         int c = lua_gettop(L);
         mv->carrier_main = (uint8_t)list_at(L, c, 1, 0);
@@ -128,11 +125,13 @@ int lb_move_play(lua_State *L)
     mhfu_move_t mv;
     if (lua_istable(L, 2)) {
         spec_of(L, 2, &mv);
+        mv.force = (uint8_t)lua_toboolean(L, 3);
         mhfu_steer_spec_t sp;
         steer_of(L, 2, &sp);
         mhfu_move_steer(&sp);
     } else {
-        /* a MOVE struct the debugger wrote, word by word; it wrote STEER_STATE.NEXT itself */
+        /* a MOVE struct the debugger wrote, word by word, FORCE included; it wrote
+         * STEER_STATE.NEXT itself */
         uint32_t at = (uint32_t)luaL_checkinteger(L, 2);
         luaL_argcheck(L, (at & 3) == 0, 2, "a MOVE struct is word aligned");
         uint32_t *w = (uint32_t *)&mv;

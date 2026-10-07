@@ -67,6 +67,24 @@ static uint8_t in_combat(uint32_t ent, uint8_t aware)
         && mhfu_mem_read_u8(ent + MHFU_ENTITY_MAIN_STATE) != DEAD;
 }
 
+extern "C" int mhfu_monster_state(uint32_t ent, mhfu_monster_state_t *out)
+{
+    uint8_t *b = (uint8_t *)out;
+    for (unsigned k = 0; k < sizeof(*out); k++) b[k] = 0;
+    if (!ent) return 0;
+    uint8_t aware = mhfu_mem_read_u8(ent + MHFU_ENTITY_AWARE);
+    out->aware = (aware & player_bit()) != 0;
+    out->combat = in_combat(ent, aware);
+    out->main_state = mhfu_mem_read_u8(ent + MHFU_ENTITY_MAIN_STATE);
+    out->sub_state = mhfu_mem_read_u8(ent + MHFU_ENTITY_SUB_STATE);
+    out->dead = out->main_state == DEAD;
+    out->noticing = out->aware && !mhfu_mem_read_u8(ent + MHFU_ENTITY_COMBAT_MODE) && !out->dead;
+    out->flinched = mhfu_mem_read_u8(ent + MHFU_ENTITY_FLINCH_MASK);
+    out->severed = (mhfu_mem_read_u8(ent + MHFU_ENTITY_SEVERED) & TAIL_BIT) != 0;
+    out->broken = mhfu_mem_read_u16(ent + MHFU_ENTITY_BROKEN);
+    return 1;
+}
+
 static volatile mhfu_monster_watch_t *watch_of(uint32_t ent, int *fresh)
 {
     *fresh = 0;

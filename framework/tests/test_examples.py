@@ -153,4 +153,4 @@ def test_ported_zinogre_dashes_at_a_far_hunter(lua: Any, tmp_path: Path) -> None
     zin._brain(lua.table_from({**state, "dist": 900.0}))
     zin._brain(lua.table_from(state))
     zin._brain(lua.table_from({**state, "tick": 110}))  # within the gap
-    assert calls(m, "em_play") == [(ENT, 0)]
+    assert calls(m, "em_play") == [(ENT, 0, False)]

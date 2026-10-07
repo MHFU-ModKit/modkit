@@ -309,12 +309,12 @@ function Port:brain(fn) self._brain = fn; return self end
 --- Refuses a pair that is already running, ours or the engine's: entering it zeroes the phase
 --- cursor and restarts the action (the clip, the once-per-entry hitbox, the engine's own chain),
 --- so a brain waits for the move to end (`s.move == nil`). `opts.force = true` restarts anyway,
---- for debugging; `opts.raw = true` writes the cells by hand even with the seam live (debugging
+--- for debugging (an own move: plays past the notice, see Port:move); `opts.raw = true` writes the cells by hand even with the seam live (debugging
 --- the seam itself).
 function Port:play(move_name, min_gap, opts)
   local mv = self.moves[move_name]
   if not mv then log("[port:%s] no such move '%s'", self.name, tostring(move_name)); return false end
-  if is_own(mv) then return self:move(move_name) end
+  if is_own(mv) then return self:move(move_name, opts) end
   if self.ent == 0 then return false end
   min_gap = min_gap or mv.min_gap or 2
   if self._played == move_name and (self._tick - (self._played_at or -99)) < min_gap then
@@ -364,8 +364,9 @@ end
 --- Play own move `name` (a move with `entry` and no pair) through the framework's move player:
 --- it starts at the monster's next AI frame, its clip on every body part, its attacks and steer
 --- as declared, and its `after` follows in C when it ends on its clip, its length or a wall.
---- A scripted pair move ends here. False while the seam is not live.
-function Port:move(name)
+--- Asked while the monster's notice runs (mhfu.monster_state), it waits for combat unless
+--- `opts.force`. A scripted pair move ends here. False while the seam is not live.
+function Port:move(name, opts)
   local mv = self.moves[name]
   if not is_own(mv) then
     log("[port:%s] move('%s'): not an own move", self.name, tostring(name))
@@ -381,7 +382,7 @@ function Port:move(name)
   end
   if not self._native_armed then self:_arm_native() end
   local slot = self._slot[name]
-  if slot == nil or not mhfu.em_play(self.ent, slot) then
+  if slot == nil or not mhfu.em_play(self.ent, slot, opts ~= nil and opts.force == true) then
     log("[port:%s] move('%s') refused (slot %s)", self.name, name, tostring(slot))
     return false
   end
@@ -470,7 +471,8 @@ end
 --- (a monster event: "noticed", "combat_entered", "combat_left", "flinch", "part_broken",
 --- "tail_cut") fires in the AI frame the event is seen instead, `from` still gating when given;
 --- `part` keeps a flinch or break to that part. `on = "flinch"` plays its own move in place of
---- the host's reaction. Up to mhfu.addr.EM_CFG.RULES_COUNT rules per port, installed when the
+--- the host's reaction. `force` plays an own move while the monster's notice runs, which would
+--- otherwise wait for combat (a rule on "noticed" needs it). Up to mhfu.addr.EM_CFG.RULES_COUNT rules per port, installed when the
 --- seam is live. Without the seam the rule is inert and logged as such: the 2 Hz brain is the
 --- fallback.
 function Port:rule(spec)
@@ -495,7 +497,7 @@ function Port:rule(spec)
   end
   self._rules[#self._rules + 1] = {
     from = from, from_main = fm or {}, play = spec.play, label = spec.label,
-    on = spec.on, part = spec.part,
+    on = spec.on, part = spec.part, force = spec.force and true or false,
     min_frames = spec.min_frames or 0,
     dist_lo = spec.dist and spec.dist[1] or 0, dist_hi = spec.dist and spec.dist[2] or 1.0e9,
     receding = spec.receding and true or false, closing = spec.closing and true or false,
@@ -510,7 +512,7 @@ function Port:_seam_rule(r)
   local t = { from_mask = 0, from_sub = EM_ANY, mode = r.mode, min_frames = r.min_frames,
               dist_lo = r.dist_lo, dist_hi = r.dist_hi, receding = r.receding,
               closing = r.closing, cooldown = r.cooldown, count = r.count, on = r.on,
-              part = r.part }
+              part = r.part, force = r.force }
   local from = r.from
   if type(from) == "string" then
     local mv = self.moves[from]

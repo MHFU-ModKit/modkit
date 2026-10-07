@@ -16,7 +16,7 @@
  *
  * A move asked for while the monster's notice runs (the player's ENTITY.AWARE bit set,
  * COMBAT_MODE still 0: the roar, the hub, the AI script's combat entry) waits for it, up to
- * MHFU_MOVE_WAIT AI frames, unless EAGER.
+ * MHFU_MOVE_WAIT AI frames, unless the call FORCEs it.
  *
  * A reaction can be replaced by a move (mhfu_move_react): the engine's own reaction runs up to
  * its enter-action (FLINCH_PARTS counters, pending damage into HP), which then enters the move's
@@ -60,7 +60,7 @@ typedef struct {
     mhfu_move_attack_t attacks[MHFU_MOVE_MAX_ATTACKS];
     uint32_t spawner;                     /* 0 = MHFU_TIGREX_ATTACK_SPAWN */
     uint8_t  host_attacks;                /* 1 keeps the host entry's animation events */
-    uint8_t  eager;                       /* 1 starts while the monster's notice runs */
+    uint8_t  force;                       /* this call: 1 starts while the monster's notice runs */
     uint8_t  _pad[2];
 } mhfu_move_t;
 

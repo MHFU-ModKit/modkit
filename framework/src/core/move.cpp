@@ -40,7 +40,6 @@
 #define MAGIC 0x4D4F5650u   /* 'MOVP' */
 #define NEVER 0xFFFFFFFFu
 #define STOP  2u            /* PENDING: end the running move */
-#define DEAD  5             /* MAIN_STATE of a dead monster */
 #define REACT_MAIN 4        /* em75's reactions */
 /* em75's flinch pairs: REACTION_CHECK code 12 by part and posture */
 #define FLINCH_SUBS ((1u << 0) | (1u << 1) | (1u << 5) | (1u << 6) | (1u << 8))
@@ -56,7 +55,7 @@ static_assert(offsetof(mhfu_move_t, attack_count) == MHFU_MOVE_ATTACK_COUNT, "MO
 static_assert(offsetof(mhfu_move_t, attacks) == MHFU_MOVE_ATTACKS, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, spawner) == MHFU_MOVE_SPAWNER, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, host_attacks) == MHFU_MOVE_HOST_ATTACKS, "MOVE layout");
-static_assert(offsetof(mhfu_move_t, eager) == MHFU_MOVE_EAGER, "MOVE layout");
+static_assert(offsetof(mhfu_move_t, force) == MHFU_MOVE_FORCE, "MOVE layout");
 static_assert(MHFU_MOVE_ATTACKS_COUNT == MHFU_MOVE_MAX_ATTACKS, "MOVE layout");
 static_assert(sizeof(mhfu_move_state_t) == MHFU_MOVE_STATE_SIZE, "MOVE_STATE layout");
 static_assert(offsetof(mhfu_move_state_t, state) == MHFU_MOVE_STATE_STATE, "MOVE_STATE layout");
@@ -171,14 +170,11 @@ static int steer(uint32_t ent)
 
 static uint32_t step(uint32_t ent);
 
-/* the player's bit set and COMBAT_MODE 0: the roar, the hub and the AI script's combat entry
- * still to come (SET_COMBAT_MODE) */
+/* the roar, the hub and the AI script's combat entry still to come (SET_COMBAT_MODE) */
 static int noticing(uint32_t ent)
 {
-    uint32_t bit = 1u << (mhfu_mem_read_u16(MHFU_PLAYER_ENTITY + MHFU_ENTITY_HUNTER_INDEX) & 7);
-    return (mhfu_mem_read_u8(ent + MHFU_ENTITY_AWARE) & bit)
-        && !mhfu_mem_read_u8(ent + MHFU_ENTITY_COMBAT_MODE)
-        && mhfu_mem_read_u8(ent + MHFU_ENTITY_MAIN_STATE) != DEAD;
+    mhfu_monster_state_t st;
+    return mhfu_monster_state(ent, &st) && st.noticing;
 }
 
 /* attack i's node, if it is still ours and live, through its end state */
@@ -389,7 +385,7 @@ static uint32_t step(uint32_t ent)
         if (S->state == MHFU_MOVE_ENTERING || S->state == MHFU_MOVE_PLAYING)
             finish(MHFU_MOVE_END_STOPPED, pair_of(S->entity));
     } else if (S->pending && ent == S->next_entity) {
-        if (!S->next.eager && noticing(ent) && S->waited < MHFU_MOVE_WAIT) {
+        if (!S->next.force && noticing(ent) && S->waited < MHFU_MOVE_WAIT) {
             S->waited++;
         } else {
             if (S->state == MHFU_MOVE_ENTERING || S->state == MHFU_MOVE_PLAYING)

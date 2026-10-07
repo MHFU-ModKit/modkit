@@ -92,7 +92,7 @@ typedef struct {
     uint8_t  from_mask, from_sub, to_main, to_sub, mode, flags;
     uint8_t  from_move, play_move;   /* own move slot + 1, 0 none (mhfu_em_rule_t) */
     uint32_t min_frames, d2_lo, d2_hi, left, fired, last_fire, cooldown;
-    uint8_t  on, part, _pad[2];      /* a monster event, 0 none; its part or MHFU_EM_ANY_PART */
+    uint8_t  on, part, force, _pad;  /* a monster event, 0 none; its part or MHFU_EM_ANY_PART */
 } cfg_rule_t;
 typedef struct {
     uint8_t  want_main, want_sub, armed, arm29;    /* +0x00 */
@@ -155,6 +155,7 @@ static_assert(offsetof(cfg_rule_t, last_fire)  == MHFU_EM_RULE_LAST_FIRE,  "EM_R
 static_assert(offsetof(cfg_rule_t, cooldown)   == MHFU_EM_RULE_COOLDOWN,   "EM_RULE layout");
 static_assert(offsetof(cfg_rule_t, on)         == MHFU_EM_RULE_ON,         "EM_RULE layout");
 static_assert(offsetof(cfg_rule_t, part)       == MHFU_EM_RULE_PART,       "EM_RULE layout");
+static_assert(offsetof(cfg_rule_t, force)      == MHFU_EM_RULE_FORCE,      "EM_RULE layout");
 
 #define CFG_CANARY_VAL 0x5645484Bu   /* 'VEHK' */
 
@@ -186,6 +187,7 @@ static_assert(offsetof(mhfu_em_moves_t, key_top) == MHFU_EM_MOVES_KEY_TOP, "EM_M
 static_assert(offsetof(mhfu_em_moves_t, moves) == MHFU_EM_MOVES_MOVES, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, keys) == MHFU_EM_MOVES_KEYS, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, scratch) == MHFU_EM_MOVES_SCRATCH, "EM_MOVES layout");
+static_assert(offsetof(mhfu_em_moves_t, req_force) == MHFU_EM_MOVES_REQ_FORCE, "EM_MOVES layout");
 static_assert(MHFU_EM_MOVES_MOVES_COUNT == MHFU_EM_MOVES, "EM_MOVES layout");
 static_assert(MHFU_EM_MOVES_KEYS_COUNT == MHFU_EM_KEYS, "EM_MOVES layout");
 
@@ -348,12 +350,15 @@ static void tag(uint32_t slot, const volatile mhfu_move_state_t *m)
     R->plays++;
 }
 
-static int play_slot(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m)
+static int play_slot(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m, int force)
 {
     if (slot >= MHFU_EM_MOVES || !R->moves[slot].valid) return 0;
     const volatile mhfu_em_own_t *o = &R->moves[slot];
+    mhfu_move_t mv;
+    copy_words(&mv, &o->move, sizeof(mv));
+    mv.force = (uint8_t)(force != 0);
     mhfu_move_steer((const mhfu_steer_spec_t *)steer_of(o));
-    if (!mhfu_move_play(ent, (const mhfu_move_t *)&o->move)) return 0;
+    if (!mhfu_move_play(ent, &mv)) return 0;
     tag(slot, m);
     return 1;
 }
@@ -405,7 +410,7 @@ static void count_fire(cfg_rule_t *r)
 static int fire(cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_state_t *m)
 {
     if (r->play_move) {
-        if (!play_slot(ent, r->play_move - 1u, m)) return 0;
+        if (!play_slot(ent, r->play_move - 1u, m, r->force)) return 0;
     } else {
         enter(ent, r->to_main, r->to_sub, r->mode);
     }
@@ -502,7 +507,7 @@ static int act(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_t edges
 {
     if (R->req_ent == ent) {
         R->req_ent = 0;
-        play_slot(ent, R->req_slot, m);
+        play_slot(ent, R->req_slot, m, (int)R->req_force);
         return 0;
     }
     if (react_take(ent, m, edges)) return 1;
@@ -510,7 +515,7 @@ static int act(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_t edges
     if (k >= 0 && m->state == MHFU_MOVE_DONE && m->entity == ent
         && (m->end == MHFU_MOVE_END_BACK || m->end == MHFU_MOVE_END_WALL)
         && R->moves[k].after != MHFU_EM_NO_MOVE) {
-        if (play_slot(ent, R->moves[k].after, m)) R->chained++;
+        if (play_slot(ent, R->moves[k].after, m, m->move.force)) R->chained++;
         else R->tag_slot = MHFU_EM_NO_MOVE;   /* an empty AFTER: not again */
         return 0;
     }
@@ -718,6 +723,7 @@ extern "C" void mhfu_em_rule(int slot, const mhfu_em_rule_t *r)
     c->play_move  = r->play_move;
     c->on         = r->on;
     c->part       = r->part;
+    c->force      = r->force;
     c->min_frames = r->min_frames;
     c->d2_lo      = f32_bits(lo * lo);
     c->d2_hi      = f32_bits(hi * hi);
@@ -793,12 +799,14 @@ extern "C" int mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_sp
     return 1;
 }
 
-extern "C" int mhfu_em_play(uint32_t entity, int slot)
+extern "C" int mhfu_em_play(uint32_t entity, int slot, int force)
 {
     if (!R || !g_installed || !entity || slot < 0 || slot >= MHFU_EM_MOVES
         || !R->moves[slot].valid)
         return 0;
+    R->req_ent = 0;
     R->req_slot = (uint32_t)slot;
+    R->req_force = (uint32_t)(force != 0);
     R->req_ent = entity;
     return 1;
 }

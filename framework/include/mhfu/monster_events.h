@@ -88,6 +88,22 @@ static inline mhfu_hook_rc_t mhfu_on_monster_event(mhfu_event_id_t id, mhfu_mons
     return mhfu_event_on(id, (mhfu_event_fn_t)cb, priority, owner);
 }
 
+/* A big monster now, from the cells the events step reads: what a mod asks before it plays. */
+typedef struct {
+    uint8_t  aware;      /* the player's ENTITY.AWARE bit: it has noticed the player */
+    uint8_t  combat;     /* the player's yellow eye is on for it (EYE_UPDATE's rule) */
+    uint8_t  noticing;   /* aware, COMBAT_MODE still 0: the notice runs; a move asked waits */
+    uint8_t  dead;
+    uint8_t  main_state, sub_state;
+    uint8_t  flinched;   /* ENTITY.FLINCH_MASK: the parts that flinched this AI frame */
+    uint8_t  severed;    /* the tail is cut */
+    uint16_t broken;     /* ENTITY.BROKEN */
+    uint16_t _pad;
+} mhfu_monster_state_t;
+
+/* 0 (and *out zeroed) for no entity. Any thread; it only reads. */
+int mhfu_monster_state(uint32_t entity, mhfu_monster_state_t *out);
+
 /* The brain's call, each AI frame of entity before the host step; stale: the host step did not
  * run in the frame before, so the per-frame cells are left over from an earlier one. Returns
  * what this frame raised (bit kind) and the parts that flinched in *parts. */

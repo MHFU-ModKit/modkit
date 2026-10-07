@@ -75,7 +75,8 @@ int lb_em_rule(lua_State *L)
          : (uint8_t)(luaL_checkoption(L, -1, NULL, mhfu_monster_event_names) + MHFU_MONSTER_NOTICED);
     lua_pop(L, 1);
     r.part       = (uint8_t)tbl_int(L, 2, "part", MHFU_EM_ANY_PART);
-    r._pad[0] = r._pad[1] = 0;
+    r.force      = (uint8_t)tbl_bool(L, 2, "force");
+    r._pad       = 0;
     mhfu_em_rule(slot, &r);
     lua_pushboolean(L, 1);
     return 1;
@@ -147,7 +148,7 @@ int lb_em_moves_clear(lua_State *L)
 int lb_em_play(lua_State *L)
 {
     lua_pushboolean(L, mhfu_em_play((uint32_t)luaL_checkinteger(L, 1),
-                                    (int)luaL_checkinteger(L, 2)));
+                                    (int)luaL_checkinteger(L, 2), lua_toboolean(L, 3)));
     return 1;
 }
 

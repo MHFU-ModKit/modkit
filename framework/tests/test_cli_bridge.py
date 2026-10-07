@@ -96,8 +96,8 @@ def test_clear_releases_the_action(game):
 PORT_LIB = """{ ports = { zin = { name = "zin", ent = %d, log = {},
   latch = function(self, a1, uses) self.log[#self.log + 1] = a1 .. "x" .. uses end,
   release = function(self) self.log[#self.log + 1] = "release" end,
-  move = function(self, name)
-    self.log[#self.log + 1] = "move " .. name
+  move = function(self, name, opts)
+    self.log[#self.log + 1] = "move " .. name .. (opts.force and " forced" or "")
     return name == "stamp"
   end } } }"""
 
@@ -156,13 +156,13 @@ def test_move_plays_the_block_spec_on_the_slot(game):
 def test_own_move_by_name_through_the_port():
     game = Game(PORT_LIB % Game().slots[1])
 
-    def own(name: str, slot: int = 1) -> int:
+    def own(name: str, slot: int = 1, arg: int = 1) -> int:
         raw = name.encode().ljust(CB.NAME.count or 0, b"\0")
         game.mem.update({BR + CB.NAME + i: c for i, c in enumerate(raw)})
-        game.send(MOVE, slot=slot, arg=1)
+        game.send(MOVE, slot=slot, arg=arg)
         return game.mem[BR + CB.RESULT]
 
-    assert (own("stamp"), own("nope"), own("stamp", slot=2)) == (1, 0, 0)
+    assert (own("stamp"), own("nope"), own("stamp", slot=2), own("stamp", arg=3)) == (1, 0, 0, 1)
     log = game.lua.eval("package.loaded.mhfu_port.ports.zin.log")
-    assert list(log.values()) == ["move stamp", "move nope"]
+    assert list(log.values()) == ["move stamp", "move nope", "move stamp forced"]
     assert game.moves == []

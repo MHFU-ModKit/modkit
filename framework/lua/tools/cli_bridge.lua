@@ -25,7 +25,8 @@ local CMD_FORCE = 1
 local CMD_FREEZE = 2
 local CMD_CLEAR = 3
 local CMD_MOVE  = 4                   -- the MOVE struct in the block, on SLOT's monster
-local ARG_OWN   = 1                   -- ...or, with this ARG, the port's own move NAME
+local ARG_OWN   = 1                   -- ...or, with this ARG bit, the port's own move NAME
+local ARG_FORCE = 2                   -- ...played past the monster's notice
 
 -- loaded before the tick is wrapped below, so the library's mhfu_tick is the one wrapped
 local has_port, port_lib = pcall(require, "mhfu_port")
@@ -136,10 +137,11 @@ function cli_bridge_tick()
         release(a0)
         mhfu.move_stop()
         mhfu.write_u32(BR + CB.STATUS, 0)   -- nothing held
-      elseif cmd == CMD_MOVE and a1 == ARG_OWN then
+      elseif cmd == CMD_MOVE and (a1 & ARG_OWN) ~= 0 then
         local ent = entity(a0)
         local p = ent and port_of(ent)
-        local ok = p and p:move(name_at(BR + CB.NAME, CB.NAME_COUNT))
+        local ok = p and p:move(name_at(BR + CB.NAME, CB.NAME_COUNT),
+                                { force = (a1 & ARG_FORCE) ~= 0 })
         mhfu.write_u32(BR + CB.RESULT, ok and 1 or 0)
       elseif cmd == CMD_MOVE then
         local ent = entity(a0)

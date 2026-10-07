@@ -57,7 +57,8 @@ typedef struct {
                             * the distance still gating; MHFU_MONSTER_FLINCH plays its own move
                             * in place of the host's reaction; 0 none */
     uint8_t  part;         /* FLINCH, PART_BROKEN: only that part's; MHFU_EM_ANY_PART */
-    uint8_t  _pad[2];
+    uint8_t  force;        /* 1: play_move starts while the monster's notice runs (MOVE.FORCE) */
+    uint8_t  _pad;
 } mhfu_em_rule_t;
 
 typedef struct {
@@ -110,8 +111,9 @@ void mhfu_em_status(mhfu_em_status_t *out);
 /* --- own moves ------------------------------------------------------------------------------
  * A port's own moves, by slot, in partition memory. The brain, in C on the wrapped AI step, plays
  * one through the move player that same AI frame: one asked for (mhfu_em_play), else the AFTER of
- * one of ours that ended on its clip, its length or a wall, else a rule's. A slot with an AFTER
- * ends into its carrier (its back pair), so the host brain does not cut in before the next. */
+ * one of ours that ended on its clip, its length or a wall (forced as that one was), else a
+ * rule's. A slot with an AFTER ends into its carrier (its back pair), so the host brain does not
+ * cut in before the next. A slot's FORCE is the call's, never the slot's. */
 #define MHFU_EM_MOVES   16
 #define MHFU_EM_KEYS    2048
 #define MHFU_EM_NO_MOVE 0xFFu
@@ -137,6 +139,7 @@ typedef struct {
     mhfu_em_own_t moves[MHFU_EM_MOVES];
     uint16_t keys[MHFU_EM_KEYS];
     mhfu_steer_spec_t scratch;               /* the steering handed to the move player */
+    uint32_t req_force;                      /* REQ_SLOT starts while the notice runs */
 } mhfu_em_moves_t;
 
 /* Empties every slot and the turn keys. */
@@ -144,8 +147,9 @@ void mhfu_em_moves_clear(void);
 /* Slot `slot` plays mv, steered by s (its keys copied); `after` is a slot or MHFU_EM_NO_MOVE.
  * 0 for a bad slot or no room left for the keys. */
 int  mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_spec_t *s, uint8_t after);
-/* Plays slot on entity at its next AI step; 0 while nothing is wrapped or the slot is empty. */
-int  mhfu_em_play(uint32_t entity, int slot);
+/* Plays slot on entity at its next AI step, forced past the notice wait (MOVE.FORCE) or not; 0
+ * while nothing is wrapped or the slot is empty. */
+int  mhfu_em_play(uint32_t entity, int slot, int force);
 /* The slot of the move the move player runs (entering or playing), if it came from here; -1. */
 int  mhfu_em_playing(void);
 /* The registry, or 0 before the framework's init. */

@@ -394,7 +394,8 @@ function mhfu.em_request(main, sub, mode) end
 ---@return true
 function mhfu.em_substitute(slot, from_mask, from_sub, to_main, to_sub, count) end
 
----Rule slot 0..3: a brain rule the AI step checks every frame (30 Hz), with no Lua in the loop.
+---Rule slot 0..mhfu.addr.EM_CFG.RULES_COUNT-1: a brain rule the AI step checks every frame (30 Hz),
+---with no Lua in the loop.
 ---@param slot integer
 ---@param rule mhfu.EmRule? nil clears the slot
 ---@return true
@@ -610,11 +611,14 @@ function mhfu.on_bigmonster_action(fn, priority) end
 -- wraps: the clip on every body part, attacks at clip frames, the native AI back at the end.
 
 ---Starts a move on ent at its next AI step, ending one it plays; false while nothing is wrapped.
----`spec` is a table, or the address of a MOVE struct in memory (the debug bridge's).
+---`spec` is a table, or the address of a MOVE struct in memory (the debug bridge's, FORCE in it).
+---Asked while the monster's notice runs (`mhfu.monster_state(ent).noticing`), it waits up to 450
+---AI frames for the roar and combat entry, unless `force`.
 ---@param ent integer
 ---@param spec mhfu.Move|integer
+---@param force? boolean
 ---@return boolean
-function mhfu.move_play(ent, spec) end
+function mhfu.move_play(ent, spec, force) end
 
 ---Ends the running move at the next AI step; the carrier pair keeps running and hands off itself.
 ---@return true
@@ -640,7 +644,6 @@ function mhfu.move_block() end
 ---@field spawner? integer the species' attack spawner, default the Tigrex's
 ---@field host_attacks? boolean keep the host entry's own attacks and effects at its clip frames (MONSTER_VTABLE.ANIM_EVENTS); default off while the move plays
 ---@field steer? mhfu.MoveSteer how it turns and stops; default no turn, no walls
----@field eager? boolean start while the monster's notice runs (the player's ENTITY.AWARE bit, COMBAT_MODE 0); by default the move waits up to 450 AI frames for its roar and combat entry
 
 ---How a move turns and stops (mhfu/steer.h); every field is optional.
 ---@class mhfu.MoveSteer
@@ -701,11 +704,12 @@ function mhfu.em_move(slot, spec) end
 function mhfu.em_moves_clear() end
 
 ---Plays own move `slot` on ent at its next AI step; false while nothing is wrapped or the slot is
----empty.
+---empty. `force` starts it while the monster's notice runs, as `mhfu.move_play`'s.
 ---@param ent integer
 ---@param slot integer
+---@param force? boolean
 ---@return boolean
-function mhfu.em_play(ent, slot) end
+function mhfu.em_play(ent, slot, force) end
 
 ---The slot of the own move the move player is playing, -1 if none of ours.
 ---@return integer
@@ -790,3 +794,28 @@ function mhfu.monster_events_block() end
 ---@field sub integer
 ---@field data integer flinch: the flinched parts; part_broken: the new broken bits; noticed: the aware bits; combat: 1 entered, 0 left; tail_cut: the cut count
 ---@field part? integer flinch, part_broken: the lowest flinched part
+
+---A big monster now, read from its cells (the monster events' own reads): whether it noticed the
+---player, is in combat, runs its notice; nil for no entity. Any thread.
+---@param ent integer
+---@return mhfu.MonsterState?
+function mhfu.monster_state(ent) end
+
+---What `mhfu.monster_state` returns.
+---@class mhfu.MonsterState
+---@field aware boolean the player's ENTITY.AWARE bit: it noticed the player
+---@field combat boolean the player's yellow eye is on for it
+---@field noticing boolean aware, COMBAT_MODE still 0: its notice runs, and a move asked now waits unless forced
+---@field dead boolean
+---@field severed boolean the tail is cut
+---@field main integer its pair
+---@field sub integer
+---@field flinched integer ENTITY.FLINCH_MASK: the parts that flinched this AI frame
+---@field broken integer ENTITY.BROKEN
+
+-- brain rules on monster events (bind_em.cpp) ----------------------------------------------------
+
+---@class mhfu.EmRule
+---@field on? "noticed"|"combat_entered"|"combat_left"|"flinch"|"part_broken"|"tail_cut" fires in the AI frame the event is seen, `from_*` and the distance still gating; "flinch" plays its own move (`play_move`) in place of the host's reaction
+---@field part? integer "flinch", "part_broken": only that part's (an ENTITY.FLINCH_MASK bit); default any
+---@field force? boolean `play_move` starts while the monster's notice runs (a rule on "noticed" needs it)
