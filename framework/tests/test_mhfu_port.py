@@ -142,6 +142,7 @@ def memory(lua: Any) -> None:
         mhfu.get_area_index = function() return 99 end
         mhfu.entity_alive = function(e) return e ~= 0 end
         mhfu.entities_of_type = function() return {{}} end
+        mhfu.em_playing = function() return -1 end
         ENT = mhfu.addr.NPC_HEAP
         local E = mhfu.addr.ENTITY
         local MAIN, SUB = ENT + E.MAIN_STATE, ENT + E.SUB_STATE
@@ -178,24 +179,24 @@ ticks(1)
 -- a re-entry of the running pair is refused, once in the log; forced it goes through
 assert(zin:play("lunge"))
 local m, s = pair()
-assert(m == 1 and s == 4 and zin.move == "lunge")
+assert(m == 1 and s == 4 and zin.scripted == "lunge")
 ticks(3)
 assert(not zin:play("lunge") and not zin:play("lunge"), "re-entry refused")
 ticks(1)
 assert(count("refused: %(1,4%) is already running %(ours%)") == 1 and count("refused") == 1)
-assert(zin:play("lunge", 0, { force = true }) and zin.move == "lunge")
+assert(zin:play("lunge", 0, { force = true }) and zin.scripted == "lunge")
 
 -- the engine leaves the pair: `after` is walked
 set_pair(0, 3)
 ticks(1)
 m, s = pair()
-assert(m == 1 and s == 3 and zin.move == "lunge_stop" and zin.last_move == "lunge")
+assert(m == 1 and s == 3 and zin.scripted == "lunge_stop" and zin.last_move == "lunge")
 assert(count("'lunge' ended %-> after='lunge_stop'") == 1 and zin.clip == 5)
 
 -- hold_max ends a standing pair into `after`
 set_pair(0, 1)
 ticks(3)
-assert(zin.move == nil and zin:play("lunge"))
+assert(zin.scripted == nil and zin:play("lunge"))
 ticks(9)
 m, s = pair()
 assert(m == 1 and s == 3, "hold_max walked to lunge_stop")
@@ -210,7 +211,7 @@ assert(zin:play("held"))
 set_phase(3)
 ticks(25)
 assert(count("move 'held' PARKED: %(2,9%) phase 3 unchanged") == 1 and count("PARKED") == 1)
-assert(zin.move == "held")
+assert(zin.scripted == "held")
 
 -- a declared pair the engine enters itself is painted once per entry
 zin:release()
@@ -222,7 +223,7 @@ assert(count("engine entered 'lunge' itself") == 1)
 set_pair(0, 3); ticks(1); set_pair(1, 4)
 assert(HOOK({ entity = ENT, action_id = 17 }) == 6, "painted again on the next entry")
 set_pair(0, 4)
-assert(HOOK({ entity = ENT, action_id = 51 }) == nil and zin.move == nil)
+assert(HOOK({ entity = ENT, action_id = 51 }) == nil and zin.scripted == nil)
 
 -- an `after` the engine already reached is adopted, not re-written
 set_pair(0, 1)
@@ -230,7 +231,7 @@ ticks(2)
 assert(zin:play("lunge"))
 set_pair(1, 3)
 ticks(2)
-assert(zin.move == "lunge_stop" and count("the engine is already in %(1,3%), adopted") == 1)
+assert(zin.scripted == "lunge_stop" and count("the engine is already in %(1,3%), adopted") == 1)
 """
 
 
@@ -297,9 +298,9 @@ assert(zin:play("lunge"))
 local m, s = pair()
 assert(m == 1 and s == 4 and SEAM.req == nil and next(SEAM.subs) == nil)
 set_pair(0, 1); ticks(1)
-m, s = pair(); assert(m == 0 and s == 3 and zin.move == "lunge_stop")
+m, s = pair(); assert(m == 0 and s == 3 and zin.scripted == "lunge_stop")
 set_pair(0, 1); ticks(2)
-assert(zin.move == nil)
+assert(zin.scripted == nil)
 
 -- the seam up: the next tick arms claims and rules, the unused slots cleared
 SEAM.installed = true
@@ -314,7 +315,7 @@ assert(r and r.from_mask == 0x02 and r.from_sub == 4 and r.to_main == 0 and r.to
        and r.min_frames == 15 and r.receding == true and r.closing == false
        and r.dist_lo == 250 and r.cooldown == 30)
 assert(count("claim: host enter%-actions with main in 0x02 %-> 'lunge'") == 1)
-assert(count("rule 1: main 0x02 sub 4 >=15 frames d%[250,inf%) receding %-> 'lunge_stop'") == 1)
+assert(count("rule 1: 'lunge' >=15 frames d%[250,inf%) receding %-> 'lunge_stop'") == 1)
 
 -- play() requests through the seam and is confirmed by the cells; `after` is adopted
 local t2 = #mhfu.logs
@@ -325,7 +326,7 @@ assert(count("'lunge' entered natively %(1,4%), provisioned") == 1 and zin._req 
 set_pair(0, 3)
 ticks(1)
 assert(count("move 'lunge' %(1,4%) ended after", t2) == 1)
-assert(zin.move == "lunge_stop" and count("adopted", t2) == 1 and SEAM.req[1] == 1)
+assert(zin.scripted == "lunge_stop" and count("adopted", t2) == 1 and SEAM.req[1] == 1)
 set_pair(0, 1); ticks(2)
 
 -- the translator's other main for the id is tracked, not read as ended
@@ -334,12 +335,12 @@ assert(zin:play("lunge"))
 ticks(1)
 assert(count("entered natively as %(2,4%) — the translator's main for id 4") == 1)
 ticks(3)
-assert(zin.move == "lunge" and zin._entered[1] == 2)
+assert(zin.scripted == "lunge" and zin._entered[1] == 2)
 set_pair(0, 3); ticks(1)
 assert(count("move 'lunge' %(2,4%) ended after") == 1)
 SEAM.land_as = nil
 set_pair(0, 1); ticks(3)
-assert(zin.move == nil)
+assert(zin.scripted == nil)
 
 -- landed and over within the tick: not a decline, `after` adopted where he stands
 local t3 = #mhfu.logs
@@ -349,7 +350,7 @@ ticks(1)
 assert(count("'lunge' entered natively %(1,4%) and was over within the tick "
              .. "%(now %(0,3%)%)", t3) == 1)
 assert(count("was requested and issued but", t3) == 0)
-assert(zin.move == "lunge_stop" and count("adopted", t3) == 1)
+assert(zin.scripted == "lunge_stop" and count("adopted", t3) == 1)
 set_pair(0, 1); ticks(3)
 
 -- a declined request is reported with the ring and walks no `after`
@@ -359,7 +360,7 @@ assert(zin:play("lunge"))
 ticks(2)
 assert(count("was requested and issued but the cells read %(0,1%)", t4) == 1)
 assert(count("last enter%-actions: .*%(1,4,m0%)", t4) == 1)
-assert(zin.move == nil and zin.clip == nil and count("after='lunge_stop'", t4) == 0)
+assert(zin.scripted == nil and zin.clip == nil and count("after='lunge_stop'", t4) == 0)
 SEAM.land = true
 
 -- {raw=true} writes the cells with the seam live
@@ -368,7 +369,7 @@ assert(zin:play("lunge", 0, { raw = true }))
 m, s = pair()
 assert(m == 1 and s == 4 and SEAM.req_done == reqs)
 ticks(1)
-assert(zin.move == "lunge")
+assert(zin.scripted == "lunge")
 set_pair(0, 1); ticks(2)
 
 -- a redefine re-arms; the seam-live line is said once
@@ -454,3 +455,76 @@ def test_fits_the_file_buffer() -> None:
     skipped_from = int(m[1]) * 1024 - 1  # read_script skips a read that fills the buffer
     for path in sorted((framework / "lua").glob("[le]*/*.lua")):
         assert path.stat().st_size < skipped_from, f"{path.name}: lua_host skips it for its size"
+
+
+OWN = """
+local SEAM = { moves = {}, rules = {}, plays = {}, playing = -1 }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) SEAM.moves[slot] = t; return true end
+function mhfu.em_moves_clear() SEAM.moves = {}; return true end
+function mhfu.em_play(ent, slot) SEAM.plays[#SEAM.plays + 1] = { ent, slot }; return true end
+function mhfu.em_playing() return SEAM.playing end
+function mhfu.em_rule(slot, r) SEAM.rules[slot] = r; return true end
+local HOOK
+mhfu.on_bigmonster_action = function(fn) HOOK = fn end
+local P = require("mhfu_port")
+local z = P.define{ name = "z", species = 75 }
+z.ent = ENT
+ticks(1)
+
+-- own moves numbered by name; `after` a slot, or a pair move's pair as the back pair
+assert(z._slot.dash == 0 and z._slot.spin == 1 and z._slot.stamp == 2)
+local st, da = SEAM.moves[2], SEAM.moves[0]
+assert(st.entry == 46 and st.after == 0 and st.attacks[1][1] == 56 and st.steer.curve)
+assert(da.after == nil and da.back[1] == 1 and da.back[2] == 4 and da.steer.turn == "hunter")
+assert(SEAM.moves[1].after == nil and SEAM.moves[1].back == nil)
+
+-- rules: from a pair to an own move, from an own move to a pair
+local r0, r1 = SEAM.rules[0], SEAM.rules[1]
+assert(r0.from_mask == 1 and r0.play_move == 2 and r0.from_move == nil and r0.cooldown == 300)
+assert(r1.from_move == 0 and r1.from_mask == 0 and r1.to_main == 1 and r1.to_sub == 4)
+assert(r1.receding and r1.count == 2 and r1.play_move == nil)
+
+-- port:move plays the slot and drops any latch; a pair move is not one
+z.clip, z._clip_uses = 99, 1
+assert(z:move("stamp") and SEAM.plays[1][2] == 2 and z.clip == nil and z.own == "stamp")
+assert(not z:move("lunge") and z:play("dash") and SEAM.plays[2][2] == 0)
+
+-- the executor hook leaves the move player's dispatch alone
+set_pair(1, 4)
+SEAM.playing = 2
+assert(HOOK({ entity = ENT, action_id = 17 }) == nil)
+ticks(1)
+assert(z.own == "stamp")
+
+-- an own move ended into its `after` pair move: that move is adopted
+SEAM.playing = 0
+ticks(1)
+SEAM.playing = -1
+ticks(1)
+assert(z.own == nil and z.scripted == "lunge" and count("own move ended into after='lunge'") == 1)
+"""
+
+
+def test_own_moves(lua: Any, tmp_path: Path) -> None:
+    """A port's own moves and rules from the module mhfu-port generates, into the seam."""
+    from mhfu_port import layout, manifest, moves, travel
+
+    m = manifest.loads(
+        '[port]\nname = "z"\nhost_species = 75\npac = "z.bin"\n[source]\nmodel = 5339\n'
+        "[clips.stamp]\nsource = 200\n[clips.dash]\nslot = 20\n"
+        "[moves.lunge]\nmain = 1\nsub = 4\nclip = 'dash'\n"
+        "[moves.stamp]\nclip = 'stamp'\nafter = 'dash'\n"
+        "[[moves.stamp.attack]]\nid = 6\nframe = 56\nend = 80\n"
+        "[moves.dash]\nclip = 'dash'\nafter = 'lunge'\n[moves.dash.steer]\nturn = 'hunter'\n"
+        "[moves.spin]\nanim = 9\n"
+        "[[rule]]\nplay = 'stamp'\nfrom_main = [0]\ncooldown = 300\n"
+        "[[rule]]\nplay = 'lunge'\nfrom = 'dash'\nreceding = true\ncount = 2\n"
+    )
+    turn = travel.Turn(4, (0, 0x2000, 0x4000), 0x4000, None)
+    lay = layout.Layout({20: 20, 46: 200, 9: 9}, turns={46: turn})
+    (tmp_path / moves.module_name(m)).write_text(moves.lua(m, lay))
+    (tmp_path / layout.module_name(m)).write_text(layout.lua(m, lay))
+    lua.execute(f"package.path = package.path .. ';' .. {str(tmp_path / '?.lua')!r}")
+    memory(lua)
+    lua.execute(OWN)
