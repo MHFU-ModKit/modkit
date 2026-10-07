@@ -9,7 +9,8 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from mhfu_port.manifest import EVENTS, MAIN_STATES, PARTS, SEAM_RULES, UNLIMITED_DIST, Rule
-from PySide6.QtWidgets import QAbstractSpinBox, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QAbstractSpinBox, QListView, QVBoxLayout, QWidget
 
 from mhfu_studio.monster import rules
 from mhfu_studio.monster.panels.common import kind
@@ -47,7 +48,10 @@ class RulesSection(QWidget):
             " to change it.",
             empty="No rules yet: New rule plays the picked move when the monster notices you",
         )
-        self.list.setMaximumHeight(120)
+        self.list.setWordWrap(True)
+        self.list.setResizeMode(QListView.ResizeMode.Adjust)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.setMaximumHeight(170)
         self.list.picked.connect(lambda i: act("pick rule", lambda: ws.pick_rule(int(i)))())
         self.new = kit.button(
             "New rule",
@@ -194,8 +198,7 @@ class RulesSection(QWidget):
         ]
         self.list.set_items(items)
         i = ws.picked_rule
-        if i is not None:
-            self.list.setCurrentRow(i)
+        self.list.setCurrentRow(-1 if i is None else i)
         self.delete.setEnabled(i is not None)
         self.editor.setVisible(i is not None)
         if i is not None:
