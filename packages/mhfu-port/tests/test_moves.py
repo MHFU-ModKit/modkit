@@ -76,8 +76,17 @@ def _m(extra: str = OWN) -> manifest.Manifest:
 
 
 def _body(text: str) -> list[str]:
-    lines = [line.strip() for line in text.splitlines() if not line.startswith("--")]
-    return [line for line in lines if line not in ("return {", "},", "}", "")]
+    lines = [line.strip() for line in moves.BUILD.sub("", text).splitlines()]
+    return [line for line in lines if line not in ("return {", "},", "}", "") and line[:2] != "--"]
+
+
+def test_build():
+    text = moves.lua(_m(), LAYOUT, {6})
+    b = moves.build_of(text)
+    assert 0 < b < 1 << 31 and text.startswith("--") and "return {\n  build = 0x" in text
+    assert moves.build_of(moves.lua(_m(), LAYOUT, {6})) == b
+    assert moves.build_of(moves.lua(_m(OWN.replace("40", "41")), LAYOUT, {6})) != b
+    assert moves.build_of("return {}") == 0
 
 
 def test_lua():

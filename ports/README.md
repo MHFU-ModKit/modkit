@@ -99,7 +99,8 @@ each own move's executor entry and turn keys come from the same build as the cli
 a move it cannot carry (no entry, an attack past its clip or with no host record) fails the
 build. `mhfu_port.lua`'s `P.define` takes it when a mod gives no `moves` or `rules`, and
 `port:move(name)` plays an own move. A module re-written while the game runs (`inject`, the
-studio's play in game) is the port's from the next tick. `mhfu move ride NAME --brain` boots a
+studio's play in game; each writes only a module that changed) is the port's from the next tick;
+its `build` lets `mhfu.live.moves.play_own(..., build=)` wait for that. `mhfu move ride NAME --brain` boots a
 port with them; `mhfu move play --own NAME [--force]` plays one of its own moves.
 
 ## Example

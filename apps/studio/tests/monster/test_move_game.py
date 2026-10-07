@@ -41,8 +41,8 @@ def zinogre(
     ws.game_session = lambda: nullcontext("session")  # type: ignore[assignment,arg-type,return-value]
     ws.game_running = lambda: True
 
-    def play_own(s: Any, name: str, force: bool) -> bool:
-        assert s == "session"
+    def play_own(s: Any, name: str, force: bool, build: int) -> bool:
+        assert s == "session" and build > 0
         asked.append((name, force))
         return True
 
@@ -80,18 +80,19 @@ def test_saves_deploys_and_asks(
     assert moves.module_name(m) in ws.message
     ws.play_move_in_game(force=True)
     assert asked[-1] == (name, True)
+    assert ws.message.endswith("saved, the memory stick's modules were current")
 
 
 def test_not_taken(zinogre: MonsterWorkspace) -> None:
     name, _ = own_and_pair(zinogre)
     zinogre.select_move(name)
-    zinogre.play_own = lambda s, n, f: False
+    zinogre.play_own = lambda s, n, f, b: False
     zinogre.play_move_in_game()
     assert zinogre.message.startswith(f"the game did not take {name}: no port rides")
 
 
 def test_bridge_missing(zinogre: MonsterWorkspace) -> None:
-    def play_own(s: Any, name: str, force: bool) -> bool:
+    def play_own(s: Any, name: str, force: bool, build: int) -> bool:
         raise TimeoutError("no ack from cli_bridge.lua")
 
     zinogre.select_move(own_and_pair(zinogre)[0])
@@ -136,14 +137,27 @@ def test_moved_clip_refused(zinogre: MonsterWorkspace, asked: list[tuple[str, bo
 def test_the_seam(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[tuple[object, ...]] = []
 
-    def play_own(s: object, name: str, **kw: bool) -> bool:
+    def play_own(s: object, name: str, **kw: object) -> bool:
         seen.append((s, name, kw))
         return True
 
     monkeypatch.setattr(live_moves, "play_own", play_own)
     assert move_game.play_own("s", "stamp") is True  # type: ignore[arg-type]
-    assert move_game.play_own("s", "stamp", force=True) is True  # type: ignore[arg-type]
-    assert seen == [("s", "stamp", {"force": False}), ("s", "stamp", {"force": True})]
+    assert move_game.play_own("s", "stamp", force=True, build=7) is True  # type: ignore[arg-type]
+    assert seen == [
+        ("s", "stamp", {"force": False, "build": 0}),
+        ("s", "stamp", {"force": True, "build": 7}),
+    ]
+
+
+def test_a_stale_module(zinogre: MonsterWorkspace) -> None:
+    def play_own(s: Any, name: str, force: bool, build: int) -> bool:
+        raise live_moves.Stale(f"the port does not run moves module build {build:08X}")
+
+    zinogre.select_move(own_and_pair(zinogre)[0])
+    zinogre.play_own = play_own
+    zinogre.play_move_in_game()
+    assert zinogre.message.startswith("not played in the game: the port does not run moves")
 
 
 def test_running_scans_at_most_every_ttl(monkeypatch: pytest.MonkeyPatch) -> None:

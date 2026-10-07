@@ -27,12 +27,12 @@ local CMD_CLEAR = 3
 local CMD_MOVE  = 4                   -- the MOVE struct in the block, on SLOT's monster
 local ARG_OWN   = 1                   -- ...or, with this ARG bit, the port's own move NAME
 local ARG_FORCE = 2                   -- ...played past the monster's notice
+local STALE     = 2                   -- RESULT: the port's moves module is not build ARG2 yet
 
 -- loaded before the tick is wrapped below, so the library's mhfu_tick is the one wrapped
 local has_port, port_lib = pcall(require, "mhfu_port")
 local PORTS = has_port and type(port_lib) == "table" and port_lib or nil
 
-local last_seq   = -1
 local g_force    = nil                 -- forced action id, or nil
 local g_ent      = nil                 -- the entity it is forced on
 local g_port     = nil                 -- the port that latches it, or nil for the own hook
@@ -117,11 +117,11 @@ end
 -- global (not local) so the chained wrapper resolves the FRESH definition after a
 -- hot-reload instead of a stale captured upvalue
 function cli_bridge_tick()
-  -- poll the command block (only act on a new seq)
+  -- poll the command block: a SEQ not yet in ACK is new, and a reload of this script finds the
+  -- ACK in the block, so it never applies a command twice
   if mhfu.read_u32(BR + CB.MAGIC) == MAGIC then
     local seq = mhfu.read_u32(BR + CB.SEQ)
-    if seq ~= last_seq then
-      last_seq = seq
+    if seq ~= mhfu.read_u32(BR + CB.ACK) then
       local cmd = mhfu.read_u32(BR + CB.CMD)
       local a0  = mhfu.read_u32(BR + CB.SLOT)
       local a1  = mhfu.read_u32(BR + CB.ARG)   -- action id / on-off
@@ -140,9 +140,12 @@ function cli_bridge_tick()
       elseif cmd == CMD_MOVE and (a1 & ARG_OWN) ~= 0 then
         local ent = entity(a0)
         local p = ent and port_of(ent)
-        local ok = p and p:move(name_at(BR + CB.NAME, CB.NAME_COUNT),
-                                { force = (a1 & ARG_FORCE) ~= 0 })
-        mhfu.write_u32(BR + CB.RESULT, ok and 1 or 0)
+        local ok, why = false, nil
+        if p then
+          ok, why = p:move(name_at(BR + CB.NAME, CB.NAME_COUNT),
+                           { force = (a1 & ARG_FORCE) ~= 0, build = mhfu.read_u32(BR + CB.ARG2) })
+        end
+        mhfu.write_u32(BR + CB.RESULT, ok and 1 or why == "stale" and STALE or 0)
       elseif cmd == CMD_MOVE then
         local ent = entity(a0)
         -- a refused move leaves the block's PENDING and STARTED as they were

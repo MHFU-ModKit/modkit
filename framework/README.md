@@ -136,6 +136,13 @@ hold, enters its own move's carrier instead of `(4,x)`, and the move plays from 
 frame. `force = true` plays a rule's move past the notice wait. `ports/README.md` "Moves and
 rules" has the manifest's side.
 
+## Calling the game from C
+
+C calls a game function through `mhfu_call(fn, a0, ...)` (`mhfu/call.h`, word arguments only).
+The game's VFPU code stores quads into its stack frame, which needs 16-byte alignment, and
+psp-gcc keeps frames at 8: a direct call halts the game at the first such store.
+`tests/test_engine_calls.py` refuses one.
+
 ## Tests
 
 `uv run pytest framework` compiles framework sources for the host and runs the Lua against the

@@ -42,7 +42,7 @@ def run_build(args: argparse.Namespace) -> int:
     out: Path = args.out or Path(m.port.pac)
     written = modules(m, built, out.parent, games)
     out.write_bytes(built.pac)
-    print(f"wrote {out}, {', '.join(map(str, written))}\n{built.summary.text()}")
+    print(f"wrote {out}, {_listed(written)}\n{built.summary.text()}")
     return 0
 
 
@@ -56,14 +56,18 @@ def run_inject(args: argparse.Namespace) -> int:
     path = inject.write_relocate_bytes(
         built.pac, host, args.dir, orig=games.fu.read(host), name=m.port.pac
     )
-    print(f"wrote {path}, {', '.join(map(str, written))}\n{built.summary.text()}")
+    print(f"wrote {path}, {_listed(written)}\n{built.summary.text()}")
     return 0
 
 
+def _listed(written: list[Path]) -> str:
+    return ", ".join(map(str, written)) or "the modules unchanged"
+
+
 def modules(m: manifest.Manifest, built: Built, where: Path, games: data.Data) -> list[Path]:
-    """Write the port's clips and moves modules into `where`, each whole: the game reloads a
-    module on change. Raises `ManifestError` for a move the moves module cannot carry, before
-    either is written."""
+    """Write the port's clips and moves modules into `where`, each whole and only when it
+    changed, since the game re-runs a module that changed on disk; those written. Raises
+    `ManifestError` for a move the moves module cannot carry, before either is written."""
     known = moves.records(games.fu, m.port.host_species)
     texts = {
         layout.module_name(m): layout.lua(m, built.layout),
@@ -73,6 +77,8 @@ def modules(m: manifest.Manifest, built: Built, where: Path, games: data.Data) -
     out = []
     for name, text in texts.items():
         path = where / name
+        if path.is_file() and path.read_text(encoding="utf-8") == text:
+            continue
         tmp = path.with_name(path.name + ".tmp")
         tmp.write_text(text, encoding="utf-8")
         tmp.replace(path)

@@ -34,9 +34,10 @@ if TYPE_CHECKING:
 MAGIC = 0x4D484252
 """CLI_BRIDGE.MAGIC once a command is written ("MHBR")."""
 PROBE_MARK = 0xC0FFEE01
-ACK_TIMEOUT = 3.0
-"""cli_bridge.lua acks on its next tick, 2 Hz under mhfu_port and now and then late; no ack in
-this long means it is not running."""
+ACK_TIMEOUT = 10.0
+"""cli_bridge.lua acks on its next tick, 2 Hz under mhfu_port, and seconds late while the emulator
+retranslates after a breakpoint was set (3.3 s measured); no ack in this long means it is not
+running."""
 RECORD_PERIOD = 0.1
 STALLED = "the game is paused or cli_bridge.lua is not loaded"
 ROW = struct.Struct("<BB")
@@ -83,15 +84,15 @@ class Bridge:
         except DebuggerError:
             return False
 
-    def send(self, op: Op, slot: int, arg: int = 0) -> int:
+    def send(self, op: Op, slot: int, arg: int = 0, arg2: int = 0) -> int:
         """Write a command in one write, so the script never sees half of it; returns its SEQ.
 
-        SEQ continues from the block's, since the script ignores a SEQ it has already seen.
+        SEQ continues from the block's, so it differs from ACK, which is what makes it new.
         Clearing also zeroes STATUS, which the script stops writing but never resets.
         """
         b, c = self.block, a.CLI_BRIDGE
         seq = (b.seq + 1) & 0xFFFF_FFFF
-        command = {c.MAGIC: MAGIC, c.SEQ: seq, c.CMD: op, c.SLOT: slot, c.ARG: arg}
+        command = {c.MAGIC: MAGIC, c.SEQ: seq, c.CMD: op, c.SLOT: slot, c.ARG: arg, c.ARG2: arg2}
         words = bytearray(c.ACK)  # the command words are the ones before ACK
         for at, value in command.items():
             _WORD.pack_into(words, at, value & 0xFFFF_FFFF)
@@ -101,11 +102,17 @@ class Bridge:
         return seq
 
     def request(
-        self, session: Session, op: Op, slot: int, arg: int = 0, timeout: float = ACK_TIMEOUT
+        self,
+        session: Session,
+        op: Op,
+        slot: int,
+        arg: int = 0,
+        arg2: int = 0,
+        timeout: float = ACK_TIMEOUT,
     ) -> tuple[int, bool]:
         """`send`, then wait for the ack: the script sees only the newest SEQ, so a command sent
         before the last one was acked would replace it unseen. Returns (SEQ, acked)."""
-        seq = self.send(op, slot, arg)
+        seq = self.send(op, slot, arg, arg2)
         try:
             return seq, session.wait(lambda: self.block.ack == seq, timeout, "ack")
         except TimeoutError:

@@ -175,3 +175,6 @@ def test_cli(data, tmp_path):
     for module in (layout.module_name(m), moves.module_name(m)):
         assert (lib / module).read_text() == (out.parent / module).read_text()
     assert "  charge = 61,  -- MHP3rd 61\n" in (lib / layout.module_name(m)).read_text()
+    stamp = (lib / moves.module_name(m)).stat().st_mtime_ns
+    assert main(["inject", str(toml), "--dir", str(tmp_path), "--lib", str(lib), *games]) == 0
+    assert (lib / moves.module_name(m)).stat().st_mtime_ns == stamp, "unchanged, not rewritten"

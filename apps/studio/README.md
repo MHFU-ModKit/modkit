@@ -69,7 +69,8 @@ a handle for the end, which drags the clip's `turn`, or a fixed steer's angle, i
 Play in game saves, writes the port's clips and moves modules to the memory stick's `mods/lib` as
 `mhfu-port inject` does, and asks the running port to play the move by name; it refuses a move
 whose clip sits in another anim than in the saved manifest, since the game holds the build
-injected from the file. A port defined before takes a new or renamed move once its mod reloads.
+injected from the file. It writes only the modules that changed, and asks for the move from the
+moves module just built, so a new or edited move plays once the game has re-run that module.
 A move asked while the monster has noticed the hunter but is not yet in combat waits for combat,
 so the "!" and the howl play out; Force beside the button plays it at once.
 

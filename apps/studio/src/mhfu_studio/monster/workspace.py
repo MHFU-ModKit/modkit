@@ -177,7 +177,7 @@ class MonsterWorkspace(Workspace):
         #: the running game, for Play in game
         self.game_session: Callable[[], AbstractContextManager[Session]] = clip_game.attached
         #: asks the running port for an own move (Play in game in Moves)
-        self.play_own: Callable[[Session, str, bool], bool] = move_game.play_own
+        self.play_own: Callable[[Session, str, bool, int], bool] = move_game.play_own
         self.game_running: Callable[[], bool] = move_game.Running()
         self._reset()
 
@@ -1888,9 +1888,9 @@ class MonsterWorkspace(Workspace):
             if clip is not None:
                 self.entry_in_game(doc.manifest.clips[clip].id)
             doc.save()
-            sent = move_game.deploy(doc.manifest, self.games(), self.mods_dir())
+            sent, build = move_game.deploy(doc.manifest, self.games(), self.mods_dir())
             with self.game_session() as s:
-                took = self.play_own(s, name, force)
+                took = self.play_own(s, name, force, build)
         except (LookupError, OSError, ValueError, DebuggerError) as e:
             self.message = f"not played in the game: {e}"
             return
@@ -1900,10 +1900,12 @@ class MonsterWorkspace(Workspace):
                 " own move by that name"
             )
             return
-        where = _home(sent[0].parent) if sent else "the memory stick"
-        self.message = (
-            f"{name} plays in the game; saved, {', '.join(p.name for p in sent)} sent to {where}"
+        news = (
+            f"{', '.join(p.name for p in sent)} sent to {_home(sent[0].parent)}"
+            if sent
+            else "the memory stick's modules were current"
         )
+        self.message = f"{name} plays in the game; saved, {news}"
 
 
 def _roots() -> tuple[Path | None, ...]:

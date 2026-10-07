@@ -549,19 +549,22 @@ function mhfu.em_move(slot, t) SEAM.moves[slot] = t; return true end
 function mhfu.em_moves_clear() SEAM.moves = {}; return true end
 function mhfu.em_play(ent, slot) return SEAM.moves[slot] ~= nil end
 function mhfu.em_rule(slot, r) SEAM.rules[slot] = r; return true end
-package.loaded.z_moves = { moves = { stamp = { entry = 46 } }, rules = {} }
+package.loaded.z_moves = { build = 1, moves = { stamp = { entry = 46 } }, rules = {} }
 local P = require("mhfu_port")
 P.mod("z_rig", function(P) P.define{ name = "z", species = 75 } end)
 P.ports.z.ent = ENT
 ticks(1)
 assert(not P.ports.z:move("probe"))
+assert(select(2, P.ports.z:move("stamp", { build = 2 })) == "stale")
 -- a new build's module re-ran in place: the next tick redefines the port from it and re-arms
-package.loaded.z_moves = { moves = { stamp = { entry = 46 }, probe = { entry = 47 } }, rules = {} }
+package.loaded.z_moves = {
+  build = 2, moves = { stamp = { entry = 46 }, probe = { entry = 47 } }, rules = {},
+}
 ticks(2)
 local z = P.ports.z
 assert(z.ent == ENT and count("moves module changed") == 1)
 assert(SEAM.moves[z._slot.probe].entry == 47)
-assert(z:move("probe"))
+assert(z:move("probe", { build = 2 }))
 ticks(2)
 assert(count("moves module changed") == 1, "once per new module")
 """

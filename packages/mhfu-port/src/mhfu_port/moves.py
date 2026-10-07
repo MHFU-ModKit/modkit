@@ -13,6 +13,7 @@ steer and `after`.
 from __future__ import annotations
 
 import re
+import zlib
 from collections.abc import Collection, Mapping
 from typing import Any
 
@@ -41,6 +42,16 @@ def hub(species: int) -> Pair | None:
 def module_name(m: Manifest) -> str:
     """The Lua module `P.define` requires for the port's moves and rules."""
     return f"{m.port.name}_moves.lua"
+
+
+BUILD = re.compile(r"^  build = 0x([0-9A-F]{8}),$", re.M)
+
+
+def build_of(text: str) -> int:
+    """The module's `build`: 31 bits of its CRC-32 without that line, never 0 (the bridge's
+    "any"); 0 for a text without one."""
+    found = BUILD.search(text)
+    return int(found.group(1), 16) if found else 0
 
 
 def carrier(m: Manifest, name: str) -> Pair:
@@ -271,4 +282,6 @@ def lua(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> st
     out += ["  },", "  rules = {"]
     out += [f"    {lua_value(_rule(r))}," for r in m.rules]
     out += ["  },", "}", ""]
-    return "\n".join(out)
+    text = "\n".join(out)
+    build = zlib.crc32(text.encode("utf-8")) & 0x7FFF_FFFF or 1
+    return text.replace("return {\n", f"return {{\n  build = 0x{build:08X},\n", 1)

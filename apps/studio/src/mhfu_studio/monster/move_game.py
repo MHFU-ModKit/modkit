@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from mhfu import inject
-from mhfu_port import build, layout
+from mhfu_port import build, layout, moves
 from mhfu_port.data import Data
 from mhfu_port.manifest import Manifest
 
@@ -21,22 +21,25 @@ if TYPE_CHECKING:
     from mhfu.live.session import Session
 
 
-def deploy(m: Manifest, games: Data, mods: Path) -> list[Path]:
-    """`m` built as it is, its modules written into `mods/lib`, and `mhfu_port.lua` kept in
-    step; what was written. The game re-runs a changed module."""
+def deploy(m: Manifest, games: Data, mods: Path) -> tuple[list[Path], int]:
+    """`m` built as it is, its modules written into `mods/lib` where they changed, and
+    `mhfu_port.lua` kept in step: what was written, and the build of the moves module now on the
+    stick, the one the port must run. The game re-runs a changed module."""
     from mhfu_port.cli.build import modules  # the writer `mhfu-port inject` uses
 
     out = modules(m, build.build(m, games), mods / layout.LIB, games)
     lib = runtime.sync_library(mods, runtime.library())
-    return out if lib is None else [*out, lib]
+    text = (mods / layout.LIB / moves.module_name(m)).read_text(encoding="utf-8")
+    return (out if lib is None else [*out, lib]), moves.build_of(text)
 
 
-def play_own(s: Session, name: str, force: bool = False) -> bool:
+def play_own(s: Session, name: str, force: bool = False, build: int = 0) -> bool:
     """`mhfu.live.moves.play_own`: False when no port rides the big monster or it has no own
-    move `name`; `force` plays it at once even before combat. The seam the tests fake."""
-    from mhfu.live import moves
+    move `name`; `force` plays it at once even before combat; `build` waits for that moves
+    module. The seam the tests fake."""
+    from mhfu.live import moves as live
 
-    return moves.play_own(s, name, force=force)
+    return live.play_own(s, name, force=force, build=build)
 
 
 class Running:

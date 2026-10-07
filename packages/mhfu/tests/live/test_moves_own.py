@@ -12,10 +12,11 @@ BR, CB = a.CLI_BRIDGE_BLOCK, a.CLI_BRIDGE
 
 
 class Bridge:
-    """cli_bridge.lua's side: CMD 4 with ARG 1 answers RESULT 1 for the names in `own`."""
+    """cli_bridge.lua's side: CMD 4 with ARG 1 answers RESULT 1 for the names in `own`, and 2
+    (stale) to the first `stale` asks for a build."""
 
-    def __init__(self, fake, own: set[str], acks: bool = True) -> None:
-        self.fake, self.own, self.acks = fake, own, acks
+    def __init__(self, fake, own: set[str], acks: bool = True, stale: int = 0) -> None:
+        self.fake, self.own, self.acks, self.stale = fake, own, acks, stale
         self.asked: list[tuple[int, str, bool]] = []
         fake.memory.extend(bytes(BR + 0x100 - fake.base - len(fake.memory)))
         fake.poke("I", a.ENTITY_REGISTRY + 4, MON)
@@ -26,12 +27,14 @@ class Bridge:
         f = self.fake
         if address != BR + CB.ACK or not self.acks:
             return
-        magic, seq, cmd, slot, arg = f.peek("5I", BR)
+        magic, seq, cmd, slot, arg, build = f.peek("6I", BR)
         if magic == MAGIC and f.peek("I", BR + CB.ACK) != (seq,):
             name = bytes(f.peek(f"{CB.NAME.count}s", BR + CB.NAME)[0]).split(b"\0")[0].decode()
             if cmd == Op.MOVE and arg & moves.OWN:
                 self.asked.append((slot, name, bool(arg & moves.FORCE)))
-                f.poke("I", BR + CB.RESULT, int(name in self.own))
+                stale = build != 0 and self.stale > 0
+                self.stale -= stale
+                f.poke("I", BR + CB.RESULT, moves.STALE if stale else int(name in self.own))
             f.poke("I", BR + CB.ACK, seq)
 
 
@@ -53,3 +56,12 @@ def test_no_ack(s, fake):
     Bridge(fake, {"stamp"}, acks=False)
     with pytest.raises(TimeoutError):
         moves.play_own(s, "stamp")
+
+
+def test_a_build_waits_for_the_module(s, fake):
+    game = Bridge(fake, {"stamp"}, stale=2)
+    assert moves.play_own(s, "stamp", build=7)
+    assert len(game.asked) == 3
+    game.stale = 99
+    with pytest.raises(moves.Stale):
+        moves.play_own(s, "stamp", build=7, wait=0.3)

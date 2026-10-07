@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 import struct
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
@@ -354,11 +355,32 @@ def ask(
         raise RuntimeError("move refused: no big monster vtable is wrapped (em_vhook)")
 
 
-def play_own(s: Session, name: str, slot: int | None = None, force: bool = False) -> bool:
+class Stale(LookupError):
+    """The port's moves module is not the build asked for: the game has not re-run the module
+    sent, or could not compile it (framework.log says which)."""
+
+
+STALE = 2
+"""CLI_BRIDGE.RESULT for a moves module of another build."""
+RELOAD_WAIT = 10.0
+"""Seconds a module just written takes at most to reach the port: lua_host's 2 Hz scan, its
+compile and the relink on the next tick."""
+
+
+def play_own(
+    s: Session,
+    name: str,
+    slot: int | None = None,
+    force: bool = False,
+    build: int = 0,
+    wait: float = RELOAD_WAIT,
+) -> bool:
     """Ask the port riding `slot`'s monster (else the first big monster's) to play its own move
     `name` (`mhfu_port`'s `port:move`, through the bridge); `force` plays it while the monster's
-    notice runs instead of waiting for combat. False when no port rides it or it has no such own
-    move; raises like `play` when the bridge does not answer."""
+    notice runs instead of waiting for combat; `build` (not 0, `mhfu_port.moves.build_of`) only
+    from that moves module, asked again for `wait` seconds until the port runs it, else `Stale`.
+    False when no port rides it or it has no such own move; raises like `play` when the bridge
+    does not answer."""
     try:
         k, _ = monster(s, slot)
     except LookupError:
@@ -369,9 +391,16 @@ def play_own(s: Session, name: str, slot: int | None = None, force: bool = False
         return False
     link = bridge(s)
     s.mem.write(a.CLI_BRIDGE_BLOCK + a.CLI_BRIDGE.NAME, raw.ljust(size, b"\0"))
-    if not link.request(s, Op.MOVE, k, OWN | (FORCE if force else 0))[1]:
-        raise TimeoutError(f"no ack: {STALLED}")
-    return s.mem.u32(a.CLI_BRIDGE_BLOCK + a.CLI_BRIDGE.RESULT) == 1
+    until = time.monotonic() + wait
+    while True:
+        if not link.request(s, Op.MOVE, k, OWN | (FORCE if force else 0), build)[1]:
+            raise TimeoutError(f"no ack: {STALLED}")
+        result = s.mem.u32(a.CLI_BRIDGE_BLOCK + a.CLI_BRIDGE.RESULT)
+        if result != STALE:
+            return result == 1
+        if time.monotonic() >= until:
+            raise Stale(f"the port does not run moves module build {build:08X}: see framework.log")
+        time.sleep(0.25)
 
 
 def play(

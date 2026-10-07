@@ -369,8 +369,11 @@ end
 --- it starts at the monster's next AI frame, its clip on every body part, its attacks and steer
 --- as declared, and its `after` follows in C when it ends on its clip, its length or a wall.
 --- Asked while the monster's notice runs (mhfu.monster_state), it waits for combat unless
---- `opts.force`. A scripted pair move ends here. False while the seam is not live.
+--- `opts.force`. A scripted pair move ends here. False while the seam is not live; false,
+--- "stale" when `opts.build` (not 0) is not the build of the moves module the port runs.
 function Port:move(name, opts)
+  local want = opts ~= nil and opts.build or 0
+  if want ~= 0 and not (self._made and self._made.build == want) then return false, "stale" end
   local mv = self.moves[name]
   if not is_own(mv) then
     log("[port:%s] move('%s'): not an own move", self.name, tostring(name))
