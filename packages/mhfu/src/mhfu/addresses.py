@@ -6,6 +6,7 @@
     addresses.SCREEN_STATE        # an int that also has .name, .type and .doc
     addresses.ENTITY.HP           # the offset of a struct field, the same kind of int
     addresses.ENTITY_REGISTRY.count   # 21: the n of a `type[n]` entry, else None
+    addresses.MONSTER_EVENT_KIND.names  # an enum's names, numbered from 1 in C and Lua
 
 The C header and the Lua table are generated from the same file:
 
