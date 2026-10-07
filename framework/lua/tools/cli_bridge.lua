@@ -5,7 +5,7 @@
 -- The shell (`mhfu shell`, `mhfu clips`) writes a command block (struct CLI_BRIDGE) in extra
 -- RAM; this script polls it each tick and applies holds a debugger cannot do smoothly: force a
 -- big monster's action (held coherently through the executor hook), freeze or unfreeze its AI,
--- play a move (the move player, `mhfu move`), and clear.
+-- play a move (the move player, `mhfu move`) or the riding port's own move by name, and clear.
 --
 -- Deploy: copy to ms0:/PSP/PLUGINS/mhfu_framework/mods/cli_bridge.lua; it hot-reloads. Needs
 -- memory=64 (the block is in extra RAM) and a big monster.
@@ -25,6 +25,7 @@ local CMD_FORCE = 1
 local CMD_FREEZE = 2
 local CMD_CLEAR = 3
 local CMD_MOVE  = 4                   -- the MOVE struct in the block, on SLOT's monster
+local ARG_OWN   = 1                   -- ...or, with this ARG, the port's own move NAME
 
 -- loaded before the tick is wrapped below, so the library's mhfu_tick is the one wrapped
 local has_port, port_lib = pcall(require, "mhfu_port")
@@ -42,6 +43,17 @@ local function entity(slot)
   local e = mhfu.entity_at(slot)
   if e and e ~= 0 then return e end
   return nil
+end
+
+-- a NUL-terminated name of at most n bytes at `at`
+local function name_at(at, n)
+  local t = {}
+  for i = 0, n - 1 do
+    local c = mhfu.read_u8(at + i)
+    if c == 0 then break end
+    t[#t + 1] = string.char(c)
+  end
+  return table.concat(t)
 end
 
 local function port_of(ent)
@@ -124,6 +136,11 @@ function cli_bridge_tick()
         release(a0)
         mhfu.move_stop()
         mhfu.write_u32(BR + CB.STATUS, 0)   -- nothing held
+      elseif cmd == CMD_MOVE and a1 == ARG_OWN then
+        local ent = entity(a0)
+        local p = ent and port_of(ent)
+        local ok = p and p:move(name_at(BR + CB.NAME, CB.NAME_COUNT))
+        mhfu.write_u32(BR + CB.RESULT, ok and 1 or 0)
       elseif cmd == CMD_MOVE then
         local ent = entity(a0)
         -- a refused move leaves the block's PENDING and STARTED as they were

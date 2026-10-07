@@ -10,7 +10,8 @@ the clip's phase, and the pairs the monster went through after.
 
 It asks through the debug bridge (`cli_bridge.lua`, CMD 4), so the game needs the framework,
 the bridge and a monster whose vtable em_vhook wrapped: a cold boot (`clips.ride`). `watch`
-follows a move something else starts, a port's own move from Lua or a rule among them.
+follows a move something else starts, a port's own move from Lua or a rule among them;
+`play_own` asks the riding port for one of its own moves by name.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from ..entries import entry_clip
 from ..views import View, f32s, ptr, ptrs, u8, u8s, u16, u32, u32s
 from .clips import Pack, bridge, monster
 from .session import Session
-from .shell_anim import Bridge, Op
+from .shell_anim import STALLED, Bridge, Op
 
 NO_PAIR = 0xFF
 DONE = 4
@@ -49,6 +50,8 @@ FULL_TURN = 0x10000
 SPEED = 2.0
 """Clip frames a forced clip's cursor moves per AI frame (CLIP_BLOCK.SPEED)."""
 POLL = 0.2
+OWN = 1
+"""CLI_BRIDGE.ARG with CMD 4: play the riding port's own move CLI_BRIDGE.NAME instead of MOVE."""
 WRAP = 1 << 32
 """The emulated clock a log line carries is cut to 32 bits."""
 
@@ -343,6 +346,25 @@ def ask(
         raise TimeoutError("no ack: the game is paused or cli_bridge.lua is not loaded")
     if not st.pending and st.started == before:
         raise RuntimeError("move refused: no big monster vtable is wrapped (em_vhook)")
+
+
+def play_own(s: Session, name: str, slot: int | None = None) -> bool:
+    """Ask the port riding `slot`'s monster (else the first big monster's) to play its own move
+    `name` (`mhfu_port`'s `port:move`, through the bridge). False when no port rides it or it has
+    no such own move; raises like `play` when the bridge does not answer."""
+    try:
+        k, _ = monster(s, slot)
+    except LookupError:
+        return False
+    raw = name.encode("utf-8")
+    size = a.CLI_BRIDGE.NAME.count or 0
+    if not raw or len(raw) >= size or b"\0" in raw:
+        return False
+    link = bridge(s)
+    s.mem.write(a.CLI_BRIDGE_BLOCK + a.CLI_BRIDGE.NAME, raw.ljust(size, b"\0"))
+    if not link.request(s, Op.MOVE, k, OWN)[1]:
+        raise TimeoutError(f"no ack: {STALLED}")
+    return s.mem.u32(a.CLI_BRIDGE_BLOCK + a.CLI_BRIDGE.RESULT) == 1
 
 
 def play(

@@ -5,6 +5,7 @@
 import struct
 
 from mhfu import addresses as a
+from mhfu.cli import main
 from mhfu.cli import moves as cli
 from mhfu.live import moves
 
@@ -75,3 +76,9 @@ def test_hp_line_takes_the_timing_part() -> None:
     w = moves._parse(line, 0x1000 - 2_000_000, part=1)
     assert w is not None and (w.phase, w.hp, w.pair, w.frame) == (57.0, 150, (1, 2), 28)
     assert w.t == 2.0 and moves._parse("junk", 0) is None
+
+
+def test_play_wants_an_entry_or_own(capsys) -> None:
+    assert main(["move", "play", "46", "--own", "stamp"]) == 1
+    assert main(["move", "play"]) == 1
+    assert "an entry or --own" in capsys.readouterr().err

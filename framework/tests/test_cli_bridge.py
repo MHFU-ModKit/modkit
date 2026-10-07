@@ -35,6 +35,7 @@ class Game:
             {
                 "addr": self.lua.execute(a.render_lua(a.table())),
                 "read_u32": lambda at: self.mem.get(at, 0),
+                "read_u8": lambda at: self.mem.get(at, 0) & 0xFF,
                 "write_u32": self.mem.__setitem__,
                 "entity_at": lambda slot: self.slots.get(slot, 0),
                 "on_bigmonster_action": lambda fn, _pri: self.handlers.append(fn),
@@ -94,7 +95,11 @@ def test_clear_releases_the_action(game):
 
 PORT_LIB = """{ ports = { zin = { name = "zin", ent = %d, log = {},
   latch = function(self, a1, uses) self.log[#self.log + 1] = a1 .. "x" .. uses end,
-  release = function(self) self.log[#self.log + 1] = "release" end } } }"""
+  release = function(self) self.log[#self.log + 1] = "release" end,
+  move = function(self, name)
+    self.log[#self.log + 1] = "move " .. name
+    return name == "stamp"
+  end } } }"""
 
 
 def test_a_ported_monster_is_forced_through_its_port():
@@ -146,3 +151,18 @@ def test_move_plays_the_block_spec_on_the_slot(game):
     assert game.moves == [(game.slots[2], BR + CB.MOVE)]
     game.send(CLEAR)
     assert game.stops == 1
+
+
+def test_own_move_by_name_through_the_port():
+    game = Game(PORT_LIB % Game().slots[1])
+
+    def own(name: str, slot: int = 1) -> int:
+        raw = name.encode().ljust(CB.NAME.count or 0, b"\0")
+        game.mem.update({BR + CB.NAME + i: c for i, c in enumerate(raw)})
+        game.send(MOVE, slot=slot, arg=1)
+        return game.mem[BR + CB.RESULT]
+
+    assert (own("stamp"), own("nope"), own("stamp", slot=2)) == (1, 0, 0)
+    log = game.lua.eval("package.loaded.mhfu_port.ports.zin.log")
+    assert list(log.values()) == ["move stamp", "move nope"]
+    assert game.moves == []
