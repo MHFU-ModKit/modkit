@@ -40,6 +40,9 @@ TURN = 0x10000
 """YAW units in a full turn."""
 TURN_MIN = math.radians(2.0)
 """A body that ends its clip turned less than this stays in the clip: the snap is not seen."""
+FAST_TURN = math.radians(10.0)
+"""A turn between two keys past which joint 0's sway is baked on every frame: turned back
+fast, it bends between keys."""
 KEY_STEP = 2
 """Clip frames between the keys `carry` bakes and `Turn` holds: the engine's clip speed, so
 its cursor lands on them."""
@@ -94,7 +97,8 @@ def of(anim: fu.Anim, skeleton: Skeleton, entries: Iterable[int] | None = None) 
         rot, loc = fk.Curves(clip, rig).at(_grid(n))
         moved = loc[-1] - loc[0]
         drawn = moved[above].sum(axis=0)
-        turn = body_turn(rig, clip, skeleton, np.arange(n + 1.0))[-1]
+        heading = body_turn(rig, clip, skeleton, np.arange(n + 1.0))
+        turn = heading[-1] - heading[0]
         x, z = _turn_xz(np.diff(loc[:, r], axis=0), -rot[1:, r, Y]).sum(axis=1).tolist()
         out.append(
             Travel(
@@ -123,7 +127,8 @@ def path(anim: fu.Anim, skeleton: Skeleton, entry: int, frames: ArrayLike) -> fk
 def carry(anim: fu.Anim, skeleton: Skeleton) -> fu.Anim:
     """`anim` as the engine plays it right: joint 0's x and z travel on the root, which the
     engine carries, the root's x and z sway and both joints' height on joint 0, which the FK
-    draws; and where the body ends a clip turned at least TURN_MIN, that turn taken out of it.
+    draws; and where the body starts or ends a clip facing TURN_MIN or more off the model's
+    forward, its facing taken out of it, so every clip starts and ends facing YAW.
 
     Travel: a clip whose root holds a height (a donor's hip, which the FK drops) has its x and
     z swapped with joint 0's and its height added to joint 0's; both joints only translate, so
@@ -170,9 +175,10 @@ def _each(anim: fu.Anim, streams: Iterable[int], fn: Callable[[Clip], Clip]) -> 
 
 
 def body_turn(rig: fk.Rig, clip: Clip, skeleton: Skeleton, frames: ArrayLike) -> fk.Floats:
-    """Radians the body (the root's rotating children, averaged) has turned about y since
-    `frames[0]`, at each of `frames` (whole clip frames, one apart, for the unwrap): the twist of
-    its rotation, ending at the turn between its first and last pose, within half a turn."""
+    """Radians the body (the root's rotating children, averaged) faces off the model's forward
+    about y at each of `frames` (whole clip frames, one apart, for the unwrap): the twist of
+    its rotation, from within half a turn at the first, ending within half a turn of the
+    turn between its first and last pose."""
     f = np.asarray(frames, dtype=np.float64)
     r = root(skeleton)
     kids = [
@@ -183,15 +189,19 @@ def body_turn(rig: fk.Rig, clip: Clip, skeleton: Skeleton, frames: ArrayLike) ->
     ]
     if not kids or len(f) < 2:
         return np.zeros(len(f))
-    rot = rig.world(*fk.Curves(clip, rig).at(f))[:, kids, :3, :3]
-    q = _quat(rot @ np.swapaxes(rot[:1], -1, -2))
+    q = _quat(rig.world(*fk.Curves(clip, rig).at(f))[:, kids, :3, :3])
     flip = np.cumprod(np.where(np.einsum("tkq,tkq->tk", q[1:], q[:-1]) < 0, -1.0, 1.0), axis=0)
     q[1:] *= flip[..., None]
     w, y = q[..., 0].sum(axis=1), q[..., 2].sum(axis=1)
-    twist = np.unwrap(2 * np.arctan2(y, w))
-    twist -= twist[0]
-    net = (twist[-1] + math.pi) % math.tau - math.pi
-    out: fk.Floats = twist - (twist[-1] - net) * (f - f[0]) / (f[-1] - f[0])
+    twist = np.unwrap(_wrap(2 * np.arctan2(y, w)))
+    net = _wrap(twist[-1] - twist[0])
+    out: fk.Floats = twist - (twist[-1] - twist[0] - net) * (f - f[0]) / (f[-1] - f[0])
+    return out
+
+
+def _wrap(a: ArrayLike) -> fk.Floats:
+    """Radians within half a turn."""
+    out: fk.Floats = (np.asarray(a, dtype=np.float64) + math.pi) % math.tau - math.pi
     return out
 
 
@@ -219,7 +229,7 @@ def _turned(own: Clip, whole: Clip, rig: fk.Rig, skeleton: Skeleton, t0: int, tr
     """The root's part clip `own` with the body's turn over `whole` taken out (`carry`)."""
     n = motion.frames(whole)
     theta = body_turn(rig, whole, skeleton, np.arange(n + 1.0)) if n > 0 else np.zeros(1)
-    if abs(theta[-1]) < TURN_MIN:
+    if max(abs(theta[0]), abs(theta[-1])) < TURN_MIN:
         return own
     r = root(skeleton)
     top = own.tracks[tr]
@@ -242,7 +252,9 @@ def _turned(own: Clip, whole: Clip, rig: fk.Rig, skeleton: Skeleton, t0: int, tr
     tracks = list(own.tracks)
     sways, travels = _locs(base), _locs(top)
     if X in sways or Z in sways:
-        at = np.union1d(grid, [k.frame for c in sways.values() for k in c.keyframes])
+        fast = np.flatnonzero(np.abs(np.diff(th)) > FAST_TURN)
+        dense = [f for k in fast for f in range(int(grid[k]), int(grid[k + 1]) + 1)]
+        at = np.union1d(grid, [k.frame for c in sways.values() for k in c.keyframes] + dense)
         at = at[(at >= 0) & (at <= n)]
         x, z = bake(at, back(0)(at), 0)
         tracks[t0] = _track(base, {X: x, Y: sways.get(Y), Z: z}, n)
@@ -305,15 +317,21 @@ def _keys(
 @dataclass(frozen=True)
 class Turn:
     """What YAW turns while an entry's clip plays: `keys[k]` YAW units at clip frame
-    `k * KEY_STEP`, the last at the clip's end. YAW reads its value at the clip's start plus the
-    key at the cursor, as the root motion is applied (`carry` turned the clip's travel so)."""
+    `k * KEY_STEP`, the last at the clip's end, the body's own facing (`body_turn`), which
+    `carry` turned the clip back by. YAW reads its value at the clip's start plus the key at
+    the cursor less the key there, as the root motion is applied; `total` is the turn."""
 
     frames: int
     keys: tuple[int, ...]
     data: int
-    """YAW units the clip's own body turned, which `carry` took out of it."""
+    """YAW units the clip's own body turned from its first frame to its last."""
     authored: float | None
     """The manifest's `turn`, degrees."""
+
+    @property
+    def total(self) -> int:
+        """YAW units turned over the clip."""
+        return self.keys[-1] - self.keys[0]
 
     def at(self, frame: ArrayLike) -> fk.Floats:
         """YAW units at clip frame `frame`, on the curve the root's turn follows."""
@@ -338,12 +356,13 @@ def turn_of(clip: Clip, skeleton: Skeleton, authored: float | None = None) -> Tu
     grid = _grid(n)
     rot, _ = fk.Curves(clip, fk.Rig.from_skeleton(skeleton)).at(grid)
     data = -rot[:, r, Y]
+    net = float(data[-1] - data[0])
     theta = data
     if authored is not None:
         u = grid / n
-        theta = data + (math.radians(authored) - data[-1]) * (3 * u**2 - 2 * u**3)
+        theta = data + (math.radians(authored) - net) * (3 * u**2 - 2 * u**3)
     keys = tuple(int(k) for k in np.round(theta / math.tau * TURN))
-    return Turn(n, keys, round(float(data[-1]) / math.tau * TURN), authored)
+    return Turn(n, keys, round(net / math.tau * TURN), authored)
 
 
 def turns(

@@ -99,6 +99,20 @@ def test_carry_takes_the_turn_out():
     assert t.carried == pytest.approx((-10.0, 600.0), abs=0.2)  # the source's, as YAW turns
 
 
+def test_carry_takes_a_facing_off_the_start_out_too():
+    """A body that starts facing aside starts and ends the carried clip facing YAW."""
+    s = rig()
+    clip = Clip([Track(), Track([HIP]), Track([rot(1, (0, -120), (40, 10))]), Track()])
+    after = travel.carry(pack(clip), s)
+    (turn,) = travel.turns(after, s).values()
+    assert turn.keys[0] == pytest.approx(-120 / 360 * travel.TURN, abs=3)
+    assert turn.total == pytest.approx(130 / 360 * travel.TURN, abs=3)
+    c = after.streams[0][0]
+    assert c is not None
+    facing = travel.body_turn(fk.Rig.from_skeleton(s), c, s, np.arange(41.0))
+    assert np.abs(facing).max() < math.radians(0.5)
+
+
 def engine_pose(clip: Clip, frames: np.ndarray, s: Skeleton | None = None) -> np.ndarray:
     """World joint positions as the engine draws them: no root translation."""
     s = s or rig()

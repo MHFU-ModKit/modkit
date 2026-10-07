@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
+import math
+
 import numpy as np
 import pytest
 from mhfu.files import monster_pac
@@ -7,7 +9,7 @@ from mhfu_port import layout, manifest, travel, verify
 from mhfu_port.model import MHFU, MHP3RD, ModelError
 from mhfu_studio.monster import inputs
 from mhfu_studio.monster.core.scene import Scene, open_scene
-from mhfu_studio.monster.render.playback import pose_at
+from mhfu_studio.monster.render.playback import pose_at, turn_of
 from mhp_formats import Pac
 
 NAMES = "\n[clips.walk]\nslot = 1\nframes = 10\nloop = true\n\n[clips.nod]\nslot = 2\nframes = 9\n"
@@ -81,8 +83,8 @@ def test_tigrex(games):
 def test_donor_matches_port(games, built, ports, name, joints, groups, vertices, pad):
     """The donor read as the porter reads it is the geometry the port carries, and the port
     plays its donor's moveset joint for joint as the game draws it: below its root, about the
-    body joint, YAW turned by the turn the build took out of the clip, standing `ground_lift`
-    higher; within 0.2 units, as a rotation key holds a 16384th of a turn."""
+    body joint, the donor turned to start facing YAW, standing `ground_lift` higher; within 0.2
+    units, as a rotation key holds a 16384th of a turn."""
     m = manifest.load(ports / f"{name}.toml")
     src = Scene.from_manifest(m, side="source", data=games)
     port = Scene.from_bytes(built(name), name, manifest=m)
@@ -110,8 +112,13 @@ def test_donor_matches_port(games, built, ports, name, joints, groups, vertices,
     for clip in src.clips:
         pc = port._by_slot[entry[clip.slot]]
         assert pc.whole_rig
+        turn = turn_of(port, pc)
+        th = -turn.keys[0] / travel.TURN * math.tau if turn else 0.0
+        face = np.array(
+            [[math.cos(th), 0, -math.sin(th)], [0, 1, 0], [math.sin(th), 0, math.cos(th)]]
+        )
         for frame in (clip.frames // 4, clip.frames // 2):
-            a = src.pose(clip, frame).joints
+            a = src.pose(clip, frame).joints @ face
             b = pose_at(port, pc, frame).joints
             lift = b[body, 1] - a[anchor, 1]
             off = (a[s_idx] - a[anchor]) - (b[p_idx] - b[body])

@@ -183,7 +183,7 @@ def pose_at(scene: Scene, clip: Clip | None, frame: float, *, strip_root: bool =
     world = scene.rig.world(rot, loc)
     turn = turn_of(scene, clip)
     if turn is not None:
-        th = float(turn.at(float(frame))) / travel.TURN * math.tau
+        th = float(turn.at(float(frame)) - turn.keys[0]) / travel.TURN * math.tau
         yaw = np.eye(4)
         yaw[0, 0] = yaw[2, 2] = math.cos(th)
         yaw[0, 2], yaw[2, 0] = math.sin(th), -math.sin(th)

@@ -81,7 +81,7 @@ def run(args: argparse.Namespace) -> int:
             f" {t.carried[0] * k:6.0f} {t.carried[1] * k:6.0f} {t.distance * k:6.0f}"
             f" {t.drawn[0] * k:7.0f} {t.drawn[1] * k:7.0f} {_deg(t.turn):5.0f}"
             f" {_deg(turn.data if turn else 0):5.0f} {'-' if given is None else f'{given:.0f}':>5}"
-            f" {_deg(turn.keys[-1] if turn else 0):5.0f} {t.seconds(args.speed):5.2f}"
+            f" {_deg(turn.total if turn else 0):5.0f} {t.seconds(args.speed):5.2f}"
         )
     lost = [t.entry for t in rows if MOVES <= math.hypot(*t.drawn) > t.distance]
     if lost:
@@ -97,7 +97,7 @@ def _deg(yaw: float) -> float:
 
 
 def _moves(t: travel.Travel, turn: travel.Turn | None) -> bool:
-    turned = max(abs(_deg(t.turn)), abs(_deg(turn.keys[-1])) if turn else 0.0)
+    turned = max(abs(_deg(t.turn)), abs(_deg(turn.total)) if turn else 0.0)
     return max(t.distance, abs(t.drawn[0]), abs(t.drawn[1])) >= MOVES or turned >= TURNS
 
 
