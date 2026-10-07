@@ -615,7 +615,11 @@ walls = false
 
 [moves.notice_howl]
 clip = "welcome_howl"
-label = "the howl the moment he notices you"
+carrier = [
+    0,
+    4,
+]
+label = "the howl the moment he notices you, on the roar pair the notice enters"
 
 [moves.notice_howl.steer]
 walls = false
