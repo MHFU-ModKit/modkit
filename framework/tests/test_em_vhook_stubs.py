@@ -19,13 +19,14 @@ CFG = BASE + 0x4000
 RET = BASE + 0x3000
 ORIG_AI = int(addresses.USER_RAM) + 0x200000
 ORIG_ACT = ORIG_AI + 0x100
+BRAIN_FN = ORIG_AI + 0x200
 SP, T7 = 29, 15
 
 SHIM = """
 #include "em_vhook_stubs.h"
 extern "C" {
-int ai(uint32_t *o, uint32_t cfg, uint32_t orig, uint32_t ret, int *ov)
-{ return emv_build_ai_stub(o, STUB_AI_INSNS, cfg, orig, ret, ov); }
+int ai(uint32_t *o, uint32_t cfg, uint32_t orig, uint32_t ret, uint32_t brain, int *ov)
+{ return emv_build_ai_stub(o, STUB_AI_INSNS, cfg, orig, ret, brain, ov); }
 int act(uint32_t *o, uint32_t cfg, uint32_t orig, int *ov)
 { return emv_build_act_stub(o, STUB_ACT_INSNS, cfg, orig, ov); }
 int cfg_size(void) { return CFG_SIZE; }
@@ -51,7 +52,7 @@ def stubs(host_lib: Callable[..., ctypes.CDLL], tmp_path_factory: pytest.TempPat
     shim.write_text(SHIM)
     lib = host_lib(str(shim))  # an absolute path overrides the framework/ prefix
     out, ov = (ctypes.c_uint32 * 1024)(), ctypes.c_int(0)
-    n_ai = lib.ai(out, CFG, ORIG_AI, RET, ctypes.byref(ov))
+    n_ai = lib.ai(out, CFG, ORIG_AI, RET, BRAIN_FN, ctypes.byref(ov))
     ai = list(out[:n_ai])
     n_act = lib.act(out, CFG, ORIG_ACT, ctypes.byref(ov))
     assert not ov.value, "a stub outgrew its slot"
@@ -99,18 +100,32 @@ def test_ai_stub_is_frame_free_and_ends_in_one_jr(stubs: Stubs) -> None:
 # the slot-29 stub run in unicorn, at addresses inside the machine
 STUB, RUN_CFG, RUN_RET, RUN_ORIG = 0x10000, 0x14000, 0x13000, 0x20000
 STEP, SEEN, ENTITY, CALLER = 0x30000, 0x7F00, 0x40000, 0x50000  # SEEN: a 16-bit offset
+BRAIN, BRAIN_SEEN, BRAIN_CALLS = 0x31000, 0x7F10, 0x7F14
 
 
 def _run_ai(stubs: Stubs, mips: Any, step: int | None) -> tuple[Any, int]:
     """Runs the stub as the engine calls the AI step; returns the machine and where it went."""
     out, ov = (ctypes.c_uint32 * 1024)(), ctypes.c_int(0)
-    n = stubs.lib.ai(out, RUN_CFG, RUN_ORIG, RUN_RET, ctypes.byref(ov))
+    n = stubs.lib.ai(out, RUN_CFG, RUN_ORIG, RUN_RET, BRAIN, ctypes.byref(ov))
     m = mips()
     player = int(addresses.PLAYER_ENTITY) & ~0xFFF
     m.uc.mem_map(player, 0x1000)
     m.write(STUB, list(out[:n]))
     m.write(RUN_RET, [mips.jr("ra"), mips.NOP])
     m.write(RUN_CFG, [0] * (stubs.cfg_size // 4))
+    m.write(  # the brain: remember a0, count the calls, clobber the argument registers
+        BRAIN,
+        [
+            mips.sw("a0", BRAIN_SEEN, "zero"),
+            mips.lw("t0", BRAIN_CALLS, "zero"),
+            mips.addiu("t0", "t0", 1),
+            mips.sw("t0", BRAIN_CALLS, "zero"),
+            mips.addiu("a0", "zero", 0x77),
+            mips.addiu("a1", "zero", 0x77),
+            mips.jr("ra"),
+            mips.NOP,
+        ],
+    )
     if step is not None:  # v0 = step; remember a0
         m.write(STEP, [mips.sw("a0", SEEN, "zero"), mips.jr("ra"), mips.addiu("v0", "zero", step)])
         m.write(RUN_CFG + stubs.lib.cfg_step(), [STEP])
@@ -130,6 +145,7 @@ def test_ai_stub_without_a_step_tail_calls_the_original(stubs: Stubs, mips: Any)
     m, went = _run_ai(stubs, mips, None)
     assert went == RUN_ORIG
     assert [m.reg(r) for r in ("a0", "a1", "a2", "a3", "ra")] == [ENTITY, 0x11, 0x22, 0x33, CALLER]
+    assert m.read(BRAIN_SEEN, 2) == [ENTITY, 1]  # the brain once, with the entity
 
 
 def test_ai_stub_step_that_declines_runs_the_original(stubs: Stubs, mips: Any) -> None:

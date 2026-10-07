@@ -104,6 +104,15 @@ its clip sits in are skipped (`host_attacks = true` keeps them). It runs in C on
 em_vhook wraps (`include/mhfu/move.h`), so it needs a cold boot and a spawned big monster. From
 the debugger: `mhfu move ride <port>`, then `mhfu move play 46 --attack 6@56-80`.
 
+## Own moves from a manifest
+
+A port's own moves sit in a registry by slot (`mhfu.em_move`). The seam's brain, in C on the
+AI step, plays one through the move player when asked (`mhfu.em_play`), when the move before it
+ends on its clip, its length or a wall and names it as its `after`, or when a rule says
+(`play_move`, and `from_move` to fire while one plays). `mhfu_port.lua` does all of it from the
+port's generated `<name>_moves.lua`: `port:move("stamp")` (`ports/README.md` "Moves and
+rules").
+
 ## Tests
 
 `uv run pytest framework` compiles framework sources for the host and runs the Lua against the

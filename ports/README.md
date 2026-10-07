@@ -15,8 +15,9 @@ uv run mhfu-port inject ports/brute_tigrex.toml   # built and placed on the memo
 ```
 
 `build` writes the model PAC that `[port] pac` names, from the extracted games in `MHFU_DATA`
-and `MHP3RD_DATA`, and `<name>_clips.lua` beside it; `inject` puts that module in the memory
-stick's `mods/lib/` (`--lib` elsewhere). The built files are game data: never commit them.
+and `MHP3RD_DATA`, and `<name>_clips.lua` and `<name>_moves.lua` beside it; `inject` puts those
+modules in the memory stick's `mods/lib/` (`--lib` elsewhere). The built files are game data:
+never commit them.
 
 ## Clips
 
@@ -50,9 +51,38 @@ places them.
 `mhfu_port.lua`'s `P.define` reads it as the port's clips, so no mod keeps a copy of the layout.
 `mhfu-port pose` checks that each entry plays its clip.
 
+## Moves and rules
+
+A move with `main` and `sub` paints a host pair: the pair keeps its hitbox, damage and timing,
+the clip is the port's. A move without them is the port's own, played by the framework's move
+player on its carrier (none given: the host's hub, `mhfu_port.moves.HUBS`, em75's `(0,2)`):
+
+```toml
+[moves.stamp]
+clip = "stamp_right_claw"
+attack = [{ id = 6, frame = 56, end = 80 }]   # an attack record, spawned and ended at clip frames
+after = "dash"                                 # played when this one ends; own or a pair
+
+[moves.stamp.steer]
+turn = "clip"       # or still, hunter, away, fixed (angle over frames)
+walls = true        # a wall ahead ends it
+```
+
+A `[[rule]]` plays a move, a pair or an own one, when its trigger holds: `from` a move (an own
+one counts its AI frames) or `from_main`, `min_frames`, the hunter's `dist`, `receding` or
+`closing`, `cooldown`, `count`. The framework checks rules every AI frame in C; one fires a
+frame, and a pair rule waits while an own move plays.
+
+`build` and `inject` also write `<name>_moves.lua`, the moves and rules as the game runs them:
+each own move's executor entry and turn keys come from the same build as the clips module, and
+a move it cannot carry (no entry, an attack past its clip or with no host record) fails the
+build. `mhfu_port.lua`'s `P.define` takes it when a mod gives no `moves` or `rules`, and
+`port:move(name)` plays an own move. `mhfu move ride NAME --brain` boots a port with them.
+
 ## Example
 
-`framework/lua/examples/ported_brute.lua` loads the Brute Tigrex in place of a Giadrome.
+`framework/lua/examples/ported_brute.lua` loads the Brute Tigrex in place of a Giadrome;
+`ported_zinogre.lua` the Zinogre with its manifest's moves and rules.
 
 ## Status
 

@@ -196,7 +196,12 @@ def test_deploy(tmp_path):
     mods = stick / "PLUGINS/mhfu_framework/mods"
     rider = (mods / "zin_rig.lua").read_text()
     assert "species = 75, replace = { 77 }" in rider
-    assert 'orig = "file_06185.bin.orig"' in rider and "fid = 6186" in rider
+    assert 'orig = "file_06185.bin.orig"' in rider and "fid = 6186, moves = {}, rules = {}" in rider
+    with pytest.raises(FileNotFoundError, match="zin_moves.lua"):
+        clips.deploy("zin", stick=stick, brain=True)
+    (lib / "zin_moves.lua").write_text("return {}\n")
+    clips.deploy("zin", stick=stick, brain=True)
+    assert "moves = {}" not in (mods / "zin_rig.lua").read_text()
     (mods / "zin_rig.lua").rename(mods / "old_rig.lua")
     (mods / "own_rig.lua").write_text("-- not ours\n")
     clips.deploy("zin", stick=stick)
@@ -224,7 +229,7 @@ def test_cli(fake, engine, clock, monkeypatch, tmp_path, capsys):
 
 def test_ride_deploys_to_the_launchers_lane(monkeypatch):
     seen = []
-    monkeypatch.setattr(clips, "deploy", lambda *args: seen.append(args))
+    monkeypatch.setattr(clips, "deploy", lambda *args, **kw: seen.append(args))
 
     def no_boot(*args, **kw):
         raise RuntimeError("no boot here")

@@ -42,6 +42,8 @@ SEAM_RULES = 4
 """Rules the framework's native brain seam holds."""
 MOVE_ATTACKS: int = addresses.MOVE.ATTACKS.count or 0
 """Attacks the move player holds per move."""
+OWN_MOVES: int = addresses.EM_MOVES.MOVES.count or 0
+"""Own moves the framework holds per port."""
 PARTS = range(hitzone.PART_MASK + 1)
 ROWS = range(hitzone.MAX_ROW + 1)
 BYTE = range(0x100)
@@ -251,9 +253,11 @@ class Move:
 
 @dataclass
 class Rule:
-    """A trigger the native seam evaluates every frame: when the live pair is in `from_move` or
-    `from_main`, has stood `min_frames`, the hunter is within `dist` and receding or closing as
-    asked, play `play`; then wait `cooldown` frames, at most `count` times (None: unlimited)."""
+    """A trigger the native seam evaluates every frame: when the live pair is `from_move`'s or in
+    `from_main` and has stood `min_frames` (or own move `from_move` has played that long), the
+    hunter is within `dist` and receding or closing as asked, play `play`, a pair or an own move;
+    then wait `cooldown` frames, at most `count` times (None: unlimited). A pair rule waits while
+    an own move plays."""
 
     play: str
     from_move: str | None = field(default=None, metadata=_toml("from"))
@@ -583,6 +587,8 @@ def _validate(m: Manifest) -> None:
             _need(lever in (None, *BYTE), w, f"{lever} is not a byte")
     for i, e in enumerate(m.effects):
         _need(e.move in m.moves, f"effect[{i}]", f"move {e.move!r} is not in moves")
+    own = sum(mv.own for mv in m.moves.values())
+    _need(own <= OWN_MOVES, "moves", f"{own} own moves, the framework holds {OWN_MOVES}")
     _need(len(m.rules) <= SEAM_RULES, "rule", f"the seam holds {SEAM_RULES}")
     for i, r in enumerate(m.rules):
         w = f"rule[{i}]"
@@ -595,6 +601,8 @@ def _validate(m: Manifest) -> None:
         _need(r.play in m.moves, w, f"play {r.play!r} is not in moves")
         _need(r.from_move in (None, *m.moves), w, f"from {r.from_move!r} is not in moves")
         _need(r.from_move != r.play, w, "from and play are the same move")
+        if r.play in m.moves and m.moves[r.play].own:
+            _need(r.mode == 0, w, "mode is a pair's: an own move enters its carrier")
 
 
 def loads(text: str, path: str | Path | None = None) -> Manifest:

@@ -549,6 +549,43 @@ sub = 3
 clip = "dash_forward_stop"
 label = "the engine's own skid after a charge, with the port's dash stop painted on it"
 
+[moves.stamp]
+clip = "stamp_right_claw"
+attack = [
+    { id = 6, frame = 56, end = 80 },
+]
+label = "the right-claw stamp, turning with its clip; attack 6 from frame 56 to 80"
+
+[moves.stamp.steer]
+walls = false
+
+[moves.dash]
+clip = "dash_forward"
+after = "dash_stop"
+label = "the long dash, ended by a wall ahead, then the stop"
+
+[moves.dash_stop]
+clip = "dash_forward_stop"
+
+[moves.dash_stop.steer]
+walls = false
+
+[moves.turn_left_90]
+clip = "turn_left"
+label = "a quarter turn to his left over the clip's 50 AI frames"
+
+[moves.turn_left_90.steer]
+turn = "fixed"
+angle = 90.0
+frames = 50
+walls = false
+
+[moves.howl]
+main = 0
+sub = 4
+clip = "welcome_howl"
+label = "the roar on notice; the clip in its entry loops, and the roar waits for frame 60"
+
 [[hurtbox]]
 bone = 35
 radius = 230.0
@@ -685,3 +722,24 @@ from = "lunge"
 min_frames = 75
 cooldown = 30
 label = "run budget by time"
+
+[[rule]]
+play = "stamp"
+from = "lunge_stop"
+min_frames = 20
+dist = [
+    0.0,
+    1200.0,
+]
+cooldown = 150
+label = "the hunter close once the skid has stood -> stamp"
+
+[[rule]]
+play = "stamp"
+from = "dash"
+min_frames = 10
+dist = [
+    0.0,
+    800.0,
+]
+label = "the hunter close during the dash -> stamp"

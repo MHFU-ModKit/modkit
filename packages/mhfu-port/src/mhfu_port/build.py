@@ -284,7 +284,8 @@ def build(m: Manifest, data: Data) -> Built:
     placed = layout(m, d, h)
     anim = animation(d, h, bind, record_of, placed, m.build.ground_lift)
     turned = travel.turns(anim, bind.rig.skeleton, authored(m, placed))
-    placed = dataclasses.replace(placed, turns=turned)
+    frames = {e: motion.frames(d.clips[cid]) for e, cid in placed.entries.items()}
+    placed = dataclasses.replace(placed, turns=turned, frames=frames)
     out = pac(h, bind.rig, model, d.textures, anim)
     summary = Summary(
         mode=bind.mode,
