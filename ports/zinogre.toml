@@ -586,12 +586,6 @@ sub = 4
 clip = "welcome_howl"
 label = "the roar on notice; the clip in its entry loops, and the roar waits for frame 60"
 
-[moves.idle]
-main = 0
-sub = 1
-clip = "stop_walk_forward"
-label = "the idle hub hands off when its clip ends, which the looping idle never does"
-
 [[hurtbox]]
 bone = 35
 radius = 230.0
