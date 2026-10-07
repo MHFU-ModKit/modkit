@@ -719,23 +719,21 @@ label = "run budget by time"
 
 [[rule]]
 play = "stamp"
-from_main = [
-    0,
-]
-min_frames = 30
+from = "lunge_stop"
+min_frames = 20
 dist = [
     0.0,
-    700.0,
+    1200.0,
 ]
-cooldown = 300
-label = "the hunter close while he stands -> stamp"
+cooldown = 150
+label = "the hunter close once the skid has stood -> stamp"
 
 [[rule]]
 play = "stamp"
 from = "dash"
-min_frames = 20
+min_frames = 10
 dist = [
     0.0,
-    600.0,
+    800.0,
 ]
 label = "the hunter close during the dash -> stamp"
