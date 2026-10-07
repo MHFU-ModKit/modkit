@@ -620,6 +620,47 @@ label = "the howl the moment he notices you"
 [moves.notice_howl.steer]
 walls = false
 
+[parts.head]
+index = 0
+hitzone_row = 0
+label = "em75's, a flinch of it measured live"
+
+[parts.neck]
+index = 1
+hitzone_row = 1
+label = "em75's neck and upper body, from its hurtbox table; not hit live"
+
+[parts.body]
+index = 2
+hitzone_row = 3
+label = "em75's, a flinch of it measured live"
+
+[parts.tail]
+index = 3
+hitzone_row = 4
+severable = true
+label = "em75's, a flinch of it measured live; the cut counts here"
+
+[parts.left_foreleg]
+index = 4
+hitzone_row = 5
+label = "em75's, a flinch of it measured live"
+
+[parts.left_hindleg]
+index = 5
+hitzone_row = 6
+label = "em75's, a flinch of it measured live"
+
+[parts.right_foreleg]
+index = 6
+hitzone_row = 5
+label = "em75's, a flinch of it measured live"
+
+[parts.right_hindleg]
+index = 7
+hitzone_row = 6
+label = "em75's, a flinch of it measured live"
+
 [[hurtbox]]
 bone = 35
 radius = 230.0
