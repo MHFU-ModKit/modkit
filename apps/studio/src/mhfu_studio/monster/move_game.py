@@ -6,6 +6,7 @@ inject` writes them, then the running port asked for one of its own moves by nam
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -45,14 +46,14 @@ class Running:
     """Whether a PPSSPP is there to ask (`$MHFU_LANE`'s, else one on this machine), from a
     process scan made at most every `ttl` seconds."""
 
-    def __init__(self, ttl: float = 2.0) -> None:
-        self.ttl = ttl
-        self._seen = (-ttl, False)
+    def __init__(self, ttl: float = 2.0, clock: Callable[[], float] = time.monotonic) -> None:
+        self.ttl, self.clock = ttl, clock
+        self._seen: tuple[float | None, bool] = (None, False)
 
     def __call__(self) -> bool:
         at, seen = self._seen
-        now = time.monotonic()
-        if now - at >= self.ttl:
+        now = self.clock()
+        if at is None or now - at >= self.ttl:
             from ppsspp_debug import emulators
 
             lane = inject.lane()
