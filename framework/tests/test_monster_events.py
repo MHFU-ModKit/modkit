@@ -152,7 +152,8 @@ def test_frame_returns_edges_and_parts(g: Game) -> None:
 
 
 def test_the_names_are_the_hosts(lib: ctypes.CDLL) -> None:
-    """Lua takes a manifest's `on` by these names: they must be mhfu's, kind for kind."""
-    names = (ctypes.c_char_p * 8).in_dll(lib, "mhfu_monster_event_names")
-    got = tuple(n.decode() for n in names[: names[:].index(None)])
-    assert got == monster_events.KINDS
+    """Lua takes a manifest's `on` by these names: mhfu's, kind for kind, then a terminator."""
+    n = len(monster_events.KINDS)
+    names = (ctypes.c_char_p * (n + 1)).in_dll(lib, "mhfu_monster_event_names")
+    assert tuple(names[i].decode() for i in range(n)) == monster_events.KINDS
+    assert names[n] is None
