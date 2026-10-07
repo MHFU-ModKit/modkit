@@ -66,7 +66,7 @@ on the floor of the view (T hides it) is the turn: an arrow for frame 0, one for
 a handle for the end, which drags the clip's `turn`, or a fixed steer's angle, in whole degrees
 (Shift: 15). Every edit is one undo step.
 
-Play in game saves, writes the port's clips and moves modules to the memory stick's `mods/lib` as
+Play in game saves, writes the port's modules to the memory stick's `mods/lib` as
 `mhfu-port inject` does, and asks the running port to play the move by name; it refuses a move
 whose clip sits in another anim than in the saved manifest, since the game holds the build
 injected from the file. It writes only the modules that changed, and asks for the move from the

@@ -172,7 +172,7 @@ def test_cli(data, tmp_path):
     port = m.port
     assert (tmp_path / port.pac).read_bytes() == out.read_bytes()
     assert (tmp_path / port.orig).read_bytes() == data.fu.read(port.host_frame)
-    for module in (layout.module_name(m), moves.module_name(m)):
+    for module in (layout.module_name(m), layout.turns_module_name(m), moves.module_name(m)):
         assert (lib / module).read_text() == (out.parent / module).read_text()
     assert "  charge = 61,  -- MHP3rd 61\n" in (lib / layout.module_name(m)).read_text()
     stamp = (lib / moves.module_name(m)).stat().st_mtime_ns

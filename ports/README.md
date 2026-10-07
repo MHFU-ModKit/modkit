@@ -15,9 +15,9 @@ uv run mhfu-port inject ports/brute_tigrex.toml   # built and placed on the memo
 ```
 
 `build` writes the model PAC that `[port] pac` names, from the extracted games in `MHFU_DATA`
-and `MHP3RD_DATA`, and `<name>_clips.lua` and `<name>_moves.lua` beside it; `inject` puts those
-modules in the memory stick's `mods/lib/` (`--lib` elsewhere). The built files are game data:
-never commit them.
+and `MHP3RD_DATA`, and `<name>_clips.lua`, `<name>_turns.lua` and `<name>_moves.lua` beside it;
+`inject` puts those modules in the memory stick's `mods/lib/` (`--lib` elsewhere). The built
+files are game data: never commit them.
 
 ## Clips
 
@@ -49,7 +49,8 @@ places them.
 
 `<name>_clips.lua` maps each clip's name (the manifest's, else `clip_<entry>`) to its entry, and
 `mhfu_port.lua`'s `P.define` reads it as the port's clips, so no mod keeps a copy of the layout.
-`mhfu-port pose` checks that each entry plays its clip.
+`mhfu-port pose` checks that each entry plays its clip. `<name>_turns.lua` holds each entry's turn
+curve for `mhfu move play --curve`; moves carry their own, so the game never loads it.
 
 ## Moves and rules
 

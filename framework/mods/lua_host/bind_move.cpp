@@ -74,7 +74,7 @@ static int hex(int c)
 
 /* t.steer (mhfu/steer.h): turn = "still" | "hunter" | "away" | "fixed", rate (YAW units a
  * frame), total (degrees) over frames, dir (degrees), walls, stuck = { main, sub, mode }, curve
- * = the clips module's _turns string for the entry */
+ * = the entry's string in the port's turns module */
 static void steer_of(lua_State *L, int t, mhfu_steer_spec_t *sp)
 {
     mhfu_steer_init_spec(sp);

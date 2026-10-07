@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-import dataclasses
 from pathlib import Path
 
 import pytest
@@ -168,12 +167,16 @@ def test_lua():
     body = [line for line in text.splitlines() if " = " in line]
     # entry 2's own name is taken by the clip in entry 3, so it goes unnamed
     assert body == ['  ["dash-stop"] = 1,  -- MHP3rd 1', "  clip_02 = 3,  -- MHP3rd 7"]
+
+
+def test_turns_lua():
+    m = manifest.loads(
+        '[port]\nname = "z"\nhost_species = 75\npac = "z.bin"\n[source]\nmodel = 5339\n'
+    )
     turn = travel.Turn(4, (0, 0x2000, 0x4000), 0, 90.0)
-    text = layout.lua(m, dataclasses.replace(got, turns={3: turn}))
-    assert '  _turns = {\n    [3] = "000020004000",\n  },' in text
-    clash = manifest.loads(manifest.dumps(m) + "[clips._turns]\nslot = 2\nsource = 205\n")
-    with pytest.raises(layout.LayoutError, match="_turns"):
-        layout.lua(clash, got)
+    text = layout.turns_lua(m, layout.Layout({3: 7}, turns={3: turn}))
+    assert layout.turns_module_name(m) == "z_turns.lua"
+    assert text.endswith('return {\n  [3] = "000020004000",\n}\n')
 
 
 @pytest.mark.parametrize(("name", "clips", "odd"), [("zinogre", 102, 20), ("brute_tigrex", 77, 19)])

@@ -33,9 +33,16 @@ LANE_ENV = "MHFU_LANE"
 INJECT_SUBDIR = "PLUGINS/mhfu_framework/inject"
 MODS_SUBDIR = "PLUGINS/mhfu_framework/mods"
 """Where the framework loads Lua mods from; `require` reads its `lib/`."""
+LIB = "lib"
+"""Where `require` finds a library, under `MODS_SUBDIR`."""
 ORIG = ".orig"
 
 _NAME = re.compile(r"file_(\d{4,6})\b")
+
+
+def port_module(port: str, kind: str) -> str:
+    """A port's generated library in `LIB`: its `clips`, `moves` or `turns`."""
+    return f"{port}_{kind}.lua"
 
 
 def detect() -> Path | None:

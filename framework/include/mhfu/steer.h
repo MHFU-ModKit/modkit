@@ -72,7 +72,7 @@ typedef struct {
     uint8_t  stuck_main, stuck_sub, stuck_mode; /* entered on a class-2 wall: em75's (0,6) mode 1 */
     uint8_t  _pad[3];
     uint16_t keys[MHFU_STEER_KEYS]; /* YAW every KEY_STEP clip frames, the last at the clip's end:
-                                     * the clips module's `_turns` (mhfu_port.travel.Turn) */
+                                     * the port's turns module (mhfu_port.travel.Turn) */
 } mhfu_steer_spec_t;
 
 /* struct STEER_STATE in addresses.toml */

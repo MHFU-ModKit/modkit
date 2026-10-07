@@ -764,7 +764,7 @@ KEY_COUNT = { offset = 0xC, type = "u16", doc = "KEYS in use; 0: the clip does n
 STUCK_MAIN = { offset = 0xE, type = "u8", doc = "pair entered on a class-2 wall ahead (ENTITY.STUCK_WALL), em75's (0,6)" }
 STUCK_SUB = { offset = 0xF, type = "u8", doc = "with STUCK_MAIN" }
 STUCK_MODE = { offset = 0x10, type = "u8", doc = "ENTER_ACTION mode for it, 1 as the Tigrex charge enters it" }
-KEYS = { offset = 0x14, type = "u16[256]", doc = "YAW every 2 clip frames, the last at the clip's end: the clips module's _turns (mhfu_port.travel.Turn)" }
+KEYS = { offset = 0x14, type = "u16[256]", doc = "YAW every 2 clip frames, the last at the clip's end: a port's turns module (mhfu_port.travel.Turn)" }
 
 [struct.STEER_STATE]
 doc = "the move player's steering (steer.h mhfu_steer_state_t), in MOVE_STATE"

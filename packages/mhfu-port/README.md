@@ -17,7 +17,7 @@ A manifest in `ports/` names the donor's files, the host and the build settings 
 [`ports/`](../../ports)), and is the only input:
 
 ```bash
-uv run mhfu-port build ports/zinogre.toml    # zinogre.bin, the model PAC, and zinogre_clips.lua
+uv run mhfu-port build ports/zinogre.toml    # zinogre.bin, the model PAC, and its Lua modules
 uv run mhfu-port inject ports/zinogre.toml   # the same, placed for the framework to load
 ```
 

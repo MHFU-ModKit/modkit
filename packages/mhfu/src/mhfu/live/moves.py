@@ -144,7 +144,7 @@ class Move:
 @dataclass(frozen=True)
 class Steer:
     """What `mhfu_steer_spec_t` holds: the clip's turn curve (`curve`, YAW every 2 clip frames:
-    the clips module's `_turns`, `turns_of`), a turn mode on top, and whether a wall ends the
+    a port's turns module, `turns_of`), a turn mode on top, and whether a wall ends the
     move, a class-2 one into `stuck`."""
 
     curve: tuple[int, ...] = ()

@@ -108,10 +108,10 @@ def test_lua():
     ]
 
 
-def test_curve_is_the_clips_module_turn():
-    """The keys an own move turns by are the clips module's `_turns` for its entry."""
-    clips = layout.lua(_m(), LAYOUT)
-    assert f'[46] = "{moves.curve(_m(), "stamp", LAYOUT)}"' in clips
+def test_curve_is_the_turns_module_entry():
+    """The keys an own move turns by are the turns module's for its entry."""
+    turns = layout.turns_lua(_m(), LAYOUT)
+    assert f'[46] = "{moves.curve(_m(), "stamp", LAYOUT)}"' in turns
     assert moves.curve(_m(), "dash", LAYOUT) is None  # turns toward the hunter instead
 
 

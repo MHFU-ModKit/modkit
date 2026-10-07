@@ -647,7 +647,7 @@ function mhfu.move_block() end
 
 ---How a move turns and stops (mhfu/steer.h); every field is optional.
 ---@class mhfu.MoveSteer
----@field curve? string YAW while the clip plays: the entry's string in the clips module's `_turns`
+---@field curve? string YAW while the clip plays: the entry's string in `<port>_turns.lua`
 ---@field turn? "still"|"hunter"|"away"|"fixed" also: toward or away from the hunter at `rate`, or `total` over `frames`
 ---@field rate? integer YAW units an AI frame toward or away, default 64 (the Tigrex charge's)
 ---@field total? number degrees for "fixed", positive the way YAW grows
