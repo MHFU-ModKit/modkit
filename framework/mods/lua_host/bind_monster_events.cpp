@@ -10,9 +10,7 @@
 
 static int r_kind[KINDS] = {LUA_NOREF, LUA_NOREF, LUA_NOREF, LUA_NOREF, LUA_NOREF, LUA_NOREF};
 
-static const char *const k_name[KINDS] = {
-    "noticed", "combat_entered", "combat_left", "flinch", "part_broken", "tail_cut",
-};
+static const char *const *const k_name = mhfu_monster_event_names;
 
 static void set_int(lua_State *L, const char *k, lua_Integer v)
 {

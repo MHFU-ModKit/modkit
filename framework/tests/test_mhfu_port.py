@@ -479,11 +479,16 @@ assert(st.entry == 46 and st.after == 0 and st.attacks[1][1] == 56 and st.steer.
 assert(da.after == nil and da.back[1] == 1 and da.back[2] == 4 and da.steer.turn == "hunter")
 assert(SEAM.moves[1].after == nil and SEAM.moves[1].back == nil)
 
--- rules: from a pair to an own move, from an own move to a pair
+-- rules: from a pair to an own move, from an own move to a pair, on monster events
 local r0, r1 = SEAM.rules[0], SEAM.rules[1]
 assert(r0.from_mask == 1 and r0.play_move == 2 and r0.from_move == nil and r0.cooldown == 300)
 assert(r1.from_move == 0 and r1.from_mask == 0 and r1.to_main == 1 and r1.to_sub == 4)
 assert(r1.receding and r1.count == 2 and r1.play_move == nil)
+local r2, r3 = SEAM.rules[2], SEAM.rules[3]
+assert(r2.on == "flinch" and r2.part == 0 and r2.play_move == 1 and r2.from_mask == 0)
+assert(r3.on == "noticed" and r3.part == nil and r3.to_main == 1)
+assert(SEAM.moves[1].eager and not SEAM.moves[2].eager)
+assert(SEAM.rules[4] == nil and SEAM.rules[mhfu.addr.EM_CFG.RULES_COUNT - 1] == nil)
 
 -- port:move plays the slot and drops any latch; a pair move is not one
 z.clip, z._clip_uses = 99, 1
@@ -517,9 +522,11 @@ def test_own_moves(lua: Any, tmp_path: Path) -> None:
         "[moves.stamp]\nclip = 'stamp'\nafter = 'dash'\n"
         "[[moves.stamp.attack]]\nid = 6\nframe = 56\nend = 80\n"
         "[moves.dash]\nclip = 'dash'\nafter = 'lunge'\n[moves.dash.steer]\nturn = 'hunter'\n"
-        "[moves.spin]\nanim = 9\n"
+        "[moves.spin]\nanim = 9\neager = true\n"
         "[[rule]]\nplay = 'stamp'\nfrom_main = [0]\ncooldown = 300\n"
         "[[rule]]\nplay = 'lunge'\nfrom = 'dash'\nreceding = true\ncount = 2\n"
+        "[[rule]]\nplay = 'spin'\non = 'flinch'\npart = 0\n"
+        "[[rule]]\nplay = 'lunge'\non = 'noticed'\n"
     )
     turn = travel.Turn(4, (0, 0x2000, 0x4000), 0x4000, None)
     lay = layout.Layout({20: 20, 46: 200, 9: 9}, turns={46: turn})

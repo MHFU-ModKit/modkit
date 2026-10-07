@@ -115,7 +115,8 @@ end
 -- is the fallback and the log says so once.
 local EM_ANY       = mhfu.EM_ANY or 0xFE
 local EM_UNLIMITED = mhfu.EM_UNLIMITED or -1
-local MAX_SUBS, MAX_RULES = 4, 4
+local MAX_SUBS     = 4
+local MAX_RULES    = mhfu.addr.EM_CFG.RULES_COUNT     -- rules the seam holds
 local MAX_OWN      = mhfu.addr.EM_MOVES.MOVES_COUNT  -- own moves the framework's registry holds
 
 local function native_ready()
@@ -465,9 +466,13 @@ end
 ---
 --- `from` an own move fires while it plays, its AI frames the dwell; a rule from a pair waits
 --- while any own move plays. Fires at most once per entry into `from` (the pair changes when it
---- fires), then `cooldown` frames must pass; at most one rule fires an AI frame. Up to 4 rules
---- per port, installed when the seam is live. Without the seam the rule is inert and logged as
---- such: the 2 Hz brain is the fallback.
+--- fires), then `cooldown` frames must pass; at most one rule fires an AI frame. `on = "<event>"`
+--- (a monster event: "noticed", "combat_entered", "combat_left", "flinch", "part_broken",
+--- "tail_cut") fires in the AI frame the event is seen instead, `from` still gating when given;
+--- `part` keeps a flinch or break to that part. `on = "flinch"` plays its own move in place of
+--- the host's reaction. Up to mhfu.addr.EM_CFG.RULES_COUNT rules per port, installed when the
+--- seam is live. Without the seam the rule is inert and logged as such: the 2 Hz brain is the
+--- fallback.
 function Port:rule(spec)
   if #self._rules >= MAX_RULES then
     log("[port:%s] rule ignored: the seam holds %d", self.name, MAX_RULES)
@@ -484,12 +489,13 @@ function Port:rule(spec)
   end
   local fm = spec.from_main
   if type(fm) == "number" then fm = { fm } end
-  if from == nil and #(fm or {}) == 0 then
-    log("[port:%s] rule -> '%s': no `from`, ignored", self.name, spec.play)
+  if from == nil and #(fm or {}) == 0 and spec.on == nil then
+    log("[port:%s] rule -> '%s': no `from` or `on`, ignored", self.name, spec.play)
     return self
   end
   self._rules[#self._rules + 1] = {
     from = from, from_main = fm or {}, play = spec.play, label = spec.label,
+    on = spec.on, part = spec.part,
     min_frames = spec.min_frames or 0,
     dist_lo = spec.dist and spec.dist[1] or 0, dist_hi = spec.dist and spec.dist[2] or 1.0e9,
     receding = spec.receding and true or false, closing = spec.closing and true or false,
@@ -503,7 +509,8 @@ end
 function Port:_seam_rule(r)
   local t = { from_mask = 0, from_sub = EM_ANY, mode = r.mode, min_frames = r.min_frames,
               dist_lo = r.dist_lo, dist_hi = r.dist_hi, receding = r.receding,
-              closing = r.closing, cooldown = r.cooldown, count = r.count }
+              closing = r.closing, cooldown = r.cooldown, count = r.count, on = r.on,
+              part = r.part }
   local from = r.from
   if type(from) == "string" then
     local mv = self.moves[from]
@@ -516,7 +523,8 @@ function Port:_seam_rule(r)
   local to = self.moves[r.play]
   if is_own(to) then t.play_move = self._slot[r.play]
   else t.to_main, t.to_sub = to.main, to.sub end
-  if (t.from_mask == 0 and t.from_move == nil) or (is_own(to) and t.play_move == nil) then
+  if (t.from_mask == 0 and t.from_move == nil and r.on == nil)
+      or (is_own(to) and t.play_move == nil) or (r.on == "flinch" and not is_own(to)) then
     return nil
   end
   return t
@@ -575,7 +583,8 @@ function Port:_arm_native()
     local t = r and self:_seam_rule(r)
     if t then
       mhfu.em_rule(i - 1, t)
-      log("[port:%s] rule %d: %s >=%d frames d[%d,%s)%s%s -> '%s'%s", self.name, i,
+      log("[port:%s] rule %d: %s%s >=%d frames d[%d,%s)%s%s -> '%s'%s", self.name, i,
+          r.on and string.format("on %s%s, ", r.on, r.part and (" part " .. r.part) or "") or "",
           type(r.from) == "string" and ("'" .. r.from .. "'")
             or string.format("main 0x%02X", t.from_mask),
           r.min_frames, math.floor(r.dist_lo),
