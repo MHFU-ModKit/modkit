@@ -374,3 +374,14 @@ def test_ports(name):
 
 def test_rule_capacity_is_the_frameworks():
     assert M.SEAM_RULES == addresses.EM_CFG.RULES.count and M.SEAM_RULES >= 8
+
+
+def test_part_events():
+    assert set(M.PART_EVENTS) < set(M.EVENTS)
+    for event in M.EVENTS:
+        rule = f"[[rule]]\non = '{event}'\npart = 1\nplay = 'o'\n"
+        if event in M.PART_EVENTS:
+            M.loads(_with(OWN + rule))
+        else:
+            with pytest.raises(ManifestError, match="part goes with"):
+                M.loads(_with(OWN + rule))

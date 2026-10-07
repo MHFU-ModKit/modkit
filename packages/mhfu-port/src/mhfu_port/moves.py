@@ -82,41 +82,57 @@ def records(game: Extracted, species: int) -> frozenset[int]:
     return frozenset(r.index - off for r in ([] if t is None else t.attacks) if any(r.raw))
 
 
-def check(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> None:
-    """Raise `ManifestError` for an own move the module cannot carry: a clip with no entry, an
-    attack past its clip or with no record in `known` (the host's, when given), more turn keys
-    than the framework holds, no carrier; or rules on the flinch whose moves ride different
-    carriers."""
+def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> list[str]:
+    """Every own move or rule the module cannot carry: a clip with no entry, an attack past its
+    clip or with no record in `known` (the host's, when given), more turn keys than the framework
+    holds, no carrier; rules on the flinch whose moves ride different carriers."""
+    out: list[str] = []
     pool = 0
     for name, mv in m.moves.items():
         if not mv.own:
             continue
         w = f"moves.{name}"
-        e = entry(m, name, layout)
-        carrier(m, name)
+        try:
+            e = entry(m, name, layout)
+            carrier(m, name)
+        except ManifestError as err:
+            out.append(str(err))
+            continue
         frames = layout.frames.get(e)
         for i, a in enumerate(mv.attacks):
             if known is not None and a.id not in known:
-                raise ManifestError(
+                out.append(
                     f"{w}.attack[{i}]: host species {m.port.host_species} has no "
                     f"attack record {a.id}"
                 )
             if frames is not None and a.frame >= frames:
-                raise ManifestError(f"{w}.attack[{i}]: frame {a.frame} is past the clip's {frames}")
+                out.append(f"{w}.attack[{i}]: frame {a.frame} is past the clip's {frames}")
         keys = len(curve(m, name, layout) or "") // 4
         if keys > KEYS:
-            raise ManifestError(f"{w}: the clip's turn has {keys} keys, a move holds {KEYS}")
+            out.append(f"{w}: the clip's turn has {keys} keys, a move holds {KEYS}")
         pool += keys
     if pool > POOL:
-        raise ManifestError(
-            f"moves: the own moves' turns need {pool} keys, the framework holds {POOL}"
-        )
-    flinch = {carrier(m, r.play) for r in m.rules if r.on == "flinch"}
+        out.append(f"moves: the own moves' turns need {pool} keys, the framework holds {POOL}")
+    flinch = set()
+    for r in m.rules:
+        if r.on == "flinch":
+            try:
+                flinch.add(carrier(m, r.play))
+            except ManifestError:
+                pass  # its move's own problem, above
     if len(flinch) > 1:
-        raise ManifestError(
+        out.append(
             f"rule: the moves of the rules on the flinch ride {len(flinch)} carriers; the "
             "reaction replacement enters one"
         )
+    return out
+
+
+def check(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> None:
+    """Raise `ManifestError` with the first of `problems`."""
+    found = problems(m, layout, known)
+    if found:
+        raise ManifestError(found[0])
 
 
 def pair_move(mv: Move) -> dict[str, Any]:

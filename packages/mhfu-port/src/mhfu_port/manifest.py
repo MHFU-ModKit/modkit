@@ -39,6 +39,8 @@ TURNS: tuple[Turn, ...] = typing.get_args(Turn)
 Event = monster_events.Kind
 EVENTS: tuple[Event, ...] = monster_events.KINDS
 """A monster event's name, as the framework takes it in a rule's `on`."""
+PART_EVENTS: tuple[Event, ...] = ("flinch", "part_broken")
+"""The events a rule's `part` narrows."""
 
 MAIN_STATES = range(8)
 """A big monster's behaviour main states."""
@@ -610,11 +612,7 @@ def _validate(m: Manifest) -> None:
         _need(r.count is None or r.count >= 1, w, "count is at least 1; leave it out for always")
         trigger = r.from_move is not None or bool(r.from_main) or r.on is not None
         _need(trigger, w, "needs from, from_main or on")
-        _need(
-            r.part is None or r.on in ("flinch", "part_broken"),
-            w,
-            "part goes with a flinch or break",
-        )
+        _need(r.part is None or r.on in PART_EVENTS, w, "part goes with a flinch or break")
         _need(r.part in (None, *PARTS), w, f"part {r.part} is not a part")
         _need(not (r.receding and r.closing), w, "cannot be receding and closing")
         _need(r.play in m.moves, w, f"play {r.play!r} is not in moves")

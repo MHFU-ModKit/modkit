@@ -211,3 +211,12 @@ def test_events_and_force_reach_the_module():
         '{ play = "stamp", on = "flinch", part = 0, count = 3 },',
         '{ play = "stamp", on = "noticed", force = true },',
     ]
+
+
+def test_problems_lists_every_one():
+    bad = OWN.replace("frame = 56\nend = 80", "frame = 228\nend = 240")
+    found = moves.problems(_m(bad), layout.Layout({20: 20, 9: 9}), {7})
+    assert found == ["moves.stamp: clip 'stamp' has no executor entry in this build"]
+    found = moves.problems(_m(bad), LAYOUT, {7})
+    assert [p.split(":")[0] for p in found] == ["moves.stamp.attack[0]"] * 2
+    assert moves.problems(_m(), LAYOUT, {6}) == []

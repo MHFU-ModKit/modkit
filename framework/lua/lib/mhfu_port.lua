@@ -261,6 +261,10 @@ function P.define(spec)
     own     = nil,      -- the own move the move player plays
     _slot   = {},       -- own move name -> its slot in the framework's registry
     _own_at = {},       -- slot -> own move name
+    -- the moves module the moves or rules came from: a re-run of it (a new build deployed while
+    -- the game runs) redefines the port (relink_changed)
+    _made   = (spec.moves == nil or spec.rules == nil) and package.loaded[spec.name .. "_moves"]
+              or nil,
   }, Port)
   if prev then for _, k in ipairs(KEEP) do self[k] = prev[k] end end
   -- declared pairs the engine enters on its own get the port's clip too (the action hook paints
@@ -949,10 +953,13 @@ local function port_state(port)
   }
 end
 
+local relink_changed   -- below, beside the setups it re-runs
+
 function mhfu_tick()
   drain()
   mhfu.paint_map()
   g_tick = g_tick + 1
+  relink_changed()
 
   for _, port in pairs(P.ports) do
     port._tick = g_tick
@@ -1117,6 +1124,17 @@ local function run_setup(name, fn, why)
   P._mods[name] = fn
   local ok, err = pcall(fn, P)
   log("[port] mod '%s' setup %s%s", name, ok and "ok" or ("FAILED: " .. tostring(err)), why)
+end
+
+-- A port's moves module re-ran in place (lua_host re-runs a changed library): every kept setup
+-- runs again, so the ports take the new moves and rules and re-arm the seam.
+relink_changed = function()
+  for _, port in pairs(P.ports) do
+    if port._made ~= nil and package.loaded[port.name .. "_moves"] ~= port._made then
+      for name, fn in pairs(P._mods) do run_setup(name, fn, " (moves module changed)") end
+      return
+    end
+  end
 end
 
 P.mod = function(name, fn) run_setup(name, fn, "") end

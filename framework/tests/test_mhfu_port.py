@@ -540,3 +540,33 @@ def test_own_moves(lua: Any, tmp_path: Path) -> None:
     lua.execute(f"package.path = package.path .. ';' .. {str(tmp_path / '?.lua')!r}")
     memory(lua)
     lua.execute(OWN)
+
+
+RELINK = """
+local SEAM = { moves = {}, rules = {} }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) SEAM.moves[slot] = t; return true end
+function mhfu.em_moves_clear() SEAM.moves = {}; return true end
+function mhfu.em_play(ent, slot) return SEAM.moves[slot] ~= nil end
+function mhfu.em_rule(slot, r) SEAM.rules[slot] = r; return true end
+package.loaded.z_moves = { moves = { stamp = { entry = 46 } }, rules = {} }
+local P = require("mhfu_port")
+P.mod("z_rig", function(P) P.define{ name = "z", species = 75 } end)
+P.ports.z.ent = ENT
+ticks(1)
+assert(not P.ports.z:move("probe"))
+-- a new build's module re-ran in place: the next tick redefines the port from it and re-arms
+package.loaded.z_moves = { moves = { stamp = { entry = 46 }, probe = { entry = 47 } }, rules = {} }
+ticks(2)
+local z = P.ports.z
+assert(z.ent == ENT and count("moves module changed") == 1)
+assert(SEAM.moves[z._slot.probe].entry == 47)
+assert(z:move("probe"))
+ticks(2)
+assert(count("moves module changed") == 1, "once per new module")
+"""
+
+
+def test_a_new_moves_module_relinks_the_port(lua: Any) -> None:
+    memory(lua)
+    lua.execute(RELINK)
