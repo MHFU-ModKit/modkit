@@ -4,11 +4,11 @@
 
 The loader refuses anything structural. What is left: an anim the build does not hold (a build
 older than the manifest's clip layout) or holds an idle copy in (an older builder's filler), a
-move on an action the census saw never entered (it lasts one tick), and joint numbers
-off the skeleton the port ships. Missing evidence is said, never passed silently; a standing
-condition nobody fixes in a port (no census, a guessed attack table) is info, so the problem
-count holds only problems. The damage grid and the hit groups being shared with a native base
-monster is said where they are edited, not here.
+move on an action the census saw never entered (it lasts one tick), joint numbers off the
+skeleton the port ships, and what mhfu-port's moves module refuses. Missing evidence is said,
+never passed silently; a standing condition nobody fixes in a port (no census, a guessed attack
+table) is info, so the problem count holds only problems. The damage grid and the hit groups
+being shared with a native base monster is said where they are edited, not here.
 
 A finding names the control that fixes it (`FOCUS`, a key the Clips, Parts and Hitboxes panels
 land on), or says what to do (`FIX`).
@@ -16,11 +16,13 @@ land on), or says what to do (`FIX`).
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping, Sequence
 
 from mhfu.em.intel import MIN_DWELL_TICKS, Handoff, SpeciesIntel
-from mhfu_port import build, records
-from mhfu_port.manifest import UNLIMITED_DIST, Hitbox, Hurtbox, Manifest
+from mhfu_port import build, layout, moves, records
+from mhfu_port.layout import Layout
+from mhfu_port.manifest import UNLIMITED_DIST, Hitbox, Hurtbox, Manifest, ManifestError, Move
 from mhfu_port.records import ANIM, GEO
 from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Skeleton
@@ -48,7 +50,7 @@ HIT_JOINT, HIT_RADIUS, HIT_END, HIT_GROUP, ATTACK_STATS = (
 #: the Clips panel's
 CLIP_NAME = "clip name"
 #: the Moves panel's
-MOVE_WINDOWS, MOVE_CLIP = "move windows", "move clip"
+MOVE_WINDOWS, MOVE_CLIP, RULES = "move windows", "move clip", "rules"
 FOCUS = {
     "CLIP_SLOT_MISSING": CLIP_NAME,
     "CLIP_FRAMES_MISMATCH": CLIP_NAME,
@@ -72,9 +74,7 @@ FOCUS = {
     "HITBOX_SET_UNUSED": HIT_GROUP,
     "HITBOX_SET_UNRIGGED": HIT_GROUP,
     "ATTACK_EMPTY": ATTACK_STATS,
-    "OWN_ATTACK_UNKNOWN": MOVE_WINDOWS,
     "OWN_WINDOW_PAST_CLIP": MOVE_WINDOWS,
-    "OWN_CLIP_UNPLACED": MOVE_CLIP,
 }
 MANIFEST = "In the manifest file (ports/<name>.toml): "
 BUILD = "Build the port again: mhfu-port build ports/<name>.toml."
@@ -102,6 +102,7 @@ FIX = {
     "ATTACK_VOLUME_UNKNOWN": MANIFEST + "give the [[attack]] a hit group the base monster has.",
     "ATTACK_JOIN_INFERRED": "Nothing to change: only em75's attack join is traced in game.",
     "OWN_ATTACKS_UNCHECKED": "Open the studio with your base monster's data (--intel).",
+    "OWN_MOVE_REFUSED": "Change it in Moves: mhfu-port writes no moves module while it stands.",
 }
 
 
@@ -119,7 +120,7 @@ def _f(
     code: str,
     where: str,
     message: str,
-    at: tuple[str, int] | None = None,
+    at: tuple[str, str | int] | None = None,
     focus: str | None = None,
 ) -> Finding:
     """`where` is `section` or `section.key` / `section[i]`; `target` is that as a tuple, or
@@ -440,11 +441,10 @@ def _moves(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
 def own_moves(
     m: Manifest, pac: bytes | None, intel: SpeciesIntel | None, sources: Mapping[int, int]
 ) -> list[Finding]:
-    """What the move player refuses or never reaches in an own move: a clip in no anim, an
-    attack the base monster has no record of, a window past the clip's frames."""
+    """What the moves module refuses (`mhfu_port.moves.check` against the layout `sources` and
+    the PAC's clips): one finding per own move, then the rest of the manifest once those pass;
+    and a window that ends past its clip."""
     mine = sorted((n, mv) for n, mv in m.moves.items() if mv.own)
-    if not mine:
-        return []
     try:
         table = clips.pac_clip_table(pac) if pac is not None else {}
     except ValueError:
@@ -455,36 +455,72 @@ def own_moves(
     if attacks is None and any(mv.attacks for _, mv in mine):
         msg = f"no attack data for {species.label(host)}: own moves' attack ids are not checked."
         out.append(_f("warning", "OWN_ATTACKS_UNCHECKED", "moves", msg))
+    lay = _layout(m, table, sources)
+    ids = {a.id for _, mv in mine for a in mv.attacks}
+    known = None if attacks is None else {i for i in ids if attacks.records_for([i], host)}
+    unknown = set() if sources else {n for n, mv in mine if _named_only(m, mv)}
+    judged = {n: mv for n, mv in m.moves.items() if n not in unknown}
+    refused = []
     for name, mv in mine:
-        w = f"moves.{name}"
-        c = m.clips.get(mv.clip or "")
-        slot = mv.anim if c is None else clips.at(c, sources)
-        known = slot is not None or bool(sources) or c is None or c.slot is not None
-        if known and (slot is None or (table and slot not in table)):
-            what = mv.clip or f"anim {mv.anim}"
-            msg = f"{what} is in no anim of this build, so the move player has nothing to play."
-            out.append(_f("error", "OWN_CLIP_UNPLACED", w, msg))
-        frames = table[slot][0] if slot in table else None if c is None else c.frames
+        if name in judged:
+            refused += _refused(dataclasses.replace(m, moves={name: mv}, rules=[]), lay, known)
+    out += refused or _refused(dataclasses.replace(m, moves=judged), lay, known)
+    for name, mv in mine:
+        e = lay.ids.get(m.clips[mv.clip].id) if mv.clip is not None else mv.anim
+        frames = lay.frames.get(e) if e is not None else None
         for i, a in enumerate(mv.attacks):
-            if attacks is not None and not attacks.records_for([a.id], host):
-                msg = (
-                    f"attack {i}: {species.label(host)} has no record {a.id} with a hit in it,"
-                    " so the spawn hits nothing."
-                )
-                out.append(_f("error", "OWN_ATTACK_UNKNOWN", w, msg))
-            if frames is not None and a.frame >= frames:
-                msg = (
-                    f"attack {i} spawns at frame {a.frame}, but the clip ends at {frames}: the"
-                    " cursor never crosses it."
-                )
-                out.append(_f("error", "OWN_WINDOW_PAST_CLIP", w, msg))
-            elif frames is not None and a.end is not None and a.end > frames:
+            if frames is not None and a.frame < frames and a.end is not None and a.end > frames:
                 msg = (
                     f"attack {i} ends at frame {a.end}, past the clip's {frames}: the move ends"
                     " it first."
                 )
-                out.append(_f("warning", "OWN_WINDOW_PAST_CLIP", w, msg))
+                out.append(_f("warning", "OWN_WINDOW_PAST_CLIP", f"moves.{name}", msg))
     return out
+
+
+def _layout(
+    m: Manifest, table: Mapping[int, clips.Fingerprint], sources: Mapping[int, int]
+) -> Layout:
+    """What the studio knows of the build: `sources` (else the pins), less the entries the PAC
+    lacks, with the PAC's clip lengths (else the manifest's)."""
+    src = dict(sources) or layout.pinned(m).entries
+    entries = {e: cid for e, cid in src.items() if not table or e in table}
+    given = {c.slot: c.frames for c in m.clips.values() if c.slot is not None and c.frames}
+    frames = {e: f for e, (f, _) in table.items()} or given
+    return Layout(entries, frames=frames)
+
+
+def _refused(m: Manifest, lay: Layout, known: set[int] | None) -> list[Finding]:
+    """`moves.check`'s refusal, at the path it names: a move's attack lands on its windows, a
+    clip in no anim on the clip, a rule on the rules."""
+    try:
+        moves.check(m, lay, known)
+    except ManifestError as e:
+        where, _, why = str(e).partition(": ")
+        name = next((n for n in m.moves if f"{where}.".startswith(f"moves.{n}.")), None)
+        if name is None:
+            focus = RULES if where.startswith("rule") else ""
+            return [_f("error", "OWN_MOVE_REFUSED", where, why, focus=focus)]
+        rest = where[len(f"moves.{name}") :]
+        focus = MOVE_WINDOWS if rest.startswith(".attack[") else ""
+        if not focus and _unplaced(m, name, lay):
+            focus = MOVE_CLIP
+        return [_f("error", "OWN_MOVE_REFUSED", where, why, ("moves", name), focus)]
+    return []
+
+
+def _named_only(m: Manifest, mv: Move) -> bool:
+    """A clip the packer places: without a layout nobody knows its anim."""
+    c = m.clips.get(mv.clip or "")
+    return c is not None and c.slot is None
+
+
+def _unplaced(m: Manifest, name: str, lay: Layout) -> bool:
+    try:
+        moves.entry(m, name, lay)
+    except ManifestError:
+        return True
+    return False
 
 
 def _chain(m: Manifest, name: str, nxt: tuple[Handoff, ...] | None) -> list[Finding]:

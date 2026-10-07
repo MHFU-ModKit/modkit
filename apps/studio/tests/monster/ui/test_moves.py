@@ -110,7 +110,7 @@ def test_attacks_and_findings(panel: MovesPanel, workspace: MonsterWorkspace) ->
     assert panel.attacks.item(0).text() == "attack 6: frames 2-5 (power 64, hit group 2)"
     assert panel.attacks.item(1).text() == "attack 3: frames 6-9 (no record)"
     alerts = [w.text() for w in panel.found.findChildren(kit.Alert)]
-    assert any("has no record 3" in a for a in alerts) and panel.found.isVisible()
+    assert any("has no attack record 3" in a for a in alerts) and panel.found.isVisible()
     panel.attacks.picked.emit(0)
     assert workspace.picked_window == 0
 
