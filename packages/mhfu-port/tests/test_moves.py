@@ -170,4 +170,7 @@ def test_zinogre(data):
     assert own == {"stamp": 46, "dash": 20, "dash_stop": 21, "turn_left_90": 9}
     assert b.layout.frames[46] == 228 and 6 in moves.records(data.fu, 75)
     assert f'curve = "{b.layout.turns[46].lua()}"' in text
+    stamp = 'stamp = { entry = 46, clip = "stamp_right_claw", attacks = { { 56, 6, 80 } }'
+    assert stamp + ", carrier = { 0, 2 }" in text
+    assert 'after = "dash_stop"' in text and 'turn = "fixed", total = 90.0, frames = 50' in text
     assert '{ play = "stamp", from = "dash", min_frames = 10' in text
