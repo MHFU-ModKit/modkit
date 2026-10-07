@@ -26,7 +26,7 @@ from mhfu_port.manifest import (
 from mhfu_studio.monster.document import PortDocument
 
 #: the Move fields the Moves panel edits
-FIELDS = ("clip", "length", "carrier", "host_attacks", "after", "label")
+FIELDS = ("clip", "length", "carrier", "host_attacks", "eager", "after", "label")
 STEER_FIELDS = tuple(f.name for f in dataclasses.fields(Steer))
 Part = Literal["new", "start", "end", "body"]
 #: points from a window's edge that grab the edge rather than the span

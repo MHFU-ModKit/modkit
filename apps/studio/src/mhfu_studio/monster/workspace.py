@@ -47,6 +47,8 @@ from mhfu_studio.monster import (
     clip_game,
     clips,
     inputs,
+    move_game,
+    rules,
     species,
 )
 from mhfu_studio.monster.attacks import AttackSession, hitbox_of
@@ -174,6 +176,9 @@ class MonsterWorkspace(Workspace):
         self._pool: ThreadPoolExecutor | None = None
         #: the running game, for Play in game
         self.game_session: Callable[[], AbstractContextManager[Session]] = clip_game.attached
+        #: asks the running port for an own move (Play in game in Moves)
+        self.play_own: Callable[[Session, str], bool] = move_game.play_own
+        self.game_running: Callable[[], bool] = move_game.Running()
         self._reset()
 
     def _reset(self) -> None:
@@ -185,6 +190,8 @@ class MonsterWorkspace(Workspace):
         self.picked_window: int | None = None
         #: the attack id a window drawn on the Timeline gets; None: `window_id`'s default
         self.next_window_id: int | None = None
+        #: the rule picked in Moves, by index
+        self.picked_rule: int | None = None
         self.show_joint_ids = False
         self.undriven: dict[int, int] = {}
         self.markers: list[align.Marker] = []
@@ -601,6 +608,8 @@ class MonsterWorkspace(Workspace):
         mv = self.own_move()
         if mv is None or not 0 <= (self.picked_window or 0) < len(mv.attacks):
             self.picked_window = None
+        if m is None or not 0 <= (self.picked_rule or 0) < len(m.rules):
+            self.picked_rule = None  # an undo took the rule away
         self.sync_steer()
         self.sync_hitboxes()
         self.sync_attacks()
@@ -1761,13 +1770,20 @@ class MonsterWorkspace(Workspace):
             self.play_source(cid)
 
     def game_entry(self) -> int:
-        """The anim Play in game forces: the picked clip's, refused while its anim differs from
-        the saved manifest's, since the game holds the build injected from the file."""
+        """The anim Play in game forces: the picked clip's (`entry_in_game`)."""
         br, cid, doc = self.browser(), self.picked_clip(), self.doc
         if br is None or cid is None or doc is None:
             if self.edit_slot is None:
                 raise LookupError("pick a clip first")
             return self.edit_slot
+        return self.entry_in_game(cid)
+
+    def entry_in_game(self, cid: int) -> int:
+        """Donor clip `cid`'s anim, refused while it differs from the saved manifest's: the game
+        holds the build injected from the file."""
+        br, doc = self.browser(), self.doc
+        if br is None or doc is None:
+            raise LookupError(self.browser_note or "no layout: open a port manifest")
         now = br.layout().ids.get(cid)
         saved = layout.of(doc.saved_manifest, br.donor, br.host).ids.get(cid)
         if now is None:
@@ -1799,6 +1815,91 @@ class MonsterWorkspace(Workspace):
             self.message = f"not released: {e}"
             return
         self.message = f"monster {slot} released" + ("" if acked else "; no ack")
+
+    # rules (the Moves panel)
+
+    def new_rule(self) -> None:
+        """A rule that plays the selected move, else the first; picked."""
+        doc, m = self.doc, self.manifest
+        if doc is None or m is None:
+            self.message = "rules live in a port manifest: open one"
+            return
+        play = self.move if self.move in m.moves else next(iter(m.moves), None)
+        if play is None:
+            self.message = "make a move first: a rule plays one"
+            return
+        if self.edit("", lambda: rules.new_rule(doc, play)):
+            self.picked_rule = len(doc.manifest.rules) - 1
+
+    def pick_rule(self, index: int | None) -> None:
+        self.picked_rule = index
+
+    def set_rule(self, **fields: Any) -> bool:
+        """`rules.FIELDS` of the picked rule, one undo step."""
+        doc, i = self.doc, self.picked_rule
+        if doc is None or i is None:
+            return False
+        return self.edit("", lambda: rules.set_rule(doc, i, **fields))
+
+    def delete_rule(self) -> None:
+        doc, i = self.doc, self.picked_rule
+        if doc is not None and i is not None and self.edit("", lambda: rules.remove_rule(doc, i)):
+            self.picked_rule = None
+
+    # Play in game for an own move (the Moves panel)
+
+    def play_move_blocker(self) -> str | None:
+        """Why Play in game cannot play the selected move now; a game that does not answer is
+        found by the play."""
+        m, name = self.manifest, self.move
+        mv = None if m is None or name is None else m.moves.get(name)
+        if mv is None:
+            return "pick a move first"
+        if not mv.own:
+            return (
+                f"{name} rides the base monster's ({mv.main},{mv.sub}): the game plays it when"
+                " its brain enters that action. Play in game in Clips holds its clip."
+            )
+        try:
+            self.games()
+            self.mods_dir()
+        except places.Missing as e:
+            return f"nothing to build or send the moves module with: {e.words}"
+        except FileNotFoundError as e:
+            return f"the framework is not on the memory stick ({e}): install it there first"
+        if not self.game_running():
+            return "no game running: start PPSSPP with the port in a quest"
+        return None
+
+    def play_move_in_game(self) -> None:
+        """Saves, sends the port's clips and moves modules to the memory stick
+        (`move_game.deploy`) and asks the running port to play the selected own move."""
+        why = self.play_move_blocker()
+        doc, name = self.doc, self.move
+        if why is not None or doc is None or name is None:
+            self.message = f"not played in the game: {why}"
+            return
+        clip = doc.manifest.moves[name].clip
+        try:
+            if clip is not None:
+                self.entry_in_game(doc.manifest.clips[clip].id)
+            doc.save()
+            sent = move_game.deploy(doc.manifest, self.games(), self.mods_dir())
+            with self.game_session() as s:
+                took = self.play_own(s, name)
+        except (LookupError, OSError, ValueError, DebuggerError) as e:
+            self.message = f"not played in the game: {e}"
+            return
+        if not took:
+            self.message = (
+                f"the game did not take {name}: no port rides its big monster, or the port has no"
+                " own move by that name (a port takes new moves when its mod reloads)"
+            )
+            return
+        where = _home(sent[0].parent) if sent else "the memory stick"
+        self.message = (
+            f"{name} plays in the game; saved, {', '.join(p.name for p in sent)} sent to {where}"
+        )
 
 
 def _roots() -> tuple[Path | None, ...]:
