@@ -140,13 +140,10 @@ def test_the_seam(monkeypatch: pytest.MonkeyPatch) -> None:
         seen.append((s, name, kw))
         return True
 
-    monkeypatch.setattr(live_moves, "play_own", play_own, raising=False)
+    monkeypatch.setattr(live_moves, "play_own", play_own)
     assert move_game.play_own("s", "stamp") is True  # type: ignore[arg-type]
     assert move_game.play_own("s", "stamp", force=True) is True  # type: ignore[arg-type]
-    assert seen == [("s", "stamp", {}), ("s", "stamp", {"force": True})]
-    monkeypatch.delattr(live_moves, "play_own")
-    with pytest.raises(LookupError, match="no play_own"):
-        move_game.play_own("s", "stamp")  # type: ignore[arg-type]
+    assert seen == [("s", "stamp", {"force": False}), ("s", "stamp", {"force": True})]
 
 
 def test_running_scans_at_most_every_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
