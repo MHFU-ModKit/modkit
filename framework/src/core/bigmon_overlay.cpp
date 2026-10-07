@@ -4,6 +4,7 @@
  * Loads a second big-monster AI overlay into a fresh slot, relocated with mhfu_ovl_relocate.
  */
 #include "mhfu/bigmon_overlay.h"
+#include "mhfu/call.h"
 #include "mhfu/ovl_reloc.h"
 #include "mhfu/log.h"
 #include "addresses.gen.h"
@@ -13,9 +14,6 @@
 #include <psputils.h>          /* sceKernelDcacheWritebackAll, sceKernelIcacheInvalidateAll */
 #include <pspsuspend.h>        /* sceKernelVolatileMemLock */
 #include <string.h>
-
-/* MWCC static-initializer list: plain function pointers up to si_end. */
-typedef void (*ctor_fn)(void);
 
 /* PPSSPP memory=64 extra RAM, from the user partition's end, which the 32 MB game
  * never touches: a persistent home, bump-allocated 64 KB-aligned. Emulator only. */
@@ -148,7 +146,8 @@ int mhfu_ovl_load_relocated(const char *path, mhfu_ovl_region_t *out)
     return 0;
 }
 
-/* Calls each pointer in [si_start, si_end) that lands inside the placed footprint. */
+/* Calls each pointer in [si_start, si_end) (MWCC's static-initializer list) that lands
+ * inside the placed footprint. */
 extern "C" void mhfu_ovl_run_static_inits(const mhfu_ovl_region_t *r)
 {
     if (!r || r->si_start >= r->si_end) return;
@@ -156,7 +155,7 @@ extern "C" void mhfu_ovl_run_static_inits(const mhfu_ovl_region_t *r)
     for (uint32_t p = r->si_start; p < r->si_end; p += 4) {
         uint32_t fn = *(volatile uint32_t *)p;
         if (fn >= r->new_load && fn < r->new_load + r->foot_size) {
-            ((ctor_fn)fn)();
+            mhfu_call(fn);
             n++;
         }
     }

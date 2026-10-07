@@ -10,6 +10,7 @@
 #include "types.h"
 #include "log.h"
 #include "memory.h"
+#include "call.h"
 #include "world.h"
 #include "ids.h"
 #include "entity.h"

@@ -14,8 +14,6 @@
 #define LABEL_LEN   48       /* UTF-16 units, terminator included */
 #define MAX_LABELS  16
 
-typedef void (*text_draw_fn)(uint32_t hud_ctx, const void *desc);
-
 /* The engine's 12-byte text descriptor; b4..adv copy its banner template. */
 typedef struct {
     uint16_t x, y;
@@ -84,7 +82,7 @@ static void draw_label(uint32_t hud_ctx, int x, int y, const uint16_t *text)
     g_desc.y = (uint16_t)y;
     g_desc.b4 = 0x0E; g_desc.b5 = 0x0E; g_desc.b6 = 0x00; g_desc.adv = 0x0E;
     g_desc.text = (uint32_t)(uintptr_t)text;
-    ((text_draw_fn)MHFU_HUD_TEXT_DRAW)(hud_ctx, &g_desc);
+    mhfu_call(MHFU_HUD_TEXT_DRAW, hud_ctx, (uint32_t)(uintptr_t)&g_desc);
 }
 
 static void poll_toggle(void)

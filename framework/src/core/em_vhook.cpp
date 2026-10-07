@@ -66,6 +66,7 @@
  * latched vtable, not per entity: two live monsters of that species would share
  * the dwell counter and the distance.
  */
+#include "mhfu/call.h"
 #include "mhfu/em_vhook.h"
 #include "mhfu/events.h"
 #include "mhfu/hooks.h"
@@ -289,10 +290,9 @@ static int      g_installed;
  * inside the engine's AI step: it never logs. */
 
 #ifndef MHFU_HOST
-typedef void (*enter_fn)(uint32_t, uint32_t, uint32_t, uint32_t);
 static void enter(uint32_t ent, uint32_t m, uint32_t s, uint32_t mode)
 {
-    ((enter_fn)MHFU_ENTER_ACTION)(ent, m, s, mode);
+    mhfu_call(MHFU_ENTER_ACTION, ent, m, s, mode);
 }
 #else
 extern "C" void mhfu_host_enter(uint32_t ent, uint32_t m, uint32_t s, uint32_t mode);

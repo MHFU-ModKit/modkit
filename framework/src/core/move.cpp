@@ -24,6 +24,7 @@
  * PRX image; nothing but its pointer is kept here. The step never logs: it runs inside the
  * engine's AI step. */
 #include "mhfu/move.h"
+#include "mhfu/call.h"
 #include "mhfu/em_vhook.h"
 #include "mhfu/memory.h"
 #include "mhfu/log.h"
@@ -92,28 +93,23 @@ static_assert(offsetof(mhfu_steer_state_t, yaw0) == MHFU_STEER_STATE_YAW0, "STEE
 /* --- the engine ------------------------------------------------------------------------- */
 
 #ifndef MHFU_HOST
-typedef void     (*enter_fn)(uint32_t, uint32_t, uint32_t, uint32_t);
-typedef void     (*execute_fn)(uint32_t, uint32_t, uint32_t, uint32_t);
-typedef uint32_t (*spawn_fn)(uint32_t, uint32_t, uint32_t);
-
 static void enter(uint32_t ent, uint32_t main_state, uint32_t sub_state, uint32_t mode)
 {
-    ((enter_fn)MHFU_ENTER_ACTION)(ent, main_state, sub_state, mode);
+    mhfu_call(MHFU_ENTER_ACTION, ent, main_state, sub_state, mode);
 }
 /* a2 a3 as the hub handlers pass them */
 static void execute(uint32_t ent, uint32_t entry)
 {
-    ((execute_fn)MHFU_ACTION_EXECUTOR)(ent, entry, 0, 0);
+    mhfu_call(MHFU_ACTION_EXECUTOR, ent, entry, 0, 0);
 }
 /* natives pass *COLLISION_WORLD_PTR as the unused first argument */
 static uint32_t spawn(uint32_t spawner, uint32_t ent, uint32_t id)
 {
-    return ((spawn_fn)spawner)(mhfu_mem_read_u32(MHFU_COLLISION_WORLD_PTR), ent, id);
+    return mhfu_call(spawner, mhfu_mem_read_u32(MHFU_COLLISION_WORLD_PTR), ent, id);
 }
-typedef void (*node_fn)(uint32_t);
 static void end_node(uint32_t node, uint32_t vtable)
 {
-    ((node_fn)mhfu_mem_read_u32(vtable + MHFU_ATTACK_NODE_VTABLE_END))(node);
+    mhfu_call(mhfu_mem_read_u32(vtable + MHFU_ATTACK_NODE_VTABLE_END), node);
 }
 #else
 extern "C" void     mhfu_host_enter(uint32_t ent, uint32_t m, uint32_t s, uint32_t mode);
