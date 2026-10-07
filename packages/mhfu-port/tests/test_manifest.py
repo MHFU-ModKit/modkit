@@ -253,6 +253,12 @@ walls = false
 )
 
 
+def test_rule_on_an_event():
+    m = M.loads(_with(OWN + "eager = true\n[[rule]]\non = 'flinch'\npart = 0\nplay = 'o'\n"))
+    assert (m.rules[0].on, m.rules[0].part, m.moves["o"].eager) == ("flinch", 0, True)
+    assert M.loads(M.dumps(m)) == m
+
+
 def test_own_move():
     m = M.loads(_with(STAMP))
     o = m.moves["o"]
@@ -302,6 +308,9 @@ def test_own_move():
         (OWN + "[moves.o.steer]\nangle = 90.0\n", "angle goes with"),
         (OWN + "[moves.o.steer]\nturn = 'spin'\n", "one of"),
         (OWN + "[moves.o.steer]\nturn = 'hunter'\nrate = 0\n", "rate"),
+        (OWN + "[[rule]]\non = 'roared'\nplay = 'o'\n", "one of"),
+        (OWN + "[[rule]]\non = 'noticed'\npart = 0\nplay = 'o'\n", "part goes with"),
+        (OWN + "[[rule]]\non = 'flinch'\npart = 8\nplay = 'o'\n", "not a part"),
     ],
 )
 def test_invalid(extra, why):

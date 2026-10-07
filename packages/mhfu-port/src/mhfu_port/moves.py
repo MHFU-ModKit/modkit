@@ -110,6 +110,12 @@ def check(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> 
         raise ManifestError(
             f"moves: the own moves' turns need {pool} keys, the framework holds {POOL}"
         )
+    for i, r in enumerate(m.rules):
+        if r.on is not None:
+            raise ManifestError(f"rule[{i}]: `on` does not reach the game yet")
+    for name, mv in m.moves.items():
+        if mv.eager:
+            raise ManifestError(f"moves.{name}: `eager` does not reach the game yet")
 
 
 def _pair_move(mv: Move) -> dict[str, Any]:

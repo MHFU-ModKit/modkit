@@ -136,6 +136,8 @@ def test_hub():
             None,
             "the clip's turn has 301 keys, a move holds 256",
         ),
+        (OWN + "[[rule]]\non = 'flinch'\nplay = 'stamp'\n", LAYOUT, None, "`on` does not reach"),
+        (OWN.replace("[moves.stamp]\n", "[moves.stamp]\neager = true\n"), LAYOUT, None, "`eager`"),
     ],
 )
 def test_check(extra, lay, known, why):

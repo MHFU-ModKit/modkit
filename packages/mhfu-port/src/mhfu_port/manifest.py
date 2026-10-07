@@ -35,6 +35,8 @@ Shape = Literal["sphere", "capsule"]
 SHAPES: tuple[Shape, ...] = typing.get_args(Shape)
 Turn = Literal["clip", "still", "hunter", "away", "fixed"]
 TURNS: tuple[Turn, ...] = typing.get_args(Turn)
+Event = Literal["noticed", "combat_entered", "combat_left", "flinch", "part_broken", "tail_cut"]
+EVENTS: tuple[Event, ...] = typing.get_args(Event)
 
 MAIN_STATES = range(8)
 """A big monster's behaviour main states."""
@@ -238,6 +240,9 @@ class Move:
     """AI frames from the clip's dispatch; None: until the clip ends."""
     carrier: tuple[int, int] | None = None
     host_attacks: bool = False
+    eager: bool = False
+    """Start at once even while the monster has noticed the hunter but not yet entered combat,
+    instead of waiting for it (a move asked in that span would cut off the "!" and the howl)."""
     label: str = ""
 
     @property
@@ -257,9 +262,15 @@ class Rule:
     `from_main` and has stood `min_frames` (or own move `from_move` has played that long), the
     hunter is within `dist` and receding or closing as asked, play `play`, a pair or an own move;
     then wait `cooldown` frames, at most `count` times (None: unlimited). A pair rule waits while
-    an own move plays."""
+    an own move plays.
+
+    With `on`, the rule fires on that monster event instead (`part`: only the flinch or break of
+    that part), under the same distance, cooldown and count; `on = "flinch"` plays its move in
+    place of the host's flinch."""
 
     play: str
+    on: Event | None = None
+    part: int | None = None
     from_move: str | None = field(default=None, metadata=_toml("from"))
     from_main: list[int] = field(default_factory=list)
     min_frames: int = 0
@@ -596,7 +607,14 @@ def _validate(m: Manifest) -> None:
         _need(0 <= lo < hi, w, "dist needs 0 <= lo < hi")
         _need(all(k in MAIN_STATES for k in r.from_main), w, "from_main is not a main state")
         _need(r.count is None or r.count >= 1, w, "count is at least 1; leave it out for always")
-        _need(r.from_move is not None or bool(r.from_main), w, "needs from or from_main")
+        trigger = r.from_move is not None or bool(r.from_main) or r.on is not None
+        _need(trigger, w, "needs from, from_main or on")
+        _need(
+            r.part is None or r.on in ("flinch", "part_broken"),
+            w,
+            "part goes with a flinch or break",
+        )
+        _need(r.part in (None, *PARTS), w, f"part {r.part} is not a part")
         _need(not (r.receding and r.closing), w, "cannot be receding and closing")
         _need(r.play in m.moves, w, f"play {r.play!r} is not in moves")
         _need(r.from_move in (None, *m.moves), w, f"from {r.from_move!r} is not in moves")
