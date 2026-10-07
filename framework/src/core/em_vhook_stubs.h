@@ -7,8 +7,8 @@
  *   - no branch in either stub: every decision is a MOVN/MOVZ select, so the JIT
  *     sees one basic block and armed and unarmed runs execute the same words;
  *   - the slot-29 stub never touches $sp: ra and the step's arguments are spilled
- *     to config words for its calls, and it ends in one jr: the original, or a return
- *     when the C step took the frame;
+ *     to config words for its calls (the request, the brain, the C step), and it ends in
+ *     one jr: the original, or a return when the C step took the frame;
  *   - the slot-32 stub's only stack use is its 16-byte frame (see build_act_stub);
  *   - each fits its slot (STUB_AI_INSNS / STUB_ACT_INSNS).
  *
@@ -36,13 +36,13 @@
 #define CFG_CANARY      0x1C   /* u32                                            */
 #define CFG_PREV        0x20   /* u32  pair at the previous slot-29 tick        */
 #define CFG_PREV2       0x24   /* u32  ... and the one before                   */
-#define CFG_FRAMES      0x28   /* u32  ticks the live pair has stood (0 = first) */
+#define CFG_FRAMES      0x28   /* u32  ticks the live pair has stood (0 = first); the brain's */
 #define CFG_RA_SPILL    0x2C   /* u32  slot-29 stub's ra across its call         */
 #define CFG_A0_SPILL    0x30   /* u32  the step's a0..a3 across the call         */
 #define CFG_A1_SPILL    0x34
 #define CFG_A2_SPILL    0x38
 #define CFG_A3_SPILL    0x3C
-#define CFG_D2          0x40   /* f32 bits  player<->monster XZ distance^2       */
+#define CFG_D2          0x40   /* f32 bits  player<->monster XZ distance^2; the brain's */
 #define CFG_D2_PREV     0x44   /* f32 bits  ... at the previous tick            */
 #define CFG_BRAIN_FIRES 0x48   /* u32  rule fires, total                        */
 #define CFG_SCRATCH     0x4C   /* u32  the match bit across a call              */
@@ -69,22 +69,9 @@
 /* enter-action ring */
 #define CFG_RING_IDX    0x94   /* u32 */
 #define CFG_RING        0x98   /* u32[8]  (subst<<24)|(mode<<16)|(main<<8)|sub  */
-/* rules: MHFU_EM_RULES entries of 0x28 bytes */
+/* rules: MHFU_EM_RULES entries of 0x28 bytes, which only the brain (C) reads */
 #define CFG_RULE_BASE   0xB8
 #define RULE_STRIDE     0x28
-#define RULE_MASK       0x00   /* u8 */
-#define RULE_FROM_SUB   0x01   /* u8 */
-#define RULE_TO_MAIN    0x02   /* u8 */
-#define RULE_TO_SUB     0x03   /* u8 */
-#define RULE_MODE       0x04   /* u8 */
-#define RULE_FLAGS      0x05   /* u8   1 receding, 2 closing                    */
-#define RULE_MIN_FRAMES 0x08   /* u32 */
-#define RULE_D2_LO      0x0C   /* f32 bits */
-#define RULE_D2_HI      0x10   /* f32 bits */
-#define RULE_LEFT       0x14   /* u32  0 = off */
-#define RULE_FIRED      0x18   /* u32 */
-#define RULE_LAST_FIRE  0x1C   /* u32  ai_ticks at the last fire */
-#define RULE_COOLDOWN   0x20   /* u32  frames */
 /* the C step (mhfu_em_step) */
 #define CFG_STEP_FN     0x158  /* u32  fn(entity) called each AI step while set; 0 = none */
 #define CFG_SKIP        0x15C  /* u32  1 = the step took this frame: the host step is skipped */
@@ -160,7 +147,7 @@ static inline void emv_pair_match(emv_asm_t *a, int off_mask, int off_sub)
     E(mips_and(R_T2, R_T2, R_T4));
 }
 
-/* A CONDITIONAL CALL WITHOUT A BRANCH. t2 holds the 0/1 decision; a0 is the
+/* A CONDITIONAL CALL WITHOUT A BRANCH (the request's). t2 holds the 0/1 decision; a0 is the
  * entity, a1..a3 the enter-action's (main, id, mode). The callee is chosen with
  * MOVN between the engine's dispatcher and a two-instruction `jr ra` in our own
  * block, so the jalr always executes and the instruction stream never forks.
@@ -188,7 +175,7 @@ static inline void emv_cond_call(emv_asm_t *a, uint32_t cfg, uint32_t ret_stub)
 
 /* --- slot 29: the per-frame pre-hook. ------------------------------------- */
 static inline int emv_build_ai_stub(uint32_t *out, int cap, uint32_t cfg,
-                                    uint32_t original, uint32_t ret_stub,
+                                    uint32_t original, uint32_t ret_stub, uint32_t brain,
                                     int *overflow)
 {
     emv_asm_t A = { out, 0, cap, 0 };
@@ -198,40 +185,6 @@ static inline int emv_build_ai_stub(uint32_t *out, int cap, uint32_t cfg,
     E(mips_lw(R_T0, CFG_AI_TICKS, R_T7));
     E(mips_addiu(R_T0, R_T0, 1));
     E(mips_sw(R_T0, CFG_AI_TICKS, R_T7));
-
-    /* cur = (main<<8)|sub off the entity; a0 is the entity, nothing ran yet */
-    E(mips_lbu(R_T0, MHFU_ENTITY_MAIN_STATE, R_A0));
-    E(mips_lbu(R_T1, MHFU_ENTITY_SUB_STATE,  R_A0));
-    E(mips_sll(R_T8, R_T0, 8));
-    E(mips_or(R_T8, R_T8, R_T1));
-
-    /* frames = (cur == prev) ? frames + 1 : 0 */
-    E(mips_lw(R_T4, CFG_PREV, R_T7));
-    E(mips_xor(R_T6, R_T4, R_T8));
-    E(mips_sltiu(R_T6, R_T6, 1));                     /* 1 iff same pair */
-    E(mips_lw(R_T5, CFG_FRAMES, R_T7));
-    E(mips_addiu(R_T5, R_T5, 1));
-    E(mips_movz(R_T5, R_ZERO, R_T6));                  /* changed -> 0 */
-    E(mips_sw(R_T5, CFG_FRAMES, R_T7));
-
-    /* d2 = (mx-px)^2 + (mz-pz)^2, kept as raw f32 bits: non-negative floats
-     * order like unsigned ints, so the rules compare with SLTU. f0..f3 are
-     * caller-saved and we are at the step's entry, so they are free. */
-    E(mips_lui(R_T2, (uint16_t)((MHFU_PLAYER_ENTITY + MHFU_ENTITY_TRANSLATION) >> 16)));
-    E(mips_ori(R_T2, R_T2, (uint16_t)(MHFU_PLAYER_ENTITY + MHFU_ENTITY_TRANSLATION)));
-    E(mips_lwc1(0, MHFU_ENTITY_POSITION,     R_A0));
-    E(mips_lwc1(1, MHFU_ENTITY_POSITION + 8, R_A0));
-    E(mips_lwc1(2, 0, R_T2));
-    E(mips_lwc1(3, 8, R_T2));
-    E(mips_sub_s(0, 0, 2));
-    E(mips_sub_s(1, 1, 3));
-    E(mips_mul_s(0, 0, 0));
-    E(mips_mul_s(1, 1, 1));
-    E(mips_add_s(0, 0, 1));
-    E(mips_lw(R_T3, CFG_D2, R_T7));
-    E(mips_sw(R_T3, CFG_D2_PREV, R_T7));
-    E(mips_mfc1(R_T3, 0));
-    E(mips_sw(R_T3, CFG_D2, R_T7));
 
     /* spill what the calls below may clobber: the step's args and our ra */
     E(mips_sw(R_A0, CFG_A0_SPILL, R_T7));
@@ -264,74 +217,14 @@ static inline int emv_build_ai_stub(uint32_t *out, int cap, uint32_t cfg,
     E(mips_movn(R_T4, R_T3, R_T2));
     E(mips_sw(R_T4, CFG_REQ_RESULT, R_T7));
 
-    /* ---- the RULES: the native brain, one block each ---- */
-    for (int r = 0; r < 4; r++) {
-        const int B = CFG_RULE_BASE + r * RULE_STRIDE;
-        /* live pair (a rule above may have changed it) */
-        E(mips_lbu(R_T0, MHFU_ENTITY_MAIN_STATE, R_A0));
-        E(mips_lbu(R_T1, MHFU_ENTITY_SUB_STATE,  R_A0));
-        emv_pair_match(a, B + RULE_MASK, B + RULE_FROM_SUB);      /* t2 */
-        /* frames >= min_frames */
-        E(mips_lw(R_T3, B + RULE_MIN_FRAMES, R_T7));
-        E(mips_lw(R_T5, CFG_FRAMES, R_T7));
-        E(mips_sltu(R_T3, R_T5, R_T3));                /* 1 iff frames < min */
-        E(mips_xori(R_T3, R_T3, 1));
-        E(mips_and(R_T2, R_T2, R_T3));
-        /* lo <= d2 < hi */
-        E(mips_lw(R_T3, CFG_D2, R_T7));
-        E(mips_lw(R_T4, B + RULE_D2_LO, R_T7));
-        E(mips_sltu(R_T4, R_T3, R_T4));                /* 1 iff d2 < lo */
-        E(mips_xori(R_T4, R_T4, 1));
-        E(mips_and(R_T2, R_T2, R_T4));
-        E(mips_lw(R_T4, B + RULE_D2_HI, R_T7));
-        E(mips_sltu(R_T4, R_T3, R_T4));                /* 1 iff d2 < hi */
-        E(mips_and(R_T2, R_T2, R_T4));
-        /* receding / closing, each only if the flag asks for it */
-        E(mips_lw(R_T4, CFG_D2_PREV, R_T7));
-        E(mips_sltu(R_T6, R_T4, R_T3));                /* receding: prev < d2 */
-        E(mips_sltu(R_T4, R_T3, R_T4));                /* closing:  d2 < prev */
-        E(mips_lbu(R_T3, B + RULE_FLAGS, R_T7));
-        E(mips_andi(R_T5, R_T3, 1));
-        E(mips_sltiu(R_T5, R_T5, 1));                  /* 1 iff not required */
-        E(mips_or(R_T5, R_T5, R_T6));
-        E(mips_and(R_T2, R_T2, R_T5));
-        E(mips_andi(R_T5, R_T3, 2));
-        E(mips_sltiu(R_T5, R_T5, 1));
-        E(mips_or(R_T5, R_T5, R_T4));
-        E(mips_and(R_T2, R_T2, R_T5));
-        /* fire budget left */
-        E(mips_lw(R_T3, B + RULE_LEFT, R_T7));
-        E(mips_sltu(R_T3, R_ZERO, R_T3));
-        E(mips_and(R_T2, R_T2, R_T3));
-        /* cooldown: ai_ticks - last_fire >= cooldown */
-        E(mips_lw(R_T3, CFG_AI_TICKS, R_T7));
-        E(mips_lw(R_T4, B + RULE_LAST_FIRE, R_T7));
-        E(mips_subu(R_T3, R_T3, R_T4));
-        E(mips_lw(R_T4, B + RULE_COOLDOWN, R_T7));
-        E(mips_sltu(R_T3, R_T3, R_T4));                /* 1 iff still cooling */
-        E(mips_xori(R_T3, R_T3, 1));
-        E(mips_and(R_T2, R_T2, R_T3));
-        /* bookkeeping, all unconditional: left -= m, fired += m, total += m,
-         * last_fire = m ? ai_ticks : last_fire */
-        E(mips_lw(R_T3, B + RULE_LEFT, R_T7));
-        E(mips_subu(R_T3, R_T3, R_T2));
-        E(mips_sw(R_T3, B + RULE_LEFT, R_T7));
-        E(mips_lw(R_T3, B + RULE_FIRED, R_T7));
-        E(mips_addu(R_T3, R_T3, R_T2));
-        E(mips_sw(R_T3, B + RULE_FIRED, R_T7));
-        E(mips_lw(R_T3, CFG_BRAIN_FIRES, R_T7));
-        E(mips_addu(R_T3, R_T3, R_T2));
-        E(mips_sw(R_T3, CFG_BRAIN_FIRES, R_T7));
-        E(mips_lw(R_T3, CFG_AI_TICKS, R_T7));
-        E(mips_lw(R_T4, B + RULE_LAST_FIRE, R_T7));
-        E(mips_movn(R_T4, R_T3, R_T2));
-        E(mips_sw(R_T4, B + RULE_LAST_FIRE, R_T7));
-        /* the enter-action's arguments; a0 is still the entity */
-        E(mips_lbu(R_A1, B + RULE_TO_MAIN, R_T7));
-        E(mips_lbu(R_A2, B + RULE_TO_SUB,  R_T7));
-        E(mips_lbu(R_A3, B + RULE_MODE,    R_T7));
-        emv_cond_call(a, cfg, ret_stub);
-    }
+    /* ---- the BRAIN: brain(entity) in C, every frame: its dwell and distance, the own moves
+     * and the rules (em_vhook.cpp); the call clobbers every caller-saved register. ---- */
+    E(mips_lui(R_T9, (uint16_t)(brain >> 16)));
+    E(mips_ori(R_T9, R_T9, (uint16_t)brain));
+    E(mips_jalr(R_T9));
+    E(MIPS_NOP);
+    emv_load_cfg(a, cfg);
+    E(mips_lw(R_A0, CFG_A0_SPILL, R_T7));
 
     /* ---- the C step: fn(entity) on the game thread, its v0 = skip the host step. The
      * jalr always runs, to fn or to the ret stub, which leaves v0 = 0. ---- */

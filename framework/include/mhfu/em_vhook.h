@@ -7,8 +7,11 @@
  *                 pair is provisioned like a native one;
  *   request       a pair entered on the game thread in the next AI frame, through
  *                 MHFU_ENTER_ACTION;
- *   rules         a 30 Hz brain: "in pair P for >= N frames, player distance in [lo, hi),
- *                 receding or closing -> enter (main, sub, mode)", with cooldown and budget;
+ *   rules         a 30 Hz brain in C: "in pair P (or own move M) for >= N frames, player
+ *                 distance in [lo, hi), receding or closing -> enter (main, sub, mode) or play
+ *                 own move M'", with cooldown and budget;
+ *   own moves     a port's moves by slot, played by the move player (mhfu/move.h) when asked,
+ *                 by a rule, or after the move before them;
  *   step          a C function on every AI frame, on the game thread, before the host step.
  *
  * Every call only writes the config block the stubs read, so it is safe from any thread,
@@ -17,6 +20,8 @@
 #define MHFU_EM_VHOOK_H
 
 #include <stdint.h>
+
+#include "mhfu/move.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,7 +43,10 @@ typedef struct {
     uint8_t  from_sub;     /* exact sub, or MHFU_EM_SUB_ANY */
     uint8_t  to_main, to_sub, mode;
     uint8_t  flags;        /* MHFU_EM_RULE_* */
-    uint32_t min_frames;   /* the pair must have stood this long */
+    uint8_t  from_move;    /* own move slot + 1: fires while it plays, its AI frames the dwell;
+                            * 0: from the pair, which waits while any move plays */
+    uint8_t  play_move;    /* own move slot + 1 played instead of entering (to_main, to_sub) */
+    uint32_t min_frames;   /* the pair (or own move) must have stood this long */
     float    dist_lo, dist_hi;   /* player XZ distance window [lo, hi) */
     uint32_t cooldown;     /* frames between two fires */
     uint32_t count;        /* fires allowed; MHFU_EM_UNLIMITED for a standing rule */
@@ -70,7 +78,7 @@ void mhfu_em_substitute(int slot, uint8_t from_mask, uint8_t from_sub,
 /* Enter (main, sub, mode) on the next AI frame; 0 while nothing is wrapped. */
 int  mhfu_em_request(uint8_t main_state, uint8_t sub_state, uint8_t mode);
 
-/* Rule slot (0..MHFU_EM_RULES-1); NULL clears it. */
+/* Rule slot (0..MHFU_EM_RULES-1); NULL clears it. At most one rule fires an AI frame. */
 void mhfu_em_rule(int slot, const mhfu_em_rule_t *r);
 
 /* fn(entity) runs at each AI step of the wrapped species, on the game thread, before the host
@@ -87,6 +95,50 @@ void mhfu_em_mute_events(uint32_t entity);
 void mhfu_em_clear(void);
 
 void mhfu_em_status(mhfu_em_status_t *out);
+
+/* --- own moves ------------------------------------------------------------------------------
+ * A port's own moves, by slot, in partition memory. The brain, in C on the wrapped AI step, plays
+ * one through the move player that same AI frame: one asked for (mhfu_em_play), else the AFTER of
+ * one of ours that ended on its clip, its length or a wall, else a rule's. A slot with an AFTER
+ * ends into its carrier (its back pair), so the host brain does not cut in before the next. */
+#define MHFU_EM_MOVES   16
+#define MHFU_EM_KEYS    2048
+#define MHFU_EM_NO_MOVE 0xFFu
+
+/* struct EM_OWN in addresses.toml */
+typedef struct {
+    mhfu_move_t  move;
+    mhfu_steer_t steer;
+    uint16_t key_at, key_count;              /* its turn keys in mhfu_em_moves_t.keys */
+    uint8_t  stuck_main, stuck_sub, stuck_mode;
+    uint8_t  after;                          /* slot played when this one ends; MHFU_EM_NO_MOVE */
+    uint32_t valid;
+    uint32_t _pad;
+} mhfu_em_own_t;
+
+/* struct EM_MOVES in addresses.toml */
+typedef struct {
+    uint32_t magic;
+    uint32_t req_ent, req_slot;              /* a play asked for, taken at req_ent's AI step */
+    uint32_t tag_slot, tag_started;          /* the slot of the move player's move, if ours */
+    uint32_t plays, chained;
+    uint32_t key_top;
+    mhfu_em_own_t moves[MHFU_EM_MOVES];
+    uint16_t keys[MHFU_EM_KEYS];
+    mhfu_steer_spec_t scratch;               /* the steering handed to the move player */
+} mhfu_em_moves_t;
+
+/* Empties every slot and the turn keys. */
+void mhfu_em_moves_clear(void);
+/* Slot `slot` plays mv, steered by s (its keys copied); `after` is a slot or MHFU_EM_NO_MOVE.
+ * 0 for a bad slot or no room left for the keys. */
+int  mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_spec_t *s, uint8_t after);
+/* Plays slot on entity at its next AI step; 0 while nothing is wrapped or the slot is empty. */
+int  mhfu_em_play(uint32_t entity, int slot);
+/* The slot of the move the move player runs (entering or playing), if it came from here; -1. */
+int  mhfu_em_playing(void);
+/* The registry, or 0 before the framework's init. */
+const volatile mhfu_em_moves_t *mhfu_em_moves(void);
 
 #ifdef __cplusplus
 }

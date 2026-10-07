@@ -428,6 +428,8 @@ mhfu.EM_UNLIMITED = -1 -- MHFU_EM_UNLIMITED
 ---@field closing? boolean only while the distance shrinks
 ---@field cooldown? integer frames between two fires, default 0
 ---@field count? integer fires allowed, default mhfu.EM_UNLIMITED
+---@field from_move? integer own move slot (`mhfu.em_move`): fires while it plays, its AI frames the dwell; a pair rule waits while any move plays
+---@field play_move? integer own move slot played instead of entering (to_main, to_sub)
 
 ---What `mhfu.em_status()` returns.
 ---@class mhfu.EmStatus
@@ -674,3 +676,46 @@ function mhfu.move_block() end
 ---@field node integer the attack node, 0 out of section
 ---@field ended integer AI frame the move ended the node at, -1 if it did not
 ---@field ended_state integer the node's state then: 1 or 2 ended, 0 it had ended itself, 255 no longer the move's
+
+-- own moves: a port's moves by slot, played by the move player (bind_em.cpp) ------------------
+-- The em_vhook brain plays one, in C on the AI step, when asked (em_play), when the move before
+-- it ends and names it (`after`), or when a rule says (EmRule.play_move).
+
+---Own move slot 0..15 plays `spec`; `spec.after` is the slot played when it ends on its clip, its
+---length or a wall. False for a bad slot or no room left for its turn keys.
+---@param slot integer
+---@param spec mhfu.OwnMove
+---@return boolean
+function mhfu.em_move(slot, spec) end
+
+---Empties every own move slot.
+---@return true
+function mhfu.em_moves_clear() end
+
+---Plays own move `slot` on ent at its next AI step; false while nothing is wrapped or the slot is
+---empty.
+---@param ent integer
+---@param slot integer
+---@return boolean
+function mhfu.em_play(ent, slot) end
+
+---The slot of the own move the move player is playing, -1 if none of ours.
+---@return integer
+function mhfu.em_playing() end
+
+---The own moves' state.
+---@return mhfu.OwnMovesStatus
+function mhfu.em_moves_status() end
+
+---An own move for `mhfu.em_move`: a `mhfu.Move` and the slot after it.
+---@class mhfu.OwnMove: mhfu.Move
+---@field after? integer own move slot played when this one ends on its clip, its length or a wall
+
+---What `mhfu.em_moves_status()` returns.
+---@class mhfu.OwnMovesStatus
+---@field block integer the registry (struct EM_MOVES)
+---@field playing integer the slot the move player is playing, -1 none of ours
+---@field last integer the slot of its current or last move, -1 none of ours
+---@field plays integer own moves started
+---@field chained integer of them by `after`
+---@field keys integer turn keys in use
