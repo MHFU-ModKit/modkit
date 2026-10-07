@@ -66,6 +66,18 @@ on the floor of the view (T hides it) is the turn: an arrow for frame 0, one for
 a handle for the end, which drags the clip's `turn`, or a fixed steer's angle, in whole degrees
 (Shift: 15). Every edit is one undo step.
 
+Play in game saves, writes the port's clips and moves modules to the memory stick's `mods/lib` as
+`mhfu-port inject` does, and asks the running port to play the move by name; it refuses a move
+whose clip sits in another anim than in the saved manifest, since the game holds the build
+injected from the file. A port defined before takes a new or renamed move once its mod reloads.
+A move asked while the monster has noticed the hunter but is not yet in combat waits for combat,
+so the "!" and the howl play out; Force beside the button plays it at once.
+
+Under the moves are the rules (`[[rule]]`), each read as a sentence ("after the lunge for 20
+frames, within 1200, play stamp"): New rule plays the picked move once when the monster notices
+the hunter, and every field is a control, the part only for a flinch or a break, the mode only
+for a pair move, `force` as above. A refusal is the manifest's own words, in the status line.
+
 ## Tests
 
 `uv run pytest apps/studio` runs offscreen; the Qt tests skip without the `qt` group, and the
