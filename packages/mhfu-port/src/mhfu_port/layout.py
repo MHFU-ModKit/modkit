@@ -52,6 +52,8 @@ class Layout:
     """Clips no entry was left for."""
     turns: dict[int, Turn] = field(default_factory=dict)
     """Entry -> what YAW turns while it plays; the build sets it."""
+    frames: dict[int, int] = field(default_factory=dict)
+    """Entry -> its clip's frames; the build sets it."""
     ids: dict[int, int] = field(init=False, repr=False, compare=False)
     """MHP3rd clip id -> executor entry."""
 

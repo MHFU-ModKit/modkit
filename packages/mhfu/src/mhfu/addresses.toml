@@ -737,3 +737,33 @@ WALL = { offset = 0x42A, type = "u8", doc = "the last frame's wall result: 0 non
 CURSOR = { offset = 0x42C, type = "f32", doc = "part 0's clip cursor the step saw last" }
 YAW0 = { offset = 0x430, type = "u16", doc = "YAW on the move's first playing frame" }
 YAW = { offset = 0x432, type = "u16", doc = "YAW as the step left it" }
+
+[struct.EM_OWN]
+doc = "one own move in em_vhook's registry (em_vhook.h mhfu_em_own_t), played by its slot when Lua, a rule or the move before it asks"
+size = 0x50
+[struct.EM_OWN.fields]
+MOVE = { offset = 0x00, type = "MOVE", doc = "the move; its back pair is its carrier when AFTER names a slot, so the brain does not cut in" }
+STEER = { offset = 0x34, type = "STEER_PARAMS", doc = "turn mode and walls" }
+KEY_AT = { offset = 0x40, type = "u16", doc = "its first turn key in EM_MOVES.KEYS" }
+KEY_COUNT = { offset = 0x42, type = "u16", doc = "its turn keys; 0: the clip does not turn YAW" }
+STUCK_MAIN = { offset = 0x44, type = "u8", doc = "STEER_SPEC.STUCK_MAIN" }
+STUCK_SUB = { offset = 0x45, type = "u8", doc = "STEER_SPEC.STUCK_SUB" }
+STUCK_MODE = { offset = 0x46, type = "u8", doc = "STEER_SPEC.STUCK_MODE" }
+AFTER = { offset = 0x47, type = "u8", doc = "slot played when this move ends on its clip, its length or a wall; 0xFF none" }
+VALID = { offset = 0x48, type = "u32", doc = "1 once written; 0 while it is rewritten" }
+
+[struct.EM_MOVES]
+doc = "em_vhook's own-move registry in partition memory (em_vhook.cpp): a port's own moves by slot, played by the move player on the AI step that asks"
+size = 0x1734
+[struct.EM_MOVES.fields]
+MAGIC = { offset = 0x00, type = "u32", doc = "0x564F4D45 (EMOV)" }
+REQ_ENT = { offset = 0x04, type = "ptr", doc = "a play asked for (mhfu_em_play): the monster, taken at its next AI step; 0 none" }
+REQ_SLOT = { offset = 0x08, type = "u32", doc = "the slot it plays" }
+TAG_SLOT = { offset = 0x0C, type = "u32", doc = "the slot of the move the move player runs or ran last, when it came from here; 0xFF otherwise" }
+TAG_STARTED = { offset = 0x10, type = "u32", doc = "MOVE_STATE.STARTED of that move" }
+PLAYS = { offset = 0x14, type = "u32", doc = "moves started from here: asked, by a rule or by AFTER" }
+CHAINED = { offset = 0x18, type = "u32", doc = "of them by AFTER" }
+KEY_TOP = { offset = 0x1C, type = "u32", doc = "KEYS in use" }
+MOVES = { offset = 0x20, type = "EM_OWN[16]", doc = "the moves by slot" }
+KEYS = { offset = 0x520, type = "u16[2048]", doc = "every move's turn keys, YAW every 2 clip frames" }
+SCRATCH = { offset = 0x1520, type = "STEER_SPEC", doc = "the steering handed to the move player for the move it plays next" }
