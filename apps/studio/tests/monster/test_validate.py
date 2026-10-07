@@ -219,3 +219,37 @@ def test_ports(name, ports, built, em75):
     m = manifest.load(ports / f"{name}.toml")
     out = V.validate(m, built(name), em75)
     assert not [f for f in out if f.level == "error"], [str(f) for f in out]
+
+
+OWN = (
+    '\n[clips.walk]\nslot = 1\n\n[moves.o]\nclip = "walk"\n'
+    "[[moves.o.attack]]\nid = 1\nframe = 2\nend = 30\n"
+    "[[moves.o.attack]]\nid = 7\nframe = 10\n"
+)
+
+
+def test_own_moves(make, species, synthetic_pac):
+    m = make(OWN)
+    out = [
+        f
+        for f in V.validate(m, synthetic_pac, species([], attacks=ATTACKS))
+        if f.code[:4] == "OWN_"
+    ]
+    by = {(f.code, f.level) for f in out}
+    assert by == {
+        ("OWN_ATTACK_UNKNOWN", "error"),
+        ("OWN_WINDOW_PAST_CLIP", "error"),
+        ("OWN_WINDOW_PAST_CLIP", "warning"),
+    }, [str(f) for f in out]
+    assert all(f.target == ("moves", "o") and f.focus == V.MOVE_WINDOWS for f in out)
+    assert any("no record 7" in f.message for f in out)
+    assert any("clip ends at 10: the cursor never crosses" in f.message for f in out)
+    assert found(V.validate(m, synthetic_pac), "OWN_ATTACKS_UNCHECKED").level == "warning"
+
+
+def test_own_move_in_no_anim(make, synthetic_pac):
+    m = make('\n[clips.gone]\nslot = 9\n\n[moves.o]\nclip = "gone"\n')
+    f = found(V.validate(m, synthetic_pac, sources={1: 1}), "OWN_CLIP_UNPLACED")
+    assert f.level == "error" and f.focus == V.MOVE_CLIP
+    named = make('\n[clips.gone]\nsource = 9\n\n[moves.o]\nclip = "gone"\n')
+    assert "OWN_CLIP_UNPLACED" not in found(V.validate(named)), "no layout: not known"

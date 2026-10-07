@@ -147,7 +147,7 @@ def validate(
         *_settings(m),
         *_pac(m, pac, sources or {}),
         *_moves(m, intel),
-        *_own_moves(m, pac, intel, sources or {}),
+        *own_moves(m, pac, intel, sources or {}),
         *_parts(m, intel),
         *_attacks(m, intel),
     ]
@@ -437,7 +437,7 @@ def _moves(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
     return out
 
 
-def _own_moves(
+def own_moves(
     m: Manifest, pac: bytes | None, intel: SpeciesIntel | None, sources: Mapping[int, int]
 ) -> list[Finding]:
     """What the move player refuses or never reaches in an own move: a clip in no anim, an
@@ -459,8 +459,10 @@ def _own_moves(
         w = f"moves.{name}"
         c = m.clips.get(mv.clip or "")
         slot = mv.anim if c is None else clips.at(c, sources)
-        if slot is None and (sources or c is None or c.slot is not None):
-            msg = f"clip {mv.clip} is in no anim, so the move player has nothing to play."
+        known = slot is not None or bool(sources) or c is None or c.slot is not None
+        if known and (slot is None or (table and slot not in table)):
+            what = mv.clip or f"anim {mv.anim}"
+            msg = f"{what} is in no anim of this build, so the move player has nothing to play."
             out.append(_f("error", "OWN_CLIP_UNPLACED", w, msg))
         frames = table[slot][0] if slot in table else None if c is None else c.frames
         for i, a in enumerate(mv.attacks):

@@ -21,7 +21,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from mhfu import files, hitzone
-from mhfu.em.intel import AttackIntel, HostSummary, PairIntel, PartIntel, SpeciesIntel
+from mhfu.em.intel import (
+    AttackIntel,
+    AttackRecord,
+    HostSummary,
+    PairIntel,
+    PartIntel,
+    SpeciesIntel,
+)
 from mhfu.files import Extracted
 from mhfu_port import layout, slots
 from mhfu_port.data import Data
@@ -367,6 +374,10 @@ class MonsterWorkspace(Workspace):
             Dock(
                 "Clips", "left", build("clips", "ClipsPanel"),
                 "Every anim, what is really in it, and the name it goes by.",
+            ),            Dock(
+                "Moves", "left", build("moves", "MovesPanel"),
+                "Your moves: on the base monster's actions, or your own, with their attacks and"
+                " turn.",
             ),
 
             Dock(
@@ -1249,6 +1260,16 @@ class MonsterWorkspace(Workspace):
             mv = self.own_move_on_screen()
             self.vp.set_steer(None if mv is None else mv.steer)
 
+    def clip_turn(self) -> tuple[float, bool] | None:
+        """Degrees the clip on screen turns YAW by its end, and whether the manifest sets it."""
+        from mhfu_studio.monster.render.playback import end_turn
+
+        vp, m, held = self.vp, self.manifest, self.clip_name_on_screen()
+        if vp is None or vp.clip is None or vp.scene is None:
+            return None
+        given = m is not None and held is not None and m.clips[held].turn is not None
+        return end_turn(vp.scene, vp.clip), given
+
     def set_turn(self, deg: float | None) -> bool:
         """The turn the gizmo shows: a fixed steer's angle, else the clip on screen's `turn`
         (None: its own body's)."""
@@ -1355,15 +1376,21 @@ class MonsterWorkspace(Workspace):
             return []
         return authoring.live(mv.attacks, vp.playback.phase)
 
+    def attack_record(self, attack: int) -> AttackRecord | None:
+        """The base monster's record `attack` a move spawns; None for none or a blank one."""
+        host = self.host_attacks()
+        recs = [] if host is None else host.records_for([attack], self.host_species)
+        return recs[0] if recs else None
+
     def attack_set(self, attack: int) -> int | None:
         """The hit group attack record `attack` spawns: the port's [[attack]] volume, else the
         base monster's record's."""
-        m, host = self.manifest, self.host_attacks()
+        m = self.manifest
         mine = None if m is None else next((a for a in m.attacks if a.id == attack), None)
         if mine is not None and mine.volume is not None:
             return mine.volume
-        recs = [] if host is None else host.records_for([attack], self.host_species)
-        return recs[0].volume if recs else None
+        rec = self.attack_record(attack)
+        return None if rec is None else rec.volume
 
     def light_live(self) -> None:
         """While an own move plays with the hit groups shown, its live attack's group is lit."""

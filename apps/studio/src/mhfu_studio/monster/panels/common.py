@@ -22,6 +22,8 @@ MARKERS: dict[str, RGBA] = {
     "ours": (0.55, 0.90, 0.60, 0.95),
     "impact": (0.98, 0.35, 0.38, 1.0),
 }
+#: an own move's attack window on the Timeline
+ATTACK: RGBA = (0.94, 0.42, 0.36, 0.85)
 
 
 def bone_span(bones: Sequence[int]) -> str:

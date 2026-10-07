@@ -112,16 +112,18 @@ class TurnGizmo:
         if t is None or vp is None or vp.clip is None or vp.scene is None:
             return
         r, size = self._radius(), o.size
-        ring = np.array([heading(a) * r for a in np.linspace(0.0, 360.0, SEGMENTS + 1)])
-        o.polyline(self._screen(ring, size), Ink.AXIS_VIEW, 1.0, closed=True)
+        ring = self._screen(
+            np.array([heading(a) * r for a in np.linspace(0.0, 360.0, SEGMENTS + 1)]), size
+        )
+        o.polyline(ring, Ink.AXIS_VIEW, 1.0, closed=True)
         c = self._screen(np.zeros((1, 3)), size)[0]
+        o.text((min(x for x, _ in ring), max(y for _, y in ring) + 6), t.text, Ink.TEXT, 11.0)
         self._arrow(o, c, heading(0.0) * r, Ink.AXIS_Z, 1.5, size)
         steer = None if vp.actor is None else vp.actor.steer
         now = math.degrees(yaw_at(vp.scene, vp.clip, vp.frame, steer, vp.playback.speed))
-        self._arrow(o, c, heading(now) * r * 0.8, Ink.SELECTION, 2.5, size)
+        self._arrow(o, c, heading(now) * r * 0.8, Ink.TEXT, 2.5, size)
         end = t.end if self.dragged is None else self.dragged
         if end is None:
-            o.text((c[0] + 8, c[1] + 8), t.text, Ink.TEXT, 11.0)
             return
         arc = np.array([heading(a) * r for a in np.linspace(0.0, end, max(2, int(abs(end)) // 4))])
         ink: Color = Ink.HOT if self.hot or self.dragged is not None else Ink.SELECTION
@@ -130,7 +132,6 @@ class TurnGizmo:
         o.line(c, h, ink, 1.0)
         o.circle(h, 6.0, Ink.SHADOW, ink if t.writes else None, 1.5)
         o.text((h[0] + 9, h[1] - 7), f"{end:+.0f}°", Ink.TEXT, 13.0)
-        o.text((c[0] + 8, c[1] + 8), t.text, Ink.TEXT, 11.0)
 
     def _arrow(
         self, o: Overlay, c: Point, tip: np.ndarray, ink: Color, width: float, size: tuple[int, int]

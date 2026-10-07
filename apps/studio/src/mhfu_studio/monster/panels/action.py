@@ -24,7 +24,7 @@ from mhfu_studio.monster.actions import ActionRow
 from mhfu_studio.monster.align import Alignment
 from mhfu_studio.monster.panels import graph
 from mhfu_studio.monster.panels.common import COVERAGE
-from mhfu_studio.monster.panels.moves import HandOffs
+from mhfu_studio.monster.panels.handoffs import HandOffs
 from mhfu_studio.monster.panels.widgets import NoScene
 from mhfu_studio.shell.findings import Level, worst
 from mhfu_studio.shell.text import plain
@@ -411,10 +411,8 @@ class ActionsPanel(kit.Panel):
             self.ws.message = "no moves to copy yet: use a clip for an action first"
             return
         QGuiApplication.clipboard().setText(text + "\n")
-        self.ws.message = (
-            f"copied {len(m.moves) if m else 0} moves as Lua: paste them into your mod's"
-            " P.define{…}"
-        )
+        n = 0 if m is None else sum(mv.pair is not None for mv in m.moves.values())
+        self.ws.message = f"copied {n} moves as Lua: paste them into your mod's P.define{{…}}"
 
     # ---- sync -------------------------------------------------------------------------- #
 
