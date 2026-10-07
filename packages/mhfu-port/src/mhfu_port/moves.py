@@ -172,8 +172,6 @@ def _own_move(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
         out["length"] = mv.length
     if mv.host_attacks:
         out["host_attacks"] = True
-    if mv.eager:
-        out["eager"] = True
     out["steer"] = _steer(m, name, layout)
     if mv.after is not None:
         out["after"] = mv.after
@@ -202,6 +200,8 @@ def _rule(r: Rule) -> dict[str, Any]:
             out[k] = getattr(r, k)
     if r.count is not None:
         out["count"] = r.count
+    if r.force:
+        out["force"] = True
     if r.label:
         out["label"] = r.label
     return out

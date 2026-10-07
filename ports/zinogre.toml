@@ -615,8 +615,7 @@ walls = false
 
 [moves.notice_howl]
 clip = "welcome_howl"
-eager = true
-label = "the howl the moment he notices you; eager, so it does not wait for combat"
+label = "the howl the moment he notices you"
 
 [moves.notice_howl.steer]
 walls = false
@@ -798,4 +797,5 @@ label = "a part breaks"
 [[rule]]
 play = "notice_howl"
 on = "noticed"
-label = "the notice: his howl at once"
+force = true
+label = "the notice: his howl at once, forced, so it does not wait for combat"

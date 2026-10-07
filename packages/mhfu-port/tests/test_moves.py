@@ -191,9 +191,7 @@ def test_zinogre(data):
     assert 'after = "dash_stop"' in text and 'turn = "fixed", total = 90.0, frames = 50' in text
     assert '{ play = "stamp", from = "dash", min_frames = 10' in text
     assert '{ play = "flinch_head", on = "flinch", part = 0' in text
-    assert (
-        'notice_howl = { entry = 2, clip = "welcome_howl", carrier = { 0, 2 }, eager = true' in text
-    )
+    assert '{ play = "notice_howl", on = "noticed", force = true' in text
 
 
 def test_lua_key():
@@ -205,13 +203,11 @@ def test_lua_key():
     ]
 
 
-def test_events_and_eager_reach_the_module():
-    extra = OWN.replace("[moves.stamp]\n", "[moves.stamp]\neager = true\n")
-    extra += "[[rule]]\non = 'flinch'\npart = 0\nplay = 'stamp'\ncount = 3\n"
-    extra += "[[rule]]\non = 'noticed'\nplay = 'stamp'\n"
+def test_events_and_force_reach_the_module():
+    extra = OWN + "[[rule]]\non = 'flinch'\npart = 0\nplay = 'stamp'\ncount = 3\n"
+    extra += "[[rule]]\non = 'noticed'\nplay = 'stamp'\nforce = true\n"
     body = _body(moves.lua(_m(extra), LAYOUT))
     assert body[-2:] == [
         '{ play = "stamp", on = "flinch", part = 0, count = 3 },',
-        '{ play = "stamp", on = "noticed" },',
+        '{ play = "stamp", on = "noticed", force = true },',
     ]
-    assert any(line.startswith("stamp = {") and "eager = true" in line for line in body)

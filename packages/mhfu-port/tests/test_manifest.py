@@ -255,8 +255,8 @@ walls = false
 
 
 def test_rule_on_an_event():
-    m = M.loads(_with(OWN + "eager = true\n[[rule]]\non = 'flinch'\npart = 0\nplay = 'o'\n"))
-    assert (m.rules[0].on, m.rules[0].part, m.moves["o"].eager) == ("flinch", 0, True)
+    m = M.loads(_with(OWN + "[[rule]]\non = 'flinch'\npart = 0\nplay = 'o'\nforce = true\n"))
+    assert (m.rules[0].on, m.rules[0].part, m.rules[0].force) == ("flinch", 0, True)
     assert M.loads(M.dumps(m)) == m
 
 

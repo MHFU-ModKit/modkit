@@ -242,9 +242,6 @@ class Move:
     """AI frames from the clip's dispatch; None: until the clip ends."""
     carrier: tuple[int, int] | None = None
     host_attacks: bool = False
-    eager: bool = False
-    """Start at once even while the monster has noticed the hunter but not yet entered combat,
-    instead of waiting for it (a move asked in that span would cut off the "!" and the howl)."""
     label: str = ""
 
     @property
@@ -268,7 +265,8 @@ class Rule:
 
     With `on`, the rule fires on that monster event instead (`part`: only the flinch or break of
     that part), under the same distance, cooldown and count; `on = "flinch"` plays its move in
-    place of the host's flinch."""
+    place of the host's flinch. An own move asked while the monster's notice runs waits for
+    combat (else it cuts off the "!" and the roar) unless `force`."""
 
     play: str
     on: Event | None = None
@@ -282,6 +280,7 @@ class Rule:
     mode: int = 0
     cooldown: int = 0
     count: int | None = None
+    force: bool = False
     label: str = ""
 
 
