@@ -158,7 +158,7 @@ class SteerState(View):
     """The move player's steering (struct STEER_STATE) in its block."""
 
     struct = a.STEER_STATE
-    base = u16(a.STEER_STATE.BASE)
+    yaw_base = u16(a.STEER_STATE.BASE)
     wall = u8(a.STEER_STATE.WALL)
     yaw0 = u16(a.STEER_STATE.YAW0)
     yaw = u16(a.STEER_STATE.YAW)
