@@ -444,19 +444,6 @@ def test_hit_reload(lua: Any) -> None:
     lua.execute(HIT_RELOAD)
 
 
-def test_fits_the_file_buffer() -> None:
-    """lua_host reads a script through one buffer and skips a bigger one at boot."""
-    import re
-
-    framework = Path(__file__).parents[1]
-    src = (framework / "mods" / "lua_host" / "scripts.cpp").read_text(encoding="utf-8")
-    m = re.search(r"#define G_FILEBUF_SZ \((\d+) \* 1024\)", src)
-    assert m, "G_FILEBUF_SZ not found"
-    skipped_from = int(m[1]) * 1024 - 1  # read_script skips a read that fills the buffer
-    for path in sorted((framework / "lua").glob("[le]*/*.lua")):
-        assert path.stat().st_size < skipped_from, f"{path.name}: lua_host skips it for its size"
-
-
 OWN = """
 local SEAM = { moves = {}, rules = {}, plays = {}, playing = -1 }
 function mhfu.em_installed() return true end

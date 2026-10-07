@@ -4,27 +4,13 @@
  * mhfu.* API. Setup, the 10 Hz worker and the mod descriptor. */
 #include <pspctrl.h>
 #include <pspthreadman.h>
-#include <string.h>
 
 #include "mhfu/mhfu.h"
 #include "lua_host.h"
 #include "lua_api.gen.inc"        /* k_mhfu_funcs, k_mhfu_consts */
 
-/* embed.S: NUL-terminated copies of lua/lib/_prelude.lua and the generated address table */
+/* embed.S: a NUL-terminated copy of lua/lib/_prelude.lua */
 extern "C" const char mhfu_lua_prelude[];
-extern "C" const char mhfu_lua_addresses[];
-
-/* mhfu.addr, every address and struct offset, is built when a script first reads it: the table
- * takes about 20 KB of the slab, and most scripts never use it. */
-static int mhfu_index(lua_State *L)
-{
-    if (lua_type(L, 2) != LUA_TSTRING || strcmp(lua_tostring(L, 2), "addr") != 0) return 0;
-    if (luaL_loadstring(L, mhfu_lua_addresses) != LUA_OK) return lua_error(L);
-    lua_call(L, 0, 1);
-    lua_pushvalue(L, -1);
-    lua_setfield(L, 1, "addr");
-    return 1;
-}
 
 static void register_mhfu_api(lua_State *L)
 {
@@ -34,10 +20,7 @@ static void register_mhfu_api(lua_State *L)
         lua_pushinteger(L, k_mhfu_consts[i].value);
         lua_setfield(L, -2, k_mhfu_consts[i].name);
     }
-    lua_newtable(L);                       /* its metatable: mhfu.addr on first use */
-    lua_pushcfunction(L, mhfu_index);
-    lua_setfield(L, -2, "__index");
-    lua_setmetatable(L, -2);
+    mhfu_lua_addr_install(L);
     lua_setglobal(L, "mhfu");
 }
 
@@ -86,9 +69,9 @@ static int lua_host_setup(void)
     mhfu_lua_have_tick = lua_isfunction(L, -1);
     lua_pop(L, 1);
 
-    mhfu_log("[lua_host] VM ready: api=%d lua_Number=%dB live=%uB peak=%uB tick=%d",
-             MHFU_LUA_API_VERSION, (int)sizeof(lua_Number), mhfu_lua_slab_live(),
-             mhfu_lua_slab_peak, mhfu_lua_have_tick);
+    mhfu_log("[lua_host] VM ready: api=%d lua_Number=%dB live=%uB peak=%uB largest free=%uB "
+             "tick=%d", MHFU_LUA_API_VERSION, (int)sizeof(lua_Number), mhfu_lua_slab_live(),
+             mhfu_lua_slab_peak, mhfu_lua_slab_largest(), mhfu_lua_have_tick);
     /* the scripts were just read from ms0, so a boot error need not wait for gameplay */
     mhfu_log_flush_held();
     return 0;
@@ -131,7 +114,6 @@ static int worker(SceSize args, void *argp)
 static int lua_host_init(void)
 {
     if (mhfu_lua_vm_init() != 0) return -1;
-    mhfu_lua_scripts_init();
 
     if (lua_host_setup() != 0) return -1;
 

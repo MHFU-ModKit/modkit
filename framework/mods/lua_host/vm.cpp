@@ -6,124 +6,47 @@
 
 #include "mhfu/mhfu.h"
 #include "lua_host.h"
+#include "tlsf.h"
 
 /* ------------------------------------------------------------------ slab
- * An implicit-free-list allocator over one fixed slab (malloc/free/realloc,
- * forward coalescing), so Lua never competes with the game for heap.
+ * TLSF (third_party/tlsf) over one fixed slab, so Lua never competes with the game for heap.
  *
- * The size is a band: a bigger slab starves the section asset load and the game
- * exits; a smaller one fails to compile a mod at boot, before the log reaches
- * framework.log. Size it off the live and peak that `VM ready` logs. */
-#define LUA_SLAB_BYTES (256 * 1024)
+ * The size is a band: a bigger slab starves the section asset load and the game exits; a
+ * smaller one fails to compile a mod at boot. The slab holds what the 96 KB script buffer held
+ * before scripts streamed (scripts.cpp), so partition 2 holds what it did with a 256 KB slab.
+ * Size it off the live and peak that `VM ready` logs. */
+#define LUA_SLAB_BYTES (350 * 1024)
 
-typedef struct blk_hdr { unsigned size; unsigned free; } blk_hdr; /* 8 bytes */
-
-static char     *g_slab;          /* slab base (8-byte aligned)      */
-static unsigned  g_slab_bytes;
+static tlsf_t    g_tlsf;
 static SceUID    g_slab_uid = -1;
+static unsigned  g_live;           /* bytes in Lua's blocks */
 unsigned         mhfu_lua_slab_peak;
 
-static unsigned align8(unsigned n) { return (n + 7u) & ~7u; }
+unsigned mhfu_lua_slab_live(void) { return g_live; }
 
-static void slab_init(void *base, unsigned bytes)
+static void note_largest(void *ptr, size_t size, int used, void *user)
 {
-    g_slab = (char *)base;
-    g_slab_bytes = bytes;
-    blk_hdr *h = (blk_hdr *)g_slab;
-    h->size = bytes;          /* whole slab = one free block (incl hdr) */
-    h->free = 1;
+    (void)ptr;
+    unsigned *largest = (unsigned *)user;
+    if (!used && size > *largest) *largest = (unsigned)size;
 }
 
-unsigned mhfu_lua_slab_live(void)
+unsigned mhfu_lua_slab_largest(void)
 {
-    unsigned used = 0, off = 0;
-    while (off + sizeof(blk_hdr) <= g_slab_bytes) {
-        blk_hdr *h = (blk_hdr *)(g_slab + off);
-        if (h->size == 0) break;
-        if (!h->free) used += h->size;
-        off += h->size;
-    }
-    return used;
-}
-
-static void slab_coalesce(void)
-{
-    unsigned off = 0;
-    while (off + sizeof(blk_hdr) <= g_slab_bytes) {
-        blk_hdr *h = (blk_hdr *)(g_slab + off);
-        if (h->size == 0) break;
-        if (h->free) {
-            unsigned noff = off + h->size;
-            while (noff + sizeof(blk_hdr) <= g_slab_bytes) {
-                blk_hdr *n = (blk_hdr *)(g_slab + noff);
-                if (n->size == 0 || !n->free) break;
-                h->size += n->size;            /* merge */
-                noff += n->size;
-            }
-        }
-        off += h->size;
-    }
-}
-
-static void *slab_malloc(unsigned n)
-{
-    unsigned need = align8(n) + sizeof(blk_hdr);
-    if (need < sizeof(blk_hdr) + 8) need = sizeof(blk_hdr) + 8;
-    unsigned off = 0;
-    while (off + sizeof(blk_hdr) <= g_slab_bytes) {
-        blk_hdr *h = (blk_hdr *)(g_slab + off);
-        if (h->size == 0) break;
-        if (h->free && h->size >= need) {
-            unsigned rem = h->size - need;
-            if (rem >= sizeof(blk_hdr) + 8) {     /* split */
-                h->size = need;
-                blk_hdr *s = (blk_hdr *)(g_slab + off + need);
-                s->size = rem;
-                s->free = 1;
-            }
-            h->free = 0;
-            unsigned live = mhfu_lua_slab_live();
-            if (live > mhfu_lua_slab_peak) mhfu_lua_slab_peak = live;
-            return (char *)h + sizeof(blk_hdr);
-        }
-        off += h->size;
-    }
-    return 0; /* OOM */
-}
-
-static void slab_free(void *p)
-{
-    if (!p) return;
-    blk_hdr *h = (blk_hdr *)((char *)p - sizeof(blk_hdr));
-    h->free = 1;
-    slab_coalesce();
-}
-
-static unsigned slab_payload(void *p)
-{
-    blk_hdr *h = (blk_hdr *)((char *)p - sizeof(blk_hdr));
-    return h->size - sizeof(blk_hdr);
-}
-
-static void *slab_realloc(void *p, unsigned n)
-{
-    if (!p) return slab_malloc(n);
-    unsigned cur = slab_payload(p);
-    if (n <= cur) return p;                 /* shrink/keep in place */
-    void *np = slab_malloc(n);
-    if (!np) return 0;
-    unsigned copy = cur < n ? cur : n;
-    for (unsigned i = 0; i < copy; i++) ((char *)np)[i] = ((char *)p)[i];
-    slab_free(p);
-    return np;
+    unsigned largest = 0;
+    if (g_tlsf) tlsf_walk_pool(tlsf_get_pool(g_tlsf), note_largest, &largest);
+    return largest;
 }
 
 static void *lua_slab_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 {
     (void)ud; (void)osize;
-    if (nsize == 0) { slab_free(ptr); return 0; }
-    if (!ptr)       return slab_malloc((unsigned)nsize);
-    return slab_realloc(ptr, (unsigned)nsize);
+    if (ptr) g_live -= (unsigned)tlsf_block_size(ptr);
+    if (nsize == 0) { tlsf_free(g_tlsf, ptr); return 0; }
+    void *p = tlsf_realloc(g_tlsf, ptr, nsize);
+    if (p || ptr) g_live += (unsigned)tlsf_block_size(p ? p : ptr);   /* a failed grow keeps ptr */
+    if (g_live > mhfu_lua_slab_peak) mhfu_lua_slab_peak = g_live;
+    return p;
 }
 
 /* ------------------------------------------------------------------ VM */
@@ -188,8 +111,8 @@ int mhfu_lua_vm_init(void)
              (unsigned)sceKernelMaxFreeMemSize(),
              (unsigned)sceKernelTotalFreeMemSize());
     void *base = sceKernelGetBlockHeadAddr(g_slab_uid);
-    unsigned a = ((unsigned)base + 7u) & ~7u;
-    slab_init((void *)a, LUA_SLAB_BYTES);
+    g_tlsf = tlsf_create_with_pool((void *)(((unsigned)base + 7u) & ~7u), LUA_SLAB_BYTES);
+    if (!g_tlsf) { mhfu_log("[lua_host] tlsf_create_with_pool FAILED"); return -1; }
     return 0;
 }
 
@@ -204,6 +127,7 @@ int mhfu_lua_vm_open(void)
 void mhfu_lua_vm_close(void)
 {
     if (mhfu_lua_vm) { lua_close(mhfu_lua_vm); mhfu_lua_vm = 0; }
+    g_tlsf = 0;
     if (g_slab_uid >= 0) { sceKernelFreePartitionMemory(g_slab_uid); g_slab_uid = -1; }
     if (g_lua_sema >= 0) { sceKernelDeleteSema(g_lua_sema); g_lua_sema = -1; }
 }

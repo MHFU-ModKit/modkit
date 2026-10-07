@@ -27,6 +27,7 @@ int      mhfu_lua_vm_init(void);          /* the lock and the slab; -1 on failur
 int      mhfu_lua_vm_open(void);          /* the state on the slab; -1 on failure */
 void     mhfu_lua_vm_close(void);
 unsigned mhfu_lua_slab_live(void);
+unsigned mhfu_lua_slab_largest(void);    /* the largest free block: what one allocation can get */
 /* Every entry into the VM, from any thread, sits between these; 0 = VM down. */
 int      mhfu_lua_enter(void);
 void     mhfu_lua_leave(void);
@@ -35,8 +36,10 @@ void     mhfu_lua_leave(void);
 /* Runs one marshalled request's Lua; the exec thread's server. */
 void mhfu_lua_serve(mhfu_lua_req_t *q);
 
+/* Sets mhfu.addr on the table at the top of the stack (addr.cpp). */
+void mhfu_lua_addr_install(lua_State *L);
+
 /* --- memory-stick scripts (scripts.cpp) --- */
-void mhfu_lua_scripts_init(void);         /* the read buffer */
 int  mhfu_lua_load_dir(lua_State *L);     /* runs every script; returns how many ran */
 void mhfu_lua_prime_tracked(void);        /* records each script's stat for hot reload */
 void mhfu_lua_hot_reload_scan(void);

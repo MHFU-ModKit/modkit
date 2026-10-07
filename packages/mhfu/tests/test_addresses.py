@@ -46,6 +46,47 @@ def in_c(t: addresses.Table, tmp_path) -> dict[str, int]:
     return {n: int(v) for n, v in (line.split() for line in lines if line)}
 
 
+# walks k_mhfu_addr the way lua_host's mhfu.addr does, printing the names constants() uses
+TABLE_MAIN = r"""
+#include <ctype.h>
+#include <stdio.h>
+#include "addresses_table.gen.inc"
+int main(void) {
+    for (const mhfu_addr_entry *e = k_mhfu_addr; e->name; e++) {
+        if (e->fields)
+            for (const mhfu_addr_field *f = e->fields; f->name; f++)
+                printf("%s_%s %lu\n", e->name, f->name, (unsigned long)f->value);
+        else if (e->names) {
+            int k = 0;
+            for (; e->names[k]; k++) {
+                printf("%s_", e->name);
+                for (const char *c = e->names[k]; *c; c++) putchar(toupper(*c));
+                printf(" %d\n", k + 1);
+            }
+            printf("%s_COUNT %d\n", e->name, k);
+        } else
+            printf("%s %lu\n", e->name, (unsigned long)e->value);
+    }
+    return 0;
+}
+"""
+
+
+def in_c_table(t: addresses.Table, tmp_path) -> dict[str, int]:
+    cc = shutil.which("cc")
+    if cc is None:
+        pytest.skip("no C compiler")
+    (tmp_path / "addresses.gen.h").write_text(addresses.render_c(t))
+    (tmp_path / "addresses_table.gen.inc").write_text(addresses.render_c_table(t))
+    (tmp_path / "table.c").write_text(TABLE_MAIN)
+    exe = tmp_path / "table"
+    subprocess.run(
+        [cc, "-std=c99", "-Wall", "-Werror", "-o", exe, tmp_path / "table.c"], check=True
+    )
+    lines = subprocess.run([exe], check=True, capture_output=True, text=True).stdout.split("\n")
+    return {n: int(v) for n, v in (line.split() for line in lines if line)}
+
+
 def in_lua(t: addresses.Table) -> dict[str, int]:
     addr = LuaRuntime().execute(addresses.render_lua(t))
     out = {name: addr[name] for name in t.addresses}
@@ -76,6 +117,10 @@ def test_lua_module_matches_python():
     assert in_lua(addresses.table()) == constants(addresses.table())
 
 
+def test_c_table_matches_python(tmp_path):
+    assert in_c_table(addresses.table(), tmp_path) == constants(addresses.table())
+
+
 def test_an_added_address_reaches_all_three_languages(tmp_path):
     data = tomllib.loads(files("mhfu").joinpath("addresses.toml").read_text(encoding="utf-8"))
     data["address"]["ADDED"] = {"eu": BASE + 0x123450, "type": "u32", "doc": "Test entry."}
@@ -86,12 +131,12 @@ def test_an_added_address_reaches_all_three_languages(tmp_path):
     }
     t = addresses.parse(data)
     assert t.addresses["ADDED"] == BASE + 0x123450
-    for found in (in_c(t, tmp_path), in_lua(t)):
+    for found in (in_c(t, tmp_path), in_c_table(t, tmp_path), in_lua(t)):
         assert found["ADDED"] == BASE + 0x123450
         assert found["ADDED_STRUCT_FIELD"] == 0x4
 
 
-@pytest.mark.parametrize("lang", ["c", "lua"])
+@pytest.mark.parametrize("lang", ["c", "c-table", "lua"])
 def test_cli_writes_the_rendering(lang, tmp_path):
     out = tmp_path / f"addresses.gen.{lang}"
     assert addresses.main([lang, "-o", str(out)]) == 0
@@ -109,7 +154,7 @@ def test_an_array_carries_its_count(tmp_path):
     t = addresses.parse(data)
     assert (t.addresses["ROWS"].count, t.addresses["WORDS"].count) == (3, 5)
     assert t.structs["ROW"].F.count is None
-    for found in (in_c(t, tmp_path), in_lua(t)):
+    for found in (in_c(t, tmp_path), in_c_table(t, tmp_path), in_lua(t)):
         assert (found["ROWS_COUNT"], found["WORDS_COUNT"], found["HOLDER_ROWS_COUNT"]) == (3, 5, 2)
         assert "ROW_F_COUNT" not in found
 
@@ -117,7 +162,7 @@ def test_an_array_carries_its_count(tmp_path):
 def test_an_enum_numbers_its_names_from_one(tmp_path):
     t = addresses.parse({"enum": {"KIND": {"doc": "d", "names": ["a_b", "c"]}}})
     assert t.enums["KIND"].names == ("a_b", "c") and t.enums["KIND"].number("c") == 2
-    for found in (in_c(t, tmp_path), in_lua(t)):
+    for found in (in_c(t, tmp_path), in_c_table(t, tmp_path), in_lua(t)):
         assert (found["KIND_A_B"], found["KIND_C"], found["KIND_COUNT"]) == (1, 2, 2)
     assert '#define MHFU_KIND_NAMES "a_b", "c"' in addresses.render_c(t)
 

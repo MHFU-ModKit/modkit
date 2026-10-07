@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""`mhfu addresses`: the address table as a C header or a Lua module."""
+"""`mhfu addresses`: the address table as a C header, a Lua module or lua_host's C data."""
 
 from __future__ import annotations
 
@@ -16,7 +16,9 @@ if TYPE_CHECKING:
 
 
 def register(sub: Subparsers) -> None:
-    p = sub.add_parser("addresses", help="print the address table as a C header or Lua module")
+    p = sub.add_parser(
+        "addresses", help="print the address table as a C header, Lua module or C data"
+    )
     p.add_argument("lang", choices=sorted(addresses.RENDER))
     p.add_argument("-o", "--output", type=Path, help="write here instead of stdout")
     p.add_argument("--table", type=Path, help="read this TOML instead of the packaged one")

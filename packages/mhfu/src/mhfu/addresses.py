@@ -8,10 +8,12 @@
     addresses.ENTITY_REGISTRY.count   # 21: the n of a `type[n]` entry, else None
     addresses.MONSTER_EVENT_KIND.names  # an enum's names, numbered from 1 in C and Lua
 
-The C header and the Lua table are generated from the same file:
+The C header, the Lua table and the C data lua_host builds mhfu.addr from are generated from
+the same file:
 
     python -m mhfu.addresses c -o addresses.gen.h
     python -m mhfu.addresses lua -o addresses.gen.lua
+    python -m mhfu.addresses c-table -o addresses_table.gen.inc
 """
 
 from __future__ import annotations
@@ -329,7 +331,53 @@ def render_lua(t: Table) -> str:
     return "\n".join(out)
 
 
-RENDER = {"c": render_c, "lua": render_lua}
+def render_c_table(t: Table) -> str:
+    """The table as C data with addresses.gen.h's values: what lua_host builds mhfu.addr from,
+    one entry at a time."""
+    out = [
+        f"/* mhfu.addr for MHFU {GAME_ID}, generated from mhfu/addresses.toml by",
+        " * `python -m mhfu.addresses c-table`. Do not edit. */",
+        "#include <stdint.h>",
+        '#include "addresses.gen.h"',
+        "",
+        "typedef struct { const char *name; uint32_t value; } mhfu_addr_field;",
+        "/* an address or a count, a struct's fields, or an enum's names */",
+        "typedef struct {",
+        "    const char *name;",
+        "    uint32_t value;",
+        "    const mhfu_addr_field *fields;",
+        "    const char *const *names;",
+        "} mhfu_addr_entry;",
+        "",
+    ]
+    rows = []
+    for a in t.addresses.values():
+        rows.append(f'    {{ "{a.name}", MHFU_{a.name}, 0, 0 }},')
+        if a.count:
+            rows.append(f'    {{ "{a.name}_COUNT", MHFU_{a.name}_COUNT, 0, 0 }},')
+    for s in t.structs.values():
+        names = ["SIZE"] * bool(s.size) + ["STRIDE"] * bool(s.stride)
+        for f in s.fields.values():
+            names += [f.name] + [f"{f.name}_COUNT"] * bool(f.count)
+        out.append(f"static const mhfu_addr_field k_addr_{s.name}[] = {{")
+        out += [f'    {{ "{n}", MHFU_{s.name}_{n} }},' for n in names]
+        out += ["    { 0, 0 },", "};"]
+        rows.append(f'    {{ "{s.name}", 0, k_addr_{s.name}, 0 }},')
+    for e in t.enums.values():
+        out.append(f"static const char *const k_addr_{e.name}[] = {{ MHFU_{e.name}_NAMES, 0 }};")
+        rows.append(f'    {{ "{e.name}", 0, 0, k_addr_{e.name} }},')
+    out += [
+        "",
+        "static const mhfu_addr_entry k_mhfu_addr[] = {",
+        *rows,
+        "    { 0, 0, 0, 0 },",
+        "};",
+        "",
+    ]
+    return "\n".join(out)
+
+
+RENDER = {"c": render_c, "c-table": render_c_table, "lua": render_lua}
 
 
 def __getattr__(name: str) -> Any:
