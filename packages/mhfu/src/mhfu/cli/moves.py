@@ -10,6 +10,8 @@ framework's move player (`mhfu.live.moves`), and what came of it.
     mhfu move play 46 --attack 6@56 --repeat 10    # a soak
     mhfu move play 20 --curve zinogre --walls      # the dash, its turn on YAW, ended by a wall
     mhfu move play 9 --turn fixed --total 90 --frames 50
+    mhfu move ride zinogre --brain                 # with its manifest's moves and rules
+    mhfu move watch --repeat 5                     # the next moves its rules or brain play
 """
 
 from __future__ import annotations
@@ -43,6 +45,9 @@ def register(sub: Subparsers) -> None:
     c.add_argument("--prx", type=Path, default=clips.PRX, help="the framework (default: built)")
     c.add_argument("--quest", default="Giadrome", help="substring of the quest's name")
     c.add_argument("--rank", type=int, default=1, help="0 = 1 star ...")
+    c.add_argument(
+        "--brain", action="store_true", help="keep the port's manifest moves, claims and rules"
+    )
     c.set_defaults(run=ride)
 
     c = cmds.add_parser("play", help="play a move and report every part, attack and HP write")
@@ -72,6 +77,14 @@ def register(sub: Subparsers) -> None:
     c.add_argument("--dir", type=float, default=0.0, help="degrees of the travel against YAW")
     c.add_argument("--stuck", type=_ints, default=(0, 6, 1), metavar="MAIN,SUB,MODE")
     c.set_defaults(run=play)
+
+    c = cmds.add_parser("watch", help="report the next moves something else plays")
+    launcher_args(c)
+    c.add_argument("--slot", type=int, help="the monster's registry slot (default the first)")
+    c.add_argument("--after", type=float, default=3.0, help="seconds watched after each end")
+    c.add_argument("--timeout", type=float, default=60.0, help="seconds to wait for each start")
+    c.add_argument("--repeat", type=int, default=1, help="moves to watch")
+    c.set_defaults(run=watch)
 
     c = cmds.add_parser("stop", help="end the running move")
     launcher_args(c)
@@ -109,6 +122,7 @@ def ride(args: argparse.Namespace) -> int:
             launcher=launcher(args),
             log=log,
             prx=args.prx,
+            brain=args.brain,
         )
         with rig:
             slot, m = clips.monster(rig.s)
@@ -220,6 +234,21 @@ def play(args: argparse.Namespace) -> int:
         print("ends: " + ", ".join(f"{k} x{v}" for k, v in sorted(ends.items())))
     if size is not None and grew is not None:
         print(f"framework.log {size} -> {grew} bytes")
+    return 0
+
+
+def watch(args: argparse.Namespace) -> int:
+    try:
+        with Rig.attach(launcher(args)) as rig:
+            for n in range(1, args.repeat + 1):
+                r = moves.watch(
+                    rig.s, lambda: None, slot=args.slot, after=args.after, timeout=args.timeout
+                )
+                if args.repeat > 1:
+                    print(f"--- move {n}/{args.repeat}")
+                print("\n".join(report(r)), flush=True)
+    except (ConnectionError, DebuggerError, LookupError, RuntimeError, TimeoutError) as e:
+        return _fail(args, e)
     return 0
 
 
