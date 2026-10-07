@@ -745,7 +745,7 @@ function mhfu.em_moves_status() end
 function mhfu.move_react(kind, ent, spec) end
 
 ---Calls fn when a big monster notices the player (its ENTITY.AWARE bit for the player rises).
----Monster events come from the move player's step on the wrapped species, one AI frame after the
+---Monster events come from em_vhook's brain on the wrapped species, one AI frame after the
 ---engine's change, and are raised on the 5 Hz registry poll. Register at load.
 ---@param fn fun(ev: mhfu.MonsterEvent)
 ---@param priority? integer

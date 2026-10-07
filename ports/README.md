@@ -73,11 +73,34 @@ one counts its AI frames) or `from_main`, `min_frames`, the hunter's `dist`, `re
 `closing`, `cooldown`, `count`. The framework checks rules every AI frame in C; one fires a
 frame, and a pair rule waits while an own move plays.
 
+`on` fires a rule on a monster event instead, in the AI frame it is seen, under the same `dist`,
+`cooldown`, `count` and, when given, `from`; `part` narrows a flinch or a break to one part
+(`[parts]` names them; em75's: 0 head, 1 neck, 2 body, 3 tail, 4/6 the left/right foreleg, 5/7
+the left/right hind leg). `on = "flinch"` plays its own move in place of the host's flinch: the
+engine counts the flinch and applies the damage, then enters the move's carrier instead of
+`(4,x)`; a flinch that breaks a part plays the break rule's move instead. An own move asked
+while the monster's notice runs waits for combat, so the "!" and the roar are not cut; `force`
+plays the rule's move at once:
+
+```toml
+[[rule]]
+play = "flinch_head"
+on = "flinch"         # noticed, combat_entered, combat_left, flinch, part_broken, tail_cut
+part = 0
+
+[[rule]]
+play = "notice_howl"  # carrier = [0, 4]: the roar pair, which the notice enters itself
+on = "noticed"
+force = true
+```
+
 `build` and `inject` also write `<name>_moves.lua`, the moves and rules as the game runs them:
 each own move's executor entry and turn keys come from the same build as the clips module, and
 a move it cannot carry (no entry, an attack past its clip or with no host record) fails the
 build. `mhfu_port.lua`'s `P.define` takes it when a mod gives no `moves` or `rules`, and
-`port:move(name)` plays an own move. `mhfu move ride NAME --brain` boots a port with them.
+`port:move(name)` plays an own move. A module re-written while the game runs (`inject`, the
+studio's play in game) is the port's from the next tick. `mhfu move ride NAME --brain` boots a
+port with them; `mhfu move play --own NAME [--force]` plays one of its own moves.
 
 ## Example
 
