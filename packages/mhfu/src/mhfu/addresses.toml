@@ -202,6 +202,14 @@ ATTACK_SPAWNERS_END = { eu = 0x09B66B00, type = "code", doc = "end of the ATTACK
 REACTION_CHECK = { eu = 0x09AC7908, type = "fn", doc = "(entity, out): applies PENDING_DAMAGE while HIT_PENDING and returns the reaction a species AI step enters: 0 none, 2 dead, 12 flinch, 14 hit only, 15/16 damage types 26..30" }
 EM75_REACTIONS = { eu = 0x09D62B00, type = "ptr[19]", doc = "em75 AI step's jump table over REACTION_CHECK codes; each case enters vt+0x88(entity, 4, 5 or 6, sub, mode 2)" }
 EM75_ATTACK_NODE_INIT = { eu = 0x09D4B318, type = "fn", doc = "(node, entity, attack id): fills the ATTACK_NODE, links it at COLLISION_WORLD.LIST_HEAD, clears the owner's COMBAT_ENGAGED and COMBAT_REGISTERED" }
+SET_COMBAT_MODE = { eu = 0x09AC92B0, type = "fn", doc = "(entity, mode, frames): ENTITY.COMBAT_MODE = mode; 0 also forgets ENTITY.AWARE. The AI script sets 1 in the hub after the roar; a hit sets it too" }
+AWARENESS_ADD = { eu = 0x09AD29F8, type = "fn", doc = "(entity, amount, cap, hunter index): adds to ENTITY.AWARENESS; at 9000, with the hunter in the monster's section, sets its ENTITY.AWARE bit (the notice) and refills AWARE_TIMERS with SPECIES.AWARE_TIME" }
+AWARE_MEMORY = { eu = 0x09AC9B08, type = "fn", doc = "(entity) per hunter: an ENTITY.SENSED bit keeps the AWARE bit and refills its AWARE_TIMERS with SPECIES.AWARE_TIME; else the timer counts down and the bit clears at 0" }
+EYE_UPDATE = { eu = 0x09A686C0, type = "fn", doc = "(hunter) each frame: HUNTER.EYE = 1 (the yellow eye beside the name) when a big monster in the hunter's section, alive, FLAGS & 0x8, has its AWARE bit and COMBAT_MODE 1; HUNTER.THREAT = that monster" }
+FLINCH_RESET = { eu = 0x09AD3B10, type = "fn", doc = "(entity, part): an enabled FLINCH_PART's COUNTER = SPECIES.FLINCH_LIMITS[part] scaled by the quest's rank; REACTION_CHECK calls it as the part flinches" }
+PART_BREAK = { eu = 0x09AD4940, type = "fn", doc = "(entity, flinched parts) from REACTION_CHECK: a part whose FLINCH_PART.COUNT reaches its BREAK_ROW's breaks: effect, BREAK_RECORD, HITZONE_STATE" }
+BREAK_RECORD = { eu = 0x09AD7F48, type = "fn", doc = "(entity, break id): sets bit id of ENTITY.BROKEN and of the quest's per-species record" }
+BREAK_TABLE = { eu = 0x09BCE8E0, type = "BREAK_ROW[62]", doc = "part breaks of every species, a zero row last (game_task overlay)" }
 
 # --- scenes ---
 # Scene objects: the values SCENE_OBJECT holds. Menus and prompts sit in a pool, so a prompt
@@ -333,6 +341,19 @@ RUN_BUDGET = { offset = 0x76C, type = "f32", doc = "big monsters: distance a run
 CLIP_BLOCKS = { offset = 0x080, type = "CLIP_BLOCK[3]", doc = "big monsters: one clip player per body part (Bone.stream); CLIP and CLIP_FLAGS are part 0's" }
 SCRIPT_WAKE = { offset = 0x4B5, type = "u8", doc = "big monsters: set as the brain hubs (0,1)/(0,2) run; SCRIPT_TICK runs the AI script and clears it. A pair entered from outside with it set is cut short by the script's next pair" }
 SCRIPT_WAIT = { offset = 0x778, type = "s16", doc = "big monsters: AI frames SCRIPT_TICK waits before it may run the AI script" }
+HUNTER_INDEX = { offset = 0x1E6, type = "u16", doc = "hunters: 0 the player, 1 the Felyne; the bit a big monster's AWARE and COMBAT_SEEN keep for it" }
+MOST_DAMAGED_PART = { offset = 0x286, type = "u8", doc = "big monsters: the part with the most PENDING_DAMAGE in the last frame with a hit; picks the flinch pair" }
+SEVERED = { offset = 0x2B8, type = "u8", doc = "big monsters: bit 0 once the tail is cut, which the hurtbox walk skips; em75 sets it entering (4,4), the tail-cut reaction" }
+COMBAT_MODE = { offset = 0x4B9, type = "u8", doc = "big monsters: 1 in combat (SET_COMBAT_MODE); with AWARE it lights the hunter's yellow eye (EYE_UPDATE)" }
+COMBAT_SEEN = { offset = 0x4BA, type = "u8", doc = "big monsters: bit per hunter EYE_UPDATE has lit the eye for" }
+AWARE = { offset = 0x503, type = "u8", doc = "big monsters: bit per HUNTER_INDEX the monster knows of; the player's bit rising is the notice" }
+SENSED = { offset = 0x513, type = "u8", doc = "big monsters: bit per hunter sensed this frame" }
+AWARE_TIMERS = { offset = 0x514, type = "s16[4]", doc = "big monsters: per hunter, AI frames AWARE outlasts the last sensing" }
+AWARENESS = { offset = 0x554, type = "s32[4]", doc = "big monsters: per hunter, the notice accumulator AWARENESS_ADD raises; 9000 notices" }
+FLINCH_MASK = { offset = 0x577, type = "u8", doc = "big monsters: parts that flinched in this AI frame; REACTION_CHECK clears it each frame, before the reaction is entered, and sets a bit per part" }
+SEVER_COUNT = { offset = 0x579, type = "s8", doc = "big monsters: tail cuts, counted by em75's (4,4) translator" }
+FLINCH_PARTS = { offset = 0x57C, type = "FLINCH_PART[9]", doc = "big monsters: per part, flinch counter and count; [8] counts cut damage to SPECIES.SEVER's part toward the tail cut" }
+BROKEN = { offset = 0x774, type = "u16", doc = "big monsters: broken parts, bit per BREAK_ROW.BREAK_ID (BREAK_RECORD)" }
 
 [struct.MONSTER_VTABLE]
 doc = "a species entity vtable (ENTITY.VTABLE): slot k at +8 + 4k, after the offset-to-top and typeinfo pair"
@@ -490,6 +511,9 @@ ATTACK_PATTERNS = { offset = 0x70, type = "ptr", doc = "attack pattern and hit-v
 SIGHT_RADIUS = { offset = 0x80, type = "f32", doc = "detection radius, read on evaluate; 0.0 stops new aggro" }
 HURTBOX_SET = { offset = 0x240, type = "ptr", doc = "the HIT_VOLUME set this species walks as its hurtboxes" }
 HITZONE_STATES = { offset = 0x2FC, type = "ptr", doc = "pointer table of hitzone grids (0x48: 7 rows x 10 percent bytes) picked by HITZONE_STATE" }
+AWARE_TIME = { offset = 0x336, type = "s16", doc = "AI frames a monster stays aware of a hunter it stopped sensing (em75 1800)" }
+SEVER = { offset = 0x33A, type = "u8[2]", doc = "the part whose cut damage counts toward the tail cut, and the hit flags that count as cut (em75 3, 0x02)" }
+FLINCH_LIMITS = { offset = 0x3A4, type = "ptr", doc = "s16[9] per part: the FLINCH_PART.COUNTER refill before rank scaling (em75 180, 160, 150, 160, 180, 140, 180, 140, sever 340)" }
 
 [struct.HIT_VOLUME]
 doc = "one collision sphere or capsule record; a set ends at BONE == 0xFFFF"
@@ -648,6 +672,9 @@ ANGLES = { offset = 0x17C, type = "f32[3]", doc = "orbit euler angles in radians
 doc = "the player combat entity PLAYER_ENTITY beyond the ENTITY fields it shares"
 [struct.HUNTER.fields]
 EXITING = { offset = 0x2A4, type = "u8", doc = "1 while leaving through an exit; without it an area change loads the stage and leaves the hunter frozen in place" }
+THREAT = { offset = 0x2F4, type = "ptr", doc = "the big monster that lit EYE this frame (EYE_UPDATE)" }
+EYE = { offset = 0x566, type = "u8", doc = "1 while the yellow eye shows beside the name: a big monster is in combat with this hunter (EYE_UPDATE)" }
+EYE_LAST = { offset = 0x68A, type = "u8", doc = "EYE in the frame before" }
 
 [struct.MOVE_ATTACK]
 doc = "one attack of a MOVE: spawned when the timing part's clip cursor crosses FRAME, ended when it crosses END"
@@ -737,3 +764,22 @@ WALL = { offset = 0x42A, type = "u8", doc = "the last frame's wall result: 0 non
 CURSOR = { offset = 0x42C, type = "f32", doc = "part 0's clip cursor the step saw last" }
 YAW0 = { offset = 0x430, type = "u16", doc = "YAW on the move's first playing frame" }
 YAW = { offset = 0x432, type = "u16", doc = "YAW as the step left it" }
+
+[struct.FLINCH_PART]
+doc = "one part's flinch state (ENTITY.FLINCH_PARTS)"
+size = 0x8
+[struct.FLINCH_PART.fields]
+ENABLED = { offset = 0x0, type = "u8", doc = "0: FLINCH_RESET leaves the part alone" }
+COUNTER = { offset = 0x4, type = "s16", doc = "counted down by the part's damage; at 0 or below the part flinches and FLINCH_RESET refills it" }
+COUNT = { offset = 0x6, type = "u8", doc = "flinches so far, at most 15; a BREAK_ROW.COUNT matching it breaks the part" }
+
+[struct.BREAK_ROW]
+doc = "one part break (BREAK_TABLE): a part of a species breaks at its COUNT-th flinch"
+size = 0x20
+[struct.BREAK_ROW.fields]
+SPECIES = { offset = 0x0, type = "u8", doc = "species, compared by family (0x4B the Tigrex)" }
+PART = { offset = 0x1, type = "u8", doc = "the flinching part" }
+COUNT = { offset = 0x2, type = "u8", doc = "FLINCH_PART.COUNT that breaks it" }
+HITZONE_STATE = { offset = 0x3, type = "u8", doc = "1: the break sets ENTITY.HITZONE_STATE = 1" }
+BONE = { offset = 0x4, type = "s16", doc = "bone of the break effect; -1 none" }
+BREAK_ID = { offset = 0x6, type = "u16", doc = "bit set in ENTITY.BROKEN; 0xFFFF none (em75: parts 4 and 6 at their first flinch bit 1, part 0 at its second bit 2)" }
