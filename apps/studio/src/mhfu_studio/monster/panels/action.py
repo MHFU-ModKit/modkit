@@ -729,9 +729,15 @@ class ActionsPanel(kit.Panel):
         text = ""
         if m is not None and mv is not None and mv.after:
             nm = m.moves.get(mv.after)
-            text = f"your move goes on to {mv.after}" + (
-                f" ({nm.main},{nm.sub})" if nm else " (no such move!)"
+            pr = None if nm is None else nm.pair
+            to = (
+                " (no such move!)"
+                if nm is None
+                else " (own move)"
+                if pr is None
+                else f" ({pr[0]},{pr[1]})"
             )
+            text = f"your move goes on to {mv.after}{to}"
         self.declared.setText(text)
         self.declared.setVisible(bool(text))
 

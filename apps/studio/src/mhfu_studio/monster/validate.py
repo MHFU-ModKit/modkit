@@ -47,6 +47,8 @@ HIT_JOINT, HIT_RADIUS, HIT_END, HIT_GROUP, ATTACK_STATS = (
 )
 #: the Clips panel's
 CLIP_NAME = "clip name"
+#: the Moves panel's
+MOVE_WINDOWS, MOVE_CLIP = "move windows", "move clip"
 FOCUS = {
     "CLIP_SLOT_MISSING": CLIP_NAME,
     "CLIP_FRAMES_MISMATCH": CLIP_NAME,
@@ -70,6 +72,9 @@ FOCUS = {
     "HITBOX_SET_UNUSED": HIT_GROUP,
     "HITBOX_SET_UNRIGGED": HIT_GROUP,
     "ATTACK_EMPTY": ATTACK_STATS,
+    "OWN_ATTACK_UNKNOWN": MOVE_WINDOWS,
+    "OWN_WINDOW_PAST_CLIP": MOVE_WINDOWS,
+    "OWN_CLIP_UNPLACED": MOVE_CLIP,
 }
 MANIFEST = "In the manifest file (ports/<name>.toml): "
 BUILD = "Build the port again: mhfu-port build ports/<name>.toml."
@@ -96,6 +101,7 @@ FIX = {
     "ATTACK_RECORD_UNKNOWN": MANIFEST + "delete this [[attack]].",
     "ATTACK_VOLUME_UNKNOWN": MANIFEST + "give the [[attack]] a hit group the base monster has.",
     "ATTACK_JOIN_INFERRED": "Nothing to change: only em75's attack join is traced in game.",
+    "OWN_ATTACKS_UNCHECKED": "Open the studio with your base monster's data (--intel).",
 }
 
 
@@ -141,6 +147,7 @@ def validate(
         *_settings(m),
         *_pac(m, pac, sources or {}),
         *_moves(m, intel),
+        *_own_moves(m, pac, intel, sources or {}),
         *_parts(m, intel),
         *_attacks(m, intel),
     ]
@@ -427,6 +434,54 @@ def _moves(m: Manifest, intel: SpeciesIntel | None) -> list[Finding]:
                         f"yours is cut short. {how}",
                     )
                 )
+    return out
+
+
+def _own_moves(
+    m: Manifest, pac: bytes | None, intel: SpeciesIntel | None, sources: Mapping[int, int]
+) -> list[Finding]:
+    """What the move player refuses or never reaches in an own move: a clip in no anim, an
+    attack the base monster has no record of, a window past the clip's frames."""
+    mine = sorted((n, mv) for n, mv in m.moves.items() if mv.own)
+    if not mine:
+        return []
+    try:
+        table = clips.pac_clip_table(pac) if pac is not None else {}
+    except ValueError:
+        table = {}  # `_pac` says so
+    attacks = intel.attacks if intel is not None and intel.attacks.present else None
+    host = m.port.host_species
+    out = []
+    if attacks is None and any(mv.attacks for _, mv in mine):
+        msg = f"no attack data for {species.label(host)}: own moves' attack ids are not checked."
+        out.append(_f("warning", "OWN_ATTACKS_UNCHECKED", "moves", msg))
+    for name, mv in mine:
+        w = f"moves.{name}"
+        c = m.clips.get(mv.clip or "")
+        slot = mv.anim if c is None else clips.at(c, sources)
+        if slot is None and (sources or c is None or c.slot is not None):
+            msg = f"clip {mv.clip} is in no anim, so the move player has nothing to play."
+            out.append(_f("error", "OWN_CLIP_UNPLACED", w, msg))
+        frames = table[slot][0] if slot in table else None if c is None else c.frames
+        for i, a in enumerate(mv.attacks):
+            if attacks is not None and not attacks.records_for([a.id], host):
+                msg = (
+                    f"attack {i}: {species.label(host)} has no record {a.id} with a hit in it,"
+                    " so the spawn hits nothing."
+                )
+                out.append(_f("error", "OWN_ATTACK_UNKNOWN", w, msg))
+            if frames is not None and a.frame >= frames:
+                msg = (
+                    f"attack {i} spawns at frame {a.frame}, but the clip ends at {frames}: the"
+                    " cursor never crosses it."
+                )
+                out.append(_f("error", "OWN_WINDOW_PAST_CLIP", w, msg))
+            elif frames is not None and a.end is not None and a.end > frames:
+                msg = (
+                    f"attack {i} ends at frame {a.end}, past the clip's {frames}: the move ends"
+                    " it first."
+                )
+                out.append(_f("warning", "OWN_WINDOW_PAST_CLIP", w, msg))
     return out
 
 

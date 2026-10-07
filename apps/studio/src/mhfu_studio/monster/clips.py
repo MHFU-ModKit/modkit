@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
 from mhfu_port import layout as layouts
@@ -329,6 +329,7 @@ def _label(
     build: str | None,
     impact_frame: int | None = None,
     source: int | None = None,
+    turn: float | None = None,
 ) -> None:
     """Names the clip in `slot`: MHP3rd clip `source` without pinning it; without a `source`,
     whatever is in `slot`, pinned there, all a build alone says."""
@@ -347,6 +348,8 @@ def _label(
         c.label = label
     if impact_frame is not None:
         c.impact_frame = impact_frame
+    if turn is not None:
+        c.turn = turn
 
 
 class LabelSession:
@@ -374,12 +377,20 @@ class LabelSession:
         found = self.entry(slot)
         return found[0] if found else clip_key(slot)
 
-    def label(self, slot: int, name: str, label: str = "", impact_frame: int | None = None) -> str:
+    def label(
+        self,
+        slot: int,
+        name: str,
+        label: str = "",
+        impact_frame: int | None = None,
+        turn: float | None = None,
+    ) -> str:
         """Name `slot`'s clip, renaming its old name and every move that plays it."""
         name = check_name(name)
         fp = self._fingerprint(slot, name)
         src = self.sources.get(slot)
-        self.doc.edit(lambda m: _label(m, slot, name, fp, label, self.build, impact_frame, src))
+        build = self.build
+        self.doc.edit(lambda m: _label(m, slot, name, fp, label, build, impact_frame, src, turn))
         return f"clips.{name} = slot {slot}"
 
     def _fingerprint(self, slot: int, name: str) -> Fingerprint:
@@ -395,20 +406,24 @@ class LabelSession:
             raise ManifestError(f"anim {slot} holds none of the original's clips")
         return fp
 
+    def _named(self, slot: int) -> tuple[str, Callable[[Manifest], None]]:
+        """`slot`'s clip name (`clip_key` when it has none) and the edit that names it."""
+        found = self.entry(slot)
+        if found is not None:
+            return found[0], lambda m: None
+        name = clip_key(slot)
+        fp, src, build = self._fingerprint(slot, name), self.sources.get(slot), self.build
+        return name, lambda m: _label(m, slot, name, fp, None, build, source=src)
+
     def bind_move(self, name: str, main: int, sub: int, slot: int | None = None) -> str:
         """`[moves.<name>]` on the pair, painting `slot`'s clip (named `clip_key` when it has no
         name). A move of that name keeps its other fields; its clip replaces any raw `anim`."""
         name = check_name(name)
-        clip, new = None, None
-        if slot is not None:
-            found = self.entry(slot)
-            clip = found[0] if found else clip_key(slot)
-            if found is None:
-                new = (slot, clip, self._fingerprint(slot, clip))
+        clip, named = self._named(slot) if slot is not None else (None, None)
 
         def bind(m: Manifest) -> None:
-            if new is not None:
-                _label(m, *new, None, self.build, source=self.sources.get(new[0]))
+            if named is not None:
+                named(m)
             mv = m.moves.get(name)
             if mv is None:
                 m.moves[name] = Move(main, sub, clip=clip)
@@ -420,42 +435,65 @@ class LabelSession:
         self.doc.edit(bind)
         return f"moves.{name} = ({main},{sub})" + (f" on {clip}" if clip else "")
 
+    def own_move(self, name: str, slot: int) -> str:
+        """A new own move `[moves.<name>]` playing `slot`'s clip, named `clip_key` when it has
+        no name."""
+        name = check_name(name)
+        if name in self.doc.manifest.moves:
+            raise ManifestError(f"moves.{name} already exists")
+        clip, named = self._named(slot)
+
+        def make(m: Manifest) -> None:
+            named(m)
+            m.moves[name] = Move(clip=clip)
+
+        self.doc.edit(make)
+        return f"moves.{name}: an own move on {clip}"
+
     def unbind_move(self, name: str) -> str:
-        """Drops `[moves.<name>]`; refused while another move, a rule or an effect names it."""
-        if name not in self.doc.manifest.moves:
-            raise ManifestError(f"no move {name!r}")
-        users = move_users(self.doc.manifest, name)
-        if users:
-            raise ManifestError(f"{name} is still used by {', '.join(users)}: change that first")
-
-        def drop(m: Manifest) -> None:
-            del m.moves[name]
-
-        self.doc.edit(drop)
-        return f"moves.{name} removed"
+        return drop_move(self.doc, name)
 
     def rename_move(self, old: str, new: str) -> str:
-        """Renames a move and every `after`, rule and effect that names it."""
-        new = check_name(new)
-        if old not in self.doc.manifest.moves:
-            raise ManifestError(f"no move {old!r}")
-        if new == old:
-            return f"moves.{old}"
-        if new in self.doc.manifest.moves:
-            raise ManifestError(f"moves.{new} already exists")
+        return rename_move(self.doc, old, new)
 
-        def rename(m: Manifest) -> None:
-            m.moves = {new if k == old else k: mv for k, mv in m.moves.items()}
-            for mv in m.moves.values():
-                mv.after = new if mv.after == old else mv.after
-            for r in m.rules:
-                r.play = new if r.play == old else r.play
-                r.from_move = new if r.from_move == old else r.from_move
-            for e in m.effects:
-                e.move = new if e.move == old else e.move
 
-        self.doc.edit(rename)
-        return f"moves.{old} is now moves.{new}"
+def drop_move(doc: PortDocument, name: str) -> str:
+    """Drops `[moves.<name>]`; refused while another move, a rule or an effect names it."""
+    if name not in doc.manifest.moves:
+        raise ManifestError(f"no move {name!r}")
+    users = move_users(doc.manifest, name)
+    if users:
+        raise ManifestError(f"{name} is still used by {', '.join(users)}: change that first")
+
+    def drop(m: Manifest) -> None:
+        del m.moves[name]
+
+    doc.edit(drop)
+    return f"moves.{name} removed"
+
+
+def rename_move(doc: PortDocument, old: str, new: str) -> str:
+    """Renames a move and every `after`, rule and effect that names it."""
+    new = check_name(new)
+    if old not in doc.manifest.moves:
+        raise ManifestError(f"no move {old!r}")
+    if new == old:
+        return f"moves.{old}"
+    if new in doc.manifest.moves:
+        raise ManifestError(f"moves.{new} already exists")
+
+    def rename(m: Manifest) -> None:
+        m.moves = {new if k == old else k: mv for k, mv in m.moves.items()}
+        for mv in m.moves.values():
+            mv.after = new if mv.after == old else mv.after
+        for r in m.rules:
+            r.play = new if r.play == old else r.play
+            r.from_move = new if r.from_move == old else r.from_move
+        for e in m.effects:
+            e.move = new if e.move == old else e.move
+
+    doc.edit(rename)
+    return f"moves.{old} is now moves.{new}"
 
 
 def move_users(m: Manifest, name: str) -> list[str]:
