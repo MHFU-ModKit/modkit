@@ -189,7 +189,8 @@ def test_two_windows_by_drag(own: TimelinePanel, workspace: MonsterWorkspace) ->
     assert own.lanes.height() == int(LANE_H * 3) + 2
     lane_drag(own, 1, 9.0, 10.0)
     assert workspace.own_move().attacks[1] == AttackWindow(6, 6, 10)  # type: ignore[union-attr]
-    own.lanes.grab()  # paints
+    workspace.set_move(length=3)
+    own.lanes.grab()  # paints, the length too
 
 
 def test_playhead_shows_what_is_out(own: TimelinePanel, workspace: MonsterWorkspace) -> None:

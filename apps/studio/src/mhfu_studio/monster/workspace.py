@@ -374,12 +374,12 @@ class MonsterWorkspace(Workspace):
             Dock(
                 "Clips", "left", build("clips", "ClipsPanel"),
                 "Every anim, what is really in it, and the name it goes by.",
-            ),            Dock(
+            ),
+            Dock(
                 "Moves", "left", build("moves", "MovesPanel"),
                 "Your moves: on the base monster's actions, or your own, with their attacks and"
                 " turn.",
             ),
-
             Dock(
                 "Scene", "left", build("scene", "ScenePanel"),
                 "What the opened port holds: the model, its skeleton, clips and textures.",
@@ -1306,11 +1306,8 @@ class MonsterWorkspace(Workspace):
     def window_frames(self) -> int:
         """Clip frames the lanes span: the own move's clip, on screen."""
         vp = self.vp
-        return (
-            0
-            if self.own_move_on_screen() is None or vp is None or vp.clip is None
-            else (vp.clip.frames)
-        )
+        on = self.own_move_on_screen() is not None and vp is not None and vp.clip is not None
+        return vp.clip.frames if on and vp is not None and vp.clip is not None else 0
 
     def window_id(self) -> int:
         """The attack a new window gets: the one set for it, else the picked window's, else
@@ -1322,8 +1319,9 @@ class MonsterWorkspace(Workspace):
             i = self.picked_window
             return mv.attacks[i if i is not None else -1].id
         host = self.host_attacks()
-        recs = [] if host is None or host.primary is None else host.primary.attacks
-        return next((r.id for r in recs if not r.is_blank), 0)
+        off = None if host is None else host.id_offset(self.host_species or 0)
+        recs = [] if host is None or host.primary is None or off is None else host.primary.attacks
+        return next((r.id - (off or 0) for r in recs if not r.is_blank), 0)
 
     def press_window(self, lane: int, frame: float, slop: float = 0.5) -> bool:
         """A press on the Timeline's attack lanes, in clip frames (`authoring.WindowDrag`)."""

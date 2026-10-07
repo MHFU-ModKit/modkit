@@ -56,7 +56,8 @@ LANE_H = 18.0
 LANES_TIP = (
     "The move's attacks, one lane each: drag on the empty lane to add one (a click adds one"
     " without an end), drag an edge or the span to move it, click one to pick it, Delete"
-    " removes it. Lit while the playhead is inside: the attack is out."
+    " removes it. Lit while the playhead is inside: the attack is out. A dashed line is where"
+    " the move's Length ends it."
 )
 #: the strip's inset at either end, in points
 INSET = 3.0
@@ -261,8 +262,12 @@ class AttackLanes(QWidget):
             p.setPen(theme.color(theme.current().view) if on else theme.color(Ink.TEXT))
             tail = " →" if a.end is None else ""
             p.drawText(QPointF(x0 + 4, top + LANE_H - 6), f"{a.id}{tail}")
-        p.setPen(QPen(theme.color(Ink.TEXT), 2.0))
         vp = ws.vp
+        if vp is not None and vp.clip is not None and mv.length is not None:
+            x = self.x_of(mv.length * vp.playback.speed)  # Length is AI frames
+            p.setPen(QPen(theme.color(Ink.WARNING), 1.5, Qt.PenStyle.DashLine))
+            p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
+        p.setPen(QPen(theme.color(Ink.TEXT), 2.0))
         if vp is not None and vp.clip is not None:
             x = self.x_of(vp.playback.phase)
             p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
