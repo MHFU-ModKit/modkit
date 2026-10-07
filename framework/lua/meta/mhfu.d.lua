@@ -661,7 +661,7 @@ function mhfu.move_block() end
 ---@field started integer moves started since boot
 ---@field pending integer 1 while a move waits for its AI step
 ---@field state integer 0 idle, 1 entering the carrier, 2 playing, 3 reading the successor, 4 done
----@field end_reason integer 1 clip done, 2 back pair, 3 pair changed, 4 stopped, 5 replaced, 6 refused, 7 lost, 8 a wall ahead, 9 a class-2 wall (stuck pair entered), 10 a replaced reaction started its move
+---@field end_reason integer a MOVE_END code: its name is mhfu.addr.MOVE_END[end_reason]
 ---@field entity integer
 ---@field entry integer
 ---@field frames integer AI frames since the clip's dispatch

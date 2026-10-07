@@ -31,6 +31,7 @@
 
 #include <stdint.h>
 
+#include "addresses.gen.h"
 #include "mhfu/steer.h"
 #include "mhfu/monster_events.h"
 
@@ -66,19 +67,7 @@ typedef struct {
 
 /* MOVE_STATE.STATE */
 enum { MHFU_MOVE_IDLE, MHFU_MOVE_ENTERING, MHFU_MOVE_PLAYING, MHFU_MOVE_AFTER, MHFU_MOVE_DONE };
-/* MOVE_STATE.END */
-enum {
-    MHFU_MOVE_END_CLIP = 1,   /* the clip ended; the carrier handed off */
-    MHFU_MOVE_END_BACK,       /* the clip or LENGTH ended; the back pair was entered */
-    MHFU_MOVE_END_PAIR,       /* the pair changed under the move */
-    MHFU_MOVE_END_STOPPED,
-    MHFU_MOVE_END_REPLACED,
-    MHFU_MOVE_END_REFUSED,    /* enter-action did not land the carrier */
-    MHFU_MOVE_END_LOST,       /* another dispatch replaced the clip */
-    MHFU_MOVE_END_WALL,       /* a wall ahead (mhfu/steer.h); the carrier or back pair takes over */
-    MHFU_MOVE_END_STUCK,      /* a class-2 wall ahead: the spec's stuck pair was entered */
-    MHFU_MOVE_END_REACTION,   /* a reaction mhfu_move_react replaces started its move */
-};
+/* MOVE_STATE.END: MHFU_MOVE_END_* from addresses.toml's [enum.MOVE_END] */
 
 #define MHFU_MOVE_WAIT 450      /* AI frames a move waits for the monster's notice to run */
 

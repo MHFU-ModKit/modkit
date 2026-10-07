@@ -32,17 +32,19 @@ NO_PAIR = 0xFF
 DONE = 4
 """MOVE_STATE.STATE once the move is over."""
 NEVER = 0xFFFF_FFFF
-ENDS = {
-    1: "clip done",
-    2: "back pair",
-    3: "pair changed",
-    4: "stopped",
-    5: "replaced",
-    6: "carrier refused",
-    7: "clip lost",
-    8: "a wall ahead",
-    9: "a class-2 wall: stuck",
+WORDS = {
+    "clip": "clip done",
+    "back": "back pair",
+    "pair": "pair changed",
+    "refused": "carrier refused",
+    "lost": "clip lost",
+    "wall": "a wall ahead",
+    "stuck": "a class-2 wall: stuck",
+    "reaction": "a reaction's move",
 }
+"""How a MOVE_END name reads, where its name alone does not say it."""
+ENDS: dict[int, str] = {a.MOVE_END.number(n): WORDS.get(n, n) for n in a.MOVE_END.names}
+"""MOVE_STATE.END in words."""
 TURNS = ("still", "hunter", "away", "fixed")
 """STEER_PARAMS.TURN by name."""
 FULL_TURN = 0x10000

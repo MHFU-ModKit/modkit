@@ -896,3 +896,7 @@ RULES = { offset = 0xE0, type = "EM_RULE[16]", doc = "the brain's rules: their c
 [enum.MONSTER_EVENT_KIND]
 doc = "the framework's monster events (MONSTER_EVENT.KIND), a manifest rule's on"
 names = ["noticed", "combat_entered", "combat_left", "flinch", "part_broken", "tail_cut"]
+
+[enum.MOVE_END]
+doc = "MOVE_STATE.END, why the move player's move ended: its clip ended (the carrier handed off); the clip or LENGTH ended and the back pair was entered; the pair changed under it; stopped; replaced; the enter-action did not land the carrier; another dispatch replaced the clip; a wall ahead; a class-2 wall (the stuck pair entered); a reaction mhfu_move_react replaces started its move"
+names = ["clip", "back", "pair", "stopped", "replaced", "refused", "lost", "wall", "stuck", "reaction"]
