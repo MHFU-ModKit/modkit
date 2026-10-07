@@ -102,7 +102,20 @@ that flinches it for one, ends the move at once. An attack can also end at a fra
 (`{ 56, 6, 80 }`), and while the move plays the host's own attacks and effects for the entry
 its clip sits in are skipped (`host_attacks = true` keeps them). It runs in C on the AI step
 em_vhook wraps (`include/mhfu/move.h`), so it needs a cold boot and a spawned big monster. From
-the debugger: `mhfu move ride <port>`, then `mhfu move play 46 --attack 6@56-80`.
+the debugger: `mhfu move ride <port>`, then `mhfu move play 46 --attack 6@56-80`. A move asked
+for while the monster's notice runs (it knows the player, not yet in combat) waits for the roar
+and the combat entry; `eager = true` starts it at once.
+
+## Monster events
+
+The same AI step finds what a mod may answer, one AI frame after the engine's change at most,
+raised on the 5 Hz registry poll (`include/mhfu/monster_events.h`): `mhfu.on_bigmonster_noticed`,
+`_combat_entered` and `_combat_left` (the yellow eye beside the player's name), `_flinch` (with
+the part), `_part_broken` and `_tail_cut`, each `fn(ev)` with the entity, the AI frame, the pair
+and the part. `mhfu.move_react("flinch", ent, { entry = 78 })` plays a move in place of the
+monster's flinch: the engine counts the flinch and applies the damage, then enters the move's
+carrier instead of `(4,x)`, and the move plays from the next AI step. From the debugger:
+`mhfu events --follow 60`.
 
 ## Tests
 
