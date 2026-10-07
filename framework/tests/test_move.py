@@ -104,13 +104,15 @@ class Game:
 
 @pytest.fixture(scope="module")
 def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
-    lib = host_lib("src/core/move.cpp", "tests/move_host.cpp")
+    lib = host_lib("src/core/move.cpp", "src/core/steer.cpp", "tests/move_host.cpp")
     lib.host_mem.restype = ctypes.c_void_p
     lib.host_frame.restype = ctypes.c_uint32
     lib.host_frame.argtypes = [ctypes.c_uint32]
     lib.host_set.argtypes = [ctypes.c_int, ctypes.c_float]
     lib.mhfu_move_state.restype = ctypes.c_void_p
     lib.mhfu_move_play.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+    lib.mhfu_move_steer.argtypes = [ctypes.c_void_p]
+    lib.mhfu_steer_init_spec.argtypes = [ctypes.c_void_p]
     return lib
 
 
@@ -271,3 +273,104 @@ def test_host_attacks_keeps_them(g: Game) -> None:
     g.pair = (4, 1)
     g.frame()
     assert [c[1] for c in g.calls() if c[0] == "M"] == [0]  # only the end's clear
+
+
+WALL, STUCK = 8, 9
+
+
+class Spec(ctypes.Structure):
+    _fields_ = [
+        ("turn", ctypes.c_uint8),
+        ("walls", ctypes.c_uint8),
+        ("rate", ctypes.c_uint16),
+        ("total", ctypes.c_int32),
+        ("frames", ctypes.c_uint16),
+        ("dir", ctypes.c_uint16),
+        ("key_count", ctypes.c_uint16),
+        ("stuck_main", ctypes.c_uint8),
+        ("stuck_sub", ctypes.c_uint8),
+        ("stuck_mode", ctypes.c_uint8),
+        ("_pad", ctypes.c_uint8 * 3),
+        ("keys", ctypes.c_uint16 * 256),
+    ]
+
+
+def steer(g: Game, keys: tuple[int, ...] = (), **kw: int) -> None:
+    spec = Spec()
+    g.lib.mhfu_steer_init_spec(ctypes.byref(spec))
+    for k, v in kw.items():
+        setattr(spec, k, v)
+    spec.key_count = len(keys)
+    for i, v in enumerate(keys):
+        spec.keys[i] = v & 0xFFFF
+    g.lib.mhfu_move_steer(ctypes.byref(spec))
+
+
+def yaw(g: Game) -> int:
+    return int(g.peek(a.ENTITY.YAW, "H")[0])
+
+
+def test_steer_spec_layout() -> None:
+    assert ctypes.sizeof(Spec) == a.STEER_SPEC.size
+    assert Spec.keys.offset == a.STEER_SPEC.KEYS and Spec.key_count.offset == a.STEER_SPEC.KEY_COUNT
+
+
+def test_yaw_follows_the_clip_turn(g: Game) -> None:
+    """YAW reads its first-frame value plus the curve at the cursor, a loop's turn kept."""
+    g.poke(a.ENTITY.YAW, "H", 0x1000)
+    steer(g, tuple(100 * k for k in range(int(CLIP_END) // 2 + 1)))
+    g.play(46)
+    g.frame()
+    g.frame()  # the dispatch
+    g.frame()  # first playing frame: the cursor reads 2, YAW stays
+    assert yaw(g) == 0x1000
+    for _ in range(10):
+        g.frame()
+    assert yaw(g) == 0x1000 + 10 * 100
+    st = int(g.lib.mhfu_move_state()) + a.MOVE_STATE.STEER
+    assert struct.unpack_from("<H", ctypes.string_at(st + a.STEER_STATE.YAW0, 2)) == (0x1000,)
+
+
+def test_fixed_turn_spreads_its_total(g: Game) -> None:
+    g.poke(a.ENTITY.YAW, "H", 0xF000)
+    steer(g, turn=3, total=0x2000, frames=20)
+    g.play(46)
+    for _ in range(2 + 25):
+        g.frame()
+    assert yaw(g) == 0x1000
+
+
+def test_a_wall_ahead_ends_the_move(g: Game) -> None:
+    steer(g, walls=1)
+    g.play(46)
+    for _ in range(6):
+        g.frame()
+    g.poke(a.ENTITY.WALL_SECTORS, "I", 0x40000000)
+    g.frame()
+    g.frame()
+    assert g.state("END", "B") == (WALL,) and g.state("STATE", "B") == (DONE,)
+
+
+def test_a_class_2_wall_enters_the_stuck_pair_and_quiets_the_script(g: Game) -> None:
+    steer(g, walls=1)
+    g.play(46)
+    for _ in range(6):
+        g.frame()
+    g.poke(a.ENTITY.WALL_SECTORS, "I", 0x00000001)
+    g.poke(a.ENTITY.STUCK_WALL, "B", 1)
+    g.poke(a.ENTITY.SCRIPT_WAKE, "B", 1)
+    g.calls()
+    g.frame()
+    assert ("E", ENT, 0, 6, 1) in g.calls() and g.pair == (0, 6)
+    assert g.state("END", "B") == (STUCK,) and g.peek(a.ENTITY.SCRIPT_WAKE, "B") == (0,)
+
+
+def test_walls_off_or_beside_do_not_end_it(g: Game) -> None:
+    steer(g, walls=1)
+    g.play(46)
+    for _ in range(6):
+        g.frame()
+    g.poke(a.ENTITY.WALL_SECTORS, "I", 0x00000100)  # beside, not ahead
+    for _ in range(4):
+        g.frame()
+    assert g.state("STATE", "B") == (2,)

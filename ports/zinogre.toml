@@ -18,7 +18,6 @@ model = 5339
 [build]
 source_skeleton = true
 skin = "source"
-ground_lift = 165.3
 
 [clips.welcome_howl]
 source = 2

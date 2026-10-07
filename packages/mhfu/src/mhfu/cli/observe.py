@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""`mhfu observe trace` and `mhfu observe cost`: what a big monster's overlay calls in the engine,
-and what the engine does to the monster, per (main, sub) pair, and what tracing costs."""
+"""`mhfu observe trace`, `cost` and `path`: what a big monster's overlay calls in the engine, what
+the engine does to the monster per (main, sub) pair, what tracing costs, and where it goes."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from .. import addresses as a
 from ..em.abi import Engine
 from ..files import Extracted
-from ..live import observe, survival
+from ..live import clips, observe, survival
 from ..live.session import Session
 from ..views import layout
 from .live import launcher, launcher_args
@@ -55,6 +55,13 @@ def register(sub: Subparsers) -> None:
     _common(c, speed="max")
     c.add_argument("--counts", default="0,50,100,all", help="callee counts, the most-called first")
     c.set_defaults(run=cost)
+
+    w = modes.add_parser("path", help="a big monster's position, walls and clip every AI frame")
+    launcher_args(w)
+    w.add_argument("--slot", type=int, help="registry slot (default the first big monster)")
+    w.add_argument("--seconds", type=float, default=5.0, help="emulated seconds")
+    w.add_argument("--csv", type=Path, help="write every frame here")
+    w.set_defaults(run=path)
 
 
 def _common(p: argparse.ArgumentParser, speed: str | None = None) -> None:
@@ -181,3 +188,13 @@ def cost(args: argparse.Namespace) -> int:
     for r in results:
         print(f"{r.breakpoints:11}  {r.speed or 0:5.2f}x  {r.fps or 0:5.1f}  {r.calls}")
     return 0
+
+
+def path(args: argparse.Namespace) -> int:
+    with Session.launch(launcher(args), stop_on_exit=False) as s:
+        _, m = clips.monster(s, args.slot)
+        frames = observe.track(s, m.base, args.seconds)
+    if args.csv:
+        observe.write_frames(frames, args.csv)
+    print(observe.legs_report(observe.legs(frames)))
+    return 0 if frames else 1

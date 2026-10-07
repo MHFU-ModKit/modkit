@@ -14,6 +14,7 @@ the bridge and a monster whose vtable em_vhook wrapped: a cold boot (`clips.ride
 
 from __future__ import annotations
 
+import re
 import struct
 from dataclasses import dataclass
 
@@ -36,7 +37,13 @@ ENDS = {
     5: "replaced",
     6: "carrier refused",
     7: "clip lost",
+    8: "a wall ahead",
+    9: "a class-2 wall: stuck",
 }
+TURNS = ("still", "hunter", "away", "fixed")
+"""STEER_PARAMS.TURN by name."""
+FULL_TURN = 0x10000
+"""ENTITY.YAW units in a turn."""
 SPEED = 2.0
 """Clip frames a forced clip's cursor moves per AI frame (CLIP_BLOCK.SPEED)."""
 POLL = 0.2
@@ -93,6 +100,68 @@ class Move:
         struct.pack_into("<I", out, f.SPAWNER, self.spawner)
         struct.pack_into("<B", out, f.HOST_ATTACKS, int(self.host_attacks))
         return bytes(out)
+
+
+@dataclass(frozen=True)
+class Steer:
+    """What `mhfu_steer_spec_t` holds: the clip's turn curve (`curve`, YAW every 2 clip frames:
+    the clips module's `_turns`, `turns_of`), a turn mode on top, and whether a wall ends the
+    move, a class-2 one into `stuck`."""
+
+    curve: tuple[int, ...] = ()
+    turn: str = "still"
+    rate: int = 64
+    """YAW units an AI frame toward or away from the hunter."""
+    total: float = 0.0
+    """Degrees "fixed" turns over `frames`, the way YAW grows."""
+    frames: int = 1
+    walls: bool = False
+    dir: float = 0.0
+    """Degrees of the travel against YAW: which wall sectors count as ahead."""
+    stuck: tuple[int, int, int] = (0, 6, 1)
+
+    def pack(self) -> bytes:
+        """struct STEER_SPEC."""
+        f, p = a.STEER_SPEC, a.STEER_PARAMS
+        most = a.STEER_SPEC.KEYS.count or 0
+        if len(self.curve) > most:
+            raise ValueError(f"at most {most} curve keys")
+        assert f.size
+        out = bytearray(f.size)
+        total = round(self.total * FULL_TURN / 360)
+        struct.pack_into(
+            "<BBH", out, f.STEER + p.TURN, TURNS.index(self.turn), self.walls, self.rate
+        )
+        struct.pack_into("<iHH", out, f.STEER + p.TOTAL, total, self.frames, _yaw(self.dir))
+        struct.pack_into("<HBBB", out, f.KEY_COUNT, len(self.curve), *self.stuck)
+        struct.pack_into(f"<{len(self.curve)}H", out, f.KEYS, *(k & 0xFFFF for k in self.curve))
+        return bytes(out)
+
+
+def _yaw(degrees: float) -> int:
+    return round(degrees * FULL_TURN / 360) & 0xFFFF
+
+
+def turns_of(module: str) -> dict[int, tuple[int, ...]]:
+    """Entry -> its turn curve, from a clips module's text (`mhfu-port build` writes it)."""
+    return {
+        int(e): tuple(int(h[i : i + 4], 16) for i in range(0, len(h), 4))
+        for e, h in re.findall(r'\[(\d+)\] = "([0-9a-f]*)"', module)
+    }
+
+
+NO_STEER = Steer()
+"""No turn, no walls."""
+
+
+class SteerState(View):
+    """The move player's steering (struct STEER_STATE) in its block."""
+
+    struct = a.STEER_STATE
+    yaw_base = u16(a.STEER_STATE.BASE)
+    wall = u8(a.STEER_STATE.WALL)
+    yaw0 = u16(a.STEER_STATE.YAW0)
+    yaw = u16(a.STEER_STATE.YAW)
 
 
 class MoveState(View):
@@ -187,6 +256,11 @@ class Played:
     """The hunter's HP once the watch was over."""
     start: int
     """The emulated clock at the ask, in microseconds cut to 32 bits: the zero of every `t`."""
+    steer: Steer = NO_STEER
+    yaw0: int = 0
+    """YAW on the move's first playing frame."""
+    yaw: int = 0
+    """YAW as the move's last step left it."""
 
     @property
     def reason(self) -> str:
@@ -226,9 +300,13 @@ def block(s: Session) -> MoveState:
     return MoveState(s.mem, at)
 
 
-def ask(s: Session, move: Move, slot: int, link: Bridge, st: MoveState) -> None:
-    """Write `move` into the bridge and have it played on `slot`'s monster."""
+def ask(
+    s: Session, move: Move, slot: int, link: Bridge, st: MoveState, steer: Steer = NO_STEER
+) -> None:
+    """Write `move` into the bridge and `steer` into the block, and have it played on `slot`'s
+    monster."""
     before = st.started
+    s.mem.write(st.base + a.MOVE_STATE.STEER + a.STEER_STATE.NEXT, steer.pack())
     s.mem.write(a.CLI_BRIDGE_BLOCK + a.CLI_BRIDGE.MOVE, move.pack())
     if not link.request(s, Op.MOVE, slot)[1]:
         raise TimeoutError("no ack: the game is paused or cli_bridge.lua is not loaded")
@@ -244,6 +322,7 @@ def play(
     after: float = 8.0,
     timeout: float = 30.0,
     link: Bridge | None = None,
+    steer: Steer = NO_STEER,
 ) -> Played:
     """Play `move` on a big monster (`slot`'s, else the first) and watch it to its end and
     `after` seconds more, the hunter's HP writes logged throughout without stopping the game."""
@@ -273,7 +352,7 @@ def play(
             return now
 
         note()
-        ask(s, move, k, link, st)
+        ask(s, move, k, link, st, steer)
         s.wait(lambda: not st.pending, 5.0, "the move's AI step")
         deadline = s.now() + timeout
         while st.state != DONE and s.now() < deadline:
@@ -328,6 +407,9 @@ def play(
         t_end,
         s.mem.u16(hp),
         start,
+        steer,
+        (sst := SteerState(s.mem, st.base + a.MOVE_STATE.STEER)).yaw0,
+        sst.yaw,
     )
 
 

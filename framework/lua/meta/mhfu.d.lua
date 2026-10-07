@@ -637,13 +637,25 @@ function mhfu.move_block() end
 ---@field attacks? integer[][] up to 4 { frame, id, end? }: attack id spawned at clip frame `frame`, its node ended at `end` (or when the move ends first); without `end` it lives as its record says
 ---@field spawner? integer the species' attack spawner, default the Tigrex's
 ---@field host_attacks? boolean keep the host entry's own attacks and effects at its clip frames (MONSTER_VTABLE.ANIM_EVENTS); default off while the move plays
+---@field steer? mhfu.MoveSteer how it turns and stops; default no turn, no walls
+
+---How a move turns and stops (mhfu/steer.h); every field is optional.
+---@class mhfu.MoveSteer
+---@field curve? string YAW while the clip plays: the entry's string in the clips module's `_turns`
+---@field turn? "still"|"hunter"|"away"|"fixed" also: toward or away from the hunter at `rate`, or `total` over `frames`
+---@field rate? integer YAW units an AI frame toward or away, default 64 (the Tigrex charge's)
+---@field total? number degrees for "fixed", positive the way YAW grows
+---@field frames? integer AI frames "fixed" spreads `total` over
+---@field walls? boolean a wall ahead ends the move; a class-2 one enters `stuck`
+---@field dir? number degrees of the travel against YAW, which sectors count as ahead; default 0
+---@field stuck? integer[] { main, sub, mode } entered on a class-2 wall, default { 0, 6, 1 }
 
 ---What `mhfu.move_status()` returns.
 ---@class mhfu.MoveStatus
 ---@field started integer moves started since boot
 ---@field pending integer 1 while a move waits for its AI step
 ---@field state integer 0 idle, 1 entering the carrier, 2 playing, 3 reading the successor, 4 done
----@field end_reason integer 1 clip done, 2 back pair, 3 pair changed, 4 stopped, 5 replaced, 6 refused, 7 lost
+---@field end_reason integer 1 clip done, 2 back pair, 3 pair changed, 4 stopped, 5 replaced, 6 refused, 7 lost, 8 a wall ahead, 9 a class-2 wall (stuck pair entered)
 ---@field entity integer
 ---@field entry integer
 ---@field frames integer AI frames since the clip's dispatch

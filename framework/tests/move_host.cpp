@@ -36,6 +36,8 @@ uint8_t  mhfu_mem_read_u8(uint32_t a)  { uint8_t *p = at(a, 1); return p ? *p : 
 uint16_t mhfu_mem_read_u16(uint32_t a) { uint16_t v = 0; uint8_t *p = at(a, 2); if (p) memcpy(&v, p, 2); return v; }
 uint32_t mhfu_mem_read_u32(uint32_t a) { uint32_t v = 0; uint8_t *p = at(a, 4); if (p) memcpy(&v, p, 4); return v; }
 float    mhfu_mem_read_f32(uint32_t a) { float v = 0; uint8_t *p = at(a, 4); if (p) memcpy(&v, p, 4); return v; }
+void     mhfu_mem_write_u8(uint32_t a, uint8_t v) { uint8_t *p = at(a, 1); if (p) *p = v; }
+void    *mhfu_host_at(uint32_t a) { return at(a, 4); }
 void mhfu_log(const char *, ...) {}
 int  mhfu_em_installed(void) { return 1; }
 void mhfu_em_step(mhfu_em_step_fn fn) { g_step = fn; }
