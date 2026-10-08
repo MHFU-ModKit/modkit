@@ -8,6 +8,7 @@ from mhfu.em.intel import AttackSet, HitSphere
 from mhfu_port.manifest import Hitbox, Hurtbox
 from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.render.hitboxes import (
+    PART_COLORS,
     Volume,
     attack_volumes,
     capsule_surface,
@@ -60,6 +61,13 @@ def test_adapters_group_by_set_and_part() -> None:
             assert max(abs(x - y) for x, y in zip(cols[i], cols[j], strict=True)) > 0.08
     assert group_color(9, "part") == group_color(1, "part")
     assert group_color(9, "set") != group_color(1, "set")
+
+
+def test_part_0_has_a_colour() -> None:
+    head = PART_COLORS[0]
+    assert max(head) - min(head) > 0.3, "part 0 is the head, not a grey nobody"
+    assert len(set(PART_COLORS)) == len(PART_COLORS)
+    assert volumes([Hurtbox(bone=35, radius=230.0, part=0)])[0].group == 0
 
 
 def test_hurtboxes_ride_the_pose(viewport: Any, rig: Scene, lit: Lit) -> None:

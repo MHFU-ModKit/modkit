@@ -33,9 +33,9 @@ Floats = npt.NDArray[np.float64]
 Palette = Literal["part", "set"]
 RGB = tuple[float, float, float]
 
-#: one per `entity+0x3B8` accumulator; 0 is grey, it means nobody
+#: one per part, the `entity+0x3B8` accumulator (em75's 0 is the head)
 PART_COLORS: tuple[RGB, ...] = (
-    (0.55, 0.58, 0.64),
+    (0.95, 0.42, 0.75),
     (0.95, 0.35, 0.35),
     (0.98, 0.68, 0.25),
     (0.92, 0.88, 0.30),

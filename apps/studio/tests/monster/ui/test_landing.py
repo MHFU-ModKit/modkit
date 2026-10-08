@@ -4,7 +4,7 @@
 
 from typing import Any
 
-from mhfu_port.manifest import Hitbox
+from mhfu_port.manifest import Hitbox, Hurtbox
 from mhfu_studio.monster import validate as V
 from mhfu_studio.monster.panels.clips import ClipsPanel
 from mhfu_studio.monster.panels.hitboxes import HitboxesPanel
@@ -39,6 +39,17 @@ def test_an_unnamed_part_lands_on_its_name(workspace: MonsterWorkspace, qtbot: A
     p.sync()
     assert ws.landing == "" and p.name_row.isVisibleTo(p)
     qtbot.waitUntil(lambda: p.focusWidget() is p.part_name)
+
+
+def test_a_part_0_hurtbox_lands_on_part_0(workspace: MonsterWorkspace, qtbot: Any) -> None:
+    ws = workspace
+    assert ws.part_session is not None and ws.doc is not None
+    i = ws.part_session.add_volume(Hurtbox(bone=1, radius=5.0, part=0))
+    f = next(f for f in ws.doc.findings() if f.target == ("hurtbox", i))
+    assert f.code == "HURTBOX_PART_UNNAMED"
+    shown(PartsPanel, ws, qtbot)
+    ws.reveal(f.target, f.focus)
+    assert ws.take_focus() == "Parts" and ws.selected_part == 0
 
 
 def test_a_group_over_capacity_lands_on_its_row(workspace: MonsterWorkspace, qtbot: Any) -> None:

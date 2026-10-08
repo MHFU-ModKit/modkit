@@ -12,7 +12,7 @@ from . import addresses as a
 from .addresses import Struct
 from .entries import input_action
 from .memory import Memory
-from .views import View, f32, f32s, ptr, ptrs, s8, u8, u16, u16s, u32, vec3
+from .views import View, f32, f32s, ptr, ptrs, s8, s16, u8, u16, u16s, u32, vec3
 
 assert a.QUEST.TARGETS.count  # an array
 TARGET_GROUPS = a.QUEST.TARGETS.count  # the engine's cap
@@ -334,15 +334,28 @@ DRAW_GATE = 0x8000
 
 
 class BigMonster(Entity):
-    """A big monster, with the two words VISIBILITY_GATE reads and writes."""
+    """A big monster: the two words VISIBILITY_GATE reads and writes, its AI script's wait, its
+    posed joints."""
 
     render_flags = u32(a.ENTITY.RENDER_FLAGS)
     flags = u32(a.ENTITY.FLAGS)
+    script_wait = s16(a.ENTITY.SCRIPT_WAIT)
+    joints = ptr(a.ENTITY.JOINTS)
 
     @property
     def drawn(self) -> bool:
         """VISIBILITY_GATE draws it: it is in the player's section and has DRAW_GATE."""
         return not self.render_flags & SKIP_DRAW
+
+    def joint(self, bone: int) -> tuple[float, float, float]:
+        """Where the engine posed `bone`, in world space."""
+        return Joint(self.mem, self.joints + bone * a.JOINT.size).position
+
+
+class Joint(View):
+    struct = a.JOINT
+
+    position = vec3(a.JOINT.POSITION)
 
 
 # --- clips ---

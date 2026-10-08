@@ -102,7 +102,8 @@ with Session.launch(cold=True) as s:  # PPSSPP here, or in the modkit container
 | `mhfu go-on-quest --rank R --quest NAME` | Cold boot to standing in the quest |
 | `mhfu start`, `mhfu stop` | The game with its debugger open, or stopped |
 | `mhfu shell` | A debug shell on the running game: player, monsters, animations, hit volumes |
-| `mhfu rig load\|save\|where\|teleport\|summon\|pin\|speed` | Set up a live experiment: savestates, the player on the floor at x, z, a big monster beside the player, pinned HP, fast-forward |
+| `mhfu rig load\|save\|where\|teleport\|summon\|pin\|speed` | Set up a live experiment: savestates, the player on the floor at x, z, a big monster beside the player, pinned HP (`--cull`: no small monsters in the section), fast-forward |
+| `mhfu rig hold\|aim BONE` | A big monster's AI script held until its next reaction; the player put before one of its bones, facing it |
 | `mhfu rig points\|goto\|walk` | Named points of a map document; the player put at one (one area change away) or walked to it, exit to exit |
 | `mhfu observe trace\|cost` | Which engine functions a big monster's overlay calls in each of its states, and how often, without stopping the game |
 

@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""Keeping a scripted run alive: the quest clock, the player's HP, and calm big monsters.
+"""Keeping a scripted run alive: the quest clock, the player's HP, calm big monsters, and no
+small ones.
 
 These are debugger writes, not play: a guarded run shows that a route exists, not that a hunter
 survives it. Calming beats healing, because a big monster knocks the player down and drags him
 and a tumbled walk makes no progress at any HP. A zero species sight radius stops new aggro (it
-is read on every evaluation) and a zero ENGAGE drops the aggro already there.
+is read on every evaluation) and a zero ENGAGE drops the aggro already there. Small monsters
+shove a hunter standing still, so a test culls them.
 """
 
 from __future__ import annotations
@@ -27,6 +29,21 @@ BIG_MONSTER_VTABLES = frozenset({a.TIGREX_VTABLE})
 def big_monsters(s: Session, vtables: Collection[int] = BIG_MONSTER_VTABLES) -> list[Entity]:
     """Registry entities whose class is one of `vtables`."""
     return [e for e in s.game.monsters().values() if e.vtable in vtables]
+
+
+def is_big(e: Entity, targets: Collection[int]) -> bool:
+    """A quest target's species (`Quest.target_species`) or a known big-monster class."""
+    return e.species in targets or e.vtable in BIG_MONSTER_VTABLES
+
+
+def cull(s: Session) -> int:
+    """Zero the HP of every living small monster in the player's section; how many."""
+    targets, area = s.game.quest.target_species - {0}, s.game.area_index
+    small = [e for e in s.game.monsters().values() if not is_big(e, targets)]
+    found = [e for e in small if e.section == area and e.hp > 0]
+    for e in found:
+        e.hp = 0
+    return len(found)
 
 
 def hold_timer(s: Session, frames: int = FULL_TIMER) -> None:
@@ -51,7 +68,7 @@ def calm(s: Session, monsters: Iterable[Entity]) -> None:
 
 
 class Guard:
-    """Holds the clock, the player's HP and calm big monsters from a thread.
+    """Holds the clock, the player's HP, calm big monsters and culled small ones from a thread.
 
         with survival.Guard(s) as guard:
             ...
@@ -68,6 +85,7 @@ class Guard:
         hp: int | None = 100,
         timer: bool = True,
         calm_monsters: bool = True,
+        cull_small: bool = False,
         tick: float = 0.5,
         rescan: float = 4.0,
         timer_every: float = 15.0,
@@ -78,6 +96,7 @@ class Guard:
         self.hp = hp
         self.timer = timer
         self.calm_monsters = calm_monsters
+        self.cull_small = cull_small
         self.tick = tick
         self.rescan = rescan
         self.timer_every = timer_every
@@ -85,6 +104,7 @@ class Guard:
         self.log = log or (lambda _: None)
         self.monsters: list[Entity] = []
         self.hp_writes = 0
+        self.culled = 0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -120,6 +140,8 @@ class Guard:
                     next_rescan = now + self.rescan
                 if self.calm_monsters:
                     calm(self.s, self.monsters)
+                if self.cull_small:
+                    self.culled += cull(self.s)
                 if self.hp is not None:
                     top_up_hp(self.s, self.hp)
                     self.hp_writes += 1
@@ -137,4 +159,6 @@ class Guard:
             held.append("clock held")
         if self.calm_monsters:
             held.append(f"{len(self.monsters)} big monster(s) calmed")
+        if self.cull_small:
+            held.append(f"{self.culled} small monster(s) culled")
         return "guard: " + (", ".join(held) or "nothing held")
