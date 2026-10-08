@@ -129,3 +129,9 @@ def test_quest_prep_read_only(app_ro):
         assert not prep.handle_key(key, snap)
     app_ro.tab = TAB_QUEST_PREP
     app_ro._render(snap)
+
+
+def test_picker_names_once():
+    names = [n for n, _ in PICKER_SPECIES]
+    assert len(names) == len(set(names))
+    assert dict(PICKER_SPECIES)["Nargacuga"] == 0x51, "a checked id binds the picker"

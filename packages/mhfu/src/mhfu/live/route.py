@@ -102,7 +102,8 @@ CLIMB_AT = 45.0
 """How close to its foot a climb starts."""
 CLIMB_LIFT = 40.0
 """Height a climb must gain to count."""
-CHANGE_TIMEOUT = 20.0
+CHANGE_TIMEOUT = 45.0
+"""Seconds an area change may take: 25-33 s measured in the desert and forest at normal speed."""
 
 
 class NoPath(LookupError):

@@ -201,8 +201,9 @@ def aim(
 ) -> Vec3:
     """Put the player `distance` before a big monster's `bone`, facing it.
 
-    A teleport keeps the player's facing, so the bone ends up straight ahead. With `turn` the
-    monster is turned first so the bone is on the player's side of its body (a tail end-on).
+    A teleport keeps the player's facing, so the bone ends up straight ahead; it lands on the
+    floor nearest the monster's height, not a ledge above it. With `turn` the monster is turned
+    first so the bone is on the player's side of its body (a tail end-on).
     """
     player, monster = _player(s), _first(s, monster)
     f = player.facing
@@ -213,7 +214,9 @@ def aim(
         monster.yaw = (monster.yaw + round(miss / math.tau * TURN)) % TURN
         s.sleep(SETTLE)
     bx, _, bz = monster.joint(bone)
-    return teleport(s, bx - distance * math.sin(f), bz - distance * math.cos(f))
+    return teleport(
+        s, bx - distance * math.sin(f), bz - distance * math.cos(f), monster.position[1]
+    )
 
 
 def pin_hp(

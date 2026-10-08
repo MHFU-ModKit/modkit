@@ -123,6 +123,17 @@ def test_aim(s, tail):
     assert tail.peek("H", TIGREX + a.ENTITY.YAW) == (0x4000,), "turned a quarter, tail to us"
 
 
+def test_aim_takes_the_floor_at_the_monster(s, tail, monkeypatch):
+    class Ledge:
+        """The ground at 5 and a ledge at 600 everywhere: the highest without `near`."""
+
+        def height(self, x: float, z: float, near: float | None = None) -> float:
+            return 600.0 if near is None or abs(near - 600.0) < abs(near - 5.0) else 5.0
+
+    monkeypatch.setattr(rig, "floor", lambda s: Ledge())
+    assert rig.aim(s, TAIL)[1] == 5.0
+
+
 def test_aim_without_turn(s, tail):
     assert rig.aim(s, TAIL, distance=100, turn=False) == pytest.approx((500, 5.0, -300))
     assert tail.peek("H", TIGREX + a.ENTITY.YAW) == (0,)
