@@ -19,47 +19,28 @@ def _checked() -> list[tuple[str, int | None]]:
     return list(rows.items())
 
 
+UNCHECKED = (
+    "Velociprey",
+    "Genprey",
+    "Ioprey",
+    "Hornetaur",
+    "Bulldrome",
+    "Felyne",
+    "Melynx",
+    "Conga",
+    "Remobra",
+    "Cephalos",
+    "Lao-Shan Lung",
+    "Shen Gaoren",
+    "Ukanlos",
+    "Espinas",
+    "Berukyurosu",
+)
+"""Species whose id is not checked yet; the picker binds one by hand."""
+
 PICKER_SPECIES: list[tuple[str, int | None]] = [
     *_checked(),
-    # species ids not checked yet; the picker binds one by hand
-    ("Velociprey", None),
-    ("Velocidrome", None),
-    ("Genprey", None),
-    ("Gendrome", None),
-    ("Ioprey", None),
-    ("Iodrome", None),
-    ("Hornetaur", None),
-    ("Bulldrome", None),
-    ("Felyne", None),
-    ("Melynx", None),
-    ("Conga", None),
-    ("Remobra", None),
-    ("Cephalos", None),
-    ("Yian Kut-Ku", None),
-    ("Yian Garuga", None),
-    ("Khezu", None),
-    ("Rathian", None),
-    ("Rathalos", None),
-    ("Cephadrome", None),
-    ("Diablos", None),
-    ("Monoblos", None),
-    ("Plesioth", None),
-    ("Gravios", None),
-    ("Basarios", None),
-    ("Daimyo Hermitaur", None),
-    ("Shogun Ceanataur", None),
-    ("Congalala", None),
-    ("Blangonga", None),
-    ("Kirin", None),
-    ("Gypceros", None),
-    ("Lao-Shan Lung", None),
-    ("Shen Gaoren", None),
-    ("Rajang", None),
-    ("Nargacuga", None),
-    ("Akantor", None),
-    ("Ukanlos", None),
-    ("Espinas", None),
-    ("Berukyurosu", None),
+    *((name, None) for name in UNCHECKED if name not in SPECIES_IDS.values()),
 ]
 """QUEST_PREP's species list: name and the species id an edit keys on."""
 
