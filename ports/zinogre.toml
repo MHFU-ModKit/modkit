@@ -1,4 +1,4 @@
-schema = 1
+schema = 2
 attack = [
     { id = 6, power = 8, label = "the charge; the native's power is 64 (-72 HP)" },
     { id = 31, power = 4, label = "the charge's second attack; native 30" },
@@ -790,59 +790,224 @@ offset = [
     150.0,
 ]
 
-[[rule]]
-play = "lunge_stop"
-from = "lunge"
-min_frames = 15
-dist = [
-    250.0,
-    1000.0,
+[behaviour.blocks.b1]
+kind = "played_for"
+at = [
+    260.0,
+    0.0,
 ]
-receding = true
-cooldown = 30
+frames = 15
+next = [
+    "b2",
+]
 label = "just past you -> skid"
 
-[[rule]]
-play = "lunge_stop"
-from = "lunge"
-min_frames = 75
-cooldown = 30
+[behaviour.blocks.b2]
+kind = "distance"
+at = [
+    480.0,
+    0.0,
+]
+lo = 250.0
+hi = 1000.0
+next = [
+    "b3",
+]
+
+[behaviour.blocks.b3]
+kind = "hunter_moving"
+at = [
+    700.0,
+    0.0,
+]
+way = "away"
+next = [
+    "b4",
+]
+
+[behaviour.blocks.b4]
+kind = "cooldown"
+at = [
+    920.0,
+    0.0,
+]
+frames = 30
+play = [
+    "lunge_stop",
+]
+
+[behaviour.blocks.b5]
+kind = "played_for"
+at = [
+    260.0,
+    120.0,
+]
+frames = 75
+next = [
+    "b6",
+]
 label = "run budget by time"
 
-[[rule]]
-play = "stamp"
-from = "lunge_stop"
-min_frames = 20
-dist = [
-    0.0,
-    1200.0,
+[behaviour.blocks.b6]
+kind = "cooldown"
+at = [
+    480.0,
+    120.0,
 ]
-cooldown = 150
+frames = 30
+play = [
+    "lunge_stop",
+]
+
+[behaviour.blocks.b7]
+kind = "played_for"
+at = [
+    260.0,
+    240.0,
+]
+frames = 20
+next = [
+    "b8",
+]
 label = "the hunter close once the skid has stood -> stamp"
 
-[[rule]]
-play = "stamp"
-from = "dash"
-min_frames = 10
-dist = [
-    0.0,
-    800.0,
+[behaviour.blocks.b8]
+kind = "distance"
+at = [
+    480.0,
+    240.0,
+]
+hi = 1200.0
+next = [
+    "b9",
+]
+
+[behaviour.blocks.b9]
+kind = "cooldown"
+at = [
+    700.0,
+    240.0,
+]
+frames = 150
+play = [
+    "stamp",
+]
+
+[behaviour.blocks.b10]
+kind = "played_for"
+at = [
+    260.0,
+    360.0,
+]
+frames = 10
+next = [
+    "b11",
 ]
 label = "the hunter close during the dash -> stamp"
 
-[[rule]]
-play = "flinch_head"
-on = "flinch"
+[behaviour.blocks.b11]
+kind = "distance"
+at = [
+    480.0,
+    360.0,
+]
+hi = 800.0
+play = [
+    "stamp",
+]
+
+[behaviour.blocks.b12]
+kind = "on_flinch"
+at = [
+    260.0,
+    480.0,
+]
 part = 0
+play = [
+    "flinch_head",
+]
 label = "a flinch of the head: his own tumble, never the host's (4,x)"
 
-[[rule]]
-play = "break_howl"
-on = "part_broken"
+[behaviour.blocks.b13]
+kind = "on_part_broken"
+at = [
+    260.0,
+    600.0,
+]
+play = [
+    "break_howl",
+]
 label = "a part breaks"
 
-[[rule]]
-play = "notice_howl"
-on = "noticed"
-force = true
+[behaviour.blocks.b14]
+kind = "on_noticed"
+at = [
+    260.0,
+    720.0,
+]
+next = [
+    "b15",
+]
 label = "the notice: his howl at once, forced, so it does not wait for combat"
+
+[behaviour.blocks.b15]
+kind = "force"
+at = [
+    480.0,
+    720.0,
+]
+play = [
+    "notice_howl",
+]
+
+[behaviour.moves.lunge]
+at = [
+    0.0,
+    0.0,
+]
+during = [
+    "b1",
+    "b5",
+]
+
+[behaviour.moves.lunge_stop]
+at = [
+    0.0,
+    240.0,
+]
+during = [
+    "b7",
+]
+
+[behaviour.moves.stamp]
+at = [
+    1140.0,
+    240.0,
+]
+
+[behaviour.moves.dash]
+at = [
+    0.0,
+    360.0,
+]
+during = [
+    "b10",
+]
+
+[behaviour.moves.flinch_head]
+at = [
+    1140.0,
+    480.0,
+]
+
+[behaviour.moves.break_howl]
+at = [
+    1140.0,
+    600.0,
+]
+
+[behaviour.moves.notice_howl]
+at = [
+    1140.0,
+    720.0,
+]

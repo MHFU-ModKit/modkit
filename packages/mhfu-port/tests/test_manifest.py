@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from mhfu import addresses
+from mhfu_port import behaviour as B
 from mhfu_port import manifest as M
 from mhfu_port.manifest import ManifestError
 
@@ -19,9 +20,7 @@ pac = "x.bin"
 model = 100
 """
 
-FULL = """
-schema = 1
-
+BODY = """
 [port]
 name = "x"
 host_species = 75
@@ -110,7 +109,9 @@ move = "run"
 frame = 4
 id = 42
 bone = 33
+"""
 
+RULES = """
 [[rule]]
 from = "run"
 min_frames = 15
@@ -125,16 +126,92 @@ from_main = [1]
 play = "stop"
 """
 
+GRAPH = """
+[behaviour.blocks.b1]
+kind = "played_for"
+at = [0, 0]
+frames = 15
+next = ["b2"]
+
+[behaviour.blocks.b2]
+kind = "distance"
+at = [220, 0]
+lo = 250
+hi = 1000
+next = ["b3"]
+
+[behaviour.blocks.b3]
+kind = "hunter_moving"
+at = [440, 0]
+way = "away"
+next = ["b4"]
+
+[behaviour.blocks.b4]
+kind = "cooldown"
+at = [660, 0]
+frames = 30
+next = ["b5"]
+
+[behaviour.blocks.b5]
+kind = "limit"
+at = [880, 0]
+times = 2
+play = ["stop"]
+
+[behaviour.blocks.b6]
+kind = "host_state"
+at = [0, 120]
+mains = [1]
+play = ["stop"]
+label = "any run"
+
+[behaviour.moves.run]
+at = [0, 0]
+during = ["b1"]
+"""
+
+FULL = "schema = 2\n" + BODY + GRAPH
+V1 = "schema = 1\n" + BODY + RULES
+
 
 def _with(extra: str) -> str:
     return MINIMAL + extra
+
+
+def _v1(extra: str) -> str:
+    return "schema = 1\n" + MINIMAL + extra
+
+
+MOVE = "[moves.m]\nmain = 1\nsub = 4\nanim = 17\n"
+RULE = "[[rule]]\nfrom_main = [1]\nplay = 'm'\n"
+OWN = "[moves.o]\nanim = 46\n"
+STAMP = (
+    OWN
+    + """carrier = [0, 2]
+length = 90
+host_attacks = true
+[[moves.o.attack]]
+id = 6
+frame = 56
+end = 80
+[moves.o.steer]
+turn = "fixed"
+angle = -90.0
+frames = 20
+walls = false
+"""
+)
+
+
+def blk(i: str, kind: str, extra: str = "") -> str:
+    return f"[behaviour.blocks.{i}]\nkind = '{kind}'\nat = [0, 0]\n{extra}"
 
 
 def test_minimal():
     m = M.loads(MINIMAL)
     assert m.build == M.Build()
     assert (m.source.game, m.source.geo, m.source.anim) == ("mhp3rd", 101, 102)
-    assert M.dumps(m).startswith("schema = 1\n")
+    assert M.dumps(m).startswith("schema = 2\n") and "behaviour" not in M.dumps(m)
 
 
 def test_derived():
@@ -155,7 +232,7 @@ def test_round_trip():
     assert m.clips["run"].label == 'a "quoted" label\nwith a newline'
     assert (m.clips["run"].turn, m.clips["stop"].turn) == (-66.5, None)
     assert m.hurtboxes[0].radius == 230.0 and m.hurtboxes[0].offset == [0.0, 0.0, 0.0]
-    assert m.rules[0].dist == (250.0, 1000.0)
+    assert B.compile(m)[0].dist == (250.0, 1000.0)
     assert m.moves["run"].claim == M.Claim([0, 1], sub=7)
 
 
@@ -203,12 +280,20 @@ def test_derived_key_refused(key):
         "[build]\ndrop_joints = 3\n",
         "[clips.a]\nslot = '1'\n",
         "[[hurtbox]]\nbone = 1\nradius = 1.0\nshape = 'cube'\n",
-        "[[rule]]\nfrom_main = [1]\nplay = 'm'\ndist = [1]\n",
+        blk("b1", "cooldown", "frames = '1'\n"),
+        blk("b1", "force", "next = 'b2'\n"),
+        blk("b1", "force").replace("[0, 0]", "[0, 0, 0]"),
+        "[behaviour.moves.m]\nat = [0, 0]\nduring = 'b1'\n",
     ],
 )
 def test_bad_type(extra):
     with pytest.raises(ManifestError, match="expected"):
-        M.loads(_with(extra))
+        M.loads(_with(MOVE + extra))
+
+
+def test_bad_v1_type():
+    with pytest.raises(ManifestError, match=r"rule\[0\].dist: expected 2 values"):
+        M.loads(_v1("[[rule]]\nfrom_main = [1]\nplay = 'm'\ndist = [1]\n"))
 
 
 def test_bad_section():
@@ -225,7 +310,11 @@ def test_missing():
 
 def test_schema():
     with pytest.raises(ManifestError, match="schema"):
-        M.loads("schema = 2\n" + MINIMAL)
+        M.loads("schema = 3\n" + MINIMAL)
+    with pytest.raises(ManifestError, match="behaviour: is for schema 2"):
+        M.loads(_v1(FULL[FULL.index("[behaviour") :]))
+    with pytest.raises(ManifestError, match="unknown key.*rule"):
+        M.loads(_with(RULES))
 
 
 def test_bad_toml_names_path():
@@ -233,31 +322,21 @@ def test_bad_toml_names_path():
         M.loads("[port", "p.toml")
 
 
-MOVE = "[moves.m]\nmain = 1\nsub = 4\nanim = 17\n"
-RULE = "[[rule]]\nfrom_main = [1]\nplay = 'm'\n"
-OWN = "[moves.o]\nanim = 46\n"
-STAMP = (
-    OWN
-    + """carrier = [0, 2]
-length = 90
-host_attacks = true
-[[moves.o.attack]]
-id = 6
-frame = 56
-end = 80
-[moves.o.steer]
-turn = "fixed"
-angle = -90.0
-frames = 20
-walls = false
-"""
-)
+def test_block_params_are_flat():
+    m = M.loads(FULL)
+    text = M.dumps(m)
+    assert '[behaviour.blocks.b2]\nkind = "distance"' in text and "params" not in text
+    assert m.behaviour.blocks["b2"].params == {"lo": 250, "hi": 1000}
+    assert m.behaviour.blocks["b2"].at == (220.0, 0.0)
+    assert M.loads(text) == m and "[[rule]]" not in text
 
 
-def test_rule_on_an_event():
-    m = M.loads(_with(OWN + "[[rule]]\non = 'flinch'\npart = 0\nplay = 'o'\nforce = true\n"))
-    assert (m.rules[0].on, m.rules[0].part, m.rules[0].force) == ("flinch", 0, True)
-    assert M.loads(M.dumps(m)) == m
+def test_v1_loads_as_the_graph():
+    old = M.loads(V1)
+    assert B.compile(old) == B.compile(M.loads(FULL.replace('label = "any run"\n', "")))
+    back = M.dumps(old)
+    assert back.startswith("schema = 2\n") and "[[rule]]" not in back
+    assert B.compile(M.loads(back)) == B.compile(old)
 
 
 def test_own_move():
@@ -307,14 +386,6 @@ def test_cuts_share_a_source():
         ("[[attack]]\nid = 1\npower = 256\n", "byte"),
         ("[[attack]]\nid = 1\n[[attack]]\nid = 1\n", "twice"),
         ("[[effect]]\nmove = 'm'\nframe = 1\nid = 1\nbone = 1\n", "not in moves"),
-        (MOVE + "[[rule]]\nplay = 'm'\n", "needs from"),
-        (MOVE + "[[rule]]\nfrom_main = [1]\nplay = 'n'\n", "not in moves"),
-        (MOVE + "[[rule]]\nfrom = 'm'\nplay = 'm'\n", "same move"),
-        (MOVE + "[[rule]]\nfrom_main = [9]\nplay = 'm'\n", "main state"),
-        (MOVE + RULE + "dist = [5, 5]\n", "lo < hi"),
-        (MOVE + RULE + "count = 0\n", "count"),
-        (MOVE + RULE + "receding = true\nclosing = true\n", "and closing"),
-        (MOVE + RULE * (M.SEAM_RULES + 1), f"holds {M.SEAM_RULES}"),
         ("[moves.m]\nmain = 1\nanim = 1\n", "both main and sub"),
         (MOVE + "length = 9\n", "for an own move"),
         (MOVE + "[[moves.m.attack]]\nid = 6\nframe = 1\n", "for an own move"),
@@ -327,15 +398,82 @@ def test_cuts_share_a_source():
         (OWN + "[moves.o.steer]\nangle = 90.0\n", "angle goes with"),
         (OWN + "[moves.o.steer]\nturn = 'spin'\n", "one of"),
         (OWN + "[moves.o.steer]\nturn = 'hunter'\nrate = 0\n", "rate"),
-        (OWN + "[[rule]]\non = 'roared'\nplay = 'o'\n", "one of"),
-        (OWN + "[[rule]]\non = 'noticed'\npart = 0\nplay = 'o'\n", "part goes with"),
-        (OWN + "[[rule]]\non = 'flinch'\npart = 8\nplay = 'o'\n", "not a part"),
-        (MOVE + "[[rule]]\non = 'flinch'\nplay = 'm'\n", "flinch plays an own move"),
     ],
 )
 def test_invalid(extra, why):
     with pytest.raises(ManifestError, match=why):
         M.loads(_with(extra))
+
+
+@pytest.mark.parametrize(
+    ("extra", "why"),
+    [
+        (blk("b1", "nope"), "kind 'nope' is not one of"),
+        (blk("B1", "force"), "id is a lowercase letter"),
+        (blk("a-b", "force"), "id is a lowercase letter"),
+        ("[behaviour.blocks.b1]\nkind = 'force'\n", "b1.at: missing"),
+        (blk("b1", "force", "frames = 3\n"), "unknown param.*frames"),
+        (blk("b1", "on_noticed", "part = 0\n"), "unknown param.*part"),
+        (blk("b1", "cooldown"), "b1.frames: missing"),
+        (blk("b1", "cooldown", "frames = 0\n"), "0 is under 1"),
+        (blk("b1", "cooldown", "frames = true\n"), "expected an integer"),
+        (blk("b1", "cooldown", "frames = 1.5\n"), "expected an integer"),
+        (blk("b1", "mode", "mode = 256\n"), "256 is over 255"),
+        (blk("b1", "distance", "lo = -1.0\n"), "-1.0 is under 0"),
+        (blk("b1", "distance", "hi = 'far'\n"), "expected a number"),
+        (blk("b1", "hunter_moving"), "b1.way: missing"),
+        (blk("b1", "hunter_moving", "way = 'up'\n"), "expected one of 'away', 'closer'"),
+        (blk("b1", "on_flinch", "part = 8\n"), "8 is not a part"),
+        (blk("b1", "host_state"), "b1.mains: missing"),
+        (blk("b1", "host_state", "mains = [8]\n"), "not a list of main states"),
+        (blk("b1", "host_state", "mains = []\n"), "not a list of main states"),
+        (blk("b1", "host_state", "mains = 1\n"), "not a list of main states"),
+        (blk("b1", "force", "next = ['b2']\n"), "'b2' is not in blocks"),
+        (blk("b1", "force", "play = ['nope']\n"), "'nope' is not in moves"),
+        (blk("b1", "force", "play = ['m', 'm']\n"), "names one twice"),
+        (blk("b1", "force", "next = ['b1']\n"), "behaviour.blocks.b1: next leads back"),
+        (
+            blk("b1", "force", "next = ['b2']\n") + blk("b2", "force", "next = ['b1']\n"),
+            "next leads back",
+        ),
+        ("[behaviour.moves.nope]\nat = [0, 0]\n", "behaviour.moves.nope: is not in moves"),
+        ("[behaviour.moves.m]\n", "behaviour.moves.m.at: missing"),
+        ("[behaviour.moves.m]\nat = [0, 0]\nduring = ['b9']\n", "'b9' is not in blocks"),
+    ],
+)
+def test_invalid_block(extra, why):
+    with pytest.raises(ManifestError, match=why):
+        M.loads(_with(MOVE + extra))
+
+
+@pytest.mark.parametrize(
+    ("extra", "why"),
+    [
+        ("[[rule]]\nplay = 'm'\n", r"rule\[0\]: needs from, from_main or on"),
+        ("[[rule]]\nfrom = 'm'\nplay = 'n'\n", r"rule\[0\]: from 'm' alone has no block"),
+        ("[[rule]]\nfrom_main = [1]\nplay = 'n'\n", "'n' is not in moves"),
+        ("[[rule]]\nfrom_main = [9]\nplay = 'm'\n", "not a list of main states"),
+        (RULE + "count = 0\n", "0 is under 1"),
+        (RULE + "receding = true\nclosing = true\n", "cannot be receding and closing"),
+        ("[[rule]]\non = 'roared'\nplay = 'm'\n", "on is one of"),
+        ("[[rule]]\non = 'noticed'\npart = 0\nplay = 'm'\n", "part goes with"),
+        ("[[rule]]\non = 'flinch'\npart = 8\nplay = 'm'\n", "8 is not a part"),
+        ("[[rule]]\nfrom_main = [1]\n", "play: missing"),
+        ("[[rule]]\nfrom_main = [1]\nplay = 'm'\ntypo = 1\n", "unknown key"),
+    ],
+)
+def test_invalid_v1(extra, why):
+    with pytest.raises(ManifestError, match=why):
+        M.loads(_v1(MOVE + extra))
+
+
+def test_at_is_two_numbers():
+    m = M.loads(_with(MOVE + blk("b1", "force")))
+    m.behaviour.blocks["b1"].at = (1.0,)  # type: ignore[assignment]
+    with pytest.raises(ManifestError, match="b1.at: expected 2 numbers"):
+        B.validate(m)
+    with pytest.raises(ManifestError, match="b1.at: expected 2 values"):
+        M.check(m)
 
 
 def test_rename_clip():
@@ -391,15 +529,15 @@ def test_ports(name):
 
 
 def test_rule_capacity_is_the_frameworks():
-    assert M.SEAM_RULES == addresses.EM_CFG.RULES.count and M.SEAM_RULES >= 8
+    assert M.SEAM_RULES == addresses.EM_CFG.RULES.count == B.SEAM_RULES >= 8
 
 
 def test_part_events():
     assert set(M.PART_EVENTS) < set(M.EVENTS)
     for event in M.EVENTS:
-        rule = f"[[rule]]\non = '{event}'\npart = 1\nplay = 'o'\n"
+        text = _with(OWN + blk("b1", f"on_{event}", "part = 1\nplay = ['o']\n"))
         if event in M.PART_EVENTS:
-            M.loads(_with(OWN + rule))
+            M.loads(text)
         else:
-            with pytest.raises(ManifestError, match="part goes with"):
-                M.loads(_with(OWN + rule))
+            with pytest.raises(ManifestError, match="unknown param"):
+                M.loads(text)

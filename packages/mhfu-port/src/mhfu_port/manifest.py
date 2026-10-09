@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """A port's manifest, `ports/<name>.toml`: the donor's files, the host, the build settings and
-the port's own clips, moves, rules, volumes, attacks and effects.
+the port's own clips, moves, behaviour graph, volumes, attacks and effects.
 
 A key left out takes its default, and `dumps` leaves out every value equal to its default. The
 files carry no comments: an editor changes the dataclasses and writes the whole file with
-`save`, which refuses a manifest that would not load back.
+`save`, which refuses a manifest that would not load back. A schema 1 file, whose behaviour is a
+`[[rule]]` list, loads as the graph `behaviour.migrate` makes of it.
 """
 
 from __future__ import annotations
@@ -22,12 +23,16 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 import tomli_w
 from mhfu import addresses, files, hitzone, inject
 
+from . import behaviour
+from .behaviour import Behaviour, Rule, migrate, validate
 from .records import ANIM, GEO
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
-SCHEMA = 1
+SCHEMA = 2
+LEGACY_SCHEMA = 1
+"""Read as well: its behaviour is a `[[rule]]` list."""
 
 Skin = Literal["auto", "transfer", "source"]
 SKINS: tuple[Skin, ...] = typing.get_args(Skin)
@@ -35,35 +40,27 @@ Shape = Literal["sphere", "capsule"]
 SHAPES: tuple[Shape, ...] = typing.get_args(Shape)
 Turn = Literal["clip", "still", "hunter", "away", "fixed"]
 TURNS: tuple[Turn, ...] = typing.get_args(Turn)
-Event = str
-EVENTS: tuple[Event, ...] = addresses.MONSTER_EVENT_KIND.names
-"""A monster event's name, as the framework takes it in a rule's `on`."""
-PART_EVENTS: tuple[Event, ...] = ("flinch", "part_broken")
-"""The events a rule's `part` narrows."""
 
-MAIN_STATES = range(8)
-"""A big monster's behaviour main states."""
-SEAM_RULES: int = addresses.EM_CFG.RULES.count or 0
-"""Rules the framework's native brain seam holds."""
+# shared with the behaviour graph, which sits under this module and defines them
+ManifestError = behaviour.ManifestError
+Event = behaviour.Event
+EVENTS = behaviour.EVENTS
+PART_EVENTS = behaviour.PART_EVENTS
+MAIN_STATES = behaviour.MAIN_STATES
+PARTS = behaviour.PARTS
+SEAM_RULES = behaviour.SEAM_RULES
+UNLIMITED_DIST = behaviour.UNLIMITED_DIST
+_need = behaviour.need
+_toml = behaviour.toml
+
 MOVE_ATTACKS: int = addresses.MOVE.ATTACKS.count or 0
 """Attacks the move player holds per move."""
 OWN_MOVES: int = addresses.EM_MOVES.MOVES.count or 0
 """Own moves the framework holds per port."""
-PARTS = range(hitzone.PART_MASK + 1)
 ROWS = range(hitzone.MAX_ROW + 1)
 BYTE = range(0x100)
 JOINER, NODE_CAPSULE, NODE_SPHERE = hitzone.MARKER_BONES
 """Volume bones that are coordinate spaces, not joints; see `mhfu.hitbox`."""
-
-UNLIMITED_DIST = 1.0e9
-
-
-class ManifestError(ValueError):
-    """A manifest that does not load: bad TOML, an unknown key, a wrong type or a bad value."""
-
-
-def _toml(key: str) -> dict[str, str]:
-    return {"toml": key}
 
 
 @dataclass
@@ -266,35 +263,6 @@ class Move:
 
 
 @dataclass
-class Rule:
-    """A trigger the native seam evaluates every frame: when the live pair is `from_move`'s or in
-    `from_main` and has stood `min_frames` (or own move `from_move` has played that long), the
-    hunter is within `dist` and receding or closing as asked, play `play`, a pair or an own move;
-    then wait `cooldown` frames, at most `count` times (None: unlimited). A pair rule waits while
-    an own move plays.
-
-    With `on`, the rule fires on that monster event instead (`part`: only the flinch or break of
-    that part), under the same distance, cooldown and count; `on = "flinch"` plays its move in
-    place of the host's flinch. An own move asked while the monster's notice runs waits for
-    combat (else it cuts off the "!" and the roar) unless `force`."""
-
-    play: str
-    on: Event | None = None
-    part: int | None = None
-    from_move: str | None = field(default=None, metadata=_toml("from"))
-    from_main: list[int] = field(default_factory=list)
-    min_frames: int = 0
-    dist: tuple[float, float] = (0.0, UNLIMITED_DIST)
-    receding: bool = False
-    closing: bool = False
-    mode: int = 0
-    cooldown: int = 0
-    count: int | None = None
-    force: bool = False
-    label: str = ""
-
-
-@dataclass
 class Hurtbox:
     """A volume where the port is hit, on the rig the port ships.
 
@@ -414,7 +382,7 @@ class Manifest:
     hitboxes: list[Hitbox] = field(default_factory=list, metadata=_toml("hitbox"))
     attacks: list[Attack] = field(default_factory=list, metadata=_toml("attack"))
     effects: list[Effect] = field(default_factory=list, metadata=_toml("effect"))
-    rules: list[Rule] = field(default_factory=list, metadata=_toml("rule"))
+    behaviour: Behaviour = field(default_factory=Behaviour)
     path: Path | None = field(default=None, compare=False, repr=False, metadata=_toml(""))
     """Where it was loaded from; not part of its identity."""
 
@@ -496,14 +464,26 @@ def _value(tp: Any, v: object, where: str) -> Any:
     return v
 
 
+def _is_flat(f: dataclasses.Field[Any]) -> bool:
+    """Whether the dict field's keys sit flat beside the other fields' (`Block.params`)."""
+    return bool(f.metadata.get("flat"))
+
+
+def _flat(cls: type) -> dataclasses.Field[Any] | None:
+    return next((f for f in dataclasses.fields(cls) if _is_flat(f)), None)
+
+
 def _read(cls: type[T], raw: object, where: str) -> T:
     if not isinstance(raw, dict):
         raise _fail(where, "a table", raw)
-    known = {_key(f): f for f in dataclasses.fields(cls) if _key(f)}
+    flat = _flat(cls)
+    known = {_key(f): f for f in dataclasses.fields(cls) if _key(f) and f is not flat}
     unknown = sorted(set(raw) - set(known))
-    if unknown:
+    if unknown and flat is None:
         raise ManifestError(f"{where}: unknown key(s) {', '.join(unknown)}")
     kwargs = {}
+    if flat is not None:
+        kwargs[flat.name] = {k: v for k, v in raw.items() if k not in known}
     hints = _hints(cls)
     for key, f in known.items():
         sub = f"{where}.{key}" if where else key
@@ -512,11 +492,6 @@ def _read(cls: type[T], raw: object, where: str) -> T:
         elif f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING:
             raise ManifestError(f"{sub}: missing")
     return cls(**kwargs)
-
-
-def _need(ok: bool, where: str, why: str) -> None:
-    if not ok:
-        raise ManifestError(f"{where}: {why}")
 
 
 def _vec3(v: list[float] | None, where: str) -> None:
@@ -617,26 +592,7 @@ def _validate(m: Manifest) -> None:
         _need(e.move in m.moves, f"effect[{i}]", f"move {e.move!r} is not in moves")
     own = sum(mv.own for mv in m.moves.values())
     _need(own <= OWN_MOVES, "moves", f"{own} own moves, the framework holds {OWN_MOVES}")
-    _need(len(m.rules) <= SEAM_RULES, "rule", f"the seam holds {SEAM_RULES}")
-    for i, r in enumerate(m.rules):
-        w = f"rule[{i}]"
-        lo, hi = r.dist
-        _need(0 <= lo < hi, w, "dist needs 0 <= lo < hi")
-        _need(all(k in MAIN_STATES for k in r.from_main), w, "from_main is not a main state")
-        _need(r.count is None or r.count >= 1, w, "count is at least 1; leave it out for always")
-        trigger = r.from_move is not None or bool(r.from_main) or r.on is not None
-        _need(trigger, w, "needs from, from_main or on")
-        _need(r.on in (None, *EVENTS), w, "on is one of " + ", ".join(map(repr, EVENTS)))
-        _need(r.part is None or r.on in PART_EVENTS, w, "part goes with a flinch or break")
-        _need(r.part in (None, *PARTS), w, f"part {r.part} is not a part")
-        _need(not (r.receding and r.closing), w, "cannot be receding and closing")
-        _need(r.play in m.moves, w, f"play {r.play!r} is not in moves")
-        _need(r.from_move in (None, *m.moves), w, f"from {r.from_move!r} is not in moves")
-        _need(r.from_move != r.play, w, "from and play are the same move")
-        if r.play in m.moves and m.moves[r.play].own:
-            _need(r.mode == 0, w, "mode is a pair's: an own move enters its carrier")
-        elif r.on == "flinch":
-            _need(False, w, "on = flinch plays an own move, in place of the host's reaction")
+    validate(m)
 
 
 def loads(text: str, path: str | Path | None = None) -> Manifest:
@@ -644,8 +600,14 @@ def loads(text: str, path: str | Path | None = None) -> Manifest:
     try:
         raw = tomllib.loads(text)
         schema = raw.pop("schema", SCHEMA)
-        _need(schema == SCHEMA, "schema", f"{schema!r} is not {SCHEMA}")
+        old = schema == LEGACY_SCHEMA
+        _need(old or schema == SCHEMA, "schema", f"{schema!r} is not {LEGACY_SCHEMA} or {SCHEMA}")
+        legacy = raw.pop("rule", []) if old else []
+        _need(not old or "behaviour" not in raw, "behaviour", f"is for schema {SCHEMA}")
         m = _read(Manifest, raw, "")
+        if old:
+            rules = _value(list[Rule], legacy, "rule")
+            m.behaviour = migrate([typing.cast(dict[str, Any], _plain(r)) for r in rules])
         _validate(m)
     except tomllib.TOMLDecodeError as e:
         raise ManifestError(f"{path or '<string>'}: {e}") from e
@@ -672,10 +634,12 @@ def _is_default(f: dataclasses.Field[Any], v: object) -> bool:
 
 def _plain(v: object) -> object:
     if dataclasses.is_dataclass(v) and not isinstance(v, type):
-        out = {}
+        out: dict[str, Any] = {}
         for f in dataclasses.fields(v):
             x = getattr(v, f.name)
-            if _key(f) and not _is_default(f, x):
+            if _is_flat(f):
+                out |= typing.cast(dict[str, Any], _plain(x))
+            elif _key(f) and not _is_default(f, x):
                 out[_key(f)] = _plain(x)
         return out
     if isinstance(v, dict):
