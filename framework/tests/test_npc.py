@@ -121,6 +121,8 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     lib.npc_host_step.argtypes = [ctypes.POINTER(Anim), ctypes.POINTER(Play), ctypes.c_int]
     lib.npc_host_spawn.argtypes = [ctypes.POINTER(Anim), ctypes.POINTER(Play)]
     lib.npc_host_alive.argtypes = [u32, u8, u16, ctypes.c_int, u32, u32]
+    lib.npc_host_speed.restype = f
+    lib.npc_host_speed.argtypes = [f]
     lib.npc_host_take.argtypes = [
         ctypes.POINTER(Course),
         ctypes.POINTER(FaceOrder),
@@ -384,6 +386,13 @@ def test_alive(lib: ctypes.CDLL) -> None:
     assert not lib.npc_host_alive(vt, 2, 17, 1, 0, 250_000)
     assert not lib.npc_host_alive(vt, OWN_KIND, 16, 1, 0, 250_000)
     assert not lib.npc_host_alive(vt, OWN_KIND, 17, 1, 300_000, 250_000)
+
+
+@pytest.mark.parametrize(
+    ("scale", "anim_scale"), [(1.25, 1.25), (0.0, 0.0), (-1.0, 0.0), (math.nan, 0.0)]
+)
+def test_speed(lib: ctypes.CDLL, scale: float, anim_scale: float) -> None:
+    assert lib.npc_host_speed(scale) == anim_scale
 
 
 STOP_CLIP, IDLE_CLIP, WALK = 5, 1, 4

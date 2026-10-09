@@ -6,7 +6,7 @@
  *   chunk        the DATA.BIN chunk that decrypts the lobby's spawn table: the village's rows
  *                plus ours into the block, NPC_SPAWN_ROWS[village] at it
  *   brain pre    the setup call of ours: RESOURCE_TABLE row 16 + kind = its PAC; later: the
- *                face and arrive orders, the turn
+ *                face and arrive orders, the turn, the clip speed
  *   brain post   the setup call: head and tail slots, its first clips, placed by the hunter;
  *                every call: not talkable, clip switches and the arrival, the status
  *
@@ -43,6 +43,7 @@ typedef struct {
     npc_play_t play;            /* any thread */
     npc_face_order_t face;
     npc_arrive_order_t arrive;
+    volatile float speed;       /* NPC.ANIM_SCALE */
     npc_anim_t anim;            /* the game thread */
     npc_course_t course;
     volatile uint32_t object, seen_us;
@@ -171,7 +172,9 @@ static void brain_pre(mhfu_regs_t *r)
         return;
     }
     int k = slot_of(npc, index);
-    if (k >= 0) turn(npc, &B->slot[k]);
+    if (k < 0) return;
+    turn(npc, &B->slot[k]);
+    wrf(npc + MHFU_NPC_ANIM_SCALE, B->slot[k].speed);   /* before the brain advances the clips */
 }
 
 /* entry on clip slots 0..SLOT_COUNT-1 (at most the three parts) over `blend` frames; a part
@@ -348,6 +351,7 @@ extern "C" int mhfu_npc_add(const mhfu_npc_spec_t *spec)
     s->face.rate = 0x200;
     s->anim.then = MHFU_NPC_NONE;
     s->play.then = MHFU_NPC_NONE;
+    s->speed = 1;
     if (hooks_init() != 0) return -3;
     B->count = k + 1;
     patch_table();   /* a lobby already up gets it now */
@@ -405,6 +409,12 @@ extern "C" void mhfu_npc_arrive(int slot, float dist, uint16_t entry, uint8_t bl
     s->arrive.then = then;
     s->arrive.face = s->face.seq;      /* the order it arms: the face given last */
     s->arrive.seq = s->arrive.seq + 1;   /* last */
+}
+
+extern "C" void mhfu_npc_speed(int slot, float scale)
+{
+    npc_slot_t *s = used(slot);
+    if (s) s->speed = npc_speed(scale);
 }
 
 extern "C" int mhfu_npc_status(int slot, mhfu_npc_status_t *out)

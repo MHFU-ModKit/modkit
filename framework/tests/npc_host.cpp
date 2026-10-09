@@ -54,6 +54,7 @@ uint16_t npc_host_frame(npc_anim_t *a, const npc_play_t *req, int playing, npc_c
 {
     return npc_frame_entry(a, req, playing, c, px, pz, hx, hz, hyaw);
 }
+float npc_host_speed(float scale) { return npc_speed(scale); }
 int npc_host_alive(uint32_t vtable, uint8_t kind, uint16_t index, int slot, uint32_t age_us,
                    uint32_t fresh_us)
 {

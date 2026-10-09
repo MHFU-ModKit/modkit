@@ -79,6 +79,12 @@ int lb_npc_arrive(lua_State *L)
     return 0;
 }
 
+int lb_npc_speed(lua_State *L)
+{
+    mhfu_npc_speed((int)luaL_checkinteger(L, 1), (float)luaL_optnumber(L, 2, 1));
+    return 0;
+}
+
 int lb_npc_status(lua_State *L)
 {
     mhfu_npc_status_t st;

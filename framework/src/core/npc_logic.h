@@ -341,6 +341,9 @@ static inline uint16_t npc_frame_entry(npc_anim_t *a, const npc_play_t *req, int
     return npc_anim_start(a, c->entry, c->blend, c->then);
 }
 
+/* mhfu_npc_speed's scale as NPC.ANIM_SCALE takes it: below 0, or NaN, is 0. */
+static inline float npc_speed(float scale) { return scale > 0 ? scale : 0; }
+
 /* 1 while a stored object is still our slot's NPC: its vtable, kind and row, and the wrapper ran
  * within `fresh_us`. */
 static inline int npc_alive(uint32_t vtable, uint8_t kind, uint16_t index, int slot,
