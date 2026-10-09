@@ -20,7 +20,7 @@ extern "C" {
 
 #define MHFU_NPC_MAX          4        /* the lobby's registry holds 20 and the village uses 16 */
 #define MHFU_NPC_OWN_KIND     5        /* ours: RESOURCE_TABLE row 21, unused in the village */
-#define MHFU_NPC_DEFAULT_CHAR 0x1E     /* no spawn condition, no conversation */
+#define MHFU_NPC_DEFAULT_CHAR 0x1E     /* no spawn condition; ours are never talked to */
 #define MHFU_NPC_NONE         0xFFFFu  /* mhfu_npc_play's `then`: none */
 
 enum {

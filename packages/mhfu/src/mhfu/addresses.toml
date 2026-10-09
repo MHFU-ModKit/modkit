@@ -391,7 +391,7 @@ BROKEN = { offset = 0x774, type = "u16", doc = "big monsters: broken parts, bit 
 
 MODEL_RADIUS = { offset = 0x060, type = "f32", doc = "model bounding radius from the PMO (Zinogre 608, human 90); an NPC's solid extent with MODEL_BOUNDS" }
 MODEL_BOUNDS = { offset = 0x064, type = "f32[2]", doc = "model bounds paired with MODEL_RADIUS" }
-SLOT_ROOTS = { offset = 0x194, type = "ptr[2]", doc = "joints of clip slots 1 and 2 (JOINTS is slot 0's); CLIP_SET reads them, so a 0 is a null read" }
+SLOT_ROOTS = { offset = 0x194, type = "ptr[2]", doc = "joints of clip slots 1 and 2 (JOINTS is slot 0's); CLIP_SET reads them for the clip's end, so a 0 is a null read" }
 ROOT_COUNT = { offset = 0x1A0, type = "u16", doc = "skeleton roots the joint builder found" }
 JOINT_COUNT = { offset = 0x1A4, type = "u16", doc = "joints the FK walks; the anim streams' partition total must match" }
 BRAIN_MEMBER = { offset = 0x3FC, type = "u32[3]", doc = "pointer-to-member OBJ_TICK calls every frame; BRAIN_MEMBER_DEFAULT = OBJ_VTABLE.BRAIN" }
@@ -415,21 +415,21 @@ ANIM_SCALE = { offset = 0x488, type = "f32", doc = "clip speed / 2 for all block
 ANIM_LATCH = { offset = 0x48C, type = "u8[2]", doc = "0: NPC_ANIM_TICK requests ANIM_INPUT[slot] next frame; 1: done" }
 HOME_POS = { offset = 0x490, type = "vec3", doc = "copy of the spawn position; walking does not move it" }
 SCRIPT = { offset = 0x4E0, type = "ptr", doc = "the path script NPC_AI_DISPATCH steps; 0 none" }
-HOME = { offset = 0x4E4, type = "ptr", doc = "NPC_SPAWN_ROW.HOME" }
+HOME = { offset = 0x4E4, type = "ptr", doc = "NPC_SPAWN_ROW.HOME: {s16 count, s16, ptr rows}, each row {s16 mesh group, s16 texture swaps, ptr}; the setup reads it for every kind, and 0 faults" }
 FLAGS = { offset = 0x4E9, type = "u8", doc = "bit 0 no floor query, bit 1 no anim tick, bit 2 solid against the hunter, 0x10/0x20 a distance cull set at setup" }
 
 [struct.NPC_SPAWN_ROW]
 doc = "one NPC of a lobby area (NPC_SPAWN_ROWS); NPC_PRE_SETUP copies it into the NPC"
 size = 0x18
 [struct.NPC_SPAWN_ROW.fields]
-CHAR = { offset = 0x00, type = "u8", doc = "character id: spawn condition, conversation, find-by-char; 0x1E has none of them, 0x20 never spawns" }
+CHAR = { offset = 0x00, type = "u8", doc = "character id: spawn condition, conversation, find-by-char; 0x1E has no spawn condition, 0x20 never spawns" }
 BEHAVIOUR = { offset = 0x01, type = "u8", doc = "NPC.BEHAVIOUR" }
 KIND = { offset = 0x02, type = "u8", doc = "model: RESOURCE_TABLE row 16 + kind; 0 human, 1 Wyverian, 2 Felyne, 3 hall felyne, 4 Poogie; the village loads no row past 20" }
 FLAGS = { offset = 0x03, type = "u8", doc = "NPC.FLAGS" }
 YAW = { offset = 0x04, type = "u16", doc = "ENTITY.YAW" }
 SCALE = { offset = 0x08, type = "f32", doc = "ENTITY.RENDER_SCALE" }
 ANIM_SCALE = { offset = 0x0C, type = "f32", doc = "NPC.ANIM_SCALE" }
-HOME = { offset = 0x10, type = "ptr", doc = "NPC.HOME; not decoded" }
+HOME = { offset = 0x10, type = "ptr", doc = "NPC.HOME, never 0" }
 SCRIPT = { offset = 0x14, type = "ptr", doc = "NPC.SCRIPT: 20-byte rows, the first vec3 the spawn position; 0 spawns at the origin" }
 
 [struct.MONSTER_VTABLE]
