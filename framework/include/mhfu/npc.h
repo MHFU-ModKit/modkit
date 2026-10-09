@@ -70,6 +70,11 @@ void mhfu_npc_face(int slot, int mode, float x, float z, uint16_t rate);
  * mhfu_npc_face disarms it. */
 void mhfu_npc_arrive(int slot, float dist, uint16_t entry, uint8_t blend, uint16_t then);
 
+/* Plays slot's clips at `scale` times their own speed from the next frame (NPC.ANIM_SCALE), so it
+ * walks that much faster too; 1 is the clips' own, 0 freezes them, below 0 counts as 0. Holds
+ * across loads. */
+void mhfu_npc_speed(int slot, float scale);
+
 /* slot's state as of its last frame into out; 0 if slot is not in use. */
 int mhfu_npc_status(int slot, mhfu_npc_status_t *out);
 

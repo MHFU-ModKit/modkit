@@ -866,6 +866,12 @@ function mhfu.npc_face(slot, mode, x, z, rate) end
 ---@param after? integer
 function mhfu.npc_arrive(slot, dist, entry, blend, after) end
 
+---Plays slot's clips at `scale` times their own speed from the next frame, so it walks that much
+---faster too; 1 (the default) is the clips' own, 0 freezes them. It holds across loads.
+---@param slot integer
+---@param scale? number default 1
+function mhfu.npc_speed(slot, scale) end
+
 ---slot as of its last frame, or nil while it is unused.
 ---@param slot integer
 ---@return mhfu.NpcStatus?
