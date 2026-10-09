@@ -40,6 +40,20 @@ def test_static_attributes(rig: Scene) -> None:
     assert set(a[lo:hi, 2]) == {2.0} and set(a[lo:hi, 3]) == {7.0}
 
 
+def test_severed_hides_the_tip(viewport: Any, built: Callable[[str], bytes], lit: Lit) -> None:
+    vp = viewport
+    counts = []
+    for severed in (False, True):
+        sc = Scene.from_bytes(built("brute_tigrex"), "brute")
+        sc.severed = severed
+        vp.set_scene(sc, frame_camera=not severed)  # one camera for both
+        vp.show_ground = vp.show_skeleton = False
+        vp.camera.look("top")
+        vp.draw()
+        counts.append(lit(vp.target.read(), vp.background))
+    assert counts[1] < counts[0]
+
+
 def test_modes_and_isolation(viewport: Any, rig: Scene, lit: Lit) -> None:
     vp = viewport
     vp.set_scene(rig)

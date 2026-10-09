@@ -17,8 +17,8 @@ from mhp_formats.skeleton import Bone, Skeleton
 
 PORTS = Path(__file__).parents[3] / "ports"
 BUILT = {
-    "brute_tigrex": "1082b88cfaeee3086020a6b02ff59101dec4af8653ff44a4b56373a90ae87fae",
-    "zinogre": "830a4c15ed67a8760c0462fa8bcd5fc6548ca0b00b090089bb6d382c5e5e2256",
+    "brute_tigrex": "adb479193d5f752ec8c64aed58598057511bd0d6eaf54390d8c847a4b5068bba",
+    "zinogre": "31ff8e2018efb28853f388396c39304163011f0d965acd42dee4cdbfbee79024",
 }
 """sha256 of each manifest's build: changes only with an intended change to the port."""
 HEAD = '[port]\nname = "t"\nhost_species = 75\npac = "t.bin"\n[source]\nmodel = 5248\n'
@@ -138,16 +138,18 @@ def test_binding_retarget(monkeypatch):
 
 def test_animation(monkeypatch):
     loc_y = next(bit for bit, kind in CHANNEL_BITS.items() if kind == ("loc", 1))
-    lifted = Clip([Track([Channel(loc_y, [Keyframe(0, 0)])]), Track()])
+    lifted = Clip([Track([Channel(loc_y, [Keyframe(0, 0), Keyframe(0, 4)])]), Track()])
     d = donor(3, 2)
     d.clips[1] = lifted
     seen = {}
     monkeypatch.setattr(build.motion, "build", lambda *a: seen.update(args=a) or fu.Anim())
     bind = binding("retarget", {0: 1, 1: None, 2: 2})
-    build.animation(d, host(), bind, {1: 0, 2: 1}, layout.Layout({4: 1}), 2.0)
+    placed = layout.Layout({4: 1, 5: 1}, cuts={5: (1, 2)})
+    build.animation(d, host(), bind, {1: 0, 2: 1}, placed, 2.0)
     clips, entries, _, streams, track_of, keep = seen["args"]
-    assert (entries, streams, track_of, keep) == ({4: 1}, [2, 1], {0: 0, 2: 1}, True)
-    assert clips[1].tracks[0].channels[0].keyframes[0].value == 32
+    assert (entries, streams, track_of, keep) == ({4: 4, 5: 5}, [2, 1], {0: 0, 2: 1}, True)
+    keys = clips[5].tracks[0].channels[0].keyframes
+    assert clips[4].tracks[0].channels[0].keyframes[0].value == 32 and keys[-1] == (32, 2, 0, 0)
 
 
 @pytest.mark.parametrize("name", sorted(BUILT))
@@ -155,8 +157,9 @@ def test_port(data, name):
     built = build.build(manifest.load(PORTS / f"{name}.toml"), data)
     assert (built.summary.mode, built.summary.skin) == ("source_skeleton", "source")
     assert built.summary.size == len(built.pac)
-    assert built.summary.placed == built.summary.clips == len(built.layout.entries)
-    assert len(list(verify.Port(built.pac).distinct())) == built.summary.clips
+    entries = built.layout.entries
+    assert built.summary.placed == len(entries) == len(list(verify.Port(built.pac).distinct()))
+    assert built.summary.clips == len(set(entries.values()))
     assert hashlib.sha256(built.pac).hexdigest() == BUILT[name]
 
 

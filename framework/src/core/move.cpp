@@ -12,7 +12,8 @@
  *
  * The step is in from the wrapped species' spawn: each AI frame it takes a reaction em_vhook
  * replaced (mhfu_em_react) by starting the registered move on the carrier the replacement
- * entered, then runs the move player. The brain, right before it, finds the monster events and
+ * entered, then runs the move player. A move asked for while the tail cut waits for its drop
+ * (mhfu_em_cut_waits) starts after it. The brain, right before it, finds the monster events and
  * may hand the replaced reaction another move (mhfu_move_react_take).
  *
  * An attack node is ended through its own end state (ATTACK_NODE_VTABLE.END): it stops being
@@ -385,7 +386,9 @@ static uint32_t step(uint32_t ent)
         if (S->state == MHFU_MOVE_ENTERING || S->state == MHFU_MOVE_PLAYING)
             finish(MHFU_MOVE_END_STOPPED, pair_of(S->entity));
     } else if (S->pending && ent == S->next_entity) {
-        if (!S->next.force && noticing(ent) && S->waited < MHFU_MOVE_WAIT) {
+        if (mhfu_em_cut_waits(ent)) {
+            /* the tail cut runs to its drop first */
+        } else if (!S->next.force && noticing(ent) && S->waited < MHFU_MOVE_WAIT) {
             S->waited++;
         } else {
             if (S->state == MHFU_MOVE_ENTERING || S->state == MHFU_MOVE_PLAYING)

@@ -97,7 +97,7 @@ def synthetic_pac() -> bytes:
     uvs = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
     influences = [[(1, 1.0)], [(1, 0.25), (2, 0.75)], [(1, 1.0)]]
     part = Part(verts, [], uvs, [], [(0, 1, 2)], influences, 0)
-    model = mesh.build([Skinned(part, part.influences)], (256.0, 256.0, 256.0))
+    model = mesh.build([Skinned(part, part.influences)], (256.0, 256.0, 256.0), tip=None)
     root = Track(
         [
             Channel(0x008, keys((0, 0, 0, 300), (10, 2048, -100, 50), (20, 0))),
@@ -159,7 +159,7 @@ def donor_pac() -> bytes:
     weights = [[(1, 1.0)], [(1, 0.25), (2, 0.75)], [(1, 1.0)], [(2, 1.0)]]
     part = Part(verts, normals, uvs, [], [(0, 1, 2), (2, 1, 3)], weights, 0)
     scale = (256.0, 256.0, 256.0)
-    built = mesh.build([Skinned(part, part.influences)], scale)
+    built = mesh.build([Skinned(part, part.influences)], scale, tip=None)
     model = p3rd.Pmo(
         [p3rd.Mesh(built.groups(), [0], scale=scale)], built.materials, scale, remap_table=False
     )

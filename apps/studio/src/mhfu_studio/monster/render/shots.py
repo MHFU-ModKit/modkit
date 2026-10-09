@@ -36,6 +36,8 @@ class Options:
     grid: bool = True
     hilite: Sequence[int] = ()
     only: str | None = None
+    severed: bool = False
+    """The stump: the tail tip hidden (`Scene.severed`)."""
 
 
 def configure(vp: MonsterViewport, o: Options) -> None:
@@ -77,6 +79,7 @@ def render(
     """`<clip>_f<frame>_<view>` per frame and view (`bind_<view>` for the bind pose), each framed
     on its own pose."""
     images: dict[str, Image8] = {}
+    scene.severed = o.severed
     with offscreen(lambda c: MonsterViewport(c, size, samples), ctx) as vp:
         vp.set_scene(scene)
         configure(vp, o)

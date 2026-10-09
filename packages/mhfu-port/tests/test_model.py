@@ -31,7 +31,7 @@ def synthetic(skeleton_at: int = 0) -> bytes:
     verts = [(0.0, 100.0, 0.0), (0.0, 100.0, 50.0), (10.0, 100.0, 0.0)]
     uvs = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
     part = Part(verts, [], uvs, [], [(0, 1, 2)], [[(1, 1.0)], [(2, 1.0)], [(1, 1.0)]], 0)
-    model = mesh.build([Skinned(part, part.influences)], (256.0, 256.0, 256.0))
+    model = mesh.build([Skinned(part, part.influences)], (256.0, 256.0, 256.0), tip=None)
     turn = [Keyframe(0, 0), Keyframe(quantize("rot", 1.5707963), 10)]
     still = Track([Channel(0x008, [Keyframe(0, 0), Keyframe(0, 10)])])
     body = Clip([still, Track([Channel(0x010, turn)])], 1)

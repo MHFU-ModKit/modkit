@@ -258,10 +258,12 @@ def _upload_textures(ctx: moderngl.Context, scene: Scene) -> dict[int, moderngl.
 
 
 def _index_batches(ctx: moderngl.Context, scene: Scene) -> dict[int | None, moderngl.Buffer]:
-    """One index buffer per texture position; None holds the untextured groups."""
+    """One index buffer per texture position, `Scene.hidden` left out; None holds the
+    untextured groups."""
     parts: dict[int | None, list[npt.NDArray[np.int64]]] = {}
+    hidden = scene.hidden()
     for i, g in enumerate(scene.groups):
-        if g.n_faces:
+        if g.n_faces and i not in hidden:
             lo, _ = scene.group_range(i)
             parts.setdefault(g.texture, []).append(g.triangles.astype(np.int64) + lo)
     return {t: ctx.buffer(np.concatenate(p).astype("i4").tobytes()) for t, p in parts.items()}

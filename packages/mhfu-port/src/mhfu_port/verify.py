@@ -22,11 +22,12 @@ from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Skeleton
 from numpy.typing import NDArray
 
-from . import constraints, fk, motion, records
-from .fidelity import Fidelity, compare, expected
+from . import constraints, fk, mesh, motion, records
+from .fidelity import Fidelity, Weights, compare, expected
 from .mesh import Part
 from .model import ANIMATION, MODEL, SKELETON
 from .motion import frames
+from .rig import OFFSET_TOL, Tip, tip_of
 
 TEAR_LIMIT = 120.0
 """Units an edge across the body fork may grow before the port counts as torn."""
@@ -38,8 +39,6 @@ GROWTH_EPS = 1e-3
 """Units of growth below which an edge counts as rigid: what the blend's rounding leaves."""
 STILL_SHARE = 0.25
 """The share of vertices that may ride joints the animation does not reach."""
-OFFSET_TOL = 0.5
-"""Units two bind offsets or positions may differ by and still be the same joint."""
 MAX_PAD = 8
 """Joints down the port's lead chain tried as the image of the donor's root."""
 
@@ -265,8 +264,8 @@ class Correspondence:
     pad: int
     """Port joints above the image of the donor's root."""
     by_position: frozenset[int]
-    """Bones outside the donor's root tree, placed by bind position alone (a chain the builder
-    re-parented): they survive, but their motion is not the donor's to compare."""
+    """Bones outside the donor's root tree (the tail tip's chain): they survive, but their
+    motion is not the donor's to compare."""
 
     @property
     def tree(self) -> dict[int, int]:
@@ -275,8 +274,9 @@ class Correspondence:
 
 
 def correspondence(donor: Skeleton, port: Skeleton) -> Correspondence:
-    """The donor's tree matched down the port's from the root, children paired by bind offset,
-    then any bone left over (a re-parented chain) by bind position.
+    """The donor's tree matched down the port's from the root, children paired by bind offset;
+    then each other donor root's tree from the port's root at its bind position, and any bone
+    left over by bind position.
 
     The builder may put origin joints above the donor's root, so each joint down the port's
     lead chain is tried as the root's image and the best kept."""
@@ -284,9 +284,9 @@ def correspondence(donor: Skeleton, port: Skeleton) -> Correspondence:
     d_off = np.array([b.position for b in donor.bones], dtype=np.float64).reshape(-1, 3)
     p_off = np.array([b.position for b in port.bones], dtype=np.float64).reshape(-1, 3)
 
-    def walk(start: int) -> dict[int, int]:
+    def walk(start: int, root: int = 0) -> dict[int, int]:
         out: dict[int, int] = {}
-        todo = [(0, start)]
+        todo = [(root, start)]
         while todo:
             d, p = todo.pop()
             out[d] = p
@@ -317,6 +317,13 @@ def correspondence(donor: Skeleton, port: Skeleton) -> Correspondence:
     p_world = fk.Rig.from_skeleton(port).bind_joints
     taken = set(best.values())
     tree = set(best)
+    for r in dk.get(-1, []):
+        free = [j for j in pk.get(-1, []) if j and j not in taken]  # joint 0 holds the pad
+        gap = [float(np.linalg.norm(p_world[j] - d_world[r])) for j in free]
+        if r not in best and gap and min(gap) < OFFSET_TOL:
+            found = walk(free[int(np.argmin(gap))], r)
+            best |= found
+            taken |= set(found.values())
     for d in range(len(donor.bones)):
         if d in best:
             continue
@@ -346,10 +353,16 @@ class Check:
     detail: str = ""
 
 
-def audit(port: Port, donor: Skeleton | None = None, parts: Sequence[Part] = ()) -> list[Check]:
+def audit(
+    port: Port,
+    donor: Skeleton | None = None,
+    parts: Sequence[Part] = (),
+    host: Port | None = None,
+) -> list[Check]:
     """The engine's rules (`constraints`), then the port's own checks; `donor` adds whether its
-    rig survived, and `parts` (its groups as the port was built from them) whether every vertex
-    kept its weights. A warning passes and says why."""
+    rig survived, `parts` (its groups as the port was built from them) whether every vertex
+    kept its weights, and `host` (the species' own PAC) whether its dropped tail finds a tip. A
+    warning passes and says why."""
     results = constraints.validate(port.model, port.skeleton, port.anim)
     out = []
     for code, (level, holds, _) in constraints.RULES.items():
@@ -395,9 +408,46 @@ def audit(port: Port, donor: Skeleton | None = None, parts: Sequence[Part] = ())
             "no edge crosses the fork" if worst_tear is None else str(worst_tear),
         )
     )
+    if host is not None:
+        out.append(tip_check(port, host))
     if donor is not None:
         out += _against(port, donor, parts)
     return out
+
+
+def tip_check(port: Port, host: Port) -> Check:
+    """A host whose model has a tail tip (a chain at `params[1]` and mesh record 1) draws the
+    port's mesh record 1 at the cut, and crashes the game without one: the port needs its own
+    chain, the map that carries it (`rig.tip_of`) and a mesh record 1 on that chain alone."""
+    name = "the host's dropped tail finds the port's tip (mesh record 1 and its map)"
+    if len(host.model.meshes) < 2 or _tip(host)[0] is None:
+        return Check(name, True, "the host drops no tail")
+    tip, why = _tip(port)
+    if tip is None:
+        return Check(name, False, why)
+    if len(port.model.meshes) < 2:
+        return Check(name, False, "one mesh record: the dropped tail draws record 1")
+    first = len(port.model.meshes[0].groups)
+    joints = set(tip.joints)
+    stray = [
+        g
+        for g in range(first, first + len(port.model.meshes[1].groups))
+        if {j for vi in port.model.influences(g) for j, w in vi if w > 0} - joints
+    ]
+    if stray:
+        return Check(name, False, f"mesh 1 groups {_few(stray)} ride joints off the tip")
+    return Check(
+        name, True, f"chain {_few(tip.joints)}, carriers {_few([c for _, c in tip.pairs])}"
+    )
+
+
+def _tip(port: Port) -> tuple[Tip | None, str]:
+    """`rig.tip_of` of the port's skeleton, and why there is none."""
+    try:
+        tip = tip_of(port.skeleton)
+    except ValueError as e:
+        return None, str(e)
+    return tip, "no tip chain at params[1]" if tip is None else ""
 
 
 def _against(port: Port, donor: Skeleton, parts: Sequence[Part]) -> list[Check]:
@@ -419,7 +469,8 @@ def _against(port: Port, donor: Skeleton, parts: Sequence[Part]) -> list[Check]:
     ]
     if not parts:
         return out
-    want = expected([vi for p in parts for vi in p.influences], c.joint_of)
+    per = [expected(p.influences, c.joint_of) for p in parts]
+    want = [w for i in _built_order(port, per) for w in per[i]]
     got = [vi for g in range(len(port.model.groups())) for vi in port.model.influences(g)]
     f: Fidelity = compare(want, got)
     out.append(
@@ -431,6 +482,15 @@ def _against(port: Port, donor: Skeleton, parts: Sequence[Part]) -> list[Check]:
         )
         out.append(Check("weights within one u8 step", f.within_step, f"worst {f.max_error:.6f}"))
     return out
+
+
+def _built_order(port: Port, per: Sequence[list[Weights]]) -> list[int]:
+    """The parts in the port's group order (`mesh.split`); part order where that fails."""
+    try:
+        kept, ends = mesh.split([[list(w.items()) for w in ws] for ws in per], _tip(port)[0])
+    except ValueError:
+        return list(range(len(per)))
+    return kept + ends
 
 
 def _loc_joints(port: Port) -> set[int]:

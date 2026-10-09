@@ -107,6 +107,9 @@ int lb_em_status(lua_State *L)
     SF_INT("sub_last_mode", (st.sub_last_in >> 16) & 0xFF);
     SF_INT("brain_fires", st.brain_fires);
     SF_INT("events_muted", st.events_muted);
+    SF_INT("tip_pairs",  st.tip_pairs);
+    SF_INT("tip_copies", st.tip_copies);
+    SF_INT("cut_waits",  st.cut_waits);
     SF_INT("req_pending", st.req_pending);
     SF_INT("req_done",    st.req_done);
     SF_INT("req_main",   (st.req_result >> 8) & 0xFF);
@@ -133,6 +136,29 @@ int lb_em_status(lua_State *L)
     for (int i = 0; i < MHFU_EM_SUBS; i++) { lua_pushinteger(L, (lua_Integer)st.sub_left[i]); lua_rawseti(L, -2, i + 1); }
     lua_setfield(L, -2, "sub_left");
 #undef SF_INT
+    return 1;
+}
+
+/* {{joint, carrier}, ...} */
+int lb_em_tip(lua_State *L)
+{
+    luaL_checktype(L, 1, LUA_TTABLE);
+    uint8_t pairs[MHFU_EM_TIP_MAX][2];
+    int n = (int)luaL_len(L, 1);
+    if (n > MHFU_EM_TIP_MAX) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    for (int i = 0; i < n; i++) {
+        lua_rawgeti(L, 1, i + 1);
+        luaL_checktype(L, -1, LUA_TTABLE);
+        lua_rawgeti(L, -1, 1);
+        lua_rawgeti(L, -2, 2);
+        pairs[i][0] = (uint8_t)luaL_checkinteger(L, -2);
+        pairs[i][1] = (uint8_t)luaL_checkinteger(L, -1);
+        lua_pop(L, 3);
+    }
+    lua_pushboolean(L, mhfu_em_tip(pairs, n));
     return 1;
 }
 

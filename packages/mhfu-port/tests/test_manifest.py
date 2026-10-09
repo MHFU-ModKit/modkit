@@ -269,6 +269,18 @@ def test_own_move():
     assert "steer" not in M.dumps(M.loads(_with(OWN)))
 
 
+CUT = (
+    "[clips.a]\nslot = 65\nsource = 7\nstart = 0\nframes = 2\n"
+    "[clips.b]\nslot = 83\nsource = 7\nstart = 2\nframes = 9\n"
+)
+
+
+def test_cuts_share_a_source():
+    m = M.loads(_with(CUT))
+    assert [(c.id, c.cut) for c in m.clips.values()] == [(7, (0, 2)), (7, (2, 9))]
+    assert M.loads(M.dumps(m)) == m and M.Clip(3, frames=5).cut is None
+
+
 @pytest.mark.parametrize(
     ("extra", "why"),
     [
@@ -280,6 +292,12 @@ def test_own_move():
         (MOVE + "claim = 8\n", "not a main state"),
         (MOVE + "claim = 1\n[moves.n]\nmain = 1\nsub = 5\nanim = 1\nclaim = 1\n", "claims"),
         ("[clips.a]\nslot = 1\n[clips.b]\nslot = 1\n", "slot 1"),
+        ("[clips.a]\nslot = 1\nstart = 0\n", "start needs slot and frames"),
+        ("[clips.a]\nsource = 1\nstart = 0\nframes = 2\n", "start needs slot and frames"),
+        ("[clips.a]\nslot = 1\nstart = -1\nframes = 2\n", "start is 0 or more"),
+        ("[clips.a]\nslot = 1\nstart = 0\nframes = 0\n", "frames is at least 1"),
+        (CUT + "[clips.c]\nsource = 7\n", "clip 7 is placed by clips.b too"),
+        ("[clips.c]\nsource = 7\n" + CUT, "clip 7 is placed by clips.c too"),
         ("[parts.p]\nindex = 8\n", "not a part"),
         ("[[hurtbox]]\nbone = 1\nradius = 1.0\npart = 8\n", "not a part"),
         ("[[hurtbox]]\nbone = 1\nradius = 1.0\nhitzone_row = 7\n", "not a row"),

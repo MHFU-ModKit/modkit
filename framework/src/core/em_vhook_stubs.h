@@ -7,7 +7,7 @@
  *   - no branch in either stub: every decision is a MOVN/MOVZ select, so the JIT
  *     sees one basic block and armed and unarmed runs execute the same words;
  *   - the slot-29 stub never touches $sp: ra and the step's arguments are spilled
- *     to config words for its calls (the request, the brain, the C step), and it ends in
+ *     to config words for its calls (the brain, the C step), and it ends in
  *     one jr: the original, or a return when the C step took the frame;
  *   - the slot-32 stub's only stack use is its 16-byte frame (see build_act_stub);
  *   - each fits its slot (STUB_AI_INSNS / STUB_ACT_INSNS).
@@ -45,8 +45,8 @@
 #define CFG_D2          0x40   /* f32 bits  player<->monster XZ distance^2; the brain's */
 #define CFG_D2_PREV     0x44   /* f32 bits  ... at the previous tick            */
 #define CFG_BRAIN_FIRES 0x48   /* u32  rule fires, total                        */
-#define CFG_SCRATCH     0x4C   /* u32  the match bit across a call              */
-/* request slot */
+#define CFG_SCRATCH     0x4C   /* u32  spare                                    */
+/* request slot: the C brain's (mhfu_em_request) */
 #define CFG_REQ_PENDING 0x50   /* u32  1 = issue on the next frame              */
 #define CFG_REQ_MAIN    0x54   /* u8 */
 #define CFG_REQ_SUB     0x55   /* u8 */
@@ -157,32 +157,6 @@ static inline void emv_pair_match(emv_asm_t *a, int off_mask, int off_sub)
     E(mips_and(R_T2, R_T2, R_T4));
 }
 
-/* A CONDITIONAL CALL WITHOUT A BRANCH (the request's). t2 holds the 0/1 decision; a0 is the
- * entity, a1..a3 the enter-action's (main, id, mode). The callee is chosen with
- * MOVN between the engine's dispatcher and a two-instruction `jr ra` in our own
- * block, so the jalr always executes and the instruction stream never forks.
- * ra was spilled to CFG_RA_SPILL by the stub prologue. Afterwards t7 and a0 are
- * reloaded (the callee clobbers every caller-saved register) and t2 is restored
- * from CFG_SCRATCH so the caller can keep using the decision. */
-static inline void emv_cond_call(emv_asm_t *a, uint32_t cfg, uint32_t ret_stub)
-{
-    E(mips_sw(R_T2, CFG_SCRATCH, R_T7));
-    E(mips_lui(R_T9, (uint16_t)(ret_stub >> 16)));
-    E(mips_ori(R_T9, R_T9, (uint16_t)ret_stub));
-    E(mips_lui(R_T6, (uint16_t)(MHFU_ENTER_ACTION >> 16)));
-    E(mips_ori(R_T6, R_T6, (uint16_t)MHFU_ENTER_ACTION));
-    E(mips_movn(R_T9, R_T6, R_T2));
-    E(mips_jalr(R_T9));
-    E(MIPS_NOP);
-    emv_load_cfg(a, cfg);
-    E(mips_lw(R_A0, CFG_A0_SPILL, R_T7));
-    E(mips_lw(R_T2, CFG_SCRATCH, R_T7));
-    /* a fire this frame means the pair just changed: its dwell restarts */
-    E(mips_lw(R_T5, CFG_FRAMES, R_T7));
-    E(mips_movn(R_T5, R_ZERO, R_T2));
-    E(mips_sw(R_T5, CFG_FRAMES, R_T7));
-}
-
 /* --- slot 29: the per-frame pre-hook. ------------------------------------- */
 static inline int emv_build_ai_stub(uint32_t *out, int cap, uint32_t cfg,
                                     uint32_t original, uint32_t ret_stub, uint32_t brain,
@@ -203,32 +177,9 @@ static inline int emv_build_ai_stub(uint32_t *out, int cap, uint32_t cfg,
     E(mips_sw(R_A3, CFG_A3_SPILL, R_T7));
     E(mips_sw(R_RA, CFG_RA_SPILL, R_T7));
 
-    /* ---- the REQUEST: a pair Lua asked for, entered on the game thread ---- */
-    E(mips_lw(R_T2, CFG_REQ_PENDING, R_T7));
-    E(mips_sltu(R_T2, R_ZERO, R_T2));                  /* 1 iff pending */
-    E(mips_lw(R_T3, CFG_REQ_PENDING, R_T7));
-    E(mips_subu(R_T3, R_T3, R_T2));                    /* consume it (a write that
-                                                          races in from Lua after
-                                                          our read survives) */
-    E(mips_sw(R_T3, CFG_REQ_PENDING, R_T7));
-    E(mips_lw(R_T3, CFG_REQ_DONE, R_T7));
-    E(mips_addu(R_T3, R_T3, R_T2));
-    E(mips_sw(R_T3, CFG_REQ_DONE, R_T7));
-    E(mips_lbu(R_A1, CFG_REQ_MAIN, R_T7));
-    E(mips_lbu(R_A2, CFG_REQ_SUB,  R_T7));
-    E(mips_lbu(R_A3, CFG_REQ_MODE, R_T7));
-    emv_cond_call(a, cfg, ret_stub);
-    /* what the cells say now, for Lua to judge the landing */
-    E(mips_lbu(R_T0, MHFU_ENTITY_MAIN_STATE, R_A0));
-    E(mips_lbu(R_T1, MHFU_ENTITY_SUB_STATE,  R_A0));
-    E(mips_sll(R_T3, R_T0, 8));
-    E(mips_or(R_T3, R_T3, R_T1));
-    E(mips_lw(R_T4, CFG_REQ_RESULT, R_T7));
-    E(mips_movn(R_T4, R_T3, R_T2));
-    E(mips_sw(R_T4, CFG_REQ_RESULT, R_T7));
-
-    /* ---- the BRAIN: brain(entity) in C, every frame: its dwell and distance, the own moves
-     * and the rules (em_vhook.cpp); the call clobbers every caller-saved register. ---- */
+    /* ---- the BRAIN: brain(entity) in C, every frame: the request, its dwell and distance,
+     * the own moves and the rules (em_vhook.cpp); the call clobbers every caller-saved
+     * register. ---- */
     E(mips_lui(R_T9, (uint16_t)(brain >> 16)));
     E(mips_ori(R_T9, R_T9, (uint16_t)brain));
     E(mips_jalr(R_T9));

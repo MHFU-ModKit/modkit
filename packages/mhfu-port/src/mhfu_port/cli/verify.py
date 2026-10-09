@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from mhfu.files import monster_pac
 
-from .. import build, constraints, data, fidelity, manifest, pose, verify
+from .. import build, constraints, data, fidelity, layout, manifest, pose, verify
 from ..motion import frames
 
 if TYPE_CHECKING:
@@ -21,7 +21,10 @@ if TYPE_CHECKING:
 def register(sub: Subparsers) -> None:
     p = sub.add_parser("verify", help="the structural audit of a built port")
     p.add_argument("port", type=Path, help="a built model PAC")
-    p.add_argument("--manifest", type=Path, help="also check the donor's rig and skin survived")
+    p.add_argument(
+        "--manifest", type=Path, help="also check the donor's rig and skin and the host's tip"
+    )
+    p.add_argument("--host", type=int, metavar="SPECIES", help="check this host's tip")
     data.add_arguments(p)
     p.set_defaults(run=run_verify)
 
@@ -59,12 +62,15 @@ def register(sub: Subparsers) -> None:
 
 def run_verify(args: argparse.Namespace) -> int:
     port = verify.Port(args.port.read_bytes())
-    if args.manifest:
-        m = manifest.load(args.manifest)
-        d = build.donor(m, data.from_arguments(args))
-        checks = verify.audit(port, d.skeleton, build.parts(d, m.build))
+    m = manifest.load(args.manifest) if args.manifest else None
+    frame = monster_pac(args.host) if args.host is not None else m.port.host_frame if m else None
+    games = None if frame is None else data.from_arguments(args)
+    host = None if games is None or frame is None else verify.Port(games.fu.read(frame))
+    if m is not None and games is not None:
+        d = build.donor(m, games)
+        checks = verify.audit(port, d.skeleton, build.parts(d, m.build), host)
     else:
-        checks = verify.audit(port)
+        checks = verify.audit(port, host=host)
     width = max(len(c.name) for c in checks)
     for c in checks:
         print(f"{'PASS' if c.ok else 'FAIL'}  {c.name:<{width}}  {c.detail}")
@@ -91,9 +97,9 @@ def run_pose(args: argparse.Namespace) -> int:
     m = manifest.load(args.manifest)
     games = data.from_arguments(args)
     d = build.donor(m, games)
-    placed = build.layout(m, d, build.host(m, games)).entries
+    placed = build.layout(m, d, build.host(m, games))
     port = verify.Port(args.port.read_bytes())
-    clips = {e: d.clips[cid] for e, cid in placed.items()}
+    clips = layout.clips(placed, d.clips)
     r = pose.compare(port, d.skeleton, clips, build.record_map(d, m.build))
     print(f"{r.matched} of {r.bones} donor bones placed (pad {r.pad}), {r.compared} compared")
     print(
@@ -101,7 +107,7 @@ def run_pose(args: argparse.Namespace) -> int:
     )
     for s in r.slots:
         print(
-            f"{s.slot:>5} {placed[s.slot]:>4} {s.joints:>6} {s.median:>8.2f} {s.p90:>8.2f} "
+            f"{s.slot:>5} {placed.entries[s.slot]:>4} {s.joints:>6} {s.median:>8.2f} {s.p90:>8.2f} "
             f"{s.worst:>8.2f} {s.lift:>7.1f}"
         )
     if r.absent:

@@ -5,7 +5,7 @@ import math
 import numpy as np
 import pytest
 from mhfu.files import monster_pac
-from mhfu_port import layout, manifest, travel, verify
+from mhfu_port import fk, layout, manifest, motion, travel, verify
 from mhfu_port.model import MHFU, MHP3RD, ModelError
 from mhfu_studio.monster import inputs
 from mhfu_studio.monster.core.scene import Scene, open_scene
@@ -74,6 +74,21 @@ def test_tigrex(games):
     assert [c.slot for c in sc.clips if not c.whole_rig] == [24, 25]
     assert len(sc.textures) == 5 and all(g.texture is not None for g in sc.groups)
     assert sorted({g.texture for g in sc.groups}) == [0, 1, 2, 3, 4]
+    assert sc.tip is not None and sc.tip.pairs == ((45, 43), (46, 43), (47, 44))
+    assert sc.tip_groups() == [11, 12]
+
+
+@pytest.mark.parametrize(("name", "groups"), [("zinogre", [175, 180]), ("brute_tigrex", [86, 87])])
+def test_tip(built, name, groups):
+    """The tip rides its carriers unless severed; severed, its groups are hidden instead."""
+    sc = Scene.from_bytes(built(name), name)
+    assert sc.tip is not None and sc.tip_groups() == list(range(groups[0], groups[1] + 1))
+    for w in (sc.bind_pose().world, pose_at(sc, sc.clip(1), 10.0).world):
+        assert all(np.array_equal(w[j], w[c]) for j, c in sc.tip.pairs)
+    assert not sc.hidden()
+    sc.severed = True
+    assert sc.hidden() == set(range(groups[0], groups[1] + 1))
+    assert np.array_equal(sc.bind_pose().world, sc.rig.bind_world)
 
 
 @pytest.mark.parametrize(
@@ -89,7 +104,9 @@ def test_donor_matches_port(games, built, ports, name, joints, groups, vertices,
     src = Scene.from_manifest(m, side="source", data=games)
     port = Scene.from_bytes(built(name), name, manifest=m)
     host = inputs.host_anim(m, games)
-    entry = layout.of(m, inputs.donor_clips(m, games), host).ids
+    lay = layout.of(m, inputs.donor_clips(m, games), host)
+    played = layout.clips(lay, {c.slot: c.source for c in src.clips})
+    tracks = {c.slot: c.joint_tracks for c in src.clips}
     assert src.game == MHP3RD and src.rig.n == joints and src.record_to_bone
     assert (
         (len(src.groups), src.n_vertices)
@@ -109,16 +126,17 @@ def test_donor_matches_port(games, built, ports, name, joints, groups, vertices,
     s_idx = np.array(sorted(b for b, j in c.tree.items() if j not in (0, root)))
     p_idx = np.array([c.tree[i] for i in s_idx])
     worst, compared = 0.0, 0
-    for clip in src.clips:
-        pc = port._by_slot[entry[clip.slot]]
+    for e, clip in played.items():
+        pc = port._by_slot[e]
         assert pc.whole_rig
         turn = turn_of(port, pc)
         th = -turn.keys[0] / travel.TURN * math.tau if turn else 0.0
         face = np.array(
             [[math.cos(th), 0, -math.sin(th)], [0, 1, 0], [math.sin(th), 0, math.cos(th)]]
         )
-        for frame in (clip.frames // 4, clip.frames // 2):
-            a = src.pose(clip, frame).joints @ face
+        want, n = fk.Curves(clip, src.rig, tracks[lay.entries[e]]), motion.frames(clip)
+        for frame in (n // 4, n // 2):
+            a = src.rig.world(*want.at(float(frame)))[:, :3, 3] @ face
             b = pose_at(port, pc, frame).joints
             lift = b[body, 1] - a[anchor, 1]
             off = (a[s_idx] - a[anchor]) - (b[p_idx] - b[body])
@@ -126,7 +144,7 @@ def test_donor_matches_port(games, built, ports, name, joints, groups, vertices,
                 worst, float(np.linalg.norm(off, axis=1).max()), abs(lift - m.build.ground_lift)
             )
             compared += 1
-    assert compared == 2 * len(src.clips) and worst < 0.2, (compared, worst)
+    assert compared == 2 * len(played) and worst < 0.2, (compared, worst)
 
 
 def test_manifest_port(games, ports):

@@ -53,7 +53,7 @@ def facing(ws: MonsterWorkspace) -> float:
     assert vp is not None and vp.actor is not None and vp.clip is not None
     sc = vp.actor.scene
     drawn = vp.actor.skeleton.positions[:, [0, 2]]
-    own = sc.rig.world(*sc.curves(vp.clip).at(vp.frame))[:, [0, 2], 3]
+    own = sc.world(*sc.curves(vp.clip).at(vp.frame))[:, [0, 2], 3]
     a, b = own - own.mean(0), drawn - drawn.mean(0)
     cross = float(np.sum(a[:, 1] * b[:, 0] - a[:, 0] * b[:, 1]))
     return math.degrees(math.atan2(cross, float(np.sum(a * b))))

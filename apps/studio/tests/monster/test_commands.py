@@ -91,7 +91,7 @@ def test_clips(games, ports, tmp_path, capsys):
     data = ["--data", str(games.fu.root), "--p3rd-data", str(games.p3rd.root)]
     assert main(["port", "clips", str(ports / "zinogre.toml"), *data]) == 0
     out = capsys.readouterr().out
-    assert "102 populated slot(s): 102 carried, 0 filler" in out and "DROPPED" not in out
+    assert "103 populated slot(s): 103 carried, 0 filler" in out and "DROPPED" not in out
     assert main(["port", "clips", str(ports / "zinogre.toml"), "--slots", *data]) == 0
     assert "a1 2    CARRIED  welcome_howl" in capsys.readouterr().out
     path = tmp_path / "z.toml"

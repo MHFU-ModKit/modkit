@@ -127,6 +127,18 @@ def test_world_and_deform():
     assert list(skin.dominant()) == [1, 0]
 
 
+def test_attach():
+    """A joint posed as its carrier skins as it, moved by the carrier's bind less its own."""
+    r = rig([-1, 0, -1], [(0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (0.0, 0.0, 50.0)])
+    world = fk.world_matrices(r, clip({ROT_Z: [(0, QUARTER)]}, {}, {}), [0, 0])
+    got = fk.attach(world, [(2, 1)])
+    assert np.array_equal(got[:, 2], world[:, 1]) and np.array_equal(got[:, :2], world[:, :2])
+    offset = np.eye(4)
+    offset[:3, 3] = r.bind_joints[1] - r.bind_joints[2]
+    assert np.allclose(r.deform(got)[:, 2], r.deform(got)[:, 1] @ offset)
+    assert np.array_equal(fk.attach(world, []), world)
+
+
 def test_bind_deform_is_identity():
     r = rig([-1, 0, 1])
     assert np.allclose(r.deform(r.bind_world), np.eye(4))

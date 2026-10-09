@@ -21,6 +21,7 @@ from mhfu.entries import ENTRY_BANK, PART_STREAMS
 from mhp_formats import AnimPack, Clip, Pac, fu
 
 from .fk import entry_of
+from .layout import Layout, LayoutError, played
 from .motion import frames
 
 Pair = tuple[int, int]
@@ -99,19 +100,21 @@ class Source:
         return self.match if self.clip is None else f"{self.match} {self.clip}"
 
 
-def correspondence(
-    port: AnimPack, donor: Mapping[int, Clip], layout: Mapping[int, int]
-) -> dict[int, Source]:
-    """Port entry -> the donor clip it holds where the fingerprints agree: the one `layout`
-    (entry -> id) puts there, else the donor's first clip (an idle copy older builds filled
-    with). An empty donor is an error, not an empty answer."""
+def correspondence(port: AnimPack, donor: Mapping[int, Clip], layout: Layout) -> dict[int, Source]:
+    """Port entry -> the donor clip it holds where the fingerprints agree: the one `layout` puts
+    there (`layout.played`, so a cut compares cut), else the donor's first clip (an idle copy
+    older builds filled with). An empty donor is an error, not an empty answer."""
     if not donor:
         raise ValueError("the donor has no clips")
     first = min(donor)
     out = {}
     for e, fp in slot_prints(port).items():
-        cid = layout.get(e)
-        if cid is not None and cid in donor and fingerprint(donor[cid]) == fp:
+        cid = layout.entries.get(e)
+        try:
+            want = played(layout, donor, e)
+        except LayoutError:
+            want = None
+        if cid is not None and want is not None and fingerprint(want) == fp:
             out[e] = Source("same", cid)
         elif cid != first and fingerprint(donor[first]) == fp:
             out[e] = Source("fill", first)
@@ -142,7 +145,7 @@ def catalog(
     drivers: Mapping[int, Collection[Pair]],
     port: AnimPack | None = None,
     donor: Mapping[int, Clip] | None = None,
-    layout: Mapping[int, int] | None = None,
+    layout: Layout | None = None,
     names: Mapping[int, str] | None = None,
 ) -> list[Row]:
     """Every entry the host fills, the port fills or a pair drives; `source` needs the port,
@@ -244,7 +247,7 @@ def verdicts(
     labels: Mapping[int, str],
     builds: Mapping[str, AnimPack],
     donor: Mapping[int, Clip],
-    layout: Mapping[int, int],
+    layout: Layout,
     drivers: Mapping[int, Collection[Pair]] | None = None,
 ) -> list[Verdict]:
     """A label names what a build played in entry N: the layout's clip only where that build

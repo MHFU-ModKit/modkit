@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """em_vhook's brain on the host with the real move player: own moves played by slot when asked,
-after the move before, or by a rule; and the rules entering pairs. One AI frame per call
-(mhfu_em_host_frame: the brain, then the C step), against em_host.cpp's engine."""
+after the move before, or by a rule; the rules entering pairs; the tail cut holding them for its
+drop; and the tail tip after the species brain. One AI frame per call (mhfu_em_host_frame: the
+brain, then the C step), against em_host.cpp's engine."""
 
 import ctypes
 import struct
@@ -13,6 +14,8 @@ from mhfu import addresses as a
 
 BASE = 0x09000000  # em_host.cpp's memory; noaddr
 ENT = BASE + 0x1000
+PMO = BASE + 0x3900
+JOINTS = BASE + 0x4000
 CLIP_END = 20.0
 SPEED = 2.0
 NO = ANY = 0xFF
@@ -67,7 +70,7 @@ class Rule(ctypes.Structure):
 class Game:
     def __init__(self, lib: ctypes.CDLL) -> None:
         self.lib = lib
-        self.mem = (ctypes.c_uint8 * 0x4000).from_address(lib.host_mem())
+        self.mem = (ctypes.c_uint8 * 0x8000).from_address(lib.host_mem())
         self.hunter = (ctypes.c_uint8 * 0x300).from_address(lib.host_hunter())
 
     def poke(self, off: int, fmt: str, *values: float) -> None:
@@ -170,6 +173,9 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     lib.mhfu_em_rule.argtypes = [ctypes.c_int, ctypes.c_void_p]
     lib.mhfu_steer_init_spec.argtypes = [ctypes.c_void_p]
     lib.mhfu_em_host_reaction.argtypes = [ctypes.c_uint32, ctypes.c_uint8, ctypes.c_uint8]
+    lib.mhfu_em_host_brain.argtypes = [ctypes.c_uint32]
+    lib.mhfu_em_host_latch.argtypes = [ctypes.c_uint32]
+    lib.mhfu_em_tip.argtypes = [ctypes.c_void_p, ctypes.c_int]
     return lib
 
 
@@ -448,3 +454,136 @@ def test_a_flinch_that_breaks_plays_the_break_rule(g: Game) -> None:
     g.flinch(0b001)
     g.frame()
     assert ("X", ENT, 59, 0, 0) in g.calls()  # no new break: the flinch rule's
+
+
+# --- the tail: the cut waits for its drop, the tip follows its carriers until it
+
+
+def tailed(g: Game, meshes: int = 7) -> None:
+    """The monster's joints, its model's mesh count and the wrapped species' vtable."""
+    g.poke(a.ENTITY.VTABLE, "I", int(a.TIGREX_VTABLE))
+    g.poke(a.ENTITY.JOINTS, "I", JOINTS)
+    g.poke(a.ENTITY.JOINT_COUNT, "H", 12)
+    g.poke(a.ENTITY.PMO, "I", PMO)
+    struct.pack_into("<H", g.mem, PMO - BASE + a.PMO.MESH_COUNT, meshes)
+    g.lib.mhfu_em_host_latch(int(a.TIGREX_VTABLE))
+
+
+def cut(g: Game, meshes: int = 7) -> None:
+    tailed(g, meshes)
+    g.pair = (4, 4)
+    g.poke(a.ENTITY.SEVERED, "B", 1)
+
+
+def drop(g: Game) -> None:
+    g.poke(a.ENTITY.FLAGS, "I", 0x4000)
+    g.pair = (4, 15)
+
+
+def _pose_at(joint: int) -> int:
+    assert a.JOINT.size
+    return JOINTS - BASE + joint * a.JOINT.size + a.JOINT.POSE
+
+
+def pose(g: Game, joint: int) -> tuple[float, ...]:
+    return struct.unpack_from("<16f", g.mem, _pose_at(joint))
+
+
+def set_pose(g: Game, joint: int, v: float) -> None:
+    struct.pack_into("<16f", g.mem, _pose_at(joint), *[v + k for k in range(16)])
+
+
+def tip(g: Game, pairs: list[tuple[int, int]]) -> int:
+    arr = (ctypes.c_uint8 * (2 * max(len(pairs), 1)))(*[x for p in pairs for x in p])
+    return int(g.lib.mhfu_em_tip(arr, len(pairs)))
+
+
+def test_tip_follows_after_the_brain(g: Game) -> None:
+    tailed(g)
+    g.lib.host_attach(5, 1)  # the brain's ATTACH poses 5 from 1
+    for j in (1, 3, 4):
+        set_pose(g, j, 10.0 * j)
+    assert tip(g, [(5, 3), (6, 4)])
+    g.lib.mhfu_em_host_brain(ENT)
+    assert g.calls()[0][0] == "B"
+    assert pose(g, 5) == pose(g, 3) and pose(g, 6) == pose(g, 4)
+
+
+def test_tip_stops_at_the_drop(g: Game) -> None:
+    tailed(g)
+    tip(g, [(5, 3)])
+    set_pose(g, 3, 30.0)
+    drop(g)
+    g.lib.mhfu_em_host_brain(ENT)
+    assert pose(g, 5) == (0.0,) * 16
+
+
+def test_tip_skips_other_vtables_and_joints(g: Game) -> None:
+    tailed(g)
+    tip(g, [(5, 3), (12, 3), (6, 12)])  # JOINT_COUNT is 12
+    set_pose(g, 3, 30.0)
+    g.poke(a.ENTITY.VTABLE, "I", int(a.GIADROME_VTABLE))
+    g.lib.mhfu_em_host_brain(ENT)
+    assert pose(g, 5) == (0.0,) * 16
+    g.poke(a.ENTITY.VTABLE, "I", int(a.TIGREX_VTABLE))
+    g.lib.mhfu_em_host_brain(ENT)
+    assert pose(g, 5) == pose(g, 3) and pose(g, 6) == (0.0,) * 16
+
+
+def test_tip_takes_up_to_eight_and_clears(g: Game) -> None:
+    tailed(g)
+    assert not tip(g, [(5, 3)] * 9)
+    assert tip(g, [(5, 3)] * 8) and tip(g, [])
+    set_pose(g, 3, 30.0)
+    g.lib.mhfu_em_host_brain(ENT)
+    assert pose(g, 5) == (0.0,) * 16
+
+
+def test_the_cut_holds_a_rule_until_the_drop(g: Game) -> None:
+    g.rule(0, from_mask=0xFF, to_main=3, to_sub=6)
+    cut(g)
+    g.frames(5)
+    assert g.entered() == []
+    drop(g)
+    g.frame()
+    assert g.entered() == [(3, 6)]
+
+
+def test_the_cut_holds_a_request(g: Game) -> None:
+    cut(g)
+    assert g.lib.mhfu_em_request(3, 6, 1)
+    g.frames(3)
+    assert g.entered() == []
+    drop(g)
+    g.frame()
+    assert [c for c in g.calls() if c[0] == "E"] == [("E", ENT, 3, 6, 1)]
+
+
+def test_the_cut_holds_a_play_forced_or_not(g: Game) -> None:
+    g.own(0, 46)
+    cut(g)
+    g.lib.mhfu_em_play(ENT, 0, 1)
+    g.frames(3)
+    assert g.entered() == []
+    drop(g)
+    g.frame()
+    assert g.entered() == [(0, 2)] and g.lib.mhfu_em_playing() == 0
+
+
+def test_the_tail_cut_event_reaches_its_rule_after_the_drop(g: Game) -> None:
+    g.rule(0, on=TAIL, to_main=3, to_sub=6, count=1)
+    g.frame()
+    cut(g)  # SEVERED rises with (4, 4)
+    g.frames(4)
+    assert g.entered() == []
+    drop(g)
+    g.frame()
+    assert g.entered() == [(3, 6)]
+
+
+def test_a_one_mesh_model_leaves_the_cut_as_before(g: Game) -> None:
+    """TAIL_SPAWN's object draws mesh 1: without it the drop must not run."""
+    g.rule(0, from_mask=1 << 4, to_main=3, to_sub=6)
+    cut(g, meshes=1)
+    g.frame()
+    assert g.entered() == [(3, 6)]

@@ -72,7 +72,7 @@ def modules(m: manifest.Manifest, built: Built, where: Path, games: data.Data) -
     texts = {
         layout.module_name(m): layout.lua(m, built.layout),
         layout.turns_module_name(m): layout.turns_lua(m, built.layout),
-        moves.module_name(m): moves.lua(m, built.layout, known),
+        moves.module_name(m): moves.lua(m, built.layout, known, built.tip),
     }
     where.mkdir(parents=True, exist_ok=True)
     out = []

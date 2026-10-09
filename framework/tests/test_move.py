@@ -404,6 +404,17 @@ def test_a_move_waits_for_the_notice(g: Game) -> None:
     assert g.calls()[0] == ("E", ENT, 0, 1, 0)
 
 
+def test_a_move_waits_for_the_cut_forced_or_not(g: Game) -> None:
+    g.lib.host_cut(1)
+    g.play(46, force=1)
+    for _ in range(5):
+        g.frame()
+    assert g.calls() == [] and g.state("WAITED") == (0,)
+    g.lib.host_cut(0)
+    g.frame()
+    assert g.calls()[0] == ("E", ENT, 0, 1, 0)
+
+
 def test_a_forced_move_does_not_wait(g: Game) -> None:
     notice(g, 0)
     g.poke(a.ENTITY.SCRIPT_WAKE, "B", 1)

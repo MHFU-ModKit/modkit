@@ -28,7 +28,7 @@ from .layout import Layout
 from .manifest import Build, Manifest, Skin
 from .mesh import Part, Skinned
 from .model import ANIMATION, MODEL, SKELETON, TEXTURES
-from .rig import Rig
+from .rig import Rig, Tip
 
 Mode = Literal["source_skeleton", "retarget"]
 
@@ -109,6 +109,8 @@ class Built:
     pac: bytes
     summary: Summary
     layout: Layout
+    tip: Tip | None = None
+    """The tail tip's chain and the joints it rides, for `<port>_moves.lua`; None without one."""
 
 
 # 1. the inputs
@@ -230,9 +232,10 @@ def animation(
     placed: Layout,
     lift: float = 0.0,
 ) -> fu.Anim:
-    """The donor's moveset on the rig's joints in the entries `placed` gives it, its pelvis
-    raised by `lift` world units, and on its own rig its travel and turns where the engine takes
-    them (`travel.carry`). Entries it leaves keep the host's clips on the host's rig."""
+    """The donor's moveset on the rig's joints in the entries `placed` gives it, cut where it
+    cuts, its pelvis raised by `lift` world units, and on its own rig its travel and turns where
+    the engine takes them (`travel.carry`). Entries it leaves keep the host's clips on the
+    host's rig."""
     clips: Mapping[int, Clip] = d.clips
     if lift:
         bone_of_record = {r: bone for bone, r in record_of.items()}
@@ -243,17 +246,19 @@ def animation(
     # records are not positional in either mode: joint -> donor bone -> record
     track_of = {j: record_of.get(bone) for j, bone in bind.bone_of.items() if bone is not None}
     keep = bind.mode == "retarget"
-    out = motion.build(clips, placed.entries, h.anim, bind.rig.streams, track_of, keep)
+    played = layouts.clips(placed, clips)
+    out = motion.build(played, {e: e for e in played}, h.anim, bind.rig.streams, track_of, keep)
     return out if keep else travel.carry(out, bind.rig.skeleton)
 
 
 def authored(m: Manifest, placed: Layout) -> dict[int, float]:
     """Entry -> the manifest's `turn` of the clip it holds."""
-    return {
-        placed.ids[c.id]: c.turn
-        for c in m.clips.values()
-        if c.turn is not None and c.id in placed.ids
-    }
+    out = {}
+    for c in m.clips.values():
+        e = placed.entry(c)
+        if c.turn is not None and e is not None:
+            out[e] = c.turn
+    return out
 
 
 # 6. the PAC
@@ -280,11 +285,11 @@ def build(m: Manifest, data: Data) -> Built:
     bind = binding(m.build, d, h, animated(m.build, record_of, len(d.skeleton.bones)))
     kept = parts(d, m.build)
     skinned, skin_used = skin(kept, m.build, bind, h)
-    model = mesh.build(skinned, d.model.scale)
+    model = mesh.build(skinned, d.model.scale, tip=bind.rig.tip)
     placed = layout(m, d, h)
     anim = animation(d, h, bind, record_of, placed, m.build.ground_lift)
     turned = travel.turns(anim, bind.rig.skeleton, authored(m, placed))
-    frames = {e: motion.frames(d.clips[cid]) for e, cid in placed.entries.items()}
+    frames = {e: motion.frames(c) for e, c in layouts.clips(placed, d.clips).items()}
     placed = dataclasses.replace(placed, turns=turned, frames=frames)
     out = pac(h, bind.rig, model, d.textures, anim)
     summary = Summary(
@@ -301,4 +306,4 @@ def build(m: Manifest, data: Data) -> Built:
         size=len(out),
         host_size=len(h.pac.to_bytes()),
     )
-    return Built(out, summary, placed)
+    return Built(out, summary, placed, bind.rig.tip)

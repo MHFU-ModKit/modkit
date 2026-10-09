@@ -1,10 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The skeleton a port ships, and how the donor's bones land on its joints.
+"""The skeleton a port ships, how the donor's bones land on its joints, and its tail tip.
 
 MHFU's animation FK walks the animated joints in streams (the Tigrex: 31 body, 9 head, 5 tail),
 each a contiguous run of joint indices named by `Bone.stream`; the joints past the animated count
 take one more stream id. A parent keeps a lower index than its children.
+
+A severable tail's tip is a second root chain at `params[1]`, past the animated joints: the
+engine poses it from its own binds (`roots[1]`) and its dropped-tail object draws it as PMO mesh
+record 1. While the tail is whole, each chain joint copies a live tail joint's pose (`Tip`).
 """
 
 from __future__ import annotations
@@ -24,8 +28,78 @@ APPENDAGE_SHARE = 0.4
 ORIGIN_EPS = 1.0
 """A joint this close to the model origin belongs to the leading origin chain."""
 
-ADOPTER = 1
-"""The joint an orphan root chain is re-parented onto: the donor's first joint past its root."""
+OFFSET_TOL = 0.5
+"""Units two bind positions may differ by and still be the same joint."""
+
+
+@dataclass(frozen=True)
+class Tip:
+    """A severable tail's tip chain and the live joints it rides while the tail is whole."""
+
+    pairs: tuple[tuple[int, int], ...]
+    """`(joint, carrier)`: the root, then the chain in index order. A joint that copies its
+    carrier's pose skins as `carrier_skin · T(offset)`, which lays the tip on the stump."""
+    offset: Vec3
+    """`bind(carrier) - bind(joint)`, one for the whole chain; the root (no vertices) takes its
+    first child's carrier."""
+
+    @property
+    def joints(self) -> list[int]:
+        return [j for j, _ in self.pairs]
+
+
+def tip_of(skeleton: Skeleton) -> Tip | None:
+    """The chain rooted at `params[1]` and its carriers: the joints of the body tree at each
+    chain joint's bind plus one offset. None without a second root there or with a bare root.
+
+    Of several such offsets, the one whose carriers keep the chain's parent links and end the
+    body's tree (a neck can mirror a short chain too); raises when none, or a tie, is left."""
+    n = len(skeleton.bones)
+    root = skeleton.params[1] if len(skeleton.params) > 1 else 0
+    if not 0 < root < n or skeleton.bones[root].parent >= 0:
+        return None
+    parents = [b.parent for b in skeleton.bones]
+    kids = _children(parents)
+    chain = sorted(_subtree(kids, root))[1:]
+    if not chain:
+        return None
+    bind = _bind_of(skeleton)
+    live = sorted(_subtree(kids, 0))
+    found: dict[tuple[int, ...], Vec3] = {}
+    for c in live:
+        d = _minus(bind[c], bind[chain[0]])
+        at = [_at(bind, live, _plus(bind[j], d)) for j in chain]
+        hit = tuple(k for k in at if k is not None)
+        if len(hit) == len(chain):
+            found[hit] = d
+
+    def fit(carriers: tuple[int, ...]) -> tuple[bool, bool]:
+        of = dict(zip(chain, carriers, strict=True))
+        linked = all(parents[of[j]] == of[parents[j]] for j in chain if parents[j] in of)
+        ends = all(k in carriers for c in carriers for k in kids.get(c, ()))
+        return linked, ends
+
+    best = max(map(fit, found), default=None)
+    picks = [c for c in found if fit(c) == best]
+    if len(picks) != 1:
+        why = "no one offset pairs" if not picks else f"{len(picks)} offsets pair"
+        raise ValueError(f"{why} the tip chain {root}..{chain[-1]} with the body's joints")
+    (pick,) = picks
+    return Tip(((root, pick[0]), *zip(chain, pick, strict=True)), found[pick])
+
+
+def _at(bind: Sequence[Vec3], joints: Sequence[int], at: Vec3) -> int | None:
+    """The joint of `joints` nearest `at` within `OFFSET_TOL`."""
+    gap, j = min(((math.dist(bind[j], at), j) for j in joints), default=(math.inf, -1))
+    return j if gap < OFFSET_TOL else None
+
+
+def _minus(a: Vec3, b: Vec3) -> Vec3:
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _plus(a: Vec3, b: Vec3) -> Vec3:
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
 
 
 @dataclass(frozen=True)
@@ -42,8 +116,7 @@ class Rig:
     """Donor bone -> output joint; empty on the host's rig."""
     lead_pad: int
     """Origin joints put in front of the donor's so its hip lands on the host's hip joint."""
-    adopted: list[int]
-    """Donor orphan roots re-parented onto the body."""
+    tip: Tip | None
 
     @property
     def animated(self) -> int:
@@ -55,9 +128,8 @@ def from_donor(donor: Skeleton, host: Skeleton, animated: int) -> Rig:
     streams read off its bone tree and reordered so each stream is a contiguous run.
 
     The host's overlay pins the hip to a joint index, the end of its leading origin chain, so
-    the donor's shorter chain is padded to the same length. An orphan root chain (the severed
-    tail's carve object) is adopted onto `ADOPTER` so it moves with the body; the host leaves
-    its own unparented, but a donor rig's origin sits at the hip and the chain would float.
+    the donor's shorter chain is padded to the same length. A second root (the tail tip's chain)
+    stays unparented at `params[1]`, as on a native rig; raises for one anywhere else.
     """
     n = len(donor.bones)
     if not 0 < animated <= n:
@@ -65,9 +137,12 @@ def from_donor(donor: Skeleton, host: Skeleton, animated: int) -> Rig:
     parents = [b.parent for b in donor.bones]
     if any(p >= i for i, p in enumerate(parents)):
         raise ValueError("a donor bone's parent does not come before it")
-    adopted = [i for i, p in enumerate(parents) if i and p < 0]
-    for i in adopted:
-        parents[i] = ADOPTER if i != ADOPTER else 0
+    roots = [i for i, p in enumerate(parents) if i and p < 0]
+    if roots and roots != [animated]:
+        raise ValueError(
+            f"donor roots at bones {roots}: only one, at the animated count {animated}, can be "
+            "the tail tip's"
+        )
     bind = bind_world(parents, [b.position for b in donor.bones])
     lead_pad = max(0, lead_origin(_bind_of(host)) - lead_origin(bind))
 
@@ -75,7 +150,11 @@ def from_donor(donor: Skeleton, host: Skeleton, animated: int) -> Rig:
     streams[0] += lead_pad
     joint_of = {old: new + lead_pad for new, old in enumerate(order)}
     out_parents = [j - 1 for j in range(lead_pad)]
-    out_parents += [p + lead_pad if p >= 0 else lead_pad - 1 for p in reorder(parents, order)]
+    # the donor's root hangs off the pad; the tip's root stays a root
+    out_parents += [
+        p + lead_pad if p >= 0 else lead_pad - 1 if not new else -1
+        for new, p in enumerate(reorder(parents, order))
+    ]
 
     shape = [Bone() for _ in range(lead_pad)]
     for old in order:
@@ -84,7 +163,7 @@ def from_donor(donor: Skeleton, host: Skeleton, animated: int) -> Rig:
     bones = _linked(shape, out_parents, streams)
     skeleton = Skeleton(bones, [0, sum(streams)], magic=FU_MAGIC)
     out_bind = bind_world(out_parents, [b.position for b in bones])
-    return Rig(skeleton, out_parents, out_bind, streams, joint_of, lead_pad, adopted)
+    return Rig(skeleton, out_parents, out_bind, streams, joint_of, lead_pad, tip_of(skeleton))
 
 
 def from_host(host: Skeleton) -> Rig:
@@ -96,7 +175,7 @@ def from_host(host: Skeleton) -> Rig:
     if streams is None:
         raise ValueError("the host's animated joints are not contiguous stream runs")
     parents = [b.parent for b in host.bones]
-    return Rig(copy.deepcopy(host), parents, _bind_of(host), streams, {}, 0, [])
+    return Rig(copy.deepcopy(host), parents, _bind_of(host), streams, {}, 0, tip_of(host))
 
 
 def partition(

@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
-/* em_vhook: the core wraps two slots of the spawned big monster's species vtable,
- * MONSTER_VTABLE.ENTER_ACTION (provisions a behaviour pair) and .AI_STEP (every frame).
+/* em_vhook: the core wraps slots of the spawned big monster's species vtable,
+ * MONSTER_VTABLE.ENTER_ACTION (provisions a behaviour pair), .AI_STEP (every frame), .ANIM_EVENTS
+ * and OBJ_VTABLE.BRAIN (the tail tip).
  *
  *   substitution  the engine's (main, id) is rewritten before enter-action runs, so our
  *                 pair is provisioned like a native one;
@@ -13,7 +14,12 @@
  *                 flinch plays its move in place of the host's reaction;
  *   own moves     a port's moves by slot, played by the move player (mhfu/move.h) when asked,
  *                 by a rule, or after the move before them;
- *   step          a C function on every AI frame, on the game thread, before the host step.
+ *   step          a C function on every AI frame, on the game thread, before the host step;
+ *   tail tip      a port's tip joints posed from carriers of the live tail until the drop.
+ *
+ * The tail cut runs to its drop first: while an entity is in em75's cut pair (4,4) with
+ * ENTITY.SEVERED and the drop (ENTITY.FLAGS 0x4000, then (4,15)) still to come, requests, plays,
+ * an own move's start and the rules wait, and events seen meanwhile reach the rules after it.
  *
  * Every call only writes the config block the stubs read, so it is safe from any thread,
  * and a no-op returning 0 while no vtable is wrapped. */
@@ -74,6 +80,9 @@ typedef struct {
     uint32_t rule_left[MHFU_EM_RULES];
     uint32_t sub_left[MHFU_EM_SUBS];
     uint32_t events_muted;       /* animation-event steps skipped (mhfu_em_mute_events) */
+    uint32_t tip_pairs;          /* the tail tip's pairs in force (mhfu_em_tip) */
+    uint32_t tip_copies;         /* frames the tip was posed */
+    uint32_t cut_waits;          /* AI frames the cut held what we start */
 } mhfu_em_status_t;
 
 /* 1 while a big monster's vtable is wrapped (from its spawn to the next quest_beginning). */
@@ -107,6 +116,17 @@ void mhfu_em_mute_events(uint32_t entity);
 void mhfu_em_clear(void);
 
 void mhfu_em_status(mhfu_em_status_t *out);
+
+/* --- the tail tip ----------------------------------------------------------------------------
+ * After the species brain (its POSE_UPDATE and ATTACH) and before the draw, each pair's
+ * JOINT.POSE is copied from its carrier joint into its joint, on every entity of the wrapped
+ * species, until TAIL_DROP sets ENTITY.FLAGS 0x4000; from then on the game's dropped tail poses
+ * the chain. */
+#define MHFU_EM_TIP_MAX 8
+
+/* pairs[i] = {joint, carrier}; n 0 clears. 0 while nothing is wrapped or n is over
+ * MHFU_EM_TIP_MAX. Dropped with the wrap at the quest's end. */
+int  mhfu_em_tip(const uint8_t (*pairs)[2], int n);
 
 /* --- own moves ------------------------------------------------------------------------------
  * A port's own moves, by slot, in partition memory. The brain, in C on the wrapped AI step, plays

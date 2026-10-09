@@ -16,7 +16,8 @@
  *
  * A move asked for while the monster's notice runs (the player's ENTITY.AWARE bit set,
  * COMBAT_MODE still 0: the roar, the hub, the AI script's combat entry) waits for it, up to
- * MHFU_MOVE_WAIT AI frames, unless the call FORCEs it.
+ * MHFU_MOVE_WAIT AI frames, unless the call FORCEs it. One asked for while the tail cut waits for
+ * its drop (mhfu/em_vhook.h) starts after the drop, forced or not.
  *
  * A reaction can be replaced by a move (mhfu_move_react): the engine's own reaction runs up to
  * its enter-action (FLINCH_PARTS counters, pending damage into HP), which then enters the move's

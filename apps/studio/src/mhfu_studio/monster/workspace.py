@@ -970,7 +970,7 @@ class MonsterWorkspace(Workspace):
             notes.append(f"original moveset unreadable ({e})")
         if host is not None and donor is not None:
             try:
-                placed = layout.of(m, donor, host).entries
+                placed = layout.of(m, donor, host)
             except ValueError as e:
                 notes.append(f"no clip layout ({e}): each anim read as its own clip id")
         return clips.coverage(port, host, donor, placed), notes
