@@ -24,6 +24,7 @@
 #include "em_vhook.h"
 #include "move.h"
 #include "monster_events.h"
+#include "npc.h"
 #include "mips.h"
 #include "mod.h"
 
