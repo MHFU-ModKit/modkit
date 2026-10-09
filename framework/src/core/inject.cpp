@@ -104,39 +104,18 @@ static void parse_subs(inject_entry_t *e)
     }
 }
 
-/* Reads path into the xram block *buf, allocating one when it is missing or too small;
- * the file's size, 0 on failure. */
-static uint32_t read_into(const char *path, uint32_t *buf, uint32_t *cap)
-{
-    SceUID fd = sceIoOpen(path, PSP_O_RDONLY, 0);
-    if (fd < 0) { mhfu_log("[inject] open FAILED %s rc=0x%08X", path, (unsigned)fd); return 0; }
-    uint32_t fsz = (uint32_t)sceIoLseek(fd, 0, PSP_SEEK_END);
-    sceIoLseek(fd, 0, PSP_SEEK_SET);
-    if (fsz < 0x40) { sceIoClose(fd); mhfu_log("[inject] %s too small (%uB)", path, (unsigned)fsz); return 0; }
-    if (!*buf || fsz > *cap) {
-        uint32_t c = (fsz + 0xFFFu) & ~0xFFFu;
-        uint32_t b = mhfu_xram_alloc(c);
-        if (!b) { sceIoClose(fd); mhfu_log("[inject] xram exhausted (need %uKB)", (unsigned)(c / 1024)); return 0; }
-        *buf = b; *cap = c;
-    }
-    int rd = sceIoRead(fd, (void *)*buf, (int)fsz);
-    sceIoClose(fd);
-    if (rd != (int)fsz) { mhfu_log("[inject] read short %s rc=0x%08X", path, (unsigned)rd); return 0; }
-    return fsz;
-}
-
 /* Same-size edit: the edit and <path>.orig, which identifies the species so a look-alike
  * monster never matches. 0 once the edit is ready to apply. */
 static int read_file(inject_entry_t *e)
 {
     e->has_diff = 0;                         /* no overwrite from a half-read buffer */
-    e->file_size = read_into(e->path, &e->buf, &e->buf_cap);
+    e->file_size = mhfu_xram_read(e->path, &e->buf, &e->buf_cap);
     if (!e->file_size) return -1;
     parse_subs(e);
 
     char opath[176];
     snprintf(opath, sizeof(opath), "%s.orig", e->path);
-    uint32_t osz = read_into(opath, &e->obuf, &e->obuf_cap);
+    uint32_t osz = mhfu_xram_read(opath, &e->obuf, &e->obuf_cap);
     if (!osz) { mhfu_log("[inject] no usable %s: the edit is not applied", opath); return -2; }
     if (osz != e->file_size) {
         mhfu_log("[inject] %s is %uB, the edit %uB: a same-size edit only (else inject_relocate)",
@@ -226,7 +205,7 @@ static int stage_relocate(inject_entry_t *e)
 {
     if (e->ready) return 1;
     if (e->tried) return 0;
-    uint32_t gsz = read_into(e->path, &e->buf, &e->buf_cap);   /* keeps a new block on failure */
+    uint32_t gsz = mhfu_xram_read(e->path, &e->buf, &e->buf_cap);  /* keeps a new block on failure */
     if (!gsz) {
         e->tried = 1;
         mhfu_xram_log("[realhw] relocate STAGE FAILED file=%u (volatile lock/read?) -> native",

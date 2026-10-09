@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
- * Private to inject.cpp, xram.cpp and volatile_interposer.cpp: the injected-file
+ * Private to inject.cpp, xram.cpp, volatile_interposer.cpp and npc.cpp: the injected-file
  * table and the extra RAM its buffers live in.
  */
 #ifndef MHFU_CORE_XRAM_H
@@ -72,6 +72,14 @@ extern int mhfu_xram_mode;
 
 /* 16-byte-aligned bump allocation from xram; 0 when exhausted or the lock is busy. */
 uint32_t mhfu_xram_alloc(uint32_t n);
+
+/* Reads path into the xram block *buf, allocating one when it is missing or too small;
+ * the file's size, 0 on failure. */
+uint32_t mhfu_xram_read(const char *path, uint32_t *buf, uint32_t *cap);
+
+/* path read into a block of its own for good: its address and *size, 0 when unreadable, out of
+ * room or on a real PSP, whose volatile partition is only lent for a quest. */
+uint32_t mhfu_xram_stage_file(const char *path, uint32_t *size);
 
 /* Appends a line to ms0:/PSP/mhfu_brute_debug.txt; skipped while ms0 I/O is unsafe. */
 void mhfu_xram_log(const char *fmt, ...);
