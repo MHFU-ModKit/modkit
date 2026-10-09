@@ -165,6 +165,7 @@ HUNTER = int(a.PLAYER_ENTITY) + a.ENTITY.TRANSLATION  # x at +0, z at +8
 HUNTER_YAW = int(a.PLAYER_ENTITY) + a.ENTITY.YAW
 # 150 deg/s, a quarter turn in 50 frames, beside the hunter
 WALK_RATE, TURN_RATE, SIDE = 910, 327, 250
+SLIDE, SLIDE_FAST, ARRIVE_MIN = 290, 300, 150  # where the arrival stops a walk
 
 
 def zinogre_clips() -> dict[str, int]:
@@ -186,8 +187,9 @@ def place(dist: float, off: float = 0.0, yaw: int = 0) -> tuple[float, float]:
 
 
 class Follower:
-    """village_follower over a stubbed village. tick() sets what npc_status and the hunter read,
-    runs one 2 Hz tick and returns the (npc_play, npc_face) calls it made."""
+    """village_follower over a stubbed village. tick() sets what npc_status, the hunter and the
+    camera read, runs one 2 Hz tick and returns the (npc_play, npc_face) calls it made; its
+    npc_arrive calls land in `arrived`."""
 
     def __init__(self, lua: Any, *, settle: bool = True) -> None:
         fields = ", ".join(f"{k} = {v}" for k, v in CLIPS.items())
@@ -199,9 +201,11 @@ class Follower:
         self.hunter: dict[int, float] = {}
         self.hyaw = 0
         self.frames = 0
+        self.arrived: list[tuple[Any, ...]] = []
         self.m.npc_status = lambda _slot: self.status
         self.m.read_f32 = lambda at: self.hunter.get(at, 0.0)
         self.m.read_u16 = lambda at: self.hyaw if at == HUNTER_YAW else 0
+        lua.execute("mhfu.player_pos = function() return eye_x, 300.0, eye_z end")
         if settle:
             self.tick(frames=3)
 
@@ -213,20 +217,27 @@ class Follower:
         npc: tuple[float, float] = (0.0, 0.0),
         yaw: int = 0,
         hyaw: float = 0.0,
+        eye: tuple[float, float] | None = None,
         frames: int | None = None,
         shown: bool = True,
         **status: Any,
     ) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]]]:
-        """at: the hunter, facing `hyaw` degrees; npc: the NPC, facing `yaw`."""
+        """at: the hunter, facing `hyaw` degrees; npc: the NPC, facing `yaw`; eye: the camera, by
+        default 500 behind the hunter, where neither side is farther from it."""
         self.frames = self.frames + 15 if frames is None else frames
         self.hunter = {HUNTER: at[0], HUNTER + 8: at[1]}
         self.hyaw = round(hyaw * 0x10000 / 360) % 0x10000
+        if eye is None:
+            a = math.radians(hyaw)
+            eye = (at[0] - 500 * math.sin(a), at[1] - 500 * math.cos(a))
+        self.lua.globals().eye_x, self.lua.globals().eye_z = eye
         fields = {"object": ENT, "frames": self.frames, "entry": entry, "playing": True}
         dist = math.dist(at, npc)
         fields |= {"yaw": yaw, "x": npc[0], "y": 0.0, "z": npc[1], "dist": dist} | status
         self.status = self.lua.table_from(fields) if shown else None
         self.lua.execute("mhfu.calls = {}")
         self.lua.globals().mhfu_tick()
+        self.arrived = calls(self.m, "npc_arrive")
         return calls(self.m, "npc_play"), calls(self.m, "npc_face")
 
     def still(self, **kw: Any) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]]]:
@@ -269,11 +280,18 @@ def test_follower_stands_on_spawn(lua: Any) -> None:
     assert f.tick(frames=3, entry=0, at=place(800)) == ([(0, IDLE, 0)], [(0, "still")])
 
 
+def stop(dist: float, entry: int = START) -> tuple[Any, ...]:
+    """The npc_arrive call that stops a walk `dist` short of its aim."""
+    return (0, pytest.approx(dist, abs=0.5), STOP, 6, IDLE)
+
+
 def test_follower_walks_to_a_far_hunter(lua: Any) -> None:
     f = Follower(lua)
     assert f.still(at=place(700)) == ([(0, START, 6)], [(0, "hunter", SIDE, 0, WALK_RATE)])
+    assert f.arrived == [stop(SLIDE)]
     assert list(f.m.logs.values())[-1] == "[village_follower] walk, 700 away"
     assert f.tick(entry=START, at=place(700), npc=(0, 80)) == ([], [])  # it walks on by itself
+    assert f.arrived == [stop(SLIDE)]  # the stop, re-armed for where the hunter is now
 
 
 @pytest.mark.parametrize(("moved", "walks"), [(0.0, False), (150.0, False), (250.0, True)])
@@ -306,26 +324,58 @@ def test_follower_never_slows_a_fast_walk(lua: Any) -> None:
     assert Follower(lua).still(entry=FAST, at=place(600)) == ([], [])
 
 
-@pytest.mark.parametrize(("entry", "short"), [(START, 330.0), (FAST, 410.0)])
-def test_follower_stops_short_of_its_aim(lua: Any, entry: int, short: float) -> None:
-    """The stop clip slides on, so a still hunter's aim, SIDE right of them, is `short` ahead."""
+@pytest.mark.parametrize(("entry", "slide"), [(START, SLIDE), (FAST, SLIDE_FAST)])
+def test_follower_arrives_by_the_slide(lua: Any, entry: int, slide: float) -> None:
+    """C stops it, the slide short of a still hunter's aim; the stop clip is not Lua's."""
     f = Follower(lua)
     hunter, aim_x = (0.0, 1000.0), -SIDE  # facing +z: their right is -x
-    assert f.still(entry=entry, at=hunter, npc=(aim_x, 1000.0 - short - 1))[0] == []
-    plays, faces = f.tick(entry=entry, at=hunter, npc=(aim_x, 1000.0 - short + 1))
-    assert (plays, faces) == ([(0, STOP, 6, IDLE)], [(0, "still")])
+    assert f.still(entry=entry, at=hunter, npc=(aim_x, 1000.0 - slide + 1)) == ([], [])
+    assert f.arrived == [stop(slide)]
     assert f.tick(entry=STOP, at=hunter, npc=(aim_x, 1000.0 - 100)) == ([], [])  # its `after`
+    assert f.arrived == []
     assert f.tick(entry=IDLE, at=hunter, npc=(aim_x, 1000.0), yaw=0x4000) == ([], [(0, "still")])
 
 
-def test_follower_walks_on_while_the_hunter_does(lua: Any) -> None:
-    """Where a still hunter would have it stop, one walking on at 120/s keeps it going."""
+@pytest.mark.parametrize(
+    ("was", "dist"),
+    [
+        (940.0, ARRIVE_MIN),  # walking on at 120/s, its aim draws off 240: never under the floor
+        (980.0, SLIDE - 80),
+        (1060.0, SLIDE + 240),  # walking up to it: stops sooner
+    ],
+)
+def test_follower_arrival_leads_the_hunter(lua: Any, was: float, dist: float) -> None:
     f = Follower(lua)
-    f.tick(entry=START, at=(0.0, 940.0), npc=(-SIDE, 500.0))
+    f.tick(entry=START, at=(0.0, was), npc=(-SIDE, 500.0))
     assert f.tick(entry=START, at=(0.0, 1000.0), npc=(-SIDE, 700.0))[0] == []
-    assert Follower(lua).still(entry=START, at=(0.0, 1000.0), npc=(-SIDE, 700.0))[0] == [
-        (0, STOP, 6, IDLE)
-    ]
+    assert f.arrived == [stop(dist)]
+
+
+def order(f: Follower) -> list[str]:
+    """The names of the calls the last tick made, in order."""
+    return [c[1] for c in f.m.calls.values()]
+
+
+def test_follower_arms_every_walk(lua: Any) -> None:
+    """A walk, a faster one, a change of side: each faces and arms the stop after it."""
+    f = Follower(lua)
+    npc = (300.0, 0.0)  # on the left of a hunter facing +z
+    f.still(at=(0.0, 700.0), npc=npc)
+    assert order(f) == ["npc_play", "npc_face", "npc_arrive"]
+    f.still(entry=START, at=(0.0, 950.0), npc=npc)
+    assert order(f) == ["npc_play", "npc_face", "npc_arrive"]
+    assert f.arrived == [stop(SLIDE_FAST)]
+    f.tick(entry=FAST, at=(0.0, 950.0), hyaw=180.0, npc=npc)  # turned about: now on their right
+    assert order(f) == ["npc_face", "npc_arrive"]
+
+
+def test_follower_starts_a_walk_on_the_hunter_who_walks_off(lua: Any) -> None:
+    """The aim drawing off lowers the stop, so a walk starts where a still hunter's would not."""
+    f = Follower(lua)
+    f.tick(at=(0.0, 300.0))
+    assert f.still(at=(650.0, 0.0), yaw=0x4000)[0] == []
+    f.tick(at=(650.0, 0.0), yaw=0x4000)
+    assert f.tick(at=(650.0, 60.0), yaw=0x4000)[0] == [(0, START, 6)]
 
 
 def test_follower_idles_after_a_clip_that_ended_alone(lua: Any) -> None:
@@ -398,3 +448,45 @@ def test_follower_starts_over_on_a_respawn(lua: Any) -> None:
     assert f.tick(at=place(700))[0] == [(0, START, 6)]  # now it follows again
     # a load between two ticks shows only as the frame count starting over
     assert f.tick(entry=START, frames=2, at=place(700))[0] == [(0, IDLE, 0)]
+
+
+# a hunter at (0, 1000) facing +z; their right is -x, their left +x
+CAM_RIGHT = (-500.0, 1000.0)  # the camera off their right: the left aim is the far one
+
+
+def test_follower_prefers_the_side_away_from_the_camera(lua: Any) -> None:
+    f = Follower(lua)
+    walk = f.still(at=(0.0, 1000.0), npc=(0.0, 300.0), eye=CAM_RIGHT)
+    assert walk[1] == [(0, "hunter", -SIDE, 0, WALK_RATE)]
+    walk = Follower(lua).still(at=(0.0, 1000.0), npc=(0.0, 300.0), eye=(500.0, 1000.0))
+    assert walk[1] == [(0, "hunter", SIDE, 0, WALK_RATE)]
+
+
+def test_follower_crosses_behind_the_hunter_to_the_far_side(lua: Any) -> None:
+    """Over on the near side but more behind the hunter than beside them: it goes round."""
+    walk = Follower(lua).still(at=(0.0, 1000.0), npc=(-300.0, 300.0), eye=CAM_RIGHT)
+    assert walk[1] == [(0, "hunter", -SIDE, 0, WALK_RATE)]
+
+
+def test_follower_keeps_the_near_side_it_is_well_over(lua: Any) -> None:
+    """Beside the hunter on the camera's side, it never cuts across them."""
+    yaw = round(math.degrees(math.atan2(700, 100)) * 0x10000 / 360)  # facing the hunter
+    walk = Follower(lua).still(at=(0.0, 1000.0), npc=(-700.0, 900.0), yaw=yaw, eye=CAM_RIGHT)
+    assert walk[1] == [(0, "hunter", SIDE, 0, WALK_RATE)]
+
+
+def test_follower_side_holds_near_the_camera_line(lua: Any) -> None:
+    """Both aims about as far from the camera, and it near the hunter's line: the side holds."""
+    f = Follower(lua)
+    eye = (-60.0, 500.0)  # nearly behind the hunter: the aims differ by under CAM
+    assert f.still(at=(0.0, 1000.0), npc=(40.0, 300.0), eye=eye)[1][-1][2] == SIDE
+    f.tick(entry=START, at=(0.0, 1000.0), npc=(-40.0, 400.0), eye=eye)
+    assert f.tick(entry=START, at=(0.0, 1000.0), npc=(50.0, 450.0), eye=eye) == ([], [])
+
+
+def test_follower_side_holds_through_the_walk(lua: Any) -> None:
+    """Gone for the far side, it does not flip back as it crosses the hunter's line."""
+    f = Follower(lua)
+    f.still(at=(0.0, 1000.0), npc=(-300.0, 300.0), eye=CAM_RIGHT)
+    for npc in ((-200.0, 500.0), (-60.0, 700.0), (80.0, 850.0)):
+        assert f.tick(entry=START, at=(0.0, 1000.0), npc=npc, eye=CAM_RIGHT) == ([], [])

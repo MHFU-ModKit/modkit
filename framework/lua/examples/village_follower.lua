@@ -1,8 +1,9 @@
 -- SPDX-License-Identifier: MIT
 -- SPDX-FileCopyrightText: 2026 sp00ktober
 -- village_follower.lua: a half-size Zinogre that follows the hunter around Pokke village. It walks
--- toward a point beside them, on whichever side it is, turning as it goes, stops there, and turns
--- on the spot to face them when they are behind it. It can't be talked to and isn't solid.
+-- toward a point beside them, on the side away from the camera unless it is well over on the
+-- other, turning as it goes, stops there, and turns on the spot to face them when they are behind
+-- it. It can't be talked to and isn't solid.
 --
 -- Needs, once: the port built and placed for injection, from modkit with $MHFU_DATA and
 -- $MHP3RD_DATA naming the extracted games,
@@ -13,9 +14,10 @@
 -- npc_add reads the PAC from the memory stick, so it runs while mods load and once per boot (a
 -- hot reload in the village keeps the NPC it added). The brain is the global mhfu_tick, 2 Hz while
 -- the hunter roams: it reads npc_status and gives one order a tick, and C keeps turning and
--- chaining clips between ticks. What plays is learned from status.entry, so a respawn or a clip
--- that ended on its own needs no bookkeeping. Don't run it next to a mhfu_port mod or
--- cli_bridge.lua: they own the tick.
+-- chaining clips between ticks. Every walk arms npc_arrive, so C stops it at its aim on the frame
+-- it gets there, also while a dialogue or a prompt zone holds the tick. What plays is learned from
+-- status.entry, so a respawn or a clip that ended on its own needs no bookkeeping. Don't run it
+-- next to a mhfu_port mod or cli_bridge.lua: they own the tick.
 
 local PAC = "ms0:/PSP/PLUGINS/mhfu_framework/inject/zinogre.bin"
 local FPS = 30                                    -- game frames a second: what a rate counts
@@ -26,10 +28,12 @@ local FAR, FASTER = 600, 900                      -- from the hunter: walk from 
 local MOVED = 200                                 -- or once they moved this far from where it rested
 local SIDE = 250                                  -- aims this far beside the hunter, not at them
 local SWAP = 60                                   -- changes side once this far over their line
--- the stop clip slides ~290 at half size (~300 out of the faster walk): stop this far short of
--- the aim, half a tick's walk included, and allow for where the hunter gets to meanwhile
-local STOP, STOP_FAST, LEAD = 330, 410, 2
-local GO = STOP + 100                             -- a walk from idle covers 100 before it stops
+local CAM = 100                                   -- or to the aim this much farther from the camera
+-- the stop clip slides ~290 at half size (~300 out of the faster walk): the arrival fires this far
+-- short of the aim, less how far the aim draws off over LEAD seconds of the hunter's walk; never
+-- under ARRIVE_MIN, so a tick held while the hunter walks lets it slide past the aim by 150 at most
+local SLIDE, SLIDE_FAST, LEAD, ARRIVE_MIN = 290, 300, 2, 150
+local WALK_MIN = 150                              -- a walk from idle covers this before it stops
 local TURN_MIN = deg(50)                          -- idle turns start with the hunter this far off
 local TURN_DIST = 120                             -- closer, the bearing is noise
 local WALK_RATE = deg(150) // FPS                 -- YAW units a frame
@@ -85,10 +89,44 @@ local function to_aim(st, h, lead)
   return math.sqrt((x - st.x) ^ 2 + (z - st.z) ^ 2)
 end
 
---- Keeps `side` on the side of the hunter it is on, so a turn of theirs never has it cross them.
-local function pick_side(st, h)
-  local right = (h.x - st.x) * math.cos(h.yaw) - (h.z - st.z) * math.sin(h.yaw)
-  if math.abs(right) > SWAP then side = right < 0 and -SIDE or SIDE end
+--- Picks `side`: the one whose aim is farther from the camera at `eye`, so it hides the hunter
+--- less, unless it is well over on the other side (more beside the hunter than behind them); else
+--- the side it is on, so a turn of theirs never has it cross them. CAM and SWAP keep it from
+--- flipping each tick.
+local function pick_side(st, h, eye)
+  local c, s = math.cos(h.yaw), math.sin(h.yaw)
+  local dx, dz = st.x - h.x, st.z - h.z
+  local right, behind = dz * s - dx * c, -(dx * s + dz * c)
+  local far = 0                                   -- the right aim's distance from the eye, less the left's
+  if eye then
+    far = math.sqrt((h.x - SIDE * c - eye.x) ^ 2 + (h.z + SIDE * s - eye.z) ^ 2)
+        - math.sqrt((h.x + SIDE * c - eye.x) ^ 2 + (h.z - SIDE * s - eye.z) ^ 2)
+  end
+  local want = far > CAM and SIDE or far < -CAM and -SIDE or nil
+  if want and right * want / SIDE >= -math.max(SWAP, behind) then
+    side = want
+  elseif math.abs(right) > SWAP then
+    side = right < 0 and -SIDE or SIDE
+  end
+end
+
+--- How far from its aim the arrival stops a walk on `entry`, and how far the aim is now.
+local function arrival(st, h, entry)
+  local now = to_aim(st, h, 0)
+  local slide = entry == FAST and SLIDE_FAST or SLIDE
+  return math.max(ARRIVE_MIN, slide - (to_aim(st, h, LEAD) - now)), now
+end
+
+--- Arms the stop of a walk on `entry` at its aim; npc_face disarms it, so it follows every face.
+local function arm(st, h, entry)
+  mhfu.npc_arrive(slot, (arrival(st, h, entry)), STOP_CLIP, BLEND, IDLE)
+end
+
+--- Walks on `entry` (none: the one playing) toward `side` of the hunter, stopping there.
+local function walk(st, h, entry)
+  if entry then mhfu.npc_play(slot, entry, BLEND) end
+  mhfu.npc_face(slot, "hunter", side, 0, WALK_RATE)
+  arm(st, h, entry or st.entry)
 end
 
 --- YAW units from the NPC's facing to the hunter, in -0x8000..0x7FFF. Positive is toward its left,
@@ -103,7 +141,7 @@ local function stand(blend)
   mhfu.npc_face(slot, "still")
 end
 
-local function from_idle(st, h)
+local function from_idle(st, h, eye)
   local err = bearing_error(st, h)
   rested = rested or { x = h.x, z = h.z }
   if st.dist > TURN_DIST and math.abs(err) > TURN_MIN then
@@ -112,29 +150,30 @@ local function from_idle(st, h)
     mhfu.npc_face(slot, "hunter", 0, 0, TURN_RATE)
     return
   end
-  pick_side(st, h)
+  pick_side(st, h, eye)
   local moved = math.sqrt((h.x - rested.x) ^ 2 + (h.z - rested.z) ^ 2)
-  if to_aim(st, h, 0) > GO and (st.dist > FAR or moved > MOVED) then
+  local entry = st.dist > FASTER and FAST or START
+  local stop, now = arrival(st, h, entry)
+  if now - stop > WALK_MIN and (st.dist > FAR or moved > MOVED) then
     say("walk, %.0f away", st.dist)
     rested = nil
-    mhfu.npc_play(slot, st.dist > FASTER and FAST or START, BLEND)
-    mhfu.npc_face(slot, "hunter", side, 0, WALK_RATE)
+    walk(st, h, entry)
   else
     mhfu.npc_face(slot, "still")                  -- a turn's gentle facing ends with its clip
   end
 end
 
-local function from_walk(st, h)
+--- C stops the walk at its aim; each tick re-aims it as the hunter moves.
+local function from_walk(st, h, eye)
   local was_side = side
-  pick_side(st, h)
-  if side ~= was_side then mhfu.npc_face(slot, "hunter", side, 0, WALK_RATE) end
-  if to_aim(st, h, LEAD) < (st.entry == FAST and STOP_FAST or STOP) then
-    say("stop, %.0f away", st.dist)
-    mhfu.npc_play(slot, STOP_CLIP, BLEND, IDLE)
-    mhfu.npc_face(slot, "still")
-  elseif st.entry == START and st.dist > FASTER then
+  pick_side(st, h, eye)
+  if st.entry == START and st.dist > FASTER then
     say("walk faster, %.0f away", st.dist)
-    mhfu.npc_play(slot, FAST, BLEND)              -- never back: START would replay its start-up
+    walk(st, h, FAST)                             -- never back: START would replay its start-up
+  elseif side ~= was_side then
+    walk(st, h)
+  else
+    arm(st, h, st.entry)
   end
 end
 
@@ -144,15 +183,17 @@ function mhfu_tick()
   local born = not seen or st.object ~= seen.object or st.frames < seen.frames
   seen = st
   local h = hunter(st)
+  local ex, _, ez = mhfu.player_pos()
+  local eye = ez and { x = ex, z = ez }
   local e = st.entry
   if born then
     say("spawned")
     rested = nil
     stand(0)
   elseif e == IDLE then
-    from_idle(st, h)
+    from_idle(st, h, eye)
   elseif e == START or e == FAST then
-    from_walk(st, h)
+    from_walk(st, h, eye)
   elseif (e ~= STOP_CLIP and e ~= TURN_R and e ~= TURN_L) or not st.playing then
     stand(BLEND)                                  -- a clip nobody asked for, or one that ended
   end
