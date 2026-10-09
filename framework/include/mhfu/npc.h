@@ -64,6 +64,12 @@ void mhfu_npc_play(int slot, uint16_t entry, uint8_t blend, uint16_t then);
  * (mhfu/steer.h). */
 void mhfu_npc_face(int slot, int mode, float x, float z, uint16_t rate);
 
+/* Arms slot's current face order: once slot is within `dist` of what it faces (FACE_POINT or
+ * FACE_HUNTER), `entry` plays as mhfu_npc_play(slot, entry, blend, then) would, and the turn
+ * stops. Checked every frame, so it holds while no mod runs; it fires once, and the next
+ * mhfu_npc_face disarms it. */
+void mhfu_npc_arrive(int slot, float dist, uint16_t entry, uint8_t blend, uint16_t then);
+
 /* slot's state as of its last frame into out; 0 if slot is not in use. */
 int mhfu_npc_status(int slot, mhfu_npc_status_t *out);
 

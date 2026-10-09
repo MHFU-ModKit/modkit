@@ -855,6 +855,17 @@ function mhfu.npc_play(slot, entry, blend, after) end
 ---@param rate? integer default 0x200
 function mhfu.npc_face(slot, mode, x, z, rate) end
 
+---Arms slot's current `npc_face` order: once it is within `dist` of what it faces ("point" or
+---"hunter"), `entry` plays as `npc_play(slot, entry, blend, after)` would, and the turn stops. C
+---checks it every frame, so it holds while no mod ticks (dialogue, a prompt zone); it fires once,
+---and the next `npc_face` disarms it.
+---@param slot integer
+---@param dist number
+---@param entry integer
+---@param blend? integer default 6
+---@param after? integer
+function mhfu.npc_arrive(slot, dist, entry, blend, after) end
+
 ---slot as of its last frame, or nil while it is unused.
 ---@param slot integer
 ---@return mhfu.NpcStatus?
