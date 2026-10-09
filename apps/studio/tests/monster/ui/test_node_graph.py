@@ -395,7 +395,7 @@ def test_edits_on_the_node(qtbot: Any) -> None:
     rec = Rec(view, qtbot)
     spin, real = field(view, "m", "n")._ctl, field(view, "c", "hp")._ctl
     combo, part = field(view, "c", "op")._ctl, field(view, "c", "part")._ctl
-    mains, note = field(view, "m", "mains")._ctl, field(view, NOTE and "t", NOTE)._ctl
+    mains, note = field(view, "m", "mains")._ctl, field(view, "t", NOTE)._ctl
     assert isinstance(spin, QSpinBox) and isinstance(real, QDoubleSpinBox)
     assert isinstance(mains, QToolButton) and isinstance(note, QLineEdit)
     spin.setValue(5)
