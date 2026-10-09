@@ -215,6 +215,12 @@ PART_BREAK = { eu = 0x09AD4940, type = "fn", doc = "(entity, flinched parts) fro
 BREAK_RECORD = { eu = 0x09AD7F48, type = "fn", doc = "(entity, break id): sets bit id of ENTITY.BROKEN and of the quest's per-species record" }
 BREAK_TABLE = { eu = 0x09BCE8E0, type = "BREAK_ROW[62]", doc = "part breaks of every species, a zero row last (game_task overlay)" }
 
+# --- big-monster pose and the tail drop ---
+POSE_UPDATE = { eu = 0x09AC51A0, type = "fn", doc = "(entity) from the species' OBJ_VTABLE.BRAIN: the clips, the joint hierarchy from every root, then ATTACH; the draw skins JOINT.POSE later in the frame" }
+ATTACH = { eu = 0x09AC5618, type = "fn", doc = "(entity) end of POSE_UPDATE: JOINT.POSE of a carrier joint (by species, em75 43) into SLOT_ROOTS[0] and the joint after it, of carrier + 1 into the next" }
+TAIL_DROP = { eu = 0x09AD3C70, type = "fn", doc = "(entity) em75's (4,4) handler, once, about 2.2 s after SEVERED: FLAGS |= 0x4000, MESH_MASK[1] = 0, pair (4,15) on all slots, then TAIL_SPAWN" }
+TAIL_SPAWN = { eu = 0x09C683D8, type = "fn", doc = "(entity, 0, 0, 1) for em75: the dropped tail, a game_sub object at the carrier joint, on the floor, drawing the monster's PMO mesh 1 (a one-mesh PMO crashes it)" }
+
 # --- scenes ---
 # Scene objects: the values SCENE_OBJECT holds. Menus and prompts sit in a pool, so a prompt
 # zone's value moves between visits and the menu values move with the UI language (these are the
@@ -317,6 +323,7 @@ ROTATION = { offset = 0x010, type = "f32[12]", doc = "3x4 orientation rows, rebu
 SIZE_SCALE = { offset = 0x024, type = "f32", doc = "size multiplier; re-derived every frame, so resize through RENDER_SCALE and SIZE_RADIUS" }
 TRANSLATION = { offset = 0x040, type = "vec3", doc = "transform translation row (w = 1.0 at +0x4C), copied from POSITION each frame" }
 TRANSLATION_W = { offset = 0x04C, type = "f32", doc = "w of the translation row, 1.0 on a live transform" }
+PMO = { offset = 0x050, type = "ptr", doc = "the model the draw reads (struct PMO), in place in its PAC" }
 FRAME_COUNTER = { offset = 0x092, type = "u8", doc = "per-entity frame counter; stops while the AI tick is frozen" }
 CLIP = { offset = 0x0B8, type = "ptr", doc = "slot-0 clip node of the playing animation (clip blocks at +0x80, 0x40 per slot)" }
 CLIP_FLAGS = { offset = 0x0BC, type = "u16", doc = "slot-0 clip flags: bit 0 playing (cleared when the clip ends), bit 1 loop" }
@@ -342,6 +349,7 @@ HP = { offset = 0x2E4, type = "u16", doc = "current HP" }
 COMBAT_NODE = { offset = 0x2EC, type = "ptr", doc = "this entity's collision node (struct COLLISION_NODE); 0 means it cannot deal damage" }
 TARGET = { offset = 0x2F4, type = "ptr", doc = "big monsters: resolved combat target (player or Felyne); flickers, so sample a histogram" }
 TALKABLE = { offset = 0x2FE, type = "u8", doc = "village NPCs: 1 while this NPC shows the talk icon" }
+MESH_MASK = { offset = 0x2FF, type = "bytes", doc = "big monsters: a u8 per PMO mesh, the draw skips mesh k while +k is 0; TAIL_DROP zeroes mesh 1's" }
 STIMULUS_TAG = { offset = 0x322, type = "u16", doc = "stimulus type written by the damage handler; picks alert or flee responses" }
 ANIM_INPUT = { offset = 0x324, type = "u16[3]", doc = "per-body-part animation input = executor action id + 0x3E8 + slot*0xC8" }
 ANIM_MODE = { offset = 0x32C, type = "u16[3]", doc = "per-body-part animation mode" }
@@ -366,7 +374,7 @@ ENGAGE = { offset = 0x5DC, type = "f32", doc = "1.0 while the monster has notice
 AI_TIMER_A = { offset = 0x624, type = "u16", doc = "AI countdown timer read by the stress-response ladder" }
 AI_TIMER_B = { offset = 0x626, type = "u16", doc = "second AI countdown timer read by the stress-response ladder" }
 STRESS = { offset = 0x62E, type = "u16", doc = "stress counter clamped to 75..450" }
-FLAGS = { offset = 0x638, type = "u32", doc = "flags: 0x8000 visibility gate B, 0x20 enraged, bit 0 swaps in ACTION_LIST_REMAP" }
+FLAGS = { offset = 0x638, type = "u32", doc = "flags: 0x8000 visibility gate B, 0x20 enraged, 0x2000 the tail cut's gate passed, 0x4000 the tail dropped (TAIL_DROP), bit 0 swaps in ACTION_LIST_REMAP" }
 ACTION_LIST = { offset = 0x640, type = "ptr", doc = "action-descriptor list the dispatcher walks; a big monster's is its overlay's table of 8-byte rows, byte 0 the action id" }
 DETECT_RANGES = { offset = 0x64C, type = "f32[3]", doc = "detection ranges (1000, 2700, 5000 on a native); read on evaluate, never written, so zero sticks" }
 DETECT_RANGES_B = { offset = 0x67C, type = "f32[3]", doc = "second detection-range triple with the same values and use as DETECT_RANGES" }
@@ -459,7 +467,13 @@ ROTATION = { offset = 0x090, type = "f32[12]", doc = "3x4 rotation matrix" }
 doc = "one entry of an entity's live joint array (ENTITY.JOINTS)"
 size = 0x250
 [struct.JOINT.fields]
+POSE = { offset = 0x090, type = "f32[16]", doc = "model-space pose; the draw skins it into +0x50 with the inverse bind at +0x10, and ATTACH copies it" }
 POSITION = { offset = 0x100, type = "vec3", doc = "world position of this bone" }
+
+[struct.PMO]
+doc = "a PMO model's header as the engine reads it in place (docs/formats/pmo.md)"
+[struct.PMO.fields]
+MESH_COUNT = { offset = 0x1C, type = "u16", doc = "mesh records; TAIL_SPAWN's object draws mesh 1, so a one-mesh model must not drop its tail" }
 
 [struct.CLIP_BLOCK]
 doc = "one body part's clip player (ENTITY.CLIP_BLOCKS): which clip the part plays and how far in"

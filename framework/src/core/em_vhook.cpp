@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
- * em_vhook: takes over a big monster's AI by wrapping three slots of its species
+ * em_vhook: takes over a big monster's AI by wrapping four slots of its species
  * vtable. A species' AI is an overlay reached through a vtable in the EBOOT; the
  * slots are writable and re-read on every dispatch, and a wrapper that tail-calls
  * the original is indistinguishable from the original. Only a word is written.
@@ -11,6 +11,8 @@
  *                                         (entity, main, id, mode)
  *   slot 30, MONSTER_VTABLE.ANIM_EVENTS   the playing entry's events at clip frames:
  *                                         attacks, effects, sounds
+ *   OBJ_VTABLE.BRAIN                      the per-frame brain around the AI step, which
+ *                                         poses the joints (POSE_UPDATE, ATTACH)
  *
  * The stubs read a config block on every dispatch, so all of this is retargetable
  * from Lua without a rebuild (public surface: mhfu/em_vhook.h):
@@ -21,9 +23,14 @@
  *                 ENTITY.ACTION_BUDGET, then act_set writes the state cells), so
  *                 a substituted charge ends into the skid like a native one; a
  *                 pair written straight into the cells parks with its hitbox spent.
- *   REQUEST       slot-29 pre: a pair Lua wants entered now, issued on the game
+ *   REQUEST       the brain, first: a pair Lua wants entered now, issued on the game
  *                 thread in the next AI frame through the engine's dispatcher
  *                 (MHFU_ENTER_ACTION), so it is provisioned too.
+ *   CUT           the brain: while the tail cut waits for its drop (cut_waits), the
+ *                 request, the plays and the rules wait, and the move player's start
+ *                 with them; the events seen meanwhile reach the rules after the drop.
+ *   TIP           OBJ_VTABLE.BRAIN post (wrap.h): the port's tip joints posed from
+ *                 their carriers, after ATTACH and before the draw, until the drop.
  *   BRAIN         slot-29 pre, in C (brain()): the pair's dwell, the hunter's
  *                 distance and the monster events (monster_events.cpp), then at most
  *                 one of: an own move asked for, the move of a rule on the flinch (or on
@@ -53,8 +60,8 @@
  *
  * Both stubs are branchless and the slot-29 one is frame-free: the engine parks
  * thread stacks inside the PRX image, so the stub keeps no frame of its own. Every
- * decision is a MOVN/MOVZ select; the slot-29 stub's calls are jalrs (the request's
- * target selected between the dispatcher and a `jr ra` in our block) with ra and the
+ * decision is a MOVN/MOVZ select; the slot-29 stub's calls are jalrs (the step's
+ * target selected between the C step and a `jr ra` in our block) with ra and the
  * step's arguments spilled to config words. The C it calls (the brain, the step) has
  * frames, which the engine's AI thread takes fine; a C frame on the construction
  * thread is what broke. The slot-32 stub keeps a 16-byte hand-written frame (see
@@ -160,18 +167,35 @@ static_assert(offsetof(cfg_rule_t, force)      == MHFU_EM_RULE_FORCE,      "EM_R
 
 #define CFG_CANARY_VAL 0x5645484Bu   /* 'VEHK' */
 
+#define CUT_PAIR     0x0404u   /* em75's tail cut, EM75_REACTIONS code 11 */
+#define TAIL_DROPPED 0x4000u   /* ENTITY.FLAGS' doc: TAIL_DROP ran */
+#define TAIL_MESH    1u        /* the mesh TAIL_SPAWN's object draws (em75) */
+
+/* The tail: the tip's map and the cut's wait, after the config in the block. */
+typedef struct {
+    uint32_t vtable;                       /* the wrapped species': its entities are posed */
+    uint32_t count;                        /* pairs in force; 0 while written */
+    uint8_t  pairs[MHFU_EM_TIP_MAX][2];    /* {joint, carrier} */
+    uint32_t copies, waits;
+    uint32_t held_ent;                     /* whose events wait for the drop */
+    uint16_t held_edges;
+    uint8_t  held_parts, _pad;
+} tail_t;
+
 /* The stubs and the config live outside the PRX image: the engine parks thread
  * stacks inside it, and stubs near its top were overwritten under heavy activity.
  * They come from the user partition, and only pointers live here. */
 #define RET_INSNS   4     /* jr ra; nop, padded to 16 bytes */
-#define STUBS       (STUB_AI_INSNS + STUB_ACT_INSNS + STUB_EVT_INSNS + RET_INSNS)
-#define BLOCK_BYTES (STUBS * 4 + CFG_SIZE + 128)
+#define STUBS       (STUB_AI_INSNS + STUB_ACT_INSNS + STUB_EVT_INSNS + MHFU_WRAP_WORDS + RET_INSNS)
+#define BLOCK_BYTES (STUBS * 4 + CFG_SIZE + sizeof(tail_t) + 128)
 
 static uint32_t *g_stub_ai;
 static uint32_t *g_stub_act;
 static uint32_t *g_stub_evt;
+static uint32_t *g_stub_brain;        /* the OBJ_VTABLE.BRAIN wrapper (wrap.h) */
 static uint32_t *g_stub_ret;
 static em_vhook_cfg_t *g_cfgp;
+static volatile tail_t *T;
 static volatile mhfu_em_moves_t *R;   /* the own-move registry */
 
 #define MOVES_MAGIC 0x564F4D45u        /* 'EMOV' */
@@ -210,9 +234,11 @@ static void place_block(uint8_t *base)
     g_stub_ai  = (uint32_t *)base;
     g_stub_act = (uint32_t *)(base + STUB_AI_INSNS * 4);
     g_stub_evt = (uint32_t *)(base + (STUB_AI_INSNS + STUB_ACT_INSNS) * 4);
+    g_stub_brain = (uint32_t *)(base + (STUB_AI_INSNS + STUB_ACT_INSNS + STUB_EVT_INSNS) * 4);
     g_stub_ret = (uint32_t *)(base + (STUBS - RET_INSNS) * 4);
     g_cfgp     = (em_vhook_cfg_t *)(base + STUBS * 4);
-    for (unsigned k = 0; k < sizeof(*g_cfgp) / 4; k++)
+    T          = (volatile tail_t *)(base + STUBS * 4 + CFG_SIZE);
+    for (unsigned k = 0; k < (CFG_SIZE + sizeof(tail_t)) / 4; k++)
         ((uint32_t *)g_cfgp)[k] = 0;
     cfg_reset_live();
 }
@@ -279,15 +305,16 @@ static uint32_t g_orig_evt;
 #endif
 static int      g_installed;
 
-/* --- the brain: slot 29 calls it every AI frame, between the request and the C step. ----
+/* --- the brain: slot 29 calls it every AI frame, before the C step. ----
  *
- * It keeps the pair's dwell, the hunter's distance and the monster events, then plays or enters
- * at most one thing: an own move asked for (mhfu_em_play), else the move of the rule on the flinch
+ * It enters the pair mhfu_em_request asked for, keeps the pair's dwell, the hunter's distance and
+ * the monster events, then plays or enters at most one thing: an own move asked for (mhfu_em_play), else the move of the rule on the flinch
  * whose reaction the last host step replaced, else the AFTER of the registry's move that just
  * ended on its clip, its length or a wall, else the first rule that holds. Last, the rules on the
  * flinch arm the reaction replacement for the host step that follows. An own move goes to the
- * move player here, and its step, called right after, enters the carrier the same AI frame. Runs
- * inside the engine's AI step: it never logs. */
+ * move player here, and its step, called right after, enters the carrier the same AI frame. While
+ * the tail cut waits for its drop it enters and plays nothing (cut_waits). Runs inside the
+ * engine's AI step: it never logs. */
 
 #ifndef MHFU_HOST
 static void enter(uint32_t ent, uint32_t m, uint32_t s, uint32_t mode)
@@ -526,9 +553,62 @@ static int act(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_t edges
     return 0;
 }
 
+/* The tail cut runs to its drop: ent is in the cut with SEVERED, TAIL_DROP has yet to run, and
+ * its model has the mesh the dropped tail draws (a one-mesh port crashes it, so it keeps leaving
+ * the cut as before). TAIL_DROP enters (4,15), which ends the wait. */
+static int cut_waits(uint32_t ent)
+{
+    if (pair_of(ent) != CUT_PAIR || !(mhfu_mem_read_u8(ent + MHFU_ENTITY_SEVERED) & 1)
+        || (mhfu_mem_read_u32(ent + MHFU_ENTITY_FLAGS) & TAIL_DROPPED))
+        return 0;
+    uint32_t pmo = mhfu_mem_read_u32(ent + MHFU_ENTITY_PMO);
+    return pmo && mhfu_mem_read_u16(pmo + MHFU_PMO_MESH_COUNT) > TAIL_MESH;
+}
+
+extern "C" int mhfu_em_cut_waits(uint32_t entity) { return entity && cut_waits(entity); }
+
+/* the pair mhfu_em_request asked for, through the engine's dispatcher */
+static void request(uint32_t ent)
+{
+    em_vhook_cfg_t *c = g_cfgp;
+    if (!c->req_pending) return;
+    uint8_t m = c->req_main, s = c->req_sub, mode = c->req_mode;
+    c->req_pending = 0;
+    c->req_done++;
+    enter(ent, m, s, mode);
+    c->req_result = pair_of(ent);
+    c->frames = 0;   /* the pair just changed: its dwell restarts */
+}
+
+/* The events of the AI frames the cut waited reach the rules in the first one after it. */
+static void hold(uint32_t ent, uint16_t edges, uint8_t parts)
+{
+    if (T->held_ent != ent) {
+        T->held_edges = 0;
+        T->held_parts = 0;
+    }
+    T->held_ent = ent;
+    T->held_edges |= edges;
+    T->held_parts |= parts;
+}
+
+static uint16_t held(uint32_t ent, uint8_t *parts)
+{
+    if (T->held_ent != ent) return 0;
+    uint16_t edges = T->held_edges;
+    *parts |= T->held_parts;
+    T->held_ent = 0;
+    T->held_edges = 0;
+    T->held_parts = 0;
+    return edges;
+}
+
 static uint32_t brain(uint32_t ent)
 {
     em_vhook_cfg_t *c = g_cfgp;
+    const int waits = cut_waits(ent);
+    if (waits) T->waits++;
+    else request(ent);
     uint32_t pair = pair_of(ent);
     c->frames = pair == c->prev_pair ? c->frames + 1 : 0;
     float dx = mhfu_mem_read_f32(ent + MHFU_ENTITY_POSITION)
@@ -541,9 +621,41 @@ static uint32_t brain(uint32_t ent)
     if (!m || !R) return 0;
     uint8_t parts;
     uint16_t edges = mhfu_monster_events_frame(ent, m->entity == ent && m->skipping, &parts);
+    if (waits) {
+        hold(ent, edges, parts);
+        return 0;
+    }
+    edges |= held(ent, &parts);
     if (!act(ent, m, edges, parts)) react_arm(ent, m);
     return 0;
 }
+
+/* --- the tail tip: OBJ_VTABLE.BRAIN's post, after POSE_UPDATE and ATTACH, before the draw. ---
+ * Each pair's JOINT.POSE from its carrier, on every entity of the wrapped species, until the
+ * drop. On the game thread at ~30 Hz an entity: no allocation, no log. */
+static void tip(uint32_t ent)
+{
+    const uint32_t n = T->count;
+    if (!n || mhfu_mem_read_u32(ent + MHFU_ENTITY_VTABLE) != T->vtable
+        || (mhfu_mem_read_u32(ent + MHFU_ENTITY_FLAGS) & TAIL_DROPPED))
+        return;
+    const uint32_t joints = mhfu_mem_read_u32(ent + MHFU_ENTITY_JOINTS);
+    const uint32_t count = mhfu_mem_read_u16(ent + MHFU_ENTITY_JOINT_COUNT);
+    if (!joints) return;
+    for (uint32_t i = 0; i < n && i < MHFU_EM_TIP_MAX; i++) {
+        const uint32_t j = T->pairs[i][0], k = T->pairs[i][1];
+        if (j >= count || k >= count) continue;
+        const uint32_t to = joints + j * MHFU_JOINT_SIZE + MHFU_JOINT_POSE;
+        const uint32_t from = joints + k * MHFU_JOINT_SIZE + MHFU_JOINT_POSE;
+        for (uint32_t w = 0; w < 4 * MHFU_JOINT_POSE_COUNT; w += 4)
+            mhfu_mem_write_u32(to + w, mhfu_mem_read_u32(from + w));
+    }
+    T->copies++;
+}
+
+#ifndef MHFU_HOST
+static void tip_post(mhfu_regs_t *r) { tip(r->a0); }
+#endif
 
 #ifndef MHFU_HOST
 /* --- slot 29: count, request, the brain, the C step, one-shot budget, tail-call. ---
@@ -753,6 +865,26 @@ extern "C" void mhfu_em_clear(void)
                                                g_cfgp->rules[i].from_move = 0; g_cfgp->rules[i].on = 0; }
     if (g_reacts) mhfu_move_react_arm(0, 0, 0, 0);
     g_reacts = 0;
+    T->held_ent = 0;
+}
+
+/* --- the tail tip --- */
+
+static int g_tip_wrapped;   /* OBJ_VTABLE.BRAIN carries tip() */
+
+/* count off while the pairs are written, as a rule's LEFT */
+extern "C" int mhfu_em_tip(const uint8_t (*pairs)[2], int n)
+{
+    if (!T || !g_installed || !g_tip_wrapped || n < 0 || n > MHFU_EM_TIP_MAX || (n && !pairs))
+        return 0;
+    T->count = 0;
+    for (int i = 0; i < n; i++) {
+        T->pairs[i][0] = pairs[i][0];
+        T->pairs[i][1] = pairs[i][1];
+    }
+    T->count = (uint32_t)n;
+    mhfu_log("[%s] tail tip: %d pair(s)", OWNER, n);
+    return 1;
 }
 
 /* --- own moves --- */
@@ -843,6 +975,9 @@ extern "C" void mhfu_em_status(mhfu_em_status_t *out)
     out->sub_last_in = g_cfgp->sub_last_in;
     out->brain_fires = g_cfgp->brain_fires;
     out->events_muted = g_cfgp->muted;
+    out->tip_pairs   = T->count;
+    out->tip_copies  = T->copies;
+    out->cut_waits   = T->waits;
     out->req_pending = g_cfgp->req_pending;
     out->req_done    = g_cfgp->req_done;
     out->req_result  = g_cfgp->req_result;
@@ -878,6 +1013,28 @@ extern "C" uint32_t mhfu_em_react_hits(uint32_t *last)
 
 /* ------------------------------------------------------------ latch */
 #ifndef MHFU_HOST
+
+/* The tip's seam, rebuilt in place for this species' brain; without it em_vhook runs on and
+ * mhfu_em_tip refuses. */
+static void wrap_brain(uint32_t vt)
+{
+    const uint32_t slot = vt + MHFU_OBJ_VTABLE_BRAIN;
+    const uint32_t orig = mhfu_mem_read_u32(slot);
+    mhfu_wrap_t w = {};
+    w.call = orig;
+    w.post = tip_post;
+    w.pc = orig;
+    T->count = 0;
+    T->vtable = vt;
+    if (!mhfu_wrap_build_at(g_stub_brain, &w)) {
+        mhfu_log("[%s] brain 0x%08X: no wrapper, no tail tip", OWNER, (unsigned)orig);
+        return;
+    }
+    mhfu_hook_rc_t rc = mhfu_hook_vtable(slot, (uint32_t)(uintptr_t)g_stub_brain, OWNER);
+    g_tip_wrapped = rc == MHFU_HOOK_OK;
+    mhfu_log("[%s] brain 0x%08X -> 0x%08X%s", OWNER, (unsigned)orig,
+             (unsigned)(uintptr_t)g_stub_brain, g_tip_wrapped ? "" : ": claim failed, no tail tip");
+}
 
 static void install_for(uint32_t entity)
 {
@@ -927,6 +1084,7 @@ static void install_for(uint32_t entity)
              (unsigned)(uintptr_t)g_stub_ai, (unsigned)g_orig_act,
              (unsigned)(uintptr_t)g_stub_act, (unsigned)g_orig_evt,
              (unsigned)(uintptr_t)g_stub_evt);
+    wrap_brain(vt);
 }
 
 static void uninstall(void)
@@ -934,13 +1092,16 @@ static void uninstall(void)
     if (!g_installed) return;
     mhfu_hook_release(OWNER);
     g_installed = 0;
+    g_tip_wrapped = 0;
+    T->count = 0;
     g_cfgp->step_fn = 0;
     mhfu_em_clear();
     mhfu_log("[%s] restored vtable 0x%08X (ai_ticks=%u act_enters=%u sub %u/%u "
-             "req %u brain %u)", OWNER, (unsigned)g_vtable,
+             "req %u brain %u tip %u cut %u)", OWNER, (unsigned)g_vtable,
              (unsigned)g_cfgp->ai_ticks, (unsigned)g_cfgp->act_enters,
              (unsigned)g_cfgp->sub_hits, (unsigned)g_cfgp->sub_landed,
-             (unsigned)g_cfgp->req_done, (unsigned)g_cfgp->brain_fires);
+             (unsigned)g_cfgp->req_done, (unsigned)g_cfgp->brain_fires,
+             (unsigned)T->copies, (unsigned)T->waits);
 }
 
 static void on_spawn(const mhfu_monster_spawn_ctx_t *ctx)
@@ -985,7 +1146,7 @@ extern "C" int mhfu_em_init(void)
 }
 #else
 /* host tests: the blocks in static memory, a monster wrapped, and the slot-29 stub's order in
- * C: the request is not run, the brain, the C step, then the pair history. */
+ * C: the brain (the request first), the C step, then the pair history. */
 static uint32_t g_host_block[(BLOCK_BYTES + 64) / 4];
 static uint32_t g_host_moves[(sizeof(mhfu_em_moves_t) + 64) / 4];
 
@@ -994,9 +1155,21 @@ extern "C" int mhfu_em_init(void)
     place_block((uint8_t *)g_host_block);
     place_moves(g_host_moves);
     g_installed = 1;
+    g_tip_wrapped = 1;
     g_host_step = 0;
     mhfu_move_init();
     return 0;
+}
+
+/* the species vtable latched, as install_for's */
+extern "C" void mhfu_em_host_latch(uint32_t vtable) { T->vtable = vtable; }
+
+/* the brain slot as its wrapper runs it: the species brain (em_host.cpp), then the tip */
+extern "C" void mhfu_host_brain(uint32_t ent);
+extern "C" void mhfu_em_host_brain(uint32_t ent)
+{
+    mhfu_host_brain(ent);
+    tip(ent);
 }
 
 extern "C" uint32_t mhfu_em_host_frame(uint32_t ent)

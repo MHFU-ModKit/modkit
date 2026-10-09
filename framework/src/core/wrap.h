@@ -34,8 +34,13 @@ int mhfu_wrap_emit_common(uint32_t *out, int cap, uint32_t base);
  * Pure, so a host test can run the words at base. */
 int mhfu_wrap_emit(uint32_t *out, int cap, uint32_t base, uint32_t common,
                    const mhfu_wrap_t *w);
+/* Words a wrapper takes at most. */
+#define MHFU_WRAP_WORDS 32
 /* Emits w into the code cave and flushes the caches; the wrapper's address, 0 when full. */
 uint32_t mhfu_wrap_build(const mhfu_wrap_t *w);
+/* Emits w at out (MHFU_WRAP_WORDS words the caller owns, rebuilt in place as often as needed)
+ * and flushes the caches; the word count, 0 when it does not fit. */
+int mhfu_wrap_build_at(uint32_t *out, const mhfu_wrap_t *w);
 
 #ifdef __cplusplus
 } /* extern "C" */

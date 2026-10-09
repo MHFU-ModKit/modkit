@@ -42,6 +42,9 @@ void     mhfu_mem_write_u8(uint32_t a, uint8_t v) { uint8_t *p = at(a, 1); if (p
 void    *mhfu_host_at(uint32_t a) { return at(a, 4); }
 void mhfu_log(const char *, ...) {}
 int  mhfu_em_installed(void) { return 1; }
+static int g_cut;
+int  mhfu_em_cut_waits(uint32_t) { return g_cut; }
+void host_cut(int waits) { g_cut = waits; }
 void mhfu_em_step(mhfu_em_step_fn fn) { g_step = fn; }
 void mhfu_em_mute_events(uint32_t entity) { record('M', entity, 0, 0, 0); }
 
@@ -131,7 +134,7 @@ int host_raised(mhfu_monster_event_ctx_t *out)
 uint8_t *host_mem(void) { return g_mem; }
 void     host_set(int lands, float clip_end)
 {
-    g_lands = lands; g_clip_end = clip_end; g_n = 0; g_step = 0; g_nraised = 0;
+    g_lands = lands; g_clip_end = clip_end; g_n = 0; g_step = 0; g_nraised = 0; g_cut = 0;
     memset(g_react, 0, sizeof(g_react));
 }
 int      host_has_step(void) { return g_step != 0; }

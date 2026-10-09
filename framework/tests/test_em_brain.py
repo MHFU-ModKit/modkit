@@ -67,7 +67,7 @@ class Rule(ctypes.Structure):
 class Game:
     def __init__(self, lib: ctypes.CDLL) -> None:
         self.lib = lib
-        self.mem = (ctypes.c_uint8 * 0x4000).from_address(lib.host_mem())
+        self.mem = (ctypes.c_uint8 * 0x8000).from_address(lib.host_mem())
         self.hunter = (ctypes.c_uint8 * 0x300).from_address(lib.host_hunter())
 
     def poke(self, off: int, fmt: str, *values: float) -> None:

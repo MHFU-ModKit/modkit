@@ -1,14 +1,14 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* The game for em_vhook.cpp's brain with the real move player on the host: the monster's memory
- * and the hunter's are two arrays, the engine calls are recorded. */
+ * (joints from BASE + 0x4000) and the hunter's are two arrays, the engine calls are recorded. */
 #include <stdint.h>
 #include <string.h>
 #include "addresses.gen.h"
 #include "mhfu/events.h"
 
 #define BASE 0x09000000u   /* the fake game memory; noaddr */
-#define SIZE 0x4000u
+#define SIZE 0x8000u
 #define NODE_VTABLE 0x1234u
 
 static uint8_t g_mem[SIZE];
@@ -39,6 +39,7 @@ uint16_t mhfu_mem_read_u16(uint32_t a) { uint16_t v = 0; uint8_t *p = at(a, 2); 
 uint32_t mhfu_mem_read_u32(uint32_t a) { uint32_t v = 0; uint8_t *p = at(a, 4); if (p) memcpy(&v, p, 4); return v; }
 float    mhfu_mem_read_f32(uint32_t a) { float v = 0; uint8_t *p = at(a, 4); if (p) memcpy(&v, p, 4); return v; }
 void     mhfu_mem_write_u8(uint32_t a, uint8_t v) { uint8_t *p = at(a, 1); if (p) *p = v; }
+void     mhfu_mem_write_u32(uint32_t a, uint32_t v) { uint8_t *p = at(a, 4); if (p) memcpy(p, &v, 4); }
 void    *mhfu_host_at(uint32_t a) { return at(a, 4); }
 void mhfu_log(const char *, ...) {}
 uint32_t mhfu_host_usec(void) { return 0; }
@@ -82,6 +83,18 @@ void mhfu_host_end(uint32_t node, uint32_t vtable)
     memcpy(at(node + MHFU_ATTACK_NODE_STATE, 1), &ended, 1);
 }
 
+/* the species brain: ATTACH's copy, JOINT.POSE of joint g_attach[1] into g_attach[0] */
+static uint32_t g_attach[2];
+void mhfu_host_brain(uint32_t e)
+{
+    record('B', e, 0, 0, 0);
+    uint32_t joints = mhfu_mem_read_u32(e + MHFU_ENTITY_JOINTS);
+    uint8_t *to = at(joints + g_attach[0] * MHFU_JOINT_SIZE + MHFU_JOINT_POSE, 64);
+    uint8_t *from = at(joints + g_attach[1] * MHFU_JOINT_SIZE + MHFU_JOINT_POSE, 64);
+    if (to && from) memcpy(to, from, 64);
+}
+void host_attach(uint32_t to, uint32_t from) { g_attach[0] = to; g_attach[1] = from; }
+
 uint8_t *host_mem(void) { return g_mem; }
 uint8_t *host_hunter(void) { return g_hunter; }
 void     host_reset(float clip_end)
@@ -90,6 +103,7 @@ void     host_reset(float clip_end)
     memset(g_hunter, 0, sizeof(g_hunter));
     g_clip_end = clip_end;
     g_n = 0;
+    g_attach[0] = g_attach[1] = 0;
 }
 int host_calls(uint32_t *out) { memcpy(out, g_calls, sizeof(g_calls)); int n = g_n; g_n = 0; return n; }
 }

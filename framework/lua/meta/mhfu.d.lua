@@ -11,7 +11,7 @@ mhfu = {}
 
 ---The API's version, raised whenever a declaration here changes; a mod that needs something added
 ---in version N checks `mhfu.api_version >= N`.
-mhfu.api_version = 2
+mhfu.api_version = 3
 
 -- log, memory and world state (bind_memory.cpp) ----------------------------------------------
 
@@ -370,6 +370,8 @@ function mhfu.action_ptr_for(species, input) end
 
 -- em_vhook, the big-monster vtable seams (bind_em.cpp) ---------------------------------------
 -- A behaviour pair (main, sub) is the MOVE a big monster runs, hitbox and damage included.
+-- While a tail cut waits for its drop (em75's (4,4), on a model with the dropped tail's mesh 1),
+-- requests, plays, own moves and rules wait with it; events seen meanwhile reach rules after it.
 
 ---True while a big monster's vtable is wrapped: from its spawn to the next quest.
 ---@return boolean
@@ -408,6 +410,13 @@ function mhfu.em_clear() end
 ---The seam's counters and its last enter-actions.
 ---@return mhfu.EmStatus
 function mhfu.em_status() end
+
+---A port's tail tip: each `{ joint, carrier }` gets the carrier's pose every frame after the
+---species brain, on every monster of the wrapped species, until the tail drops; at most 8 pairs,
+---`{}` clears. False while nothing is wrapped or for more pairs. Dropped at the quest's end.
+---@param pairs integer[][]
+---@return boolean
+function mhfu.em_tip(pairs) end
 
 ---Any sub state, for `mhfu.em_substitute` and `mhfu.em_rule`.
 mhfu.EM_ANY = 0xFE -- MHFU_EM_SUB_ANY
@@ -448,6 +457,9 @@ mhfu.EM_UNLIMITED = -1 -- MHFU_EM_UNLIMITED
 ---@field sub_last_mode integer
 ---@field brain_fires integer rule fires
 ---@field events_muted integer animation-event steps a move skipped (its host_attacks off)
+---@field tip_pairs integer the tail tip's pairs in force (`mhfu.em_tip`)
+---@field tip_copies integer frames the tip was posed
+---@field cut_waits integer AI frames the tail cut held requests, plays and rules for its drop
 ---@field req_pending integer 1 while a request waits for its AI frame
 ---@field req_done integer requests entered
 ---@field req_main integer the last request's pair

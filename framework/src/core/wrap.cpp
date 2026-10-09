@@ -175,26 +175,40 @@ extern "C" int mhfu_wrap_emit(uint32_t *out, int cap, uint32_t base, uint32_t co
 #ifndef MHFU_HOST
 #include "internal.h"
 
-#define WRAP_MAX_WORDS 32
-
 static uint32_t g_common;
+
+static int common_ready(void)
+{
+    if (g_common) return 1;
+    const int n = SAVE_WORDS + RESTORE_WORDS;
+    uint32_t *c = mhfu_cave_alloc(n);
+    if (!c || !mhfu_wrap_emit_common(c, n, (uint32_t)(uintptr_t)c)) return 0;
+    g_common = (uint32_t)(uintptr_t)c;
+    return 1;
+}
 
 extern "C" uint32_t mhfu_wrap_build(const mhfu_wrap_t *w)
 {
-    if (!g_common) {
-        const int n = SAVE_WORDS + RESTORE_WORDS;
-        uint32_t *c = mhfu_cave_alloc(n);
-        if (!c || !mhfu_wrap_emit_common(c, n, (uint32_t)(uintptr_t)c)) return 0;
-        g_common = (uint32_t)(uintptr_t)c;
-    }
+    if (!common_ready()) return 0;
     /* the words do not depend on where they land, and the cave is one jump region */
-    uint32_t tmp[WRAP_MAX_WORDS];
-    int n = mhfu_wrap_emit(tmp, WRAP_MAX_WORDS, g_common, g_common, w);
+    uint32_t tmp[MHFU_WRAP_WORDS];
+    int n = mhfu_wrap_emit(tmp, MHFU_WRAP_WORDS, g_common, g_common, w);
     if (!n) return 0;
     uint32_t *p = mhfu_cave_alloc(n);
     if (!p) return 0;
     memcpy(p, tmp, 4u * (unsigned)n);
     mhfu_hook_flush_caches();
     return (uint32_t)(uintptr_t)p;
+}
+
+extern "C" int mhfu_wrap_build_at(uint32_t *out, const mhfu_wrap_t *w)
+{
+    if (!out || !common_ready()) return 0;
+    uint32_t tmp[MHFU_WRAP_WORDS];   /* out is untouched unless the wrapper fits */
+    int n = mhfu_wrap_emit(tmp, MHFU_WRAP_WORDS, (uint32_t)(uintptr_t)out, g_common, w);
+    if (!n) return 0;
+    memcpy(out, tmp, 4u * (unsigned)n);
+    mhfu_hook_flush_caches();
+    return n;
 }
 #endif

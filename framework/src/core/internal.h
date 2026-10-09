@@ -84,6 +84,8 @@ int  mhfu_quest_install_targets(void);
 
 /* --- em_vhook (em_vhook.cpp) --- */
 int  mhfu_em_init(void);
+/* 1 while entity's tail cut waits for its drop: nothing of ours enters a pair meanwhile. */
+int  mhfu_em_cut_waits(uint32_t entity);
 
 /* --- joint fix (joint_fix.cpp) --- */
 void mhfu_joint_fix_init(void);
