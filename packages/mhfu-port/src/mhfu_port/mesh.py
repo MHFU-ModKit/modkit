@@ -161,12 +161,15 @@ def overflow(parts: Sequence[Part], scale: Vec3) -> list[Overflow]:
     return out
 
 
-def tip_parts(skinned: Sequence[Skinned], joints: Collection[int]) -> list[int]:
-    """The parts that ride only `joints` (a tail tip's chain); raises for a part that blends
-    them with other joints, which neither the monster nor the dropped tail could draw."""
+def tip_parts(
+    influences: Sequence[Sequence[Sequence[Influence]]], joints: Collection[int]
+) -> list[int]:
+    """The parts, given as their vertices' influences, that ride only `joints` (a tail tip's
+    chain); raises for a part that blends them with other joints, which neither the monster nor
+    the dropped tail could draw."""
     out = []
-    for i, s in enumerate(skinned):
-        on = {j in joints for row in s.influences for j, w in row if w > _FAINT and j >= 0}
+    for i, rows in enumerate(influences):
+        on = {j in joints for row in rows for j, w in row if w > _FAINT and j >= 0}
         if on == {True, False}:
             raise ValueError(f"part {i} blends the tip's joints {sorted(joints)} with the body's")
         if on == {True}:
@@ -221,7 +224,7 @@ def build(skinned: Sequence[Skinned], scale: Vec3, chain: Tip | None = None) -> 
     textures. A group per part, one material per texture of a mesh in texture order, and
     positions quantised against `scale` (the donor's `Pmo.scale`). Vertex colours are not
     written."""
-    tip = [] if chain is None else tip_parts(skinned, chain.joints)
+    tip = [] if chain is None else tip_parts([s.influences for s in skinned], chain.joints)
     cut = cut_parts(skinned, tip, chain.offset) if chain is not None else []
     body = [s for i, s in enumerate(skinned) if i not in tip]
     textures = sorted({s.part.texture for s in body})

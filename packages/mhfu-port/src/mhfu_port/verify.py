@@ -24,7 +24,7 @@ from numpy.typing import NDArray
 
 from . import constraints, fk, mesh, motion, records
 from .fidelity import Fidelity, Weights, compare, expected
-from .mesh import Part, Skinned
+from .mesh import Part
 from .model import ANIMATION, MODEL, SKELETON
 from .motion import frames
 from .rig import OFFSET_TOL, Tip, tip_of
@@ -470,7 +470,7 @@ def _against(port: Port, donor: Skeleton, parts: Sequence[Part]) -> list[Check]:
     if not parts:
         return out
     per = [expected(p.influences, c.joint_of) for p in parts]
-    want = [w for i in _built_order(port, parts, per) for w in per[i]]
+    want = [w for i in _built_order(port, per) for w in per[i]]
     got = [vi for g in range(len(port.model.groups())) for vi in port.model.influences(g)]
     f: Fidelity = compare(want, got)
     out.append(
@@ -484,17 +484,16 @@ def _against(port: Port, donor: Skeleton, parts: Sequence[Part]) -> list[Check]:
     return out
 
 
-def _built_order(port: Port, parts: Sequence[Part], per: Sequence[list[Weights]]) -> list[int]:
+def _built_order(port: Port, per: Sequence[list[Weights]]) -> list[int]:
     """The parts in the port's group order: the body's, then the tip's (`mesh.build`)."""
     tip = _tip(port)[0]
     if tip is None:
-        return list(range(len(parts)))
-    skinned = [Skinned(p, [list(w.items()) for w in ws]) for p, ws in zip(parts, per, strict=True)]
+        return list(range(len(per)))
     try:
-        last = mesh.tip_parts(skinned, tip.joints)
+        last = mesh.tip_parts([[list(w.items()) for w in ws] for ws in per], tip.joints)
     except ValueError:
-        return list(range(len(parts)))
-    return [i for i in range(len(parts)) if i not in last] + last
+        return list(range(len(per)))
+    return [i for i in range(len(per)) if i not in last] + last
 
 
 def _loc_joints(port: Port) -> set[int]:

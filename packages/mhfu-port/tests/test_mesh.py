@@ -179,11 +179,11 @@ TIP = Tip(((4, 1), (5, 1), (6, 1)), (0.0, 0.0, -10.0))
 
 
 def test_tip_parts():
-    parts = _tail()
-    assert mesh.tip_parts(parts, TIP.joints) == [1, 2, 3]
-    parts[1] = Skinned(parts[1].part, [[(5, 0.5), (1, 0.5)]] * 8)
+    rows = [s.influences for s in _tail()]
+    assert mesh.tip_parts(rows, TIP.joints) == [1, 2, 3]
+    rows[1] = [[(5, 0.5), (1, 0.5)]] * 8
     with pytest.raises(ValueError, match="part 1 blends"):
-        mesh.tip_parts(parts, TIP.joints)
+        mesh.tip_parts(rows, TIP.joints)
 
 
 def test_cut_parts():
