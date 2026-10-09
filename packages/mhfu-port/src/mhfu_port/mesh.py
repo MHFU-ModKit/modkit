@@ -25,7 +25,6 @@ LIGHTING = 0
 BLEND = 0
 SHADOW = 0
 COLOR = 0xFFFFFFFF
-CLIP = 0.0
 NO_NORMAL = (0.0, 0.0, 0.0)
 """Written for a donor vertex that carries no normal."""
 
@@ -162,7 +161,8 @@ def build(skinned: Sequence[Skinned], scale: Vec3) -> pmo.Pmo:
     groups = [group(s, scale, material_of[s.part.texture]) for s in skinned]
     mesh = pmo.Mesh(groups, list(range(len(textures))), lighting=LIGHTING, blend=BLEND)
     materials = [pmo.Material(color=COLOR, shadow=SHADOW, texture=t) for t in textures]
-    return pmo.Pmo([mesh], materials, scale, CLIP)
+    # the engine's cull sphere (Pmo.clip): 0 culls the model as a point near its feet
+    return pmo.Pmo([mesh], materials, scale, max(scale))
 
 
 def group(skinned: Skinned, scale: Vec3, material: int = 0) -> pmo.Group:

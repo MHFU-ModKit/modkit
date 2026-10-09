@@ -131,7 +131,7 @@ def test_build():
     joint_of = {4: 1, 7: 2, 9: 3}
     built = mesh.build(skin.source(parts, joint_of), SCALE)
     back = fu.Pmo.from_bytes(built.to_bytes())
-    assert back == built and back.clip == mesh.CLIP and back.scale == SCALE
+    assert back == built and back.clip == max(SCALE) and back.scale == SCALE
     assert [m.texture for m in back.materials] == [2, 6]
     assert {(m.color, m.shadow) for m in back.materials} == {(mesh.COLOR, mesh.SHADOW)}
     assert back.meshes[0].materials == [0, 1] and back.meshes[0].lighting == mesh.LIGHTING
@@ -163,8 +163,8 @@ def test_palette_limit():
 
 
 DONORS = {  # model, geometry: groups, vertices, triangles, sha256 of our PMO on an identity map
-    "brute": (5248, 5249, 88, 2862, 2973, "cb0d830eb6c61a09"),
-    "zinogre": (5339, 5340, 181, 4336, 4426, "98b3869f594ce302"),
+    "brute": (5248, 5249, 88, 2862, 2973, "ccc9f32546fdfcbb"),
+    "zinogre": (5339, 5340, 181, 4336, 4426, "09fd2847cff33e01"),
 }
 
 
