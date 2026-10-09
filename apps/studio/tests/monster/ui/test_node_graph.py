@@ -629,3 +629,54 @@ def test_show_80_nodes_is_cheap_after_the_first_time(qtbot: Any) -> None:
     view.show(ns, ls)
     one = time.perf_counter() - t0
     assert again < 0.25 and one < 0.25
+
+
+def test_an_option_of_none_is_the_owners_own_none(qtbot: Any) -> None:
+    view = make(qtbot)
+    new = [("any", None), ("Head", 1), ("Tail", 2)]
+    view.show([replace(nodes()[1], options={"part": new}, values={"part": None})], [])
+    part = field(view, "c", "part")
+    assert part._ctl.count() == 3 and part._ctl.itemText(0) == "any" and part.get_value() is None
+    rec = Rec(view, qtbot)
+    part._ctl.setCurrentIndex(2)
+    part._ctl.setCurrentIndex(0)
+    assert [a[2] for n, a in rec.got() if n == "param_changed"] == [2, None]
+
+
+def test_settled_follows_the_intents_of_a_gesture(qtbot: Any) -> None:
+    view = make(qtbot, spare())
+    calls: list[str] = []
+    for name in ("unlink_requested", "link_requested", "settled"):
+        getattr(view, name).connect(lambda *_, n=name: calls.append(n))
+    reroute(view)
+    qtbot.wait(20)
+    assert calls == ["unlink_requested", "link_requested", "settled"]
+    calls.clear()
+    field(view, "m", "n")._ctl.setValue(4)
+    qtbot.wait(20)
+    assert calls == ["settled"]
+
+
+def test_the_owner_may_show_when_settled(qtbot: Any) -> None:
+    view = make(qtbot)
+    view.settled.connect(lambda: view.show(nodes(), [LINKS[0]]))
+    pipe = view._pipes()[LINKS[1]]
+    mid = at(view, pipe.path().pointAtPercent(0.7))
+    drag(view, mid, mid + QPoint(0, 150))
+    qtbot.wait(20)
+    assert pipes(view) == {LINKS[0]}
+
+
+def test_the_canvas_takes_a_colour_and_frames_nodes(qtbot: Any) -> None:
+    view = make(qtbot)
+    scene = view.viewer.scene()
+    view.set_canvas((0.1, 0.2, 0.3, 1.0))
+    assert tuple(scene.background_color) == (26, 51, 77) and tuple(scene.grid_color) != (26, 51, 77)
+    view.set_canvas((0.9, 0.9, 0.9, 1.0))
+    assert sum(scene.grid_color) < sum(scene.background_color), "a darker grid on a light canvas"
+    view.viewer.zoom_to_nodes([s.view for s in view._shown.values()])
+    view.frame(["m"])
+    centre = view.viewer.mapToScene(view.viewer.viewport().rect().center())
+    node = view._shown["m"].view
+    assert abs(centre.x() - (node.scenePos().x() + node.boundingRect().width() / 2)) < 120
+    view.frame(["nope"])
