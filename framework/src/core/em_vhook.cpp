@@ -181,6 +181,7 @@ typedef struct {
     uint16_t held_edges;
     uint8_t  held_parts, _pad;
 } tail_t;
+static_assert(sizeof(tail_t) % 4 == 0, "zeroed word by word after the config");
 
 /* The stubs and the config live outside the PRX image: the engine parks thread
  * stacks inside it, and stubs near its top were overwritten under heavy activity.
@@ -308,9 +309,10 @@ static int      g_installed;
 /* --- the brain: slot 29 calls it every AI frame, before the C step. ----
  *
  * It enters the pair mhfu_em_request asked for, keeps the pair's dwell, the hunter's distance and
- * the monster events, then plays or enters at most one thing: an own move asked for (mhfu_em_play), else the move of the rule on the flinch
- * whose reaction the last host step replaced, else the AFTER of the registry's move that just
- * ended on its clip, its length or a wall, else the first rule that holds. Last, the rules on the
+ * the monster events, then plays or enters at most one thing: an own move asked for
+ * (mhfu_em_play), else the move of the rule on the flinch whose reaction the last host step
+ * replaced, else the AFTER of the registry's move that just ended on its clip, its length or a
+ * wall, else the first rule that holds. Last, the rules on the
  * flinch arm the reaction replacement for the host step that follows. An own move goes to the
  * move player here, and its step, called right after, enters the carrier the same AI frame. While
  * the tail cut waits for its drop it enters and plays nothing (cut_waits). Runs inside the
@@ -658,7 +660,7 @@ static void tip_post(mhfu_regs_t *r) { tip(r->a0); }
 #endif
 
 #ifndef MHFU_HOST
-/* --- slot 29: count, request, the brain, the C step, one-shot budget, tail-call. ---
+/* --- slot 29: count, the brain (the request first), the C step, one-shot budget, tail-call. ---
  *
  * A slot-32 post-hook owns ENTITY.ACTION_BUDGET for 15 of the 27 timer-gated
  * actions; the other 12 re-seed it in their handler's phase-0 block, on the first
