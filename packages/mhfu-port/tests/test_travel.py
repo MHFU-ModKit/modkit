@@ -9,6 +9,7 @@ from mhfu.live import observe
 from mhfu_port import build, fk, manifest, motion, travel
 from mhfu_port.cli import main
 from mhfu_port.model import ANIMATION, SKELETON
+from mhfu_port.rig import tip_of
 from mhp_formats import fu
 from mhp_formats.anim import Channel, Clip, Keyframe, Track
 from mhp_formats.pac import Pac
@@ -114,12 +115,13 @@ def test_carry_takes_a_facing_off_the_start_out_too():
 
 
 def engine_pose(clip: Clip, frames: np.ndarray, s: Skeleton | None = None) -> np.ndarray:
-    """World joint positions as the engine draws them: no root translation."""
+    """World joint positions as the engine draws them: no root translation, the tail tip on."""
     s = s or rig()
     r = fk.Rig.from_skeleton(s)
     rot_, loc_ = fk.Curves(clip, r).at(frames)
     loc_[:, travel.root(s)] = 0.0
-    out: np.ndarray = r.world(rot_, loc_)[..., :3, 3]
+    tip = tip_of(s)
+    out: np.ndarray = fk.attach(r.world(rot_, loc_), tip.pairs if tip else ())[..., :3, 3]
     return out
 
 

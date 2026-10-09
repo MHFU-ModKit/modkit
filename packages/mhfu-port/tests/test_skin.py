@@ -70,7 +70,9 @@ def test_weld():
 def _host() -> fu.Pmo:
     quad = [(0.0, 0.0, 0.0), (100.0, 0.0, 0.0), (0.0, 0.0, 100.0), (100.0, 0.0, 100.0)]
     part = Part(quad, [], [(0.0, 0.0)] * 4, [], [(0, 1, 2), (2, 1, 3)], [], 0)
-    return mesh.build([Skinned(part, [[(1, 1.0)], [(2, 1.0)], [(1, 1.0)], [(2, 1.0)]])], SCALE)
+    return mesh.build(
+        [Skinned(part, [[(1, 1.0)], [(2, 1.0)], [(1, 1.0)], [(2, 1.0)]])], SCALE, tip=None
+    )
 
 
 def test_transfer():
@@ -88,7 +90,7 @@ def test_transfer():
 def test_transfer_flat():
     line = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)]
     part = Part(line, [], [(0.0, 0.0)] * 3, [], [(0, 1, 2)], [], 0)
-    host = mesh.build([Skinned(part, [[(0, 1.0)]] * 3)], SCALE)
+    host = mesh.build([Skinned(part, [[(0, 1.0)]] * 3)], SCALE, tip=None)
     with pytest.raises(ValueError, match="area"):
         skin.transfer([_part([(0.0, 0.0, 0.0)])], host, PARENTS)
 

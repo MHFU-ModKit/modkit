@@ -117,6 +117,7 @@ def _render(groups: Groups) -> None:
     p.add_argument("--no-grid", action="store_true", help="hide the ground plane")
     p.add_argument("--hilite", type=_ints, default=(), metavar="J,J,..", help="paint joints red")
     p.add_argument("--only", choices=("tagged", "rest"), help="draw only --hilite, or the rest")
+    p.add_argument("--severed", action="store_true", help="the stump: the tail tip hidden")
     data.add_arguments(p)
     flags.add_flags(p)
     p.set_defaults(run=run_render)
@@ -168,6 +169,7 @@ def run_render(args: argparse.Namespace) -> int:
         grid=not args.no_grid,
         hilite=args.hilite,
         only=args.only,
+        severed=args.severed,
     )
     return flags.finish(args, shots.render(sc, o, args.size, args.samples))
 

@@ -7,7 +7,8 @@ or `rules`.
 A pair move goes as the runtime paints it on its host pair. An own move goes as the move player
 takes it (`mhfu.move_play`): its clip's executor entry and, for `turn = "clip"`, its turn keys,
 both from the build's layout; the attack windows, the carrier (`hub` when it names none), the
-steer and `after`.
+steer and `after`. `tip` is the tail tip's `{ joint, carrier }` pairs (`rig.Tip`), which
+`mhfu.em_tip` takes.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from mhfu.files import Extracted, em_overlay
 
 from .layout import Layout
 from .manifest import Manifest, ManifestError, Move, Rule
+from .rig import Tip
 
 Pair = tuple[int, int]
 
@@ -265,7 +267,9 @@ def lua_value(v: object) -> str:
     raise TypeError(f"no Lua for {v!r}")
 
 
-def lua(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> str:
+def lua(
+    m: Manifest, layout: Layout, known: Collection[int] | None = None, tip: Tip | None = None
+) -> str:
     """The module; `check`s first."""
     check(m, layout, known)
     src = f"ports/{m.path.name}" if m.path is not None else f"the {m.port.name} manifest"
@@ -281,7 +285,10 @@ def lua(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> st
         out.append(f"    {lua_key(name)} = {lua_value(body)},")
     out += ["  },", "  rules = {"]
     out += [f"    {lua_value(_rule(r))}," for r in m.rules]
-    out += ["  },", "}", ""]
+    out += ["  },"]
+    if tip is not None:
+        out.append(f"  tip = {lua_value(tip.pairs)},")
+    out += ["}", ""]
     text = "\n".join(out)
     build = zlib.crc32(text.encode("utf-8")) & 0x7FFF_FFFF or 1
     return text.replace("return {\n", f"return {{\n  build = 0x{build:08X},\n", 1)

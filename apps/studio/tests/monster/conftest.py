@@ -140,7 +140,7 @@ def _pac(carried: bool = False) -> bytes:
         [[(1, 1.0)], [(2, 1.0)], [(1, 1.0)]],
         0,
     )
-    model = mesh.build([Skinned(part, part.influences)], (256.0, 256.0, 256.0))
+    model = mesh.build([Skinned(part, part.influences)], (256.0, 256.0, 256.0), tip=None)
     image = TmhImage(3, 2, 2, bytes(range(16)))
     turn = [Keyframe(0, 0), Keyframe(0 if carried else quantize("rot", 1.5707963), 10)]
     body = Clip(

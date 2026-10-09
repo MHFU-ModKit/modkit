@@ -74,6 +74,21 @@ def test_tigrex(games):
     assert [c.slot for c in sc.clips if not c.whole_rig] == [24, 25]
     assert len(sc.textures) == 5 and all(g.texture is not None for g in sc.groups)
     assert sorted({g.texture for g in sc.groups}) == [0, 1, 2, 3, 4]
+    assert sc.tip is not None and sc.tip.pairs == ((45, 43), (46, 43), (47, 44))
+    assert sc.tip_groups() == [11, 12]
+
+
+@pytest.mark.parametrize(("name", "groups"), [("zinogre", [175, 180]), ("brute_tigrex", [86, 87])])
+def test_tip(built, name, groups):
+    """The tip rides its carriers unless severed; severed, its groups are hidden instead."""
+    sc = Scene.from_bytes(built(name), name)
+    assert sc.tip is not None and sc.tip_groups() == list(range(groups[0], groups[1] + 1))
+    for w in (sc.bind_pose().world, pose_at(sc, sc.clip(1), 10.0).world):
+        assert all(np.array_equal(w[j], w[c]) for j, c in sc.tip.pairs)
+    assert not sc.hidden()
+    sc.severed = True
+    assert sc.hidden() == set(range(groups[0], groups[1] + 1))
+    assert np.array_equal(sc.bind_pose().world, sc.rig.bind_world)
 
 
 @pytest.mark.parametrize(

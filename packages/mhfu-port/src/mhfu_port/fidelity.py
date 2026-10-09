@@ -96,7 +96,8 @@ def of_build(m: Manifest, data: Data) -> Report:
     bind = build.binding(m.build, d, h, build.animated(m.build, record_of, len(d.skeleton.bones)))
     parts = build.parts(d, m.build)
     skinned, used = build.skin(parts, m.build, bind, h)
-    model = pmo.Pmo.from_bytes(mesh.build(skinned, d.model.scale).to_bytes())
-    want = expected([vi for p in parts for vi in p.influences], bind.joint_of)
+    model = pmo.Pmo.from_bytes(mesh.build(skinned, d.model.scale, tip=bind.rig.tip).to_bytes())
+    kept, ends = mesh.split([s.influences for s in skinned], bind.rig.tip)
+    want = expected([vi for i in kept + ends for vi in parts[i].influences], bind.joint_of)
     got = [vi for g in range(len(model.groups())) for vi in model.influences(g)]
     return Report(used, compare(want, got))

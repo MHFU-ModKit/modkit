@@ -8,11 +8,15 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import NamedTuple
 
+import numpy as np
 from mhp_formats import p3rd, pmo
 from mhp_formats.pac import Pac
 from mhp_formats.pmo import Influence, Triangle, Vec3
 from mhp_formats.psp.color import Rgba
 from mhp_formats.psp.vtype import BITS8, BITS16, VertexType, quantize_vertices
+from numpy.typing import NDArray
+
+from .rig import OFFSET_TOL, Tip
 
 Uv = tuple[float, float]
 
@@ -27,6 +31,11 @@ SHADOW = 0
 COLOR = 0xFFFFFFFF
 NO_NORMAL = (0.0, 0.0, 0.0)
 """Written for a donor vertex that carries no normal."""
+
+CUT_WELD = 0.5
+"""The share of a cut-face part's vertices that weld to the body."""
+CUT_FACING = 0.7
+"""How squarely, area-weighted |cos|, a cut-face part's faces face along the tail."""
 
 _FAINT = 1e-4
 """A weight `Part.dominant` does not count."""
@@ -152,17 +161,106 @@ def overflow(parts: Sequence[Part], scale: Vec3) -> list[Overflow]:
     return out
 
 
-def build(skinned: Sequence[Skinned], scale: Vec3) -> pmo.Pmo:
-    """The MHFU PMO: one mesh, a group per part, one material per distinct texture in texture
-    order, and positions quantised against `scale` (the donor's `Pmo.scale`). Vertex colours are
-    not written."""
-    textures = sorted({s.part.texture for s in skinned})
-    material_of = {t: i for i, t in enumerate(textures)}
-    groups = [group(s, scale, material_of[s.part.texture]) for s in skinned]
-    mesh = pmo.Mesh(groups, list(range(len(textures))), lighting=LIGHTING, blend=BLEND)
-    materials = [pmo.Material(color=COLOR, shadow=SHADOW, texture=t) for t in textures]
+def tip_parts(
+    influences: Sequence[Sequence[Sequence[Influence]]], joints: Collection[int]
+) -> list[int]:
+    """The parts, given as their vertices' influences, that ride only `joints` (a tail tip's
+    chain); raises for a part that blends them with other joints, which neither the monster nor
+    the dropped tail could draw."""
+    out = []
+    for i, rows in enumerate(influences):
+        on = {j in joints for row in rows for j, w in row if w > _FAINT and j >= 0}
+        if on == {True, False}:
+            raise ValueError(f"part {i} blends the tip's joints {sorted(joints)} with the body's")
+        if on == {True}:
+            out.append(i)
+    return out
+
+
+def cut_parts(skinned: Sequence[Skinned], tip: Collection[int], offset: Vec3) -> list[int]:
+    """Of the `tip` parts, the cut face: at least `CUT_WELD` of its vertices weld to the body's
+    once moved by `offset` (the tip on the stump), and its faces face along the tail
+    (`CUT_FACING`), the seam toward the tip. Native caps weld all; a donor's keeps its centre
+    apart, and a fin welded at the seam faces sideways."""
+    body = np.array([p for i, s in enumerate(skinned) if i not in tip for p in s.part.positions])
+    if not tip or not len(body):
+        return []
+    moved = {i: np.array(skinned[i].part.positions) + np.array(offset) for i in sorted(tip)}
+    welded = {i: _gap(x, body) < OFFSET_TOL for i, x in moved.items()}
+    every = np.concatenate(list(moved.values()))
+    seam = np.concatenate([x[welded[i]] for i, x in moved.items()])
+    if not len(seam):
+        return []
+    axis = every.mean(axis=0) - seam.mean(axis=0)
+    axis /= np.linalg.norm(axis) or 1.0
+    return [
+        i
+        for i in sorted(tip)
+        if welded[i].mean() >= CUT_WELD
+        and _facing(moved[i], skinned[i].part.triangles, axis) >= CUT_FACING
+    ]
+
+
+def _gap(points: NDArray[np.float64], to: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Each point's distance to the nearest of `to`."""
+    out: NDArray[np.float64] = np.sqrt(((points[:, None] - to[None]) ** 2).sum(axis=-1)).min(axis=1)
+    return out
+
+
+def _facing(
+    positions: NDArray[np.float64], triangles: Sequence[Triangle], axis: NDArray[np.float64]
+) -> float:
+    """The area-weighted mean |cos| between the triangles' normals and `axis`."""
+    t = np.array(triangles, dtype=np.intp).reshape(-1, 3)
+    n = np.cross(positions[t[:, 1]] - positions[t[:, 0]], positions[t[:, 2]] - positions[t[:, 0]])
+    area = np.linalg.norm(n, axis=1).sum()
+    return float(np.abs(n @ axis).sum() / area) if area else 0.0
+
+
+def split(
+    influences: Sequence[Sequence[Sequence[Influence]]], tip: Tip | None
+) -> tuple[list[int], list[int]]:
+    """The parts, given as their vertices' influences, `build` puts in mesh 0 and in mesh 1:
+    the body's and the `tip`'s (`tip_parts`), each in part order."""
+    ends = [] if tip is None else tip_parts(influences, tip.joints)
+    return [i for i in range(len(influences)) if i not in ends], ends
+
+
+def build(skinned: Sequence[Skinned], scale: Vec3, *, tip: Tip | None) -> pmo.Pmo:
+    """The MHFU PMO: mesh 0 holds the body; mesh 1, where the host's dropped tail draws from,
+    the parts riding the `tip`'s chain (`split`; None for a rig without one): its material 0
+    the tip's, 1 the cut face's (`cut_parts`; em75 hides it until the cut; a copy of 0 without
+    one), then the tip's other textures. A group per part, one material per texture of a mesh
+    in texture order, and positions quantised against `scale` (the donor's `Pmo.scale`).
+    Vertex colours are not written."""
+    kept, ends = split([s.influences for s in skinned], tip)
+    cut = [] if tip is None else cut_parts(skinned, ends, tip.offset)
+    body = [skinned[i] for i in kept]
+    textures = sorted({s.part.texture for s in body})
+    meshes = [[(s, textures.index(s.part.texture)) for s in body]]
+    slots = [textures]
+    if ends:
+        plain = sorted({skinned[i].part.texture for i in ends if i not in cut})
+        face = sorted({skinned[i].part.texture for i in cut})
+        if len(face) > 1:
+            raise ValueError(f"the cut face spans textures {face}; it takes one material")
+        first = (plain or face)[0]
+        slots.append([first, (face or plain)[0], *plain[1:]])
+        rest = [first, -1, *plain[1:]]
+        meshes.append(
+            [(skinned[i], 1 if i in cut else rest.index(skinned[i].part.texture)) for i in ends]
+        )
+    out: list[pmo.Mesh] = []
+    materials: list[pmo.Material] = []
+    for laid, textures in zip(meshes, slots, strict=True):
+        first = len(materials)
+        materials += [pmo.Material(color=COLOR, shadow=SHADOW, texture=t) for t in textures]
+        groups = [group(s, scale, k) for s, k in laid]
+        out.append(
+            pmo.Mesh(groups, list(range(first, len(materials))), lighting=LIGHTING, blend=BLEND)
+        )
     # the engine's cull sphere (Pmo.clip): 0 culls the model as a point near its feet
-    return pmo.Pmo([mesh], materials, scale, max(scale))
+    return pmo.Pmo(out, materials, scale, max(scale))
 
 
 def group(skinned: Skinned, scale: Vec3, material: int = 0) -> pmo.Group:

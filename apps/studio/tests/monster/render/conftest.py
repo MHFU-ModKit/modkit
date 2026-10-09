@@ -131,7 +131,7 @@ def rig_pac(**override: Any) -> bytes:
         tube(REAR, -350.0, 100.0, 1),
         box((300.0, 40.0, 0.0), 40.0, 7, 0),
     ]
-    model = mesh.build(parts, (1024.0, 1024.0, 1024.0))
+    model = mesh.build(parts, (1024.0, 1024.0, 1024.0), tip=None)
     body, tail = walk()
     anim = fu.Anim([[None, body, strike()], [None, None, None], [None, tail, None]])
     images = override.get("textures", [texture(0), texture(1)])

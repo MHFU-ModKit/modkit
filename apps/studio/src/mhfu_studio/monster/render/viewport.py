@@ -76,7 +76,7 @@ class Actor:
             steer=self.steer,
             speed=self.playback.speed,
         )
-        self.mesh.set_pose(None if clip is None else p)
+        self.mesh.set_pose(p)  # bind included: the tail tip moves onto the tail
         self.skeleton.set_positions(p.joints)
         for ov in (self.hitboxes, self.attacks):
             if ov is not None:

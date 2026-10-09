@@ -9,7 +9,8 @@ from typing import Any
 
 import numpy as np
 import pytest
-from mhfu_port import motion
+from mhfu_port import build, manifest, motion, verify
+from mhfu_port.data import Data
 from mhfu_port.model import Model
 from mhp_formats import Pac, Pmo, Tmh, fu
 from mhp_formats.anim import Channel, Clip, Keyframe, Track
@@ -207,6 +208,27 @@ def test_donor(write: ModuleType, donor: bytes) -> None:
     assert np.allclose(back.groups[0].positions, model.groups[0].positions)
     with pytest.raises(write.ExportError, match="port"):
         write.place(out.pac, model)
+
+
+@pytest.mark.parametrize("side", ["source", "port"])
+def test_zinogre_tip(write: ModuleType, mhfu_data: Path, mhp3rd_data: Path, side: str) -> None:
+    """An export of the Zinogre, its MHP3rd model or its port edited, keeps the tail tip in mesh
+    record 1, which the Tigrex's dropped tail draws: verify's tip check passes."""
+    if side == "source":
+        model = Model.from_path(mhp3rd_data / "file_05339.bin")
+        groups = None
+    else:
+        games = Data.find(mhfu_data, mhp3rd_data)
+        ports = Path(__file__).parents[3] / "ports"
+        pac = build.build(manifest.load(ports / "zinogre.toml"), games).pac
+        model = Model.from_bytes(pac, "file_06185")
+        groups = held(write, model)
+        groups[0].positions[0] += (3.0, -2.0, 1.5)
+    port = verify.Port(export(write, model, groups).pac)
+    host = verify.Port((mhfu_data / "file_06185.bin").read_bytes())
+    check = verify.tip_check(port, host)
+    assert check.ok, check.detail
+    assert len(port.model.meshes[1].groups) == 6
 
 
 def test_place(write: ModuleType, model: Model, tmp_path: Path) -> None:

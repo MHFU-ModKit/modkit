@@ -36,7 +36,7 @@ def anim(body=3, head=2):
 def model(joints=(0, 1, 3), vertices=3):
     part = Part([(0.0, 0.0, 0.0)] * vertices, [], [(0.0, 0.0)] * vertices, [], [], [], 0)
     rows = [[(joints[i % len(joints)], 1.0)] for i in range(vertices)]
-    return mesh.build([Skinned(part, rows)], (1.0, 1.0, 1.0))
+    return mesh.build([Skinned(part, rows)], (1.0, 1.0, 1.0), tip=None)
 
 
 def codes(**parts):
