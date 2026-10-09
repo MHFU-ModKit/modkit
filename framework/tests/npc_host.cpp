@@ -45,6 +45,15 @@ uint16_t npc_host_step(npc_anim_t *a, const npc_play_t *req, int playing)
     return npc_anim_step(a, req, playing);
 }
 uint16_t npc_host_spawn(npc_anim_t *a, const npc_play_t *req) { return npc_anim_spawn(a, req); }
+void npc_host_take(npc_course_t *c, const npc_face_order_t *f, const npc_arrive_order_t *a)
+{
+    npc_course_take(c, f, a);
+}
+uint16_t npc_host_frame(npc_anim_t *a, const npc_play_t *req, int playing, npc_course_t *c,
+                        float px, float pz, float hx, float hz, uint16_t hyaw)
+{
+    return npc_frame_entry(a, req, playing, c, px, pz, hx, hz, hyaw);
+}
 int npc_host_alive(uint32_t vtable, uint8_t kind, uint16_t index, int slot, uint32_t age_us,
                    uint32_t fresh_us)
 {

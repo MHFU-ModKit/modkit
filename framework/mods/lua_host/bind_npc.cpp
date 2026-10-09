@@ -68,6 +68,17 @@ int lb_npc_face(lua_State *L)
     return 0;
 }
 
+int lb_npc_arrive(lua_State *L)
+{
+    int slot = (int)luaL_checkinteger(L, 1);
+    float dist = (float)luaL_checknumber(L, 2);
+    uint16_t entry = (uint16_t)luaL_checkinteger(L, 3);
+    uint8_t blend = (uint8_t)luaL_optinteger(L, 4, 6);
+    uint16_t then = (uint16_t)luaL_optinteger(L, 5, MHFU_NPC_NONE);
+    mhfu_npc_arrive(slot, dist, entry, blend, then);
+    return 0;
+}
+
 int lb_npc_status(lua_State *L)
 {
     mhfu_npc_status_t st;

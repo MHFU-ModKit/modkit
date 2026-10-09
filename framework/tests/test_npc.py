@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The village NPCs' pure parts (src/core/npc_logic.h) on the host: the spawn rows and when to
-patch them, a row's slot, the hunter's frame and the turn, the clip lookup, the part roots and
-the clip state machine."""
+patch them, a row's slot, the hunter's frame, the turn and the arrival, the clip lookup, the part
+roots and the clip state machine."""
 
 import ctypes
 import math
@@ -59,6 +59,44 @@ class Anim(ctypes.Structure):
     ]
 
 
+class FaceOrder(ctypes.Structure):
+    _fields_ = [
+        ("seq", ctypes.c_uint32),
+        ("mode", ctypes.c_uint8),
+        ("_pad", ctypes.c_uint8),
+        ("rate", ctypes.c_uint16),
+        ("x", ctypes.c_float),
+        ("z", ctypes.c_float),
+    ]
+
+
+class ArriveOrder(ctypes.Structure):
+    _fields_ = [
+        ("seq", ctypes.c_uint32),
+        ("face", ctypes.c_uint32),
+        ("dist", ctypes.c_float),
+        ("entry", ctypes.c_uint16),
+        ("then", ctypes.c_uint16),
+        ("blend", ctypes.c_uint8),
+        ("_pad", ctypes.c_uint8 * 3),
+    ]
+
+
+class Course(ctypes.Structure):
+    _fields_ = [
+        ("face_seq", ctypes.c_uint32),
+        ("arrive_seq", ctypes.c_uint32),
+        ("face", Face),
+        ("arrive_face", ctypes.c_uint32),
+        ("dist", ctypes.c_float),
+        ("entry", ctypes.c_uint16),
+        ("then", ctypes.c_uint16),
+        ("blend", ctypes.c_uint8),
+        ("pending", ctypes.c_uint8),
+        ("_pad", ctypes.c_uint8 * 2),
+    ]
+
+
 @pytest.fixture(scope="module")
 def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     lib = host_lib("tests/npc_host.cpp", "src/core/steer.cpp")
@@ -83,6 +121,23 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     lib.npc_host_step.argtypes = [ctypes.POINTER(Anim), ctypes.POINTER(Play), ctypes.c_int]
     lib.npc_host_spawn.argtypes = [ctypes.POINTER(Anim), ctypes.POINTER(Play)]
     lib.npc_host_alive.argtypes = [u32, u8, u16, ctypes.c_int, u32, u32]
+    lib.npc_host_take.argtypes = [
+        ctypes.POINTER(Course),
+        ctypes.POINTER(FaceOrder),
+        ctypes.POINTER(ArriveOrder),
+    ]
+    lib.npc_host_frame.restype = u16
+    lib.npc_host_frame.argtypes = [
+        ctypes.POINTER(Anim),
+        ctypes.POINTER(Play),
+        ctypes.c_int,
+        ctypes.POINTER(Course),
+        f,
+        f,
+        f,
+        f,
+        u16,
+    ]
     return lib
 
 
@@ -329,3 +384,144 @@ def test_alive(lib: ctypes.CDLL) -> None:
     assert not lib.npc_host_alive(vt, 2, 17, 1, 0, 250_000)
     assert not lib.npc_host_alive(vt, OWN_KIND, 16, 1, 0, 250_000)
     assert not lib.npc_host_alive(vt, OWN_KIND, 17, 1, 300_000, 250_000)
+
+
+STOP_CLIP, IDLE_CLIP, WALK = 5, 1, 4
+
+
+class Npc:
+    """One slot's orders and the wrapper's state: the calls as npc.cpp writes the orders, frame()
+    as its brain wrapper takes them (pre) and picks the clip (post)."""
+
+    def __init__(self, lib: ctypes.CDLL) -> None:
+        self.lib = lib
+        self.play_req, self.anim = Play(then=NONE), Anim(then=NONE)
+        self.face_req, self.arrive_req, self.course = FaceOrder(), ArriveOrder(), Course()
+
+    def play(self, entry: int, blend: int = 6, then: int = NONE) -> None:
+        self.play_req.ask(entry, blend, then)
+
+    def face(self, mode: int, x: float = 0, z: float = 0, rate: int = 0x200) -> None:
+        o = self.face_req
+        o.x, o.z, o.rate, o.mode = x, z, rate, mode
+        o.seq += 1
+
+    def arrive(
+        self, dist: float, entry: int = STOP_CLIP, blend: int = 6, then: int = IDLE_CLIP
+    ) -> None:
+        o = self.arrive_req
+        o.dist, o.entry, o.blend, o.then = dist, entry, blend, then
+        o.face = self.face_req.seq
+        o.seq += 1
+
+    def frame(
+        self,
+        at: tuple[float, float],
+        hunter: tuple[float, float, int] = (0, 0, 0),
+        playing: bool = True,
+    ) -> int:
+        c = ctypes.byref(self.course)
+        self.lib.npc_host_take(c, ctypes.byref(self.face_req), ctypes.byref(self.arrive_req))
+        a, p = ctypes.byref(self.anim), ctypes.byref(self.play_req)
+        return int(self.lib.npc_host_frame(a, p, int(playing), c, *at, *hunter))
+
+
+def walking(lib: ctypes.CDLL, dist: float = 300) -> Npc:
+    """Walking toward (0, 1000) with the arrival armed `dist` short of it."""
+    n = Npc(lib)
+    n.play(WALK)
+    n.face(POINT, 0, 1000)
+    n.arrive(dist)
+    assert n.frame((0, 0)) == WALK
+    return n
+
+
+def test_arrive_at_the_threshold(lib: ctypes.CDLL) -> None:
+    n = walking(lib)
+    assert n.frame((0, 699)) == NONE
+    assert n.frame((0, 700)) == STOP_CLIP
+    assert (n.anim.blend, n.anim.then) == (6, IDLE_CLIP)  # as npc_play(STOP, 6, IDLE)
+    assert n.course.face.mode == STILL
+
+
+def test_arrive_once(lib: ctypes.CDLL) -> None:
+    n = walking(lib)
+    n.frame((0, 800))
+    assert [n.frame((0, z)) for z in (850, 300, 900, 1000)] == [NONE] * 4
+
+
+def test_arrive_then(lib: ctypes.CDLL) -> None:
+    n = walking(lib)
+    n.frame((0, 750))
+    assert [n.frame((0, 800), playing=p) for p in (False, True, True)] == [NONE] * 3
+    assert n.frame((0, 900), playing=False) == IDLE_CLIP  # the stop clip ended
+
+
+def test_arrive_disarmed_by_a_face(lib: ctypes.CDLL) -> None:
+    n = walking(lib)
+    n.face(POINT, 0, 1000)
+    assert n.frame((0, 900)) == NONE
+    n.arrive(300)
+    assert n.frame((0, 900)) == STOP_CLIP  # armed again on the new face
+
+
+def test_arrive_disarmed_by_still(lib: ctypes.CDLL) -> None:
+    n = walking(lib)
+    n.face(STILL)
+    assert n.frame((0, 900)) == NONE
+    n.arrive(300)  # on a still face
+    assert n.frame((0, 1000)) == NONE
+
+
+def test_arrive_after_it_fired(lib: ctypes.CDLL) -> None:
+    """The arrival stilled the turn: arming again without a face arms nothing."""
+    n = walking(lib)
+    n.frame((0, 800))
+    n.arrive(300)
+    assert n.frame((0, 900)) == NONE and n.course.face.mode == STILL
+
+
+def test_arrive_never_on_a_stale_face(lib: ctypes.CDLL) -> None:
+    n = walking(lib)
+    n.arrive_req.face += 1  # armed on a face order the wrapper has not taken
+    n.arrive_req.seq += 1
+    assert n.frame((0, 900)) == NONE
+    n.face(POINT, 0, 1000)  # that order lands
+    assert n.frame((0, 900)) == STOP_CLIP
+
+
+def test_arrive_waits_for_its_seq(lib: ctypes.CDLL) -> None:
+    n = walking(lib, 50)
+    o = n.arrive_req
+    o.dist, o.face = 300, n.face_req.seq  # the writer stopped before SEQ
+    assert n.frame((0, 900)) == NONE
+    o.seq += 1
+    assert n.frame((0, 900)) == STOP_CLIP
+
+
+def test_arrive_after_a_play(lib: ctypes.CDLL) -> None:
+    """A walk and its arrival taken in one frame, already there: the arrival, given last, wins."""
+    n = Npc(lib)
+    n.play(WALK)
+    n.face(POINT, 0, 1000)
+    n.arrive(300)
+    assert n.frame((0, 800)) == STOP_CLIP and n.anim.then == IDLE_CLIP
+
+
+def test_arrive_at_the_hunter(lib: ctypes.CDLL) -> None:
+    """FACE_HUNTER's point moves with the hunter, recomputed every frame."""
+    n = Npc(lib)
+    n.face(HUNTER, 250, 0)  # 250 right of a hunter facing +z: x - 250
+    n.arrive(300)
+    at = (-250.0, 0.0)
+    assert [n.frame(at, (0, z, 0)) for z in (700, 500, 301)] == [NONE] * 3
+    assert n.frame(at, (0, 300, 0)) == STOP_CLIP
+    assert n.frame(at, (0, 0, 0)) == NONE
+
+
+def test_arrive_at_a_turning_hunter(lib: ctypes.CDLL) -> None:
+    n = Npc(lib)
+    n.face(HUNTER, 250, 0)
+    n.arrive(100)
+    assert n.frame((250, 0), (0, 0, 0)) == NONE  # their left
+    assert n.frame((250, 0), (0, 0, 0x8000)) == STOP_CLIP  # turned about: now their right

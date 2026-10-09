@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* npc.cpp's pure parts: the spawn rows and when to patch them, a row index's slot, the hunter's
- * frame and the turn, the clip lookup and the clip state machine. Free of PSP headers, so the
- * host test compiles them (tests/npc_host.cpp). */
+ * frame, the turn and the arrival, the clip lookup and the clip state machine. Free of PSP
+ * headers, so the host test compiles them (tests/npc_host.cpp). */
 #ifndef MHFU_CORE_NPC_LOGIC_H
 #define MHFU_CORE_NPC_LOGIC_H
 
@@ -99,20 +99,28 @@ typedef struct {
     float    x, z;
 } npc_face_t;
 
+/* The world point `f` faces into (tx, tz), the hunter at (hx, hz) facing hyaw; 0 for FACE_STILL. */
+static inline int npc_face_point(const npc_face_t *f, float hx, float hz, uint16_t hyaw, float *tx,
+                                 float *tz)
+{
+    if (f->mode == MHFU_NPC_FACE_POINT) {
+        *tx = f->x;
+        *tz = f->z;
+    } else if (f->mode == MHFU_NPC_FACE_HUNTER) {
+        npc_hunter_point(hx, hz, hyaw, f->x, f->z, tx, tz);
+    } else {
+        return 0;
+    }
+    return 1;
+}
+
 /* YAW after one frame's turn of an NPC at (px, pz) as `f` says, the hunter at (hx, hz) facing
  * hyaw; `yaw` when there is nothing to turn to. */
 static inline uint16_t npc_turn(uint16_t yaw, const npc_face_t *f, float px, float pz, float hx,
                                 float hz, uint16_t hyaw)
 {
     float tx, tz;
-    if (f->mode == MHFU_NPC_FACE_POINT) {
-        tx = f->x;
-        tz = f->z;
-    } else if (f->mode == MHFU_NPC_FACE_HUNTER) {
-        npc_hunter_point(hx, hz, hyaw, f->x, f->z, &tx, &tz);
-    } else {
-        return yaw;
-    }
+    if (!npc_face_point(f, hx, hz, hyaw, &tx, &tz)) return yaw;
     const float dx = tx - px, dz = tz - pz;
     if (dx * dx + dz * dz < 1.0f) return yaw;   /* on the spot: no bearing */
     return mhfu_steer_toward(yaw, mhfu_steer_bearing(dx, dz), f->rate);
@@ -196,6 +204,16 @@ typedef struct {
     uint8_t  _pad[2];
 } npc_anim_t;
 
+/* Starts `entry` on a as a request does; entry. */
+static inline uint16_t npc_anim_start(npc_anim_t *a, uint16_t entry, uint8_t blend, uint16_t then)
+{
+    a->entry = entry;
+    a->then = then;
+    a->blend = blend;
+    a->armed = 0;
+    return entry;
+}
+
 /* The entry to start this frame, or MHFU_NPC_NONE: a new request; else `then` once a clip seen
  * playing has stopped (one that loops never does). */
 static inline uint16_t npc_anim_step(npc_anim_t *a, const npc_play_t *req, int playing)
@@ -203,11 +221,8 @@ static inline uint16_t npc_anim_step(npc_anim_t *a, const npc_play_t *req, int p
     const uint32_t seq = req->seq;
     if (seq != a->seq) {
         a->seq = seq;
-        a->entry = req->entry;
-        a->then = req->then;
-        a->blend = req->blend;
-        a->armed = 0;
-        return a->entry;
+        const uint16_t entry = req->entry, then = req->then;
+        return npc_anim_start(a, entry, req->blend, then);
     }
     if (playing) {
         a->armed = 1;
@@ -226,6 +241,104 @@ static inline uint16_t npc_anim_spawn(npc_anim_t *a, const npc_play_t *req)
     a->armed = 0;   /* so only a request moves it */
     npc_anim_step(a, req, 0);
     return a->entry;
+}
+
+/* mhfu_npc_face's order, written as npc_play_t: the fields, then SEQ. */
+typedef struct {
+    volatile uint32_t seq;
+    volatile uint8_t  mode, _pad;
+    volatile uint16_t rate;
+    volatile float    x, z;
+} npc_face_order_t;
+static_assert(std::is_volatile<decltype(npc_face_order_t::seq)>::value
+                  && std::is_volatile<decltype(npc_face_order_t::mode)>::value
+                  && std::is_volatile<decltype(npc_face_order_t::rate)>::value
+                  && std::is_volatile<decltype(npc_face_order_t::x)>::value
+                  && std::is_volatile<decltype(npc_face_order_t::z)>::value,
+              "npc_face_order_t's stores and loads keep their order only while volatile");
+
+/* mhfu_npc_arrive's order, the same way; FACE is the SEQ of the face order it arms. */
+typedef struct {
+    volatile uint32_t seq, face;
+    volatile float    dist;
+    volatile uint16_t entry, then;
+    volatile uint8_t  blend, _pad[3];
+} npc_arrive_order_t;
+static_assert(std::is_volatile<decltype(npc_arrive_order_t::seq)>::value
+                  && std::is_volatile<decltype(npc_arrive_order_t::face)>::value
+                  && std::is_volatile<decltype(npc_arrive_order_t::dist)>::value
+                  && std::is_volatile<decltype(npc_arrive_order_t::entry)>::value
+                  && std::is_volatile<decltype(npc_arrive_order_t::then)>::value
+                  && std::is_volatile<decltype(npc_arrive_order_t::blend)>::value,
+              "npc_arrive_order_t's stores and loads keep their order only while volatile");
+
+/* The turn and the arrival as the wrapper last took them. */
+typedef struct {
+    uint32_t   face_seq, arrive_seq;  /* the orders taken last */
+    npc_face_t face;                  /* FACE_STILL once arrived */
+    uint32_t   arrive_face;           /* the face order the arrival arms */
+    float      dist;
+    uint16_t   entry, then;
+    uint8_t    blend;
+    uint8_t    pending;               /* the arrival has not fired */
+    uint8_t    _pad[2];
+} npc_course_t;
+
+/* Takes each order whose SEQ moved, only if SEQ held across the copy: a writer that cut in is
+ * taken next frame, never half. */
+static inline void npc_course_take(npc_course_t *c, const npc_face_order_t *f,
+                                   const npc_arrive_order_t *a)
+{
+    uint32_t seq = f->seq;
+    if (seq != c->face_seq) {
+        npc_face_t t = {f->mode, 0, f->rate, f->x, f->z};
+        if (f->seq == seq) {
+            c->face = t;
+            c->face_seq = seq;
+        }
+    }
+    seq = a->seq;
+    if (seq != c->arrive_seq) {
+        const uint32_t face = a->face;
+        const float dist = a->dist;
+        const uint16_t entry = a->entry, then = a->then;
+        const uint8_t blend = a->blend;
+        if (a->seq == seq) {
+            c->arrive_seq = seq;
+            c->arrive_face = face;
+            c->dist = dist;
+            c->entry = entry;
+            c->then = then;
+            c->blend = blend;
+            c->pending = 1;
+        }
+    }
+}
+
+/* 1 when c's arrival fires for an NPC at (px, pz): on the face it turns by, not FACE_STILL, and
+ * within DIST of its point. Firing ends it and stills the turn. */
+static inline int npc_arrived(npc_course_t *c, float px, float pz, float hx, float hz,
+                              uint16_t hyaw)
+{
+    float tx, tz;
+    if (!c->pending || c->arrive_face != c->face_seq || c->dist < 0
+        || !npc_face_point(&c->face, hx, hz, hyaw, &tx, &tz))
+        return 0;
+    const float dx = tx - px, dz = tz - pz;
+    if (dx * dx + dz * dz > c->dist * c->dist) return 0;
+    c->pending = 0;
+    c->face.mode = MHFU_NPC_FACE_STILL;
+    return 1;
+}
+
+/* The entry to start this frame: npc_anim_step's, then the arrival's when it fires. */
+static inline uint16_t npc_frame_entry(npc_anim_t *a, const npc_play_t *req, int playing,
+                                       npc_course_t *c, float px, float pz, float hx, float hz,
+                                       uint16_t hyaw)
+{
+    const uint16_t entry = npc_anim_step(a, req, playing);
+    if (!npc_arrived(c, px, pz, hx, hz, hyaw)) return entry;
+    return npc_anim_start(a, c->entry, c->blend, c->then);
 }
 
 /* 1 while a stored object is still our slot's NPC: its vtable, kind and row, and the wrapper ran

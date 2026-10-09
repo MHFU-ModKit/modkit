@@ -5,9 +5,10 @@
  *   npc_add      stages the PAC in extra RAM and adds a row to the block
  *   chunk        the DATA.BIN chunk that decrypts the lobby's spawn table: the village's rows
  *                plus ours into the block, NPC_SPAWN_ROWS[village] at it
- *   brain pre    the setup call of ours: RESOURCE_TABLE row 16 + kind = its PAC; later: the turn
+ *   brain pre    the setup call of ours: RESOURCE_TABLE row 16 + kind = its PAC; later: the
+ *                face and arrive orders, the turn
  *   brain post   the setup call: head and tail slots, its first clips, placed by the hunter;
- *                every call: not talkable, clip switches, the status
+ *                every call: not talkable, clip switches and the arrival, the status
  *
  * KIND is 0 at the setup call (NPC_PRE_SETUP copies it in), so ours are told apart there by the
  * row NPC_PRE_SETUP is about to copy, and by INDEX and KIND after. The block lives in partition
@@ -40,8 +41,10 @@ typedef struct {
     uint8_t  _pad;
     uint16_t roots[NPC_PARTS];  /* each part's first joint */
     npc_play_t play;            /* any thread */
-    volatile npc_face_t face;
+    npc_face_order_t face;
+    npc_arrive_order_t arrive;
     npc_anim_t anim;            /* the game thread */
+    npc_course_t course;
     volatile uint32_t object, seen_us;
     mhfu_npc_status_t status;
 } npc_slot_t;
@@ -148,16 +151,13 @@ static void setup_pre(uint32_t npc)
 /* YAW here, before the brain's transform reads it, so the turn shows this frame. */
 static void turn(uint32_t npc, npc_slot_t *s)
 {
-    npc_face_t f;
-    f.mode = s->face.mode;
-    if (f.mode == MHFU_NPC_FACE_STILL) return;
-    f.rate = s->face.rate;
-    f.x = s->face.x;
-    f.z = s->face.z;
+    npc_course_take(&s->course, &s->face, &s->arrive);
+    const npc_face_t *f = &s->course.face;
+    if (f->mode == MHFU_NPC_FACE_STILL) return;
     const uint32_t pos = npc + MHFU_ENTITY_POSITION;
     const uint32_t hunter = MHFU_PLAYER_ENTITY + MHFU_ENTITY_POSITION;
     wr16(npc + MHFU_ENTITY_YAW,
-         npc_turn(rd16(npc + MHFU_ENTITY_YAW), &f, rdf(pos), rdf(pos + 8), rdf(hunter),
+         npc_turn(rd16(npc + MHFU_ENTITY_YAW), f, rdf(pos), rdf(pos + 8), rdf(hunter),
                   rdf(hunter + 8), rd16(MHFU_PLAYER_ENTITY + MHFU_ENTITY_YAW)));
 }
 
@@ -219,17 +219,19 @@ static void setup_post(uint32_t npc, int k)
     s->object = npc;
 }
 
-/* Every frame of ours: after the brain, which zeroes BUSY and plays the clips. */
+/* Every frame of ours: after the brain, which zeroes BUSY, plays the clips and moves it. */
 static void frame(uint32_t npc, npc_slot_t *s)
 {
     wr8(npc + MHFU_NPC_BUSY, 1);
     const uint32_t flags = npc + MHFU_ENTITY_CLIP_BLOCKS + MHFU_CLIP_BLOCK_FLAGS;
-    uint16_t entry = npc_anim_step(&s->anim, &s->play, rd16(flags) & 1);
+    const uint32_t pos = npc + MHFU_ENTITY_POSITION;
+    const uint32_t hunter = MHFU_PLAYER_ENTITY + MHFU_ENTITY_POSITION;
+    uint16_t entry = npc_frame_entry(&s->anim, &s->play, rd16(flags) & 1, &s->course, rdf(pos),
+                                     rdf(pos + 8), rdf(hunter), rdf(hunter + 8),
+                                     rd16(MHFU_PLAYER_ENTITY + MHFU_ENTITY_YAW));
     if (entry != MHFU_NPC_NONE) play(npc, entry, s->anim.blend, 0);
 
     mhfu_npc_status_t *st = &s->status;
-    const uint32_t pos = npc + MHFU_ENTITY_POSITION;
-    const uint32_t hunter = MHFU_PLAYER_ENTITY + MHFU_ENTITY_POSITION;
     st->frames++;
     st->entry = s->anim.entry;
     st->playing = (uint8_t)(rd16(flags) & 1);
@@ -389,6 +391,20 @@ extern "C" void mhfu_npc_face(int slot, int mode, float x, float z, uint16_t rat
     s->face.z = z;
     s->face.rate = rate;
     s->face.mode = (uint8_t)mode;
+    s->face.seq = s->face.seq + 1;   /* last, as play's: it also disarms an arrival */
+}
+
+extern "C" void mhfu_npc_arrive(int slot, float dist, uint16_t entry, uint8_t blend,
+                                uint16_t then)
+{
+    npc_slot_t *s = used(slot);
+    if (!s) return;
+    s->arrive.dist = dist;
+    s->arrive.entry = entry;
+    s->arrive.blend = blend;
+    s->arrive.then = then;
+    s->arrive.face = s->face.seq;      /* the order it arms: the face given last */
+    s->arrive.seq = s->arrive.seq + 1;   /* last */
 }
 
 extern "C" int mhfu_npc_status(int slot, mhfu_npc_status_t *out)
