@@ -566,13 +566,15 @@ TIP = """
 local TIP, calls = nil, 0
 function mhfu.em_installed() return true end
 function mhfu.em_tip(pairs) TIP, calls = pairs, calls + 1; return true end
-package.loaded.z_moves = { moves = {}, rules = {}, tip = { { 46, 43 }, { 47, 42 } } }
+package.loaded.z_moves = {
+  moves = {}, rules = {}, tip = { { 46, 42 }, { 47, 42 }, { 48, 43 }, { 49, 44 }, { 50, 45 } },
+}
 package.loaded.y_moves = { moves = {}, rules = {} }
 local P = require("mhfu_port")
 P.define{ name = "z", species = 75 }.ent = ENT
 ticks(2)
-assert(calls == 1 and TIP[1][1] == 46 and TIP[2][2] == 42, "once, when the port latches")
-assert(count("tail tip: 2 joint%(s%) follow their carriers") == 1)
+assert(calls == 1 and TIP[1][1] == 46 and TIP[5][2] == 45, "once, when the port latches")
+assert(count("tail tip: 5 joint%(s%) follow their carriers") == 1)
 P.ports.z = nil
 P.define{ name = "y", species = 75 }.ent = ENT
 ticks(1)
