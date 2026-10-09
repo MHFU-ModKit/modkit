@@ -61,5 +61,5 @@ files = [
 ]
 
 [[tool.mypy.overrides]]
-module = ["mhef.*", "pycdlib.*", "elftools.*", "qtawesome.*"]
+module = ["mhef.*", "pycdlib.*", "elftools.*", "qtawesome.*", "NodeGraphQt.*"]
 ignore_missing_imports = true
