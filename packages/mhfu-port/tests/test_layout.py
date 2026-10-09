@@ -5,8 +5,9 @@ from pathlib import Path
 import pytest
 from mhfu_port import build, layout, manifest, travel
 from mhfu_port.manifest import Clip as Named
+from mhfu_port.motion import frames
 from mhp_formats import fu
-from mhp_formats.anim import Clip
+from mhp_formats.anim import Channel, Clip, Keyframe, Track
 
 PORTS = Path(__file__).parents[3] / "ports"
 TIGREX = 75
@@ -123,6 +124,35 @@ def test_name_clip():
         manifest.loads(HEAD + "[clips.a]\nlabel = 'x'\n")
     with pytest.raises(layout.LayoutError, match="clips.a: the donor has no clip 7"):
         layout.plan({"a": Named(source=7)}, ids, h, TIGREX)
+
+
+CUTS = (
+    "[clips.a]\nslot = 1\nsource = 7\nstart = 0\nframes = 2\n"
+    "[clips.b]\nslot = 2\nsource = 7\nstart = 2\nframes = 5\n"
+)
+
+
+def test_cuts():
+    """Two cuts of one source: they free its entry once, the second clip they displace takes a
+    free one."""
+    m = manifest.loads(HEAD + CUTS)
+    got = layout.of(m, {1, 2, 6, 7, 100}, host({1, 2, 3, 5}, {4}))
+    assert got.entries == {1: 7, 2: 7, 3: 2, 6: 6, 7: 1, 100: 100}
+    assert (got.cuts, got.placed, got.ids[7]) == ({1: (0, 2), 2: (2, 5)}, {1, 2}, 1)
+    assert [layout.names(m, got)[e] for e in (1, 2, 3)] == ["a", "b", "clip_03"]
+    assert layout.where(m.clips["b"], got.ids) == 2 and layout.pinned(m).cuts == got.cuts
+    assert "  b = 2,  -- MHP3rd 7, frames 2..7" in layout.lua(m, got)
+
+
+def test_clips():
+    m = manifest.loads(HEAD + CUTS)
+    got = layout.of(m, {1, 2, 6, 7, 100}, host({1, 2, 3, 5}, {4}))
+    keyed = Clip([Track([Channel(0x008, [Keyframe(0, 0), Keyframe(9, 9)])])])
+    donor = {cid: keyed for cid in (1, 2, 6, 7, 100)}
+    clips = layout.clips(got, donor)
+    assert clips[6] is keyed and [frames(clips[e]) for e in (1, 2)] == [2, 5]
+    with pytest.raises(layout.LayoutError, match="entry 2, clip 7: frames 2..7"):
+        layout.clips(got, donor | {7: Clip([Track([Channel(0x008, [Keyframe(0, 6)])])])})
 
 
 def test_full():

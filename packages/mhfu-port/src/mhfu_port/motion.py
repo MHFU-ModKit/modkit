@@ -18,7 +18,7 @@ from mhp_formats import fu, p3rd
 from mhp_formats.anim import CHANNEL_BITS, AnimPack, Channel, Clip, Keyframe, Track, quantize
 from mhp_formats.skeleton import Skeleton
 
-from .fk import entry_of, entry_slot, part_clip, part_joints, rig_clip
+from .fk import entry_of, entry_slot, part_clip, part_joints, rig_clip, spline
 
 _BIT = {kind: bit for bit, kind in CHANNEL_BITS.items()}
 _ROTATION = tuple(_BIT["rot", axis] for axis in range(3))
@@ -52,6 +52,92 @@ def moveset(anim: bytes) -> dict[int, Clip]:
 def frames(clip: Clip) -> int:
     """The last keyframe: a clip's length."""
     return max((k.frame for t in clip.tracks for c in t.channels for k in c.keyframes), default=0)
+
+
+def cut(clip: Clip, start: int, length: int) -> Clip:
+    """Frames `start` to `start + length` of `clip` as a clip of their own, from frame 0.
+
+    Each keyed channel gets a key at both ends on the source's curve, its keys between them
+    kept, so two cuts that meet share the pose there. It loops only where it runs to the
+    clip's end, from the source's loop start."""
+    end = start + length
+    have = frames(clip)
+    if start < 0 or length < 1 or end > have:
+        raise ValueError(f"frames {start}..{end} are not within the clip's {have}")
+    tracks = [Track([_cut(c, start, end) for c in t.channels]) for t in clip.tracks]
+    if clip.loop and end == have:
+        return Clip(tracks, clip.loop, max(0.0, clip.loop_start - start))
+    return Clip(tracks)
+
+
+def _cut(channel: Channel, start: int, end: int) -> Channel:
+    keys = channel.keyframes
+    if not keys:
+        return Channel(channel.bit, [])
+
+    def edge(f: int) -> Keyframe:
+        ease = (slope_at(keys, f, left=True), slope_at(keys, f, left=False))
+        return Keyframe(*(s16(x) for x in (value_at(keys, f), f - start, *ease)))
+
+    inner = [k._replace(frame=k.frame - start) for k in keys if start < k.frame < end]
+    return Channel(channel.bit, [edge(start), *sorted(inner, key=_frame), edge(end)])
+
+
+def _frame(k: Keyframe) -> int:
+    return k.frame
+
+
+def s16(x: float) -> int:
+    """`x` rounded to a keyframe word."""
+    v = round(x)
+    if not -0x8000 <= v <= 0x7FFF:
+        raise ValueError(f"{x:.0f} does not fit a keyframe")
+    return v
+
+
+def _segment(keys: Sequence[Keyframe], f: float, left: bool) -> tuple[Keyframe, Keyframe] | None:
+    """The keys around `f`, the one ending at `f` when `left`; None outside them, where the
+    channel holds."""
+    ks = sorted(keys, key=_frame)
+    for k0, k1 in zip(ks, ks[1:], strict=False):
+        inside = k0.frame < f <= k1.frame if left else k0.frame <= f < k1.frame
+        if inside and k1.frame > k0.frame:
+            return k0, k1
+    return None
+
+
+def value_at(keys: Sequence[Keyframe], f: float) -> float:
+    """A channel's raw value at frame `f` (`fk.spline`), held before its first key and after its
+    last."""
+    ks = sorted(keys, key=_frame)
+    if f <= ks[0].frame:
+        return float(ks[0].value)
+    if f >= ks[-1].frame:
+        return float(ks[-1].value)
+    seg = _segment(ks, f, left=False)
+    assert seg is not None
+    k0, k1 = seg
+    return float(spline(f, k0.frame, k0.value, k0.ease_out, k1.frame, k1.value, k1.ease_in))
+
+
+def slope_at(keys: Sequence[Keyframe], f: float, *, left: bool) -> float:
+    """A channel's slope at `f` from the left or the right, raw units per frame: a key's own
+    ease there, 0 where the channel holds."""
+    seg = _segment(keys, f, left)
+    if seg is None:
+        return 0.0
+    k0, k1 = seg
+    if f == k0.frame:
+        return float(k0.ease_out)
+    if f == k1.frame:
+        return float(k1.ease_in)
+    span = k1.frame - k0.frame
+    s = (f - k0.frame) / span
+    return (
+        (k0.value * (6 * s * s - 6 * s) + k1.value * (6 * s - 6 * s * s)) / span
+        + k0.ease_out * (3 * s * s - 4 * s + 1)
+        + k1.ease_in * (3 * s * s - 2 * s)
+    )
 
 
 def filled(anim: AnimPack) -> list[int]:

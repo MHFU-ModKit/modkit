@@ -26,6 +26,7 @@ from mhp_formats.skeleton import Skeleton
 from numpy.typing import ArrayLike
 
 from . import fk, motion
+from .motion import s16, slope_at, value_at
 
 AI_HZ = 30
 """AI frames a second."""
@@ -309,7 +310,7 @@ def _keys(
     """Keys through `values` at frames `at`, entering and leaving with slopes `ins`, `outs`."""
     q = dequantize(kind, 1)
     return [
-        Keyframe(_s16(v / q), int(f), _s16(i / q), _s16(o / q))
+        Keyframe(s16(v / q), int(f), s16(i / q), s16(o / q))
         for f, v, i, o in zip(at, values, ins, outs, strict=True)
     ]
 
@@ -417,62 +418,11 @@ def _sum(a: Channel | None, b: Channel | None) -> Channel | None:
     frames = sorted({k.frame for k in a.keyframes} | {k.frame for k in b.keyframes})
     keys = []
     for f in frames:
-        v = _at(a.keyframes, f) + _at(b.keyframes, f)
-        ease_in = _slope(a.keyframes, f, left=True) + _slope(b.keyframes, f, left=True)
-        ease_out = _slope(a.keyframes, f, left=False) + _slope(b.keyframes, f, left=False)
-        keys.append(Keyframe(*(_s16(x) for x in (v, f, ease_in, ease_out))))
+        v = value_at(a.keyframes, f) + value_at(b.keyframes, f)
+        ease_in = slope_at(a.keyframes, f, left=True) + slope_at(b.keyframes, f, left=True)
+        ease_out = slope_at(a.keyframes, f, left=False) + slope_at(b.keyframes, f, left=False)
+        keys.append(Keyframe(*(s16(x) for x in (v, f, ease_in, ease_out))))
     return Channel(a.bit, keys)
-
-
-def _s16(x: float) -> int:
-    v = round(x)
-    if not -0x8000 <= v <= 0x7FFF:
-        raise ValueError(f"{x:.0f} does not fit a keyframe")
-    return v
-
-
-def _segment(keys: list[Keyframe], f: float, left: bool) -> tuple[Keyframe, Keyframe] | None:
-    """The keys around `f` (sorted keys), the one ending at `f` when `left`; None outside them,
-    where the channel holds."""
-    ks = sorted(keys, key=lambda k: k.frame)
-    for k0, k1 in zip(ks, ks[1:], strict=False):
-        inside = k0.frame < f <= k1.frame if left else k0.frame <= f < k1.frame
-        if inside and k1.frame > k0.frame:
-            return k0, k1
-    return None
-
-
-def _at(keys: list[Keyframe], f: float) -> float:
-    """`fk.spline`'s value: held before the first key and after the last."""
-    ks = sorted(keys, key=lambda k: k.frame)
-    if f <= ks[0].frame:
-        return float(ks[0].value)
-    if f >= ks[-1].frame:
-        return float(ks[-1].value)
-    seg = _segment(ks, f, left=False)
-    assert seg is not None
-    k0, k1 = seg
-    return float(fk.spline(f, k0.frame, k0.value, k0.ease_out, k1.frame, k1.value, k1.ease_in))
-
-
-def _slope(keys: list[Keyframe], f: float, *, left: bool) -> float:
-    """The spline's slope at `f` from the left or the right: a key's own ease there, 0 where
-    the channel holds."""
-    seg = _segment(keys, f, left)
-    if seg is None:
-        return 0.0
-    k0, k1 = seg
-    if f == k0.frame:
-        return float(k0.ease_out)
-    if f == k1.frame:
-        return float(k1.ease_in)
-    span = k1.frame - k0.frame
-    s = (f - k0.frame) / span
-    return (
-        (k0.value * (6 * s * s - 6 * s) + k1.value * (6 * s - 6 * s * s)) / span
-        + k0.ease_out * (3 * s * s - 4 * s + 1)
-        + k1.ease_in * (3 * s * s - 2 * s)
-    )
 
 
 def _above(skeleton: Skeleton, joint: int) -> list[int]:

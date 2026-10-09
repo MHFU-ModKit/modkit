@@ -138,16 +138,18 @@ def test_binding_retarget(monkeypatch):
 
 def test_animation(monkeypatch):
     loc_y = next(bit for bit, kind in CHANNEL_BITS.items() if kind == ("loc", 1))
-    lifted = Clip([Track([Channel(loc_y, [Keyframe(0, 0)])]), Track()])
+    lifted = Clip([Track([Channel(loc_y, [Keyframe(0, 0), Keyframe(0, 4)])]), Track()])
     d = donor(3, 2)
     d.clips[1] = lifted
     seen = {}
     monkeypatch.setattr(build.motion, "build", lambda *a: seen.update(args=a) or fu.Anim())
     bind = binding("retarget", {0: 1, 1: None, 2: 2})
-    build.animation(d, host(), bind, {1: 0, 2: 1}, layout.Layout({4: 1}), 2.0)
+    placed = layout.Layout({4: 1, 5: 1}, cuts={5: (1, 2)})
+    build.animation(d, host(), bind, {1: 0, 2: 1}, placed, 2.0)
     clips, entries, _, streams, track_of, keep = seen["args"]
-    assert (entries, streams, track_of, keep) == ({4: 1}, [2, 1], {0: 0, 2: 1}, True)
-    assert clips[1].tracks[0].channels[0].keyframes[0].value == 32
+    assert (entries, streams, track_of, keep) == ({4: 4, 5: 5}, [2, 1], {0: 0, 2: 1}, True)
+    keys = clips[5].tracks[0].channels[0].keyframes
+    assert clips[4].tracks[0].channels[0].keyframes[0].value == 32 and keys[-1] == (32, 2, 0, 0)
 
 
 @pytest.mark.parametrize("name", sorted(BUILT))

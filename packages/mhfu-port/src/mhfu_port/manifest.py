@@ -144,11 +144,13 @@ class Clip:
     in that executor entry, the a1 that plays it (`source` None: the clip numbered like it).
 
     `frames` and `loop` fingerprint the clip in a build; `labelled_build` names the build the
-    label was written against.
+    label was written against. With `start`, the entry holds only source frames `start` to
+    `start + frames`, so one source can fill several entries.
     """
 
     slot: int | None = None
     source: int | None = field(default=None, kw_only=True)
+    start: int | None = field(default=None, kw_only=True)
     frames: int | None = None
     loop: bool | None = None
     impact_frame: int | None = None
@@ -157,6 +159,13 @@ class Clip:
     monster's +x, its left. None: the turn its own body makes (`mhfu_port.travel`)."""
     label: str = ""
     labelled_build: str | None = None
+
+    @property
+    def cut(self) -> tuple[int, int] | None:
+        """`(start, frames)` of the source the entry holds; None: all of it."""
+        if self.start is None or self.frames is None:
+            return None
+        return self.start, self.frames
 
     @property
     def id(self) -> int:
@@ -543,7 +552,13 @@ def _validate(m: Manifest) -> None:
             slots[c.slot] = name
         cid = c.id
         _need(cid >= 0, w, "source is 0 or more")
-        _need(cid not in sources, w, f"clip {cid} is placed by clips.{sources.get(cid)} too")
+        if c.start is not None:
+            _need(c.slot is not None and c.frames is not None, w, "start needs slot and frames")
+            _need(c.start >= 0, w, "start is 0 or more")
+            _need(c.frames is not None and c.frames >= 1, w, "frames is at least 1")
+        held = sources.get(cid)
+        cuts = held is not None and c.start is not None and m.clips[held].start is not None
+        _need(held is None or cuts, w, f"clip {cid} is placed by clips.{held} too")
         sources[cid] = name
     claimed: dict[tuple[int, int | None], str] = {}
     for name, mv in m.moves.items():

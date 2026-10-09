@@ -47,6 +47,25 @@ entry the pin freed, so placing a clip swaps it with the clip there. A name with
 nothing and moves nothing. The studio's Clips panel lists every clip by MHP3rd id and names and
 places them.
 
+A `start` cuts the source: the entry holds its frames `start` to `start + frames` only, so one
+source fills several entries, each cut pinned. Cuts that meet share the pose there, so a reaction
+the engine plays over two entries runs straight through. The cuts of one source free its entry
+once; another clip they displace takes a free entry:
+
+```toml
+[clips.flinch_tail_cut]       # (4,4): em75 drops the tail when entry 65 ends
+slot = 65
+source = 111
+start = 0
+frames = 2
+
+[clips.flinch_tail_cut_drop]  # (4,15), which the drop enters
+slot = 83
+source = 111
+start = 2
+frames = 284
+```
+
 `<name>_clips.lua` maps each clip's name (the manifest's, else `clip_<entry>`) to its entry, and
 `mhfu_port.lua`'s `P.define` reads it as the port's clips, so no mod keeps a copy of the layout.
 `mhfu-port pose` checks that each entry plays its clip. `<name>_turns.lua` holds each entry's turn
