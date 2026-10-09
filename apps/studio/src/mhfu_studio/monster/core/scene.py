@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """A monster PAC as the studio opens it: `mhfu_port.model.Model` with a port manifest's clip
-names, the file's build id and `pose()`."""
+names, the file's build id and `pose()`, its tail tip on the tail unless `severed`."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from functools import cached_property
 from pathlib import Path
 from typing import Any, Self
 
-from mhfu_port import build, layout
+from mhfu_port import build, fk, layout, mesh, rig
 from mhfu_port.data import Data
 from mhfu_port.manifest import Manifest
 from mhfu_port.model import MHP3RD, Clip, Model
@@ -32,6 +33,8 @@ class Scene(Model):
             None if self.path is None or self.pac is None else build_id(self.path.name, self.pac)
         )
         """`name@digest` of the file, what clip labels are keyed to."""
+        self.severed = False
+        """Draw the stump: the tail tip hidden, not posed on the tail."""
 
     @classmethod
     def from_bytes(
@@ -97,6 +100,40 @@ class Scene(Model):
                 by_slot.setdefault(at, []).append(name)
         self.rename(by_slot)
 
+    # the tail tip
+
+    @cached_property
+    def tip(self) -> rig.Tip | None:
+        """`rig.tip_of` the skeleton; None, with a note, where no offset pairs the chain."""
+        try:
+            return rig.tip_of(self.skeleton)
+        except ValueError as e:
+            self.notes.append(f"the tail tip stays where it is stored: {e}")
+            return None
+
+    def tip_groups(self) -> list[int]:
+        """The groups riding only the tip's chain (`mesh.tip_parts`)."""
+        if self.tip is None:
+            return []
+        rows = [
+            [
+                list(zip(js, ws, strict=True))
+                for js, ws in zip(g.skin.joints.tolist(), g.skin.weights.tolist(), strict=True)
+            ]
+            for g in self.groups
+        ]
+        return mesh.tip_parts(rows, self.tip.joints)
+
+    def hidden(self) -> set[int]:
+        """The groups not drawn: the tip's, when `severed`."""
+        return set(self.tip_groups()) if self.severed else set()
+
+    def world(self, rot: fk.Floats | None = None, loc: fk.Floats | None = None) -> fk.Floats:
+        """`fk.Rig.world`, the tip's chain posed as its carriers unless `severed`, as the game
+        does while the tail is whole."""
+        world = self.rig.world(rot, loc)
+        return world if self.severed or self.tip is None else fk.attach(world, self.tip.pairs)
+
     def clip_table(self) -> dict[int, tuple[int, bool]]:
         return {c.slot: (c.frames, c.loop) for c in self.clips}
 
@@ -104,10 +141,10 @@ class Scene(Model):
         """Frames outside the clip hold per channel."""
         c = self.clip(key)
         rot, loc = self.curves(c).at(float(frame))
-        return Pose(self.rig, float(frame), self.rig.world(rot, loc), c.slot)
+        return Pose(self.rig, float(frame), self.world(rot, loc), c.slot)
 
     def bind_pose(self) -> Pose:
-        return Pose(self.rig, 0.0, self.rig.bind_world)
+        return Pose(self.rig, 0.0, self.world())
 
     # reporting
 

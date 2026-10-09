@@ -191,7 +191,7 @@ def pose_at(
         if js:
             loc = loc.copy()
             loc[js] = curves.at(0.0)[1][js]
-    world = scene.rig.world(rot, loc)
+    world = scene.world(rot, loc)
     th = yaw_at(scene, clip, frame, steer, speed)
     if th:
         world = yaw_matrix(th) @ world
