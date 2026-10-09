@@ -283,6 +283,14 @@ def test_then_waits_for_the_clip(lib: ctypes.CDLL) -> None:
     assert step(lib, anim, play, False) == 1
 
 
+def test_fields_before_seq(lib: ctypes.CDLL) -> None:
+    anim, play = Anim(then=NONE), Play(then=NONE)
+    play.entry, play.blend, play.then = 5, 6, 1  # the writer stopped before SEQ
+    assert step(lib, anim, play, True) == NONE and anim.entry == 0
+    play.seq += 1
+    assert step(lib, anim, play, True) == 5 and (anim.blend, anim.then) == (6, 1)
+
+
 def test_a_loop_never_ends(lib: ctypes.CDLL) -> None:
     anim, play = Anim(then=NONE), Play(then=NONE)
     play.ask(4, then=1)

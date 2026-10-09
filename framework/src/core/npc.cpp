@@ -378,7 +378,7 @@ extern "C" void mhfu_npc_play(int slot, uint16_t entry, uint8_t blend, uint16_t 
     s->play.entry = entry;
     s->play.blend = blend;
     s->play.then = then;
-    s->play.seq = s->play.seq + 1;
+    s->play.seq = s->play.seq + 1;   /* last: the frame takes the fields once SEQ moves */
 }
 
 extern "C" void mhfu_npc_face(int slot, int mode, float x, float z, uint16_t rate)

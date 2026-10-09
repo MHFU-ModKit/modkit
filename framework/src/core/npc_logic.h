@@ -9,6 +9,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
+#include <type_traits>
 
 #include "mhfu/npc.h"
 #include "mhfu/steer.h"
@@ -172,12 +173,19 @@ static inline uint32_t npc_pac_sub(const uint8_t *pac, uint32_t size, uint32_t m
     return 0;
 }
 
-/* mhfu_npc_play's request: the fields, then SEQ bumped, so a reader that saw SEQ move takes it. */
+/* mhfu_npc_play's request, written on any thread: the fields, then SEQ bumped. Every field is
+ * volatile, so the compiler keeps that order and npc_anim_step's (SEQ, then the fields); one core,
+ * so the CPU keeps it too. Two requests between two frames are taken once, as the later. */
 typedef struct {
     volatile uint32_t seq;
     volatile uint16_t entry, then;
     volatile uint8_t  blend, _pad[3];
 } npc_play_t;
+static_assert(std::is_volatile<decltype(npc_play_t::seq)>::value
+                  && std::is_volatile<decltype(npc_play_t::entry)>::value
+                  && std::is_volatile<decltype(npc_play_t::then)>::value
+                  && std::is_volatile<decltype(npc_play_t::blend)>::value,
+              "npc_play_t's stores and loads keep their order only while volatile");
 
 /* What slot 0 plays, as the wrapper last left it. */
 typedef struct {
