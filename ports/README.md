@@ -2,8 +2,8 @@
 
 A manifest, `<name>.toml`, describes one monster ported from MHP3rd: the donor's files
 (`[source]`), the MHFU monster it rides (`[port]`), how it is built (`[build]`), and what the
-studio and the Lua runtime read: its clips, moves, rules, hurtboxes, parts, hitboxes, attacks and
-effects. The schema is `mhfu_port.manifest`; a key left out takes its default. The files are
+studio and the Lua runtime read: its clips, moves, behaviour, hurtboxes, parts, hitboxes, attacks
+and effects. The schema is `mhfu_port.manifest`; a key left out takes its default. The files are
 written whole by `mhfu_port.manifest.save`, so they carry no comments; edit them in the studio
 or by hand.
 
@@ -71,7 +71,7 @@ frames = 284
 `mhfu-port pose` checks that each entry plays its clip. `<name>_turns.lua` holds each entry's turn
 curve for `mhfu move play --curve`; moves carry their own, so the game never loads it.
 
-## Moves and rules
+## Moves and behaviour
 
 A move with `main` and `sub` paints a host pair: the pair keeps its hitbox, damage and timing,
 the clip is the port's. A move without them is the port's own, played by the framework's move
@@ -88,36 +88,59 @@ turn = "clip"       # or still, hunter, away, fixed (angle over frames)
 walls = true        # a wall ahead ends it
 ```
 
-A `[[rule]]` plays a move, a pair or an own one, when its trigger holds: `from` a move (an own
-one counts its AI frames) or `from_main`, `min_frames`, the hunter's `dist`, `receding` or
-`closing`, `cooldown`, `count`. The framework checks rules every AI frame in C; one fires a
-frame, and a pair rule waits while an own move plays.
-
-`on` fires a rule on a monster event instead, in the AI frame it is seen, under the same `dist`,
-`cooldown`, `count` and, when given, `from`; `part` narrows a flinch or a break to one part
-(`[parts]` names them; em75's: 0 head, 1 neck, 2 body, 3 tail, 4/6 the left/right foreleg, 5/7
-the left/right hind leg). `on = "flinch"` plays its own move in place of the host's flinch: the
-engine counts the flinch and applies the damage, then enters the move's carrier instead of
-`(4,x)`; a flinch that breaks a part plays the break rule's move instead. An own move asked
-while the monster's notice runs waits for combat, so the "!" and the roar are not cut; `force`
-plays the rule's move at once:
+`[behaviour]` decides when a move plays, as a graph. A block is `[behaviour.blocks.<id>]`: its
+`kind`, the kind's params flat beside it, `at` (canvas x, y), `next` (the blocks it feeds), `play`
+(the moves a path that gets here plays) and `label`. A move on the canvas is
+`[behaviour.moves.<name>]`: `at` and `during`, the blocks fed while it plays. The kinds and their
+params are `mhfu_port.behaviour.KINDS`, which the studio's palette shows: events (`on_noticed`,
+`on_flinch`, ...), the base monster's state, conditions and modifiers.
 
 ```toml
-[[rule]]
-play = "flinch_head"
-on = "flinch"         # noticed, combat_entered, combat_left, flinch, part_broken, tail_cut
-part = 0
+[behaviour.blocks.b1]     # the head flinches: play flinch_head in place of the host's flinch
+kind = "on_flinch"
+at = [260.0, 480.0]
+part = 0                  # only the flinch of this part
+play = ["flinch_head"]
 
-[[rule]]
-play = "notice_howl"  # carrier = [0, 4]: the roar pair, which the notice enters itself
-on = "noticed"
-force = true
+[behaviour.blocks.b2]     # while the dash has played 10 frames, stamp if the hunter is close
+kind = "played_for"
+at = [260.0, 360.0]
+frames = 10
+next = ["b3"]
+
+[behaviour.blocks.b3]
+kind = "distance"
+at = [480.0, 360.0]
+hi = 800.0
+play = ["stamp"]
+
+[behaviour.moves.dash]
+at = [0.0, 360.0]
+during = ["b2"]
 ```
 
-`build` and `inject` also write `<name>_moves.lua`, the moves and rules as the game runs them:
-each own move's executor entry and turn keys come from the same build as the clips module, and
-a move it cannot carry (no entry, an attack past its clip or with no host record) fails the
-build. `mhfu_port.lua`'s `P.define` takes it when a mod gives no `moves` or `rules`, and
+A path starts at an event or state block nothing feeds, or at a block a move lists in `during`,
+follows `next` and plays the moves in each `play` it reaches; fan-out and fan-in make more paths.
+Each path is one rule the framework checks every AI frame in C, and one fires a frame; a pair rule
+waits while an own move plays. Higher on the canvas is checked first. A path holds one event and
+at most one block of a kind; a block on no complete path is loose, which loads but does nothing.
+A cooldown waits after the path fired; a limit caps how often.
+
+An event fires in the AI frame it is seen; `part` narrows a flinch or a break to one part
+(`[parts]` names them; em75's: 0 head, 1 neck, 2 body, 3 tail, 4/6 the left/right foreleg, 5/7 the
+left/right hind leg). `on_flinch` plays an own move in place of the host's flinch: the engine
+counts the flinch and applies the damage, then enters the move's carrier instead of `(4,x)`; a
+flinch that breaks a part plays the break path's move instead. An own move asked while the
+monster's notice runs waits for combat, so the "!" and the roar are not cut; a `force` block plays
+it at once (its carrier `[0, 4]` is the roar pair, which the notice enters itself).
+
+A schema 1 file lists `[[rule]]` tables instead; it loads as one chain of blocks a rule, in the
+same order, and the next save writes schema 2.
+
+`build` and `inject` also write `<name>_moves.lua`, the moves and the compiled rules as the game
+runs them: each own move's executor entry and turn keys come from the same build as the clips module, and
+a move it cannot carry (no entry, an attack past its clip or with no host record) or a path that
+does not compile fails the build. `mhfu_port.lua`'s `P.define` takes it when a mod gives no `moves` or `rules`, and
 `port:move(name)` plays an own move. A module re-written while the game runs (`inject`, the
 studio's play in game; each writes only a module that changed) is the port's from the next tick;
 its `build` lets `mhfu.live.moves.play_own(..., build=)` wait for that. `mhfu move ride NAME --brain` boots a
@@ -126,7 +149,7 @@ port with them; `mhfu move play --own NAME [--force]` plays one of its own moves
 ## Example
 
 `framework/lua/examples/ported_brute.lua` loads the Brute Tigrex in place of a Giadrome;
-`ported_zinogre.lua` the Zinogre with its manifest's moves and rules.
+`ported_zinogre.lua` the Zinogre with its manifest's moves and behaviour.
 
 ## Status
 
