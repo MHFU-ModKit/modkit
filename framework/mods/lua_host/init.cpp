@@ -77,12 +77,17 @@ static int lua_host_setup(void)
     return 0;
 }
 
+/* Worker passes the hunter has roamed the village for; menus and dialogue page breaks flick the
+ * scene to free roam for a frame. */
+#define ROAM_SETTLED 3
+static int g_roamed;
+
 static void call_tick(void)
 {
     if (!mhfu_lua_have_tick) return;
     /* mod ticks touch game memory: running one while the savedata utility loads
      * the save froze it, so only during gameplay */
-    if (!mhfu_world_ms0_io_safe() && !mhfu_world_village_roam()) return;
+    if (!mhfu_world_ms0_io_safe() && g_roamed < ROAM_SETTLED) return;
     if (!mhfu_lua_enter()) return;
     lua_getglobal(mhfu_lua_vm, "mhfu_tick");
     if (lua_pcall(mhfu_lua_vm, 0, 0, 0) != LUA_OK) {
@@ -101,6 +106,8 @@ static int worker(SceSize args, void *argp)
     int sub = 0;
     for (;;) {
         sceKernelDelayThread(100 * 1000);    /* 10 Hz base */
+        if (!mhfu_world_village_roam()) g_roamed = 0;
+        else if (g_roamed < ROAM_SETTLED) g_roamed++;
         mhfu_inject_tick();
         if (++sub >= 5) {
             sub = 0;
