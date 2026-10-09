@@ -17,7 +17,18 @@ from mhfu_studio.ui import kit
 from mhfu_studio.ui.testing import elsewhere, gl_or_skip
 from PySide6.QtWidgets import QDockWidget
 
-DOCKS = ("Actions", "Clips", "Moves", "Scene", "View", "Joints", "Hitboxes", "Parts", "Timeline")
+DOCKS = (
+    "Actions",
+    "Clips",
+    "Moves",
+    "Scene",
+    "View",
+    "Joints",
+    "Hitboxes",
+    "Parts",
+    "Behaviour",
+    "Timeline",
+)
 
 
 def test_registers_its_docks() -> None:
@@ -205,6 +216,11 @@ def test_window_builds_the_docks(
         d = w.findChild(QDockWidget, f"monster/{label}")
         assert d is not None and isinstance(d.widget(), cls)
         assert kit.missing_tips(d.widget()) == []
+    from mhfu_studio.monster.panels.behaviour import BehaviourPanel
+
+    behaviour = w.findChild(QDockWidget, "monster/Behaviour")
+    assert behaviour is not None and isinstance(behaviour.widget(), BehaviourPanel)
+    assert not behaviour.isVisible() and kit.missing_tips(behaviour.widget()) == []
     actions = w.findChild(QDockWidget, "monster/Actions")
     assert actions is not None and actions.isVisible(), "in front of Clips"
     clips = w.findChild(QDockWidget, "monster/Clips")
@@ -213,6 +229,10 @@ def test_window_builds_the_docks(
     w.studio.changed()
     w.sync()
     assert clips.isVisible()
+    ws.focus("Behaviour")
+    w.studio.changed()
+    w.sync()
+    assert behaviour.isVisible() and behaviour.height() > 200
 
 
 def test_window_shows_the_host(

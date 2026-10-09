@@ -252,6 +252,12 @@ class MovesPanel(kit.Panel):
         for w in top:
             self.editor.body.addWidget(w)
 
+        self.behaviour = kit.button(
+            "Open the behaviour graph",
+            tip="Opens the Behaviour dock: the events, states and conditions that play your moves",
+            on=act("open behaviour", lambda: ws.focus("Behaviour")),
+            icon="ph.tree-structure",
+        )
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -261,6 +267,7 @@ class MovesPanel(kit.Panel):
             self.table,
             kit.row(self.new, self.delete, stretch=True),
             self.editor,
+            kit.row(self.behaviour, stretch=True),
             kit.label(GAME_NOTE, role="muted"),
         )
         for w in shown:

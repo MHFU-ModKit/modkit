@@ -123,6 +123,13 @@ def test_a_pair_move_points_to_actions(panel: MovesPanel, workspace: MonsterWork
     assert "(1,4)" in panel.pair_note.text()
 
 
+def test_the_behaviour_button_opens_the_dock(
+    panel: MovesPanel, workspace: MonsterWorkspace
+) -> None:
+    panel.behaviour.click()
+    assert workspace.take_focus() == "Behaviour" and kit.missing_tips(panel) == []
+
+
 def test_force_says_what_the_block_says(panel: MovesPanel) -> None:
     assert panel.force.toolTip() == KINDS["force"].tip
 

@@ -92,6 +92,8 @@ Pair = tuple[int, int]
 PORT, HOST = "port", "host"
 #: the Timeline's height: its title, the transport and the frame strip; the rest scrolls
 TIMELINE_H = 120
+#: the Behaviour dock's height: a canvas wants room
+BEHAVIOUR_H = 340
 #: the left docks' width: the Actions table's four columns
 ACTIONS_W = 460
 PLAY = Shortcut(("Space",), "Plays the clip, or pauses it")
@@ -422,6 +424,13 @@ class MonsterWorkspace(Workspace):
                 "Parts", "right", build("parts", "PartsPanel"),
                 "Where the monster can be hit, and how much each spot takes.",
                 shown=False,
+            ),
+            Dock(
+                "Behaviour", "bottom", build("behaviour", "BehaviourPanel"),
+                "When the port plays which move: events, states and conditions wired to your"
+                " moves on a canvas; higher blocks are checked first.",
+                shown=False,
+                size=BEHAVIOUR_H,
             ),
             Dock(
                 "Timeline", "bottom", build("timeline", "TimelinePanel"),
