@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from mhfu.files import monster_pac
-from mhfu_port import build, manifest, mesh, motion, pose, verify
+from mhfu_port import build, layout, manifest, mesh, motion, pose, verify
 from mhfu_port.cli import main
 from mhfu_port.mesh import Part, Skinned
 from mhp_formats import Channel, Clip, Keyframe, Pac, Track, fu
@@ -97,7 +97,7 @@ def test_ports_play_their_donor(data, tmp_path, name):
     d = build.donor(m, data)
     out = build.build(m, data)
     built = out.pac
-    clips = {e: d.clips[cid] for e, cid in out.layout.entries.items()}
+    clips = layout.clips(out.layout, d.clips)
     r = pose.compare(verify.Port(built), d.skeleton, clips, build.record_map(d, m.build))
     assert r.ok and {round(s.lift, 1) for s in r.slots} == {m.build.ground_lift}
     assert len(r.slots) == len(d.clips) and not r.absent and not r.partial

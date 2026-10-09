@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from mhfu.files import monster_pac
 
-from .. import build, constraints, data, fidelity, manifest, pose, verify
+from .. import build, constraints, data, fidelity, layout, manifest, pose, verify
 from ..motion import frames
 
 if TYPE_CHECKING:
@@ -91,9 +91,9 @@ def run_pose(args: argparse.Namespace) -> int:
     m = manifest.load(args.manifest)
     games = data.from_arguments(args)
     d = build.donor(m, games)
-    placed = build.layout(m, d, build.host(m, games)).entries
+    placed = build.layout(m, d, build.host(m, games))
     port = verify.Port(args.port.read_bytes())
-    clips = {e: d.clips[cid] for e, cid in placed.items()}
+    clips = layout.clips(placed, d.clips)
     r = pose.compare(port, d.skeleton, clips, build.record_map(d, m.build))
     print(f"{r.matched} of {r.bones} donor bones placed (pad {r.pad}), {r.compared} compared")
     print(
@@ -101,7 +101,7 @@ def run_pose(args: argparse.Namespace) -> int:
     )
     for s in r.slots:
         print(
-            f"{s.slot:>5} {placed[s.slot]:>4} {s.joints:>6} {s.median:>8.2f} {s.p90:>8.2f} "
+            f"{s.slot:>5} {placed.entries[s.slot]:>4} {s.joints:>6} {s.median:>8.2f} {s.p90:>8.2f} "
             f"{s.worst:>8.2f} {s.lift:>7.1f}"
         )
     if r.absent:
