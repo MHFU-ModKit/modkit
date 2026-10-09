@@ -1,8 +1,8 @@
 -- SPDX-License-Identifier: MIT
 -- SPDX-FileCopyrightText: 2026 sp00ktober
 -- village_follower.lua: a half-size Zinogre that follows the hunter around Pokke village. It walks
--- toward a point beside him, turning as it goes, stops when it is close, and turns on the spot to
--- face him when he is behind it. It can't be talked to and isn't solid.
+-- toward a point beside them, turning as it goes, stops when it is close, and turns on the spot to
+-- face them when they are behind it. It can't be talked to and isn't solid.
 --
 -- Needs, once: the port built and placed for injection, from modkit with $MHFU_DATA and
 -- $MHP3RD_DATA naming the extracted games,
@@ -23,9 +23,9 @@ local FPS = 30                                    -- game frames a second: what 
 local function deg(d) return d * 0x10000 // 360 end
 
 local FAR, NEAR, FASTER = 380, 260, 900           -- distances: walk from idle, stop, walk faster
-local SIDE = 200                                  -- aims this far to the hunter's right, not at him
-local TURN_MIN = deg(50)                          -- idle turn clips start when he is this far off
-local TURN_DIST = 120                             -- closer than this his bearing is noise
+local SIDE = 200                                  -- aims this far right of the hunter, not at them
+local TURN_MIN = deg(50)                          -- idle turns start with the hunter this far off
+local TURN_DIST = 120                             -- closer, the bearing is noise
 local WALK_RATE = deg(150) // FPS                 -- YAW units a frame
 local TURN_RATE = 0x4000 // 50                    -- a quarter turn over the turn clip's 50 frames
 local BLEND = 6                                   -- frames a clip cross-fades

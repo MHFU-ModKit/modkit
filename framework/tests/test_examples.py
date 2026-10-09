@@ -162,7 +162,8 @@ PORT = Path(__file__).parents[2] / "ports" / "zinogre.toml"
 FOLLOWER_CLIPS = ("idle", "start_walk_forward", "stop_walk_forward", "walk_forwards_faster")
 FOLLOWER_CLIPS += ("turn_right", "turn_left")
 HUNTER = int(a.PLAYER_ENTITY) + a.ENTITY.TRANSLATION  # x at +0, z at +8
-WALK_RATE, TURN_RATE, SIDE = 910, 327, 200  # 150 deg/s, a quarter turn in 50 frames, right of him
+# 150 deg/s, a quarter turn in 50 frames, right of the hunter
+WALK_RATE, TURN_RATE, SIDE = 910, 327, 200
 
 
 def zinogre_clips() -> dict[str, int]:
@@ -290,7 +291,7 @@ def test_follower_turns_to_a_hunter_behind(lua: Any, dist: float, off: float, cl
     f = Follower(lua)
     assert f.tick(dist=dist, off=off) == ([(0, clip, 6, IDLE)], [(0, "hunter", 0, 0, TURN_RATE)])
     assert f.tick(entry=clip, dist=dist, off=0.0) == ([], [])  # the clip plays
-    walk = [(0, START, 6)] if dist > 380 else []  # its `after` took over, facing him
+    walk = [(0, START, 6)] if dist > 380 else []  # its `after` took over, facing the hunter
     assert f.tick(entry=IDLE, dist=dist, off=0.0)[0] == walk
 
 
@@ -308,7 +309,7 @@ def test_follower_measures_the_turn_across_the_yaw_wrap(lua: Any) -> None:
         (IDLE, 381.0, 0.0, START),
         (IDLE, 300.0, 49.0, None),
         (IDLE, 300.0, -51.0, TURN_R),
-        (IDLE, 100.0, 170.0, None),  # on top of him his bearing is noise
+        (IDLE, 100.0, 170.0, None),  # on top of the hunter their bearing is noise
         (IDLE, 500.0, 60.0, TURN_L),  # turn first, then walk
         (START, 261.0, 0.0, None),
         (START, 259.0, 0.0, STOP),
