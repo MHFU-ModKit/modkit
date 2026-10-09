@@ -160,10 +160,12 @@ loop = true
 labelled_build = "zinogre_v10.bin@09091d56"
 
 [clips.walk_forwards_faster]
+slot = 73
 source = 65
 frames = 162
 loop = true
-labelled_build = "zinogre_v10.bin@09091d56"
+label = "the faster walk; under entry 100, the only entries a village NPC plays"
+labelled_build = "zinogre.bin@22ca7afc"
 
 [clips.idle]
 source = 1
@@ -262,10 +264,22 @@ loop = false
 labelled_build = "zinogre.bin@76e44506"
 
 [clips.flinch_tail_cut]
+slot = 65
 source = 111
-frames = 286
+start = 0
+frames = 2
 loop = false
-labelled_build = "zinogre.bin@76e44506"
+label = "first 2 frames of the tail-cut flinch, (4,4): em75 drops the tail as entry 65 ends, and frames 52-122 of it spin the monster 180 degrees"
+labelled_build = "zinogre.bin@22ca7afc"
+
+[clips.flinch_tail_cut_drop]
+slot = 83
+source = 111
+start = 2
+frames = 284
+loop = false
+label = "the rest of it, in (4,15), which the drop enters"
+labelled_build = "zinogre.bin@22ca7afc"
 
 [clips.flich_brief_houl]
 source = 112
@@ -599,13 +613,6 @@ label = "his own flinch of the head, played in place of the host's"
 [moves.flinch_head.steer]
 walls = false
 
-[moves.tail_cut]
-clip = "flinch_tail_cut"
-label = "his own tail-cut flinch"
-
-[moves.tail_cut.steer]
-walls = false
-
 [moves.break_howl]
 clip = "flich_brief_houl"
 label = "a brief howl as a part breaks"
@@ -828,11 +835,6 @@ play = "flinch_head"
 on = "flinch"
 part = 0
 label = "a flinch of the head: his own tumble, never the host's (4,x)"
-
-[[rule]]
-play = "tail_cut"
-on = "tail_cut"
-label = "the tail cut"
 
 [[rule]]
 play = "break_howl"

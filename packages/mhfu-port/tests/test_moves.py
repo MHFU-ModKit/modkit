@@ -189,7 +189,6 @@ def test_zinogre(data):
         "dash_stop": 21,
         "turn_left_90": 9,
         "flinch_head": 101,
-        "tail_cut": 111,
         "break_howl": 112,
         "notice_howl": 2,
     }

@@ -5,8 +5,9 @@ from pathlib import Path
 import pytest
 from mhfu_port import build, layout, manifest, travel
 from mhfu_port.manifest import Clip as Named
+from mhfu_port.motion import frames
 from mhp_formats import fu
-from mhp_formats.anim import Clip
+from mhp_formats.anim import Channel, Clip, Keyframe, Track
 
 PORTS = Path(__file__).parents[3] / "ports"
 TIGREX = 75
@@ -125,6 +126,35 @@ def test_name_clip():
         layout.plan({"a": Named(source=7)}, ids, h, TIGREX)
 
 
+CUTS = (
+    "[clips.a]\nslot = 1\nsource = 7\nstart = 0\nframes = 2\n"
+    "[clips.b]\nslot = 2\nsource = 7\nstart = 2\nframes = 5\n"
+)
+
+
+def test_cuts():
+    """Two cuts of one source: they free its entry once, the second clip they displace takes a
+    free one."""
+    m = manifest.loads(HEAD + CUTS)
+    got = layout.of(m, {1, 2, 6, 7, 100}, host({1, 2, 3, 5}, {4}))
+    assert got.entries == {1: 7, 2: 7, 3: 2, 6: 6, 7: 1, 100: 100}
+    assert (got.cuts, got.placed, got.ids[7]) == ({1: (0, 2), 2: (2, 5)}, {1, 2}, 1)
+    assert [layout.names(m, got)[e] for e in (1, 2, 3)] == ["a", "b", "clip_03"]
+    assert layout.where(m.clips["b"], got.ids) == 2 and layout.pinned(m).cuts == got.cuts
+    assert "  b = 2,  -- MHP3rd 7, frames 2..7" in layout.lua(m, got)
+
+
+def test_clips():
+    m = manifest.loads(HEAD + CUTS)
+    got = layout.of(m, {1, 2, 6, 7, 100}, host({1, 2, 3, 5}, {4}))
+    keyed = Clip([Track([Channel(0x008, [Keyframe(0, 0), Keyframe(9, 9)])])])
+    donor = {cid: keyed for cid in (1, 2, 6, 7, 100)}
+    clips = layout.clips(got, donor)
+    assert clips[6] is keyed and [frames(clips[e]) for e in (1, 2)] == [2, 5]
+    with pytest.raises(layout.LayoutError, match="entry 2, clip 7: frames 2..7"):
+        layout.clips(got, donor | {7: Clip([Track([Channel(0x008, [Keyframe(0, 6)])])])})
+
+
 def test_full():
     got = layout.plan({}, {0, 1, 2, 100, 101}, host({0}, slots=3), TIGREX)
     assert (got.capacity, got.unplaced) == (3, (100, 101))
@@ -179,20 +209,27 @@ def test_turns_lua():
     assert text.endswith('return {\n  [3] = "000020004000",\n}\n')
 
 
-@pytest.mark.parametrize(("name", "clips", "odd"), [("zinogre", 102, 20), ("brute_tigrex", 77, 19)])
-def test_ports(data, name, clips, odd):
-    """Every source clip in an entry: under the capacity in its own but the Tigrex's partial 24
-    and 25, the manifest's where it says, the rest packed."""
+@pytest.mark.parametrize(
+    ("name", "clips", "odd", "pins"),
+    [("zinogre", 102, 20, {65, 73, 83}), ("brute_tigrex", 77, 19, set())],
+)
+def test_ports(data, name, clips, odd, pins):
+    """Every source clip in an entry, a cut one in each cut: under the capacity in its own but
+    the Tigrex's partial 24 and 25 and the pinned, the manifest's where it says, the rest
+    packed."""
     m = manifest.load(PORTS / f"{name}.toml")
     d, h = build.donor(m, data), build.host(m, data)
     got = build.layout(m, d, h)
-    assert (len(d.clips), len(got.entries), got.unplaced) == (clips, clips, ())
-    assert sorted(got.entries.values()) == sorted(d.clips)
+    held = list(got.entries.values())
+    cut = len(got.cuts) - len({got.entries[e] for e in got.cuts})
+    assert (len(d.clips), len(held) - cut, got.unplaced) == (clips, clips, ())
+    assert set(held) == set(d.clips) and got.placed == pins
     assert got.partial == {24, 25} and not got.partial & set(got.entries)
     assert sum(e >= 100 for e in got.entries) == odd and max(got.entries) < got.capacity
-    assert all(got.ids[c] == c for c in d.clips if c < got.capacity and c not in got.partial)
+    own = {c for c in d.clips if c < got.capacity and c not in got.partial}
+    assert all(got.ids[c] == c for c in own - {got.entries[e] for e in pins})
     assert all(c.slot is None or got.entries[c.slot] == c.id for c in m.clips.values())
-    assert set(layout.names(m, got).values()) >= set(m.clips) and not got.placed
+    assert set(layout.names(m, got).values()) >= set(m.clips)
 
 
 @pytest.mark.parametrize("name", ["zinogre", "brute_tigrex"])
@@ -205,7 +242,8 @@ def test_naming_moves_nothing(data, name):
     for cid in sorted(base.ids):
         layout.name_clip(m, f"c{cid}", cid)
         assert layout.of(m, d.clips, h.anim).entries == base.entries, cid
-    assert len(m.clips) == len(d.clips) and not layout.of(m, d.clips, h.anim).placed
+    assert {c.id for c in m.clips.values()} == set(d.clips)
+    assert layout.of(m, d.clips, h.anim).placed == base.placed
     for cid, e in sorted(base.ids.items()):
         layout.pin(m, f"c{cid}", cid, e)
         assert layout.of(m, d.clips, h.anim).entries == base.entries, cid

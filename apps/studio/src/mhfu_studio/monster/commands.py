@@ -267,7 +267,7 @@ def run_clips(args: argparse.Namespace) -> int:
     port = slots.anim_of(b.pac)
     table = clips.clip_table(port)
     host, donor = inputs.host_anim(m, games), inputs.donor_clips(m, games)
-    cov = clips.coverage(port, host, donor, layout.of(m, donor, host).entries)
+    cov = clips.coverage(port, host, donor, layout.of(m, donor, host))
     if args.import_labels:
         labels = slots.read_labels(args.import_labels.read_text(encoding="utf-8"))
         provenance = args.labels_from or clips.UNRECORDED.format(args.import_labels.name)

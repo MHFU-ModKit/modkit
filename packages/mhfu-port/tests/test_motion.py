@@ -4,6 +4,7 @@ import hashlib
 from collections.abc import Sequence
 from pathlib import Path
 
+import numpy as np
 import pytest
 from mhfu_port import layout, motion
 from mhfu_port.data import Data
@@ -134,6 +135,40 @@ def test_errors():
         motion.build({7: clip(1)}, {9: 7}, host({0: {0}}), [1])
     with pytest.raises(ValueError, match="entry 200 is past"):
         motion.build({7: clip(1)}, {200: 7}, host({0: {0}}), [1])
+
+
+def eased() -> Clip:
+    """A rotation over three eased keys, a held one, and an empty one; loops from 12."""
+    keys = [Keyframe(0, 0, 0, 30), Keyframe(100, 10, 5, 5), Keyframe(-40, 20, 0, 0)]
+    held = Channel(ROT[1], [Keyframe(7, 5)])
+    return Clip([Track([Channel(ROT[0], keys), held, Channel(ROT[2], [])])], 1, 12.0)
+
+
+def test_cut_follows_the_curve():
+    src = eased()
+    got = motion.cut(src, 4, 12)
+    assert motion.frames(got) == 12 and (got.loop, got.loop_start) == (0, 0.0)
+    for a, b in zip(src.tracks[0].channels, got.tracks[0].channels, strict=True):
+        for f in np.linspace(0, 12, 49) if a.keyframes else ():
+            assert abs(motion.value_at(b.keyframes, f) - motion.value_at(a.keyframes, f + 4)) < 1
+    assert got.tracks[0].channels[2].keyframes == []
+
+
+def test_cuts_meet():
+    src = eased()
+    head, rest = motion.cut(src, 0, 4), motion.cut(src, 4, 16)
+    for a, b in zip(head.tracks[0].channels, rest.tracks[0].channels, strict=True):
+        if a.keyframes:
+            assert a.keyframes[-1]._replace(frame=0) == b.keyframes[0]
+    assert (rest.loop, rest.loop_start) == (1, 8.0)
+    whole = motion.cut(src, 0, 20).tracks[0].channels[0]
+    assert whole == src.tracks[0].channels[0]
+
+
+@pytest.mark.parametrize(("start", "length"), [(-1, 4), (0, 0), (10, 11)])
+def test_cut_refuses(start, length):
+    with pytest.raises(ValueError, match="not within the clip's 20"):
+        motion.cut(eased(), start, length)
 
 
 def test_moveset():

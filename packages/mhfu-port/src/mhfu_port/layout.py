@@ -9,8 +9,10 @@ first those the host fills, which its own brain asks for, then the others from 0
 clip goes to an entry the host plays on some body parts only (the Tigrex's 24 and 25), where it
 would move one part. A manifest clip with a `slot` pins MHP3rd clip `source` (default: `slot`)
 in that entry; the clip the packer had there takes the entry the pin freed, so a pin moves only
-the clips it touches. A manifest clip without one only names its clip. What fills the entries
-left over is `motion.build`'s.
+the clips it touches. A manifest clip without one only names its clip. One with a `start` pins
+only those frames of its source, so a source can fill several entries; its pins free its packer
+entry once, and the other clips they displace go to free entries. What fills the entries left
+over is `motion.build`'s.
 """
 
 from __future__ import annotations
@@ -21,12 +23,12 @@ from dataclasses import dataclass, field
 
 from mhfu import inject
 from mhfu.entries import ENTRY_BANK, PART_STREAMS
-from mhp_formats.anim import AnimPack
+from mhp_formats.anim import AnimPack, Clip
 
 from . import manifest
 from .fk import entry_slot, part_clip
 from .model import clip_key
-from .motion import filled
+from .motion import cut, filled
 from .travel import KEY_STEP, Turn
 
 ENTRIES = {75: 123}
@@ -54,11 +56,19 @@ class Layout:
     """Entry -> what YAW turns while it plays; the build sets it."""
     frames: dict[int, int] = field(default_factory=dict)
     """Entry -> its clip's frames; the build sets it."""
+    cuts: dict[int, tuple[int, int]] = field(default_factory=dict)
+    """Entry -> `(start, frames)` of the source it holds; an entry not here holds all of it."""
     ids: dict[int, int] = field(init=False, repr=False, compare=False)
-    """MHP3rd clip id -> executor entry."""
+    """MHP3rd clip id -> executor entry; a cut source's first cut."""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "ids", {cid: e for e, cid in self.entries.items()})
+        last_first = sorted(self.entries, key=lambda e: (self.cuts.get(e, (0, 0)), e), reverse=True)
+        object.__setattr__(self, "ids", {self.entries[e]: e for e in last_first})
+
+    def entry(self, c: manifest.Clip) -> int | None:
+        """Clip `c`'s entry here: a cut's pin, else its source's; None where it holds neither."""
+        e = where(c, self.ids)
+        return e if e is not None and self.entries.get(e) == c.id else None
 
 
 def capacity(host: AnimPack, species: int) -> int:
@@ -105,6 +115,7 @@ def plan(
     cap = capacity(host, species)
     part = partial(host, cap)
     pins: dict[int, int] = {}
+    cuts: dict[int, tuple[int, int]] = {}
     for name, c in sorted(clips.items()):
         where = f"clips.{name}"
         if c.id not in ids:
@@ -116,6 +127,8 @@ def plan(
         if c.slot in part:
             raise LayoutError(f"{where}: the host plays entry {c.slot} on some body parts only")
         pins[c.slot] = c.id
+        if c.cut is not None:
+            cuts[c.slot] = c.cut
     asked = set(filled(host))
     packed, left = _pack(ids, cap, part, asked)
     home = {cid: e for e, cid in packed.items()}
@@ -128,7 +141,7 @@ def plan(
         if cid is None or cid in pinned:
             continue
         freed = _freed(e, pins, home)
-        if freed is None:
+        if freed is None or freed in entries:
             displaced.append(cid)
         else:
             entries[freed] = cid
@@ -140,7 +153,8 @@ def plan(
             unplaced.append(cid)
         else:
             entries[to] = cid
-    return Layout(dict(sorted(entries.items())), frozenset(pins), cap, part, tuple(unplaced))
+    placed = dict(sorted(entries.items()))
+    return Layout(placed, frozenset(pins), cap, part, tuple(unplaced), cuts=cuts)
 
 
 def _free(taken: Collection[int], cap: int, asked: Collection[int]) -> list[int]:
@@ -167,23 +181,45 @@ def _pack(
 def _freed(at: int, pins: Mapping[int, int], home: Mapping[int, int]) -> int | None:
     """The entry the chain of pins ending at `at` frees: the packer's entry of the clip pinned
     there, followed back while another pin took it; None where the chain starts at a clip the
-    packer had no entry for."""
-    for _ in range(len(pins)):
+    packer had no entry for, or loops through a source pinned twice."""
+    seen = set()
+    while at not in seen:
+        seen.add(at)
         src = home.get(pins[at])
         if src is None or src not in pins:
             return src
         at = src
-    raise AssertionError("a chain of pins that loops through a clip nobody pinned")
+    return None
 
 
 def pinned(m: manifest.Manifest) -> Layout:
     """The manifest's pins alone: all that is known of a layout without the donor and host."""
-    return Layout({c.slot: c.id for c in m.clips.values() if c.slot is not None})
+    pins = {c.slot: c for c in m.clips.values() if c.slot is not None}
+    cuts = {e: c.cut for e, c in pins.items() if c.cut is not None}
+    return Layout({e: c.id for e, c in pins.items()}, cuts=cuts)
 
 
 def where(c: manifest.Clip, ids: Mapping[int, int]) -> int | None:
-    """Clip `c`'s entry: what a layout's `ids` say, else its pin."""
-    return ids.get(c.id, c.slot)
+    """Clip `c`'s entry: a cut's pin, else what a layout's `ids` say, else its pin."""
+    return c.slot if c.start is not None else ids.get(c.id, c.slot)
+
+
+def played(placed: Layout, donor: Mapping[int, Clip], e: int) -> Clip | None:
+    """The donor clip entry `e` plays: `donor`'s by id, cut where `placed` cuts it; None where
+    the donor lacks it. Raises `LayoutError` for a cut past the clip."""
+    cid = placed.entries.get(e)
+    whole = None if cid is None else donor.get(cid)
+    if whole is None or e not in placed.cuts:
+        return whole
+    try:
+        return cut(whole, *placed.cuts[e])
+    except ValueError as err:
+        raise LayoutError(f"entry {e}, clip {cid}: {err}") from None
+
+
+def clips(placed: Layout, donor: Mapping[int, Clip]) -> dict[int, Clip]:
+    """Entry -> the clip it `played`, for every entry whose clip the donor has."""
+    return {e: c for e in placed.entries if (c := played(placed, donor, e)) is not None}
 
 
 def holder(m: manifest.Manifest, cid: int) -> str | None:
@@ -237,7 +273,7 @@ def of(m: manifest.Manifest, ids: Collection[int], host: AnimPack) -> Layout:
 
 def names(m: manifest.Manifest, layout: Layout) -> dict[int, str]:
     """Entry -> the clip's name: the manifest's, else `clip_key(entry)` where no clip has it."""
-    given = {e: n for n, c in m.clips.items() if (e := layout.ids.get(c.id)) is not None}
+    given = {e: n for n, c in m.clips.items() if (e := layout.entry(c)) is not None}
     taken = set(given.values())
     out = {}
     for e in layout.entries:
@@ -279,8 +315,12 @@ def lua(m: manifest.Manifest, layout: Layout) -> str:
         if name is None:
             continue
         key = name if _IDENT.fullmatch(name) else f'["{name}"]'
-        out.append(f"  {key} = {e},  -- MHP3rd {cid}")
+        out.append(f"  {key} = {e},  -- MHP3rd {cid}{_frames(layout.cuts.get(e))}")
     return "\n".join([*out, "}", ""])
+
+
+def _frames(cut: tuple[int, int] | None) -> str:
+    return "" if cut is None else f", frames {cut[0]}..{cut[0] + cut[1]}"
 
 
 def turns_lua(m: manifest.Manifest, layout: Layout) -> str:
