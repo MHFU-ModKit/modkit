@@ -95,6 +95,28 @@ A **material** is 0x10 bytes:
 | 0x09 | 3 bytes | Zero |
 | 0x0C | `u32` | Leftover memory on some MHFU models, else 0 |
 
+## A big monster's meshes
+
+The engine draws a big monster mesh by mesh, skips a mesh whose entity mask byte is 0, and lets
+the species overlay set each material's alpha before the draw, so a mesh or a material hides as a
+whole. A monster with a severable tail keeps the tail's tip in **mesh record 1**, skinned only to
+the skeleton's second root chain, the one at `params[1]`
+([animation.md](animation.md#skeleton)):
+
+- While the tail is whole, the engine copies a tail joint's pose onto each chain joint every frame
+  and draws the tip in place.
+- At the cut it masks mesh 1 off the monster and spawns the dropped tail, an object that draws
+  the monster's own mesh 1, its chain posed from its binds. A model without a mesh record 1
+  crashes the game there.
+- The Tigrex (em75) hides mesh 1's material 1, the tip's cut face, and mesh 5's material 2, the
+  body's stump cap, until the cut; its meshes 2, 3, 4 and 6 have other alpha rules.
+
+`mhfu-port` builds a port this way (`mhfu_port.mesh.build`): mesh 1 holds the parts that ride only
+the chain, its material 0 the tip, 1 the cut face (the part that welds to the body at the tip's
+offset and faces along the tail), then the tip's other textures, each its own material. The
+chain's `(joint, carrier)` pairs come from `mhfu_port.rig.tip_of`, and on the 35 native rigs with
+a chain they are the carriers the engine copies.
+
 ## Bone palette and skinning
 
 The palette is an array of `{u8 slot, u8 bone}`: "matrix `slot` now holds skeleton bone
