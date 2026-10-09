@@ -31,8 +31,10 @@ def skeleton(parents, local, animated=None):
 
 
 def donor():
-    """The rig above plus an orphan root chain (10, 11) past the animated bones."""
-    return skeleton([*PARENTS, -1, 10], [*LOCAL, (0.0, 0.0, -50.0), (0.0, 0.0, -5.0)])
+    """The rig above plus a tail tip past the animated bones: root 10, then 11 and 12 at the
+    tail's 7 and 8 less (0, 10, -40)."""
+    tip = [(0.0, 0.0, 0.0), (0.0, 0.0, 30.0), (0.0, 0.0, -10.0)]
+    return skeleton([*PARENTS, -1, 10, 11], [*LOCAL, *tip], animated=10)
 
 
 def host():
@@ -59,15 +61,15 @@ def test_reorder():
 def test_from_donor():
     r = rig.from_donor(donor(), host(), 10)
     pad = 2  # the host's origin chain is 3 joints, the donor's 1
-    assert (r.lead_pad, r.adopted, r.streams, r.animated) == (pad, [10], [8, 2, 2], 12)
-    assert r.joint_of == {old: pad + new for new, old in enumerate([*ORDER, 10, 11])}
-    assert r.parents[:3] == [-1, 0, 1]
-    assert r.parents[r.joint_of[10]] == r.joint_of[1]
+    assert (r.lead_pad, r.streams, r.animated) == (pad, [8, 2, 2], 12)
+    assert r.joint_of == {old: pad + new for new, old in enumerate([*ORDER, 10, 11, 12])}
+    assert r.parents[:3] == [-1, 0, 1] and r.parents[12:] == [-1, 12, 13]
     assert all(p < j for j, p in enumerate(r.parents))
-    assert r.bind[r.joint_of[11]] == (0.0, 10.0, -55.0)
+    assert r.bind[13] == (0.0, 0.0, 30.0)
+    assert r.tip == rig.Tip(((12, 10), (13, 10), (14, 11)), (0.0, 10.0, -40.0))
     sk = r.skeleton
     assert sk.params == [0, 12]
-    assert [b.stream for b in sk.bones] == [0] * 8 + [1] * 2 + [2] * 2 + [3] * 2
+    assert [b.stream for b in sk.bones] == [0] * 8 + [1] * 2 + [2] * 2 + [3] * 3
     assert Skeleton.from_bytes(sk.to_bytes()) == sk
 
 
@@ -78,18 +80,32 @@ def test_links():
         assert b.child == (kids[0] if kids else -1)
         for a, c in zip(kids, kids[1:], strict=False):
             assert bones[a].sibling == c
-    assert [b.sibling for b in bones if b.parent == -1] == [-1]
+    assert {b.sibling for b in bones if b.parent == -1} == {-1}
 
 
 def test_from_donor_clamps():
-    assert rig.from_donor(donor(), host(), 0).animated == 14
-    assert rig.from_donor(donor(), host(), 99).animated == 14
+    body = skeleton(PARENTS, LOCAL)
+    assert rig.from_donor(body, host(), 0).animated == 12
+    assert rig.from_donor(body, host(), 99).animated == 12
+    assert rig.from_donor(body, host(), 10).tip is None
 
 
-def test_from_donor_second_root():
-    """A root at bone 1 goes onto bone 0, not onto itself."""
-    r = rig.from_donor(skeleton([-1, -1, 1], [(0.0, 0.0, 0.0)] * 3), host(), 3)
-    assert (r.adopted, r.parents) == ([1], [-1, 0, 1])
+@pytest.mark.parametrize("animated", [9, 13])
+def test_from_donor_root_elsewhere(animated):
+    with pytest.raises(ValueError, match="roots at bones"):
+        rig.from_donor(donor(), host(), animated)
+
+
+def test_tip_of():
+    r = rig.from_donor(donor(), host(), 10)
+    assert rig.tip_of(r.skeleton) == r.tip and r.tip is not None and r.tip.joints == [12, 13, 14]
+    sk = r.skeleton
+    sk.bones[14].position = (0.0, 0.0, -11.0)  # 1 unit off the tail: no one offset pairs
+    with pytest.raises(ValueError, match="no one offset"):
+        rig.tip_of(sk)
+    assert rig.tip_of(skeleton(PARENTS, LOCAL)) is None
+    bare = skeleton([*PARENTS, -1], [*LOCAL, (0.0, 0.0, 0.0)], animated=10)
+    assert rig.tip_of(bare) is None
 
 
 def test_from_donor_order():
@@ -113,19 +129,22 @@ def test_from_host():
 
 
 # our own output, pinned: the skeletons the port ships
+BRUTE_TIP = ((44, 42), (45, 42), (46, 43))
+ZINOGRE_TIP = ((46, 42), (47, 42), (48, 43), (49, 44), (50, 45))
 DONORS = [
-    (5248, [31, 9, 4], 1, [43], 47, "df4d23ca7da440ed"),
-    (5339, [33, 6, 7], 0, [46], 51, "8e522dea8d9d1901"),
+    (5248, [31, 9, 4], 1, BRUTE_TIP, 47, "efb17b4a5885387d"),
+    (5339, [33, 6, 7], 0, ZINOGRE_TIP, 51, "637067112286b351"),
 ]
 
 
-@pytest.mark.parametrize(("model", "streams", "pad", "adopted", "joints", "digest"), DONORS)
-def test_donor(data, model, streams, pad, adopted, joints, digest):
+@pytest.mark.parametrize(("model", "streams", "pad", "tip", "joints", "digest"), DONORS)
+def test_donor(data, model, streams, pad, tip, joints, digest):
     host = Skeleton.from_bytes(Pac.from_bytes(data.fu.read(files.monster_pac(75))).entries[0])
     donor = Skeleton.from_bytes(Pac.from_bytes(data.p3rd.read(model)).entries[0])
     animated = donor.params[1]  # the driven range, as test_records shows
     r = rig.from_donor(donor, host, animated)
-    assert (r.streams, r.lead_pad, r.adopted, len(r.parents)) == (streams, pad, adopted, joints)
+    assert (r.streams, r.lead_pad, len(r.parents)) == (streams, pad, joints)
+    assert r.tip is not None and r.tip.pairs == tip and r.parents[tip[0][0]] == -1
     assert r.animated == animated + pad == r.skeleton.params[1]
     assert sorted(r.joint_of) == list(range(len(donor.bones)))
     assert all(p < j for j, p in enumerate(r.parents))
@@ -136,4 +155,5 @@ def test_host(data):
     host = Skeleton.from_bytes(Pac.from_bytes(data.fu.read(files.monster_pac(75))).entries[0])
     r = rig.from_host(host)
     assert (r.streams, len(r.parents)) == ([31, 9, 5], 48)
+    assert r.tip is not None and r.tip.pairs == ((45, 43), (46, 43), (47, 44))  # em75's ATTACH
     assert r.skeleton.to_bytes() == host.to_bytes()

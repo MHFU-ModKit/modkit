@@ -15,7 +15,7 @@ out.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 import numpy as np
 from mhfu.entries import ENTRY_BANK, PART_STREAMS, entry_clip
@@ -248,6 +248,17 @@ class Curves:
             loc[:, joint[kind == 1], axis[kind == 1]] = value[:, kind == 1]
         shape = (*f.shape, n, 3)
         return rot.reshape(shape), loc.reshape(shape)
+
+
+def attach(world: ArrayLike, pairs: Iterable[tuple[int, int]]) -> Floats:
+    """`world` with each `(joint, carrier)`'s joint posed as its carrier, as the game copies
+    `JOINT+0x90` onto a tail tip's chain while the tail is whole (`rig.Tip`)."""
+    out: Floats = np.array(world, dtype=np.float64)
+    js = list(pairs)
+    if js:
+        joint, carrier = (list(x) for x in zip(*js, strict=True))
+        out[..., joint, :, :] = out[..., carrier, :, :]
+    return out
 
 
 def world_matrices(
