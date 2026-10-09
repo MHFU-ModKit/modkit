@@ -44,8 +44,11 @@ ASFLAGS  = -Wa,-I$(GEN)
 # defined fails the link
 $(OBJDIR)/mods/lua_host/%.o: CXXFLAGS += -Werror=missing-declarations
 
-# prxexports.o: real firmware rejects a PRX without the syslib export (0x800200D9); lua needs libm, libc
-LIBS = $(PSPSDK)/lib/prxexports.o -lpspsdk -lpspuser -lpspusb -lpspnet -lpspnet_apctl -llua -lm -lc
+# prxexports.o: real firmware rejects a PRX without the syslib export (0x800200D9); lua needs
+# libm, libc. libc's glue goes before the SDK libs, or its kernel calls resolve from psp-gcc's
+# trailing -lpspuser and psp-fixup-imports finds ThreadManForUser split ("stubs out of order")
+LIBS = $(PSPSDK)/lib/prxexports.o -llua -lm -Wl,--start-group -lpthreadglue -lpthread -lcglue -lc \
+       -Wl,--end-group -lpspsdk -lpspuser -lpspusb -lpspnet -lpspnet_apctl
 # the prebuilt liblua.a uses small data; without GP threshold 0 the link overflows R_MIPS_GPREL16
 GP0  = -Wl,-G,0
 
@@ -61,6 +64,10 @@ include $(PSPSDK)/lib/build_prx.mak
 # replaces build_prx.mak's flags, whose own -T linkfile.prx would clash with prx.lds;
 # prx.lds is linkfile.prx that also drops .MIPS.abiflags and .reginfo, which old loaders reject
 override LDFLAGS := $(addprefix -L,$(LIBDIR)) -Wl,-q,-T$(CURDIR)/prx.lds -nostartfiles -Wl,-zmax-page-size=128 $(GP0)
+
+# a fixup warning leaves the import table wrong (NIDs under the wrong library): fail the build
+FIXUP = sh -c 'out=$$(psp-fixup-imports "$$0" 2>&1); printf "%s" "$$out"; \
+               case "$$out" in *Warning*) rm -f "$$0"; exit 1;; esac'
 
 DEPFLAGS = -MMD -MP
 $(OBJDIR)/%.o: %.cpp
