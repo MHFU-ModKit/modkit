@@ -65,6 +65,11 @@ class Layout:
         last_first = sorted(self.entries, key=lambda e: (self.cuts.get(e, (0, 0)), e), reverse=True)
         object.__setattr__(self, "ids", {self.entries[e]: e for e in last_first})
 
+    def entry(self, c: manifest.Clip) -> int | None:
+        """Clip `c`'s entry here: a cut's pin, else its source's; None where it holds neither."""
+        e = where(c, self.ids)
+        return e if e is not None and self.entries.get(e) == c.id else None
+
 
 def capacity(host: AnimPack, species: int) -> int:
     """The executor entries the host plays: `ENTRIES`, within the slots its pack has."""
@@ -265,7 +270,7 @@ def of(m: manifest.Manifest, ids: Collection[int], host: AnimPack) -> Layout:
 
 def names(m: manifest.Manifest, layout: Layout) -> dict[int, str]:
     """Entry -> the clip's name: the manifest's, else `clip_key(entry)` where no clip has it."""
-    given = {e: n for n, c in m.clips.items() if (e := where(c, layout.ids)) in layout.entries}
+    given = {e: n for n, c in m.clips.items() if (e := layout.entry(c)) is not None}
     taken = set(given.values())
     out = {}
     for e in layout.entries:

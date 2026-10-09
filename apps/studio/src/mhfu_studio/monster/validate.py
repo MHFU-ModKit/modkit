@@ -466,7 +466,7 @@ def own_moves(
             refused += _refused(dataclasses.replace(m, moves={name: mv}, rules=[]), lay, known)
     out += refused or _refused(dataclasses.replace(m, moves=judged), lay, known)
     for name, mv in mine:
-        e = lay.ids.get(m.clips[mv.clip].id) if mv.clip is not None else mv.anim
+        e = lay.entry(m.clips[mv.clip]) if mv.clip is not None else mv.anim
         frames = lay.frames.get(e) if e is not None else None
         for i, a in enumerate(mv.attacks):
             if frames is not None and a.frame < frames and a.end is not None and a.end > frames:

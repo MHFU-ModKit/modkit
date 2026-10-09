@@ -71,7 +71,7 @@ def entry(m: Manifest, name: str, layout: Layout) -> int:
     if mv.clip is None:
         assert mv.anim is not None
         return mv.anim
-    e = layout.ids.get(m.clips[mv.clip].id)
+    e = layout.entry(m.clips[mv.clip])
     if e is None:
         raise ManifestError(f"moves.{name}: clip {mv.clip!r} has no executor entry in this build")
     return e

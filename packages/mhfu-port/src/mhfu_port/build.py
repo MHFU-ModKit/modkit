@@ -253,8 +253,8 @@ def authored(m: Manifest, placed: Layout) -> dict[int, float]:
     """Entry -> the manifest's `turn` of the clip it holds."""
     out = {}
     for c in m.clips.values():
-        e = layouts.where(c, placed.ids)
-        if c.turn is not None and e in placed.entries:
+        e = placed.entry(c)
+        if c.turn is not None and e is not None:
             out[e] = c.turn
     return out
 
