@@ -793,7 +793,7 @@ offset = [
 [behaviour.blocks.b1]
 kind = "played_for"
 at = [
-    260.0,
+    400.0,
     0.0,
 ]
 frames = 15
@@ -805,7 +805,7 @@ label = "just past you -> skid"
 [behaviour.blocks.b2]
 kind = "distance"
 at = [
-    480.0,
+    680.0,
     0.0,
 ]
 lo = 250.0
@@ -817,7 +817,7 @@ next = [
 [behaviour.blocks.b3]
 kind = "hunter_moving"
 at = [
-    700.0,
+    960.0,
     0.0,
 ]
 way = "away"
@@ -828,7 +828,7 @@ next = [
 [behaviour.blocks.b4]
 kind = "cooldown"
 at = [
-    920.0,
+    1240.0,
     0.0,
 ]
 frames = 30
@@ -839,8 +839,8 @@ play = [
 [behaviour.blocks.b5]
 kind = "played_for"
 at = [
-    260.0,
-    120.0,
+    400.0,
+    200.0,
 ]
 frames = 75
 next = [
@@ -851,8 +851,8 @@ label = "run budget by time"
 [behaviour.blocks.b6]
 kind = "cooldown"
 at = [
-    480.0,
-    120.0,
+    680.0,
+    200.0,
 ]
 frames = 30
 play = [
@@ -862,8 +862,8 @@ play = [
 [behaviour.blocks.b7]
 kind = "played_for"
 at = [
-    260.0,
-    240.0,
+    400.0,
+    400.0,
 ]
 frames = 20
 next = [
@@ -874,8 +874,8 @@ label = "the hunter close once the skid has stood -> stamp"
 [behaviour.blocks.b8]
 kind = "distance"
 at = [
-    480.0,
-    240.0,
+    680.0,
+    400.0,
 ]
 hi = 1200.0
 next = [
@@ -885,8 +885,8 @@ next = [
 [behaviour.blocks.b9]
 kind = "cooldown"
 at = [
-    700.0,
-    240.0,
+    960.0,
+    400.0,
 ]
 frames = 150
 play = [
@@ -896,8 +896,8 @@ play = [
 [behaviour.blocks.b10]
 kind = "played_for"
 at = [
-    260.0,
-    360.0,
+    400.0,
+    600.0,
 ]
 frames = 10
 next = [
@@ -908,8 +908,8 @@ label = "the hunter close during the dash -> stamp"
 [behaviour.blocks.b11]
 kind = "distance"
 at = [
-    480.0,
-    360.0,
+    680.0,
+    600.0,
 ]
 hi = 800.0
 play = [
@@ -919,8 +919,8 @@ play = [
 [behaviour.blocks.b12]
 kind = "on_flinch"
 at = [
-    260.0,
-    480.0,
+    400.0,
+    800.0,
 ]
 part = 0
 play = [
@@ -931,8 +931,8 @@ label = "a flinch of the head: his own tumble, never the host's (4,x)"
 [behaviour.blocks.b13]
 kind = "on_part_broken"
 at = [
-    260.0,
-    600.0,
+    400.0,
+    1000.0,
 ]
 play = [
     "break_howl",
@@ -942,8 +942,8 @@ label = "a part breaks"
 [behaviour.blocks.b14]
 kind = "on_noticed"
 at = [
-    260.0,
-    720.0,
+    400.0,
+    1200.0,
 ]
 next = [
     "b15",
@@ -953,8 +953,8 @@ label = "the notice: his howl at once, forced, so it does not wait for combat"
 [behaviour.blocks.b15]
 kind = "force"
 at = [
-    480.0,
-    720.0,
+    680.0,
+    1200.0,
 ]
 play = [
     "notice_howl",
@@ -973,7 +973,7 @@ during = [
 [behaviour.moves.lunge_stop]
 at = [
     0.0,
-    240.0,
+    400.0,
 ]
 during = [
     "b7",
@@ -981,14 +981,14 @@ during = [
 
 [behaviour.moves.stamp]
 at = [
-    1140.0,
-    240.0,
+    1520.0,
+    400.0,
 ]
 
 [behaviour.moves.dash]
 at = [
     0.0,
-    360.0,
+    600.0,
 ]
 during = [
     "b10",
@@ -996,18 +996,18 @@ during = [
 
 [behaviour.moves.flinch_head]
 at = [
-    1140.0,
-    480.0,
+    1520.0,
+    800.0,
 ]
 
 [behaviour.moves.break_howl]
 at = [
-    1140.0,
-    600.0,
+    1520.0,
+    1000.0,
 ]
 
 [behaviour.moves.notice_howl]
 at = [
-    1140.0,
-    720.0,
+    1520.0,
+    1200.0,
 ]

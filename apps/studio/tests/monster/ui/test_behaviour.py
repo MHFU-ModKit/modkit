@@ -196,7 +196,7 @@ def test_the_zinogre_opens(
     assert all(p.view._shown[i].view.opacity() == 1.0 for i in m.behaviour.blocks)
     assert in_step(p, ws)
     wrote = {i: p.view._shown[i].view.xy_pos for i in m.behaviour.blocks}
-    assert wrote["b12"] == [260.0, 480.0]
+    assert wrote["b12"] == [float(model.LEFT), 4.0 * model.ROW]
     note = field(p, "b12", "@note").get_value()
     assert note.startswith("a flinch of the head")
     assert field(p, "b12", "part").get_value() == 0
