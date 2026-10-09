@@ -33,7 +33,8 @@ local CAM = 100                                   -- or to the aim this much far
 -- short of the aim, less how far the aim draws off over LEAD seconds of the hunter's walk; never
 -- under ARRIVE_MIN, so a tick held while the hunter walks lets it slide past the aim by 150 at most
 local SLIDE, SLIDE_FAST, LEAD, ARRIVE_MIN = 290, 300, 2, 150
-local WALK_MIN = 150                              -- a walk from idle covers this before it stops
+local WALK_MIN = 150                              -- a walk from idle covers this before it stops,
+                                                  -- as if the hunter stood: their turn swings the aim
 local TURN_MIN = deg(50)                          -- idle turns start with the hunter this far off
 local TURN_DIST = 120                             -- closer, the bearing is noise
 local WALK_RATE = deg(150) // FPS                 -- YAW units a frame
@@ -110,11 +111,12 @@ local function pick_side(st, h, eye)
   end
 end
 
---- How far from its aim the arrival stops a walk on `entry`, and how far the aim is now.
+--- How far from its aim the arrival stops a walk on `entry`; how far the aim is now; the stop
+--- slide, where a still hunter's would.
 local function arrival(st, h, entry)
   local now = to_aim(st, h, 0)
   local slide = entry == FAST and SLIDE_FAST or SLIDE
-  return math.max(ARRIVE_MIN, slide - (to_aim(st, h, LEAD) - now)), now
+  return math.max(ARRIVE_MIN, slide - (to_aim(st, h, LEAD) - now)), now, slide
 end
 
 --- Arms the stop of a walk on `entry` at its aim; npc_face disarms it, so it follows every face.
@@ -153,8 +155,8 @@ local function from_idle(st, h, eye)
   pick_side(st, h, eye)
   local moved = math.sqrt((h.x - rested.x) ^ 2 + (h.z - rested.z) ^ 2)
   local entry = st.dist > FASTER and FAST or START
-  local stop, now = arrival(st, h, entry)
-  if now - stop > WALK_MIN and (st.dist > FAR or moved > MOVED) then
+  local stop, now, slide = arrival(st, h, entry)
+  if now - math.max(stop, slide) > WALK_MIN and (st.dist > FAR or moved > MOVED) then
     say("walk, %.0f away", st.dist)
     rested = nil
     walk(st, h, entry)

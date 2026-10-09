@@ -369,13 +369,19 @@ def test_follower_arms_every_walk(lua: Any) -> None:
     assert order(f) == ["npc_face", "npc_arrive"]
 
 
-def test_follower_starts_a_walk_on_the_hunter_who_walks_off(lua: Any) -> None:
-    """The aim drawing off lowers the stop, so a walk starts where a still hunter's would not."""
+@pytest.mark.parametrize(
+    ("was", "at", "walks"),
+    [(590.0, 650.0, False), (710.0, 650.0, False), (700.0, 700.0, True)],
+)
+def test_follower_starts_no_walk_a_still_hunter_would_not(
+    lua: Any, was: float, at: float, walks: bool
+) -> None:
+    """Its aim 400 away: walking off or up, the hunter starts no walk a still one would not
+    (their turn swings the aim); 460 away, a still one does."""
     f = Follower(lua)
     f.tick(at=(0.0, 300.0))
-    assert f.still(at=(650.0, 0.0), yaw=0x4000)[0] == []
-    f.tick(at=(650.0, 0.0), yaw=0x4000)
-    assert f.tick(at=(650.0, 60.0), yaw=0x4000)[0] == [(0, START, 6)]
+    f.tick(at=(was, 0.0), yaw=0x4000)
+    assert f.tick(at=(at, 0.0), yaw=0x4000)[0] == ([(0, START, 6)] if walks else [])
 
 
 def test_follower_idles_after_a_clip_that_ended_alone(lua: Any) -> None:
