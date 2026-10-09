@@ -125,6 +125,16 @@ def test_correspondence():
     assert c.tree == {0: 1, 1: 2, 2: 4, 3: 3}
 
 
+def test_correspondence_second_root():
+    """A second root at the origin goes onto the port's, not onto the pad above the first."""
+    donor = Skeleton([Bone(parent=-1), Bone(parent=0, position=(0.0, 5.0, 0.0)), Bone()])
+    donor.bones.append(Bone(parent=2, position=(0.0, 0.0, 9.0)))
+    parents = [-1, 0, 1, -1, 3]
+    local = [(0.0, 0.0, 0.0)] * 2 + [(0.0, 5.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 9.0)]
+    c = verify.correspondence(donor, skeleton(parents, local))
+    assert (c.joint_of, c.pad, c.by_position) == ({0: 1, 1: 2, 2: 3, 3: 4}, 1, {2, 3})
+
+
 def test_audit_donor():
     parts = [Part(VERTICES, [], [], [], TRIANGLES, [[(j, 1.0)] for j in JOINT], 0)]
     good = checks(port(rest()), skeleton(), parts)
@@ -156,8 +166,28 @@ def test_commands(tmp_path, capsys):
 
 def test_host(data):
     p = verify.Port(data.fu.read(monster_pac(TIGREX)))
-    assert all(c.ok for c in verify.audit(p))
+    assert all(c.ok for c in verify.audit(p, host=p))
     assert verify.tear(p) is None
+
+
+def test_tip_check(data, tmp_path, capsys):
+    host = verify.Port(data.fu.read(monster_pac(TIGREX)))
+    assert verify.tip_check(host, host).detail == "chain 45 46 47, carriers 43 43 44"
+    one = verify.Port(data.fu.read(monster_pac(TIGREX)))
+    del one.model.meshes[1:]
+    assert verify.tip_check(one, host).detail.startswith("one mesh record")
+    adopted = verify.Port(data.fu.read(monster_pac(TIGREX)))
+    adopted.skeleton.bones[45].parent = 1
+    assert verify.tip_check(adopted, host).detail == "no tip chain at params[1]"
+    swapped = verify.Port(data.fu.read(monster_pac(TIGREX)))
+    swapped.model.meshes[1].groups[0] = swapped.model.meshes[0].groups[0]
+    assert "ride joints off the tip" in verify.tip_check(swapped, host).detail
+    assert verify.tip_check(port(rest()), port(rest())).ok
+    bare = tmp_path / "bare.bin"
+    bare.write_bytes(pac(rest()))
+    assert main(["verify", str(bare)]) == 0
+    assert main(["verify", str(bare), "--host", str(TIGREX), "--data", str(data.fu.root)]) == 1
+    assert "FAIL  the host's dropped tail" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("name", ["brute_tigrex", "zinogre"])
