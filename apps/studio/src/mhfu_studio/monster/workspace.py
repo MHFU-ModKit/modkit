@@ -1465,7 +1465,29 @@ class MonsterWorkspace(Workspace):
         self.playing_step = None
         self._stepped = True
         if mv.after is not None:
-            self._play_step(mv.after)
+            self._play_after(mv.after)
+
+    def _play_after(self, name: str) -> None:
+        """Plays step `name` where the step on screen stands: facing as it faces, from its root."""
+        from mhfu_studio.monster.render.playback import carry_after
+
+        vp = self.vp
+        assert vp is not None and vp.actor is not None and vp.clip is not None
+        a, clip, phase = vp.actor, vp.clip, vp.playback.phase
+        was = a.steer, a.carry
+        self._play_step(name)
+        if self.playing_step == name and vp.clip is not None:
+            carry = carry_after(
+                a.scene,
+                clip,
+                phase,
+                vp.clip,
+                strip_root=a.strip_root,
+                steer=was[0],
+                speed=vp.playback.speed,
+                carry=was[1],
+            )
+            vp.set_carry(carry)
 
     def take_stepped(self) -> bool:
         """Whether the played sequence went on (or ended) since the last ask."""

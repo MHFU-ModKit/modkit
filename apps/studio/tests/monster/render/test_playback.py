@@ -10,7 +10,9 @@ from mhfu_port.model import Clip as Slot
 from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.render.playback import (
     GAME_HZ,
+    Carry,
     Playback,
+    carry_after,
     leading_chain,
     pose_at,
     root_joints,
@@ -187,3 +189,24 @@ def test_own_moves_steer_the_preview() -> None:
     port = '[port]\nname = "t"\nhost_species = 75\npac = "t.bin"\n[source]\nmodel = 1\n'
     sc.attach_manifest(manifest.loads(port + "[clips.c]\nslot = 5\nturn = -45.0\n"))
     assert end_turn(sc, slot) == pytest.approx(-45.0, abs=0.1), "the manifest's turn wins"
+
+
+def test_a_carry_starts_a_clip_where_the_last_one_stood(rig: Scene) -> None:
+    from mhfu_port.manifest import Steer
+    from mhfu_studio.monster.render.playback import yaw_matrix
+
+    walk, root = rig.clip(1), travel_joints(rig)[-1]
+    fixed = Steer("fixed", angle=90.0, frames=10)
+    end = pose_at(rig, walk, 20.0, steer=fixed, speed=2.0).joints
+    c = carry_after(rig, walk, 20.0, walk, steer=fixed, speed=2.0)
+    assert c.yaw == pytest.approx(math.pi / 2) and abs(c.shift[0]) > 50.0
+    plain = pose_at(rig, walk, 0.0).joints
+    start = pose_at(rig, walk, 0.0, carry=c).joints
+    assert np.allclose(start[root][[0, 2]], end[root][[0, 2]], atol=1e-6), "from the same spot"
+    turned = (yaw_matrix(c.yaw)[:3, :3] @ (plain - plain[root]).T).T
+    assert np.allclose(start - start[root], turned, atol=1e-6), "facing the same way"
+    assert np.allclose(pose_at(rig, walk, 0.0, carry=Carry()).joints, plain)
+    again = carry_after(rig, walk, 20.0, walk, steer=fixed, speed=2.0, carry=c)
+    assert again.yaw == pytest.approx(math.pi), "the turns add up"
+    far = pose_at(rig, walk, 20.0, steer=fixed, speed=2.0, carry=c).joints[root]
+    assert np.allclose(pose_at(rig, walk, 0.0, carry=again).joints[root][[0, 2]], far[[0, 2]])

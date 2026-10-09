@@ -3,6 +3,7 @@
 """Sequences on screen: the Moves strip and picker, the Timeline's bar, playing a chain, the Clips
 sort, over the synthetic port."""
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -11,12 +12,16 @@ import pytest
 from mhfu_port import continuity
 from mhfu_port.manifest import Clip
 from mhfu_studio.monster.clip_browser import SourceClip
+from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.panels.clips import ClipsPanel
 from mhfu_studio.monster.panels.moves import MovesPanel
 from mhfu_studio.monster.panels.timeline import TimelinePanel
+from mhfu_studio.monster.render.playback import pose_at
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.ui import kit
+from mhp_formats.anim import Channel, Keyframe, Track, quantize
+from mhp_formats.anim import Clip as AnimClip
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 
@@ -269,6 +274,64 @@ def test_the_timeline_follows_the_sequence(timeline: TimelinePanel, ws: MonsterW
     ws.frame(1.0)
     timeline._tick()
     assert timeline.steps.picked == "a_2" and timeline.frame.text() == "frame 0.0 / 6"
+
+
+# ---- the body carried across steps ----
+
+
+@pytest.fixture
+def walking(ws: MonsterWorkspace, synthetic_pac: bytes) -> MonsterWorkspace:
+    """`ws` on a rig whose clips both walk the root 100 units forward by frame 10; a turns 90
+    degrees (fixed steer), a_2 and a_3 do not."""
+    assert ws.doc is not None
+    scene = Scene.from_bytes(synthetic_pac, "t", manifest=ws.doc.manifest)
+    track = Track([Channel(0x100, [Keyframe(0, 0), Keyframe(quantize("loc", 100.0), 10)])])
+    for c in scene.clips:
+        c.source = AnimClip([track, Track(), Track()])
+    ws.load(scene, ws.doc)
+    ws.select_move("a")
+    assert ws.set_steer(turn="fixed", angle=90.0)
+    return ws
+
+
+def test_a_sequence_carries_the_body(walking: MonsterWorkspace) -> None:
+    ws = walking
+    vp = ws.vp
+    assert vp is not None and vp.actor is not None and vp.clip is not None
+    first, speed = vp.clip, vp.playback.speed
+    ws.play_sequence()
+    assert vp.actor.carry is None, "the first step starts where clips start"
+    at = pose_at(vp.actor.scene, first, first.frames, steer=vp.actor.steer, speed=speed).joints[0]
+    ws.frame(1.0)
+    c = vp.actor.carry
+    assert ws.move == "a_2" and c is not None and c.yaw == pytest.approx(math.pi / 2)
+    start = pose_at(vp.actor.scene, vp.clip, 0.0, carry=c).joints[0]
+    assert abs(at[0]) > 90.0 and np.allclose(start, at, atol=1e-6), "from where a ended, turned"
+    ws.frame(1.0)
+    c2 = vp.actor.carry
+    assert ws.move == "a_3" and c2 is not None
+    assert c2.yaw == pytest.approx(math.pi / 2), "a_2 does not turn"
+    assert c2.shift[0] > c.shift[0] + 50.0, "and walked on from there"
+
+
+def test_anything_else_played_starts_where_clips_start(walking: MonsterWorkspace) -> None:
+    ws = walking
+    vp = ws.vp
+    assert vp is not None and vp.actor is not None
+    ws.play_sequence()
+    ws.frame(1.0)
+    assert vp.actor.carry is not None
+    ws.select_move("a_2")  # the same step, picked again
+    assert vp.actor.carry is None
+    ws.play_sequence()
+    ws.frame(1.0)
+    assert vp.actor.carry is not None
+    ws.play_slot(2)
+    assert vp.actor.carry is None
+    ws.play_sequence()
+    ws.frame(1.0)
+    ws.play_sequence()
+    assert vp.actor.carry is None, "again from the head"
 
 
 # ---- the Clips table ----
