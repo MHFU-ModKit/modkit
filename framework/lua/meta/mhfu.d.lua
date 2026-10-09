@@ -11,7 +11,7 @@ mhfu = {}
 
 ---The API's version, raised whenever a declaration here changes; a mod that needs something added
 ---in version N checks `mhfu.api_version >= N`.
-mhfu.api_version = 1
+mhfu.api_version = 2
 
 -- log, memory and world state (bind_memory.cpp) ----------------------------------------------
 
@@ -819,3 +819,75 @@ function mhfu.monster_state(ent) end
 ---@field on? "noticed"|"combat_entered"|"combat_left"|"flinch"|"part_broken"|"tail_cut" fires in the AI frame the event is seen, `from_*` and the distance still gating; "flinch" plays its own move (`play_move`) in place of the host's reaction
 ---@field part? integer "flinch", "part_broken": only that part's (an ENTITY.FLINCH_MASK bit); default any
 ---@field force? boolean `play_move` starts while the monster's notice runs (a rule on "noticed" needs it)
+
+-- village NPCs of our own (bind_npc.cpp) ------------------------------------------------------
+
+---Adds an NPC that the lobby spawns on every load of Pokke village's main area, `opts.right` and
+---`opts.ahead` from the hunter in their frame. Its model is the PAC at `pac` (a path as
+---`inject_register` takes it), read now: call it while mods load, never in the village. It runs no
+---AI, can't be talked to and is not solid.
+---@param pac string
+---@param opts? {size?: number, char?: integer, right?: number, ahead?: number} size 1, char 0x1E, right 300, ahead 0 unless given
+---@return integer? slot
+---@return string? err
+function mhfu.npc_add(pac, opts) end
+
+---slot's live object while the village shows it, else 0.
+---@param slot integer
+---@return integer
+function mhfu.npc_object(slot) end
+
+---Plays `entry` of the PAC's animation pack on clip slots 0-2 from the next frame, cross-fading
+---over `blend` frames (default 6, 0 cuts). When a clip that doesn't loop ends, entry `after`
+---follows with the same blend; without it the last frame holds.
+---@param slot integer
+---@param entry integer
+---@param blend? integer
+---@param after? integer
+function mhfu.npc_play(slot, entry, blend, after) end
+
+---Turns slot a little every frame: "still"; "point", toward world (x, z); or "hunter", toward the
+---hunter offset by (x right, z ahead) in their frame. At most `rate` YAW units a frame (0x10000 a turn).
+---@param slot integer
+---@param mode "still"|"point"|"hunter"
+---@param x? number
+---@param z? number
+---@param rate? integer default 0x200
+function mhfu.npc_face(slot, mode, x, z, rate) end
+
+---Arms slot's current `npc_face` order: once it is within `dist` of what it faces ("point" or
+---"hunter"), `entry` plays as `npc_play(slot, entry, blend, after)` would, and the turn stops. C
+---checks it every frame, so it holds while no mod ticks (dialogue, a prompt zone); it fires once,
+---and the next `npc_face` disarms it.
+---@param slot integer
+---@param dist number
+---@param entry integer
+---@param blend? integer default 6
+---@param after? integer
+function mhfu.npc_arrive(slot, dist, entry, blend, after) end
+
+---Plays slot's clips at `scale` times their own speed from the next frame, so it walks that much
+---faster too; 1 (the default) is the clips' own, 0 freezes them. It holds across loads.
+---@param slot integer
+---@param scale? number default 1
+function mhfu.npc_speed(slot, scale) end
+
+---slot as of its last frame, or nil while it is unused.
+---@param slot integer
+---@return mhfu.NpcStatus?
+function mhfu.npc_status(slot) end
+
+---What `mhfu.npc_status` returns.
+---@class mhfu.NpcStatus
+---@field object integer 0 while the village does not show it
+---@field frames integer frames since it spawned
+---@field entry integer the entry clip slot 0 plays
+---@field playing boolean slot 0's clip has not ended
+---@field yaw integer ENTITY.YAW
+---@field x number
+---@field y number
+---@field z number
+---@field dist number XZ distance to the hunter
+
+---How many NPCs `npc_add` takes.
+mhfu.NPC_MAX = 4 -- MHFU_NPC_MAX

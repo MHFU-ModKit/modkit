@@ -15,7 +15,7 @@ extern "C" {
 #define MHFU_WORLD_SCREEN_MENU    1
 #define MHFU_WORLD_SCREEN_TITLE   4
 #define MHFU_WORLD_SCREEN_IN_AREA 17
-#define MHFU_WORLD_SCREEN_VILLAGE 22   /* 22: in the village, per the log gate; unverified */
+#define MHFU_WORLD_SCREEN_VILLAGE 22   /* boot loads near the save read; village is 0 or 113 */
 
 uint8_t     mhfu_world_screen_state(void);
 uint16_t    mhfu_world_area_index(void);      /* the visible section; ENTITY.SECTION's encoding */
@@ -23,9 +23,14 @@ uint32_t    mhfu_world_quest_timer(void);     /* frames left at 30 Hz */
 uint32_t    mhfu_world_player_hp(void);
 mhfu_vec3_t mhfu_world_player_pos(void);      /* read from MHFU_CAM_VIEW_EYE */
 
-/* 1 while in an area or the village. Gate every ms0 access on it: the savedata utility
+/* 1 while in an area or on screen 22. Gate every ms0 access on it: the savedata utility
  * shares the non-reentrant Memory Stick driver, and a concurrent write freezes the load. */
 int         mhfu_world_ms0_io_safe(void);
+
+/* 1 while the hunter roams Pokke: PLAYER_ENTITY has the village's vtable and SCENE_OBJECT is in
+ * FREE_ROAM_SCENES. Passive: reading the savedata utility's status would advance it under the
+ * game. */
+int         mhfu_world_village_roam(void);
 
 /* Shows every big monster on the map (MHFU_MAP_PAINT); call at 2 Hz or faster. */
 void        mhfu_world_paint_map(void);

@@ -35,8 +35,12 @@ mhfu.on_bigmonster_spawn(function(_, species, slot, hp)
 end)
 ```
 
-`lua/examples/` has three to start from: an animation override, a second big monster in a quest,
-and the ported Brute Tigrex.
+A mod may also define a global `mhfu_tick()`: it runs at 2 Hz in a quest area and while the hunter
+roams Pokke village; menus, dialogue, prompt zones and loads pause it.
+
+`lua/examples/` has five to start from: an animation override, a second big monster in a quest,
+the ported Brute Tigrex and Zinogre, and a small Zinogre that follows the hunter around the
+village (`village_follower.lua`, on the village NPC calls `mhfu.npc_*`).
 
 ## Memory stick
 

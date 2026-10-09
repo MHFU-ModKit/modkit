@@ -27,6 +27,8 @@ def constants(t: addresses.Table) -> dict[str, int]:
     for e in t.enums.values():
         out |= {f"{e.name}_{n.upper()}": k for k, n in enumerate(e.names, 1)}
         out[f"{e.name}_COUNT"] = len(e.names)
+    for st in t.sets.values():
+        out |= {f"{st.name}_{a.name}": int(a) for a in st.of}
     return out
 
 
@@ -35,9 +37,20 @@ def in_c(t: addresses.Table, tmp_path) -> dict[str, int]:
     if cc is None:
         pytest.skip("no C compiler")
     (tmp_path / "addresses.gen.h").write_text(addresses.render_c(t))
-    prints = "".join(f'    printf("{n} %lu\\n", (unsigned long)MHFU_{n});\n' for n in constants(t))
+    members = {f"{st.name}_{a.name}" for st in t.sets.values() for a in st.of}
+    names = [n for n in constants(t) if n not in members]
+    prints = "".join(f'    printf("{n} %lu\\n", (unsigned long)MHFU_{n});\n' for n in names)
+    sets = ""
+    for st in t.sets.values():
+        # the initializer, in the file's order, and a COUNT that matches it
+        sets += f"static const unsigned long set_{st.name}[] = MHFU_{st.name};\n"
+        sets += f"typedef char count_{st.name}[MHFU_{st.name}_COUNT == {len(st.of)} ? 1 : -1];\n"
+        prints += "".join(
+            f'    printf("{st.name}_{a.name} %lu\\n", set_{st.name}[{k}]);\n'
+            for k, a in enumerate(st.of)
+        )
     (tmp_path / "main.c").write_text(
-        '#include <stdio.h>\n#include "addresses.gen.h"\n'
+        f'#include <stdio.h>\n#include "addresses.gen.h"\n{sets}'
         f"int main(void) {{\n{prints}    return 0;\n}}\n"
     )
     exe = tmp_path / "main"
@@ -97,6 +110,8 @@ def in_lua(t: addresses.Table) -> dict[str, int]:
         names = list(addr[e.name].values())
         out |= {f"{e.name}_{n.upper()}": k for k, n in enumerate(names, 1)}
         out[f"{e.name}_COUNT"] = len(names)
+    for st in t.sets.values():
+        out |= {f"{st.name}_{m}": v for m, v in addr[st.name].items()}
     return out
 
 
@@ -165,6 +180,26 @@ def test_an_enum_numbers_its_names_from_one(tmp_path):
     for found in (in_c(t, tmp_path), in_c_table(t, tmp_path), in_lua(t)):
         assert (found["KIND_A_B"], found["KIND_C"], found["KIND_COUNT"]) == (1, 2, 2)
     assert '#define MHFU_KIND_NAMES "a_b", "c"' in addresses.render_c(t)
+
+
+def test_a_set_reaches_all_three_languages(tmp_path):
+    data = {
+        "address": {"A": entry(BASE + 8), "B": entry(BASE + 4), "C": entry(BASE)},
+        "set": {"AB": {"of": ["A", "B"], "doc": "d"}},
+    }
+    t = addresses.parse(data)
+    ab = t.sets["AB"]
+    assert ab == frozenset({BASE + 8, BASE + 4}) and ab.of == (BASE + 8, BASE + 4)
+    assert (ab.name, ab.doc) == ("AB", "d")
+    for found in (in_c(t, tmp_path), in_c_table(t, tmp_path), in_lua(t)):
+        assert (found["AB_A"], found["AB_B"]) == (BASE + 8, BASE + 4)
+    assert "#define MHFU_AB { MHFU_A, MHFU_B }" in addresses.render_c(t)
+
+
+def test_a_set_is_a_frozenset():
+    roam = addresses.FREE_ROAM_SCENES
+    assert isinstance(roam, frozenset) and roam.name == "FREE_ROAM_SCENES"
+    assert addresses.SCENE_VILLAGE in roam and addresses.SCENE_PROMPT not in roam
 
 
 def test_unknown_names_raise():
@@ -238,6 +273,20 @@ def entry_field(offset=0):
             "clashes",
         ),
         ({"regions": {}}, "unknown top-level"),
+        ({"address": {"A": entry()}, "set": {"S": {"of": ["A", "B"], "doc": "d"}}}, "B is not"),
+        ({"address": {"A": entry()}, "set": {"S": {"of": [], "doc": "d"}}}, "distinct address"),
+        ({"address": {"A": entry()}, "set": {"S": {"of": ["A", "A"], "doc": "d"}}}, "distinct"),
+        ({"address": {"A": entry()}, "set": {"S": {"of": [1], "doc": "d"}}}, "distinct"),
+        ({"address": {"A": entry()}, "set": {"S": {"of": ["A"]}}}, "expects exactly of"),
+        ({"address": {"A": entry()}, "set": {"s": {"of": ["A"], "doc": "d"}}}, "UPPER_SNAKE"),
+        ({"address": {"A": entry()}, "set": {"A": {"of": ["A"], "doc": "d"}}}, "is a set and"),
+        (
+            {
+                "address": {"A": entry(), "S_COUNT": entry(BASE + 4)},
+                "set": {"S": {"of": ["A"], "doc": "d"}},
+            },
+            "clashes",
+        ),
         ({"enum": {"K": {"doc": "d", "names": ["A"]}}}, "lower_snake_case"),
         ({"enum": {"K": {"doc": "d", "names": ["a", "a"]}}}, "distinct"),
         ({"enum": {"K": {"doc": "d", "names": []}}}, "distinct"),

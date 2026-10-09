@@ -238,11 +238,16 @@ static void patch_overlay(uint32_t addr, uint32_t w0, uint32_t w1, mhfu_wrap_fn 
         mhfu_log("[ai] overlay patch @0x%08lx: rc=%d", (unsigned long)addr, (int)rc);
 }
 
-/* Postfix on the loader's call into the per-segment loader, a few dozen calls per map load:
- * acts only while the executor holds its original prologue, i.e. on a fresh overlay. */
+/* The core's chunk listeners (mhfu_ai_on_chunk). */
+#define CHUNK_LISTENERS 4
+static mhfu_chunk_fn g_chunk[CHUNK_LISTENERS];
+
+/* Postfix on the loader's call into the chunk decrypt (a1 buffer, a2 bytes), for every DATA.BIN
+ * chunk read: the chunk listeners see each; the AI part acts only while the executor holds its
+ * original prologue, i.e. on a fresh overlay. */
 static void overlay_post(mhfu_regs_t *r)
 {
-    (void)r;
+    for (int i = 0; i < CHUNK_LISTENERS && g_chunk[i]; i++) g_chunk[i](r->a1, r->a2);
     if (*(volatile uint32_t *)MHFU_ACTION_EXECUTOR != EXEC_WORD0) return;
 
     if (mhfu_event_count(MHFU_EVENT_BIGMONSTER_SLOT_PICKED))
@@ -285,6 +290,15 @@ extern "C" int mhfu_ai_install_overlay_loaded(void)
     if (rc != MHFU_HOOK_OK) return failed("overlay loader", rc);
     s_done = 1;
     return 0;
+}
+
+extern "C" int mhfu_ai_on_chunk(mhfu_chunk_fn fn)
+{
+    int i = 0;
+    while (i < CHUNK_LISTENERS && g_chunk[i] && g_chunk[i] != fn) i++;
+    if (i == CHUNK_LISTENERS) return failed("chunk listeners full", MHFU_HOOK_NOSPACE);
+    g_chunk[i] = fn;
+    return mhfu_ai_install_overlay_loaded();
 }
 
 /* The EBOOT loop is queued; the overlay loop is patched from the loader's postfix. */

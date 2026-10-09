@@ -125,6 +125,53 @@ extern "C" uint32_t mhfu_xram_alloc(uint32_t n)
     return a;
 }
 
+extern "C" uint32_t mhfu_xram_read(const char *path, uint32_t *buf, uint32_t *cap)
+{
+    SceUID fd = sceIoOpen(path, PSP_O_RDONLY, 0);
+    if (fd < 0) {
+        mhfu_log("[xram] open FAILED %s rc=0x%08X", path, (unsigned)fd);
+        return 0;
+    }
+    uint32_t fsz = (uint32_t)sceIoLseek(fd, 0, PSP_SEEK_END);
+    sceIoLseek(fd, 0, PSP_SEEK_SET);
+    if (fsz < 0x40) {
+        sceIoClose(fd);
+        mhfu_log("[xram] %s too small (%uB)", path, (unsigned)fsz);
+        return 0;
+    }
+    if (!*buf || fsz > *cap) {
+        uint32_t c = (fsz + 0xFFFu) & ~0xFFFu;
+        uint32_t b = mhfu_xram_alloc(c);
+        if (!b) {
+            sceIoClose(fd);
+            mhfu_log("[xram] exhausted (need %uKB)", (unsigned)(c / 1024));
+            return 0;
+        }
+        *buf = b;
+        *cap = c;
+    }
+    int rd = sceIoRead(fd, (void *)*buf, (int)fsz);
+    sceIoClose(fd);
+    if (rd != (int)fsz) {
+        mhfu_log("[xram] read short %s rc=0x%08X", path, (unsigned)rd);
+        return 0;
+    }
+    return fsz;
+}
+
+/* Volatile is released at every quest exit, which would drop the block under its user. */
+extern "C" uint32_t mhfu_xram_stage_file(const char *path, uint32_t *size)
+{
+    if (!mhfu_xram_mode) mhfu_xram_init();
+    if (mhfu_xram_mode != XRAM_RAW) {
+        mhfu_log("[xram] %s not staged: a real PSP has no extra RAM to keep", path);
+        return 0;
+    }
+    uint32_t buf = 0, cap = 0;
+    *size = mhfu_xram_read(path, &buf, &cap);
+    return *size ? buf : 0;
+}
+
 /* Quest exit: unlock our volatile so the reward save does not freeze. The entries
  * staged in it are dropped and staged again next quest. */
 extern "C" void mhfu_xram_release(void)

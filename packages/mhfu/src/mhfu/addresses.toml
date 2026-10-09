@@ -14,9 +14,13 @@
 #   [struct.NAME.fields]
 #   NAME = { offset = <offset>, type = "<type>", doc = "<one line>" }
 #
+#   [set]                               # addresses named together
+#   NAME = { of = ["<address name>", ...], doc = "<one line>" }
+#
 # Types: u8 u16 u32 s8 s16 s32 f32 vec3 ptr vtable fn code bytes, or a struct's name, each
 # optionally followed by [count] for an array, which also generates NAME_COUNT. fn is a function
 # entry, code any other instruction address.
+# A set is a frozenset in Python, an initializer and NAME_COUNT in C, and member = address in Lua.
 # Names are UPPER_SNAKE_CASE; an address and a value appear once.
 
 [address]
@@ -112,8 +116,8 @@ QUEST_SINGLETON = { eu = 0x09A05DC0, type = "bytes", doc = "Quest singleton (str
 CARVE_COUNT = { eu = 0x09A44C86, type = "u8", doc = "carves left on the last-killed monster: 0 while alive, 2 at the kill, minus one per carve" }
 
 # --- AI engine ---
-ACTION_PICKER = { eu = 0x08865254, type = "fn", doc = "vt[8] action picker the known species vtables share at +0x20; swap that slot to override" }
-AI_TICK = { eu = 0x08865648, type = "fn", doc = "per-entity AI tick: movement and action pick" }
+ACTION_PICKER = { eu = 0x08865254, type = "fn", doc = "vt[8] action picker the known species vtables share at +0x20; swap that slot to override. Resolves an id: id % 1000 is ACTION_TABLE's stream * 100 + entry" }
+AI_TICK = { eu = 0x08865648, type = "fn", doc = "per-entity ObjBase tick: transform, root motion along YAW, ANIM_ADVANCE; on monsters also the action pick" }
 SLOT_LOOP = { eu = 0x088656B0, type = "code", doc = "top of the per-slot loop inside AI_TICK (small-monster path)" }
 ATTACK_RESOLVER = { eu = 0x08865934, type = "fn", doc = "engine attack resolver for one entity; call only game-thread-synced, from an override callback" }
 IN_SECTION = { eu = 0x08865BAC, type = "fn", doc = "(entity): 1 when ENTITY.SECTION is the current section; EFFECT_SPAWN and the attack spawners do nothing otherwise" }
@@ -134,8 +138,8 @@ EFFECT_SPAWN = { eu = 0x09ACB3E0, type = "fn", doc = "species-biased effect spaw
 TIGREX_ATTACK_SPAWN = { eu = 0x09B661E8, type = "fn", doc = "em75-family attack spawner (unused, entity, attack id) -> node, 0 out of section; natives pass *COLLISION_WORLD_PTR; works from any game-thread frame" }
 
 # --- overlays and species ---
-OVERLAY_LOAD_CALL = { eu = 0x0884E9F8, type = "code", doc = "jal into OVERLAY_SEGMENT_LOAD; hooked to learn when the AI overlay has landed" }
-OVERLAY_SEGMENT_LOAD = { eu = 0x0884EA1C, type = "fn", doc = "per-segment overlay loader that copies overlay code into place" }
+OVERLAY_LOAD_CALL = { eu = 0x0884E9F8, type = "code", doc = "jal into OVERLAY_SEGMENT_LOAD for every DATA.BIN chunk read; hooked to learn when the AI overlay or the lobby's NPC table has landed" }
+OVERLAY_SEGMENT_LOAD = { eu = 0x0884EA1C, type = "fn", doc = "in-place DATA.BIN chunk decrypt (a1 buffer, a2 bytes): a chunk of overlay code or data is readable once it returns" }
 BASE_SPECIES = { eu = 0x089AA1C8, type = "bytes", doc = "s8 per species id: its base species (subspecies collapse onto the parent), used by effect spawns" }
 SPECIES_TABLE = { eu = 0x09BB87C0, type = "bytes", doc = "per-species data rows (struct SPECIES) indexed by ENTITY.SPECIES" }
 ACTION_LIST_REMAP = { eu = 0x09BD38F0, type = "bytes", doc = "alternate action-descriptor list (type 0x3A) used while ENTITY.FLAGS bit 0 is set" }
@@ -256,6 +260,41 @@ NPC_HALL_SHOP = { eu = 0x090CFC90, type = "bytes", doc = "NPC slot: the hall's i
 NPC_HALL_HUNTER = { eu = 0x090D3560, type = "bytes", doc = "NPC slot: the hunter by the hall's fire pit" }
 NPC_HALL_FELYNE = { eu = 0x090D6E30, type = "bytes", doc = "NPC slot: the felyne waiting in the hall" }
 
+# --- lobby NPCs: lobby_task.ovl, loaded in the village, house, farm, kitchen, hall and school ---
+LOBBY_OVERLAY = { eu = 0x09A5F200, type = "bytes", doc = "lobby_task.ovl (MWo3 id 7) holds all NPC code; a quest loads game_task over it, and leaving the quest reads it again" }
+NPC_SPAWN_ROWS = { eu = 0x09B0AD68, type = "ptr[6]", doc = "per lobby area the NPC_SPAWN_ROW array: 0 house, 1 village, 2 kitchen, 3 farm, 4 hall, 5 school (STAGE_AREA_INDEX)" }
+NPC_SPAWN_COUNTS = { eu = 0x09B0AD80, type = "u8[6]", doc = "rows per lobby area in NPC_SPAWN_ROWS" }
+NPC_SPAWN_ROWS_VILLAGE = { eu = 0x09B0A7F8, type = "bytes", doc = "the village's 16 shipped rows, NPC_SPAWN_ROWS[1] on a fresh lobby load" }
+NPC_SPAWNER = { eu = 0x09ADBB50, type = "fn", doc = "(ctx, stage): builds an area's NPCs from NPC_SPAWN_ROWS; each NPC's first OBJ_TICK, model setup included, runs inside it" }
+NPC_SPAWN_ALLOWED = { eu = 0x09ADC478, type = "fn", doc = "(ctx, row, stage): 1 if the row spawns; special cases by NPC_SPAWN_ROW.CHAR (0x20 never), default 1" }
+NPC_CTOR = { eu = 0x09AB82B0, type = "fn", doc = "Npc::Npc: ObjBase::ObjBase, then NPC_VTABLE; on ObjManager list 7" }
+NPC_PRE_SETUP = { eu = 0x09ABC9E0, type = "fn", doc = "(npc): copies its NPC_SPAWN_ROW in; the spawn position is the row SCRIPT's first vec3" }
+NPC_MODEL_SETUP = { eu = 0x09ADB550, type = "fn", doc = "(ctx, npc, kind): the model from RESOURCE_TABLE row 16 + kind, read in place; an empty row faults in PAC_COUNT" }
+NPC_JOINT_BUILDER = { eu = 0x09ADB7E0, type = "fn", doc = "the lobby's JOINT_BUILDER: joints, SLOT_ROOTS from the skeleton's roots, SLOT_COUNT = the anim streams" }
+NPC_BRAIN = { eu = 0x09ABB600, type = "fn", doc = "(npc): NPC_VTABLE's OBJ_VTABLE.BRAIN, 30 Hz; state 0 runs NPC_PRE_SETUP and NPC_MODEL_SETUP" }
+NPC_AI_DISPATCH = { eu = 0x09ABEA68, type = "fn", doc = "(npc): zeroes NPC.BUSY, runs behaviour NPC.BEHAVIOUR (0xFF none), then steps NPC.SCRIPT" }
+NPC_ANIM_TICK = { eu = 0x09ABD190, type = "fn", doc = "(npc): requests ANIM_INPUT[0..1] while NPC.ANIM_LATCH is 0, then AI_TICK" }
+NPC_ANIM_RESOLVE = { eu = 0x09ABCFD8, type = "fn", doc = "NPC_VTABLE+0x20: an id from 1000 through ACTION_PICKER on the own pack, below it the shared player motion file" }
+NPC_TALK_SCAN = { eu = 0x09A79A60, type = "fn", doc = "hunter side, per frame: the talk target among the registered NPCs, skipping NPC.BUSY == 1; sets ENTITY.TALKABLE" }
+NPC_CONTEXT = { eu = 0x09B23A98, type = "ptr", doc = "the lobby NPC context: registry u32[20] at +0xC, count at +0x5C; NPC_MODEL_SETUP's ctx" }
+NPC_REGISTER = { eu = 0x09ADB350, type = "fn", doc = "(ctx, npc): appends to the 20-entry registry and sets ENTITY.ID" }
+NPC_UNREGISTER = { eu = 0x09ADB388, type = "fn", doc = "(ctx, npc): removes from the registry" }
+NPC_REGISTRY_GET = { eu = 0x09ADC408, type = "fn", doc = "(ctx, i): registry entry i < 20, else 0" }
+NPC_FIND_BY_CHAR = { eu = 0x09ADC438, type = "fn", doc = "(ctx, char): the first registered NPC with that NPC.CHAR, else 0" }
+STAGE_AREA_INDEX = { eu = 0x088C722C, type = "fn", doc = "(map manager, MAP_TABLE row, stage): the stage's index in the row; the lobby's: 66 house, 139 village, 13 kitchen, 46 farm, 85 hall, 17 school" }
+OBJ_INIT = { eu = 0x08864554, type = "fn", doc = "ObjBase::vtable_0x10: resets the transform, copies BRAIN_MEMBER_DEFAULT into ENTITY.BRAIN_MEMBER" }
+OBJ_TICK = { eu = 0x08864634, type = "fn", doc = "ObjBase::vtable_0x14, per frame: calls ENTITY.BRAIN_MEMBER, then vt+0x18 and vt+0x1C" }
+OBJ_TICK_BRAIN_RETURN = { eu = 0x08864660, type = "code", doc = "OBJ_TICK just past the brain call; s0 = the object" }
+OBJ_DTOR = { eu = 0x088644E8, type = "fn", doc = "~ObjBase(obj, flags): runs on every NPC as its area unloads, leaving ENTITY.VTABLE = OBJ_BASE_VTABLE" }
+OBJ_BASE_VTABLE = { eu = 0x089BAB34, type = "vtable", doc = "a destroyed object's vtable: tells a stale NPC pointer from a live one" }
+OBJ_MANAGER_PTR = { eu = 0x08A62C5C, type = "ptr", doc = "Singleton<ObjManager>; its heap at +0x80000 holds NPC objects, joints and compiled models, reset on every area load" }
+OBJ_HEAP_ALLOC = { eu = 0x08859B44, type = "fn", doc = "(heap, size, align): top-down first fit" }
+MEMBER_CALL = { eu = 0x0890C370, type = "fn", doc = "calls the pointer-to-member at t9 on a0; a virtual one resolves through a0's vtable on every call" }
+BRAIN_MEMBER_DEFAULT = { eu = 0x089A6054, type = "u32[3]", doc = "{0, 0x38, 0}: the brain member OBJ_INIT gives every object, OBJ_VTABLE.BRAIN" }
+CLIP_SET = { eu = 0x08863E70, type = "fn", doc = "(clip blocks, clip, start frame, blend frames, t0 = slot): binds a clip to the slot's joints, 0 blend cuts; VFPU, so mhfu_call" }
+ANIM_ADVANCE = { eu = 0x088637C4, type = "fn", doc = "(clip blocks): advances and evaluates ENTITY.SLOT_COUNT clip blocks" }
+PAC_COUNT = { eu = 0x088B89A8, type = "fn", doc = "pac_header::count; faults on a null package" }
+
 # --- framework regions ---
 MAIN_RAM = { eu = 0x08000000, type = "bytes", doc = "start of main RAM (kernel partition below USER_RAM); the lower bound of the framework's pointer checks" }
 PRX_STACK_GUARD = { eu = 0x09D88000, type = "bytes", doc = "framework-owned 16 KB block reserved when the PRX image cannot be: where the engine's construction-thread stack meets the PRX" }
@@ -264,13 +303,16 @@ CLONE_POOL = { eu = 0x0A800000, type = "bytes", doc = "framework-owned entity-cl
 INJECT_XRAM = { eu = 0x0B000000, type = "bytes", doc = "framework-owned model-inject scratch in the extra-RAM window (emulator only); a relocated PAC lands at its start" }
 EXTRA_RAM_END = { eu = 0x0C000000, type = "bytes", doc = "first address past the extra-RAM window (PPSSPP memory=64)" }
 
+[set]
+FREE_ROAM_SCENES = { of = ["SCENE_ROAM", "SCENE_VILLAGE", "SCENE_VILLAGE_CONTRACT", "SCENE_QUEST", "SCENE_QUEST_ALT"], doc = "SCENE_OBJECT values of free roam with nothing on screen; a prompt zone's are pool values that move, so not here" }
+
 
 [struct.ENTITY]
 doc = "common entity layout of monsters, the player combat entity and village NPCs; field docs name a narrower user"
 [struct.ENTITY.fields]
 VTABLE = { offset = 0x000, type = "ptr", doc = "class vtable; identifies the species more reliably than SPECIES" }
-RENDER_FLAGS = { offset = 0x004, type = "u32", doc = "engine output: bit 0x4 skips the draw (VISIBILITY_GATE sets it for a big monster out of section)" }
-DRAW_NODE = { offset = 0x008, type = "ptr", doc = "engine output: shared draw node while in the view frustum this frame, else 0" }
+RENDER_FLAGS = { offset = 0x004, type = "u32", doc = "bit 0x1 submitted for drawing, 0x2 passed the frustum cull this frame, 0x4 skips the draw (VISIBILITY_GATE sets it for a big monster out of section)" }
+DRAW_NODE = { offset = 0x008, type = "ptr", doc = "engine output: the next object in this frame's depth bucket while it passed the frustum cull, else 0" }
 ROTATION = { offset = 0x010, type = "f32[12]", doc = "3x4 orientation rows, rebuilt every frame from YAW: read only" }
 SIZE_SCALE = { offset = 0x024, type = "f32", doc = "size multiplier; re-derived every frame, so resize through RENDER_SCALE and SIZE_RADIUS" }
 TRANSLATION = { offset = 0x040, type = "vec3", doc = "transform translation row (w = 1.0 at +0x4C), copied from POSITION each frame" }
@@ -279,7 +321,7 @@ FRAME_COUNTER = { offset = 0x092, type = "u8", doc = "per-entity frame counter; 
 CLIP = { offset = 0x0B8, type = "ptr", doc = "slot-0 clip node of the playing animation (clip blocks at +0x80, 0x40 per slot)" }
 CLIP_FLAGS = { offset = 0x0BC, type = "u16", doc = "slot-0 clip flags: bit 0 playing (cleared when the clip ends), bit 1 loop" }
 JOINTS = { offset = 0x190, type = "ptr", doc = "live joint array the engine poses from (struct JOINT, stride 0x250)" }
-SLOT_COUNT = { offset = 0x1A2, type = "u16", doc = "AI slot count on the small-monster path; big monsters ignore it" }
+SLOT_COUNT = { offset = 0x1A2, type = "u16", doc = "clip slots ANIM_ADVANCE advances, on small monsters and NPCs; big monsters ignore it" }
 ACTION_TABLE = { offset = 0x1AC, type = "ptr", doc = "per-species table the vt[8] resolver maps an animation input through: probabilities for small monsters, the animation pack's base for big ones (CLIP_BLOCK.NODE = base + slot-table offset)" }
 SLOT_INPUTS = { offset = 0x1B8, type = "u16[3]", doc = "per-slot input cursors fed to the vt[8] resolver; zeroed by act_set" }
 NEXT_OBJ = { offset = 0x1C4, type = "ptr", doc = "next entity on the engine's update list; splice clones in here" }
@@ -353,6 +395,48 @@ FLINCH_MASK = { offset = 0x577, type = "u8", doc = "big monsters: parts that fli
 SEVER_COUNT = { offset = 0x579, type = "s8", doc = "big monsters: tail cuts, counted by em75's (4,4) translator" }
 FLINCH_PARTS = { offset = 0x57C, type = "FLINCH_PART[9]", doc = "big monsters: per part, flinch counter and count; [8] counts cut damage to SPECIES.SEVER's part toward the tail cut" }
 BROKEN = { offset = 0x774, type = "u16", doc = "big monsters: broken parts, bit per BREAK_ROW.BREAK_ID (BREAK_RECORD)" }
+
+MODEL_SCALE = { offset = 0x060, type = "vec3", doc = "copy of the PMO's scale (Zinogre 608.3 each, human 90.5/105.3/51.6); an NPC's solid extent with NPC.FLAGS bit 2" }
+SLOT_ROOTS = { offset = 0x194, type = "ptr[2]", doc = "joints of clip slots 1 and 2 (JOINTS is slot 0's); CLIP_SET reads them for the clip's end, so a 0 is a null read" }
+ROOT_COUNT = { offset = 0x1A0, type = "u16", doc = "skeleton roots the joint builder found" }
+JOINT_COUNT = { offset = 0x1A4, type = "u16", doc = "joints the FK walks; the anim streams' partition total must match" }
+BRAIN_MEMBER = { offset = 0x3FC, type = "u32[3]", doc = "pointer-to-member OBJ_TICK calls every frame; BRAIN_MEMBER_DEFAULT = OBJ_VTABLE.BRAIN" }
+
+[struct.OBJ_VTABLE]
+doc = "an ObjBase class's vtable (NPC_VTABLE, the species vtables) by byte offset"
+[struct.OBJ_VTABLE.fields]
+BRAIN = { offset = 0x38, type = "ptr", doc = "the per-frame brain BRAIN_MEMBER resolves to on every call; swap it to wrap a class, its spawn call included" }
+
+[struct.NPC]
+doc = "a village NPC (NPC_VTABLE) beyond the ENTITY fields it shares"
+size = 0x510
+[struct.NPC.fields]
+STATE = { offset = 0x1D4, type = "u8", doc = "NPC_BRAIN state: 0 setup, 1 running" }
+INDEX = { offset = 0x1E6, type = "u16", doc = "its NPC_SPAWN_ROW's index" }
+KIND = { offset = 0x1E8, type = "u8", doc = "NPC_SPAWN_ROW.KIND, in ENTITY.SPECIES' cell" }
+CHAR = { offset = 0x480, type = "u8", doc = "NPC_SPAWN_ROW.CHAR" }
+BEHAVIOUR = { offset = 0x481, type = "u8", doc = "the behaviour NPC_AI_DISPATCH runs; 0xFF none" }
+BUSY = { offset = 0x482, type = "u8", doc = "1: NPC_TALK_SCAN skips it, so it cannot be talked to; NPC_AI_DISPATCH zeroes it every frame" }
+ANIM_SCALE = { offset = 0x488, type = "f32", doc = "clip speed / 2 for all blocks" }
+ANIM_LATCH = { offset = 0x48C, type = "u8[2]", doc = "0: NPC_ANIM_TICK requests ANIM_INPUT[slot] next frame; 1: done" }
+HOME_POS = { offset = 0x490, type = "vec3", doc = "copy of the spawn position; walking does not move it" }
+SCRIPT = { offset = 0x4E0, type = "ptr", doc = "the path script NPC_AI_DISPATCH steps; 0 none" }
+HOME = { offset = 0x4E4, type = "ptr", doc = "NPC_SPAWN_ROW.HOME: {s16 count, s16, ptr rows}, each row {s16 mesh group, s16 texture swaps, ptr}; the setup reads it for every kind, and 0 faults" }
+FLAGS = { offset = 0x4E9, type = "u8", doc = "bit 0 no floor query, bit 1 no anim tick, bit 2 solid against the hunter, 0x10/0x20 a distance cull set at setup" }
+
+[struct.NPC_SPAWN_ROW]
+doc = "one NPC of a lobby area (NPC_SPAWN_ROWS); NPC_PRE_SETUP copies it into the NPC"
+size = 0x18
+[struct.NPC_SPAWN_ROW.fields]
+CHAR = { offset = 0x00, type = "u8", doc = "character id: spawn condition, conversation, find-by-char; 0x1E has no spawn condition, 0x20 never spawns" }
+BEHAVIOUR = { offset = 0x01, type = "u8", doc = "NPC.BEHAVIOUR" }
+KIND = { offset = 0x02, type = "u8", doc = "model: RESOURCE_TABLE row 16 + kind; 0 human, 1 Wyverian, 2 Felyne, 3 hall felyne, 4 Poogie; the village loads no row past 20" }
+FLAGS = { offset = 0x03, type = "u8", doc = "NPC.FLAGS" }
+YAW = { offset = 0x04, type = "u16", doc = "ENTITY.YAW" }
+SCALE = { offset = 0x08, type = "f32", doc = "ENTITY.RENDER_SCALE" }
+ANIM_SCALE = { offset = 0x0C, type = "f32", doc = "NPC.ANIM_SCALE" }
+HOME = { offset = 0x10, type = "ptr", doc = "NPC.HOME, never 0" }
+SCRIPT = { offset = 0x14, type = "ptr", doc = "NPC.SCRIPT: 20-byte rows, the first vec3 the spawn position; 0 spawns at the origin" }
 
 [struct.MONSTER_VTABLE]
 doc = "a species entity vtable (ENTITY.VTABLE): slot k at +8 + 4k, after the offset-to-top and typeinfo pair"

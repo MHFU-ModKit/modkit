@@ -44,6 +44,16 @@ int mhfu_world_ms0_io_safe(void)
     uint8_t s = mhfu_world_screen_state();
     return (s == MHFU_WORLD_SCREEN_IN_AREA || s == MHFU_WORLD_SCREEN_VILLAGE);
 }
+int mhfu_world_village_roam(void)
+{
+    static const uint32_t roam[] = MHFU_FREE_ROAM_SCENES;
+    const uint32_t vtable = *(volatile uint32_t *)(MHFU_PLAYER_ENTITY + MHFU_ENTITY_VTABLE);
+    if (vtable != MHFU_PLAYER_ENTITY_VTABLE) return 0;
+    const uint32_t scene = *(volatile uint32_t *)MHFU_SCENE_OBJECT;
+    for (int i = 0; i < MHFU_FREE_ROAM_SCENES_COUNT; i++)
+        if (scene == roam[i]) return 1;
+    return 0;
+}
 uint16_t mhfu_world_area_index(void)
 {
     return *(volatile uint16_t *)MHFU_AREA_INDEX;
