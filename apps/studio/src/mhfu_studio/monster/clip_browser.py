@@ -21,7 +21,7 @@ from mhfu_port.model import Clip as SceneClip
 from mhp_formats import anim
 from mhp_formats.anim import AnimPack
 
-from mhfu_studio.monster import clips
+from mhfu_studio.monster import clips, sequences
 from mhfu_studio.monster.document import PortDocument
 
 
@@ -36,6 +36,8 @@ class SourceClip:
     loop: bool
     name: str = ""
     label: str = ""
+    used: tuple[str, ...] = ()
+    """The moves that play it."""
 
     @property
     def stream(self) -> int | None:
@@ -80,7 +82,8 @@ class ClipBrowser:
         for cid in sorted(self.donor):
             frames, loop = self.prints[cid]
             name, label = named.get(cid, ("", ""))
-            out.append(SourceClip(cid, ids.get(cid), frames, loop, name, label))
+            used = tuple(sequences.used_in(m, name)) if name else ()
+            out.append(SourceClip(cid, ids.get(cid), frames, loop, name, label, used))
         return [*out, *others]
 
     def name(self, cid: int, name: str, label: str, build: str | None = None) -> str:

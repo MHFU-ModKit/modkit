@@ -11,6 +11,7 @@ frames per game frame, set by the ACTION (2.0 and 2.4 both seen on one monster),
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Protocol
 from weakref import WeakKeyDictionary
 
@@ -170,6 +171,20 @@ def travel_joints(scene: Scene) -> tuple[int, ...]:
     return leading_chain(scene.rig.parents) or root_joints(scene)
 
 
+@dataclass(frozen=True)
+class Carry:
+    """Where a step of a played sequence starts: the body turned `yaw` radians about y and moved
+    `shift` (x, z) on the ground, as the steps before it left it."""
+
+    yaw: float = 0.0
+    shift: tuple[float, float] = (0.0, 0.0)
+
+    def matrix(self) -> np.ndarray:
+        m = yaw_matrix(self.yaw)
+        m[0, 3], m[2, 3] = self.shift
+        return m
+
+
 def pose_at(
     scene: Scene,
     clip: Clip | None,
@@ -178,10 +193,12 @@ def pose_at(
     strip_root: bool = False,
     steer: Steer | None = None,
     speed: float = DEFAULT_SPEED,
+    carry: Carry | None = None,
 ) -> Pose:
-    """The rig at `frame`, turned as YAW turns while the clip plays (`yaw_at`); `strip_root`
-    holds the travel joints' location at frame 0, so the clip plays in place without dropping
-    the animal to its bind height."""
+    """The rig at `frame`, turned as YAW turns while the clip plays (`yaw_at`) and, under a
+    `carry`, where the steps before left the body; `strip_root` holds the travel joints'
+    location at frame 0, so the clip plays in place without dropping the animal to its bind
+    height."""
     if clip is None:
         return scene.bind_pose()
     curves = scene.curves(clip)
@@ -195,7 +212,32 @@ def pose_at(
     th = yaw_at(scene, clip, frame, steer, speed)
     if th:
         world = yaw_matrix(th) @ world
+    if carry is not None:
+        world = carry.matrix() @ world
     return Pose(scene.rig, float(frame), world, clip.slot)
+
+
+def carry_after(
+    scene: Scene,
+    clip: Clip,
+    frame: float,
+    then: Clip,
+    *,
+    strip_root: bool = False,
+    steer: Steer | None = None,
+    speed: float = DEFAULT_SPEED,
+    carry: Carry | None = None,
+) -> Carry:
+    """The carry that starts clip `then` where `clip` stands at `frame` (played under `steer` and
+    `carry`): facing as it faces, its first pose's root on the ground where the root is."""
+    root = travel_joints(scene)[-1]
+    end = pose_at(
+        scene, clip, frame, strip_root=strip_root, steer=steer, speed=speed, carry=carry
+    ).joints[root]
+    start = pose_at(scene, then, 0.0, strip_root=strip_root, speed=speed).joints[root]
+    yaw = (carry.yaw if carry is not None else 0.0) + yaw_at(scene, clip, frame, steer, speed)
+    turned = Carry(yaw).matrix() @ np.append(start, 1.0)
+    return Carry(yaw, (float(end[0] - turned[0]), float(end[2] - turned[2])))
 
 
 def yaw_matrix(th: float) -> np.ndarray:
