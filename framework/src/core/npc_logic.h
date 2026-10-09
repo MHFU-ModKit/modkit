@@ -26,8 +26,20 @@ static inline uint32_t npc_u32(const uint8_t *p)
     return v;
 }
 
+/* NPC_SPAWN_ROW.HOME of ours, to sit at `at`: {s16 count, s16, ptr list}, the list 8-byte
+ * {s16 mesh group, s16 texture swaps, ptr swaps}. The brain's setup reads it whatever the kind
+ * (a 0 faults); one entry, no swaps, and kind 5 draws every group anyway. */
+#define NPC_HOME_BYTES 0x10
+static inline void npc_home(uint8_t *out, uint32_t at)
+{
+    const uint32_t list = at + 8;
+    memset(out, 0, NPC_HOME_BYTES);
+    out[0] = 1;
+    memcpy(out + 4, &list, 4);
+}
+
 /* One row of ours: no AI, our kind, not solid, ANIM_SCALE 1, at the origin (npc.cpp places it). */
-static inline void npc_row(uint8_t *out, uint8_t character, float size)
+static inline void npc_row(uint8_t *out, uint8_t character, float size, uint32_t home)
 {
     const float one = 1.0f;
     memset(out, 0, NPC_ROW_BYTES);
@@ -36,16 +48,17 @@ static inline void npc_row(uint8_t *out, uint8_t character, float size)
     out[MHFU_NPC_SPAWN_ROW_KIND] = MHFU_NPC_OWN_KIND;
     memcpy(out + MHFU_NPC_SPAWN_ROW_SCALE, &size, 4);
     memcpy(out + MHFU_NPC_SPAWN_ROW_ANIM_SCALE, &one, 4);
+    memcpy(out + MHFU_NPC_SPAWN_ROW_HOME, &home, 4);
 }
 
-/* The village's table into out: its shipped rows, then a row per (chars[k], sizes[k]); the row
- * count. */
+/* The village's table into out: its shipped rows, then a row per (chars[k], sizes[k]) with
+ * HOME `home`; the row count. */
 static inline int npc_rows(uint8_t *out, const uint8_t *shipped, const uint8_t *chars,
-                           const float *sizes, int n)
+                           const float *sizes, int n, uint32_t home)
 {
     if (out != shipped) memcpy(out, shipped, NPC_SHIPPED * NPC_ROW_BYTES);
     for (int k = 0; k < n; k++)
-        npc_row(out + (NPC_SHIPPED + k) * NPC_ROW_BYTES, chars[k], sizes[k]);
+        npc_row(out + (NPC_SHIPPED + k) * NPC_ROW_BYTES, chars[k], sizes[k], home);
     return NPC_SHIPPED + n;
 }
 

@@ -50,6 +50,7 @@ typedef struct {
     uint32_t magic;
     volatile uint32_t count;
     uint8_t  rows[(NPC_SHIPPED + MHFU_NPC_MAX) * NPC_ROW_BYTES];
+    uint8_t  home[NPC_HOME_BYTES];   /* every row's HOME */
     npc_slot_t slot[MHFU_NPC_MAX];
 } npc_block_t;
 
@@ -96,7 +97,8 @@ static void patch_table(void)
     const uint8_t *shipped = rows == MHFU_NPC_SPAWN_ROWS_VILLAGE
                                  ? (const uint8_t *)MHFU_NPC_SPAWN_ROWS_VILLAGE
                                  : B->rows;
-    int total = npc_rows(B->rows, shipped, chars, sizes, (int)n);
+    const uint32_t home = (uint32_t)(uintptr_t)B->home;
+    int total = npc_rows(B->rows, shipped, chars, sizes, (int)n, home);
     wr32(at, (uint32_t)(uintptr_t)B->rows);
     wr8(MHFU_NPC_SPAWN_COUNTS + NPC_VILLAGE, (uint8_t)total);
 }
@@ -279,6 +281,7 @@ static int block_init(void)
     for (unsigned i = 0; i < sizeof(npc_block_t); i++) b[i] = 0;
     B = (npc_block_t *)at;
     B->magic = MAGIC;
+    npc_home(B->home, (uint32_t)(uintptr_t)B->home);
     mhfu_log("[%s] block @0x%08X", OWNER, (unsigned)at);
     return 0;
 }

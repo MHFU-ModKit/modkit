@@ -21,6 +21,7 @@ SHIPPED = 16
 ROW = int(a.NPC_SPAWN_ROW.size or 0)
 STILL, POINT, HUNTER = 0, 1, 2
 SKELETON = 0xC0000000
+HOME = 0x08812340  # where the block put it; noaddr
 
 
 class Face(ctypes.Structure):
@@ -64,7 +65,8 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     u8, u16, u32, f = ctypes.c_uint8, ctypes.c_uint16, ctypes.c_uint32, ctypes.c_float
     p = ctypes.c_char_p
     pf = ctypes.POINTER(f)
-    lib.npc_host_rows.argtypes = [p, p, p, pf, ctypes.c_int]
+    lib.npc_host_rows.argtypes = [p, p, p, pf, ctypes.c_int, u32]
+    lib.npc_host_home.argtypes = [p, u32]
     lib.npc_host_chunk.argtypes = [u32, u32, u32, u8]
     lib.npc_host_slot.argtypes = [u32, u32]
     lib.npc_host_point.argtypes = [f, f, u16, f, f, pf, pf]
@@ -88,7 +90,7 @@ def test_rows(lib: ctypes.CDLL) -> None:
     shipped = bytes(i % 251 for i in range(SHIPPED * ROW))
     out = ctypes.create_string_buffer((SHIPPED + 2) * ROW)
     sizes = (ctypes.c_float * 2)(0.5, 2.0)
-    assert lib.npc_host_rows(out, shipped, bytes([0x1E, 0x21]), sizes, 2) == SHIPPED + 2
+    assert lib.npc_host_rows(out, shipped, bytes([0x1E, 0x21]), sizes, 2, HOME) == SHIPPED + 2
     assert out.raw[: SHIPPED * ROW] == shipped
     r = a.NPC_SPAWN_ROW
     for k, (char, size) in enumerate(((0x1E, 0.5), (0x21, 2.0))):
@@ -97,12 +99,20 @@ def test_rows(lib: ctypes.CDLL) -> None:
         assert row[r.KIND] == OWN_KIND and row[r.FLAGS] == 0
         assert struct.unpack_from("<H", row, r.YAW)[0] == 0
         assert struct.unpack_from("<ff", row, r.SCALE) == (size, 1.0)
-        assert struct.unpack_from("<II", row, r.HOME) == (0, 0)
+        assert struct.unpack_from("<II", row, r.HOME) == (HOME, 0)  # SCRIPT 0: placed by C
+
+
+def test_home(lib: ctypes.CDLL) -> None:
+    out = ctypes.create_string_buffer(0x10)
+    lib.npc_host_home(out, HOME)
+    count, list_at = struct.unpack_from("<hxxI", out.raw)
+    assert (count, list_at) == (1, HOME + 8)
+    assert struct.unpack_from("<hhI", out.raw, list_at - HOME) == (0, 0, 0)  # group 0, no swaps
 
 
 def test_rows_in_place(lib: ctypes.CDLL) -> None:
     out = ctypes.create_string_buffer(bytes(i % 251 for i in range(SHIPPED * ROW)) + bytes(ROW))
-    lib.npc_host_rows(out, out, bytes([0x1E]), (ctypes.c_float * 1)(1.0), 1)
+    lib.npc_host_rows(out, out, bytes([0x1E]), (ctypes.c_float * 1)(1.0), 1, HOME)
     assert out.raw[: SHIPPED * ROW] == bytes(i % 251 for i in range(SHIPPED * ROW))
 
 

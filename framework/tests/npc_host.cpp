@@ -5,10 +5,11 @@
 
 extern "C" {
 int npc_host_rows(uint8_t *out, const uint8_t *shipped, const uint8_t *chars, const float *sizes,
-                  int n)
+                  int n, uint32_t home)
 {
-    return npc_rows(out, shipped, chars, sizes, n);
+    return npc_rows(out, shipped, chars, sizes, n, home);
 }
+void npc_host_home(uint8_t *out, uint32_t at) { npc_home(out, at); }
 int npc_host_chunk(uint32_t buf, uint32_t bytes, uint32_t rows, uint8_t count)
 {
     return npc_chunk_patches(buf, bytes, rows, count);
