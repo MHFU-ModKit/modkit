@@ -3,11 +3,10 @@
 from typing import Any
 
 import pytest
-from mhfu_port.manifest import SEAM_RULES, Rule, Steer
-from mhfu_studio.monster import validate as V
+from mhfu_port.behaviour import KINDS
+from mhfu_port.manifest import Steer
 from mhfu_studio.monster.panels.moves import MovesPanel
 from mhfu_studio.monster.workspace import MonsterWorkspace
-from mhfu_studio.shell.findings import Finding
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.ui import kit
 
@@ -124,76 +123,8 @@ def test_a_pair_move_points_to_actions(panel: MovesPanel, workspace: MonsterWork
     assert "(1,4)" in panel.pair_note.text()
 
 
-def test_rules(panel: MovesPanel, workspace: MonsterWorkspace) -> None:
-    r = panel.rules
-    assert not r.editor.isVisible() and r.title.text() == f"Rules · 0 of {SEAM_RULES}"
-    panel.new.click()
-    r.new.click()
-    assert r.list.item(0).text() == "on noticing the hunter, play walk, once"
-    assert r.editor.isVisible() and not r.part.isVisible() and not r.mode.isVisible()
-    r.on.activated.emit(r.on.findData("flinch"))
-    assert r.part.isVisible()
-    r.part.activated.emit(r.part.findData("1"))
-    r.times.setValue(0)
-    assert r.list.item(0).text() == "on a flinch of the head, play walk"
-    assert r.sentence.text() == "On a flinch of the head, play walk."
-    r.new.click()
-    r.after.activated.emit(r.after.findData("charge"))
-    r.on.activated.emit(r.on.findData(""))
-    r.min_frames.setValue(20)
-    r.far.setValue(1200.0)
-    r.hunter.buttons["closing"].click()
-    r.mains[3].click()
-    r.cooldown.setValue(30)
-    r.label.setText("stamp after the charge")
-    r.label.editingFinished.emit()
-    want = [
-        Rule("walk", on="flinch", part=1),
-        Rule(
-            "walk",
-            from_move="charge",
-            from_main=[3],
-            min_frames=20,
-            dist=(0.0, 1200.0),
-            closing=True,
-            cooldown=30,
-            count=1,
-            label="stamp after the charge",
-        ),
-    ]
-    assert workspace.manifest is not None and workspace.manifest.rules == want
-    assert r.list.item(1).text() == (
-        "after the charge or main state 3 for 20 frames, within 1200, while the hunter closes"
-        " in, play walk, then wait 30 frames, once"
-    )
-    assert kit.missing_tips(panel) == []
-    r.list.picked.emit(0)
-    r.on.activated.emit(r.on.findData("noticed"))  # a flinch rule plays only an own move
-    r.play.activated.emit(r.play.findData("charge"))
-    assert r.mode.isVisible() and workspace.manifest.rules[0].play == "charge"
-    r.delete.click()
-    assert workspace.manifest.rules == want[1:] and not r.editor.isVisible()
-
-
-def test_rule_findings(
-    panel: MovesPanel, workspace: MonsterWorkspace, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    said = Finding("error", "OWN_MOVE_REFUSED", "the game cannot", "rule[0]", ("rule", 0))
-    monkeypatch.setattr(V, "own_moves", lambda *a: [said])
-    workspace.new_rule()
-    panel.sync()
-    assert panel.rules.list.item(0).foreground().color().name() != "#000000"
-    alerts = [w.text() for w in panel.rules.found.findChildren(kit.Alert)]
-    assert alerts == ["the game cannot"] and panel.rules.found.isVisible()
-
-
-def test_rule_force(panel: MovesPanel, workspace: MonsterWorkspace) -> None:
-    panel.new.click()
-    panel.rules.new.click()
-    assert panel.rules.force.isVisible() and '"!"' in panel.rules.force.toolTip()
-    panel.rules.force.click()
-    assert workspace.manifest.rules[0].force  # type: ignore[union-attr]
-    assert panel.rules.list.item(0).text() == "on noticing the hunter, play walk right away, once"
+def test_force_says_what_the_block_says(panel: MovesPanel) -> None:
+    assert panel.force.toolTip() == KINDS["force"].tip
 
 
 def test_play_in_game_button(qtbot: Any, workspace: MonsterWorkspace) -> None:

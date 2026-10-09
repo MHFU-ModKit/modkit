@@ -3,20 +3,20 @@
 """The Moves dock: every move of the port, on a base monster's action or its own; an own move
 made from the clip on screen, renamed, deleted, its fields and steer edited, and played in the
 running game. Its attack windows are drawn on the Timeline. The moves that follow one another are
-a sequence, grouped in the table and edited under the picked move. Under them, the rules."""
+a sequence, grouped in the table and edited under the picked move. What plays them, and when, is
+the Behaviour dock's graph."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from mhfu_port import sequence
+from mhfu_port.behaviour import KINDS
 from mhfu_port.manifest import MOVE_ATTACKS, TURNS, Move
 from PySide6.QtWidgets import QAbstractSpinBox, QSpinBox, QVBoxLayout, QWidget
 
-from mhfu_studio.monster import rules
 from mhfu_studio.monster import validate as V
 from mhfu_studio.monster.panels.common import kind
-from mhfu_studio.monster.panels.rules import RulesSection
 from mhfu_studio.monster.panels.sequence import ClipPicker, StepChips
 from mhfu_studio.monster.panels.widgets import NoScene
 from mhfu_studio.shell.findings import Finding
@@ -37,7 +37,7 @@ TURN_WORDS = {
 }
 GAME_NOTE = (
     "Own moves reach the game from the moves module mhfu-port generates from this file with the"
-    " port, not through Copy Lua; a mod or a rule plays them by name."
+    " port, not through Copy Lua; a mod or the behaviour graph plays them by name."
 )
 
 
@@ -80,7 +80,7 @@ class MovesPanel(kit.Panel):
         )
         self.delete = kit.button(
             "Delete",
-            tip="Deletes the picked move; refused while another move, a rule or an effect names it",
+            tip="Deletes the picked move; refused while another move, a block or an effect uses it",
             on=act("delete move", ws.delete_move),
             icon="ph.trash",
         )
@@ -102,12 +102,12 @@ class MovesPanel(kit.Panel):
             on=act("play move in game", lambda: ws.play_move_in_game(self.force.isChecked())),
             icon="ph.game-controller",
         )
-        self.force = kit.check("Force", tip=rules.FORCE_TIP, on=lambda _on: None)
+        self.force = kit.check("Force", tip=KINDS["force"].tip, on=lambda _on: None)
         self.game_hint = kit.label(role="muted")
         self.pair_note = kit.label(role="muted")
         form = kit.Form()
         self.name = kit.text_field(
-            tip="The move's name: a mod or a rule plays it by this name; renaming follows them",
+            tip="The move's name: a mod or a block plays it by this name; renaming follows them",
             placeholder="move name",
         )
         self.name.editingFinished.connect(self._rename)
@@ -252,7 +252,6 @@ class MovesPanel(kit.Panel):
         for w in top:
             self.editor.body.addWidget(w)
 
-        self.rules = RulesSection(ws, studio)
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -262,7 +261,6 @@ class MovesPanel(kit.Panel):
             self.table,
             kit.row(self.new, self.delete, stretch=True),
             self.editor,
-            self.rules,
             kit.label(GAME_NOTE, role="muted"),
         )
         for w in shown:
@@ -305,7 +303,7 @@ class MovesPanel(kit.Panel):
         self.remove_step = kit.button(
             "Remove step",
             tip="Deletes this step; the move before it hands to the move after it. Refused while"
-            " a rule or an effect names it.",
+            " a block or an effect names it.",
             on=act("remove step", ws.remove_step),
             icon="ph.trash",
         )
@@ -429,11 +427,7 @@ class MovesPanel(kit.Panel):
             self._close_picker()
         if picked is not None and ws.move is not None:
             self._sync_move(ws.move, picked)
-        self.rules.sync(self._checks())
-        findings.take(
-            ws,
-            {V.MOVE_WINDOWS: self.attacks, V.MOVE_CLIP: self.play_clip, V.RULES: self.rules.list},
-        )
+        findings.take(ws, {V.MOVE_WINDOWS: self.attacks, V.MOVE_CLIP: self.play_clip})
 
     @staticmethod
     def _attacks(mv: Move) -> str:
@@ -528,8 +522,7 @@ class MovesPanel(kit.Panel):
             self.attacks.setCurrentRow(ws.picked_window)
 
     def _checks(self) -> list[Finding]:
-        """What the game will refuse or never reach in the own moves and rules, once per
-        manifest."""
+        """What the game will refuse or never reach in the own moves, once per manifest."""
         doc = self.ws.doc
         if doc is None:
             return []

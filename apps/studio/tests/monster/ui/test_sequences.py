@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 import pytest
 from mhfu_port import continuity
+from mhfu_port.behaviour import Block
 from mhfu_port.manifest import Clip
 from mhfu_studio.monster.clip_browser import SourceClip
 from mhfu_studio.monster.core.scene import Scene
@@ -180,8 +181,10 @@ def test_remove_picks_a_neighbour(moves: MovesPanel, ws: MonsterWorkspace) -> No
 
 def test_a_refusal_reaches_the_status(moves: MovesPanel, ws: MonsterWorkspace) -> None:
     assert ws.doc is not None
-    ws.new_rule()
-    ws.set_rule(play="a_3")
+    ws.doc.edit(
+        lambda m: m.behaviour.blocks.__setitem__("b1", Block("on_noticed", (0, 0), play=["a_3"]))
+    )
+    ws.sync()
     moves.table.picked.emit("a_3")
     moves.remove_step.click()
     assert "still used by" in ws.message and ws.sequence_of() == ["a", "a_2", "a_3"]
