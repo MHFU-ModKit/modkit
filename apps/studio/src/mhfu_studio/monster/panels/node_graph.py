@@ -17,10 +17,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
-from NodeGraphQt import BaseNode, NodeGraph
-from NodeGraphQt.constants import PortTypeEnum
+from NodeGraphQt import BaseNode, NodeBaseWidget, NodeGraph, Port
 from NodeGraphQt.qgraphics.node_base import NodeItem
-from NodeGraphQt.widgets.node_widgets import NodeBaseWidget
 from PySide6.QtCore import QRectF, QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QKeyEvent, QPainter, QShowEvent, QUndoCommand, QUndoStack
 from PySide6.QtWidgets import (
@@ -128,10 +126,9 @@ class _NoUndo(QUndoStack):
 
 
 class _Item(NodeItem):  # type: ignore[misc]
-    """A node's drawing: a badge in the title bar, the owner's tooltip, no renaming."""
+    """A node's drawing: a badge in the title bar, and no renaming."""
 
     badge = ""
-    tip = ""
 
     def paint(
         self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None
@@ -151,9 +148,6 @@ class _Item(NodeItem):  # type: ignore[misc]
     def mouseDoubleClickEvent(self, event: Any) -> None:  # noqa: N802
         event.accept()  # NodeGraphQt would edit the title here; a title is the owner's
 
-    def _tooltip_disable(self, state: bool) -> None:
-        self.setToolTip(self.tip)
-
 
 class _Node(BaseNode):  # type: ignore[misc]
     __identifier__ = "mhfu.studio"
@@ -161,28 +155,6 @@ class _Node(BaseNode):  # type: ignore[misc]
 
     def __init__(self) -> None:
         super().__init__(qgraphics_item=_Item)
-
-
-class _Graph(NodeGraph):  # type: ignore[misc]
-    """NodeGraphQt's controller, with the three handlers that would edit its model turned
-    into signals."""
-
-    #: (pairs of port items cut, pairs made)
-    wired = Signal(object, object)
-    #: the ids of the nodes a drag moved
-    dragged = Signal(object)
-
-    def __init__(self) -> None:
-        super().__init__(undo_stack=_NoUndo())
-
-    def _on_connection_changed(self, disconnected: list[Any], connected: list[Any]) -> None:
-        self.wired.emit(disconnected, connected)
-
-    def _on_connection_sliced(self, ports: list[Any]) -> None:
-        self.wired.emit(ports, [])
-
-    def _on_nodes_moved(self, node_data: Mapping[Any, Any]) -> None:
-        self.dragged.emit([item.id for item in node_data])
 
 
 # ---- a parameter on a node ---------------------------------------------------------------- #
@@ -387,13 +359,14 @@ class GraphView(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._graph = _Graph()
+        self._graph = NodeGraph(undo_stack=_NoUndo())
         self._shown: dict[str, _Shown] = {}
         self._nodes: Sequence[NodeSpec] = ()
         self._links: Sequence[LinkSpec] = ()
         self._roles: Mapping[str, Color] = {}
         self._menus: list[QMenu] = []
         self._pending: list[tuple[Callable[[], None], bool]] = []
+        self._wires: list[tuple[str, LinkSpec]] = []
         self._renders = 0
         self._busy = 0
         self._pick: str | None = None
@@ -408,8 +381,9 @@ class GraphView(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self._graph.widget)
         viewer.scene().selectionChanged.connect(self._selection)
-        self._graph.wired.connect(self._wires)
-        self._graph.dragged.connect(self._dragged)
+        self._graph.port_connected.connect(lambda inp, out: self._wired("link", inp, out))
+        self._graph.port_disconnected.connect(lambda inp, out: self._wired("unlink", inp, out))
+        viewer.moved_nodes.connect(self._dragged)
 
     @property
     def viewer(self) -> Any:
@@ -552,7 +526,9 @@ class GraphView(QWidget):
 
     def _drop(self, node_id: str) -> None:
         shown = self._shown.pop(node_id)
-        for port in shown.view.inputs + shown.view.outputs:
+        for port in shown.node.input_ports() + shown.node.output_ports():
+            port.clear_connections(push_undo=False, emit_signal=False)
+        for port in shown.view.inputs + shown.view.outputs:  # a wire only the canvas had
             for pipe in list(port.connected_pipes):
                 pipe.delete()
         self._graph.remove_node(shown.node, push_undo=False)
@@ -563,8 +539,6 @@ class GraphView(QWidget):
         view = s.view
         if s.title != spec.title:
             s.title = view.name = spec.title
-        view.tip = spec.tip
-        view.setToolTip(spec.tip)
         tint = self._tint(spec.role) or s.base
         if tint != s.tint:
             s.tint = tint
@@ -589,6 +563,7 @@ class GraphView(QWidget):
             s.fields[NOTE].set_value(spec.label)
         if resized:
             view.draw_node()
+        view.setToolTip(spec.tip)  # after `draw_node`, which sets NodeGraphQt's own
 
     def _tint(self, role: str) -> tuple[tuple[int, ...], tuple[int, ...]] | None:
         ink = self._roles.get(role)
@@ -613,16 +588,25 @@ class GraphView(QWidget):
                     out[key] = pipe
         return out
 
+    def _ports(self, ln: LinkSpec) -> tuple[Port, Port]:
+        return (
+            self._shown[ln.src].node.get_output(ln.src_port),
+            self._shown[ln.dst].node.get_input(ln.dst_port),
+        )
+
     def _relink(self, links: Sequence[LinkSpec]) -> None:
+        """Cuts and makes wires through the ports, so NodeGraphQt's model follows the canvas;
+        `emit_signal=False` keeps them from reaching `_wired`."""
         have = self._pipes()
         want = set(links)
-        for key, pipe in have.items():
-            if key not in want:
-                pipe.delete()
-        for key in want - have.keys():
-            self._shown[key.src].outs[key.src_port].connect_to(
-                self._shown[key.dst].ins[key.dst_port]
-            )
+        for ln in have.keys() - want:
+            src, dst = self._ports(ln)
+            src.disconnect_from(dst, push_undo=False, emit_signal=False)
+        for ln in want - have.keys():
+            src, dst = self._ports(ln)
+            if dst in src.connected_ports():  # the model holds a wire the canvas lost
+                src.disconnect_from(dst, push_undo=False, emit_signal=False)
+            src.connect_to(dst, push_undo=False, emit_signal=False)
 
     # -- what the canvas tells -- #
 
@@ -641,24 +625,24 @@ class GraphView(QWidget):
         if self._renders == seen and any(revert for _, revert in pending):
             self._apply(self._nodes, self._links)
 
-    def _wires(self, unlinked: Sequence[Any], linked: Sequence[Any]) -> None:
-        cut, made = [self._link_of(*p) for p in unlinked], [self._link_of(*p) for p in linked]
+    def _wired(self, kind: str, into: Port, out: Port) -> None:
+        """NodeGraphQt applied a connect or a disconnect (a re-route is both, in one turn):
+        they come out in order as the one intent each."""
+        if self._busy:
+            return
+        self._wires.append((kind, LinkSpec(out.node().id, out.name(), into.node().id, into.name())))
+        if len(self._wires) == 1:
+            self._raise(self._tell_wires)
 
-        def emit() -> None:
-            for ln in cut:
-                self.unlink_requested.emit(ln.src, ln.src_port, ln.dst, ln.dst_port)
-            for ln in made:
-                self.link_requested.emit(ln.src, ln.src_port, ln.dst, ln.dst_port)
+    def _tell_wires(self) -> None:
+        wires, self._wires = self._wires, []
+        for kind, ln in wires:
+            signal = self.link_requested if kind == "link" else self.unlink_requested
+            signal.emit(ln.src, ln.src_port, ln.dst, ln.dst_port)
 
-        self._raise(emit)
-
-    @staticmethod
-    def _link_of(a: Any, b: Any) -> LinkSpec:
-        out, into = (a, b) if a.port_type == PortTypeEnum.OUT.value else (b, a)
-        return LinkSpec(out.node.id, out.name, into.node.id, into.name)
-
-    def _dragged(self, ids: Sequence[str]) -> None:
-        at = [(i, *self._shown[i].view.xy_pos) for i in ids if i in self._shown]
+    def _dragged(self, moved: Mapping[Any, Any]) -> None:
+        """`moved` is NodeGraphQt's {node item: where it was}, once per drag end."""
+        at = [(i.id, *i.xy_pos) for i in moved if i.id in self._shown]
 
         def emit() -> None:
             for i, x, y in at:
@@ -703,7 +687,12 @@ class GraphView(QWidget):
 
     def _delete_selected(self) -> None:
         ids = self.selected()
-        cuts = [self._link_of(p.input_port, p.output_port) for p in self.viewer.selected_pipes()]
+        cuts = [
+            LinkSpec(
+                p.output_port.node.id, p.output_port.name, p.input_port.node.id, p.input_port.name
+            )
+            for p in self.viewer.selected_pipes()
+        ]
 
         def emit() -> None:
             for ln in cuts:

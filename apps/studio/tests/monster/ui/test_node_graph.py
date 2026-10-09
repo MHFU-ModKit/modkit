@@ -265,6 +265,8 @@ def test_drag_a_link(qtbot: Any) -> None:
     drag(view, port_at(view, "c", "out"), port_at(view, "m", "in"))
     assert rec.got() == [("link_requested", ("c", "out", "m", "in"))]
     assert pipes(view) == {LINKS[0]}  # the view drew nothing: that is the owner's
+    drag(view, port_at(view, "c", "out"), port_at(view, "m", "in"))
+    assert rec.got() == [("link_requested", ("c", "out", "m", "in"))]  # and asks again
 
 
 def test_drag_a_link_from_the_input_side(qtbot: Any) -> None:
@@ -298,6 +300,46 @@ def test_drag_a_wire_off_is_an_unlink_and_a_refusal_puts_it_back(qtbot: Any) -> 
     drag(view, mid, mid + QPoint(0, 150))
     assert rec.got() == [("unlink_requested", ("c", "out", "m", "in"))]
     assert pipes(view) == set(LINKS)  # the owner said nothing: the wire is back
+
+
+def spare() -> list[NodeSpec]:
+    """`nodes()` and a node to re-route a wire to."""
+    return [*nodes(), NodeSpec("x", "Extra", "move", (600, 200), ("in",))]
+
+
+def reroute(view: GraphView) -> None:
+    """Picks up the c to m wire at its m end and drops it on x."""
+    mid = at(view, view._pipes()[LINKS[1]].path().pointAtPercent(0.7))
+    drag(view, mid, port_at(view, "x", "in"))
+
+
+def test_a_reroute_is_an_unlink_then_a_link(qtbot: Any) -> None:
+    view = make(qtbot, spare())
+    rec = Rec(view, qtbot)
+    reroute(view)
+    assert rec.got() == [
+        ("unlink_requested", ("c", "out", "m", "in")),
+        ("link_requested", ("c", "out", "x", "in")),
+    ]
+
+
+def test_a_refused_reroute_restores_the_old_wire(qtbot: Any) -> None:
+    view = make(qtbot, spare())
+    rec = Rec(view, qtbot)
+    reroute(view)
+    assert len(rec.got()) == 2
+    assert pipes(view) == set(LINKS)
+    reroute(view)  # the model went back with the canvas: asking again asks again
+    assert len(rec.got()) == 2 and pipes(view) == set(LINKS)
+
+
+def test_an_accepted_reroute_is_drawn_once(qtbot: Any) -> None:
+    view = make(qtbot, spare())
+    moved = [LINKS[0], LinkSpec("c", "out", "x", "in")]
+    view.link_requested.connect(lambda *a: view.show(spare(), moved))
+    reroute(view)
+    qtbot.wait(20)
+    assert pipes(view) == set(moved) and len(view.viewer.all_pipes()) == 2
 
 
 def test_an_accepted_unlink_stays_gone(qtbot: Any) -> None:
