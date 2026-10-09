@@ -233,6 +233,8 @@ P.is_own = is_own
 --           attack rides the host's whole attack timing. A move with `entry` and no `main` is
 --           an own move (port:move). Default: the manifest's (P.behaviour)
 --   rules   port:rule{} specs installed with the port; default: the manifest's
+--   tip     { {joint, carrier}, ... }: the tail tip's joints follow the carriers until the tail
+--           drops (mhfu.em_tip); default: the manifest's
 --
 -- Returns a port handle. Safe to call again (hot reload): the injector is armed once per boot.
 function P.define(spec)
@@ -243,6 +245,7 @@ function P.define(spec)
     species = spec.species,
     clips   = spec.clips or P.layout(spec.name),
     moves   = spec.moves or made.moves or {},
+    tip     = spec.tip or made.tip,
     replace = spec.replace or {},
     ent     = 0,
     clip    = nil,      -- currently latched executor a1, nil = hands off
@@ -551,7 +554,7 @@ function Port:_seam_move(name)
   return t
 end
 
---- Install every claim and rule on the seam. Runs on the first tick the seam
+--- Install every claim, rule and the tail tip on the seam. Runs on the first tick the seam
 --- is live for this port, and again after a redefine (hot reload). Idempotent:
 --- the table is rewritten slot by slot, unused slots cleared.
 function Port:_arm_native()
@@ -603,6 +606,18 @@ function Port:_arm_native()
     else
       if r then log("[port:%s] rule %d -> '%s' cannot be installed", self.name, i, r.play) end
       mhfu.em_rule(i - 1, nil)
+    end
+  end
+  if self.tip then
+    if mhfu.em_tip == nil then
+      if not P._once["tip:" .. self.name] then
+        P._once["tip:" .. self.name] = true
+        log("[port:%s] this framework has no mhfu.em_tip: the tail tip stays unattached",
+            self.name)
+      end
+    else
+      log("[port:%s] tail tip: %d joint(s) %s", self.name, #self.tip,
+          mhfu.em_tip(self.tip) and "follow their carriers until the drop" or "refused")
     end
   end
 end

@@ -38,6 +38,7 @@ int cfg_muted(void) { return CFG_MUTED; }
 int act_frame(void) { return ACT_FRAME; }
 int cfg_react(void) { return CFG_REACT_ENT; }
 int cfg_sub(void) { return CFG_SUB_BASE; }
+int cfg_req(void) { return CFG_REQ_PENDING; }
 }
 """
 
@@ -102,11 +103,12 @@ def test_ai_stub_is_frame_free_and_ends_in_one_jr(stubs: Stubs) -> None:
 # the slot-29 stub run in unicorn, at addresses inside the machine
 STUB, RUN_CFG, RUN_RET, RUN_ORIG = 0x10000, 0x14000, 0x13000, 0x20000
 STEP, SEEN, ENTITY, CALLER = 0x30000, 0x7F00, 0x40000, 0x50000  # SEEN: a 16-bit offset
-BRAIN, BRAIN_SEEN, BRAIN_CALLS = 0x31000, 0x7F10, 0x7F14
+BRAIN, BRAIN_SEEN, BRAIN_CALLS, ORDER = 0x31000, 0x7F10, 0x7F14, 0x7F18
 
 
-def _run_ai(stubs: Stubs, mips: Any, step: int | None) -> tuple[Any, int]:
-    """Runs the stub as the engine calls the AI step; returns the machine and where it went."""
+def _run_ai(stubs: Stubs, mips: Any, step: int | None, request: bool = False) -> tuple[Any, int]:
+    """Runs the stub as the engine calls the AI step; returns the machine and where it went.
+    The step keeps the brain's call count at ORDER; `request` leaves one pending in the block."""
     out, ov = (ctypes.c_uint32 * 1024)(), ctypes.c_int(0)
     n = stubs.lib.ai(out, RUN_CFG, RUN_ORIG, RUN_RET, BRAIN, ctypes.byref(ov))
     m = mips()
@@ -128,9 +130,20 @@ def _run_ai(stubs: Stubs, mips: Any, step: int | None) -> tuple[Any, int]:
             mips.NOP,
         ],
     )
-    if step is not None:  # v0 = step; remember a0
-        m.write(STEP, [mips.sw("a0", SEEN, "zero"), mips.jr("ra"), mips.addiu("v0", "zero", step)])
+    if step is not None:  # v0 = step; remember a0 and how often the brain ran before
+        m.write(
+            STEP,
+            [
+                mips.sw("a0", SEEN, "zero"),
+                mips.lw("t0", BRAIN_CALLS, "zero"),
+                mips.sw("t0", ORDER, "zero"),
+                mips.jr("ra"),
+                mips.addiu("v0", "zero", step),
+            ],
+        )
         m.write(RUN_CFG + stubs.lib.cfg_step(), [STEP])
+    if request:  # (3, 6) mode 1
+        m.write(RUN_CFG + stubs.lib.cfg_req(), [1, 0x010603])
     for reg, v in (("a0", ENTITY), ("a1", 0x11), ("a2", 0x22), ("a3", 0x33), ("ra", CALLER)):
         m.set_reg(reg, v)
     m.set_reg("sp", 0x3F000)
@@ -158,6 +171,13 @@ def test_ai_stub_step_that_declines_runs_the_original(stubs: Stubs, mips: Any) -
 def test_ai_stub_step_that_takes_the_frame_returns(stubs: Stubs, mips: Any) -> None:
     m, went = _run_ai(stubs, mips, 1)
     assert went == CALLER and m.read(SEEN) == [ENTITY] and m.reg("v0") == 0
+
+
+def test_ai_stub_leaves_the_request_to_the_brain_then_steps(stubs: Stubs, mips: Any) -> None:
+    """The brain issues a request (the dispatcher is unmapped here), then the step runs."""
+    m, went = _run_ai(stubs, mips, 0, request=True)
+    assert went == RUN_ORIG and m.read(ORDER) == [1]
+    assert m.read(RUN_CFG + stubs.lib.cfg_req()) == [1]
 
 
 def test_act_stub_uses_only_its_frame(stubs: Stubs) -> None:

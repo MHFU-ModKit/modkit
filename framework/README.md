@@ -132,7 +132,8 @@ AI step, plays one through the move player when asked (`mhfu.em_play`), when the
 ends on its clip, its length or a wall and names it as its `after`, or when a rule says
 (`play_move`, and `from_move` to fire while one plays). `mhfu_port.lua` does all of it from the
 port's generated `<name>_moves.lua`: `port:move("stamp")` (`ports/README.md` "Moves and
-rules").
+rules"). Its `tip` goes to `mhfu.em_tip`: each tip joint takes its carrier's pose after the
+species brain, so the tail stays whole until it drops.
 
 ## Rules on monster events
 
@@ -140,7 +141,9 @@ A brain rule (`mhfu.em_rule`) with `on = "<event>"` fires in C in the AI frame t
 `part` narrowing a flinch or a break; capacity `mhfu.addr.EM_CFG.RULES_COUNT`. A rule on the
 flinch owns the reaction replacement while installed: a flinch of its part, in a frame its gates
 hold, enters its own move's carrier instead of `(4,x)`, and the move plays from the next AI
-frame. `force = true` plays a rule's move past the notice wait. `ports/README.md` "Moves and
+frame. `force = true` plays a rule's move past the notice wait. While em75's tail cut `(4,4)`
+waits for its drop, on a model with the mesh 1 the dropped tail draws, requests, plays and rules
+wait with it, and the events seen meanwhile reach them after it. `ports/README.md` "Moves and
 rules" has the manifest's side.
 
 ## Calling the game from C
@@ -157,7 +160,7 @@ declared API; it needs a host `c++` (else those tests skip) and `lupa`, which `u
 
 ## Status
 
-Runs in PPSSPP and on a real PSP under PRO CFW, for MHFU EU only. The Lua API is version 1
+Runs in PPSSPP and on a real PSP under PRO CFW, for MHFU EU only. The Lua API is version 3
 (`mhfu.api_version`); `mhfu.clone_combat` is experimental and can crash the game.
 
 ## Licence

@@ -560,3 +560,30 @@ assert(count("moves module changed") == 1, "once per new module")
 def test_a_new_moves_module_relinks_the_port(lua: Any) -> None:
     memory(lua)
     lua.execute(RELINK)
+
+
+TIP = """
+local TIP, calls = nil, 0
+function mhfu.em_installed() return true end
+function mhfu.em_tip(pairs) TIP, calls = pairs, calls + 1; return true end
+package.loaded.z_moves = { moves = {}, rules = {}, tip = { { 46, 43 }, { 47, 42 } } }
+package.loaded.y_moves = { moves = {}, rules = {} }
+local P = require("mhfu_port")
+P.define{ name = "z", species = 75 }.ent = ENT
+ticks(2)
+assert(calls == 1 and TIP[1][1] == 46 and TIP[2][2] == 42, "once, when the port latches")
+assert(count("tail tip: 2 joint%(s%) follow their carriers") == 1)
+P.ports.z = nil
+P.define{ name = "y", species = 75 }.ent = ENT
+ticks(1)
+assert(calls == 1, "no tip, no call")
+-- a framework without em_tip: one line
+mhfu.em_tip = nil
+for _ = 1, 2 do P.define{ name = "z", species = 75 }.ent = ENT; ticks(1) end
+assert(count("no mhfu.em_tip") == 1)
+"""
+
+
+def test_tip_on_latch(lua: Any) -> None:
+    memory(lua)
+    lua.execute(TIP)
