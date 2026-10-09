@@ -73,6 +73,10 @@ int  mhfu_ai_install_slot_picked(void);
 int  mhfu_ai_install_picker(void);       /* ACTION_INPUT and ACTION_DECIDED */
 int  mhfu_ai_install_ai_step(void);
 int  mhfu_ai_install_action(void);
+/* fn(buffer, bytes) for every DATA.BIN chunk once it is decrypted, on the game thread, from the
+ * overlay loader hook (installed here); <0 when the listeners are full or the hook failed. */
+typedef void (*mhfu_chunk_fn)(uint32_t buf, uint32_t bytes);
+int  mhfu_ai_on_chunk(mhfu_chunk_fn fn);
 
 /* --- quest (quest.cpp) --- */
 /* The buildTargets wrapper, queued for the first QUEST_TARGETS_BUILDING subscriber. */
