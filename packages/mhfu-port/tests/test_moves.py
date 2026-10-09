@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from mhfu_port import build, layout, manifest, moves, travel
 from mhfu_port.manifest import ManifestError
+from mhfu_port.rig import Tip
 
 PORTS = Path(__file__).parents[3] / "ports"
 
@@ -108,6 +109,13 @@ def test_lua():
     ]
 
 
+def test_tip():
+    tip = Tip(((46, 42), (47, 42), (48, 43)), (0.0, 0.0, -705.0))
+    body = _body(moves.lua(_m(), LAYOUT, {6}, tip))
+    assert body[-1] == "tip = { { 46, 42 }, { 47, 42 }, { 48, 43 } },"
+    assert not any(line.startswith("tip") for line in _body(moves.lua(_m(), LAYOUT, {6})))
+
+
 def test_curve_is_the_turns_module_entry():
     """The keys an own move turns by are the turns module's for its entry."""
     turns = layout.turns_lua(_m(), LAYOUT)
@@ -181,7 +189,8 @@ def test_manifest_limits(extra, why):
 def test_zinogre(data):
     m = manifest.load(PORTS / "zinogre.toml")
     b = build.build(m, data)
-    text = moves.lua(m, b.layout, moves.records(data.fu, 75))
+    text = moves.lua(m, b.layout, moves.records(data.fu, 75), b.tip)
+    assert "  tip = { { 46, 42 }, { 47, 42 }, { 48, 43 }, { 49, 44 }, { 50, 45 } },\n" in text
     own = {n: moves.entry(m, n, b.layout) for n, mv in m.moves.items() if mv.own}
     assert own == {
         "stamp": 46,

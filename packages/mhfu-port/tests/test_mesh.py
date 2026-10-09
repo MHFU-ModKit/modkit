@@ -7,6 +7,7 @@ import pytest
 from mhfu_port import mesh, skin
 from mhfu_port.data import Data
 from mhfu_port.mesh import Part, Skinned
+from mhfu_port.rig import Tip
 from mhp_formats import p3rd
 from mhp_formats import pmo as fu
 from mhp_formats.pac import Pac
@@ -145,6 +146,67 @@ def test_build():
     assert back.groups()[1].block.vertices.uvs() == parts[1].uvs
     tris = back.triangles(1)
     assert sorted(t for t in tris if len(set(t)) == 3) == [(0, 1, 2), (2, 1, 3)]
+
+
+def _shape(positions, triangles, joint: int, texture: int = 0) -> Skinned:
+    n = len(positions)
+    part = Part(positions, [], [(0.0, 0.0)] * n, [], triangles, [[(joint, 1.0)]] * n, texture)
+    return Skinned(part, part.influences)
+
+
+RING = [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)]
+FAN = [(4, 0, 1), (4, 1, 2), (4, 2, 3), (4, 3, 0)]
+
+
+def _tail() -> list[Skinned]:
+    """A body ending in a ring at z 0 on joint 1, and a tip (chain joints 5, 6) stored 10 up z:
+    its tube, its cap (a fan with its centre off the seam), and a fin welded at the seam that
+    faces sideways."""
+    body = _shape([(x, y, 0.0) for x, y in RING] + [(0.0, 0.0, 20.0)], FAN, 1)
+    tube = [(x, y, z) for z in (10.0, 0.0) for x, y in RING]
+    sides = [(k, (k + 1) % 4, 4 + k) for k in range(4)]
+    cap = [(x, y, 10.0) for x, y in RING] + [(0.0, 0.0, 10.5)]
+    fin = [(1.0, 1.0, 10.0), (1.0, -1.0, 10.0), (1.0, 0.0, 4.0)]
+    return [
+        body,
+        _shape(tube, sides, 5, texture=3),
+        _shape(cap, FAN, 6, texture=3),
+        _shape(fin, [(0, 1, 2)], 6, texture=1),
+    ]
+
+
+TIP = Tip(((4, 1), (5, 1), (6, 1)), (0.0, 0.0, -10.0))
+
+
+def test_tip_parts():
+    parts = _tail()
+    assert mesh.tip_parts(parts, TIP.joints) == [1, 2, 3]
+    parts[1] = Skinned(parts[1].part, [[(5, 0.5), (1, 0.5)]] * 8)
+    with pytest.raises(ValueError, match="part 1 blends"):
+        mesh.tip_parts(parts, TIP.joints)
+
+
+def test_cut_parts():
+    parts = _tail()
+    assert mesh.cut_parts(parts, [1, 2, 3], TIP.offset) == [2]
+    assert mesh.cut_parts(parts, [1, 2, 3], (0.0, 0.0, -11.0)) == []
+    assert mesh.cut_parts(parts, [], TIP.offset) == []
+
+
+def test_build_tip():
+    built = fu.Pmo.from_bytes(mesh.build(_tail(), SCALE, TIP).to_bytes())
+    body, tip = built.meshes
+    assert len(body.groups) == 1 and body.materials == [0]
+    assert tip.materials == [1, 2, 3] and [g.material for g in tip.groups] == [2, 1, 0]
+    assert [m.texture for m in built.materials] == [0, 1, 3, 3]
+    alone = mesh.build(_tail()[:2], SCALE, TIP)
+    assert [alone.materials[i].texture for i in alone.meshes[1].materials] == [3, 3]
+    assert len(mesh.build(_tail(), SCALE).meshes) == 1
+    parts = _tail()
+    parts[2].part.texture = 4
+    parts[3] = _shape([(x, y, 10.0) for x, y in RING] + [(0.0, 0.0, 10.5)], FAN, 6, texture=2)
+    with pytest.raises(ValueError, match="cut face spans"):
+        mesh.build(parts, SCALE, TIP)
 
 
 def test_group():

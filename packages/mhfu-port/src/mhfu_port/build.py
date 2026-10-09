@@ -28,7 +28,7 @@ from .layout import Layout
 from .manifest import Build, Manifest, Skin
 from .mesh import Part, Skinned
 from .model import ANIMATION, MODEL, SKELETON, TEXTURES
-from .rig import Rig
+from .rig import Rig, Tip
 
 Mode = Literal["source_skeleton", "retarget"]
 
@@ -109,6 +109,8 @@ class Built:
     pac: bytes
     summary: Summary
     layout: Layout
+    tip: Tip | None = None
+    """The tail tip's chain and the joints it rides, for `<port>_moves.lua`; None without one."""
 
 
 # 1. the inputs
@@ -280,7 +282,7 @@ def build(m: Manifest, data: Data) -> Built:
     bind = binding(m.build, d, h, animated(m.build, record_of, len(d.skeleton.bones)))
     kept = parts(d, m.build)
     skinned, skin_used = skin(kept, m.build, bind, h)
-    model = mesh.build(skinned, d.model.scale)
+    model = mesh.build(skinned, d.model.scale, bind.rig.tip)
     placed = layout(m, d, h)
     anim = animation(d, h, bind, record_of, placed, m.build.ground_lift)
     turned = travel.turns(anim, bind.rig.skeleton, authored(m, placed))
@@ -301,4 +303,4 @@ def build(m: Manifest, data: Data) -> Built:
         size=len(out),
         host_size=len(h.pac.to_bytes()),
     )
-    return Built(out, summary, placed)
+    return Built(out, summary, placed, bind.rig.tip)
