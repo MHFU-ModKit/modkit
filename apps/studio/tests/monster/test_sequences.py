@@ -135,9 +135,17 @@ def test_remove_refusals(seq: PortDocument) -> None:
         sequences.remove_step(seq, "topple_3")  # two moves hand to it
 
 
-def test_remove_refused_while_a_rule_or_effect_names_it(doc: Open) -> None:
+def test_remove_takes_its_node_along(doc: Open) -> None:
+    d = doc(BODY + "[behaviour.moves.topple_2]\nat = [10.0, 20.0]\n")
+    sequences.remove_step(d, "topple_2")
+    assert "topple_2" not in d.manifest.behaviour.moves
+    d.undo()
+    assert "topple_2" in d.manifest.behaviour.moves
+
+
+def test_remove_refused_while_a_block_or_effect_names_it(doc: Open) -> None:
     d = doc(BODY + '[[rule]]\nplay = "topple_2"\non = "noticed"\n')
-    with pytest.raises(ManifestError, match="still used by .*rule 0"):
+    with pytest.raises(ManifestError, match="still used by .*block b1 plays it"):
         sequences.remove_step(d, "topple_2")
     d = doc(BODY + '[[effect]]\nmove = "solo"\nframe = 1\nid = 5\nbone = 1\n')
     with pytest.raises(ManifestError, match="still used by effect 5"):

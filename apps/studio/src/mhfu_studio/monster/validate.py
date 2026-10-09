@@ -20,13 +20,15 @@ import dataclasses
 from collections.abc import Mapping, Sequence
 
 from mhfu.em.intel import MIN_DWELL_TICKS, Handoff, SpeciesIntel
-from mhfu_port import build, layout, moves, records
+from mhfu_port import behaviour, build, layout, moves, records
+from mhfu_port.behaviour import KINDS, Behaviour, Rule
 from mhfu_port.layout import Layout
 from mhfu_port.manifest import UNLIMITED_DIST, Hitbox, Hurtbox, Manifest, ManifestError, Move
 from mhfu_port.records import ANIM, GEO
 from mhp_formats.pac import Pac
 from mhp_formats.skeleton import Skeleton
 
+from mhfu_studio.monster import behaviour as graph
 from mhfu_studio.monster import clips, species
 from mhfu_studio.shell.findings import Finding, Level
 
@@ -50,7 +52,9 @@ HIT_JOINT, HIT_RADIUS, HIT_END, HIT_GROUP, ATTACK_STATS = (
 #: the Clips panel's
 CLIP_NAME = "clip name"
 #: the Moves panel's
-MOVE_WINDOWS, MOVE_CLIP, RULES = "move windows", "move clip", "rules"
+MOVE_WINDOWS, MOVE_CLIP = "move windows", "move clip"
+#: the Behaviour dock
+BEHAVIOUR = "behaviour"
 FOCUS = {
     "CLIP_SLOT_MISSING": CLIP_NAME,
     "CLIP_FRAMES_MISMATCH": CLIP_NAME,
@@ -93,7 +97,9 @@ FIX = {
     "MOVE_PAIR_SHORT_DWELL": "Pick another action in Actions.",
     "MOVE_PAIR_BUDGET_GATED": "Keep your clip within the action's timer, or hook the seam.",
     "MOVE_PAIR_PARKS": MANIFEST + "give the move after or hold_max in [moves].",
-    "MOVE_BUDGET_ROOT_MOTION": MANIFEST + "add a [[rule]] from the move with min_frames.",
+    "MOVE_BUDGET_ROOT_MOTION": "In Behaviour: wire the move's while playing to a time block.",
+    "BEHAVIOUR_PATH_REFUSED": "Change the blocks on the path in Behaviour.",
+    "BEHAVIOUR_OVER_CAP": "Delete a path in Behaviour: the game holds no more.",
     "MOVE_AFTER_ENGINE": "Nothing to change if you meant it.",
     "HITZONE_STATE_DUPLICATE": MANIFEST + "rename one [[hitzone]] state.",
     "HITZONE_STATE_COUNT": "Copy the base monster's damage grid again (Parts, More).",
@@ -148,6 +154,7 @@ def validate(
         *_settings(m),
         *_pac(m, pac, sources or {}),
         *_moves(m, intel),
+        *_behaviour(m),
         *own_moves(m, pac, intel, sources or {}),
         *_parts(m, intel),
         *_attacks(m, intel),
@@ -463,8 +470,10 @@ def own_moves(
     refused = []
     for name, mv in mine:
         if name in judged:
-            refused += _refused(dataclasses.replace(m, moves={name: mv}, rules=[]), lay, known)
-    out += refused or _refused(dataclasses.replace(m, moves=judged), lay, known)
+            refused += _refused(
+                dataclasses.replace(m, moves={name: mv}, behaviour=Behaviour()), lay, known
+            )
+    out += refused or _refused(_among(m, judged), lay, known)
     for name, mv in mine:
         e = lay.entry(m.clips[mv.clip]) if mv.clip is not None else mv.anim
         frames = lay.frames.get(e) if e is not None else None
@@ -476,6 +485,17 @@ def own_moves(
                 )
                 out.append(_f("warning", "OWN_WINDOW_PAST_CLIP", f"moves.{name}", msg))
     return out
+
+
+def _among(m: Manifest, kept: Mapping[str, Move]) -> Manifest:
+    """`m` with the moves `kept` only, and the graph playing no other."""
+    b = m.behaviour
+    blocks = {
+        i: dataclasses.replace(blk, play=[n for n in blk.play if n in kept])
+        for i, blk in b.blocks.items()
+    }
+    nodes = {n: node for n, node in b.moves.items() if n in kept}
+    return dataclasses.replace(m, moves=dict(kept), behaviour=Behaviour(blocks, nodes))
 
 
 def _layout(
@@ -492,15 +512,18 @@ def _layout(
 
 def _refused(m: Manifest, lay: Layout, known: set[int] | None) -> list[Finding]:
     """`moves.check`'s refusal, at the path it names: a move's attack lands on its windows, a
-    clip in no anim on the clip, a rule on the rules."""
+    clip in no anim on the clip, the flinch carriers on the Behaviour dock. A refused path is
+    `_behaviour`'s."""
     try:
         moves.check(m, lay, known)
     except ManifestError as e:
         where, _, why = str(e).partition(": ")
         name = next((n for n in m.moves if f"{where}.".startswith(f"moves.{n}.")), None)
+        if where.startswith("behaviour"):
+            return []
         if name is None:
-            focus = RULES if where.startswith("rule") else ""
-            return [_f("error", "OWN_MOVE_REFUSED", where, why, focus=focus)]
+            at = ("behaviour", "") if where.startswith("rule") else None
+            return [_f("error", "OWN_MOVE_REFUSED", where, why, at, BEHAVIOUR if at else "")]
         rest = where[len(f"moves.{name}") :]
         focus = MOVE_WINDOWS if rest.startswith(".attack[") else ""
         if not focus and _unplaced(m, name, lay):
@@ -521,6 +544,37 @@ def _unplaced(m: Manifest, name: str, lay: Layout) -> bool:
     except ManifestError:
         return True
     return False
+
+
+def _rules(m: Manifest) -> list[Rule]:
+    """What the graph compiles to; none when it does not (`_behaviour` says why)."""
+    try:
+        return behaviour.compile(m)
+    except ManifestError:
+        return []
+
+
+def _behaviour(m: Manifest) -> list[Finding]:
+    """What `compile` refuses: the blocks of a bad path, and more paths than the seam holds."""
+    by_reason: dict[str, list[str]] = {}
+    for i, why in behaviour.refused(m).items():
+        by_reason.setdefault(why, []).append(i)
+    out = [
+        _f(
+            "error",
+            "BEHAVIOUR_PATH_REFUSED",
+            f"behaviour blocks {', '.join(ids)}",
+            why,
+            ("block", ids[0]),
+            BEHAVIOUR,
+        )
+        for why, ids in by_reason.items()
+    ]
+    if (cap := graph.capped(m)) is not None:
+        out.append(
+            _f("error", "BEHAVIOUR_OVER_CAP", "behaviour", cap, ("behaviour", ""), BEHAVIOUR)
+        )
+    return out
 
 
 def _chain(m: Manifest, name: str, nxt: tuple[Handoff, ...] | None) -> list[Finding]:
@@ -561,7 +615,7 @@ def _chain(m: Manifest, name: str, nxt: tuple[Handoff, ...] | None) -> list[Find
     if budget_only and mv.clip is not None:
         timed = [
             r
-            for r in m.rules
+            for r in _rules(m)
             if r.from_move == name
             and r.min_frames > 0
             and not (r.receding or r.closing)
@@ -574,8 +628,9 @@ def _chain(m: Manifest, name: str, nxt: tuple[Handoff, ...] | None) -> list[Find
                     "MOVE_BUDGET_ROOT_MOTION",
                     w,
                     f"action {pair} runs until the clip has travelled far enough, and clip "
-                    f"{mv.clip!r} is yours: if it does not travel, the action never ends. Add a "
-                    "[[rule]] from this move with only `min_frames`, or give the clip travel.",
+                    f"{mv.clip!r} is yours: if it does not travel, the action never ends. Wire "
+                    f"this move's while playing to a {KINDS['played_for'].title!r} block that "
+                    "plays a move, or give the clip travel.",
                 )
             )
     if nxt and mv.after is not None and mv.after in m.moves:

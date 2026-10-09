@@ -3,7 +3,7 @@
 import pytest
 from mhfu_port import manifest, moves
 from mhfu_port.layout import Layout
-from mhfu_port.manifest import ManifestError
+from mhfu_port.manifest import SEAM_RULES, ManifestError
 from mhfu_studio.monster import validate as V
 
 CLIP = "\n[clips.c]\nslot = 61\nframes = 382\nloop = false\n"
@@ -76,7 +76,9 @@ def test_chain(make, species, make_pair):
     assert "never ends by itself" in found(V.validate(m, intel=parks), "MOVE_PAIR_PARKS").message
     chained = make(
         CLIP + MOVE.format(1, 4) + 'after = "stop"\n\n[moves.stop]\nmain = 0\nsub = 6\nanim = 3\n'
-        '\n[[rule]]\nplay = "stop"\nfrom = "m"\nmin_frames = 30\n'
+        '\n[behaviour.blocks.b1]\nkind = "played_for"\nat = [0.0, 0.0]\nframes = 30\n'
+        'play = ["stop"]\n'
+        '\n[behaviour.moves.m]\nat = [0.0, 0.0]\nduring = ["b1"]\n'
     )
     out = found(V.validate(chained, intel=si))
     assert "MOVE_PAIR_PARKS" not in out and "MOVE_BUDGET_ROOT_MOTION" not in out
@@ -253,11 +255,42 @@ def test_own_moves(make, species, synthetic_pac):
     assert f.where == "moves.o.attack[1]" and "past the clip's 10" in f.message, "then the frames"
 
 
+def flinch(i: int, move: str) -> str:
+    at = i * 60.0
+    return f'\n[behaviour.blocks.b{i}]\nkind = "on_flinch"\nat = [0.0, {at}]\nplay = ["{move}"]\n'
+
+
 def test_own_rules_refused(make):
     two = "\n[moves.p]\nanim = 1\ncarrier = [0, 1]\n"
-    rules = '[[rule]]\non = "flinch"\nplay = "o"\n[[rule]]\non = "flinch"\nplay = "p"\n'
-    f = found(V.validate(make(OWN + two + rules), sources={1: 1}), "OWN_MOVE_REFUSED")
-    assert (f.where, f.focus) == ("rule", V.RULES) and "carriers" in f.message
+    m = make(OWN + two + flinch(1, "o") + flinch(2, "p"))
+    f = found(V.validate(m, sources={1: 1}), "OWN_MOVE_REFUSED")
+    assert (f.where, f.focus, f.target) == ("rule", V.BEHAVIOUR, ("behaviour", ""))
+    assert "carriers" in f.message
+
+
+def test_a_refused_path_is_a_finding(make):
+    two = (
+        '\n[behaviour.blocks.b1]\nkind = "on_noticed"\nat = [0.0, 0.0]\nnext = ["b2"]\n'
+        '\n[behaviour.blocks.b2]\nkind = "cooldown"\nat = [0.0, 0.0]\nframes = 5\nnext = ["b3"]\n'
+        '\n[behaviour.blocks.b3]\nkind = "cooldown"\nat = [0.0, 0.0]\nframes = 9\nplay = ["o"]\n'
+    )
+    f = found(V.validate(make(OWN + two), sources={1: 1}), "BEHAVIOUR_PATH_REFUSED")
+    assert (f.level, f.where) == ("error", "behaviour blocks b1, b2, b3")
+    assert (f.target, f.focus) == (("block", "b1"), V.BEHAVIOUR) and "two" in f.message
+    assert "OWN_MOVE_REFUSED" not in found(V.validate(make(OWN + two), sources={1: 1}))
+
+
+def test_more_paths_than_the_seam_holds(make):
+    blocks = "".join(flinch(i, "o").replace("on_flinch", "on_noticed") for i in range(40))
+    m = make(OWN + blocks)
+    assert len(m.behaviour.blocks) > SEAM_RULES
+    f = found(V.validate(m, sources={1: 1}), "BEHAVIOUR_OVER_CAP")
+    assert f.level == "error" and f"the seam holds {SEAM_RULES}" in f.message
+
+
+def test_the_zinogre_graph_passes(ports):
+    m = manifest.load(ports / "zinogre.toml")
+    assert not [f for f in V.validate(m) if f.code.startswith("BEHAVIOUR")]
 
 
 def test_own_move_in_no_anim(make, synthetic_pac):

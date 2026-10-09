@@ -17,7 +17,18 @@ from mhfu_studio.ui import kit
 from mhfu_studio.ui.testing import elsewhere, gl_or_skip
 from PySide6.QtWidgets import QDockWidget
 
-DOCKS = ("Actions", "Clips", "Moves", "Scene", "View", "Joints", "Hitboxes", "Parts", "Timeline")
+DOCKS = (
+    "Actions",
+    "Clips",
+    "Moves",
+    "Scene",
+    "View",
+    "Joints",
+    "Hitboxes",
+    "Parts",
+    "Behaviour",
+    "Timeline",
+)
 
 
 def test_registers_its_docks() -> None:

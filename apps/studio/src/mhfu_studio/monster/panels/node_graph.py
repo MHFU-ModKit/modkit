@@ -74,7 +74,8 @@ class NodeSpec:
     """One node as the owner wants it drawn.
 
     `options[name]` is a combo's or a multi-select's list of (label, value), else the
-    parameter's `choices`; `values[name]` is a number, a value of the list, `None` for "none"
+    parameter's `choices`; an option of value `None` is the optional combo's "none" under the
+    owner's own label. `values[name]` is a number, a value of the list, `None` for "none"
     (an optional parameter), or for `mains` the values picked. `label` is the one free-text
     note; `tip` the node's tooltip; `dim` draws it faded.
     """
@@ -282,10 +283,11 @@ class _Field(NodeBaseWidget):  # type: ignore[misc]
         keep = self.get_value() if built else None
         self._built, self._opts = True, list(options)
         if isinstance(ctl, QComboBox):
-            self._vals = ([None] if self.optional else []) + [v for _, v in self._opts]
+            none = self.optional and all(v is not None for _, v in self._opts)
+            self._vals = ([None] if none else []) + [v for _, v in self._opts]
             with QSignalBlocker(ctl):
                 ctl.clear()
-                ctl.addItems([NONE] * self.optional + [label for label, _ in self._opts])
+                ctl.addItems([NONE] * none + [label for label, _ in self._opts])
         else:
             menu = ctl.menu()
             menu.clear()
@@ -356,6 +358,9 @@ class GraphView(QWidget):
     #: the id of the one node selected, else `None`
     picked = Signal(object)
     label_changed = Signal(str, str)
+    #: after the intents of one gesture, all of them: the owner applies what it collected and
+    #: shows, still before the view would put the canvas back
+    settled = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -384,6 +389,7 @@ class GraphView(QWidget):
         self._graph.port_connected.connect(lambda inp, out: self._wired("link", inp, out))
         self._graph.port_disconnected.connect(lambda inp, out: self._wired("unlink", inp, out))
         viewer.moved_nodes.connect(self._dragged)
+        self.set_canvas(theme.current().view)
 
     @property
     def viewer(self) -> Any:
@@ -405,6 +411,13 @@ class GraphView(QWidget):
         """A node's colour by `NodeSpec.role`; a role not named keeps NodeGraphQt's grey."""
         self._roles = colors
         self._apply(self._nodes, self._links)
+
+    def set_canvas(self, background: Color) -> None:
+        """The canvas's fill, and its grid a shade off it."""
+        bg = theme.color(background)
+        grid = bg.lighter(150) if bg.lightness() < 128 else bg.darker(112)
+        self._graph.set_background_color(bg.red(), bg.green(), bg.blue())
+        self._graph.set_grid_color(grid.red(), grid.green(), grid.blue())
 
     def set_palette(self, groups: Sequence[PaletteGroup]) -> None:
         """What the right-click menu offers to create: a submenu per group."""
@@ -438,6 +451,12 @@ class GraphView(QWidget):
         """The selected nodes' ids, in the order of the last `show`."""
         picked = {n.id for n in self.viewer.selected_nodes()}
         return [n.id for n in self._nodes if n.id in picked]
+
+    def frame(self, ids: Sequence[str]) -> None:
+        """Centres the canvas on these nodes."""
+        nodes = [self._shown[i].node for i in ids if i in self._shown]
+        if nodes:
+            self._graph.center_on(nodes)
 
     def fit(self) -> None:
         """Frames every node."""
@@ -622,6 +641,7 @@ class GraphView(QWidget):
         seen = self._renders
         for fn, _ in pending:
             fn()
+        self.settled.emit()
         if self._renders == seen and any(revert for _, revert in pending):
             self._apply(self._nodes, self._links)
 

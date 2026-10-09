@@ -111,8 +111,8 @@ def test_kinds_have_titles_and_tips():
 
 
 def test_defaults_fill_in():
-    assert B._params(blk("distance")) == {"lo": 0.0}
-    assert B._params(blk("distance", hi=9, lo=2)) == {"lo": 2, "hi": 9}
+    assert B.params(blk("distance")) == {"lo": 0.0}
+    assert B.params(blk("distance", hi=9, lo=2)) == {"lo": 2, "hi": 9}
 
 
 # paths
@@ -307,6 +307,28 @@ def test_path_errors(m, why):
         B.compile(m)
 
 
+def test_refused_names_each_block_of_a_bad_path():
+    m = graph({"b1": blk("on_noticed", to=["b2"]), "b2": blk("force", to=["b3"])})
+    m.behaviour.blocks["b3"] = blk("force", play=["m"])
+    m.behaviour.blocks["b4"] = blk("on_flinch", play=["o"])
+    why = {i: "has two 'Right away' blocks" for i in ("b1", "b2", "b3")}
+    assert B.refused(m) == why
+    with pytest.raises(ManifestError, match=why["b1"]):
+        B.compile(m)
+    assert B.refused(graph({"b1": blk("on_noticed", play=["m"])})) == {}
+
+
+def test_a_block_keeps_the_first_reason():
+    m = graph({"b1": blk("on_noticed", to=["b2", "b3"], play=["m"])})
+    m.behaviour.blocks["b2"] = blk("distance", lo=5, hi=5, play=["m"])
+    m.behaviour.blocks["b3"] = blk("mode", mode=1, play=["o"])
+    assert B.refused(m) == {
+        "b1": "dist needs 0 <= lo < hi",
+        "b2": "dist needs 0 <= lo < hi",
+        "b3": "mode is a pair's: an own move enters its carrier",
+    }
+
+
 def test_the_seam_holds_so_many_paths():
     blocks = {f"b{i}": blk("on_noticed", y=i, play=["m"]) for i in range(M.SEAM_RULES)}
     assert len(B.compile(graph(blocks))) == M.SEAM_RULES
@@ -446,6 +468,11 @@ def test_migrate_lays_a_chain_a_row():
     assert b.blocks["b1"].label == "close in" and b.blocks["b2"].label == ""
     assert b.moves["o"].during == ["b8", "b9"] and b.moves["o"].at[0] == 0
     assert b.moves["n"].at[0] == B.LEFT + 7 * B.COLUMN
+
+
+def test_migrate_grid_clears_the_nodes():
+    """The studio draws a block up to 241 by 174 and a move 355 by 77."""
+    assert B.COLUMN > 241 and B.ROW > 174 and B.LEFT > 355
 
 
 def test_migrate_order_is_the_old_order_at_the_seam():

@@ -302,7 +302,7 @@ def new_id(b: Behaviour) -> str:
     return next(f"b{i}" for i in itertools.count(1) if f"b{i}" not in b.blocks)
 
 
-def _params(b: Block) -> dict[str, Any]:
+def params(b: Block) -> dict[str, Any]:
     """`b`'s params with its kind's defaults filled in."""
     out = {p.name: p.default for p in KINDS[b.kind].params if p.default is not None}
     return out | b.params
@@ -476,7 +476,7 @@ def _rule(m: Manifest, p: Path) -> Rule:
         if (event := event_of(blk.kind)) is not None:
             kw |= {"on": event, "part": blk.params.get("part")}
         else:
-            kw |= _APPLY[blk.kind](_params(blk))
+            kw |= _APPLY[blk.kind](params(blk))
     if labels := [blk.label for blk in blocks if blk.label]:
         kw["label"] = "; ".join(labels)
     r = Rule(**kw)
@@ -488,6 +488,20 @@ def _rule(m: Manifest, p: Path) -> Rule:
     else:
         need(r.on != "flinch", w, "on = flinch plays an own move, in place of the host's reaction")
     return r
+
+
+def refused(m: Manifest) -> dict[str, str]:
+    """Block id -> why, for every block on a path `compile` refuses (the first reason a block
+    has); the cap on the paths is `compile`'s alone."""
+    out: dict[str, str] = {}
+    for p in paths(m):
+        try:
+            _rule(m, p)
+        except ManifestError as e:
+            why = str(e).partition(": ")[2]
+            for i in p.blocks:
+                out.setdefault(i, why)
+    return out
 
 
 def compile(m: Manifest) -> list[Rule]:
@@ -525,8 +539,10 @@ def drop_move(m: Manifest, move: str) -> None:
 
 # schema 1
 
-ROW, COLUMN, LEFT = 120, 220, 260
-"""The canvas grid `migrate` lays chains on: a rule a row, a block a column from `LEFT`."""
+ROW, COLUMN, LEFT = 200, 280, 400
+"""The canvas grid `migrate` lays chains on: a rule a row, a block a column from `LEFT`. The
+studio draws a block up to 241 by 174 and a move 355 by 77, so these leave a gap; a move that
+a rule starts from sits left of `LEFT`, at x = 0."""
 
 
 def _legacy(raw: dict[str, Any], where: str) -> Rule:

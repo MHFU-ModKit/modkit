@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from mhfu_port import continuity, sequence
+from mhfu_port import behaviour, continuity, sequence
 from mhfu_port.continuity import Ends
 from mhfu_port.manifest import Manifest, ManifestError, Move, Steer
 
@@ -90,7 +90,7 @@ def append_step(doc: PortDocument, after_move: str, clip: str) -> str:
 
 
 def remove_step(doc: PortDocument, name: str) -> str:
-    """Removes step `name`; the move before it hands to the move after it. Refused while a rule
+    """Removes step `name`; the move before it hands to the move after it. Refused while a block
     or an effect names it, or two moves hand to it."""
     m = doc.manifest
     _own(m, [name])
@@ -105,6 +105,7 @@ def remove_step(doc: PortDocument, name: str) -> str:
         for k in before:
             m.moves[k].after = None if then == k else then
         del m.moves[name]
+        behaviour.drop_move(m, name)  # its node on the canvas
 
     doc.edit(drop)
     return f"moves.{name} removed" + (f"; {before[0]} hands to {then}" if before and then else "")
