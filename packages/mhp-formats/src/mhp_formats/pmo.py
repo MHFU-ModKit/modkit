@@ -536,7 +536,8 @@ class Pmo:
     scale: Vec3 = (1.0, 1.0, 1.0)
     """Multiplies the dequantised positions."""
     clip: float = 0.0
-    """Clipping distance; MHFU sets it to the largest scale component."""
+    """Cull-sphere radius before the entity's scale, centred half a `scale.y` up; MHFU sets it to
+    the largest scale component, and 0 culls the model as a point."""
     tail: bytes = b""
     """Bytes after the size the header declares (a standalone file pads to 0x800)."""
 

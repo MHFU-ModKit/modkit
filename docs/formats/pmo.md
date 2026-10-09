@@ -22,7 +22,7 @@ from [mhff](https://github.com/svanheulen/mhff) by Seth VanHeulen.
 | 0x00 | `char[4]` | `pmo\0` |
 | 0x04 | `char[4]` | Version, `1.0\0` or `102\0` |
 | 0x08 | `u32` | Size: header, tables and geometry region. Bytes after it are the tail |
-| 0x0C | `f32` | Clip distance; MHFU sets the largest scale component |
+| 0x0C | `f32` | Cull-sphere radius before the entity's scale; MHFU sets the largest scale component, and 0 culls the model as a point |
 | 0x10 | `f32[3]` | Scale (MHFU): multiplies the dequantised positions |
 | 0x1C | `u16` | Mesh count |
 | 0x1E | `u16` | Material count |
