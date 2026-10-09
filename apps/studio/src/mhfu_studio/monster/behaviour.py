@@ -11,13 +11,12 @@ graph for them.
 
 from __future__ import annotations
 
-import dataclasses
 import typing
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, NamedTuple, Protocol
 
 from mhfu_port import behaviour, sequence
-from mhfu_port.behaviour import KINDS, Behaviour, Block, MoveNode, Param, Path
+from mhfu_port.behaviour import KINDS, Block, MoveNode, Param, Path
 from mhfu_port.manifest import Manifest, ManifestError
 
 from mhfu_studio.monster.document import PortDocument
@@ -28,8 +27,6 @@ MOVE = "move:"
 IN, OUT = "in", "out"
 PLAY, WHILE, THEN = "play", "while playing", "then"
 """A move node's ports: the input, then the two outputs."""
-BLOCK_W, MOVE_W = 280, 380
-"""How far right of a block, or a move's node, the next column starts: a node's width and a gap."""
 ROLE_TITLES = {
     "event": "Events",
     "state": "State",
@@ -146,8 +143,8 @@ def spots(m: Manifest) -> dict[str, Point]:
     """Where each move sits: its node's place, else a column right of everything placed, in
     sequence order so a chain sits together."""
     b = m.behaviour
-    clear = [blk.at[0] + BLOCK_W for blk in b.blocks.values()]
-    clear += [n.at[0] + MOVE_W for n in b.moves.values()]
+    clear = [blk.at[0] + behaviour.COLUMN for blk in b.blocks.values()]
+    clear += [n.at[0] + behaviour.LEFT for n in b.moves.values()]
     x = max(clear, default=float(behaviour.LEFT))
     order = [n for steps in sequence.groups(m).values() for n in steps]
     return {
@@ -163,8 +160,8 @@ class Reading(NamedTuple):
     priority: dict[str, list[int]]
     """Block id -> the 1-based places in `paths` of the paths that play from it."""
     loose: list[str]
-    refused: dict[Path, str]
-    """The paths `compile` refuses, and why."""
+    refused: dict[str, str]
+    """Block id -> why, for the blocks on a path `compile` refuses."""
     capped: str | None
     """Set when the paths outnumber the rules the seam holds."""
 
@@ -174,38 +171,13 @@ def read(m: Manifest) -> Reading:
     priority: dict[str, list[int]] = {}
     for k, p in enumerate(ps, 1):
         priority.setdefault(p.blocks[-1], []).append(k)
-    return Reading(ps, priority, behaviour.loose(m), refusals(m, ps), capped(m, ps))
+    return Reading(ps, priority, behaviour.loose(m), behaviour.refused(m), capped(m, ps))
 
 
 def capped(m: Manifest, ps: Sequence[Path] | None = None) -> str | None:
     """Why the paths are too many for the rules the seam holds; None when they fit."""
     n = len(behaviour.paths(m) if ps is None else ps)
     return f"{n} paths, the seam holds {behaviour.SEAM_RULES}" if n > behaviour.SEAM_RULES else None
-
-
-def refusals(m: Manifest, ps: Sequence[Path] | None = None) -> dict[Path, str]:
-    """Why `compile` refuses each path it does, in its words: each path alone."""
-    out: dict[Path, str] = {}
-    for p in behaviour.paths(m) if ps is None else ps:
-        try:
-            behaviour.compile(_alone(m, p))
-        except ManifestError as e:
-            out[p] = str(e).partition(": ")[2]
-    return out
-
-
-def _alone(m: Manifest, p: Path) -> Manifest:
-    """`m` with the graph cut down to the path `p`."""
-    b = m.behaviour
-    blocks = {}
-    for k, i in enumerate(p.blocks):
-        last = k == len(p.blocks) - 1
-        blk = b.blocks[i]
-        blocks[i] = dataclasses.replace(
-            blk, next=[] if last else [p.blocks[k + 1]], play=[p.play] if last else []
-        )
-    moves = {} if p.during is None else {p.during: MoveNode(b.moves[p.during].at, [p.blocks[0]])}
-    return dataclasses.replace(m, behaviour=Behaviour(blocks, moves))
 
 
 def part_options(m: Manifest, optional: bool) -> list[tuple[str, int | None]]:
@@ -472,8 +444,8 @@ def move_nodes(doc: Edits, at: Mapping[str, Point]) -> str:
 
 
 def spread(doc: Edits, kx: float = 1.5, ky: float = 1.7) -> str:
-    """Every placed node's place scaled out from the origin: a graph laid on a tight grid (the
-    rules of a schema 1 file) stops overlapping, and which block is higher stays so."""
+    """Every placed node's place scaled out from the origin, so crowded nodes stop overlapping.
+    A scale keeps the order of the canvas rows and columns, so every path's priority holds."""
     b = doc.manifest.behaviour
 
     def scale(m: Manifest) -> None:

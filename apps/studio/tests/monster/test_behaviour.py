@@ -259,7 +259,7 @@ def test_the_users_example(d: PortDocument) -> None:
 
 
 def test_moves_without_a_node_sit_in_a_column_in_sequence_order(d: PortDocument) -> None:
-    x = 260.0 + B.BLOCK_W
+    x = 260.0 + model.COLUMN
     want = {
         n: (x, float(k * model.ROW)) for k, n in enumerate(["stamp", "stamp_2", "flinch_head"], 1)
     }
@@ -278,8 +278,8 @@ def test_what_the_graph_says_of_itself(d: PortDocument) -> None:
     r = B.read(d.manifest)
     assert [p.play for p in r.paths] == ["stamp", "flinch_head"]
     assert r.priority == {"b1": [1], "b4": [2]} and r.loose == []
-    [(path, why)] = r.refused.items()
-    assert path.blocks == ("b2", "b3", "b4") and "two 'Then wait' blocks" in why
+    assert set(r.refused) == {"b2", "b3", "b4"}
+    assert all("two 'Then wait' blocks" in why for why in r.refused.values())
     assert r.capped is None
 
 
@@ -298,6 +298,28 @@ def test_spread_keeps_the_order(d: PortDocument) -> None:
     assert b.blocks["b1"].at == (390.0, 0.0) and b.blocks["b2"].at == (150.0, 85.0)
     assert b.moves["charge"].at == (0.0, 0.0)
     assert undone(d, before)
+
+
+def test_spread_keeps_every_priority(ports: Path) -> None:
+    z = PortDocument(manifest.load(ports / "zinogre.toml"))
+    order = [(p.blocks, p.play, p.during) for p in model.paths(z.manifest)]
+    rules = model.compile(z.manifest)
+    for _ in range(3):
+        B.spread(z)
+        assert [(p.blocks, p.play, p.during) for p in model.paths(z.manifest)] == order
+    assert model.compile(z.manifest) == rules
+
+
+def test_spread_keeps_a_tie_a_tie(d: PortDocument) -> None:
+    B.add_block(d, "on_noticed", (260.0, 0.0))
+    B.add_block(d, "on_flinch", (100.0, 0.0))
+
+    def order() -> list[tuple[tuple[str, ...], str]]:
+        return [(p.blocks, p.play) for p in model.paths(d.manifest)]
+
+    before = order()
+    B.spread(d)
+    assert order() == before
 
 
 def test_the_cap(d: PortDocument) -> None:
@@ -332,6 +354,7 @@ def test_the_zinogre_reads(ports: Path) -> None:
     assert len(m.behaviour.blocks) == 15 and len(r.paths) == 7
     assert sorted(n for ns in r.priority.values() for n in ns) == list(range(1, 8))
     assert r.loose == [] and r.refused == {} and r.capped is None
+    assert min(b.at[0] for b in m.behaviour.blocks.values()) == model.LEFT
     assert {w.dst for w in B.wires(m) if w.dst_port == "play"} >= {"move:flinch_head"}
     assert len(B.spots(m)) == len(m.moves)
 

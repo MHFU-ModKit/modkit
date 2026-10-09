@@ -555,17 +555,20 @@ def _rules(m: Manifest) -> list[Rule]:
 
 
 def _behaviour(m: Manifest) -> list[Finding]:
-    """What `compile` refuses: each path, and more paths than the seam holds rules."""
+    """What `compile` refuses: the blocks of a bad path, and more paths than the seam holds."""
+    by_reason: dict[str, list[str]] = {}
+    for i, why in behaviour.refused(m).items():
+        by_reason.setdefault(why, []).append(i)
     out = [
         _f(
             "error",
             "BEHAVIOUR_PATH_REFUSED",
-            f"behaviour path {' > '.join(p.blocks)} plays {p.play}",
+            f"behaviour blocks {', '.join(ids)}",
             why,
-            ("block", p.blocks[0]),
+            ("block", ids[0]),
             BEHAVIOUR,
         )
-        for p, why in graph.refusals(m).items()
+        for why, ids in by_reason.items()
     ]
     if (cap := graph.capped(m)) is not None:
         out.append(

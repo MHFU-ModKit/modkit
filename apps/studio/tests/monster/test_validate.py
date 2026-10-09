@@ -275,7 +275,7 @@ def test_a_refused_path_is_a_finding(make):
         '\n[behaviour.blocks.b3]\nkind = "cooldown"\nat = [0.0, 0.0]\nframes = 9\nplay = ["o"]\n'
     )
     f = found(V.validate(make(OWN + two), sources={1: 1}), "BEHAVIOUR_PATH_REFUSED")
-    assert (f.level, f.where) == ("error", "behaviour path b1 > b2 > b3 plays o")
+    assert (f.level, f.where) == ("error", "behaviour blocks b1, b2, b3")
     assert (f.target, f.focus) == (("block", "b1"), V.BEHAVIOUR) and "two" in f.message
     assert "OWN_MOVE_REFUSED" not in found(V.validate(make(OWN + two), sources={1: 1}))
 

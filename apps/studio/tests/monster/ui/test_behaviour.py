@@ -5,6 +5,7 @@ through the real view."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -18,9 +19,12 @@ from mhfu_studio.monster.panels.behaviour import WARN, BehaviourPanel
 from mhfu_studio.monster.panels.node_graph import GraphView, LinkSpec
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
+from mhfu_studio.shell.workspace import Dock
 from mhfu_studio.ui import kit, theme
+from mhfu_studio.ui.testing import FakeWorkspace
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QDockWidget
 
 LEFT, NONE = Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
 STAMP, FLINCH, STEP = B.move_id("stamp"), B.move_id("flinch_head"), B.move_id("stamp_2")
@@ -139,6 +143,39 @@ def badge(p: BehaviourPanel, node: str) -> str:
 def test_the_dock_is_registered_at_the_bottom() -> None:
     [dock] = [d for d in MonsterWorkspace().docks() if d.label == "Behaviour"]
     assert (dock.area, dock.shown, dock.alone) == ("bottom", False, False)
+
+
+class Hosted(FakeWorkspace):
+    """A fake workspace carrying the monster workspace's own Behaviour dock, and a strip that
+    is never tabbed under it, as the Timeline is."""
+
+    def __init__(self, own: MonsterWorkspace) -> None:
+        super().__init__("monster")
+        self.own = own
+
+    def docks(self) -> tuple[Dock, ...]:
+        [spec] = [d for d in self.own.docks() if d.label == "Behaviour"]
+        strip = Dock("Strip", "bottom", lambda s: kit.Panel(), "A panel never tabbed", alone=True)
+        return (*super().docks(), spec, strip)
+
+
+def test_the_window_opens_the_dock(
+    make_window: Callable[..., Any], qtbot: Any, port_doc: PortDocument
+) -> None:
+    own = MonsterWorkspace()
+    own.doc = port_doc
+    host = Hosted(own)
+    w = make_window(host)
+    dock = w.findChild(QDockWidget, "monster/Behaviour")
+    strip = w.findChild(QDockWidget, "monster/Strip")
+    assert dock is not None and strip is not None and not dock.isVisible()
+    assert isinstance(dock.widget(), BehaviourPanel) and kit.missing_tips(dock.widget()) == []
+    host.focus = "Behaviour"  # what the Moves dock's button asks for
+    w.studio.changed()
+    w.sync()
+    qtbot.wait(20)
+    assert dock.isVisible() and w.dockWidgetArea(dock) == Qt.DockWidgetArea.BottomDockWidgetArea
+    assert dock.height() > 2 * strip.height() and dock.geometry().bottom() < strip.geometry().top()
 
 
 def test_empty(qtbot: Any) -> None:

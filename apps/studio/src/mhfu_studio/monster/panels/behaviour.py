@@ -67,8 +67,8 @@ class BehaviourPanel(kit.Panel):
         )
         self.spread = kit.button(
             "Spread out",
-            tip="Moves every node away from the top left so none overlaps: a graph made from"
-            " rules is laid out tight",
+            tip="Moves every node away from the top left so crowded ones stop overlapping; which"
+            " block is higher stays so, and so does every path's priority",
             on=studio.act("spread nodes", lambda: ws.edit("", self._spread)),
             icon="ph.arrows-out-simple",
         )
@@ -182,8 +182,9 @@ class BehaviourPanel(kit.Panel):
         out = []
         for i, blk in m.behaviour.blocks.items():
             k = KINDS[blk.kind]
-            why = list(dict.fromkeys(w for p, w in r.refused.items() if i in p.blocks))
+            why = r.refused.get(i)
             marks = [*(f"#{n}" for n in r.priority.get(i, [])), *([WARN] if why else [])]
+            values = model.params(blk)
             options: dict[str, list[tuple[str, object]]] = {}
             for p in k.params:
                 if p.type == "part":
@@ -199,12 +200,12 @@ class BehaviourPanel(kit.Panel):
                     (graph.IN,),
                     (graph.OUT,),
                     k.params,
-                    {p.name: blk.params.get(p.name, p.default) for p in k.params},
+                    {p.name: values.get(p.name) for p in k.params},
                     options,
                     " ".join(marks),
                     i in r.loose,
                     blk.label,
-                    "\n".join([k.tip, *(f"{WARN} {w}" for w in why)]),
+                    "\n".join([k.tip, *([f"{WARN} {why}"] if why else [])]),
                 )
             )
         return out
