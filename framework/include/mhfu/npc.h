@@ -18,10 +18,10 @@
 extern "C" {
 #endif
 
-#define MHFU_NPC_MAX  4        /* the lobby's registry holds 20 and the village uses 16 */
-#define MHFU_NPC_KIND 5        /* NPC_SPAWN_ROW.KIND of ours: RESOURCE_TABLE row 21, unused in the village */
-#define MHFU_NPC_CHAR 0x1E     /* the default character id: no spawn condition, no conversation */
-#define MHFU_NPC_NONE 0xFFFFu  /* mhfu_npc_play's `then`: none */
+#define MHFU_NPC_MAX          4        /* the lobby's registry holds 20 and the village uses 16 */
+#define MHFU_NPC_OWN_KIND     5        /* ours: RESOURCE_TABLE row 21, unused in the village */
+#define MHFU_NPC_DEFAULT_CHAR 0x1E     /* no spawn condition, no conversation */
+#define MHFU_NPC_NONE         0xFFFFu  /* mhfu_npc_play's `then`: none */
 
 enum {
     MHFU_NPC_FACE_STILL  = 0,  /* no turn */
@@ -32,7 +32,7 @@ enum {
 typedef struct {
     const char *pac;        /* the model's PAC, a path as mhfu_inject_register takes it; read now */
     float       size;       /* ENTITY.RENDER_SCALE; 1 is the model's own */
-    uint8_t     character;  /* NPC_SPAWN_ROW.CHAR; MHFU_NPC_CHAR unless you need another */
+    uint8_t     character;  /* NPC_SPAWN_ROW.CHAR; MHFU_NPC_DEFAULT_CHAR unless you need another */
     float       right;      /* where it appears on each load, in the hunter's frame */
     float       ahead;
 } mhfu_npc_spec_t;
