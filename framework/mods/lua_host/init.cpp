@@ -82,7 +82,7 @@ static void call_tick(void)
     if (!mhfu_lua_have_tick) return;
     /* mod ticks touch game memory: running one while the savedata utility loads
      * the save froze it, so only during gameplay */
-    if (!mhfu_world_ms0_io_safe()) return;
+    if (!mhfu_world_ms0_io_safe() && !mhfu_world_village_roam()) return;
     if (!mhfu_lua_enter()) return;
     lua_getglobal(mhfu_lua_vm, "mhfu_tick");
     if (lua_pcall(mhfu_lua_vm, 0, 0, 0) != LUA_OK) {
