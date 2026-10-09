@@ -323,6 +323,18 @@ def test_drag_a_node(qtbot: Any) -> None:
     assert view._shown["c"].view.xy_pos == [300.0, 0.0]  # refused: back where the owner has it
 
 
+def test_a_click_is_not_a_move_and_a_group_drag_moves_each_node_once(qtbot: Any) -> None:
+    view = make(qtbot)
+    rec = Rec(view, qtbot)
+    QTest.mouseClick(view.viewer.viewport(), LEFT, NONE, title_at(view, "c"))
+    assert [c for c in rec.got() if c[0] == "moved"] == []
+    view.select(["c", "m"])
+    a = title_at(view, "c")
+    drag(view, a, a + QPoint(0, 50))
+    moved = [c[1][0] for c in rec.got() if c[0] == "moved"]
+    assert sorted(moved) == ["c", "m"]
+
+
 def test_an_accepted_move_stays(qtbot: Any) -> None:
     view = make(qtbot)
     placed: list[tuple[float, float]] = []
