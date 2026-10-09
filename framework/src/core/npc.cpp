@@ -190,7 +190,7 @@ static void play(uint32_t npc, uint16_t entry, uint8_t blend, int spawn)
     }
 }
 
-/* S4 and the place: the brain has just built the model. */
+/* Head and tail, the first clips and the place: the brain has just built the model. */
 static void setup_post(uint32_t npc, int k)
 {
     npc_slot_t *s = &B->slot[k];
@@ -265,7 +265,8 @@ static void brain_post(mhfu_regs_t *r)
 static int block_init(void)
 {
     if (B) return 0;
-    SceUID blk = sceKernelAllocPartitionMemory(2, OWNER, PSP_SMEM_Low, sizeof(npc_block_t) + 64, 0);
+    SceUID blk = sceKernelAllocPartitionMemory(2, OWNER, PSP_SMEM_Low, sizeof(npc_block_t) + 64,
+                                               0);
     if (blk < 0) {
         mhfu_log("[%s] partition alloc FAILED (%d)", OWNER, (int)blk);
         return -1;
