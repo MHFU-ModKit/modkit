@@ -311,8 +311,8 @@ FREE_ROAM_SCENES = { of = ["SCENE_ROAM", "SCENE_VILLAGE", "SCENE_VILLAGE_CONTRAC
 doc = "common entity layout of monsters, the player combat entity and village NPCs; field docs name a narrower user"
 [struct.ENTITY.fields]
 VTABLE = { offset = 0x000, type = "ptr", doc = "class vtable; identifies the species more reliably than SPECIES" }
-RENDER_FLAGS = { offset = 0x004, type = "u32", doc = "engine output: bit 0x4 skips the draw (VISIBILITY_GATE sets it for a big monster out of section)" }
-DRAW_NODE = { offset = 0x008, type = "ptr", doc = "engine output: shared draw node while in the view frustum this frame, else 0" }
+RENDER_FLAGS = { offset = 0x004, type = "u32", doc = "bit 0x1 submitted for drawing, 0x2 passed the frustum cull this frame, 0x4 skips the draw (VISIBILITY_GATE sets it for a big monster out of section)" }
+DRAW_NODE = { offset = 0x008, type = "ptr", doc = "engine output: the next object in this frame's depth bucket while it passed the frustum cull, else 0" }
 ROTATION = { offset = 0x010, type = "f32[12]", doc = "3x4 orientation rows, rebuilt every frame from YAW: read only" }
 SIZE_SCALE = { offset = 0x024, type = "f32", doc = "size multiplier; re-derived every frame, so resize through RENDER_SCALE and SIZE_RADIUS" }
 TRANSLATION = { offset = 0x040, type = "vec3", doc = "transform translation row (w = 1.0 at +0x4C), copied from POSITION each frame" }
@@ -396,8 +396,7 @@ SEVER_COUNT = { offset = 0x579, type = "s8", doc = "big monsters: tail cuts, cou
 FLINCH_PARTS = { offset = 0x57C, type = "FLINCH_PART[9]", doc = "big monsters: per part, flinch counter and count; [8] counts cut damage to SPECIES.SEVER's part toward the tail cut" }
 BROKEN = { offset = 0x774, type = "u16", doc = "big monsters: broken parts, bit per BREAK_ROW.BREAK_ID (BREAK_RECORD)" }
 
-MODEL_RADIUS = { offset = 0x060, type = "f32", doc = "model bounding radius from the PMO (Zinogre 608, human 90); an NPC's solid extent with MODEL_BOUNDS" }
-MODEL_BOUNDS = { offset = 0x064, type = "f32[2]", doc = "model bounds paired with MODEL_RADIUS" }
+MODEL_SCALE = { offset = 0x060, type = "vec3", doc = "copy of the PMO's scale (Zinogre 608.3 each, human 90.5/105.3/51.6); an NPC's solid extent with NPC.FLAGS bit 2" }
 SLOT_ROOTS = { offset = 0x194, type = "ptr[2]", doc = "joints of clip slots 1 and 2 (JOINTS is slot 0's); CLIP_SET reads them for the clip's end, so a 0 is a null read" }
 ROOT_COUNT = { offset = 0x1A0, type = "u16", doc = "skeleton roots the joint builder found" }
 JOINT_COUNT = { offset = 0x1A4, type = "u16", doc = "joints the FK walks; the anim streams' partition total must match" }
