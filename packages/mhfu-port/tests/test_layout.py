@@ -209,20 +209,27 @@ def test_turns_lua():
     assert text.endswith('return {\n  [3] = "000020004000",\n}\n')
 
 
-@pytest.mark.parametrize(("name", "clips", "odd"), [("zinogre", 102, 20), ("brute_tigrex", 77, 19)])
-def test_ports(data, name, clips, odd):
-    """Every source clip in an entry: under the capacity in its own but the Tigrex's partial 24
-    and 25, the manifest's where it says, the rest packed."""
+@pytest.mark.parametrize(
+    ("name", "clips", "odd", "pins"),
+    [("zinogre", 102, 20, {65, 73, 83}), ("brute_tigrex", 77, 19, set())],
+)
+def test_ports(data, name, clips, odd, pins):
+    """Every source clip in an entry, a cut one in each cut: under the capacity in its own but
+    the Tigrex's partial 24 and 25 and the pinned, the manifest's where it says, the rest
+    packed."""
     m = manifest.load(PORTS / f"{name}.toml")
     d, h = build.donor(m, data), build.host(m, data)
     got = build.layout(m, d, h)
-    assert (len(d.clips), len(got.entries), got.unplaced) == (clips, clips, ())
-    assert sorted(got.entries.values()) == sorted(d.clips)
+    held = list(got.entries.values())
+    cut = len(got.cuts) - len({got.entries[e] for e in got.cuts})
+    assert (len(d.clips), len(held) - cut, got.unplaced) == (clips, clips, ())
+    assert set(held) == set(d.clips) and got.placed == pins
     assert got.partial == {24, 25} and not got.partial & set(got.entries)
     assert sum(e >= 100 for e in got.entries) == odd and max(got.entries) < got.capacity
-    assert all(got.ids[c] == c for c in d.clips if c < got.capacity and c not in got.partial)
+    own = {c for c in d.clips if c < got.capacity and c not in got.partial}
+    assert all(got.ids[c] == c for c in own - {got.entries[e] for e in pins})
     assert all(c.slot is None or got.entries[c.slot] == c.id for c in m.clips.values())
-    assert set(layout.names(m, got).values()) >= set(m.clips) and not got.placed
+    assert set(layout.names(m, got).values()) >= set(m.clips)
 
 
 @pytest.mark.parametrize("name", ["zinogre", "brute_tigrex"])
@@ -235,7 +242,8 @@ def test_naming_moves_nothing(data, name):
     for cid in sorted(base.ids):
         layout.name_clip(m, f"c{cid}", cid)
         assert layout.of(m, d.clips, h.anim).entries == base.entries, cid
-    assert len(m.clips) == len(d.clips) and not layout.of(m, d.clips, h.anim).placed
+    assert {c.id for c in m.clips.values()} == set(d.clips)
+    assert layout.of(m, d.clips, h.anim).placed == base.placed
     for cid, e in sorted(base.ids.items()):
         layout.pin(m, f"c{cid}", cid, e)
         assert layout.of(m, d.clips, h.anim).entries == base.entries, cid

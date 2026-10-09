@@ -172,10 +172,10 @@ V_FAST, RUN = 650 * SIZE, 174.0  # the faster walk's loop; the hunter's run, uni
 
 
 def zinogre_clips() -> dict[str, int]:
-    """The entries `mhfu-port inject` writes to zinogre_clips.lua: a clip below the host's 123
-    entries sits in the entry of its MHP3rd id, which the manifest gives as `source`."""
+    """The entries `mhfu-port inject` writes to zinogre_clips.lua: a pinned clip's `slot`, else
+    the entry of its MHP3rd id `source`, where a clip below the host's 123 entries sits."""
     clips = tomllib.loads(PORT.read_text(encoding="utf-8"))["clips"]
-    return {name: clips[name]["source"] for name in FOLLOWER_CLIPS}
+    return {name: clips[name].get("slot", clips[name].get("source")) for name in FOLLOWER_CLIPS}
 
 
 CLIPS = zinogre_clips()

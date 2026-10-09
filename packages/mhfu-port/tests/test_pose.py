@@ -100,7 +100,7 @@ def test_ports_play_their_donor(data, tmp_path, name):
     clips = layout.clips(out.layout, d.clips)
     r = pose.compare(verify.Port(built), d.skeleton, clips, build.record_map(d, m.build))
     assert r.ok and {round(s.lift, 1) for s in r.slots} == {m.build.ground_lift}
-    assert len(r.slots) == len(d.clips) and not r.absent and not r.partial
+    assert len(r.slots) == len(out.layout.entries) and not r.absent and not r.partial
     path = tmp_path / "port.bin"
     path.write_bytes(built)
     games = ["--data", str(data.fu.root), "--p3rd-data", str(data.p3rd.root)]

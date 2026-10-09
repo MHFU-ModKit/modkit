@@ -204,9 +204,13 @@ def test_zinogre(games, built, ports):
     host, donor = host_anim(m, games), donor_clips(m, games)
     cov = C.coverage(port, host, donor, layout.of(m, donor, host))
     n = cov.counts()
-    assert len(cov.slots) == n[C.CARRIED] == 102 and n[C.FILLER] == n[C.DROPPED] == 0
+    assert len(cov.slots) == n[C.CARRIED] == 103 and n[C.FILLER] == n[C.DROPPED] == 0
     assert all(t.trusted for t in C.track_labels(m, C.clip_table(port), sources=cov.sources()))
-    assert {t.status for t in C.track_labels(m, C.clip_table(port))} == {C.UNCHECKABLE}
+    pinned = {name for name, c in m.clips.items() if c.slot is not None}
+    got = {t.name: t.status for t in C.track_labels(m, C.clip_table(port))}
+    assert {k: v for k, v in got.items() if v != C.UNCHECKABLE} == dict.fromkeys(
+        pinned, C.STILL_VALID
+    ), "without a layout only a pin is checkable"
 
 
 def test_brute(built):

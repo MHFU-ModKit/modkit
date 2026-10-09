@@ -157,8 +157,9 @@ def test_port(data, name):
     built = build.build(manifest.load(PORTS / f"{name}.toml"), data)
     assert (built.summary.mode, built.summary.skin) == ("source_skeleton", "source")
     assert built.summary.size == len(built.pac)
-    assert built.summary.placed == built.summary.clips == len(built.layout.entries)
-    assert len(list(verify.Port(built.pac).distinct())) == built.summary.clips
+    entries = built.layout.entries
+    assert built.summary.placed == len(entries) == len(list(verify.Port(built.pac).distinct()))
+    assert built.summary.clips == len(set(entries.values()))
     assert hashlib.sha256(built.pac).hexdigest() == BUILT[name]
 
 
