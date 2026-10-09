@@ -278,7 +278,7 @@ def test_follower_walks_to_a_far_hunter(lua: Any) -> None:
 
 @pytest.mark.parametrize(("moved", "walks"), [(0.0, False), (150.0, False), (250.0, True)])
 def test_follower_follows_a_hunter_who_moved_off(lua: Any, moved: float, walks: bool) -> None:
-    """Inside FAR, past NEAR: followed once the hunter moved MOVED from where it came to rest."""
+    """Inside FAR: followed once the hunter moved MOVED from where it came to rest."""
     f = Follower(lua)
     f.tick(at=(0.0, 300.0))  # at rest
     plays, _ = f.tick(at=(0.0, 300.0 + moved), npc=(0.0, moved - 150.0))
@@ -371,6 +371,14 @@ def test_follower_thresholds(
 ) -> None:
     plays, _ = Follower(lua).still(entry=entry, at=place(dist, off))
     assert [p[1] for p in plays] == ([] if play is None else [play])
+
+
+def test_follower_never_starts_a_walk_it_would_stop(lua: Any) -> None:
+    """Far from a hunter who moved, but with its aim, SIDE toward it, near: no step-and-stop."""
+    f = Follower(lua)
+    f.tick(at=(0.0, 300.0))
+    assert f.still(at=(650.0, 0.0), yaw=0x4000)[0] == []  # the aim is 400 away
+    assert f.still(at=(700.0, 0.0), yaw=0x4000)[0] == [(0, START, 6)]  # 450
 
 
 def test_follower_does_not_flicker_between_states(lua: Any) -> None:

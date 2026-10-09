@@ -23,12 +23,13 @@ local FPS = 30                                    -- game frames a second: what 
 local function deg(d) return d * 0x10000 // 360 end
 
 local FAR, FASTER = 600, 900                      -- from the hunter: walk from idle, walk faster
-local NEAR, MOVED = 400, 200                      -- or from this far, once they moved this much
+local MOVED = 200                                 -- or once they moved this far from where it rested
 local SIDE = 250                                  -- aims this far beside the hunter, not at them
 local SWAP = 60                                   -- changes side once this far over their line
 -- the stop clip slides ~290 at half size (~300 out of the faster walk): stop this far short of
 -- the aim, half a tick's walk included, and allow for where the hunter gets to meanwhile
 local STOP, STOP_FAST, LEAD = 330, 410, 2
+local GO = STOP + 100                             -- a walk from idle covers 100 before it stops
 local TURN_MIN = deg(50)                          -- idle turns start with the hunter this far off
 local TURN_DIST = 120                             -- closer, the bearing is noise
 local WALK_RATE = deg(150) // FPS                 -- YAW units a frame
@@ -113,7 +114,7 @@ local function from_idle(st, h)
   end
   pick_side(st, h)
   local moved = math.sqrt((h.x - rested.x) ^ 2 + (h.z - rested.z) ^ 2)
-  if st.dist > FAR or (st.dist > NEAR and moved > MOVED) then
+  if to_aim(st, h, 0) > GO and (st.dist > FAR or moved > MOVED) then
     say("walk, %.0f away", st.dist)
     rested = nil
     mhfu.npc_play(slot, st.dist > FASTER and FAST or START, BLEND)
