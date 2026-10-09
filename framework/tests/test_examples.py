@@ -2,6 +2,8 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The example mods in lupa, against the declared API."""
 
+import math
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -154,3 +156,188 @@ def test_ported_zinogre_dashes_at_a_far_hunter(lua: Any, tmp_path: Path) -> None
     zin._brain(lua.table_from(state))
     zin._brain(lua.table_from({**state, "tick": 110}))  # within the gap
     assert calls(m, "em_play") == [(ENT, 0, False)]
+
+
+PORT = Path(__file__).parents[2] / "ports" / "zinogre.toml"
+FOLLOWER_CLIPS = ("idle", "start_walk_forward", "stop_walk_forward", "walk_forwards_faster")
+FOLLOWER_CLIPS += ("turn_right", "turn_left")
+HUNTER = int(a.PLAYER_ENTITY) + a.ENTITY.TRANSLATION  # x at +0, z at +8
+# 150 deg/s, a quarter turn in 50 frames, right of the hunter
+WALK_RATE, TURN_RATE, SIDE = 910, 327, 200
+
+
+def zinogre_clips() -> dict[str, int]:
+    """The entries `mhfu-port inject` writes to zinogre_clips.lua: a clip below the host's 123
+    entries sits in the entry of its MHP3rd id, which the manifest gives as `source`."""
+    clips = tomllib.loads(PORT.read_text(encoding="utf-8"))["clips"]
+    return {name: clips[name]["source"] for name in FOLLOWER_CLIPS}
+
+
+CLIPS = zinogre_clips()
+IDLE, START, STOP, FAST = (CLIPS[n] for n in FOLLOWER_CLIPS[:4])
+TURN_R, TURN_L = CLIPS["turn_right"], CLIPS["turn_left"]
+
+
+class Follower:
+    """village_follower over a stubbed village. tick() sets what npc_status and the hunter read,
+    runs one 2 Hz tick and returns the (npc_play, npc_face) calls it made."""
+
+    def __init__(self, lua: Any, *, settle: bool = True) -> None:
+        fields = ", ".join(f"{k} = {v}" for k, v in CLIPS.items())
+        lua.execute(f"package.loaded.zinogre_clips = {{ {fields} }}")
+        self.lua, self.m = lua, lua.globals().mhfu
+        run(lua, "village_follower")
+        self.added = calls(self.m, "npc_add")
+        self.status: Any = None
+        self.hunter: dict[int, float] = {}
+        self.frames = 0
+        self.m.npc_status = lambda _slot: self.status
+        self.m.read_f32 = lambda at: self.hunter.get(at, 0.0)
+        if settle:
+            self.tick(frames=3)
+
+    def tick(
+        self,
+        *,
+        entry: int = IDLE,
+        dist: float = 300.0,
+        off: float = 0.0,
+        yaw: int = 0,
+        frames: int | None = None,
+        shown: bool = True,
+        **status: Any,
+    ) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]]]:
+        """off: degrees from the NPC's facing to the hunter, positive toward its left."""
+        self.frames = self.frames + 15 if frames is None else frames
+        bearing = math.radians(yaw * 360 / 0x10000 + off)
+        self.hunter = {HUNTER: dist * math.sin(bearing), HUNTER + 8: dist * math.cos(bearing)}
+        fields = {"object": ENT, "frames": self.frames, "entry": entry, "playing": True}
+        fields |= {"yaw": yaw, "x": 0.0, "y": 0.0, "z": 0.0, "dist": dist} | status
+        self.status = self.lua.table_from(fields) if shown else None
+        self.lua.execute("mhfu.calls = {}")
+        self.lua.globals().mhfu_tick()
+        return calls(self.m, "npc_play"), calls(self.m, "npc_face")
+
+
+def test_follower_adds_a_half_size_zinogre(lua: Any) -> None:
+    ((pac, opts),) = Follower(lua, settle=False).added
+    assert pac.endswith("/mhfu_framework/inject/zinogre.bin") and opts.size == 0.5
+
+
+def test_follower_adds_once_per_boot(lua: Any) -> None:
+    f = Follower(lua, settle=False)
+    run(lua, "village_follower")  # a hot reload
+    assert len(calls(f.m, "npc_add")) == 1 and lua.eval("type(mhfu_tick)") == "function"
+
+
+@pytest.mark.parametrize("fail", ["add", "clips"])
+def test_follower_failure_does_nothing(lua: Any, fail: str) -> None:
+    m = lua.globals().mhfu
+    if fail == "add":
+        lua.execute(f"package.loaded.zinogre_clips = {{ {', '.join(f'{k} = 1' for k in CLIPS)} }}")
+        lua.execute('mhfu.npc_add = function() return nil, "extra RAM is short" end')
+    run(lua, "village_follower")
+    assert lua.eval("mhfu_tick") is None
+    (line,) = m.logs.values()
+    assert line.startswith("[village_follower] " + ("npc_add failed" if fail == "add" else "needs"))
+
+
+@pytest.mark.parametrize("gone", [{"shown": False}, {"object": 0}])
+def test_follower_waits_without_an_object(lua: Any, gone: dict[str, Any]) -> None:
+    f = Follower(lua)
+    assert f.tick(dist=600.0, **gone) == ([], [])
+
+
+def test_follower_stands_on_spawn(lua: Any) -> None:
+    f = Follower(lua, settle=False)
+    assert f.tick(frames=3, entry=0, dist=600.0) == ([(0, IDLE, 0)], [(0, "still")])
+
+
+def test_follower_walks_to_a_far_hunter(lua: Any) -> None:
+    f = Follower(lua)
+    assert f.tick(dist=500.0) == ([(0, START, 6)], [(0, "hunter", SIDE, 0, WALK_RATE)])
+    assert list(f.m.logs.values())[-1] == "[village_follower] walk, 500 away"
+    assert f.tick(entry=START, dist=480.0) == ([], [])  # it walks on by itself
+
+
+@pytest.mark.parametrize(("entry", "dist"), [(IDLE, 1200.0), (START, 950.0)])
+def test_follower_walks_faster_when_very_far(lua: Any, entry: int, dist: float) -> None:
+    plays, _ = Follower(lua).tick(entry=entry, dist=dist)
+    assert plays == [(0, FAST, 6)]
+
+
+def test_follower_never_slows_a_fast_walk(lua: Any) -> None:
+    f = Follower(lua)
+    assert f.tick(entry=FAST, dist=600.0) == ([], [])
+
+
+@pytest.mark.parametrize("entry", [START, FAST])
+def test_follower_stops_when_close_then_idles(lua: Any, entry: int) -> None:
+    f = Follower(lua)
+    assert f.tick(entry=entry, dist=250.0) == ([(0, STOP, 6, IDLE)], [(0, "still")])
+    assert f.tick(entry=STOP, dist=230.0) == ([], [])  # playing; its `after` is the idle
+    assert f.tick(entry=IDLE, dist=210.0) == ([], [(0, "still")])
+
+
+def test_follower_idles_after_a_clip_that_ended_alone(lua: Any) -> None:
+    assert Follower(lua).tick(entry=STOP, playing=False)[0] == [(0, IDLE, 6)]
+    assert Follower(lua).tick(entry=77)[0] == [(0, IDLE, 6)]  # a clip nobody asked for
+
+
+@pytest.mark.parametrize("dist", [300.0, 700.0])
+@pytest.mark.parametrize(("off", "clip"), [(90.0, TURN_L), (-90.0, TURN_R), (170.0, TURN_L)])
+def test_follower_turns_to_a_hunter_behind(lua: Any, dist: float, off: float, clip: int) -> None:
+    """Positive is the way YAW grows, toward the Zinogre's left, where turn_left turns."""
+    f = Follower(lua)
+    assert f.tick(dist=dist, off=off) == ([(0, clip, 6, IDLE)], [(0, "hunter", 0, 0, TURN_RATE)])
+    assert f.tick(entry=clip, dist=dist, off=0.0) == ([], [])  # the clip plays
+    walk = [(0, START, 6)] if dist > 380 else []  # its `after` took over, facing the hunter
+    assert f.tick(entry=IDLE, dist=dist, off=0.0)[0] == walk
+
+
+def test_follower_measures_the_turn_across_the_yaw_wrap(lua: Any) -> None:
+    f = Follower(lua)
+    assert f.tick(yaw=0xF000, off=45.0)[0] == []  # 45 degrees off
+    assert f.tick(yaw=0xF000, off=-60.0)[0] == [(0, TURN_R, 6, IDLE)]
+    assert f.tick(yaw=0xF000, off=60.0)[0] == [(0, TURN_L, 6, IDLE)]
+
+
+@pytest.mark.parametrize(
+    ("entry", "dist", "off", "play"),
+    [
+        (IDLE, 379.0, 0.0, None),
+        (IDLE, 381.0, 0.0, START),
+        (IDLE, 300.0, 49.0, None),
+        (IDLE, 300.0, -51.0, TURN_R),
+        (IDLE, 100.0, 170.0, None),  # on top of the hunter their bearing is noise
+        (IDLE, 500.0, 60.0, TURN_L),  # turn first, then walk
+        (START, 261.0, 0.0, None),
+        (START, 259.0, 0.0, STOP),
+        (START, 899.0, 0.0, None),
+        (START, 901.0, 0.0, FAST),
+    ],
+)
+def test_follower_thresholds(
+    lua: Any, entry: int, dist: float, off: float, play: int | None
+) -> None:
+    plays, _ = Follower(lua).tick(entry=entry, dist=dist, off=off)
+    assert [p[1] for p in plays] == ([] if play is None else [play])
+
+
+def test_follower_does_not_flicker_between_states(lua: Any) -> None:
+    f = Follower(lua)
+    for dist in (370.0, 300.0, 380.0, 265.0, 340.0):  # idle holds anywhere in the band
+        assert f.tick(entry=IDLE, dist=dist)[0] == []
+    for dist in (370.0, 300.0, 265.0, 340.0, 380.0):  # and so does a walk
+        assert f.tick(entry=START, dist=dist)[0] == []
+
+
+def test_follower_starts_over_on_a_respawn(lua: Any) -> None:
+    f = Follower(lua)
+    assert f.tick(dist=500.0)[0] == [(0, START, 6)]
+    assert f.tick(entry=START, dist=450.0)[0] == []
+    assert f.tick(object=0) == ([], [])  # the village unloaded
+    assert f.tick(frames=3, entry=START, dist=500.0) == ([(0, IDLE, 0)], [(0, "still")])
+    assert f.tick(dist=500.0)[0] == [(0, START, 6)]  # now it follows again
+    # a load between two ticks shows only as the frame count starting over
+    assert f.tick(entry=START, frames=2, dist=500.0)[0] == [(0, IDLE, 0)]
