@@ -314,7 +314,8 @@ def test_schema():
     with pytest.raises(ManifestError, match="behaviour: is for schema 2"):
         M.loads(_v1(FULL[FULL.index("[behaviour") :]))
     with pytest.raises(ManifestError, match="unknown key.*rule"):
-        M.loads(_with(RULES))
+        M.loads("schema = 2\n" + BODY + RULES)
+    assert M.loads(BODY + RULES) == M.loads(V1)
 
 
 def test_bad_toml_names_path():

@@ -599,7 +599,7 @@ def loads(text: str, path: str | Path | None = None) -> Manifest:
     """Parse and validate a manifest; `path` only labels errors and `Manifest.path`."""
     try:
         raw = tomllib.loads(text)
-        schema = raw.pop("schema", SCHEMA)
+        schema = raw.pop("schema", LEGACY_SCHEMA if "rule" in raw else SCHEMA)
         old = schema == LEGACY_SCHEMA
         _need(old or schema == SCHEMA, "schema", f"{schema!r} is not {LEGACY_SCHEMA} or {SCHEMA}")
         legacy = raw.pop("rule", []) if old else []
