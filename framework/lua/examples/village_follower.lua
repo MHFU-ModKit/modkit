@@ -67,10 +67,10 @@ local TURN_R, TURN_L = C.turn_right, C.turn_left
 
 local slot = _G.village_follower_slot
 if slot == nil then
-  local err
-  slot, err = mhfu.npc_add(PAC, { size = SIZE, right = SIDE })  -- spawns at its aim
-  if not slot then mhfu.log("[village_follower] npc_add failed: " .. tostring(err)) end
-  _G.village_follower_slot = slot or false
+  local added, err = mhfu.npc_add(PAC, { size = SIZE, right = SIDE })  -- spawns at its aim
+  if not added then mhfu.log("[village_follower] npc_add failed: " .. tostring(err)) end
+  slot = added or false
+  _G.village_follower_slot = slot
 end
 if not slot then return end
 mhfu.npc_speed(slot, 1)                           -- C keeps it over a hot reload
