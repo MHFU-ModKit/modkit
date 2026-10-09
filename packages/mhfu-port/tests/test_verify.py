@@ -43,7 +43,7 @@ def skeleton(parents=PARENTS, local=LOCAL, streams=None):
 
 def model(joints=JOINT):
     part = Part(VERTICES, [], [(0.0, 0.0)] * 4, [], TRIANGLES, [[(j, 1.0)] for j in joints], 0)
-    return mesh.build([Skinned(part, part.influences)], (256.0, 256.0, 256.0))
+    return mesh.build([Skinned(part, part.influences)], (256.0, 256.0, 256.0), tip=None)
 
 
 def lifted(joint, units):

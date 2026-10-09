@@ -130,7 +130,7 @@ def test_overflow():
 def test_build():
     parts = mesh.parts(_donor())
     joint_of = {4: 1, 7: 2, 9: 3}
-    built = mesh.build(skin.source(parts, joint_of), SCALE)
+    built = mesh.build(skin.source(parts, joint_of), SCALE, tip=None)
     back = fu.Pmo.from_bytes(built.to_bytes())
     assert back == built and back.clip == max(SCALE) and back.scale == SCALE
     assert [m.texture for m in back.materials] == [2, 6]
@@ -181,6 +181,10 @@ TIP = Tip(((4, 1), (5, 1), (6, 1)), (0.0, 0.0, -10.0))
 def test_tip_parts():
     rows = [s.influences for s in _tail()]
     assert mesh.tip_parts(rows, TIP.joints) == [1, 2, 3]
+    assert mesh.split(rows, TIP) == ([0], [1, 2, 3]) and mesh.split(rows, None) == (
+        [0, 1, 2, 3],
+        [],
+    )
     rows[1] = [[(5, 0.5), (1, 0.5)]] * 8
     with pytest.raises(ValueError, match="part 1 blends"):
         mesh.tip_parts(rows, TIP.joints)
@@ -194,34 +198,37 @@ def test_cut_parts():
 
 
 def test_build_tip():
-    built = fu.Pmo.from_bytes(mesh.build(_tail(), SCALE, TIP).to_bytes())
+    built = fu.Pmo.from_bytes(mesh.build(_tail(), SCALE, tip=TIP).to_bytes())
     body, tip = built.meshes
     assert len(body.groups) == 1 and body.materials == [0]
     assert tip.materials == [1, 2, 3] and [g.material for g in tip.groups] == [2, 1, 0]
     assert [m.texture for m in built.materials] == [0, 1, 3, 3]
-    alone = mesh.build(_tail()[:2], SCALE, TIP)
+    alone = mesh.build(_tail()[:2], SCALE, tip=TIP)
     assert [alone.materials[i].texture for i in alone.meshes[1].materials] == [3, 3]
-    assert len(mesh.build(_tail(), SCALE).meshes) == 1
+    assert len(mesh.build(_tail(), SCALE, tip=None).meshes) == 1
     parts = _tail()
     parts[2].part.texture = 4
     parts[3] = _shape([(x, y, 10.0) for x, y in RING] + [(0.0, 0.0, 10.5)], FAN, 6, texture=2)
     with pytest.raises(ValueError, match="cut face spans"):
-        mesh.build(parts, SCALE, TIP)
+        mesh.build(parts, SCALE, tip=TIP)
 
 
 def test_group():
     part = _part([[(5, 0.5), (2, 0.5)]] * 4, texture=3)
     skinned = Skinned(part, part.influences)
     group = mesh.group(skinned, SCALE, 7)
-    assert group == replace(mesh.build([skinned], SCALE).groups()[0], material=7)
+    assert group == replace(mesh.build([skinned], SCALE, tip=None).groups()[0], material=7)
     assert group.bones == [BoneSlot(0, 5), BoneSlot(1, 2)]
 
 
 def test_palette_limit():
     part = _part([[(j, 1.0)] for j in range(9)] + [[(0, 1.0)]])
     with pytest.raises(ValueError, match="more than"):
-        mesh.build([Skinned(part, part.influences)], SCALE)
-    assert len(mesh.build(skin.source([part], {j: j for j in range(9)}), SCALE).groups()) == 1
+        mesh.build([Skinned(part, part.influences)], SCALE, tip=None)
+    assert (
+        len(mesh.build(skin.source([part], {j: j for j in range(9)}), SCALE, tip=None).groups())
+        == 1
+    )
 
 
 DONORS = {  # model, geometry: groups, vertices, triangles, sha256 of our PMO on an identity map
@@ -239,7 +246,7 @@ def test_game(data: Data, name: str):
     assert sum(len(p.triangles) for p in parts) == triangles
     assert not mesh.overflow(parts, donor.scale)
     bones = {b for p in parts for row in p.influences for b, _ in row}
-    built = mesh.build(skin.source(parts, {b: b for b in bones}), donor.scale).to_bytes()
+    built = mesh.build(skin.source(parts, {b: b for b in bones}), donor.scale, tip=None).to_bytes()
     back = fu.Pmo.from_bytes(built)
     assert [back.positions(g) for g in range(groups)] == [p.positions for p in parts]
     assert hashlib.sha256(built).hexdigest()[:16] == digest

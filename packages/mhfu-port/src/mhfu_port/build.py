@@ -282,7 +282,7 @@ def build(m: Manifest, data: Data) -> Built:
     bind = binding(m.build, d, h, animated(m.build, record_of, len(d.skeleton.bones)))
     kept = parts(d, m.build)
     skinned, skin_used = skin(kept, m.build, bind, h)
-    model = mesh.build(skinned, d.model.scale, bind.rig.tip)
+    model = mesh.build(skinned, d.model.scale, tip=bind.rig.tip)
     placed = layout(m, d, h)
     anim = animation(d, h, bind, record_of, placed, m.build.ground_lift)
     turned = travel.turns(anim, bind.rig.skeleton, authored(m, placed))

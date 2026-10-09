@@ -485,15 +485,12 @@ def _against(port: Port, donor: Skeleton, parts: Sequence[Part]) -> list[Check]:
 
 
 def _built_order(port: Port, per: Sequence[list[Weights]]) -> list[int]:
-    """The parts in the port's group order: the body's, then the tip's (`mesh.build`)."""
-    tip = _tip(port)[0]
-    if tip is None:
-        return list(range(len(per)))
+    """The parts in the port's group order (`mesh.split`); part order where that fails."""
     try:
-        last = mesh.tip_parts([[list(w.items()) for w in ws] for ws in per], tip.joints)
+        kept, ends = mesh.split([[list(w.items()) for w in ws] for ws in per], _tip(port)[0])
     except ValueError:
         return list(range(len(per)))
-    return [i for i in range(len(per)) if i not in last] + last
+    return kept + ends
 
 
 def _loc_joints(port: Port) -> set[int]:

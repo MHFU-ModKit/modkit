@@ -217,21 +217,30 @@ def _facing(
     return float(np.abs(n @ axis).sum() / area) if area else 0.0
 
 
-def build(skinned: Sequence[Skinned], scale: Vec3, chain: Tip | None = None) -> pmo.Pmo:
+def split(
+    influences: Sequence[Sequence[Sequence[Influence]]], tip: Tip | None
+) -> tuple[list[int], list[int]]:
+    """The parts, given as their vertices' influences, `build` puts in mesh 0 and in mesh 1:
+    the body's and the `tip`'s (`tip_parts`), each in part order."""
+    ends = [] if tip is None else tip_parts(influences, tip.joints)
+    return [i for i in range(len(influences)) if i not in ends], ends
+
+
+def build(skinned: Sequence[Skinned], scale: Vec3, *, tip: Tip | None) -> pmo.Pmo:
     """The MHFU PMO: mesh 0 holds the body; mesh 1, where the host's dropped tail draws from,
-    the parts riding the `chain` (`tip_parts`): its material 0 the tip's, 1 the cut face's
-    (`cut_parts`; em75 hides it until the cut; a copy of 0 without one), then the tip's other
-    textures. A group per part, one material per texture of a mesh in texture order, and
-    positions quantised against `scale` (the donor's `Pmo.scale`). Vertex colours are not
-    written."""
-    tip = [] if chain is None else tip_parts([s.influences for s in skinned], chain.joints)
-    cut = cut_parts(skinned, tip, chain.offset) if chain is not None else []
-    body = [s for i, s in enumerate(skinned) if i not in tip]
+    the parts riding the `tip`'s chain (`split`; None for a rig without one): its material 0
+    the tip's, 1 the cut face's (`cut_parts`; em75 hides it until the cut; a copy of 0 without
+    one), then the tip's other textures. A group per part, one material per texture of a mesh
+    in texture order, and positions quantised against `scale` (the donor's `Pmo.scale`).
+    Vertex colours are not written."""
+    kept, ends = split([s.influences for s in skinned], tip)
+    cut = [] if tip is None else cut_parts(skinned, ends, tip.offset)
+    body = [skinned[i] for i in kept]
     textures = sorted({s.part.texture for s in body})
     meshes = [[(s, textures.index(s.part.texture)) for s in body]]
     slots = [textures]
-    if tip:
-        plain = sorted({skinned[i].part.texture for i in tip if i not in cut})
+    if ends:
+        plain = sorted({skinned[i].part.texture for i in ends if i not in cut})
         face = sorted({skinned[i].part.texture for i in cut})
         if len(face) > 1:
             raise ValueError(f"the cut face spans textures {face}; it takes one material")
@@ -239,17 +248,14 @@ def build(skinned: Sequence[Skinned], scale: Vec3, chain: Tip | None = None) -> 
         slots.append([first, (face or plain)[0], *plain[1:]])
         rest = [first, -1, *plain[1:]]
         meshes.append(
-            [
-                (skinned[i], 1 if i in cut else rest.index(skinned[i].part.texture))
-                for i in sorted(tip)
-            ]
+            [(skinned[i], 1 if i in cut else rest.index(skinned[i].part.texture)) for i in ends]
         )
     out: list[pmo.Mesh] = []
     materials: list[pmo.Material] = []
-    for parts, textures in zip(meshes, slots, strict=True):
+    for laid, textures in zip(meshes, slots, strict=True):
         first = len(materials)
         materials += [pmo.Material(color=COLOR, shadow=SHADOW, texture=t) for t in textures]
-        groups = [group(s, scale, k) for s, k in parts]
+        groups = [group(s, scale, k) for s, k in laid]
         out.append(
             pmo.Mesh(groups, list(range(first, len(materials))), lighting=LIGHTING, blend=BLEND)
         )

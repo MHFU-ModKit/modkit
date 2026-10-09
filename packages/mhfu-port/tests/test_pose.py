@@ -44,7 +44,7 @@ def ported(*clips):
     positions = [(0.0, 100.0, 0.0), (0.0, 0.0, 0.0), (0.0, 50.0, 0.0), (5.0, -50.0, 0.0)]
     part = Part(positions, [], [(0.0, 0.0)] * 4, [], [(0, 1, 2), (1, 2, 3)], [], 0)
     skinned = Skinned(part, [[(2, 1.0)], [(3, 1.0)], [(3, 1.0)], [(4, 1.0)]])
-    model = mesh.build([skinned], (256.0, 256.0, 256.0))
+    model = mesh.build([skinned], (256.0, 256.0, 256.0), tip=None)
     return verify.Port(Pac([PORT.to_bytes(), model.to_bytes(), b"", anim.to_bytes()]).to_bytes())
 
 

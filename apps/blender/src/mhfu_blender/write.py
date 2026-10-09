@@ -5,7 +5,8 @@
 What Blender holds comes in as plain data: the bind joints, each group's geometry and each slot's
 clip. An MHFU model keeps every byte no edit reaches: a group whose vertex count and triangles are
 unchanged is written in place, at the PMO's own size; any other is rebuilt and the PMO laid out
-again. An MHP3rd model comes out as an MHFU PAC with geometry, skeleton and textures, no clips.
+again. An MHP3rd model comes out as an MHFU PAC with geometry, skeleton and textures, no clips;
+its tail tip, when its skeleton has one, in mesh record 1 (`mhfu_port.mesh.build`).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from typing import NamedTuple
 
 import numpy as np
 from mhfu import inject
-from mhfu_port import constraints, fk, mesh, motion
+from mhfu_port import constraints, fk, mesh, motion, rig
 from mhfu_port.mesh import Part, Skinned
 from mhfu_port.model import ANIMATION, MHFU, MODEL, SKELETON, MeshGroup, Model
 from mhp_formats import fu, pmo
@@ -328,13 +329,13 @@ def _donor(model: Model, skeleton: Skeleton, groups: Mapping[int, Geometry]) -> 
             f"{len(over)} positions outside the model's {_box(scale)} box, first group "
             f"{kept[o.group]} vertex {o.vertex}"
         )
+    bones = [replace(b, name=None) for b in skeleton.bones]
+    fu_skeleton = Skeleton(bones, list(skeleton.params), magic=FU_MAGIC)
     try:
-        out = mesh.build(skinned, scale)
+        out = mesh.build(skinned, scale, tip=rig.tip_of(fu_skeleton))
     except ValueError as e:
         raise ExportError(str(e)) from None
     notes[:0] = ["no clips: an in-game monster from an MHP3rd one is a port, built from a manifest"]
-    bones = [replace(b, name=None) for b in skeleton.bones]
-    fu_skeleton = Skeleton(bones, list(skeleton.params), magic=FU_MAGIC)
     results = _judge(constraints.validate(out, fu_skeleton), [])
     tmh = next((e for e in entries if Tmh.sniff(e)), b"")
     pac = [fu_skeleton.to_bytes(), out.to_bytes(), tmh, EMPTY_ANIM.to_bytes()]
