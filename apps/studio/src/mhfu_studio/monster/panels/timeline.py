@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The Timeline: the transport at the engine's rate, the base monster's action's frames on the
-clip, and an own move's attack windows under it.
+clip, and an own move's attack windows under it; above them, the steps of its sequence.
 
 The RATE is the action's (one monster plays some actions at 2.0, others at 2.4); the clip owns
 only its SPAN. A gate past the clip's last frame never runs: the strip runs on past the end,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import QSizePolicy, QStackedWidget, QToolTip, QVBoxLayout
 from mhfu_studio.monster.align import EFFECT, GATE, IMPACT, OURS, WINDOW, Marker
 from mhfu_studio.monster.authoring import EDGE_PX
 from mhfu_studio.monster.panels.common import ATTACK, MARKERS
+from mhfu_studio.monster.panels.sequence import SequenceBar
 from mhfu_studio.monster.panels.widgets import NoScene
 from mhfu_studio.monster.render.playback import GAME_HZ, OBSERVED_SPEEDS
 from mhfu_studio.shell.overlay import Ink
@@ -409,6 +410,8 @@ class TimelinePanel(kit.Panel):
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
+        self.steps = SequenceBar(ws, studio)
+        lay.addWidget(self.steps)
         lay.addWidget(
             kit.row(
                 self.rewind, self.back, self.play, self.fwd, self.frame, self.loop,
@@ -487,6 +490,7 @@ class TimelinePanel(kit.Panel):
         kit.put(self.in_place, vp.strip_root)
         kit.put(self.speed, pb.speed)
         self._show_phase()
+        self._sequence()
         self._attacks()
         self.hint.setVisible(not ws.markers and ws.own_move_on_screen() is None)
         self.timing.setText(
@@ -506,6 +510,13 @@ class TimelinePanel(kit.Panel):
             self.timer.start()
         else:
             self.timer.stop()
+
+    def _sequence(self) -> None:
+        """The picked move's steps above the transport, when it has company."""
+        ws = self.ws
+        steps = ws.sequence_of()
+        self.steps.setVisible(len(steps) > 1)
+        self.steps.show_steps([ws.step_of(n) for n in steps] if len(steps) > 1 else [], ws.move)
 
     def _attacks(self) -> None:
         """The lanes and the picked attack's row, while an own move's clip is on screen."""
@@ -545,7 +556,10 @@ class TimelinePanel(kit.Panel):
             self._show_live()
 
     def _tick(self) -> None:
-        """The playhead follows playback; a stop by itself (the end, no loop) re-syncs."""
+        """The playhead follows playback; a stop by itself (the end, no loop) re-syncs, and so
+        does a played sequence going on to its next step."""
+        if self.ws.take_stepped():
+            self.studio.changed()
         vp = self.ws.vp
         if vp is None or vp.clip is None or not vp.playback.playing:
             self.timer.stop()

@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 
 import pytest
-from mhfu_port import continuity, manifest
+from mhfu_port import continuity, fk, manifest
 from mhfu_port.data import Data
 from mhp_formats.anim import Channel, Clip, Keyframe, Track, quantize
 from mhp_formats.skeleton import Bone, Skeleton
@@ -75,6 +75,18 @@ def test_the_end_poses_are_the_clips_ends():
     after_swing, before_swing = dict(continuity.fits_after(e, 1)), dict(continuity.fits_after(e, 2))
     assert after_swing[3] == pytest.approx(0.0, abs=0.1), "the swing ends where 3 begins"
     assert before_swing[1] == pytest.approx(0.0), "and begins where the rest ends"
+
+
+def test_curves_stand_in_for_clips_and_an_unknown_clip_is_refused():
+    clips = moveset(c1=(0, 0), c2=(0, 40))
+    rig = fk.Rig.from_skeleton(skeleton())
+    given = continuity.ends({i: fk.Curves(c, rig) for i, c in clips.items()}, skeleton())
+    assert continuity.fits_after(given, 1) == continuity.fits_after(
+        continuity.ends(clips, skeleton()), 1
+    )
+    with pytest.raises(KeyError):
+        continuity.fits_after(given, 7)
+    assert continuity.ends({}, skeleton()).ids == ()
 
 
 def test_words():

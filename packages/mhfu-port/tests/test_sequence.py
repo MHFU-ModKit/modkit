@@ -55,6 +55,7 @@ def test_a_join_belongs_to_the_first_head():
     assert sequence.heads(m) == ["p", "q"]
     assert sequence.head_of(m, "join") == "p" and sequence.head_of(m, "q") == "q"
     assert sequence.chain(m, "q") == ["q", "join", "end"]
+    assert sequence.groups(m) == {"p": ["p", "join", "end"], "q": ["q"]}
 
 
 def test_step_name():

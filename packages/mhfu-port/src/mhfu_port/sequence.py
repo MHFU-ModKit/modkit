@@ -41,10 +41,20 @@ def heads(m: Manifest) -> list[str]:
     return sorted(out, key=order.index)
 
 
+def groups(m: Manifest) -> dict[str, list[str]]:
+    """Each head and the moves of its chain that no earlier head's chain has."""
+    out: dict[str, list[str]] = {}
+    seen: set[str] = set()
+    for h in heads(m):
+        out[h] = [n for n in chain(m, h) if n not in seen]
+        seen.update(out[h])
+    return out
+
+
 def head_of(m: Manifest, name: str) -> str:
     """The head of the sequence `name` belongs to."""
-    for h in heads(m):
-        if name in chain(m, h):
+    for h, steps in groups(m).items():
+        if name in steps:
             return h
     raise ManifestError(f"no move {name!r}")
 

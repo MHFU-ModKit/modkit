@@ -2,12 +2,14 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The Moves dock: every move of the port, on a base monster's action or its own; an own move
 made from the clip on screen, renamed, deleted, its fields and steer edited, and played in the
-running game. Its attack windows are drawn on the Timeline. Under them, the rules."""
+running game. Its attack windows are drawn on the Timeline. The moves that follow one another are
+a sequence, grouped in the table and edited under the picked move. Under them, the rules."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from mhfu_port import sequence
 from mhfu_port.manifest import MOVE_ATTACKS, TURNS, Move
 from PySide6.QtWidgets import QAbstractSpinBox, QSpinBox, QVBoxLayout, QWidget
 
@@ -15,6 +17,7 @@ from mhfu_studio.monster import rules
 from mhfu_studio.monster import validate as V
 from mhfu_studio.monster.panels.common import kind
 from mhfu_studio.monster.panels.rules import RulesSection
+from mhfu_studio.monster.panels.sequence import ClipPicker, StepChips
 from mhfu_studio.monster.panels.widgets import NoScene
 from mhfu_studio.shell.findings import Finding
 from mhfu_studio.shell.text import plain
@@ -38,6 +41,13 @@ GAME_NOTE = (
 )
 
 
+def row_name(name: str, place: int, count: int) -> str:
+    """A move's cell in the table: a step under its head, or a head with its step count."""
+    if place:
+        return f"   \u2514 {name}"
+    return name if count == 1 else f"{name} \u00b7 {count} steps"
+
+
 def special(box: QSpinBox, text: str) -> QSpinBox:
     """`box` shows `text` at its lowest value, which means "none"."""
     box.setSpecialValueText(text)
@@ -55,7 +65,8 @@ class MovesPanel(kit.Panel):
         self.table = kit.Table(
             ["Move", "Plays on", "Clip", "Attacks"],
             tip="Your moves: on one of the base monster's actions, or your own, which the move"
-            " player plays whole. Click one to watch it.",
+            " player plays whole. The moves that follow one another are grouped under the first."
+            " Click one to watch it.",
         )
         self.table.picked.connect(
             lambda n: act("pick move", lambda: ws.select_move(str(n)))() if n else None
@@ -76,6 +87,7 @@ class MovesPanel(kit.Panel):
 
         self.editor = kit.Section("This move", tip="The picked own move: what the game plays")
         self.title = kit.label(role="title", wrap=False)
+        self.seq = self._sequence_section()
         self.clip = kit.label(role="muted")
         self.play_clip = kit.button(
             "Play its clip",
@@ -230,6 +242,7 @@ class MovesPanel(kit.Panel):
             body.addWidget(w)
         top: tuple[QWidget, ...] = (
             self.title,
+            self.seq,
             kit.row(self.clip, self.play_clip, self.in_game, self.force, stretch=True),
             self.game_hint,
             self.pair_note,
@@ -265,7 +278,110 @@ class MovesPanel(kit.Panel):
         for box in (self.length, self.main, self.sub, self.rate, self.angle, self.frames, self.dir):
             box.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
 
+    def _sequence_section(self) -> kit.Section:
+        """The picked move's sequence: a chip per step, the edits, the clip picker."""
+        ws, act = self.ws, self.studio.act
+        sec = kit.Section(
+            "Sequence", tip="The moves that follow one another, each handing to the next by Then"
+        )
+        #: how the picker was opened, and for which move
+        self._picking: tuple[str, str] | None = None
+        self.chips = StepChips()
+        self.chips.picked.connect(lambda n: act("pick step", lambda: ws.select_move(n))())
+        self.add_step = kit.button(
+            "Add step after",
+            tip="Lists the clips best fit first after this move's clip, and puts the one you click"
+            " in a new own move that follows this one",
+            on=lambda: self._open("add"),
+            icon="ph.plus",
+        )
+        self.change_clip = kit.button(
+            "Change clip",
+            tip="Lists the clips best fit first after the step before, and plays the one you"
+            " click in this step",
+            on=lambda: self._open("change"),
+            icon="ph.swap",
+        )
+        self.remove_step = kit.button(
+            "Remove step",
+            tip="Deletes this step; the move before it hands to the move after it. Refused while"
+            " a rule or an effect names it.",
+            on=act("remove step", ws.remove_step),
+            icon="ph.trash",
+        )
+        self.earlier = kit.button(
+            "Earlier",
+            tip="Swaps this step with the one before it",
+            on=act("earlier", lambda: ws.move_step(-1)),
+            icon="ph.arrow-left",
+        )
+        self.later = kit.button(
+            "Later",
+            tip="Swaps this step with the one after it",
+            on=act("later", lambda: ws.move_step(1)),
+            icon="ph.arrow-right",
+        )
+        self.split = kit.button(
+            "Split here",
+            tip="Ends the sequence before this step, which starts one of its own",
+            on=act("split sequence", ws.split_step),
+            icon="ph.link-break",
+        )
+        self.play_seq = kit.button(
+            "Play sequence",
+            tip="Plays the sequence from its first step, each clip after the other at the game's"
+            " speed, each turning as its move steers",
+            on=act("play sequence", ws.play_sequence),
+            icon="ph.play",
+        )
+        self.picker = ClipPicker(ws, self.studio)
+        self.picker.picked.connect(self._picked)
+        self.picker.cancelled.connect(self._close_picker)
+        self.picker.hide()
+        for w in (
+            self.chips,
+            kit.row(self.add_step, self.change_clip, self.remove_step, stretch=True),
+            kit.row(self.earlier, self.later, self.split, self.play_seq, stretch=True),
+            self.picker,
+        ):
+            sec.body.addWidget(w)
+        return sec
+
     # acting
+
+    def _open(self, mode: str) -> None:
+        if self.ws.move is not None:
+            self._picking = mode, self.ws.move
+            self._show_picker()
+
+    def _close_picker(self) -> None:
+        self._picking = None
+        self.picker.hide()
+
+    def _picked(self, clip: str) -> None:
+        mode = self._picking[0] if self._picking else ""
+        self._close_picker()
+        if mode == "add":
+            self.studio.act("add step", lambda: self.ws.add_step(clip))()
+        elif mode == "change":
+            self.studio.act("change clip", lambda: self.ws.set_step_clip(clip))()
+
+    def _show_picker(self) -> None:
+        """The picker for the move it was opened for, ranked after the clip it follows."""
+        ws, m = self.ws, self.ws.manifest
+        if self._picking is None or m is None or ws.move != self._picking[1]:
+            self._close_picker()
+            return
+        mode, name = self._picking
+        steps = ws.sequence_of()
+        i = steps.index(name)
+        if mode == "add":
+            after, title = m.moves[name].clip, f"A step after {name}"
+        else:
+            after = m.moves[steps[i - 1]].clip if i else None
+            title = f"The clip of {name}"
+        self.picker.show_after(after, title)
+        self.picker.show()
 
     def _rename(self) -> None:
         new = self.name.text().strip()
@@ -294,10 +410,13 @@ class MovesPanel(kit.Panel):
         own = sum(mv.own for mv in m.moves.values())
         self.count.setText(f"{len(m.moves)} moves, {own} of them own")
         rows, data, tips = [], [], []
-        for n, mv in m.moves.items():
-            rows.append([n, kind(mv), mv.clip or f"anim {mv.anim}", self._attacks(mv)])
-            data.append(n)
-            tips.append(mv.label or ("" if mv.pair is None else "edit it in Actions"))
+        for steps in sequence.groups(m).values():
+            for k, n in enumerate(steps):
+                mv = m.moves[n]
+                shown = row_name(n, k, len(steps))
+                rows.append([shown, kind(mv), mv.clip or f"anim {mv.anim}", self._attacks(mv)])
+                data.append(n)
+                tips.append(mv.label or ("" if mv.pair is None else "edit it in Actions"))
         self.table.set_rows(rows, data, tips=tips)
         self.table.fit(ROWS)
         self.table.select_data(ws.move)
@@ -306,6 +425,8 @@ class MovesPanel(kit.Panel):
         picked = None if ws.move is None else m.moves.get(ws.move)
         self.delete.setEnabled(picked is not None)
         self.editor.setVisible(picked is not None)
+        if picked is None:
+            self._close_picker()
         if picked is not None and ws.move is not None:
             self._sync_move(ws.move, picked)
         self.rules.sync(self._checks())
@@ -345,7 +466,21 @@ class MovesPanel(kit.Panel):
             kit.put(self.name, name)
         if own:
             self._sync_own(name, mv)
+        self._sync_sequence(name, own)
         self._findings(name)
+
+    def _sync_sequence(self, name: str, own: bool) -> None:
+        ws = self.ws
+        steps = ws.sequence_of(name)
+        i = steps.index(name)
+        self.chips.show_steps([ws.step_of(n) for n in steps], name)
+        for w in (self.add_step, self.change_clip, self.remove_step):
+            w.setEnabled(own)
+        self.earlier.setEnabled(i > 0)
+        self.later.setEnabled(i < len(steps) - 1)
+        self.split.setEnabled(i > 0)
+        if self._picking is not None:
+            self._show_picker()
 
     def _sync_own(self, name: str, mv: Move) -> None:
         ws, m = self.ws, self.ws.manifest

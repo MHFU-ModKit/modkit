@@ -26,8 +26,9 @@ from .manifest import Manifest
 from .motion import SOURCE_BANK
 
 GOOD, FAIR = 10.0, 20.0
-"""Degrees. A fifth of a donor's clip pairs lie within GOOD (clips that start and end on the same
-stance); the Zinogre's backflip parts meet at 15, FAIR; beyond it the poses do not meet."""
+"""Degrees. An eighth to a fifth of a donor's clip pairs lie within GOOD (clips that start and
+end on the same stance); the Zinogre's backflip parts meet at 14 to 15; past FAIR the poses do
+not meet."""
 
 Scores = list[tuple[int, float]]
 
@@ -102,10 +103,11 @@ def donor_ends(m: Manifest, data: Data) -> Ends:
     return ends(d.clips, d.skeleton, build.record_map(d, m.build))
 
 
-def fits_after(e: Ends, a: int, *, top: int | None = None) -> Scores:
-    """Every clip but `a` as `(id, degrees)`, best first: how far its first pose is from the
-    last of `a`. Equal scores go nearest the id of `a` first. `top` keeps that many."""
-    rows = [(i, float(s)) for i, s in zip(e.ids, e.scores(a), strict=True) if i != a]
+def fits_after(e: Ends, a: int, *, top: int | None = None, itself: bool = False) -> Scores:
+    """Every clip but `a` (unless `itself`) as `(id, degrees)`, best first: how far its first
+    pose is from the last of `a`. Equal scores go nearest the id of `a` first. `top` keeps that
+    many."""
+    rows = [(i, float(s)) for i, s in zip(e.ids, e.scores(a), strict=True) if itself or i != a]
     rows.sort(key=lambda r: (round(r[1], 3), abs(r[0] - a), r[0]))
     return rows if top is None else rows[:top]
 
