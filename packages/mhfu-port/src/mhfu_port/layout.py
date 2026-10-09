@@ -204,19 +204,22 @@ def where(c: manifest.Clip, ids: Mapping[int, int]) -> int | None:
     return c.slot if c.start is not None else ids.get(c.id, c.slot)
 
 
+def played(placed: Layout, donor: Mapping[int, Clip], e: int) -> Clip | None:
+    """The donor clip entry `e` plays: `donor`'s by id, cut where `placed` cuts it; None where
+    the donor lacks it. Raises `LayoutError` for a cut past the clip."""
+    cid = placed.entries.get(e)
+    whole = None if cid is None else donor.get(cid)
+    if whole is None or e not in placed.cuts:
+        return whole
+    try:
+        return cut(whole, *placed.cuts[e])
+    except ValueError as err:
+        raise LayoutError(f"entry {e}, clip {cid}: {err}") from None
+
+
 def clips(placed: Layout, donor: Mapping[int, Clip]) -> dict[int, Clip]:
-    """Entry -> the donor clip it plays: `donor`'s by id, cut where `placed` cuts it."""
-    out = {}
-    for e, cid in placed.entries.items():
-        whole = donor[cid]
-        if e not in placed.cuts:
-            out[e] = whole
-            continue
-        try:
-            out[e] = cut(whole, *placed.cuts[e])
-        except ValueError as err:
-            raise LayoutError(f"entry {e}, clip {cid}: {err}") from None
-    return out
+    """Entry -> the clip it `played`, for every entry whose clip the donor has."""
+    return {e: c for e in placed.entries if (c := played(placed, donor, e)) is not None}
 
 
 def holder(m: manifest.Manifest, cid: int) -> str | None:

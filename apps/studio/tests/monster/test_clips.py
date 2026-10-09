@@ -49,14 +49,14 @@ def packs(make_clip):
 
 def test_coverage(packs):
     port, host, donor = packs
-    cov = C.coverage(port, host, donor, {1: 1, 2: 2, 5: 5, 6: 6})
+    cov = C.coverage(port, host, donor, layout.Layout({1: 1, 2: 2, 5: 5, 6: 6}))
     kinds = {s: c.kind for s, c in cov.slots.items()}
     assert kinds == {1: C.CARRIED, 2: C.CARRIED, 3: C.FILLER, 4: C.HOST, 5: C.ALTERED, 6: C.CARRIED}
     assert cov.dropped == {7: (90, False)} and cov.slots[2].scriptable
     assert cov.counts()[C.DROPPED] == 1 and "1 donor clip(s) DROPPED" in cov.summary()
     assert "idle copy" in cov.slots[3].why().lower()
     assert cov.sources() == {1: 1, 2: 2, 5: 5, 6: 6}
-    moved = C.coverage(port, host, donor, {2: 6, 6: 2})
+    moved = C.coverage(port, host, donor, layout.Layout({2: 6, 6: 2}))
     assert (moved.kind(2), moved.kind(6), moved.slots[2].clip) == (C.ALTERED, C.FILLER, 6)
 
 
@@ -202,7 +202,7 @@ def test_zinogre(games, built, ports):
     m = manifest.load(ports / "zinogre.toml")
     port = slots.anim_of(built("zinogre"))
     host, donor = host_anim(m, games), donor_clips(m, games)
-    cov = C.coverage(port, host, donor, layout.of(m, donor, host).entries)
+    cov = C.coverage(port, host, donor, layout.of(m, donor, host))
     n = cov.counts()
     assert len(cov.slots) == n[C.CARRIED] == 102 and n[C.FILLER] == n[C.DROPPED] == 0
     assert all(t.trusted for t in C.track_labels(m, C.clip_table(port), sources=cov.sources()))

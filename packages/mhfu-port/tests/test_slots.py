@@ -10,6 +10,7 @@ from mhfu.files import monster_pac
 from mhfu_port import motion, slots
 from mhfu_port.cli import main, parser
 from mhfu_port.cli.slots import run_labels, run_slots
+from mhfu_port.layout import Layout
 from mhp_formats import Channel, Clip, Keyframe, Pac, Track, fu, p3rd
 
 ROT_X = 0x008
@@ -33,7 +34,7 @@ def donor():
     return motion.moveset(anim.to_bytes())
 
 
-LAYOUT = {1: 1, 2: 2, 3: 3, 4: 4, 100: 100}
+LAYOUT = Layout({1: 1, 2: 2, 3: 3, 4: 4, 100: 100})
 
 
 def build(donor, occupancy, size):
