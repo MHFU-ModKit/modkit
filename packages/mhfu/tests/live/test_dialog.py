@@ -35,6 +35,12 @@ def test_control(s, fake):
     assert not dialog.has_control(s)
 
 
+@pytest.mark.parametrize("scene", sorted(a.FREE_ROAM_SCENES))
+def test_free_roam(s, fake, scene):
+    fake.poke("I", a.SCENE_OBJECT, scene)
+    assert dialog.has_control(s) and not dialog.prompt_showing(s)
+
+
 def test_scene_name():
     assert dialog.scene_name(a.SCENE_DIALOG) == "dialog"
     assert dialog.scene_name(0) == "unknown 0x00000000"

@@ -15,9 +15,7 @@ from ppsspp_debug import Button
 from .. import addresses as a
 from .session import POLL, Session
 
-WALKING = frozenset(
-    {a.SCENE_ROAM, a.SCENE_VILLAGE, a.SCENE_VILLAGE_CONTRACT, a.SCENE_QUEST, a.SCENE_QUEST_ALT}
-)
+WALKING: frozenset[int] = a.FREE_ROAM_SCENES
 """Free roam with nothing on screen."""
 
 FREE = WALKING | {a.SCENE_PROMPT, a.SCENE_PROMPT_ALT}

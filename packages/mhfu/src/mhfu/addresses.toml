@@ -14,9 +14,13 @@
 #   [struct.NAME.fields]
 #   NAME = { offset = <offset>, type = "<type>", doc = "<one line>" }
 #
+#   [set]                               # addresses named together
+#   NAME = { of = ["<address name>", ...], doc = "<one line>" }
+#
 # Types: u8 u16 u32 s8 s16 s32 f32 vec3 ptr vtable fn code bytes, or a struct's name, each
 # optionally followed by [count] for an array, which also generates NAME_COUNT. fn is a function
 # entry, code any other instruction address.
+# A set is a frozenset in Python, an initializer and NAME_COUNT in C, and member = address in Lua.
 # Names are UPPER_SNAKE_CASE; an address and a value appear once.
 
 [address]
@@ -298,6 +302,9 @@ CLI_BRIDGE_BLOCK = { eu = 0x0A7F0000, type = "bytes", doc = "framework-owned com
 CLONE_POOL = { eu = 0x0A800000, type = "bytes", doc = "framework-owned entity-clone pool in the extra-RAM window, up to EXTRA_RAM_END" }
 INJECT_XRAM = { eu = 0x0B000000, type = "bytes", doc = "framework-owned model-inject scratch in the extra-RAM window (emulator only); a relocated PAC lands at its start" }
 EXTRA_RAM_END = { eu = 0x0C000000, type = "bytes", doc = "first address past the extra-RAM window (PPSSPP memory=64)" }
+
+[set]
+FREE_ROAM_SCENES = { of = ["SCENE_ROAM", "SCENE_VILLAGE", "SCENE_VILLAGE_CONTRACT", "SCENE_QUEST", "SCENE_QUEST_ALT"], doc = "SCENE_OBJECT values of free roam with nothing on screen; a prompt zone's are pool values that move, so not here" }
 
 
 [struct.ENTITY]
