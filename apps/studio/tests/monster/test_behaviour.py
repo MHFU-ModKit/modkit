@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from mhfu_port import behaviour as model
 from mhfu_port import manifest
-from mhfu_port.behaviour import KINDS, Kind, Param, Rule
+from mhfu_port.behaviour import KINDS, Block, Kind, Param, Rule
 from mhfu_port.manifest import Manifest, ManifestError
 from mhfu_studio.monster import behaviour as B
 from mhfu_studio.monster import clips
@@ -337,7 +337,9 @@ def test_the_cap(d: PortDocument) -> None:
 def test_the_palette_offers_every_kind(monkeypatch: pytest.MonkeyPatch) -> None:
     offered = [k for _, kinds in B.palette() for k, _, _ in kinds]
     assert sorted(offered) == sorted(KINDS)
-    assert [t for t, _ in B.palette()] == ["Events", "State", "Conditions", "Modifiers"]
+    titles = [t for t, _ in B.palette()]
+    assert titles[:4] == ["Events", "State", "Conditions", "Modifiers"]
+    assert titles[4:] in ([], ["Effects"])
     tips = {k: (t, tip) for _, kinds in B.palette() for k, t, tip in kinds}
     assert tips["force"] == (KINDS["force"].title, KINDS["force"].tip)
     monkeypatch.setitem(
@@ -386,3 +388,106 @@ def test_a_move_in_use_is_not_deleted(ports: Path) -> None:
         clips.drop_move(z, "lunge")
     clips.drop_move(z, "idle")
     assert "idle" not in z.manifest.moves
+
+
+# ---- effects, names and sides ---------------------------------------------------------------- #
+
+
+class Bare:
+    """An `Edits` over a manifest that is never validated: the new param types' checks are the
+    package's."""
+
+    def __init__(self, m: Manifest) -> None:
+        self.manifest = m
+
+    def edit(self, change: Callable[[Manifest], object]) -> None:
+        change(self.manifest)
+
+
+def test_the_palette_has_an_effects_group(new_kinds: tuple[Kind, ...]) -> None:
+    groups = dict(B.palette())
+    assert list(groups) == ["Events", "State", "Conditions", "Modifiers", "Effects"]
+    [count, flag] = new_kinds[:2]
+    assert groups["Effects"] == [(k.name, k.title, k.tip) for k in (count, flag)]
+    assert new_kinds[2].name in [k for k, _, _ in groups["Events"]]
+    assert new_kinds[3].name in [k for k, _, _ in groups["Conditions"]]
+
+
+def test_names_are_collected_across_the_graph(
+    new_kinds: tuple[Kind, ...], make: Callable[[str], Manifest], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(
+        KINDS,
+        "t_boss",
+        Kind("t_boss", "effect", "Boss", (Param("flag", "var", "Flag", "boss"),), "a default"),
+    )
+    m = make("")
+    for i, (kind, params) in enumerate(
+        [
+            ("t_count", {"counter": "hits"}),
+            ("t_flag", {"flag": "armor"}),
+            ("t_count", {"counter": "hits"}),
+            ("t_boss", {}),
+            ("t_signal", {"name": "rage"}),
+            ("t_side", {"sides": ["front"]}),
+        ]
+    ):
+        m.behaviour.blocks[f"b{i}"] = Block(kind, (0.0, 100.0 * i), params)
+    assert B.names(m, "var") == ["armor", "boss", "hits"]
+    assert B.names(m, "signal") == ["rage"]
+    assert B.names(m, "sides") == [] and B.names(m, "int") == []
+
+
+def test_new_blocks_start_with_fresh_names_and_a_side(
+    new_kinds: tuple[Kind, ...], make: Callable[[str], Manifest], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(
+        KINDS,
+        "t_pair",
+        Kind(
+            "t_pair",
+            "event",
+            "Pair",
+            (Param("a", "signal", "A"), Param("b", "signal", "B")),
+            "two signals",
+        ),
+    )
+    d = Bare(make(""))
+    for kind in ("t_count", "t_count", "t_flag", "t_signal", "t_side", "t_pair", "t_signal"):
+        B.add_block(d, kind, (0, 0))
+    got = [blk.params for blk in d.manifest.behaviour.blocks.values()]
+    assert got == [
+        {"counter": "counter1", "by": 1},
+        {"counter": "counter2", "by": 1},
+        {"flag": "flag1"},
+        {"name": "signal1"},
+        {"sides": ["front"]},
+        {"a": "signal2", "b": "signal3"},
+        {"name": "signal4"},
+    ]
+    assert B.fresh("x", {"x1", "x3"}) == "x2"
+
+
+def test_sides_are_stored_in_the_order_of_the_choices(
+    new_kinds: tuple[Kind, ...], make: Callable[[str], Manifest]
+) -> None:
+    d = Bare(make(""))
+    B.add_block(d, "t_side", (0, 0))
+    B.set_param(d, "b1", "sides", ("behind", "front", "front"))
+    assert d.manifest.behaviour.blocks["b1"].params == {"sides": ["front", "behind"]}
+    B.set_param(d, "b1", "sides", ())
+    assert d.manifest.behaviour.blocks["b1"].params == {"sides": []}  # the loader refuses this
+    B.add_block(d, "t_flag", (0, 0))
+    B.set_param(d, "b2", "flag", "armor_2")
+    assert d.manifest.behaviour.blocks["b2"].params == {"flag": "armor_2"}
+
+
+def test_a_path_that_plays_nothing_ranks_on_its_last_block(
+    d: PortDocument, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = [model.Path(("b2", "b3"), None, None), model.Path(("b1",), "stamp", "charge")]
+    monkeypatch.setattr(model, "paths", lambda m: paths)
+    monkeypatch.setattr(model, "refused", lambda m: {})
+    monkeypatch.setattr(model, "loose", lambda m: [])
+    r = B.read(d.manifest)
+    assert r.priority == {"b3": [1], "b1": [2]} and r.capped is None

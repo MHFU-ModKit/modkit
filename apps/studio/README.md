@@ -98,6 +98,14 @@ rank (higher on the canvas is checked first), `⚠` a path the game refuses (the
 faded a block on no complete path. Delete removes blocks and their links; a move is deleted in
 Moves. Every gesture is one undo step.
 
+Effect blocks (violet) change the monster's counters and flags when their path fires. A path may
+end at an effect with nothing to play: it applies its effects, keeps its `#n` on that block, and
+the scan goes on to the next path. A counter, flag or signal name is a box of the names the graph
+already uses; type a new one (lowercase letters, digits, `_`, starting with a letter) or it is put
+back. An On signal block fires when Lua raises that name: `port:fire("name")`; `port:var("name")`
+reads a counter or flag and `port:var("name", v)` sets it. Hunter side ticks any of front, left,
+right, behind.
+
 ## Tests
 
 `uv run pytest apps/studio` runs offscreen; the Qt tests skip without the `qt` group, and the
