@@ -791,6 +791,19 @@ function mhfu.on_bigmonster_part_broken(fn, priority) end
 ---@param priority? integer
 function mhfu.on_bigmonster_tail_cut(fn, priority) end
 
+---Calls fn when a big monster enrages (ENTITY.FLAGS bit 0x20 rises).
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_enraged(fn, priority) end
+
+---Calls fn when a big monster calms down (ENTITY.FLAGS bit 0x20 falls).
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_calmed(fn, priority) end
+
+---The monster events, as a brain rule's `on` and `mhfu.MonsterEvent.kind` name them.
+---@alias mhfu.MonsterEventKind "noticed"|"combat_entered"|"combat_left"|"flinch"|"part_broken"|"tail_cut"|"enraged"|"calmed"
+
 ---The monster-event block (struct MONSTER_EVENTS), for a debugger; 0 before the framework's init.
 ---@return integer
 function mhfu.monster_events_block() end
@@ -798,13 +811,13 @@ function mhfu.monster_events_block() end
 ---One monster event.
 ---@class mhfu.MonsterEvent
 ---@field entity integer
----@field kind "noticed"|"combat_entered"|"combat_left"|"flinch"|"part_broken"|"tail_cut"
+---@field kind mhfu.MonsterEventKind
 ---@field frame integer the monster's AI frame the change was seen in
 ---@field usec integer the emulated clock then
 ---@field delay integer microseconds from then to this call
 ---@field main integer the monster's pair then
 ---@field sub integer
----@field data integer flinch: the flinched parts; part_broken: the new broken bits; noticed: the aware bits; combat: 1 entered, 0 left; tail_cut: the cut count
+---@field data integer flinch: the flinched parts; part_broken: the new broken bits; noticed: the aware bits; combat: 1 entered, 0 left; tail_cut: the cut count; enraged, calmed: 1 and 0
 ---@field part? integer flinch, part_broken: the lowest flinched part
 
 ---A big monster now, read from its cells (the monster events' own reads): whether it noticed the

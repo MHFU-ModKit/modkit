@@ -12,6 +12,8 @@
  *   FLINCH           parts flinched (ENTITY.FLINCH_MASK); the pair is the reaction entered
  *   PART_BROKEN      ENTITY.BROKEN gains bits (BREAK_RECORD)
  *   TAIL_CUT         ENTITY.SEVERED bit 0 rises
+ *   ENRAGED          ENTITY.FLAGS bit 0x20 rises: the monster enrages
+ *   CALMED           and falls: it calms down
  *
  * A monster first seen sets the baseline and raises nothing. */
 #ifndef MHFU_MONSTER_EVENTS_H
@@ -35,7 +37,13 @@ enum {
     MHFU_MONSTER_FLINCH         = MHFU_MONSTER_EVENT_KIND_FLINCH,
     MHFU_MONSTER_PART_BROKEN    = MHFU_MONSTER_EVENT_KIND_PART_BROKEN,
     MHFU_MONSTER_TAIL_CUT       = MHFU_MONSTER_EVENT_KIND_TAIL_CUT,
+    MHFU_MONSTER_ENRAGED        = MHFU_MONSTER_EVENT_KIND_ENRAGED,
+    MHFU_MONSTER_CALMED         = MHFU_MONSTER_EVENT_KIND_CALMED,
 };
+#define MHFU_MONSTER_KINDS MHFU_MONSTER_EVENT_KIND_COUNT
+
+/* ENTITY.FLAGS: the monster is enraged (the ENRAGED and CALMED events, the rules' conditions) */
+#define MHFU_MONSTER_FLAG_ENRAGED 0x20u
 
 /* the kinds' names, MHFU_MONSTER_NOTICED's first, then NULL: Lua's and a manifest's `on` */
 extern const char *const mhfu_monster_event_names[];
@@ -61,7 +69,7 @@ typedef struct {
 typedef struct {
     uint32_t entity;
     uint32_t frames;    /* AI frames seen */
-    uint8_t  aware, combat, severed, _pad;
+    uint8_t  aware, combat, severed, enraged;
     uint16_t broken;
     uint16_t edges;     /* bit kind: what this frame raised */
 } mhfu_monster_watch_t;
@@ -84,7 +92,7 @@ typedef struct {
 
 typedef void (*mhfu_monster_event_cb_t)(const mhfu_monster_event_ctx_t *ctx);
 
-/* id is one of MHFU_EVENT_BIGMONSTER_NOTICED .. _TAIL_CUT; callbacks run on the poll thread. */
+/* id is one of MHFU_EVENT_BIGMONSTER_NOTICED .. _CALMED; callbacks run on the poll thread. */
 static inline mhfu_hook_rc_t mhfu_on_monster_event(mhfu_event_id_t id, mhfu_monster_event_cb_t cb,
                                                    int priority, const char *owner) {
     return mhfu_event_on(id, (mhfu_event_fn_t)cb, priority, owner);

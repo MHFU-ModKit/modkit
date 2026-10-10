@@ -14,6 +14,7 @@ from mhfu.live import monster_events
 BASE = 0x09000000  # move_host.cpp's memory; noaddr
 ENT = BASE + 0x1000
 NOTICED, ENTERED, LEFT, FLINCH, BROKEN, TAIL = range(1, 7)
+ENRAGED, CALMED = a.MONSTER_EVENT_KIND.number("enraged"), a.MONSTER_EVENT_KIND.number("calmed")
 
 
 class Event(ctypes.Structure):
@@ -85,6 +86,7 @@ def g(lib: ctypes.CDLL) -> Game:
 
 def test_first_sight_raises_nothing(g: Game) -> None:
     g.poke(a.ENTITY.AWARE, "B", 1)
+    g.poke(a.ENTITY.FLAGS, "I", 0x8 | 0x20)
     g.poke(a.ENTITY.BROKEN, "H", 4)
     g.lib.mhfu_monster_events_host_quest()
     g.frame()
@@ -132,6 +134,15 @@ def test_break_and_tail_once(g: Game) -> None:
     g.poke(a.ENTITY.FLINCH_MASK, "B", 0)
     g.frame()
     assert g.raised() == [(FLINCH, 0, 1, 2), (BROKEN, 0, 4, 2), (TAIL, 0xFF, 1, 2)]
+
+
+def test_enraged_and_calmed_once(g: Game) -> None:
+    g.poke(a.ENTITY.FLAGS, "I", 0x8 | 0x20)
+    g.frame()
+    g.frame()
+    g.poke(a.ENTITY.FLAGS, "I", 0x8)
+    g.frame()
+    assert g.raised() == [(ENRAGED, 0xFF, 1, 2), (CALMED, 0xFF, 0, 4)]
 
 
 def test_a_full_ring_drops(g: Game) -> None:
