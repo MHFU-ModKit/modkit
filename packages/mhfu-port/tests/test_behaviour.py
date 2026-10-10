@@ -625,6 +625,26 @@ def test_vars_and_signals_number_by_sorted_name():
     assert B.vars(graph({})) == B.signals(graph({})) == {}
 
 
+def test_names_are_every_value_of_the_type_sorted(monkeypatch):
+    kind = B.Kind("t_boss", "effect", "Boss", (B.Param("flag", "var", "Flag", "boss"),))
+    monkeypatch.setitem(B.KINDS, "t_boss", kind)
+    m = graph(
+        {
+            "b1": blk("counter_add", counter="hits"),
+            "b2": blk("flag_set", flag="armor"),
+            "b3": blk("counter_is", counter="hits"),
+            "b4": blk("t_boss"),
+            "b5": blk("on_signal", name="rage"),
+            "b6": blk("hunter_side", sides=["front"]),
+            "b7": blk("no_such_kind", name="x"),
+        }
+    )
+    assert B.names(m, "var") == ["armor", "boss", "hits"], "a default counts"
+    assert B.names(m, "signal") == ["rage"]
+    assert B.names(m, "sides") == B.names(m, "int") == B.names(graph({}), "var") == []
+    assert B.vars(m) == {"armor": 0, "boss": 1, "hits": 2} and B.signals(m) == {"rage": 0}
+
+
 def test_a_name_is_one_index_everywhere():
     m = _chain(
         blk("on_flinch"),

@@ -696,24 +696,34 @@ REPEATS = frozenset(_CONDS) | frozenset(_EFFECTS)
 _SIGNAL = "on_signal"
 
 
-def _names(m: Manifest, type_: str) -> dict[str, int]:
-    found = {
-        blk.params[p.name]
-        for blk in m.behaviour.blocks.values()
-        for p in KINDS[blk.kind].params
-        if p.type == type_ and p.name in blk.params
-    }
-    return {name: i for i, name in enumerate(sorted(found))}
+def names(m: Manifest, type_: str) -> list[str]:
+    """Every name a `type_` param (`var` or `signal`) of any block holds, sorted: a block of no
+    known kind or with no such value adds none. The one place names are collected."""
+    found: set[str] = set()
+    for blk in m.behaviour.blocks.values():
+        if (kind := KINDS.get(blk.kind)) is None:
+            continue
+        held = params(blk)
+        found |= {
+            held[p.name]
+            for p in kind.params
+            if p.type == type_ and isinstance(held.get(p.name), str)
+        }
+    return sorted(found)
+
+
+def _indices(m: Manifest, type_: str) -> dict[str, int]:
+    return {name: i for i, name in enumerate(names(m, type_))}
 
 
 def vars(m: Manifest) -> dict[str, int]:
     """Every counter and flag the graph names -> its index on the monster's board, by name."""
-    return _names(m, "var")
+    return _indices(m, "var")
 
 
 def signals(m: Manifest) -> dict[str, int]:
     """Every signal the graph waits for -> its index on the monster's board, by name."""
-    return _names(m, "signal")
+    return _indices(m, "signal")
 
 
 def _ops(blocks: list[Block], table: dict[str, Any], v: dict[str, int], w: str) -> list[Op]:
