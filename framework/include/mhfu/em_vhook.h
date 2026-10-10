@@ -57,7 +57,7 @@ extern "C" {
 /* mhfu_em_rule_t.flags */
 #define MHFU_EM_RULE_RECEDING 0x01   /* only while the distance grows */
 #define MHFU_EM_RULE_CLOSING  0x02   /* only while the distance shrinks */
-#define MHFU_EM_RULE_NO_PLAY  0x04   /* plays nothing: applies its effects and the scan goes on */
+#define MHFU_EM_RULE_NO_PLAY  0x04   /* plays nothing: applies its effects, before the rules that play */
 
 /* struct EM_OP: a condition or effect. op is MHFU_EM_COND_* or MHFU_EM_EFFECT_* (index + 1), 0
  * none; arg a part (broken), a side mask (side) or a board var; value a percent or a number. */
@@ -124,9 +124,10 @@ void mhfu_em_substitute(int slot, uint8_t from_mask, uint8_t from_sub,
 int  mhfu_em_request(uint8_t main_state, uint8_t sub_state, uint8_t mode);
 
 /* Rule slot (0..MHFU_EM_RULES-1); NULL clears it, and so does a rule that cannot hold: no trigger
- * (from_*, on or signal), an unknown op, a board index out of range. At most one rule that plays
- * fires an AI frame; one with MHFU_EM_RULE_NO_PLAY applies its effects and the scan goes on to the
- * next, at every AI frame whatever else the frame did. While a rule on the flinch that plays is
+ * (from_*, on or signal), an unknown op, a board index out of range. Each AI frame, whatever else
+ * it does, first every rule with MHFU_EM_RULE_NO_PLAY that holds applies its effects, wherever it
+ * sits in slot order; then at most one rule that plays fires, the first in slot order that holds,
+ * seeing the counters as that left them. While a rule on the flinch that plays is
  * installed, the brain owns the reaction replacement (mhfu_move_react): a flinch of a part a rule
  * takes, in a frame its gates and conditions hold, enters its move's carrier instead, and the
  * move plays from the next AI frame (all such rules share the first's carrier). A no-play rule on

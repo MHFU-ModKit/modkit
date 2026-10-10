@@ -106,6 +106,10 @@ typedef struct {
     uint32_t events;                      /* the monster-event block (MONSTER_EVENTS) */
 } mhfu_move_state_t;
 
+/* em75's alert hub, the carrier a move rides unless it names one (moves.HUBS in mhfu-port) */
+#define MHFU_MOVE_HUB_MAIN 0
+#define MHFU_MOVE_HUB_SUB  2
+
 /* entry on the carrier (0,2), em75's alert hub (one dispatch, then the brain once the clip
  * ends; (0,1) becomes (0,2) under ENTITY+0x4B9): no back pair, no attacks, timed on part 0 */
 void mhfu_move_init_spec(mhfu_move_t *mv, uint16_t entry);

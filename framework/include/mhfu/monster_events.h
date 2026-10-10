@@ -10,7 +10,10 @@
  *   COMBAT_ENTERED   the player's yellow eye comes on for this monster: COMBAT_MODE 1, the
  *   COMBAT_LEFT      player's AWARE bit, the same section, FLAGS & 0x8, alive (EYE_UPDATE); and off
  *   FLINCH           parts flinched (ENTITY.FLINCH_MASK); the pair is the reaction entered
- *   PART_BROKEN      ENTITY.BROKEN gains bits (BREAK_RECORD)
+ *   PART_BROKEN      a flinched part's FLINCH_PART.COUNT reaches its species' BREAK_TABLE row's,
+ *                    once per part (PART_BREAK's rule; two parts may share a BREAK_ID, so
+ *                    ENTITY.BROKEN gains no bit for the second); also ENTITY.BROKEN gaining a bit
+ *                    no part's row explains
  *   TAIL_CUT         ENTITY.SEVERED bit 0 rises
  *   ENRAGED          ENTITY.FLAGS bit 0x20 rises: the monster enrages
  *   CALMED           and falls: it calms down
@@ -118,8 +121,9 @@ int mhfu_monster_state(uint32_t entity, mhfu_monster_state_t *out);
 
 /* The brain's call, each AI frame of entity before the host step; stale: the host step did not
  * run in the frame before, so the per-frame cells are left over from an earlier one. Returns
- * what this frame raised (bit kind) and the parts that flinched in *parts. */
-uint16_t mhfu_monster_events_frame(uint32_t entity, int stale, uint8_t *parts);
+ * what this frame raised (bit kind), the parts that flinched in *parts and the parts that broke
+ * in *broke (either may be NULL). */
+uint16_t mhfu_monster_events_frame(uint32_t entity, int stale, uint8_t *parts, uint8_t *broke);
 
 /* Raises what the step found, oldest first; the registry poll calls it. */
 void mhfu_monster_events_drain(void);

@@ -38,8 +38,8 @@
  *                 ours that ended, a rule
  *                 ("in pair P or own move M for N frames, or on event E or signal S,
  *                 player at [lo,hi), receding, every condition holding -> enter Q or play
- *                 own move M', change counters", cooldown, budget); a rule that plays
- *                 nothing applies its effects and the scan goes on, in every AI frame;
+ *                 own move M', change counters", cooldown, budget); the rules that play
+ *                 nothing run first, all of them, in every AI frame;
  *                 last, the rules on the flinch arm the reaction replacement for the
  *                 host step that follows. Own moves sit in a registry by slot
  *                 (mhfu_em_move) and play through the move player (move.cpp) that same
@@ -201,7 +201,7 @@ typedef struct {
     uint32_t copies, waits;
     uint32_t held_ent;                     /* whose events wait for the drop */
     uint16_t held_edges;
-    uint8_t  held_parts, _pad;
+    uint8_t  held_parts, held_broke;
 } tail_t;
 static_assert(sizeof(tail_t) % 4 == 0, "zeroed word by word after the config");
 
@@ -684,6 +684,14 @@ static void apply(const cfg_rule_t *r, uint32_t ent)
     }
 }
 
+/* what an AI frame saw, for the rules */
+typedef struct {
+    uint16_t edges;   /* the monster events raised, bit kind */
+    uint16_t sigs;    /* the signals taken, bit index */
+    uint8_t  parts;   /* the parts that flinched */
+    uint8_t  broke;   /* the parts that broke */
+} seen_t;
+
 static int part_of(const cfg_rule_t *r, uint8_t parts)
 {
     return r->part == MHFU_EM_ANY_PART || (r->part < 8 && ((parts >> r->part) & 1));
@@ -691,15 +699,17 @@ static int part_of(const cfg_rule_t *r, uint8_t parts)
 
 static int quiet(const cfg_rule_t *r) { return (r->flags & MHFU_EM_RULE_NO_PLAY) != 0; }
 
-/* rule r fires on ent this frame; edges: what the monster events raised, parts: what flinched,
- * sigs: the signals taken. A rule on the flinch that plays goes through the reaction
- * replacement. */
+/* rule r fires on ent this frame, given what the frame saw. A rule on the flinch that plays goes
+ * through the reaction replacement. */
 static int holds(const cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_state_t *m,
-                 uint16_t edges, uint8_t parts, uint16_t sigs)
+                 const seen_t *s)
 {
     if (r->on == MHFU_MONSTER_FLINCH && !quiet(r)) return 0;
-    if (r->on && (!((edges >> r->on) & 1) || !part_of(r, parts))) return 0;
-    if (r->signal && (r->signal > MHFU_EM_SIGNALS || !((sigs >> (r->signal - 1)) & 1))) return 0;
+    if (r->on && (!((s->edges >> r->on) & 1)
+                  || !part_of(r, r->on == MHFU_MONSTER_PART_BROKEN ? s->broke : s->parts)))
+        return 0;
+    if (r->signal && (r->signal > MHFU_EM_SIGNALS || !((s->sigs >> (r->signal - 1)) & 1)))
+        return 0;
     return gates(r, ent, m) && conds_hold(r, ent);
 }
 
@@ -750,15 +760,15 @@ static uint8_t g_armed[MHFU_EM_RULES];     /* 1: rule i's gates and conditions h
  * break that flinch made, whose gates and conditions hold and whose own move rides that carrier,
  * else the first rule armed for it whose part flinched, hands the move player its move, which the
  * step starts. */
-static int react_take(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_t edges)
+static int react_take(uint32_t ent, const volatile mhfu_move_state_t *m, const seen_t *s)
 {
     if (!g_reacts || !mhfu_move_react_pending(ent)) return 0;
     uint8_t flinched = mhfu_mem_read_u8(ent + MHFU_ENTITY_FLINCH_MASK);
     cfg_rule_t *first = 0;
-    for (int i = 0; i < MHFU_EM_RULES && ((edges >> MHFU_MONSTER_PART_BROKEN) & 1); i++) {
+    for (int i = 0; i < MHFU_EM_RULES && ((s->edges >> MHFU_MONSTER_PART_BROKEN) & 1); i++) {
         cfg_rule_t *r = &g_cfgp->rules[i];
         const volatile mhfu_em_own_t *o = rule_move(r);
-        if (r->on == MHFU_MONSTER_PART_BROKEN && o && part_of(r, flinched) && gates(r, ent, m)
+        if (r->on == MHFU_MONSTER_PART_BROKEN && o && part_of(r, s->broke) && gates(r, ent, m)
             && o->move.carrier_main == g_cfgp->react_to_main
             && o->move.carrier_sub == g_cfgp->react_to_sub && conds_hold(r, ent)) {
             first = r;
@@ -814,29 +824,31 @@ static void react_arm(uint32_t ent, const volatile mhfu_move_state_t *m)
     g_reacts = 1;
 }
 
-/* The rules in slot order: the first that plays and holds fires and ends the scan; one that plays
- * nothing fires and the scan goes on. plays 0: the frame already did its one thing, so only the
- * rules that play nothing are tried (and no chance is rolled for the others). */
-static void scan(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_t edges, uint8_t parts,
-                 uint16_t sigs, int plays)
+/* The rules of one kind in slot order. Those that play nothing (quiet) all fire where they hold;
+ * of those that play, the first that fires ends the scan. */
+static void scan(uint32_t ent, const volatile mhfu_move_state_t *m, const seen_t *s,
+                 int quiet_rules)
 {
     for (int i = 0; i < MHFU_EM_RULES; i++) {
         cfg_rule_t *r = &g_cfgp->rules[i];
-        if (!r->left || (!plays && !quiet(r))) continue;
-        if (holds(r, ent, m, edges, parts, sigs) && fire(r, ent, m) && !quiet(r)) break;
+        if (!r->left || quiet(r) != quiet_rules) continue;
+        if (holds(r, ent, m, s) && fire(r, ent, m) && !quiet_rules) break;
     }
 }
 
-/* at most one thing played or entered; 1 when a replaced reaction waits for the step */
-static int act(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_t edges, uint8_t parts,
-               uint16_t sigs)
+/* The rules that play nothing keep the counters and flags, so they run first, whatever the frame
+ * does and wherever they sit among the others: the events of the frame count, and the rules that
+ * play see the counters as this frame left them. Then at most one thing played or entered; 1 when
+ * a replaced reaction waits for the step. */
+static int act(uint32_t ent, const volatile mhfu_move_state_t *m, const seen_t *s)
 {
+    scan(ent, m, s, 1);
     int took = 0, plays = 0;
     int k = ours(m);
     if (R->req_ent == ent) {
         R->req_ent = 0;
         play_slot(ent, R->req_slot, m, (int)R->req_force);
-    } else if (react_take(ent, m, edges)) {
+    } else if (react_take(ent, m, s)) {
         took = 1;
     } else if (k >= 0 && m->state == MHFU_MOVE_DONE && m->entity == ent
                && (m->end == MHFU_MOVE_END_BACK || m->end == MHFU_MOVE_END_WALL)
@@ -846,7 +858,7 @@ static int act(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_t edges
     } else {
         plays = 1;
     }
-    scan(ent, m, edges, parts, sigs, plays);
+    if (plays) scan(ent, m, s, 0);
     return took;
 }
 
@@ -879,26 +891,30 @@ static void request(uint32_t ent)
 
 /* The events of the AI frames the cut waited reach the rules in the first one after it; the
  * signals stay raised on the board until a frame takes them. */
-static void hold(uint32_t ent, uint16_t edges, uint8_t parts)
+static void hold(uint32_t ent, const seen_t *s)
 {
     if (T->held_ent != ent) {
         T->held_edges = 0;
         T->held_parts = 0;
+        T->held_broke = 0;
     }
     T->held_ent = ent;
-    T->held_edges |= edges;
-    T->held_parts |= parts;
+    T->held_edges |= s->edges;
+    T->held_parts |= s->parts;
+    T->held_broke |= s->broke;
 }
 
-static uint16_t held(uint32_t ent, uint8_t *parts)
+/* adds what the cut held to s */
+static void held(uint32_t ent, seen_t *s)
 {
-    if (T->held_ent != ent) return 0;
-    uint16_t edges = T->held_edges;
-    *parts |= T->held_parts;
+    if (T->held_ent != ent) return;
+    s->edges |= T->held_edges;
+    s->parts |= T->held_parts;
+    s->broke |= T->held_broke;
     T->held_ent = 0;
     T->held_edges = 0;
     T->held_parts = 0;
-    return edges;
+    T->held_broke = 0;
 }
 
 static uint32_t brain(uint32_t ent)
@@ -922,17 +938,18 @@ static uint32_t brain(uint32_t ent)
     c->d2 = f32_bits(dx * dx + dz * dz);
     const volatile mhfu_move_state_t *m = mhfu_move_state();
     if (!m || !R) return 0;
-    uint8_t parts;
-    uint16_t edges = mhfu_monster_events_frame(ent, m->entity == ent && m->skipping, &parts);
-    if ((edges >> MHFU_MONSTER_PART_BROKEN) & 1) g_board->broken |= parts;
+    seen_t seen = {};
+    seen.edges = mhfu_monster_events_frame(ent, m->entity == ent && m->skipping, &seen.parts,
+                                           &seen.broke);
+    g_board->broken |= seen.broke;
     if (waits) {
-        hold(ent, edges, parts);
+        hold(ent, &seen);
         return 0;
     }
-    const uint16_t sigs = take_signals();
+    seen.sigs = take_signals();
     take_rage(ent);
-    edges |= held(ent, &parts);
-    if (!act(ent, m, edges, parts, sigs)) react_arm(ent, m);
+    held(ent, &seen);
+    if (!act(ent, m, &seen)) react_arm(ent, m);
     return 0;
 }
 
