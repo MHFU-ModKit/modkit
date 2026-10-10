@@ -441,11 +441,18 @@ def test_idle_and_any_time_are_main_states():
     assert B.compile(_chain(blk("any_time")))[0].from_main == list(B.MAIN_STATES)
 
 
+def test_idle_and_any_time_say_they_wait_for_own_moves():
+    for k in ("any_time", "idle"):
+        assert "between moves" in B.KINDS[k].title and "no own move plays" in B.KINDS[k].tip
+
+
 def test_one_state_block_a_path():
     m = _chain(blk("idle"), blk("host_state", mains=[1]))
     with pytest.raises(ManifestError, match="b1 > b2 plays m: has more than one state block"):
         B.compile(m)
-    with pytest.raises(ManifestError, match="has two 'Base monster idle' blocks"):
+    with pytest.raises(
+        ManifestError, match="has two 'Base monster idle \\(between moves\\)' blocks"
+    ):
         B.compile(_chain(blk("idle"), blk("idle")))
 
 

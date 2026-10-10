@@ -140,9 +140,12 @@ Condition and effect blocks may repeat on a path: a rule holds 4 conditions and 
 (`monster_hp` with both bounds is two conditions). All conditions hold, or it does not fire.
 
 A path that ends at an effect block with no `next` and no `play` plays nothing: it applies its
-effects, counts as fired (cooldown and limit work) and the scan goes on to the next rule. On
-`on_flinch` it never replaces the host's reaction. A path that plays still stops the scan. Its
-`force` and `mode` have nothing to act on, so a no-play path refuses them.
+effects and counts as fired (cooldown and limit work). The framework runs every no-play path each
+AI frame first, whatever its place on the canvas; then the playing paths from the highest, and
+the first that holds plays and ends the scan. So canvas order ranks the playing paths only. On
+`on_flinch` a no-play path never replaces the host's reaction. Its `force` and `mode` have
+nothing to act on, so a no-play path refuses them. `any_time` and `idle` are pair gates: a path
+from them waits while an own move plays, and fires in the frames between moves.
 
 Counters and flags are named in the blocks (`[a-z][a-z0-9_]*`) and made on first use: 16 a
 monster, signed 16 bits, 0 at first and again for a new monster (a flag is a counter that is 0 or
@@ -158,9 +161,10 @@ port:fire("roar")                   -- raise a signal: true if the port has it
 
 A signal fires its rules in the AI frame the brain takes it, once. An unknown name is logged once.
 
-A flinch rule that plays a move decides when the reaction is armed, before that frame's effects
-run, so a counter it tests misses the flinch being counted. The Zinogre counts flinches on a
-no-play rule and charges up from idle once `flinches` is 2, not on the flinch itself.
+A flinch rule that plays a move is armed ahead of the flinch: its conditions are judged in the
+AI frame before the host step that flinches, so a counter it tests misses the flinch about to be
+counted, in any order. The Zinogre counts flinches on a no-play rule and charges up from idle
+once `flinches` is 2, not on the flinch itself.
 
 An event fires in the AI frame it is seen; `part` narrows a flinch or a break to one part
 (`[parts]` names them; em75's: 0 head, 1 neck, 2 body, 3 tail, 4/6 the left/right foreleg, 5/7 the

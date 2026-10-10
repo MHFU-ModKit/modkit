@@ -147,9 +147,19 @@ KINDS: dict[str, Kind] = {
             "A mod raises this signal",
         ),
         Kind(
-            "any_time", "state", "At any time", (), "Fires in every main state of the base monster"
+            "any_time",
+            "state",
+            "Any time (between moves)",
+            (),
+            "Fires every AI frame in any main state of the base monster, while no own move plays",
         ),
-        Kind("idle", "state", "Base monster idle", (), "Fires while the base monster idles"),
+        Kind(
+            "idle",
+            "state",
+            "Base monster idle (between moves)",
+            (),
+            "Fires every AI frame the base monster idles, while no own move plays",
+        ),
         Kind(
             "host_state",
             "state",
