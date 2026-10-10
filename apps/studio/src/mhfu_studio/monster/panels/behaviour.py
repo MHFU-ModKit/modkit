@@ -40,7 +40,10 @@ ROLES: dict[str, Color] = {
 EFFECT: dict[bool, Color] = {True: (0.82, 0.44, 0.91, 1.0), False: (0.56, 0.14, 0.67, 1.0)}
 MOVE_ROLE = "move"
 WARN = chr(0x26A0)
-HINT = "Right-click adds a block · drag from a port to wire · higher blocks are checked first"
+HINT = (
+    "Right-click adds a block · drag from a port to wire · higher blocks are checked first,"
+    " but paths that play nothing run before all of them"
+)
 
 
 def roles() -> dict[str, Color]:

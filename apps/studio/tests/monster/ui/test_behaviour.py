@@ -232,6 +232,8 @@ def test_the_zinogre_opens(
     assert plays == sorted(f"#{k}" for k in range(1, 17))
     for k, path in enumerate(B.read(m).paths, 1):  # a path that plays nothing has its place too
         assert badge(p, path.blocks[-1]) == rank(k)
+    assert [badge(p, i) for i in ("b15", "b17", "b23")] == [rank(1), rank(2), rank(3)]
+    assert badge(p, "b4") == rank(4) and badge(p, "b36") == rank(16)
     assert badge(p, "b37") == rank(13) and p.rage.isChecked()
     assert field(p, "b23", "counter").get_value() == "flinches"
     assert options(p, "b15", "flag") == ["flinches", "in_combat"]
@@ -567,18 +569,21 @@ def test_renaming_a_move_keeps_the_graph(panel: BehaviourPanel, ws: MonsterWorks
 # ---- effects, names, sides and paths that play nothing -------------------------------------- #
 
 
-def test_a_path_that_plays_nothing_has_its_place(
-    panel: BehaviourPanel, monkeypatch: pytest.MonkeyPatch
+def test_a_path_that_plays_nothing_ranks_first_wherever_it_sits(
+    panel: BehaviourPanel, ws: MonsterWorkspace
 ) -> None:
-    paths = [model.Path(("b2", "b3"), None, None), model.Path(("b1",), "stamp", "charge")]
-    monkeypatch.setattr(model, "paths", lambda m: paths)
-    monkeypatch.setattr(model, "refused", lambda m: {})
-    monkeypatch.setattr(model, "loose", lambda m: [])
-    panel._drawn = None
+    def add(m: Any) -> None:
+        b = m.behaviour.blocks
+        b["b4"] = Block("on_enraged", (260.0, 500.0), next=["b5"])
+        b["b5"] = Block("counter_add", (540.0, 500.0), {"counter": "hits"})
+
+    doc(ws).edit(add)
+    ws.sync()
     panel.sync()
-    assert [badge(panel, n) for n in ("b1", "b2", "b3")] == [rank(2), "", rank(1)]
-    assert panel.title.text() == f"3 blocks · 2 of {model.SEAM_RULES} paths"
-    assert panel.view._shown["b2"].view.opacity() == 1.0
+    assert [badge(panel, n) for n in ("b1", "b2", "b3", "b5")] == [rank(2), "", "", rank(1)]
+    assert panel.title.text() == f"5 blocks · 2 of {model.SEAM_RULES} paths · 2 loose"
+    assert panel.view._shown["b5"].view.opacity() == 1.0
+    assert "play nothing run before" in panel.hint.text()
 
 
 @pytest.mark.parametrize(
