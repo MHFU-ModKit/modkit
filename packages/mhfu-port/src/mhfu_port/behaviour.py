@@ -5,8 +5,9 @@
 A path starts at an event or state block no other block feeds, or at a block a move lists in
 `during`, walks `next` and plays the moves a reached block lists in `play`; one that ends at an
 effect block with neither `next` nor `play` plays nothing and only applies its effects. One path
-is one `Rule`, in canvas order: higher is checked first. `KINDS` is the schema of a block; the
-loader, the compiler and the studio all read it.
+is one `Rule`: the no-play paths first, then the playing ones, each group in canvas order, higher
+first. That is the order the brain runs them in. `KINDS` is the schema of a block; the loader,
+the compiler and the studio all read it.
 
 This module sits under `manifest`: the names the manifest and the graph share are defined here.
 """
@@ -147,9 +148,19 @@ KINDS: dict[str, Kind] = {
             "A mod raises this signal",
         ),
         Kind(
-            "any_time", "state", "At any time", (), "Fires in every main state of the base monster"
+            "any_time",
+            "state",
+            "Any time (between moves)",
+            (),
+            "Fires every AI frame in any main state of the base monster, while no own move plays",
         ),
-        Kind("idle", "state", "Base monster idle", (), "Fires while the base monster idles"),
+        Kind(
+            "idle",
+            "state",
+            "Base monster idle (between moves)",
+            (),
+            "Fires every AI frame the base monster idles, while no own move plays",
+        ),
         Kind(
             "host_state",
             "state",
@@ -591,7 +602,8 @@ def validate(m: Manifest) -> None:
 
 
 def paths(m: Manifest) -> list[Path]:
-    """Every complete path, in priority order."""
+    """Every complete path in the order the brain runs them: those that play nothing, then the
+    rest, each in canvas order."""
     b = m.behaviour
     fed = {n for blk in b.blocks.values() for n in blk.next}
     listed = {n for node in b.moves.values() for n in node.during}
@@ -618,7 +630,8 @@ def paths(m: Manifest) -> list[Path]:
 
 
 def _priority(m: Manifest, p: Path) -> tuple[Any, ...]:
-    """Higher on the canvas first: each block's `(y, x)` in order, then the played move's."""
+    """No-play paths first, then higher on the canvas: each block's `(y, x)` in order, then the
+    played move's."""
     b = m.behaviour
 
     def row(at: tuple[float, float]) -> tuple[float, float]:
@@ -627,6 +640,7 @@ def _priority(m: Manifest, p: Path) -> tuple[Any, ...]:
     node = b.moves.get(p.play) if p.play is not None else None
     move = row(node.at) if node is not None else (math.inf, math.inf)
     return (
+        p.play is not None,
         tuple(row(b.blocks[i].at) for i in p.blocks),
         move,
         p.blocks,
@@ -696,24 +710,34 @@ REPEATS = frozenset(_CONDS) | frozenset(_EFFECTS)
 _SIGNAL = "on_signal"
 
 
-def _names(m: Manifest, type_: str) -> dict[str, int]:
-    found = {
-        blk.params[p.name]
-        for blk in m.behaviour.blocks.values()
-        for p in KINDS[blk.kind].params
-        if p.type == type_ and p.name in blk.params
-    }
-    return {name: i for i, name in enumerate(sorted(found))}
+def names(m: Manifest, type_: str) -> list[str]:
+    """Every name a `type_` param (`var` or `signal`) of any block holds, sorted: a block of no
+    known kind or with no such value adds none. The one place names are collected."""
+    found: set[str] = set()
+    for blk in m.behaviour.blocks.values():
+        if (kind := KINDS.get(blk.kind)) is None:
+            continue
+        held = params(blk)
+        found |= {
+            held[p.name]
+            for p in kind.params
+            if p.type == type_ and isinstance(held.get(p.name), str)
+        }
+    return sorted(found)
+
+
+def _indices(m: Manifest, type_: str) -> dict[str, int]:
+    return {name: i for i, name in enumerate(names(m, type_))}
 
 
 def vars(m: Manifest) -> dict[str, int]:
     """Every counter and flag the graph names -> its index on the monster's board, by name."""
-    return _names(m, "var")
+    return _indices(m, "var")
 
 
 def signals(m: Manifest) -> dict[str, int]:
     """Every signal the graph waits for -> its index on the monster's board, by name."""
-    return _names(m, "signal")
+    return _indices(m, "signal")
 
 
 def _ops(blocks: list[Block], table: dict[str, Any], v: dict[str, int], w: str) -> list[Op]:

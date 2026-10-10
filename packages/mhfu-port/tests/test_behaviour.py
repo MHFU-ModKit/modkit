@@ -441,11 +441,18 @@ def test_idle_and_any_time_are_main_states():
     assert B.compile(_chain(blk("any_time")))[0].from_main == list(B.MAIN_STATES)
 
 
+def test_idle_and_any_time_say_they_wait_for_own_moves():
+    for k in ("any_time", "idle"):
+        assert "between moves" in B.KINDS[k].title and "no own move plays" in B.KINDS[k].tip
+
+
 def test_one_state_block_a_path():
     m = _chain(blk("idle"), blk("host_state", mains=[1]))
     with pytest.raises(ManifestError, match="b1 > b2 plays m: has more than one state block"):
         B.compile(m)
-    with pytest.raises(ManifestError, match="has two 'Base monster idle' blocks"):
+    with pytest.raises(
+        ManifestError, match="has two 'Base monster idle \\(between moves\\)' blocks"
+    ):
         B.compile(_chain(blk("idle"), blk("idle")))
 
 
@@ -554,7 +561,7 @@ def test_a_block_that_plays_and_ends_a_no_play_path_makes_both():
             "b3": blk("counter_add", x=2, counter="n"),
         }
     )
-    assert [(p.blocks, p.play) for p in B.paths(m)] == [(("b1", "b2"), "m"), (("b1", "b3"), None)]
+    assert [(p.blocks, p.play) for p in B.paths(m)] == [(("b1", "b3"), None), (("b1", "b2"), "m")]
 
 
 def test_a_non_effect_end_without_a_move_is_loose():
@@ -594,6 +601,26 @@ def test_a_rule_that_plays_nothing_needs_an_effect():
         B._rule(m, B.Path(("b1", "b2"), None, None))
 
 
+def test_no_play_paths_come_first_whatever_the_canvas():
+    m = graph(
+        {
+            "b1": blk("on_noticed", y=0, play=["m"]),
+            "b2": blk("on_flinch", y=500, nxt=["b3"]),
+            "b3": blk("counter_add", x=300, y=500, counter="n"),
+            "b4": blk("on_tail_cut", y=-50, nxt=["b5"]),
+            "b5": blk("flag_set", x=300, y=-50, flag="f"),
+            "b6": blk("on_combat_left", y=900, play=["n"]),
+        }
+    )
+    assert [(p.blocks, p.play) for p in B.paths(m)] == [
+        (("b4", "b5"), None),
+        (("b2", "b3"), None),
+        (("b1",), "m"),
+        (("b6",), "n"),
+    ]
+    assert [r.play for r in B.compile(m)] == [None, None, "m", "n"]
+
+
 def test_no_play_paths_sort_with_the_rest():
     m = graph(
         {
@@ -623,6 +650,26 @@ def test_vars_and_signals_number_by_sorted_name():
     assert B.vars(m) == {"alpha": 0, "mid": 1, "zeta": 2}, "a loose block's name counts"
     assert [r.signal for r in B.compile(m)] == [1, 0]
     assert B.vars(graph({})) == B.signals(graph({})) == {}
+
+
+def test_names_are_every_value_of_the_type_sorted(monkeypatch):
+    kind = B.Kind("t_boss", "effect", "Boss", (B.Param("flag", "var", "Flag", "boss"),))
+    monkeypatch.setitem(B.KINDS, "t_boss", kind)
+    m = graph(
+        {
+            "b1": blk("counter_add", counter="hits"),
+            "b2": blk("flag_set", flag="armor"),
+            "b3": blk("counter_is", counter="hits"),
+            "b4": blk("t_boss"),
+            "b5": blk("on_signal", name="rage"),
+            "b6": blk("hunter_side", sides=["front"]),
+            "b7": blk("no_such_kind", name="x"),
+        }
+    )
+    assert B.names(m, "var") == ["armor", "boss", "hits"], "a default counts"
+    assert B.names(m, "signal") == ["rage"]
+    assert B.names(m, "sides") == B.names(m, "int") == B.names(graph({}), "var") == []
+    assert B.vars(m) == {"armor": 0, "boss": 1, "hits": 2} and B.signals(m) == {"rage": 0}
 
 
 def test_a_name_is_one_index_everywhere():
@@ -821,7 +868,17 @@ def test_migrate_nothing():
 # the ports
 
 
-ZINOGRE = [
+ZINOGRE = [  # the paths that play nothing, then the rest
+    Rule(
+        None,
+        on="combat_entered",
+        effects=[("var_set", 1, 1)],
+        label="combat start -> set in_combat",
+    ),
+    Rule(
+        None, on="combat_left", effects=[("var_set", 1, 0)], label="combat end -> clear in_combat"
+    ),
+    Rule(None, on="flinch", effects=[("var_add", 0, 1)], label="count the flinches"),
     Rule(
         "lunge_stop",
         from_move="lunge",
@@ -853,20 +910,10 @@ ZINOGRE = [
         force=True,
         label="the notice: his howl at once, forced, so it does not wait for combat",
     ),
-    Rule(
-        None,
-        on="combat_entered",
-        effects=[("var_set", 1, 1)],
-        label="combat start -> set in_combat",
-    ),
-    Rule(
-        None, on="combat_left", effects=[("var_set", 1, 0)], label="combat end -> clear in_combat"
-    ),
     Rule("flinch_head", on="part_broken", part=0, label="horns break -> head flinch"),
     Rule("topple_left", on="part_broken", part=4, label="left foreleg breaks -> topple left"),
     Rule("topple_right", on="part_broken", part=6, label="right foreleg breaks -> topple right"),
     Rule("break_howl", on="part_broken", label="a part breaks"),
-    Rule(None, on="flinch", effects=[("var_add", 0, 1)], label="count the flinches"),
     Rule(
         "charge_up",
         from_main=[0],
@@ -898,13 +945,16 @@ def test_zinogre_compiles_to_its_rules():
     assert B.compile(m) == ZINOGRE
     assert B.loose(m) == [] and B.refused(m) == {}
     assert B.vars(m) == {"flinches": 0, "in_combat": 1} and B.signals(m) == {"roar": 0}
-    old = ZINOGRE[:4]
+    old = [r for r in ZINOGRE if r.from_move]
+    assert len(old) == 4
     assert all(not r.conds and not r.effects and r.signal is None for r in old)
     assert len(ZINOGRE) <= B.SEAM_RULES
     idle = [r for r in ZINOGRE if r.from_main == [0]]
     assert len(idle) == 3 and all(("var_at_least", 1, 1) in r.conds for r in idle)
     notice = next(i for i, r in enumerate(ZINOGRE) if r.on == "noticed")
     assert notice < ZINOGRE.index(idle[0]), "the notice scans before the idle paths"
+    quiet = [i for i, r in enumerate(ZINOGRE) if r.play is None]
+    assert quiet == [0, 1, 2], "the rules that play nothing run first"
 
 
 def test_zinogre_topples_end_in_the_stamp():

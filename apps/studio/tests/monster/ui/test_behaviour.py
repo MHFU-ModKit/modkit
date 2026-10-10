@@ -24,7 +24,7 @@ from mhfu_studio.ui import kit, theme
 from mhfu_studio.ui.testing import FakeWorkspace
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDockWidget
+from PySide6.QtWidgets import QComboBox, QDockWidget, QToolButton
 
 LEFT, NONE = Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
 STAMP, FLINCH, STEP = B.move_id("stamp"), B.move_id("flinch_head"), B.move_id("stamp_2")
@@ -227,16 +227,20 @@ def test_the_zinogre_opens(
     ws.load(Scene.from_bytes(synthetic_pac, "z", path=zinogre_toml.with_suffix(".bin")), zin)
     p = make(qtbot, ws)
     m = zin.manifest
-    assert len(m.behaviour.blocks) == 15 and len(p.view._shown) == 15 + len(m.moves)
+    assert len(m.behaviour.blocks) == 36 and len(p.view._shown) == 36 + len(m.moves)
     plays = sorted(badge(p, i) for i in m.behaviour.blocks if badge(p, i))
-    assert plays == sorted(f"#{k}" for k in range(1, 8))
+    assert plays == sorted(f"#{k}" for k in range(1, 17))
+    for k, path in enumerate(B.read(m).paths, 1):  # a path that plays nothing has its place too
+        assert badge(p, path.blocks[-1]) == rank(k)
+    assert field(p, "b23", "counter").get_value() == "flinches"
+    assert options(p, "b15", "flag") == ["flinches", "in_combat"]
     assert all(p.view._shown[i].view.opacity() == 1.0 for i in m.behaviour.blocks)
     assert in_step(p, ws)
     wrote = {i: p.view._shown[i].view.xy_pos for i in m.behaviour.blocks}
     assert wrote["b12"] == [float(model.LEFT), 4.0 * model.ROW]
-    note = field(p, "b12", "@note").get_value()
-    assert note.startswith("a flinch of the head")
-    assert field(p, "b12", "part").get_value() == 0
+    note = field(p, "b18", "@note").get_value()
+    assert note.startswith("horns break")
+    assert field(p, "b18", "part").get_value() == 0
     assert field(p, "b2", "hi").get_value() == 1000.0
 
 
@@ -678,3 +682,67 @@ def test_signals_and_sides_through_the_canvas(
     qtbot.wait(30)
     assert doc(ws).manifest is kept and "side" in ws.message
     assert field(panel, "b5", "sides").get_value() == ("behind",)
+
+
+def put(qtbot: Any, p: BehaviourPanel, node: str, name: str, value: Any) -> None:
+    """Sets a node's parameter through its widget, as a hand would."""
+    ctl = field(p, node, name)._ctl
+    if isinstance(ctl, QToolButton):
+        [act] = [a for a in ctl.menu().actions() if a.text() == value]
+        act.trigger()
+    elif isinstance(ctl, QComboBox) and ctl.isEditable():
+        type_name(qtbot, p, node, name, value)
+        return
+    elif isinstance(ctl, QComboBox):
+        ctl.setCurrentIndex(ctl.findText(value))
+    else:
+        ctl.setValue(value)
+    qtbot.wait(30)
+
+
+#: (kind, param, what is put in the widget, what the manifest then holds)
+EDITS = [
+    ("counter_is", "counter", "hits_taken", "hits_taken"),
+    ("counter_is", "test", "below", "below"),
+    ("counter_is", "value", 7, 7),
+    ("flag_is", "flag", "armor", "armor"),
+    ("flag_is", "state", "clear", "clear"),
+    ("counter_add", "by", -3, -3),
+    ("counter_set", "to", 9, 9),
+    ("flag_set", "state", "clear", "clear"),
+    ("monster_hp", "lo", 10, 10),
+    ("monster_hp", "hi", 50, 50),
+    ("part_broken", "part", "head", 1),
+    ("part_broken", "state", "not broken", "not broken"),
+    ("rage", "state", "calm", "calm"),
+    ("hunter_side", "sides", "left", ["front", "left"]),
+    ("chance", "percent", 50, 50),
+    ("on_signal", "name", "roar", "roar"),
+]
+
+
+def test_every_real_kind_draws_and_edits(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    ids: dict[str, str] = {}
+    for n, kind in enumerate(KINDS):
+        ids[kind] = model.new_id(doc(ws).manifest.behaviour)
+        B.add_block(doc(ws), kind, (300.0 + 20 * n, 900.0 + 60 * n))
+    ws.sync()
+    panel.sync()
+    assert in_step(panel, ws)
+    blocks = doc(ws).manifest.behaviour.blocks
+    for kind, i in ids.items():
+        held = model.params(blocks[i])
+        for p in KINDS[kind].params:
+            shown = field(panel, i, p.name).get_value()
+            want = held.get(p.name)
+            assert shown == (tuple(want) if isinstance(want, list) else want), (kind, p.name)
+    drawn = doc(ws).manifest
+    for kind, name, put_, stored in EDITS:
+        put(qtbot, panel, ids[kind], name, put_)
+        assert doc(ws).manifest.behaviour.blocks[ids[kind]].params[name] == stored, (kind, name)
+        assert in_step(panel, ws)
+    for _ in EDITS:
+        doc(ws).undo()
+    assert doc(ws).manifest == drawn
