@@ -783,8 +783,8 @@ function mhfu.on_bigmonster_combat_left(fn, priority) end
 ---@param priority? integer
 function mhfu.on_bigmonster_flinch(fn, priority) end
 
----Calls fn when a part of a big monster breaks; ev.part is the flinching part that broke, ev.data
----the new ENTITY.BROKEN bits.
+---Calls fn when a part of a big monster breaks, once per part: ev.part is the part, ev.data its
+---BREAK_ID bit in ENTITY.BROKEN (two parts may share one, so the second adds no new bit there).
 ---@param fn fun(ev: mhfu.MonsterEvent)
 ---@param priority? integer
 function mhfu.on_bigmonster_part_broken(fn, priority) end
@@ -820,8 +820,8 @@ function mhfu.monster_events_block() end
 ---@field delay integer microseconds from then to this call
 ---@field main integer the monster's pair then
 ---@field sub integer
----@field data integer flinch: the flinched parts; part_broken: the new broken bits; noticed: the aware bits; combat: 1 entered, 0 left; tail_cut: the cut count; enraged, calmed: 1 and 0
----@field part? integer flinch, part_broken: the lowest flinched part
+---@field data integer flinch: the flinched parts; part_broken: the part's BREAK_ID bit, as ENTITY.BROKEN has it; noticed: the aware bits; combat: 1 entered, 0 left; tail_cut: the cut count; enraged, calmed: 1 and 0
+---@field part? integer flinch: the lowest flinched part; part_broken: the part that broke
 
 ---A big monster now, read from its cells (the monster events' own reads): whether it noticed the
 ---player, is in combat, runs its notice; nil for no entity. Any thread.
@@ -862,7 +862,7 @@ function mhfu.monster_state(ent) end
 ---@field signal? integer fires in the AI frame the board's signal of this 0-based index (`mhfu.em_signal`) is taken; not with `on`
 ---@field conds? mhfu.EmCondOp[] all must hold, at most mhfu.addr.EM_RULE.CONDS_COUNT; a chance is rolled last
 ---@field effects? mhfu.EmEffectOp[] applied each time it fires, at most mhfu.addr.EM_RULE.EFFECTS_COUNT
----@field no_play? boolean plays nothing: applies its effects, counts the fire and the scan goes on to the next rule, in every AI frame; with `on = "flinch"` it never replaces the reaction
+---@field no_play? boolean plays nothing: applies its effects and counts the fire, in every AI frame before the rules that play are tried and wherever it sits among them; with `on = "flinch"` it never replaces the reaction
 
 ---Counter k of the board the rules and Lua share for the wrapped species' monster (16 counters,
 ---s16, 0 for a bad k); with v, sets it first. A new monster resets the board, from its spawn on.

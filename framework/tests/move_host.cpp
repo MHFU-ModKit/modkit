@@ -20,8 +20,13 @@ static int g_n;
 static int g_lands = 1;          /* enter-action writes the pair cells */
 static float g_clip_end = 228;   /* what the executor installs on every part */
 
+/* BREAK_TABLE, where the game has it */
+static uint8_t g_breaks[MHFU_BREAK_TABLE_COUNT * MHFU_BREAK_ROW_SIZE];
+
 static uint8_t *at(uint32_t a, uint32_t n)
 {
+    if (a >= MHFU_BREAK_TABLE && a + n <= MHFU_BREAK_TABLE + sizeof(g_breaks))
+        return g_breaks + (a - MHFU_BREAK_TABLE);
     return (a >= BASE && a + n <= BASE + SIZE) ? g_mem + (a - BASE) : 0;
 }
 
@@ -131,9 +136,19 @@ int host_raised(mhfu_monster_event_ctx_t *out)
     return n;
 }
 
+/* row i of BREAK_TABLE: the species' part breaks at its count-th flinch, setting bit id */
+void host_break_row(int i, uint8_t species, uint8_t part, uint8_t count, uint16_t id)
+{
+    uint8_t *r = g_breaks + (unsigned)i * MHFU_BREAK_ROW_SIZE;
+    r[MHFU_BREAK_ROW_SPECIES] = species;
+    r[MHFU_BREAK_ROW_PART] = part;
+    r[MHFU_BREAK_ROW_COUNT] = count;
+    memcpy(r + MHFU_BREAK_ROW_BREAK_ID, &id, 2);
+}
 uint8_t *host_mem(void) { return g_mem; }
 void     host_set(int lands, float clip_end)
 {
+    memset(g_breaks, 0, sizeof(g_breaks));
     g_lands = lands; g_clip_end = clip_end; g_n = 0; g_step = 0; g_nraised = 0; g_cut = 0;
     memset(g_react, 0, sizeof(g_react));
 }

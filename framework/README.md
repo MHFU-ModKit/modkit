@@ -119,11 +119,12 @@ and the combat entry; the call's `force` starts it at once (`mhfu.move_play(ent,
 The same AI step finds what a mod may answer, one AI frame after the engine's change at most,
 raised on the 5 Hz registry poll (`include/mhfu/monster_events.h`): `mhfu.on_bigmonster_noticed`,
 `_combat_entered` and `_combat_left` (the yellow eye beside the player's name), `_flinch` (with
-the part), `_part_broken`, `_tail_cut`, `_enraged` and `_calmed` (ENTITY.FLAGS bit 0x20), each
-`fn(ev)` with the entity, the AI frame, the pair and the part. `mhfu.move_react("flinch", ent,
-{ entry = 78 })` plays a move in place of the monster's flinch: the engine counts the flinch and
-applies the damage, then enters the move's carrier instead of `(4,x)`, and the move plays from
-the next AI step. From the debugger: `mhfu events --follow 60`.
+the part), `_part_broken` (once per part, when its flinch count reaches its species' break row,
+so two parts sharing a break id both raise it), `_tail_cut`, `_enraged` and `_calmed`
+(ENTITY.FLAGS bit 0x20), each `fn(ev)` with the entity, the AI frame, the pair and the part.
+`mhfu.move_react("flinch", ent, { entry = 78 })` plays a move in place of the monster's flinch:
+the engine counts the flinch and applies the damage, then enters the move's carrier instead of
+`(4,x)`, and the move plays from the next AI step. From the debugger: `mhfu events --follow 60`.
 
 ## Own moves from a manifest
 
@@ -150,8 +151,10 @@ A rule also takes `conds` that must all hold (`{ "hp_below", 0, 30 }`: op, arg, 
 `mhfu.EmCond`: HP percent, broken parts, enraged or calm, the hunter's side of the monster, a
 chance rolled last, a counter against a number), `effects` it applies each time it fires
 (`var_add`, `var_set` on a counter), a `signal` that fires it in place of `on`, and
-`no_play = true`: it plays nothing, applies its effects, and the scan goes on to the next rule, in
-every AI frame. The counters (`mhfu.em_var`), signals (`mhfu.em_signal`) and the parts broken so
+`no_play = true`: it plays nothing and applies its effects. Each AI frame the rules that play
+nothing run first, every one that holds wherever it sits among the others, so a counter counts the
+frame's events whatever plays; then the first rule that plays and holds fires, seeing the
+counters as they stand. The counters (`mhfu.em_var`), signals (`mhfu.em_signal`) and the parts broken so
 far are the monster's board, reset with a new monster; a port names them in its moves module's
 `vars` and `signals` (`port:var`, `port:fire`). The board holds
 `mhfu.addr.EM_BOARD.VARS_COUNT` counters and `SIGNALS_COUNT` signals, a rule

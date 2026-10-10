@@ -128,9 +128,24 @@ static uint8_t lowest(uint16_t bits)
     return MHFU_MONSTER_NO_PART;
 }
 
-extern "C" uint16_t mhfu_monster_events_frame(uint32_t ent, int stale, uint8_t *parts)
+/* The BREAK_TABLE row of the species' part, or 0: PART_BREAK walks the table to its zero row. The
+ * species is compared as the row has it. */
+static uint32_t break_row(uint8_t species, uint8_t part)
+{
+    for (int i = 0; i < MHFU_BREAK_TABLE_COUNT; i++) {
+        const uint32_t row = MHFU_BREAK_TABLE + (uint32_t)i * MHFU_BREAK_ROW_SIZE;
+        const uint8_t sp = mhfu_mem_read_u8(row + MHFU_BREAK_ROW_SPECIES);
+        if (!sp) break;
+        if (sp == species && mhfu_mem_read_u8(row + MHFU_BREAK_ROW_PART) == part) return row;
+    }
+    return 0;
+}
+
+extern "C" uint16_t mhfu_monster_events_frame(uint32_t ent, int stale, uint8_t *parts,
+                                              uint8_t *broke)
 {
     if (parts) *parts = 0;
+    if (broke) *broke = 0;
     if (!B || !ent) return 0;
     int fresh;
     volatile mhfu_monster_watch_t *w = watch_of(ent, &fresh);
@@ -152,8 +167,31 @@ extern "C" uint16_t mhfu_monster_events_frame(uint32_t ent, int stale, uint8_t *
             put(w, ent, combat ? MHFU_MONSTER_COMBAT_ENTERED : MHFU_MONSTER_COMBAT_LEFT,
                 MHFU_MONSTER_NO_PART, combat, usec);
         if (flinched) put(w, ent, MHFU_MONSTER_FLINCH, part, flinched, usec);
-        if (broken & ~w->broken)
-            put(w, ent, MHFU_MONSTER_PART_BROKEN, part, (uint16_t)(broken & ~w->broken), usec);
+        /* PART_BREAK's rule: a flinched part whose count reached its row's broke, the event's
+         * data the row's BREAK_ID bit. The count only grows, so it is once per part */
+        uint8_t broke_now = 0;
+        uint16_t claimed = 0;
+        const uint8_t species = mhfu_mem_read_u8(ent + MHFU_ENTITY_SPECIES);
+        for (uint8_t p = 0; flinched && p < 8; p++) {
+            if (!((flinched >> p) & 1)) continue;
+            const uint32_t row = break_row(species, p);
+            const uint32_t count_at = ent + MHFU_ENTITY_FLINCH_PARTS
+                                    + p * MHFU_FLINCH_PART_SIZE + MHFU_FLINCH_PART_COUNT;
+            if (!row || mhfu_mem_read_u8(count_at) != mhfu_mem_read_u8(row + MHFU_BREAK_ROW_COUNT))
+                continue;
+            const uint16_t id = mhfu_mem_read_u16(row + MHFU_BREAK_ROW_BREAK_ID);
+            const uint16_t bit = id < 16 ? (uint16_t)(1u << id) : 0;
+            put(w, ent, MHFU_MONSTER_PART_BROKEN, p, bit, usec);
+            broke_now |= (uint8_t)(1u << p);
+            claimed |= bit;
+        }
+        /* a break the table does not explain */
+        const uint16_t fresh_bits = (uint16_t)(broken & ~w->broken & ~claimed);
+        if (fresh_bits) {
+            put(w, ent, MHFU_MONSTER_PART_BROKEN, part, fresh_bits, usec);
+            if (part < 8) broke_now |= (uint8_t)(1u << part);
+        }
+        if (broke) *broke = broke_now;
         if (severed && !w->severed)
             put(w, ent, MHFU_MONSTER_TAIL_CUT, MHFU_MONSTER_NO_PART,
                 mhfu_mem_read_u8(ent + MHFU_ENTITY_SEVER_COUNT), usec);
