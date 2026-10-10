@@ -201,7 +201,8 @@ port with them; `mhfu move play --own NAME [--force]` plays one of its own moves
 `framework/lua/examples/ported_brute.lua` loads the Brute Tigrex in place of a Giadrome;
 `ported_zinogre.lua` the Zinogre with its manifest's moves and behaviour.
 
-The Zinogre's paths, after the lunge and dash chains (higher is checked first):
+The Zinogre's paths, after the lunge and dash chains (higher is checked first; 2, 4 and 7 play
+nothing and so run first):
 
 1. The notice plays `notice_howl` at once, before anything that idles.
 2. Combat start sets the flag `in_combat`, combat end clears it; both play nothing.
@@ -210,9 +211,12 @@ The Zinogre's paths, after the lunge and dash chains (higher is checked first):
    then `stamp` (`after`).
 4. A flinch adds 1 to `flinches` and plays nothing.
 5. Idle, in combat: with `flinches` at least 2, set it to 0 and play `charge_up`; with the
-   hunter 1500 away, play `dash`, then wait 300; below 30% HP, play `notice_howl` once. The
-   charge also enrages him.
+   hunter 1500 away, play `dash`, then wait 300; below 30% HP, play `notice_howl` once.
 6. The signal `roar` plays `notice_howl`.
+7. Once `charge_up` has played 120 AI frames, just short of its end (121 by its clip, 125
+   measured), he enrages, then waits 250 frames. The roar starts one AI frame after the enrage,
+   so it comes after the charge; on the charge path itself it would cut the charge after one
+   frame.
 
 His tail cuts only below 50% HP (`sever_below`); natural rage stays on.
 
