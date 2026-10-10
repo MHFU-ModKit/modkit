@@ -48,7 +48,6 @@ from mhfu_studio.monster import (
     clips,
     inputs,
     move_game,
-    rules,
     sequences,
     species,
 )
@@ -93,6 +92,8 @@ Pair = tuple[int, int]
 PORT, HOST = "port", "host"
 #: the Timeline's height: its title, the transport and the frame strip; the rest scrolls
 TIMELINE_H = 120
+#: the Behaviour dock's height: a canvas wants room
+BEHAVIOUR_H = 340
 #: the left docks' width: the Actions table's four columns
 ACTIONS_W = 460
 PLAY = Shortcut(("Space",), "Plays the clip, or pauses it")
@@ -191,8 +192,8 @@ class MonsterWorkspace(Workspace):
         self.picked_window: int | None = None
         #: the attack id a window drawn on the Timeline gets; None: `window_id`'s default
         self.next_window_id: int | None = None
-        #: the rule picked in Moves, by index
-        self.picked_rule: int | None = None
+        #: a block a finding named, for the Behaviour dock to pick and frame (`take_block`)
+        self._block: str | None = None
         self.show_joint_ids = False
         self.undriven: dict[int, int] = {}
         self.markers: list[align.Marker] = []
@@ -397,7 +398,7 @@ class MonsterWorkspace(Workspace):
             Dock(
                 "Moves", "left", build("moves", "MovesPanel"),
                 "Your moves: on the base monster's actions, or your own, with their attacks and"
-                " turn; and the rules that play them.",
+                " turn.",
                 shown=False,
             ),
             Dock(
@@ -423,6 +424,13 @@ class MonsterWorkspace(Workspace):
                 "Parts", "right", build("parts", "PartsPanel"),
                 "Where the monster can be hit, and how much each spot takes.",
                 shown=False,
+            ),
+            Dock(
+                "Behaviour", "bottom", build("behaviour", "BehaviourPanel"),
+                "When the port plays which move: events, states and conditions wired to your"
+                " moves on a canvas; higher blocks are checked first.",
+                shown=False,
+                size=BEHAVIOUR_H,
             ),
             Dock(
                 "Timeline", "bottom", build("timeline", "TimelinePanel"),
@@ -553,9 +561,11 @@ class MonsterWorkspace(Workspace):
         elif section == "moves" and isinstance(key, str) and key in m.moves:
             self.select_move(key)
             self.focus("Moves" if m.moves[key].own else "Actions")
-        elif section == "rule" and isinstance(key, int) and key < len(m.rules):
-            self.picked_rule = key
-            self.focus("Moves")
+        elif section == "block" and isinstance(key, str) and key in m.behaviour.blocks:
+            self._block = key
+            self.focus("Behaviour")
+        elif section == "behaviour":
+            self.focus("Behaviour")
         elif section == "hurtbox" and isinstance(key, int) and key < len(m.hurtboxes):
             self.show_parts, self.parts_source = True, PORT
             self.sync_hitboxes()
@@ -625,8 +635,6 @@ class MonsterWorkspace(Workspace):
         mv = self.own_move()
         if mv is None or not 0 <= (self.picked_window or 0) < len(mv.attacks):
             self.picked_window = None
-        if m is None or not 0 <= (self.picked_rule or 0) < len(m.rules):
-            self.picked_rule = None  # an undo took the rule away
         self.sync_steer()
         self.sync_hitboxes()
         self.sync_attacks()
@@ -1256,7 +1264,7 @@ class MonsterWorkspace(Workspace):
             self.select_move(name)
 
     def delete_move(self) -> None:
-        """The selected move goes; refused while another move, a rule or an effect names it."""
+        """The selected move goes; refused while another move, a block or an effect names it."""
         doc, name, pair = self.doc, self.move, self.pair
         if doc is None or name is None:
             return
@@ -2000,35 +2008,12 @@ class MonsterWorkspace(Workspace):
             return
         self.message = f"monster {slot} released" + ("" if acked else "; no ack")
 
-    # rules (the Moves panel)
+    # the behaviour graph (the Behaviour dock)
 
-    def new_rule(self) -> None:
-        """A rule that plays the selected move, else the first; picked."""
-        doc, m = self.doc, self.manifest
-        if doc is None or m is None:
-            self.message = "rules live in a port manifest: open one"
-            return
-        play = self.move if self.move in m.moves else next(iter(m.moves), None)
-        if play is None:
-            self.message = "make a move first: a rule plays one"
-            return
-        if self.edit("", lambda: rules.new_rule(doc, play)):
-            self.picked_rule = len(doc.manifest.rules) - 1
-
-    def pick_rule(self, index: int | None) -> None:
-        self.picked_rule = index
-
-    def set_rule(self, **fields: Any) -> bool:
-        """`rules.FIELDS` of the picked rule, one undo step."""
-        doc, i = self.doc, self.picked_rule
-        if doc is None or i is None:
-            return False
-        return self.edit("", lambda: rules.set_rule(doc, i, **fields))
-
-    def delete_rule(self) -> None:
-        doc, i = self.doc, self.picked_rule
-        if doc is not None and i is not None and self.edit("", lambda: rules.remove_rule(doc, i)):
-            self.picked_rule = None
+    def take_block(self) -> str | None:
+        """The block a finding named, once; the dock picks and frames it."""
+        block, self._block = self._block, None
+        return block
 
     # Play in game for an own move (the Moves panel)
 

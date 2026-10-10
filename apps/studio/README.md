@@ -89,10 +89,14 @@ starting where the last stood, facing as it faced, and the Timeline's bar above 
 shows the steps (click one to pick it). Picking or playing anything else starts clips where
 they normally start.
 
-Under the moves are the rules (`[[rule]]`), each read as a sentence ("after the lunge for 20
-frames, within 1200, play stamp"): New rule plays the picked move once when the monster notices
-the hunter, and every field is a control, the part only for a flinch or a break, the mode only
-for a pair move, `force` as above. A refusal is the manifest's own words, in the status line.
+The Behaviour dock (the button under the moves, or View > Panels) draws the port's `[behaviour]`
+graph: every move and every block is a node, and right-click adds a block (the palette is
+`mhfu_port.behaviour.KINDS`). A wire from a block's `out` feeds the next block's `in`, or plays a
+move at its `play`; a move's `while playing` starts a path while it plays, and its `then` hands to
+another move (`after`). Any other wire is refused in the status line. `#2` on a block is its path's
+rank (higher on the canvas is checked first), `⚠` a path the game refuses (the tip says why),
+faded a block on no complete path. Delete removes blocks and their links; a move is deleted in
+Moves. Every gesture is one undo step.
 
 ## Tests
 
