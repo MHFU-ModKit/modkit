@@ -119,11 +119,11 @@ and the combat entry; the call's `force` starts it at once (`mhfu.move_play(ent,
 The same AI step finds what a mod may answer, one AI frame after the engine's change at most,
 raised on the 5 Hz registry poll (`include/mhfu/monster_events.h`): `mhfu.on_bigmonster_noticed`,
 `_combat_entered` and `_combat_left` (the yellow eye beside the player's name), `_flinch` (with
-the part), `_part_broken` and `_tail_cut`, each `fn(ev)` with the entity, the AI frame, the pair
-and the part. `mhfu.move_react("flinch", ent, { entry = 78 })` plays a move in place of the
-monster's flinch: the engine counts the flinch and applies the damage, then enters the move's
-carrier instead of `(4,x)`, and the move plays from the next AI step. From the debugger:
-`mhfu events --follow 60`.
+the part), `_part_broken`, `_tail_cut`, `_enraged` and `_calmed` (ENTITY.FLAGS bit 0x20), each
+`fn(ev)` with the entity, the AI frame, the pair and the part. `mhfu.move_react("flinch", ent,
+{ entry = 78 })` plays a move in place of the monster's flinch: the engine counts the flinch and
+applies the damage, then enters the move's carrier instead of `(4,x)`, and the move plays from
+the next AI step. From the debugger: `mhfu events --follow 60`.
 
 ## Own moves from a manifest
 
@@ -146,6 +146,18 @@ waits for its drop, on a model with the mesh 1 the dropped tail draws, requests,
 wait with it, and the events seen meanwhile reach them after it. `ports/README.md` "Moves and
 behaviour" has the manifest's side.
 
+A rule also takes `conds` that must all hold (`{ "hp_below", 0, 30 }`: op, arg, value; the ops are
+`mhfu.EmCond`: HP percent, broken parts, enraged or calm, the hunter's side of the monster, a
+chance rolled last, a counter against a number), `effects` it applies each time it fires
+(`var_add`, `var_set` on a counter), a `signal` that fires it in place of `on`, and
+`no_play = true`: it plays nothing, applies its effects, and the scan goes on to the next rule, in
+every AI frame. The counters (`mhfu.em_var`), signals (`mhfu.em_signal`) and the parts broken so
+far are the monster's board, reset with a new monster; a port names them in its moves module's
+`vars` and `signals` (`port:var`, `port:fire`). The board holds
+`mhfu.addr.EM_BOARD.VARS_COUNT` counters and `SIGNALS_COUNT` signals, a rule
+`mhfu.addr.EM_RULE.CONDS_COUNT` conditions and `EFFECTS_COUNT` effects. The partitions em_vhook
+takes grow with the rules and moves; its log lines give their sizes.
+
 ## Calling the game from C
 
 C calls a game function through `mhfu_call(fn, a0, ...)` (`mhfu/call.h`, word arguments only).
@@ -160,7 +172,7 @@ declared API; it needs a host `c++` (else those tests skip) and `lupa`, which `u
 
 ## Status
 
-Runs in PPSSPP and on a real PSP under PRO CFW, for MHFU EU only. The Lua API is version 3
+Runs in PPSSPP and on a real PSP under PRO CFW, for MHFU EU only. The Lua API is version 4
 (`mhfu.api_version`); `mhfu.clone_combat` is experimental and can crash the game.
 
 ## Licence

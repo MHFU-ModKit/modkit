@@ -15,10 +15,10 @@
 #ifndef MHFU_HOST
 #include <pspsysmem.h>
 #include <pspthreadman.h>
-static uint32_t now_usec(void) { return sceKernelGetSystemTimeLow(); }
+extern "C" uint32_t mhfu_usec(void) { return sceKernelGetSystemTimeLow(); }
 #else
 extern "C" uint32_t mhfu_host_usec(void);
-static uint32_t now_usec(void) { return mhfu_host_usec(); }
+extern "C" uint32_t mhfu_usec(void) { return mhfu_host_usec(); }
 #endif
 
 #define OWNER "mhfu_events"
@@ -31,14 +31,15 @@ static_assert(sizeof(mhfu_monster_event_t) == MHFU_MONSTER_EVENT_SIZE, "MONSTER_
 static_assert(offsetof(mhfu_monster_event_t, kind) == MHFU_MONSTER_EVENT_KIND, "MONSTER_EVENT layout");
 static_assert(offsetof(mhfu_monster_event_t, data) == MHFU_MONSTER_EVENT_DATA, "MONSTER_EVENT layout");
 static_assert(sizeof(mhfu_monster_watch_t) == MHFU_MONSTER_WATCH_SIZE, "MONSTER_WATCH layout");
+static_assert(offsetof(mhfu_monster_watch_t, enraged) == MHFU_MONSTER_WATCH_ENRAGED, "MONSTER_WATCH layout");
 static_assert(offsetof(mhfu_monster_watch_t, edges) == MHFU_MONSTER_WATCH_EDGES, "MONSTER_WATCH layout");
 static_assert(offsetof(mhfu_monster_events_t, watch) == MHFU_MONSTER_EVENTS_WATCH, "MONSTER_EVENTS layout");
 static_assert(offsetof(mhfu_monster_events_t, ring) == MHFU_MONSTER_EVENTS_RING, "MONSTER_EVENTS layout");
 static_assert(sizeof(mhfu_monster_events_t) == MHFU_MONSTER_EVENTS_SIZE, "MONSTER_EVENTS layout");
 static_assert(MHFU_MONSTER_EVENTS_RING_COUNT == MHFU_MONSTER_EVENT_RING, "MONSTER_EVENTS layout");
 static_assert(MHFU_MONSTER_EVENTS_WATCH_COUNT == MHFU_MONSTER_EVENT_WATCH, "MONSTER_EVENTS layout");
-static_assert(MHFU_EVENT_BIGMONSTER_TAIL_CUT - MHFU_EVENT_BIGMONSTER_NOTICED
-              == MHFU_MONSTER_TAIL_CUT - MHFU_MONSTER_NOTICED, "kind order is event order");
+static_assert(MHFU_EVENT_BIGMONSTER_CALMED - MHFU_EVENT_BIGMONSTER_NOTICED
+              == MHFU_MONSTER_CALMED - MHFU_MONSTER_NOTICED, "kind order is event order");
 
 static volatile mhfu_monster_events_t *B;
 
@@ -46,7 +47,7 @@ extern "C" const char *const mhfu_monster_event_names[] = {
     MHFU_MONSTER_EVENT_KIND_NAMES, 0,
 };
 static_assert(sizeof(mhfu_monster_event_names) / sizeof(mhfu_monster_event_names[0]) - 1
-              == MHFU_MONSTER_TAIL_CUT, "a name per kind");
+              == MHFU_MONSTER_KINDS, "a name per kind");
 
 /* --- the step side ----------------------------------------------------------------------- */
 
@@ -138,11 +139,12 @@ extern "C" uint16_t mhfu_monster_events_frame(uint32_t ent, int stale, uint8_t *
     uint8_t aware = mhfu_mem_read_u8(ent + MHFU_ENTITY_AWARE);
     uint8_t combat = in_combat(ent, aware);
     uint8_t severed = (uint8_t)(mhfu_mem_read_u8(ent + MHFU_ENTITY_SEVERED) & TAIL_BIT);
+    uint8_t enraged = (mhfu_mem_read_u32(ent + MHFU_ENTITY_FLAGS) & MHFU_MONSTER_FLAG_ENRAGED) != 0;
     uint16_t broken = mhfu_mem_read_u16(ent + MHFU_ENTITY_BROKEN);
     uint8_t flinched = stale ? 0 : mhfu_mem_read_u8(ent + MHFU_ENTITY_FLINCH_MASK);
     if (parts) *parts = flinched;
     if (!fresh) {
-        uint32_t usec = now_usec();
+        uint32_t usec = mhfu_usec();
         uint8_t part = lowest(flinched);
         if (aware & ~w->aware & player_bit())
             put(w, ent, MHFU_MONSTER_NOTICED, MHFU_MONSTER_NO_PART, aware, usec);
@@ -155,10 +157,14 @@ extern "C" uint16_t mhfu_monster_events_frame(uint32_t ent, int stale, uint8_t *
         if (severed && !w->severed)
             put(w, ent, MHFU_MONSTER_TAIL_CUT, MHFU_MONSTER_NO_PART,
                 mhfu_mem_read_u8(ent + MHFU_ENTITY_SEVER_COUNT), usec);
+        if (enraged != w->enraged)
+            put(w, ent, enraged ? MHFU_MONSTER_ENRAGED : MHFU_MONSTER_CALMED,
+                MHFU_MONSTER_NO_PART, enraged, usec);
     }
     w->aware = aware;
     w->combat = combat;
     w->severed = severed;
+    w->enraged = enraged;
     w->broken = broken;
     return w->edges;
 }
@@ -181,9 +187,9 @@ extern "C" void mhfu_monster_events_drain(void)
         c.ev.data = e->data;
         c.ev._pad = 0;
         B->tail++;
-        if (c.ev.kind < MHFU_MONSTER_NOTICED || c.ev.kind > MHFU_MONSTER_TAIL_CUT) continue;
+        if (c.ev.kind < MHFU_MONSTER_NOTICED || c.ev.kind > MHFU_MONSTER_KINDS) continue;
         c.event_id = (mhfu_event_id_t)(MHFU_EVENT_BIGMONSTER_NOTICED + c.ev.kind - 1);
-        c.delay = now_usec() - c.ev.usec;
+        c.delay = mhfu_usec() - c.ev.usec;
         mhfu_event_fire(c.event_id, &c);
     }
 }

@@ -18,6 +18,9 @@ typedef unsigned int SceSize;   /* host tests compile the core's pure parts */
 extern "C" {
 #endif
 
+/* The emulated clock, microseconds (monster_events.cpp). */
+uint32_t mhfu_usec(void);
+
 /* --- events (events.cpp; the world events in world_events.cpp) --- */
 typedef struct {
     mhfu_event_fn_t fn;

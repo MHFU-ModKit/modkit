@@ -11,7 +11,7 @@ mhfu = {}
 
 ---The API's version, raised whenever a declaration here changes; a mod that needs something added
 ---in version N checks `mhfu.api_version >= N`.
-mhfu.api_version = 3
+mhfu.api_version = 4
 
 -- log, memory and world state (bind_memory.cpp) ----------------------------------------------
 
@@ -397,7 +397,8 @@ function mhfu.em_request(main, sub, mode) end
 function mhfu.em_substitute(slot, from_mask, from_sub, to_main, to_sub, count) end
 
 ---Rule slot 0..mhfu.addr.EM_CFG.RULES_COUNT-1: a brain rule the AI step checks every frame (30 Hz),
----with no Lua in the loop.
+---with no Lua in the loop. A rule that cannot hold (no trigger, an op or a board index it does not
+---know) is cleared and logged.
 ---@param slot integer
 ---@param rule mhfu.EmRule? nil clears the slot
 ---@return true
@@ -460,6 +461,8 @@ mhfu.EM_UNLIMITED = -1 -- MHFU_EM_UNLIMITED
 ---@field tip_pairs integer the tail tip's pairs in force (`mhfu.em_tip`)
 ---@field tip_copies integer frames the tip was posed
 ---@field cut_waits integer AI frames the tail cut held requests, plays and rules for its drop
+---@field vars integer[] the board's counters, by index + 1
+---@field broken integer the board's broken parts, bit k: part k
 ---@field req_pending integer 1 while a request waits for its AI frame
 ---@field req_done integer requests entered
 ---@field req_main integer the last request's pair
@@ -704,7 +707,7 @@ function mhfu.move_block() end
 -- The em_vhook brain plays one, in C on the AI step, when asked (em_play), when the move before
 -- it ends and names it (`after`), or when a rule says (EmRule.play_move).
 
----Own move slot 0..15 plays `spec`; `spec.after` is the slot played when it ends on its clip, its
+---Own move slot 0..mhfu.addr.EM_MOVES.MOVES_COUNT-1 plays `spec`; `spec.after` is the slot played when it ends on its clip, its
 ---length or a wall. False for a bad slot or no room left for its turn keys.
 ---@param slot integer
 ---@param spec mhfu.OwnMove
@@ -791,6 +794,19 @@ function mhfu.on_bigmonster_part_broken(fn, priority) end
 ---@param priority? integer
 function mhfu.on_bigmonster_tail_cut(fn, priority) end
 
+---Calls fn when a big monster enrages (ENTITY.FLAGS bit 0x20 rises).
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_enraged(fn, priority) end
+
+---Calls fn when a big monster calms down (ENTITY.FLAGS bit 0x20 falls).
+---@param fn fun(ev: mhfu.MonsterEvent)
+---@param priority? integer
+function mhfu.on_bigmonster_calmed(fn, priority) end
+
+---The monster events, as a brain rule's `on` and `mhfu.MonsterEvent.kind` name them.
+---@alias mhfu.MonsterEventKind "noticed"|"combat_entered"|"combat_left"|"flinch"|"part_broken"|"tail_cut"|"enraged"|"calmed"
+
 ---The monster-event block (struct MONSTER_EVENTS), for a debugger; 0 before the framework's init.
 ---@return integer
 function mhfu.monster_events_block() end
@@ -798,13 +814,13 @@ function mhfu.monster_events_block() end
 ---One monster event.
 ---@class mhfu.MonsterEvent
 ---@field entity integer
----@field kind "noticed"|"combat_entered"|"combat_left"|"flinch"|"part_broken"|"tail_cut"
+---@field kind mhfu.MonsterEventKind
 ---@field frame integer the monster's AI frame the change was seen in
 ---@field usec integer the emulated clock then
 ---@field delay integer microseconds from then to this call
 ---@field main integer the monster's pair then
 ---@field sub integer
----@field data integer flinch: the flinched parts; part_broken: the new broken bits; noticed: the aware bits; combat: 1 entered, 0 left; tail_cut: the cut count
+---@field data integer flinch: the flinched parts; part_broken: the new broken bits; noticed: the aware bits; combat: 1 entered, 0 left; tail_cut: the cut count; enraged, calmed: 1 and 0
 ---@field part? integer flinch, part_broken: the lowest flinched part
 
 ---A big monster now, read from its cells (the monster events' own reads): whether it noticed the
@@ -825,12 +841,41 @@ function mhfu.monster_state(ent) end
 ---@field flinched integer ENTITY.FLINCH_MASK: the parts that flinched this AI frame
 ---@field broken integer ENTITY.BROKEN
 
--- brain rules on monster events (bind_em.cpp) ----------------------------------------------------
+-- brain rules on monster events, with conditions, effects and signals (bind_em.cpp) -------------
+
+---A brain rule's condition: hp_at_least, hp_below (value: percent of max HP), broken, not_broken
+---(arg: part), enraged, calm, side (arg: sides, 1 front, 2 the monster's left, 4 right, 8
+---behind), chance (value: percent), var_at_least, var_below, var_equal (arg: counter, value).
+---@alias mhfu.EmCond "hp_at_least"|"hp_below"|"broken"|"not_broken"|"enraged"|"calm"|"side"|"chance"|"var_at_least"|"var_below"|"var_equal"
+
+---What a brain rule changes when it fires: var_add (saturating), var_set; arg: counter, value.
+---@alias mhfu.EmEffect "var_add"|"var_set"
+
+---`{ op, arg, value }`, arg and value 0 when left out.
+---@alias mhfu.EmCondOp [mhfu.EmCond, integer?, integer?]
+---@alias mhfu.EmEffectOp [mhfu.EmEffect, integer?, integer?]
 
 ---@class mhfu.EmRule
----@field on? "noticed"|"combat_entered"|"combat_left"|"flinch"|"part_broken"|"tail_cut" fires in the AI frame the event is seen, `from_*` and the distance still gating; "flinch" plays its own move (`play_move`) in place of the host's reaction
+---@field on? mhfu.MonsterEventKind fires in the AI frame the event is seen, `from_*` and the distance still gating; "flinch" plays its own move (`play_move`) in place of the host's reaction
 ---@field part? integer "flinch", "part_broken": only that part's (an ENTITY.FLINCH_MASK bit); default any
 ---@field force? boolean `play_move` starts while the monster's notice runs (a rule on "noticed" needs it)
+---@field signal? integer fires in the AI frame the board's signal of this 0-based index (`mhfu.em_signal`) is taken; not with `on`
+---@field conds? mhfu.EmCondOp[] all must hold, at most mhfu.addr.EM_RULE.CONDS_COUNT; a chance is rolled last
+---@field effects? mhfu.EmEffectOp[] applied each time it fires, at most mhfu.addr.EM_RULE.EFFECTS_COUNT
+---@field no_play? boolean plays nothing: applies its effects, counts the fire and the scan goes on to the next rule, in every AI frame; with `on = "flinch"` it never replaces the reaction
+
+---Counter k of the board the rules and Lua share for the wrapped species' monster (16 counters,
+---s16, 0 for a bad k); with v, sets it first. A new monster resets the board, from its spawn on.
+---@param k integer 0-based
+---@param v? integer
+---@return integer
+function mhfu.em_var(k, v) end
+
+---Raises board signal k (0-based): a rule with `signal = k` fires in the next AI frame, once. False
+---for a bad k.
+---@param k integer
+---@return boolean
+function mhfu.em_signal(k) end
 
 -- village NPCs of our own (bind_npc.cpp) ------------------------------------------------------
 
