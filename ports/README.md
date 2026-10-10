@@ -122,11 +122,11 @@ during = ["b2"]
 
 A path starts at an event or state block nothing feeds, or at a block a move lists in `during`,
 follows `next` and plays the moves in each `play` it reaches; fan-out and fan-in make more paths.
-Each path is one rule the framework checks every AI frame in C, and one fires a frame; a pair rule
-waits while an own move plays. Higher on the canvas is checked first. A path holds one event, one
-state and at most one block of a kind, but for conditions and effects (below); a block on no
-complete path is loose, which loads but does nothing. A cooldown waits after the path fired; a
-limit caps how often.
+Each path is one rule the framework checks every AI frame in C, and one playing path fires a frame;
+a pair rule waits while an own move plays. Among the paths that play, higher on the canvas is
+checked first. A path holds one event, one state and at most one block of a kind, but for
+conditions and effects (below); a block on no complete path is loose, which loads but does
+nothing. A cooldown waits after the path fired; a limit caps how often.
 
 ### Conditions, effects, counters and signals
 
@@ -140,12 +140,14 @@ Condition and effect blocks may repeat on a path: a rule holds 4 conditions and 
 (`monster_hp` with both bounds is two conditions). All conditions hold, or it does not fire.
 
 A path that ends at an effect block with no `next` and no `play` plays nothing: it applies its
-effects and counts as fired (cooldown and limit work). The framework runs every no-play path each
-AI frame first, whatever its place on the canvas; then the playing paths from the highest, and
-the first that holds plays and ends the scan. So canvas order ranks the playing paths only. On
-`on_flinch` a no-play path never replaces the host's reaction. Its `force` and `mode` have
-nothing to act on, so a no-play path refuses them. `any_time` and `idle` are pair gates: a path
-from them waits while an own move plays, and fires in the frames between moves.
+effects and counts as fired (cooldown and limit work). The rule table lists every no-play path
+first, then the playing paths, each group by canvas order (higher first), and the framework runs
+it in that order every AI frame: all the no-play paths, then the first playing path that holds. A
+path's rank (the studio's `#n`) is its place in the table, so a no-play path outranks every
+playing path wherever it sits on the canvas. On `on_flinch` a no-play path never replaces the
+host's reaction. Its `force` and `mode` have nothing to act on, so a no-play path refuses them.
+`any_time` and `idle` are pair gates: a path from them waits while an own move plays, and fires in
+the frames between moves.
 
 Counters and flags are named in the blocks (`[a-z][a-z0-9_]*`) and made on first use: 16 a
 monster, signed 16 bits, 0 at first and again for a new monster (a flag is a counter that is 0 or

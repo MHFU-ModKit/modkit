@@ -5,8 +5,9 @@
 A path starts at an event or state block no other block feeds, or at a block a move lists in
 `during`, walks `next` and plays the moves a reached block lists in `play`; one that ends at an
 effect block with neither `next` nor `play` plays nothing and only applies its effects. One path
-is one `Rule`, in canvas order: higher is checked first. `KINDS` is the schema of a block; the
-loader, the compiler and the studio all read it.
+is one `Rule`: the no-play paths first, then the playing ones, each group in canvas order, higher
+first. That is the order the brain runs them in. `KINDS` is the schema of a block; the loader,
+the compiler and the studio all read it.
 
 This module sits under `manifest`: the names the manifest and the graph share are defined here.
 """
@@ -601,7 +602,8 @@ def validate(m: Manifest) -> None:
 
 
 def paths(m: Manifest) -> list[Path]:
-    """Every complete path, in priority order."""
+    """Every complete path in the order the brain runs them: those that play nothing, then the
+    rest, each in canvas order."""
     b = m.behaviour
     fed = {n for blk in b.blocks.values() for n in blk.next}
     listed = {n for node in b.moves.values() for n in node.during}
@@ -628,7 +630,8 @@ def paths(m: Manifest) -> list[Path]:
 
 
 def _priority(m: Manifest, p: Path) -> tuple[Any, ...]:
-    """Higher on the canvas first: each block's `(y, x)` in order, then the played move's."""
+    """No-play paths first, then higher on the canvas: each block's `(y, x)` in order, then the
+    played move's."""
     b = m.behaviour
 
     def row(at: tuple[float, float]) -> tuple[float, float]:
@@ -637,6 +640,7 @@ def _priority(m: Manifest, p: Path) -> tuple[Any, ...]:
     node = b.moves.get(p.play) if p.play is not None else None
     move = row(node.at) if node is not None else (math.inf, math.inf)
     return (
+        p.play is not None,
         tuple(row(b.blocks[i].at) for i in p.blocks),
         move,
         p.blocks,
