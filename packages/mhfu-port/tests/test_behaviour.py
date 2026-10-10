@@ -847,6 +847,21 @@ ZINOGRE = [
         dist=(0.0, 800.0),
         label="the hunter close during the dash -> stamp",
     ),
+    Rule(
+        "notice_howl",
+        on="noticed",
+        force=True,
+        label="the notice: his howl at once, forced, so it does not wait for combat",
+    ),
+    Rule(
+        None,
+        on="combat_entered",
+        effects=[("var_set", 1, 1)],
+        label="combat start -> set in_combat",
+    ),
+    Rule(
+        None, on="combat_left", effects=[("var_set", 1, 0)], label="combat end -> clear in_combat"
+    ),
     Rule("flinch_head", on="part_broken", part=0, label="horns break -> head flinch"),
     Rule("topple_left", on="part_broken", part=4, label="left foreleg breaks -> topple left"),
     Rule("topple_right", on="part_broken", part=6, label="right foreleg breaks -> topple right"),
@@ -855,7 +870,7 @@ ZINOGRE = [
     Rule(
         "charge_up",
         from_main=[0],
-        conds=[("var_at_least", 0, 2)],
+        conds=[("var_at_least", 1, 1), ("var_at_least", 0, 2)],
         effects=[("var_set", 0, 0)],
         label="2nd flinch -> charge up",
     ),
@@ -864,22 +879,17 @@ ZINOGRE = [
         from_main=[0],
         dist=(1500.0, B.UNLIMITED_DIST),
         cooldown=300,
+        conds=[("var_at_least", 1, 1)],
         label="hunter far -> dash",
     ),
     Rule(
         "notice_howl",
         from_main=[0],
-        conds=[("hp_below", 0, 30)],
+        conds=[("var_at_least", 1, 1), ("hp_below", 0, 30)],
         count=1,
         label="below 30% HP -> howl",
     ),
     Rule("notice_howl", signal=0, label="a mod's roar -> howl"),
-    Rule(
-        "notice_howl",
-        on="noticed",
-        force=True,
-        label="the notice: his howl at once, forced, so it does not wait for combat",
-    ),
 ]
 
 
@@ -887,10 +897,14 @@ def test_zinogre_compiles_to_its_rules():
     m = M.load(PORTS / "zinogre.toml")
     assert B.compile(m) == ZINOGRE
     assert B.loose(m) == [] and B.refused(m) == {}
-    assert B.vars(m) == {"flinches": 0} and B.signals(m) == {"roar": 0}
+    assert B.vars(m) == {"flinches": 0, "in_combat": 1} and B.signals(m) == {"roar": 0}
     old = ZINOGRE[:4]
     assert all(not r.conds and not r.effects and r.signal is None for r in old)
     assert len(ZINOGRE) <= B.SEAM_RULES
+    idle = [r for r in ZINOGRE if r.from_main == [0]]
+    assert len(idle) == 3 and all(("var_at_least", 1, 1) in r.conds for r in idle)
+    notice = next(i for i, r in enumerate(ZINOGRE) if r.on == "noticed")
+    assert notice < ZINOGRE.index(idle[0]), "the notice scans before the idle paths"
 
 
 def test_zinogre_topples_end_in_the_stamp():

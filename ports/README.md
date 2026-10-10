@@ -189,14 +189,15 @@ port with them; `mhfu move play --own NAME [--force]` plays one of its own moves
 
 The Zinogre's paths, after the lunge and dash chains (higher is checked first):
 
-1. A break of the head plays `flinch_head`; of the left foreleg `topple_left`; of the right
+1. The notice plays `notice_howl` at once, before anything that idles.
+2. Combat start sets the flag `in_combat`, combat end clears it; both play nothing.
+3. A break of the head plays `flinch_head`; of the left foreleg `topple_left`; of the right
    `topple_right`; of any part `break_howl`. A topple is a sequence: fall, lie helpless, get up,
    then `stamp` (`after`).
-2. A flinch adds 1 to `flinches` and plays nothing.
-3. Idle with `flinches` at least 2 sets it to 0 and plays `charge_up`.
-4. Idle with the hunter 1500 away plays `dash`, then waits 300; idle below 30% HP plays
-   `notice_howl` once.
-5. The signal `roar` plays `notice_howl`; the notice plays it at once.
+4. A flinch adds 1 to `flinches` and plays nothing.
+5. Idle, in combat: with `flinches` at least 2, set it to 0 and play `charge_up`; with the
+   hunter 1500 away, play `dash`, then wait 300; below 30% HP, play `notice_howl` once.
+6. The signal `roar` plays `notice_howl`.
 
 ## Status
 

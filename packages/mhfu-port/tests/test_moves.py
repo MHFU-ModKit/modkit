@@ -235,9 +235,11 @@ def test_zinogre(data):
     assert '{ play = "flinch_head", on = "part_broken", part = 0' in text
     assert '{ play = "topple_left", on = "part_broken", part = 4' in text
     assert '{ no_play = true, on = "flinch", effects = { { "var_add", 0, 1 } }' in text
-    assert 'conds = { { "var_at_least", 0, 2 } }, effects = { { "var_set", 0, 0 } }' in text
-    assert 'conds = { { "hp_below", 0, 30 } }' in text and "signal = 0" in text
-    assert "  vars = { flinches = 0 },\n  signals = { roar = 0 },\n  tip = " in text
+    assert 'conds = { { "var_at_least", 1, 1 }, { "var_at_least", 0, 2 } }, ' in text
+    assert 'effects = { { "var_set", 0, 0 } }' in text and "signal = 0" in text
+    assert '{ no_play = true, on = "combat_entered", effects = { { "var_set", 1, 1 } }' in text
+    assert 'conds = { { "var_at_least", 1, 1 }, { "hp_below", 0, 30 } }' in text
+    assert "  vars = { flinches = 0, in_combat = 1 },\n  signals = { roar = 0 },\n  tip = " in text
     assert '{ play = "notice_howl", on = "noticed", force = true' in text
     assert "length = 78, steer = { walls = false" in text and 'after = "topple_left_2"' in text
 
