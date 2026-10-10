@@ -236,10 +236,14 @@ def test_zinogre(data):
     assert '{ play = "topple_left", on = "part_broken", part = 4' in text
     assert '{ no_play = true, on = "flinch", effects = { { "var_add", 0, 1 } }' in text
     assert 'conds = { { "var_at_least", 1, 1 }, { "var_at_least", 0, 2 } }, ' in text
-    assert 'effects = { { "var_set", 0, 0 } }' in text and "signal = 0" in text
+    assert 'effects = { { "var_set", 0, 0 }, { "enrage", 0, 0 } }' in text and "signal = 0" in text
+    assert "  sever_below = 50,\n  tip = " in text and "natural_rage" not in text
     assert '{ no_play = true, on = "combat_entered", effects = { { "var_set", 1, 1 } }' in text
     assert 'conds = { { "var_at_least", 1, 1 }, { "hp_below", 0, 30 } }' in text
-    assert "  vars = { flinches = 0, in_combat = 1 },\n  signals = { roar = 0 },\n  tip = " in text
+    assert (
+        "  vars = { flinches = 0, in_combat = 1 },\n  signals = { roar = 0 },\n  sever_below"
+        in text
+    )
     assert '{ play = "notice_howl", on = "noticed", force = true' in text
     assert "length = 78, steer = { walls = false" in text and 'after = "topple_left_2"' in text
 
@@ -295,6 +299,22 @@ def test_the_board_reaches_the_module():
         'vars = { ["end"] = 0, hits = 1 },',
         "signals = { roar = 0 },",
     ]
+
+
+def test_the_gate_and_natural_rage_reach_the_module():
+    m = _board()
+    m.parts["tail"] = manifest.Part(3, severable=True, sever_below=50)
+    m.behaviour.natural_rage = False
+    body = _body(moves.lua(m, LAYOUT, {6}))
+    assert body[-2:] == ["sever_below = 50,", "natural_rage = false,"]
+    assert moves.sever_below(m) == 50 and moves.sever_below(_m()) is None
+
+
+def test_the_defaults_leave_both_out():
+    m = _m()
+    m.parts["tail"] = manifest.Part(3, severable=True)
+    body = _body(moves.lua(m, LAYOUT, {6}))
+    assert not any(line.startswith(("sever_below", "natural_rage")) for line in body)
 
 
 def test_a_module_without_the_board_has_no_tables():

@@ -416,6 +416,8 @@ EFFECTS = [
     ("counter_set", {"counter": "n", "to": 7}, [("var_set", 0, 7)]),
     ("flag_set", {"flag": "n"}, [("var_set", 0, 1)]),
     ("flag_set", {"flag": "n", "state": "clear"}, [("var_set", 0, 0)]),
+    ("enrage", {}, [("enrage", 0, 0)]),
+    ("calm", {}, [("calm", 0, 0)]),
 ]
 
 
@@ -891,8 +893,8 @@ ZINOGRE = [
         "charge_up",
         from_main=[0],
         conds=[("var_at_least", 1, 1), ("var_at_least", 0, 2)],
-        effects=[("var_set", 0, 0)],
-        label="2nd flinch -> charge up",
+        effects=[("var_set", 0, 0), ("enrage", 0, 0)],
+        label="2nd flinch -> charge up and enrage",
     ),
     Rule(
         "dash",
@@ -935,6 +937,30 @@ def test_zinogre_topples_end_in_the_stamp():
         assert all(m.moves[n].own and not m.moves[n].steer.walls for n in steps[:-1])
         assert m.moves[steps[1]].length == 78 and m.moves[steps[1]].carrier is None
     assert sum(mv.own for mv in m.moves.values()) <= M.OWN_MOVES
+
+
+def test_zinogre_cuts_its_tail_below_half():
+    m = M.load(PORTS / "zinogre.toml")
+    assert [n for n, p in m.parts.items() if p.sever_below] == ["tail"]
+    assert m.parts["tail"].severable and m.parts["tail"].sever_below == 50
+    assert m.behaviour.natural_rage
+
+
+def test_enrage_and_calm_play_nothing_alone():
+    m = _chain(blk("on_combat_entered"), blk("enrage"), play=None)
+    assert B.compile(m) == [Rule(None, on="combat_entered", effects=[("enrage", 0, 0)])]
+    assert B.KINDS["enrage"].role == B.KINDS["calm"].role == "effect"
+    assert not B.KINDS["enrage"].params and not B.KINDS["calm"].params
+    with pytest.raises(ManifestError, match="unknown param"):
+        M.check(graph({"b1": blk("calm", by=1)}))
+
+
+def test_natural_rage_is_on_unless_the_graph_says():
+    m = graph({})
+    assert m.behaviour.natural_rage and "natural_rage" not in M.dumps(m)
+    m.behaviour.natural_rage = False
+    assert "[behaviour]\nnatural_rage = false" in M.dumps(m)
+    assert M.loads(M.dumps(m)).behaviour.natural_rage is False
 
 
 def test_brute_has_no_rules():
