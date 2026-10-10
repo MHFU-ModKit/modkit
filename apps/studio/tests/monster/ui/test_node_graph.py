@@ -40,6 +40,9 @@ HP = P("hp", "float", "HP below", 0, 1, optional=True, tip="a fraction")
 OP = P("op", "choice", "Compare", choices=("below", "above"), tip="which way")
 PART = P("part", "part", "Part", optional=True, tip="a part")
 MAINS = P("mains", "mains", "Mains", optional=True, tip="mains")
+COUNTER = P("counter", "var", "Counter", tip="which counter")
+SIGNAL = P("name", "signal", "Signal", tip="which signal")
+SIDES = P("sides", "sides", "Sides", choices=("front", "left", "right", "behind"), tip="sides")
 ROLES = {"trigger": Ink.HOT, "condition": Ink.AXIS_Z, "move": Ink.AXIS_X}
 
 
@@ -680,3 +683,134 @@ def test_the_canvas_takes_a_colour_and_frames_nodes(qtbot: Any) -> None:
     node = view._shown["m"].view
     assert abs(centre.x() - (node.scenePos().x() + node.boundingRect().width() / 2)) < 120
     view.frame(["nope"])
+
+
+# ---- names and sides ----------------------------------------------------------------------- #
+
+
+def named() -> list[NodeSpec]:
+    """A node of a counter, a signal and sides."""
+    return [
+        NodeSpec(
+            "e",
+            "Count",
+            "effect",
+            (0, 0),
+            ("in",),
+            ("out",),
+            params=(COUNTER, SIGNAL, SIDES),
+            values={"counter": "hits", "name": "rage", "sides": ("front",)},
+            options={
+                "counter": [("armor", "armor"), ("hits", "hits")],
+                "name": [("rage", "rage")],
+            },
+        )
+    ]
+
+
+def edits(rec: Rec) -> list[tuple[str, object]]:
+    """The (param, value) of every `param_changed` by now."""
+    return [(a[1], a[2]) for n, a in rec.got() if n == "param_changed"]
+
+
+def test_a_name_is_an_editable_combo_over_the_names_in_use(qtbot: Any) -> None:
+    view = make(qtbot, named(), [])
+    counter, signal = field(view, "e", "counter"), field(view, "e", "name")
+    assert isinstance(counter._ctl, QComboBox) and counter._ctl.isEditable()
+    assert [counter._ctl.itemText(i) for i in range(counter._ctl.count())] == ["armor", "hits"]
+    assert (counter.get_value(), signal.get_value()) == ("hits", "rage")
+    assert counter._ctl.currentIndex() == 1 and counter._ctl.currentText() == "hits"
+    view.show([replace(named()[0], values={"counter": "fresh", "name": "rage"})], [])
+    assert counter.get_value() == "fresh" and counter._ctl.currentIndex() == -1  # not an option
+
+
+def test_sides_are_a_multi_select_over_the_choices(qtbot: Any) -> None:
+    view = make(qtbot, named(), [])
+    sides = field(view, "e", "sides")
+    assert isinstance(sides._ctl, QToolButton) and sides.get_value() == ("front",)
+    assert [a.text() for a in sides._ctl.menu().actions()] == ["front", "left", "right", "behind"]
+    assert sides._ctl.text() == "front"
+    view.show([replace(named()[0], values={"sides": ("left", "behind")})], [])
+    assert sides.get_value() == ("left", "behind") and sides._ctl.text() == "left, behind"
+
+
+def test_each_new_widget_says_its_edit_once(qtbot: Any) -> None:
+    view = make(qtbot, named(), [])
+    rec = Rec(view, qtbot)
+    counter, signal = field(view, "e", "counter")._ctl, field(view, "e", "name")._ctl
+    counter.setCurrentIndex(0)  # a pick
+    assert edits(rec) == [("counter", "armor")]
+    counter.setEditText("fresh_1")  # a new name, finished by Return or by leaving
+    counter.lineEdit().editingFinished.emit()
+    counter.lineEdit().editingFinished.emit()
+    assert edits(rec) == [("counter", "fresh_1")]
+    signal.lineEdit().selectAll()
+    QTest.keyClicks(signal.lineEdit(), "calm")
+    QTest.keyClick(signal.lineEdit(), Qt.Key.Key_Return)
+    assert edits(rec) == [("name", "calm")]
+    field(view, "e", "sides")._ctl.menu().actions()[2].trigger()
+    assert edits(rec) == [("sides", ("front", "right"))]
+
+
+def test_a_name_that_is_not_a_name_goes_back_unheard(qtbot: Any) -> None:
+    view = make(qtbot, named(), [])
+    rec = Rec(view, qtbot)
+    f = field(view, "e", "counter")
+    for bad in ("Hits", "9lives", "two words", "x-y", "", "  "):
+        f._ctl.setEditText(bad)
+        f._ctl.lineEdit().editingFinished.emit()
+        assert f.get_value() == "hits" and f._ctl.currentText() == "hits", bad
+    assert rec.got() == []
+
+
+def test_a_name_with_spaces_around_it_is_the_name(qtbot: Any) -> None:
+    view = make(qtbot, named(), [])
+    rec = Rec(view, qtbot)
+    f = field(view, "e", "counter")
+    f._ctl.setEditText("  fresh ")
+    f._ctl.lineEdit().editingFinished.emit()
+    assert f._ctl.currentText() == "fresh"
+    assert edits(rec) == [("counter", "fresh")]
+
+
+def test_a_refused_name_goes_back_and_is_asked_again(qtbot: Any) -> None:
+    view = make(qtbot, named(), [])
+    rec = Rec(view, qtbot)
+    f = field(view, "e", "counter")
+    for _ in range(2):
+        f._ctl.setEditText("fresh")
+        f._ctl.lineEdit().editingFinished.emit()
+        assert edits(rec) == [("counter", "fresh")]
+        assert f.get_value() == "hits"
+
+
+def test_an_accepted_name_stays_and_is_an_option(qtbot: Any) -> None:
+    view = make(qtbot, named(), [])
+    f = field(view, "e", "counter")
+
+    def take(i: str, name: str, value: object) -> None:
+        opts = [("armor", "armor"), ("fresh", "fresh"), ("hits", "hits")]
+        spec = named()[0]
+        view.show(
+            [replace(spec, values={**spec.values, name: value}, options={"counter": opts})], []
+        )
+
+    view.param_changed.connect(take)
+    f._ctl.setEditText("fresh")
+    f._ctl.lineEdit().editingFinished.emit()
+    qtbot.wait(20)
+    assert f.get_value() == "fresh" and f._ctl.currentIndex() == 1 and f._ctl.count() == 3
+
+
+def test_new_names_keep_what_is_picked(qtbot: Any) -> None:
+    view = make(qtbot, named(), [])
+    f = field(view, "e", "counter")
+    f._ctl.setEditText("half_typ")  # not finished: not held
+    view.show([replace(named()[0], options={"counter": [("hits", "hits"), ("zeta", "zeta")]})], [])
+    assert f.get_value() == "hits" and f._ctl.count() == 2
+
+
+def test_an_unknown_type_raises(qtbot: Any) -> None:
+    view = make(qtbot)
+    with pytest.raises(ValueError, match="unknown type 'number'"):
+        view.show([replace(nodes()[0], params=(P("x", "number"),))], [])
