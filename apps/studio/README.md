@@ -94,7 +94,8 @@ graph: every move and every block is a node, and right-click adds a block (the p
 `mhfu_port.behaviour.KINDS`). A wire from a block's `out` feeds the next block's `in`, or plays a
 move at its `play`; a move's `while playing` starts a path while it plays, and its `then` hands to
 another move (`after`). Any other wire is refused in the status line. `#2` on a block is its path's
-rank (higher on the canvas is checked first), `⚠` a path the game refuses (the tip says why),
+rank (higher on the canvas is checked first, but every path that plays nothing runs before all
+the others), `⚠` a path the game refuses (the tip says why),
 faded a block on no complete path. Delete removes blocks and their links; a move is deleted in
 Moves. Every gesture is one undo step.
 

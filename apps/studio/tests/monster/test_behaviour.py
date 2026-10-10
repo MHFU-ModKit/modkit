@@ -370,6 +370,7 @@ def test_the_zinogre_reads(ports: Path) -> None:
     assert sorted(n for ns in r.priority.values() for n in ns) == list(range(1, 17))
     assert r.loose == [] and r.refused == {} and r.capped is None
     assert [p.blocks[-1] for p in r.paths if p.play is None] == ["b15", "b17", "b23"]
+    assert [p.play is None for p in r.paths] == [True] * 3 + [False] * 13, "bookkeeping runs first"
     assert model.names(m, "var") == ["flinches", "in_combat"]
     assert min(b.at[0] for b in m.behaviour.blocks.values()) == model.LEFT
     assert {w.dst for w in B.wires(m) if w.dst_port == "play"} >= {"move:flinch_head"}
