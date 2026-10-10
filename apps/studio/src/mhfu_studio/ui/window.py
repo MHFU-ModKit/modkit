@@ -208,7 +208,12 @@ class Window(QMainWindow):
         if not (isinstance(geo, QByteArray) and self.restoreGeometry(geo)):
             self.resize(1500, 940)
         studio.listen(self._schedule)
+        # the layout before the maximize: Qt retries one restored into a hidden, maximized
+        # window on every resize, and on macOS each retry resizes again, forever
+        maximized = self.windowState() & Qt.WindowState.WindowMaximized
+        self.setWindowState(self.windowState() & ~maximized)
         self.sync()
+        self.setWindowState(self.windowState() | maximized)
 
     # ---- docks ----------------------------------------------------------------------- #
 

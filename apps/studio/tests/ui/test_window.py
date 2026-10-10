@@ -176,6 +176,24 @@ def test_old_layouts_are_dropped(make_window: Make) -> None:
     assert again.dockWidgetArea(dock(again, "map/Items")) == LEFT
 
 
+def test_layout_restores_unmaximized(make_window: Make, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A layout restored into a hidden, maximized window looped forever on macOS."""
+    w = make_window()
+    w.showMaximized()
+    w.close()
+    states: list[Qt.WindowState] = []
+    restore = QMainWindow.restoreState
+
+    def spy(self: QMainWindow, state: Any, version: int = 0) -> bool:
+        states.append(self.windowState())
+        return restore(self, state, version)
+
+    monkeypatch.setattr(QMainWindow, "restoreState", spy)
+    again = make_window(show=False)
+    assert states and not any(s & Qt.WindowState.WindowMaximized for s in states)
+    assert again.windowState() & Qt.WindowState.WindowMaximized
+
+
 def test_restore_places_new_docks(make_window: Make) -> None:
     make_window().close()
     w = make_window(Tabbed("map"), Tabbed("monster"))
