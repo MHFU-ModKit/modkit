@@ -14,7 +14,8 @@
 -- and port:play("charge") enters the pair and latches the port's clip in one call. A move with an
 -- executor `entry` and no pair is the port's own: port:move("stamp") plays it through the
 -- framework's move player (mhfu.em_move). A port's moves and rules default to its manifest's,
--- from <name>_moves.lua (P.behaviour).
+-- from <name>_moves.lua (P.behaviour), whose `vars` and `signals` name the monster's board:
+-- port:var("kills") reads a counter the rules change, port:fire("rage") raises a signal.
 --
 -- A mod requires the library at its top level and registers a setup function, which runs at once
 -- and again after a library reload; registering the same name again replaces it:
@@ -118,6 +119,9 @@ local EM_UNLIMITED = mhfu.EM_UNLIMITED or -1
 local MAX_SUBS     = 4
 local MAX_RULES    = mhfu.addr.EM_CFG.RULES_COUNT     -- rules the seam holds
 local MAX_OWN      = mhfu.addr.EM_MOVES.MOVES_COUNT  -- own moves the framework's registry holds
+local MAX_CONDS    = mhfu.addr.EM_RULE.CONDS_COUNT    -- conditions and effects a rule holds
+local MAX_EFFECTS  = mhfu.addr.EM_RULE.EFFECTS_COUNT
+local MAX_SIGNALS  = mhfu.addr.EM_BOARD.SIGNALS_COUNT -- the board's signals
 
 local function native_ready()
   return mhfu.em_installed ~= nil and mhfu.em_installed() == true
@@ -200,8 +204,8 @@ function P.layout(name)
 end
 
 --- A port's moves and rules from mods/lib/<name>_moves.lua, which `mhfu-port inject` generates
---- from the manifest with the clips module: { moves = {...}, rules = {...} }. Empty, logged
---- once, without it.
+--- from the manifest with the clips module: { moves = {...}, rules = {...}, vars = {name = index},
+--- signals = {name = index} }. Empty, logged once, without it.
 function P.behaviour(name)
   local ok, t = pcall(require, name .. "_moves")
   if ok and type(t) == "table" then return t end
@@ -233,6 +237,8 @@ P.is_own = is_own
 --           attack rides the host's whole attack timing. A move with `entry` and no `main` is
 --           an own move (port:move). Default: the manifest's (P.behaviour)
 --   rules   port:rule{} specs installed with the port; default: the manifest's
+--   vars, signals  name -> index of the board's counters and signals (port:var, port:fire); default:
+--           the manifest's
 --   tip     { {joint, carrier}, ... }: the tail tip's joints follow the carriers until the tail
 --           drops (mhfu.em_tip); default: the manifest's
 --
@@ -246,6 +252,8 @@ function P.define(spec)
     clips   = spec.clips or P.layout(spec.name),
     moves   = spec.moves or made.moves or {},
     tip     = spec.tip or made.tip,
+    _vars   = spec.vars or made.vars or {},          -- board counter name -> index
+    _signals = spec.signals or made.signals or {},   -- board signal name -> index
     replace = spec.replace or {},
     ent     = 0,
     clip    = nil,      -- currently latched executor a1, nil = hands off
@@ -477,14 +485,20 @@ end
 ---
 --- `from` an own move fires while it plays, its AI frames the dwell; a rule from a pair waits
 --- while any own move plays. Fires at most once per entry into `from` (the pair changes when it
---- fires), then `cooldown` frames must pass; at most one rule fires an AI frame. `on = "<event>"`
---- (a monster event: "noticed", "combat_entered", "combat_left", "flinch", "part_broken",
---- "tail_cut") fires in the AI frame the event is seen instead, `from` still gating when given;
+--- fires), then `cooldown` frames must pass; at most one rule that plays fires an AI frame. `on =
+--- "<event>"` (a monster event, mhfu.MonsterEventKind) fires in the AI frame the event is seen
+--- instead, `from` still gating when given;
 --- `part` keeps a flinch or break to that part. `on = "flinch"` plays its own move in place of
 --- the host's reaction. `force` plays an own move while the monster's notice runs, which would
---- otherwise wait for combat (a rule on "noticed" needs it). Up to mhfu.addr.EM_CFG.RULES_COUNT rules per port, installed when the
---- seam is live. Without the seam the rule is inert and logged as such: the 2 Hz brain is the
---- fallback.
+--- otherwise wait for combat (a rule on "noticed" needs it). Up to mhfu.addr.EM_CFG.RULES_COUNT
+--- rules per port, installed when the seam is live. Without the seam the rule is inert and logged
+--- as such: the 2 Hz brain is the fallback.
+---
+--- A rule also takes conditions that must all hold (`conds = { {"hp_below", 0, 30}, ... }`: op,
+--- arg, value; mhfu.EmCond), effects it applies each time it fires (`effects = { {"var_add", 2, 1} }`),
+--- a `signal` (0-based index) that fires it in place of `on`, and `no_play = true`: it plays
+--- nothing (no `play`), applies its effects and the scan goes on to the next rule. The numbers are
+--- board indices, which the moves module's `vars` and `signals` give names.
 function Port:rule(spec)
   if #self._rules >= MAX_RULES then
     log("[port:%s] rule ignored: the seam holds %d", self.name, MAX_RULES)
@@ -495,18 +509,31 @@ function Port:rule(spec)
     log("[port:%s] rule: no such move '%s'", self.name, from)
     return self
   end
-  if not self.moves[spec.play or ""] then
+  local no_play = spec.no_play and true or false
+  if not no_play and not self.moves[spec.play or ""] then
     log("[port:%s] rule: play='%s' is not a declared move", self.name, tostring(spec.play))
     return self
   end
+  local label = no_play and "(no play)" or spec.play
   local fm = spec.from_main
   if type(fm) == "number" then fm = { fm } end
-  if from == nil and #(fm or {}) == 0 and spec.on == nil then
-    log("[port:%s] rule -> '%s': no `from` or `on`, ignored", self.name, spec.play)
+  if from == nil and #(fm or {}) == 0 and spec.on == nil and spec.signal == nil then
+    log("[port:%s] rule -> '%s': no `from`, `on` or `signal`, ignored", self.name, label)
+    return self
+  end
+  if #(spec.conds or {}) > MAX_CONDS or #(spec.effects or {}) > MAX_EFFECTS then
+    log("[port:%s] rule -> '%s': the seam holds %d conditions and %d effects a rule, ignored",
+        self.name, label, MAX_CONDS, MAX_EFFECTS)
+    return self
+  end
+  if spec.signal ~= nil and (spec.signal < 0 or spec.signal >= MAX_SIGNALS) then
+    log("[port:%s] rule -> '%s': signal %s is not 0..%d, ignored", self.name, label,
+        tostring(spec.signal), MAX_SIGNALS - 1)
     return self
   end
   self._rules[#self._rules + 1] = {
-    from = from, from_main = fm or {}, play = spec.play, label = spec.label,
+    from = from, from_main = fm or {}, play = not no_play and spec.play or nil, label = spec.label,
+    no_play = no_play, conds = spec.conds, effects = spec.effects, signal = spec.signal,
     on = spec.on, part = spec.part, force = spec.force and true or false,
     min_frames = spec.min_frames or 0,
     dist_lo = spec.dist and spec.dist[1] or 0, dist_hi = spec.dist and spec.dist[2] or 1.0e9,
@@ -522,7 +549,8 @@ function Port:_seam_rule(r)
   local t = { from_mask = 0, from_sub = EM_ANY, mode = r.mode, min_frames = r.min_frames,
               dist_lo = r.dist_lo, dist_hi = r.dist_hi, receding = r.receding,
               closing = r.closing, cooldown = r.cooldown, count = r.count, on = r.on,
-              part = r.part, force = r.force }
+              part = r.part, force = r.force, conds = r.conds, effects = r.effects,
+              signal = r.signal, no_play = r.no_play }
   local from = r.from
   if type(from) == "string" then
     local mv = self.moves[from]
@@ -532,14 +560,43 @@ function Port:_seam_rule(r)
     t.from_mask, t.from_sub = 1 << (from.main or 0), from.sub or EM_ANY
   end
   for _, m in ipairs(r.from_main) do t.from_mask = t.from_mask | (1 << m) end
+  if t.from_mask == 0 and t.from_move == nil and r.on == nil and r.signal == nil then return nil end
+  if r.no_play then return t end
   local to = self.moves[r.play]
   if is_own(to) then t.play_move = self._slot[r.play]
   else t.to_main, t.to_sub = to.main, to.sub end
-  if (t.from_mask == 0 and t.from_move == nil and r.on == nil)
-      or (is_own(to) and t.play_move == nil) or (r.on == "flinch" and not is_own(to)) then
+  if (is_own(to) and t.play_move == nil) or (r.on == "flinch" and not is_own(to)) then
     return nil
   end
   return t
+end
+
+--- Counter `name` of the monster's board, which the moves module's `vars` declares: its value,
+--- set to `v` first when given. 0, logged once, for a name it does not declare.
+function Port:var(name, v)
+  local k = self._vars[name]
+  if k == nil or mhfu.em_var == nil then
+    if k == nil and not P._once["var:" .. self.name .. ":" .. tostring(name)] then
+      P._once["var:" .. self.name .. ":" .. tostring(name)] = true
+      log("[port:%s] var('%s'): not in the moves module's vars", self.name, tostring(name))
+    end
+    return 0
+  end
+  return mhfu.em_var(k, v)
+end
+
+--- Raises signal `name`, which the moves module's `signals` declares: the rules on it fire in the
+--- monster's next AI frame. False, logged once, for a name it does not declare.
+function Port:fire(name)
+  local k = self._signals[name]
+  if k == nil or mhfu.em_signal == nil then
+    if k == nil and not P._once["signal:" .. self.name .. ":" .. tostring(name)] then
+      P._once["signal:" .. self.name .. ":" .. tostring(name)] = true
+      log("[port:%s] fire('%s'): not in the moves module's signals", self.name, tostring(name))
+    end
+    return false
+  end
+  return mhfu.em_signal(k) == true
 end
 
 --- An own move's em_move table: its `after` as a slot, or as the back pair of a pair move.
@@ -595,16 +652,21 @@ function Port:_arm_native()
     local t = r and self:_seam_rule(r)
     if t then
       mhfu.em_rule(i - 1, t)
-      log("[port:%s] rule %d: %s%s >=%d frames d[%d,%s)%s%s -> '%s'%s", self.name, i,
+      log("[port:%s] rule %d: %s%s >=%d frames d[%d,%s)%s%s%s -> %s%s", self.name, i,
           r.on and string.format("on %s%s, ", r.on, r.part and (" part " .. r.part) or "") or "",
           type(r.from) == "string" and ("'" .. r.from .. "'")
             or string.format("main 0x%02X", t.from_mask),
           r.min_frames, math.floor(r.dist_lo),
           r.dist_hi >= 1e9 and "inf" or tostring(math.floor(r.dist_hi)),
-          r.receding and " receding" or "", r.closing and " closing" or "", r.play,
+          r.receding and " receding" or "", r.closing and " closing" or "",
+          r.signal and (" signal " .. r.signal) or "",
+          r.no_play and "no play" or ("'" .. r.play .. "'"),
           r.label and (" (" .. r.label .. ")") or "")
     else
-      if r then log("[port:%s] rule %d -> '%s' cannot be installed", self.name, i, r.play) end
+      if r then
+        log("[port:%s] rule %d -> %s cannot be installed", self.name, i,
+            r.no_play and "no play" or ("'" .. r.play .. "'"))
+      end
       mhfu.em_rule(i - 1, nil)
     end
   end
