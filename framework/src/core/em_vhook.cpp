@@ -44,6 +44,12 @@
  *                 host step that follows. Own moves sit in a registry by slot
  *                 (mhfu_em_move) and play through the move player (move.cpp) that same
  *                 AI frame. The board (counters, signals, broken parts) is the monster's.
+ *   RAGE          the brain writes the engine's own rage levers, never the rage values: the
+ *                 enrage and calm effects and Lua's queued request (ENTITY.FLAGS 0x400,
+ *                 RAGE_TIMER), and the species' anger threshold raised once per monster.
+ *   SEVER GATE    OBJ_VTABLE.CUT_GATE of the species: a wrapper (wrap.h, a vtable swap) that
+ *                 refuses the tail cut at or above an HP percent and otherwise calls the
+ *                 species' own gate.
  *   BUDGET        slot-32 post + slot-29 one-shot: the ENTITY.ACTION_BUDGET
  *                 override; the stubs carry it, but nothing arms it.
  *   STEP          slot-29 pre: a C function per AI frame (mhfu_em_step), which may
@@ -179,6 +185,7 @@ static_assert(offsetof(mhfu_em_board_t, signals) == MHFU_EM_BOARD_SIGNALS, "EM_B
 static_assert(offsetof(mhfu_em_board_t, broken) == MHFU_EM_BOARD_BROKEN,   "EM_BOARD layout");
 static_assert(offsetof(mhfu_em_board_t, rng)   == MHFU_EM_BOARD_RNG,       "EM_BOARD layout");
 static_assert(offsetof(mhfu_em_board_t, entity) == MHFU_EM_BOARD_ENTITY,   "EM_BOARD layout");
+static_assert(offsetof(mhfu_em_board_t, rage)  == MHFU_EM_BOARD_RAGE,      "EM_BOARD layout");
 
 #define CFG_CANARY_VAL 0x5645484Bu   /* 'VEHK' */
 
@@ -202,13 +209,15 @@ static_assert(sizeof(tail_t) % 4 == 0, "zeroed word by word after the config");
  * stacks inside it, and stubs near its top were overwritten under heavy activity.
  * They come from the user partition, and only pointers live here. */
 #define RET_INSNS   4     /* jr ra; nop, padded to 16 bytes */
-#define STUBS       (STUB_AI_INSNS + STUB_ACT_INSNS + STUB_EVT_INSNS + MHFU_WRAP_WORDS + RET_INSNS)
+#define STUBS       (STUB_AI_INSNS + STUB_ACT_INSNS + STUB_EVT_INSNS + 2 * MHFU_WRAP_WORDS \
+                     + RET_INSNS)
 #define BLOCK_BYTES (STUBS * 4 + CFG_SIZE + sizeof(tail_t) + sizeof(mhfu_em_board_t) + 128)
 
 static uint32_t *g_stub_ai;
 static uint32_t *g_stub_act;
 static uint32_t *g_stub_evt;
 static uint32_t *g_stub_brain;        /* the OBJ_VTABLE.BRAIN wrapper (wrap.h) */
+static uint32_t *g_stub_gate;         /* the OBJ_VTABLE.CUT_GATE wrapper */
 static uint32_t *g_stub_ret;
 static em_vhook_cfg_t *g_cfgp;
 static volatile tail_t *T;
@@ -250,6 +259,8 @@ static void place_block(uint8_t *base)
     g_stub_act = (uint32_t *)(base + STUB_AI_INSNS * 4);
     g_stub_evt = (uint32_t *)(base + (STUB_AI_INSNS + STUB_ACT_INSNS) * 4);
     g_stub_brain = (uint32_t *)(base + (STUB_AI_INSNS + STUB_ACT_INSNS + STUB_EVT_INSNS) * 4);
+    g_stub_gate = (uint32_t *)(base + (STUB_AI_INSNS + STUB_ACT_INSNS + STUB_EVT_INSNS
+                                       + MHFU_WRAP_WORDS) * 4);
     g_stub_ret = (uint32_t *)(base + (STUBS - RET_INSNS) * 4);
     g_cfgp     = (em_vhook_cfg_t *)(base + STUBS * 4);
     T          = (volatile tail_t *)(base + STUBS * 4 + CFG_SIZE);
@@ -320,6 +331,7 @@ static uint32_t g_vtable;            /* the species vtable we latched onto */
 static uint32_t g_orig_ai;
 static uint32_t g_orig_act;
 static uint32_t g_orig_evt;
+static uint32_t g_orig_gate;         /* the species' own CUT_GATE */
 #endif
 static int      g_installed;
 
@@ -343,6 +355,14 @@ static void enter(uint32_t ent, uint32_t m, uint32_t s, uint32_t mode)
 #else
 extern "C" void mhfu_host_enter(uint32_t ent, uint32_t m, uint32_t s, uint32_t mode);
 static void enter(uint32_t e, uint32_t m, uint32_t s, uint32_t mode) { mhfu_host_enter(e, m, s, mode); }
+#endif
+
+/* the species' own tail-cut gate on ent */
+#ifndef MHFU_HOST
+static uint32_t gate_orig(uint32_t ent) { return mhfu_call(g_orig_gate, ent); }
+#else
+extern "C" uint32_t mhfu_host_gate(uint32_t ent);
+static uint32_t gate_orig(uint32_t ent) { return mhfu_host_gate(ent); }
 #endif
 
 static void copy_words(volatile void *to, const volatile void *from, unsigned bytes)
@@ -444,11 +464,91 @@ static uint32_t rng_next(void)   /* xorshift32; the state is never 0 */
     return x;
 }
 
-/* ent's board: counters, signals and parts 0, the generator reseeded; ent 0 for none yet */
+/* --- rage: the engine's own levers, written from the brain's thread ---------------------------- */
+
+#define NO_ANGER 32767   /* an ANGER_THRESHOLD no hit reaches */
+
+static uint8_t  g_natural = 1;    /* mhfu_em_natural_rage: the species' anger starts rage */
+static uint8_t  g_thr_pending;    /* the board's monster is due its threshold */
+static uint32_t g_thr_ent;        /* the monster whose threshold we raised, 0 none ... */
+static uint16_t g_thr_saved;      /* ... and the species' value there */
+static uint32_t g_gate_pct;       /* mhfu_em_sever_gate: the cut only below this HP percent, 0 any */
+static uint32_t g_gate_refused;
+
+/* the defaults: natural rage on, any cut, nothing raised */
+static void rage_reset(void)
+{
+    g_natural = 1;
+    g_thr_pending = 0;
+    g_thr_ent = 0;
+    g_gate_pct = 0;
+    g_gate_refused = 0;
+}
+
+/* The start is pending: the engine's MONSTER_STEP runs RAGE_START in its next frame. Set while
+ * the monster is enraged it would restart the timer and roar again. */
+static void enrage(uint32_t ent)
+{
+    const uint32_t f = mhfu_mem_read_u32(ent + MHFU_ENTITY_FLAGS);
+    if (!(f & MHFU_MONSTER_FLAG_ENRAGED))
+        mhfu_mem_write_u32(ent + MHFU_ENTITY_FLAGS, f | MHFU_MONSTER_FLAG_RAGE_START);
+}
+
+/* One frame of rage left: RAGE_END runs in the next. The flag alone would leave the values. */
+static void calm(uint32_t ent)
+{
+    if (mhfu_mem_read_u32(ent + MHFU_ENTITY_FLAGS) & MHFU_MONSTER_FLAG_ENRAGED)
+        mhfu_mem_write_u16(ent + MHFU_ENTITY_RAGE_TIMER, 1);
+}
+
+/* ent's anger threshold as mhfu_em_natural_rage has it: raised once, the species' value kept for
+ * the restore. Not maintained: whatever the engine writes later stands. */
+static void threshold_sync(uint32_t ent)
+{
+    const uint32_t at = ent + MHFU_ENTITY_ANGER_THRESHOLD;
+    if (g_natural) {
+        if (g_thr_ent == ent) {
+            mhfu_mem_write_u16(at, g_thr_saved);
+            g_thr_ent = 0;
+        }
+        return;
+    }
+    if (g_thr_ent != ent) {
+        g_thr_saved = mhfu_mem_read_u16(at);
+        g_thr_ent = ent;
+    }
+    mhfu_mem_write_u16(at, NO_ANGER);
+}
+
+/* --- the tail cut's gate: REACTION_CHECK asks vt[CUT_GATE](entity) when the cut counter runs out,
+ * and a 0 puts the counter back. The wrapper (wrap_gate) calls this in the gate's place. */
+
+/* no cut at or above g_gate_pct of the HP, for a monster of the species vtable the brain serves */
+static int gate_refuses(uint32_t ent)
+{
+    if (!g_gate_pct || mhfu_mem_read_u32(ent + MHFU_ENTITY_VTABLE) != T->vtable) return 0;
+    const int32_t max = mhfu_mem_read_u16(ent + MHFU_ENTITY_MAX_HP);
+    return max && (int32_t)mhfu_mem_read_u16(ent + MHFU_ENTITY_HP) * 100 >= (int32_t)g_gate_pct * max;
+}
+
+/* the species' gate has refusals of its own, so it runs on every cut the percent allows */
+static uint32_t gate_call(uint32_t ent)
+{
+    if (gate_refuses(ent)) {
+        g_gate_refused++;
+        return 0;
+    }
+    return gate_orig(ent);
+}
+
+/* ent's board: counters, signals and parts 0, the generator reseeded; ent 0 for none yet. The
+ * monster is due its anger threshold. */
 static void board_reset(uint32_t ent)
 {
     volatile uint32_t *w = (volatile uint32_t *)g_board;
     for (unsigned k = 0; k < sizeof(mhfu_em_board_t) / 4; k++) w[k] = 0;
+    g_thr_ent = 0;
+    g_thr_pending = 1;
     g_board->entity = ent;
     g_board->rng = ((ent * 0x9E3779B1u) ^ mhfu_usec()) | 1u;
     for (int k = 0; k < 4; k++) rng_next();   /* a near seed gives a near first draw */
@@ -464,6 +564,16 @@ static uint16_t take_signals(void)
         s = (uint16_t)(s | (1u << k));
     }
     return s;
+}
+
+/* the rage Lua queued (mhfu_em_rage), as the effect */
+static void take_rage(uint32_t ent)
+{
+    const uint8_t r = g_board->rage;
+    if (!r) return;
+    g_board->rage = MHFU_EM_RAGE_NONE;
+    if (r == MHFU_EM_RAGE_ON) enrage(ent);
+    else calm(ent);
 }
 
 /* --- the conditions --------------------------------------------------------------------------- */
@@ -552,16 +662,25 @@ static int conds_hold(const cfg_rule_t *r, uint32_t ent)
     return 1;
 }
 
-/* r's effects on the board */
-static void apply(const cfg_rule_t *r)
+/* the effects whose arg is a counter */
+static int is_var_effect(uint8_t op)
+{
+    return op == MHFU_EM_EFFECT_VAR_ADD || op == MHFU_EM_EFFECT_VAR_SET;
+}
+
+/* r's effects on the board and the monster */
+static void apply(const cfg_rule_t *r, uint32_t ent)
 {
     for (int i = 0; i < MHFU_EM_EFFECTS; i++) {
         const mhfu_em_op_t *e = &r->effects[i];
-        if (e->arg >= MHFU_EM_VARS) continue;
-        if (e->op == MHFU_EM_EFFECT_VAR_ADD)
-            g_board->vars[e->arg] = sat16(g_board->vars[e->arg] + e->value);
-        else if (e->op == MHFU_EM_EFFECT_VAR_SET)
-            g_board->vars[e->arg] = e->value;
+        if (is_var_effect(e->op) && e->arg >= MHFU_EM_VARS) continue;
+        switch (e->op) {
+        case MHFU_EM_EFFECT_VAR_ADD: g_board->vars[e->arg] = sat16(g_board->vars[e->arg] + e->value); break;
+        case MHFU_EM_EFFECT_VAR_SET: g_board->vars[e->arg] = e->value; break;
+        case MHFU_EM_EFFECT_ENRAGE:  enrage(ent); break;
+        case MHFU_EM_EFFECT_CALM:    calm(ent); break;
+        default: break;
+        }
     }
 }
 
@@ -596,14 +715,14 @@ static int holds(const cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_sta
 
 /* every fire, whichever path: the budget, the clock, the effects; a rule that plays restarts the
  * pair's dwell, one that plays nothing leaves it */
-static void count_fire(cfg_rule_t *r)
+static void count_fire(cfg_rule_t *r, uint32_t ent)
 {
     if (r->left != MHFU_EM_UNLIMITED) r->left--;
     r->fired++;
     r->last_fire = g_cfgp->ai_ticks;
     g_cfgp->brain_fires++;
     if (!quiet(r)) g_cfgp->frames = 0;
-    apply(r);
+    apply(r, ent);
 }
 
 static int fire(cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_state_t *m)
@@ -615,7 +734,7 @@ static int fire(cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_state_t *m
             enter(ent, r->to_main, r->to_sub, r->mode);
         }
     }
-    count_fire(r);
+    count_fire(r, ent);
     return 1;
 }
 
@@ -664,7 +783,7 @@ static int react_take(uint32_t ent, const volatile mhfu_move_state_t *m, const s
     const volatile mhfu_em_own_t *o = &R->moves[first->play_move - 1];
     mhfu_move_react_take((const mhfu_move_t *)&o->move, steer_of(o));
     tag(first->play_move - 1u, m);
-    count_fire(first);
+    count_fire(first, ent);
     return 1;
 }
 
@@ -802,6 +921,10 @@ static uint32_t brain(uint32_t ent)
 {
     em_vhook_cfg_t *c = g_cfgp;
     if (!g_board->entity) board_reset(ent);   /* unclaimed: the first monster seen owns it */
+    if (g_thr_pending && ent == g_board->entity) {
+        g_thr_pending = 0;
+        threshold_sync(ent);
+    }
     const int waits = cut_waits(ent);
     if (waits) T->waits++;
     else request(ent);
@@ -824,6 +947,7 @@ static uint32_t brain(uint32_t ent)
         return 0;
     }
     seen.sigs = take_signals();
+    take_rage(ent);
     held(ent, &seen);
     if (!act(ent, m, &seen)) react_arm(ent, m);
     return 0;
@@ -1010,8 +1134,9 @@ static const char *op_error(const mhfu_em_op_t *o, int cond)
 {
     if (!o->op) return 0;
     if (o->op > (cond ? MHFU_EM_COND_COUNT : MHFU_EM_EFFECT_COUNT)) return "an op it does not know";
-    if (!cond || is_var_cond(o->op))
+    if (cond ? is_var_cond(o->op) : is_var_effect(o->op))
         return o->arg < MHFU_EM_VARS ? 0 : "a counter past the board";
+    if (!cond) return 0;
     if (o->op == MHFU_EM_COND_BROKEN || o->op == MHFU_EM_COND_NOT_BROKEN)
         return o->arg < 8 ? 0 : "a part past 7";
     if (o->op == MHFU_EM_COND_SIDE) return (o->arg & SIDES) ? 0 : "a side mask with no side";
@@ -1100,6 +1225,9 @@ extern "C" void mhfu_em_clear(void)
     if (g_reacts) mhfu_move_react_arm(0, 0, 0, 0);
     g_reacts = 0;
     T->held_ent = 0;
+    g_gate_pct = 0;
+    g_natural = 1;
+    g_thr_pending = 1;
 }
 
 /* --- the tail tip --- */
@@ -1222,6 +1350,9 @@ extern "C" void mhfu_em_status(mhfu_em_status_t *out)
     for (int i = 0; i < MHFU_EM_SUBS; i++)  out->sub_left[i] = g_cfgp->subs[i].left;
     for (int i = 0; i < MHFU_EM_VARS; i++)  out->vars[i] = g_board->vars[i];
     out->broken = g_board->broken;
+    out->sever_pct = g_gate_pct;
+    out->gate_refused = g_gate_refused;
+    out->natural_rage = g_natural;
 }
 
 /* --- the board --- */
@@ -1244,6 +1375,36 @@ extern "C" int mhfu_em_signal(int k)
 }
 
 extern "C" const volatile mhfu_em_board_t *mhfu_em_board(void) { return g_board; }
+
+/* --- rage and the cut's gate --- */
+
+extern "C" int mhfu_em_rage(int on)
+{
+    if (!g_board || !g_installed) return 0;
+    g_board->rage = on ? MHFU_EM_RAGE_ON : MHFU_EM_RAGE_OFF;
+    return 1;
+}
+
+extern "C" void mhfu_em_natural_rage(int on)
+{
+    g_natural = on != 0;
+    g_thr_pending = 1;
+}
+
+#ifndef MHFU_HOST
+static int wrap_gate(void);
+#endif
+
+extern "C" int mhfu_em_sever_gate(int pct)
+{
+    if (!g_installed || pct < 0 || pct > 100) return 0;
+#ifndef MHFU_HOST
+    if (pct && !wrap_gate()) return 0;
+#endif
+    g_gate_pct = (uint32_t)pct;
+    mhfu_log("[%s] sever gate: the tail cuts %s", OWNER, pct ? "below the HP percent" : "at any HP");
+    return 1;
+}
 
 /* A new quest: no move is ours and the board belongs to no monster yet. */
 static void quest_reset(void)
@@ -1298,6 +1459,30 @@ static void wrap_brain(uint32_t vt)
     g_tip_wrapped = rc == MHFU_HOOK_OK;
     mhfu_log("[%s] brain 0x%08X -> 0x%08X%s", OWNER, (unsigned)orig,
              (unsigned)(uintptr_t)g_stub_brain, g_tip_wrapped ? "" : ": claim failed, no tail tip");
+}
+
+static int g_gate_wrapped;
+
+/* The cut's gate of this species, wrapped on the first percent; a vtable swap, claimed with the
+ * rest and restored with them. 0 when it cannot be. */
+static int wrap_gate(void)
+{
+    if (g_gate_wrapped) return 1;
+    const uint32_t slot = g_vtable + MHFU_OBJ_VTABLE_CUT_GATE;
+    const uint32_t orig = mhfu_mem_read_u32(slot);
+    mhfu_wrap_t w = {};
+    w.call = (uint32_t)(uintptr_t)gate_call;
+    w.pc = orig;
+    g_orig_gate = orig;
+    if (!orig || !mhfu_wrap_build_at(g_stub_gate, &w)) {
+        mhfu_log("[%s] cut gate 0x%08X: no wrapper, no sever gate", OWNER, (unsigned)orig);
+        return 0;
+    }
+    mhfu_hook_rc_t rc = mhfu_hook_vtable(slot, (uint32_t)(uintptr_t)g_stub_gate, OWNER);
+    g_gate_wrapped = rc == MHFU_HOOK_OK;
+    mhfu_log("[%s] cut gate 0x%08X -> 0x%08X%s", OWNER, (unsigned)orig,
+             (unsigned)(uintptr_t)g_stub_gate, g_gate_wrapped ? "" : ": claim failed, no sever gate");
+    return g_gate_wrapped;
 }
 
 static void install_for(uint32_t entity)
@@ -1357,6 +1542,7 @@ static void uninstall(void)
     mhfu_hook_release(OWNER);
     g_installed = 0;
     g_tip_wrapped = 0;
+    g_gate_wrapped = 0;
     T->count = 0;
     g_cfgp->step_fn = 0;
     mhfu_em_clear();
@@ -1395,6 +1581,7 @@ static void on_quest(const mhfu_event_ctx_t *ctx)
 extern "C" int mhfu_em_init(void)
 {
     if (alloc_block() < 0 || alloc_moves() < 0) return -1;
+    rage_reset();
     g_cfgp->patch_off = MHFU_ENTITY_ACTION_BUDGET;
     g_cfgp->patch_val = 900;
     g_cfgp->want_main = 0xFF;      /* matches nothing: nothing arms the budget override */
@@ -1425,12 +1612,16 @@ extern "C" int mhfu_em_init(void)
     g_installed = 1;
     g_tip_wrapped = 1;
     g_host_step = 0;
+    rage_reset();
     mhfu_move_init();
     return 0;
 }
 
 /* the species vtable latched, as install_for's */
 extern "C" void mhfu_em_host_latch(uint32_t vtable) { T->vtable = vtable; }
+
+/* the species' gate slot as its wrapper runs it: gate_call, calling mhfu_host_gate for the original */
+extern "C" uint32_t mhfu_em_host_gate(uint32_t ent) { return gate_call(ent); }
 
 /* the monster spawned, as on_spawn's */
 extern "C" void mhfu_em_host_spawn(uint32_t ent) { board_reset(ent); }

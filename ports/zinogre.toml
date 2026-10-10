@@ -708,6 +708,7 @@ index = 3
 hitzone_row = 4
 severable = true
 label = "em75's, a flinch of it measured live; the cut counts here"
+sever_below = 50
 
 [parts.left_foreleg]
 index = 4
@@ -1247,6 +1248,36 @@ play = [
 ]
 label = "a mod's roar -> howl"
 
+[behaviour.blocks.b37]
+kind = "played_for"
+at = [
+    400.0,
+    3200.0,
+]
+frames = 120
+next = [
+    "b38",
+]
+label = "after the charge -> enrage"
+
+[behaviour.blocks.b38]
+kind = "cooldown"
+at = [
+    680.0,
+    3200.0,
+]
+frames = 250
+next = [
+    "b39",
+]
+
+[behaviour.blocks.b39]
+kind = "enrage"
+at = [
+    960.0,
+    3200.0,
+]
+
 [behaviour.moves.lunge]
 at = [
     0.0,
@@ -1313,6 +1344,9 @@ at = [
 
 [behaviour.moves.charge_up]
 at = [
-    1520.0,
-    2400.0,
+    0.0,
+    3200.0,
+]
+during = [
+    "b37",
 ]

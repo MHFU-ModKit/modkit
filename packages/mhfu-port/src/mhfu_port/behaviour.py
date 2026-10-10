@@ -393,6 +393,20 @@ KINDS: dict[str, Kind] = {
             ),
             "When the path fires, sets or clears a flag",
         ),
+        Kind(
+            "enrage",
+            "effect",
+            "Enrage",
+            (),
+            "When the path fires, the monster becomes enraged, roar and all; none while it is",
+        ),
+        Kind(
+            "calm",
+            "effect",
+            "Calm down",
+            (),
+            "When the path fires, an enraged monster calms down; none while it is calm",
+        ),
     )
 }
 """The schema of a block, by kind name."""
@@ -428,6 +442,8 @@ class Behaviour:
 
     blocks: dict[str, Block] = field(default_factory=dict)
     moves: dict[str, MoveNode] = field(default_factory=dict)
+    natural_rage: bool = True
+    """False: the monster's own anger never enrages it; only an Enrage effect or a mod does."""
 
 
 Op = tuple[str, int, int]
@@ -704,6 +720,8 @@ _EFFECTS: dict[str, Callable[[dict[str, Any], dict[str, int]], list[Op]]] = {
     "counter_add": lambda p, v: [("var_add", v[p["counter"]], p["by"])],
     "counter_set": lambda p, v: [("var_set", v[p["counter"]], p["to"])],
     "flag_set": lambda p, v: [("var_set", v[p["flag"]], _FLAG[p["state"]])],
+    "enrage": lambda p, v: [("enrage", 0, 0)],
+    "calm": lambda p, v: [("calm", 0, 0)],
 }
 """A block kind's ops, given its params and the vars' indices; each may repeat on a path."""
 REPEATS = frozenset(_CONDS) | frozenset(_EFFECTS)

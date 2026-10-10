@@ -11,7 +11,7 @@ mhfu = {}
 
 ---The API's version, raised whenever a declaration here changes; a mod that needs something added
 ---in version N checks `mhfu.api_version >= N`.
-mhfu.api_version = 4
+mhfu.api_version = 5
 
 -- log, memory and world state (bind_memory.cpp) ----------------------------------------------
 
@@ -404,7 +404,8 @@ function mhfu.em_substitute(slot, from_mask, from_sub, to_main, to_sub, count) e
 ---@return true
 function mhfu.em_rule(slot, rule) end
 
----Drops every substitution, rule and pending request.
+---Drops every substitution, rule and pending request, and sets the sever gate and natural rage
+---back to any HP and on.
 ---@return true
 function mhfu.em_clear() end
 
@@ -463,6 +464,9 @@ mhfu.EM_UNLIMITED = -1 -- MHFU_EM_UNLIMITED
 ---@field cut_waits integer AI frames the tail cut held requests, plays and rules for its drop
 ---@field vars integer[] the board's counters, by index + 1
 ---@field broken integer the board's broken parts, bit k: part k
+---@field sever_pct integer `mhfu.em_sever_gate`'s percent, 0 off
+---@field gate_refused integer tail cuts the gate refused
+---@field natural_rage boolean `mhfu.em_natural_rage`
 ---@field req_pending integer 1 while a request waits for its AI frame
 ---@field req_done integer requests entered
 ---@field req_main integer the last request's pair
@@ -848,8 +852,10 @@ function mhfu.monster_state(ent) end
 ---behind), chance (value: percent), var_at_least, var_below, var_equal (arg: counter, value).
 ---@alias mhfu.EmCond "hp_at_least"|"hp_below"|"broken"|"not_broken"|"enraged"|"calm"|"side"|"chance"|"var_at_least"|"var_below"|"var_equal"
 
----What a brain rule changes when it fires: var_add (saturating), var_set; arg: counter, value.
----@alias mhfu.EmEffect "var_add"|"var_set"
+---What a brain rule changes when it fires: var_add (saturating), var_set (arg: counter, value);
+---enrage (the monster's rage starts, unless it is enraged) and calm (its rage ends in the next AI
+---frame), which take no arg or value.
+---@alias mhfu.EmEffect "var_add"|"var_set"|"enrage"|"calm"
 
 ---`{ op, arg, value }`, arg and value 0 when left out.
 ---@alias mhfu.EmCondOp [mhfu.EmCond, integer?, integer?]
@@ -876,6 +882,29 @@ function mhfu.em_var(k, v) end
 ---@param k integer
 ---@return boolean
 function mhfu.em_signal(k) end
+
+-- rage and the tail cut's gate (bind_em.cpp) -----------------------------------------------------
+
+---Enrages (true) or calms (false) the wrapped species' monster in its next AI frame, through the
+---engine's own start and end: the same as a rule's `enrage` and `calm` effects. The request waits
+---on the board for the brain, since Lua must not write the monster's flags from its thread. False
+---while nothing is wrapped.
+---@param on boolean
+---@return boolean
+function mhfu.em_rage(on) end
+
+---Off keeps the species' own anger from starting rage (its threshold is raised once per monster);
+---on, the default, restores the species' value. The quest's end sets it on.
+---@param on boolean
+---@return true
+function mhfu.em_natural_rage(on) end
+
+---The wrapped species' tail cut only below pct percent of the monster's HP (1..100), 0 for any;
+---the species' own gate still runs on the cuts it allows. False while nothing is wrapped or for a
+---bad pct. The quest's end sets it to 0.
+---@param pct integer
+---@return boolean
+function mhfu.em_sever_gate(pct) end
 
 -- village NPCs of our own (bind_npc.cpp) ------------------------------------------------------
 

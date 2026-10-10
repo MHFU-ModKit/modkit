@@ -16,6 +16,7 @@ static uint8_t g_hunter[0x300];
 static uint32_t g_calls[64][5];
 static int g_n;
 static float g_clip_end = 100;
+static uint32_t g_gate_ret;    /* what the species' own tail-cut gate answers */
 
 /* BREAK_TABLE, where the game has it */
 static uint8_t g_breaks[MHFU_BREAK_TABLE_COUNT * MHFU_BREAK_ROW_SIZE];
@@ -44,6 +45,7 @@ uint16_t mhfu_mem_read_u16(uint32_t a) { uint16_t v = 0; uint8_t *p = at(a, 2); 
 uint32_t mhfu_mem_read_u32(uint32_t a) { uint32_t v = 0; uint8_t *p = at(a, 4); if (p) memcpy(&v, p, 4); return v; }
 float    mhfu_mem_read_f32(uint32_t a) { float v = 0; uint8_t *p = at(a, 4); if (p) memcpy(&v, p, 4); return v; }
 void     mhfu_mem_write_u8(uint32_t a, uint8_t v) { uint8_t *p = at(a, 1); if (p) *p = v; }
+void     mhfu_mem_write_u16(uint32_t a, uint16_t v) { uint8_t *p = at(a, 2); if (p) memcpy(p, &v, 2); }
 void     mhfu_mem_write_u32(uint32_t a, uint32_t v) { uint8_t *p = at(a, 4); if (p) memcpy(p, &v, 4); }
 void    *mhfu_host_at(uint32_t a) { return at(a, 4); }
 void mhfu_log(const char *, ...) {}
@@ -88,6 +90,14 @@ void mhfu_host_end(uint32_t node, uint32_t vtable)
     memcpy(at(node + MHFU_ATTACK_NODE_STATE, 1), &ended, 1);
 }
 
+/* the species' own tail-cut gate (OBJ_VTABLE.CUT_GATE) */
+uint32_t mhfu_host_gate(uint32_t e)
+{
+    record('G', e, 0, 0, 0);
+    return g_gate_ret;
+}
+void host_gate(uint32_t ret) { g_gate_ret = ret; }
+
 /* the species brain: ATTACH's copy, JOINT.POSE of joint g_attach[1] into g_attach[0] */
 static uint32_t g_attach[2];
 void mhfu_host_brain(uint32_t e)
@@ -117,6 +127,7 @@ void     host_reset(float clip_end)
     memset(g_mem, 0, sizeof(g_mem));
     memset(g_hunter, 0, sizeof(g_hunter));
     g_clip_end = clip_end;
+    g_gate_ret = 1;
     g_n = 0;
     g_attach[0] = g_attach[1] = 0;
 }

@@ -16,6 +16,9 @@
 -- framework's move player (mhfu.em_move). A port's moves and rules default to its manifest's,
 -- from <name>_moves.lua (P.behaviour), whose `vars` and `signals` name the monster's board:
 -- port:var("kills") reads a counter the rules change, port:fire("rage") raises a signal.
+-- port:enrage() and port:calm() start and end the monster's rage through the engine's own levers,
+-- and the module's `sever_below` (an HP percent) and `natural_rage = false` set the tail cut's
+-- gate and keep the species' anger from starting rage.
 --
 -- A mod requires the library at its top level and registers a setup function, which runs at once
 -- and again after a library reload; registering the same name again replaces it:
@@ -205,7 +208,8 @@ end
 
 --- A port's moves and rules from mods/lib/<name>_moves.lua, which `mhfu-port inject` generates
 --- from the manifest with the clips module: { moves = {...}, rules = {...}, vars = {name = index},
---- signals = {name = index} }. Empty, logged once, without it.
+--- signals = {name = index}, sever_below = pct, natural_rage = false }. Empty, logged once, without
+--- it.
 function P.behaviour(name)
   local ok, t = pcall(require, name .. "_moves")
   if ok and type(t) == "table" then return t end
@@ -239,6 +243,10 @@ P.is_own = is_own
 --   rules   port:rule{} specs installed with the port; default: the manifest's
 --   vars, signals  name -> index of the board's counters and signals (port:var, port:fire); default:
 --           the manifest's
+--   sever_below  an HP percent: the tail cuts only below it (mhfu.em_sever_gate); default: the
+--           manifest's, none
+--   natural_rage false keeps the species' anger from starting rage (mhfu.em_natural_rage); default:
+--           the manifest's, true
 --   tip     { {joint, carrier}, ... }: the tail tip's joints follow the carriers until the tail
 --           drops (mhfu.em_tip); default: the manifest's
 --
@@ -254,6 +262,8 @@ function P.define(spec)
     tip     = spec.tip or made.tip,
     _vars   = spec.vars or made.vars or {},          -- board counter name -> index
     _signals = spec.signals or made.signals or {},   -- board signal name -> index
+    _sever_below = spec.sever_below or made.sever_below,   -- the tail cuts only below this HP percent
+    _natural_rage = spec.natural_rage ~= false and made.natural_rage ~= false,
     replace = spec.replace or {},
     ent     = 0,
     clip    = nil,      -- currently latched executor a1, nil = hands off
@@ -600,6 +610,17 @@ function Port:fire(name)
   return mhfu.em_signal(k) == true
 end
 
+--- Starts the monster's rage in its next AI frame, through the engine's own start (it roars): the
+--- same as a rule's `enrage` effect. False while the seam is not live.
+function Port:enrage()
+  return mhfu.em_rage ~= nil and mhfu.em_rage(true) == true
+end
+
+--- Ends the monster's rage in its next AI frame, through the engine's own end.
+function Port:calm()
+  return mhfu.em_rage ~= nil and mhfu.em_rage(false) == true
+end
+
 --- An own move's em_move table: its `after` as a slot, or as the back pair of a pair move.
 function Port:_seam_move(name)
   local mv = self.moves[name]
@@ -670,6 +691,16 @@ function Port:_arm_native()
       end
       mhfu.em_rule(i - 1, nil)
     end
+  end
+  if mhfu.em_sever_gate ~= nil then
+    local pct = self._sever_below or 0
+    if mhfu.em_sever_gate(pct) and pct > 0 then
+      log("[port:%s] tail cut only below %d%% HP", self.name, pct)
+    end
+  end
+  if mhfu.em_natural_rage ~= nil then
+    mhfu.em_natural_rage(self._natural_rage)
+    if not self._natural_rage then log("[port:%s] natural rage off", self.name) end
   end
   if self.tip then
     if mhfu.em_tip == nil then

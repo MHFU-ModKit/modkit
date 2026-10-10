@@ -110,6 +110,9 @@ class Status(ctypes.Structure):
         *[(k, ctypes.c_uint32) for k in ("events_muted", "tip_pairs", "tip_copies", "cut_waits")],
         ("vars", ctypes.c_int32 * (a.EM_BOARD.VARS.count or 0)),
         ("broken", ctypes.c_uint32),
+        ("sever_pct", ctypes.c_uint32),
+        ("gate_refused", ctypes.c_uint32),
+        ("natural_rage", ctypes.c_uint32),
     ]
 
 
@@ -264,6 +267,11 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     lib.mhfu_em_signal.argtypes = [ctypes.c_int]
     lib.mhfu_em_board.restype = ctypes.c_void_p
     lib.mhfu_em_status.argtypes = [ctypes.c_void_p]
+    lib.mhfu_em_rage.argtypes = [ctypes.c_int]
+    lib.mhfu_em_natural_rage.argtypes = [ctypes.c_int]
+    lib.mhfu_em_sever_gate.argtypes = [ctypes.c_int]
+    lib.mhfu_em_host_gate.argtypes = [ctypes.c_uint32]
+    lib.host_gate.argtypes = [ctypes.c_uint32]
     lib.host_break_row.argtypes = [
         ctypes.c_int,
         ctypes.c_uint8,
@@ -1194,6 +1202,227 @@ def test_the_last_rule_and_move_slots_work(g: Game) -> None:
     assert g.entered() == [(0, 2)]
     g.frame()
     assert ("X", ENT, 59, 0, 0) in g.calls() and g.lib.mhfu_em_playing() == MOVES - 1
+
+
+# --- rage and the tail cut's gate
+
+ENRAGED_FLAG, START_FLAG = 0x20, 0x400
+
+
+def flags(g: Game) -> int:
+    return int(g.peek(a.ENTITY.FLAGS, "I")[0])
+
+
+def timer(g: Game) -> int:
+    return int(g.peek(a.ENTITY.RAGE_TIMER, "h")[0])
+
+
+def threshold(g: Game) -> int:
+    return int(g.peek(a.ENTITY.ANGER_THRESHOLD, "h")[0])
+
+
+def test_the_enrage_effect_sets_the_start_pending(g: Game) -> None:
+    g.rule(0, **PLAY, no_play=True, count=1, effects=[effect("enrage")])
+    g.poke(a.ENTITY.FLAGS, "I", 0x8000)
+    g.frame()
+    assert flags(g) == 0x8000 | START_FLAG
+
+
+def test_the_enrage_effect_never_sets_it_while_enraged(g: Game) -> None:
+    g.rule(0, **PLAY, no_play=True, effects=[effect("enrage", 99)])
+    g.poke(a.ENTITY.FLAGS, "I", 0x8000 | ENRAGED_FLAG)
+    g.frames(3)
+    assert flags(g) == 0x8000 | ENRAGED_FLAG
+    assert g.status().rule_fired[0] == 3  # a counter-free effect takes any arg
+
+
+def test_the_calm_effect_leaves_one_frame_of_rage(g: Game) -> None:
+    g.rule(0, **PLAY, no_play=True, effects=[effect("calm")])
+    g.poke(a.ENTITY.RAGE_TIMER, "h", 2400)
+    g.frame()
+    assert timer(g) == 2400  # not enraged: nothing to end
+    g.poke(a.ENTITY.FLAGS, "I", ENRAGED_FLAG)
+    g.frame()
+    assert timer(g) == 1 and flags(g) == ENRAGED_FLAG  # the engine's own end clears the flag
+
+
+def test_rage_effects_ride_with_a_counter(g: Game) -> None:
+    g.rule(0, **PLAY, no_play=True, count=1, effects=[effect("var_add", 2, 1), effect("enrage")])
+    g.frame()
+    assert g.var(2) == 1 and flags(g) & START_FLAG
+
+
+def test_a_flinch_take_applies_the_rage_effect(g: Game) -> None:
+    g.own(0, 59)
+    g.rule(0, on=FLINCH, part=0, play_move=1, effects=[effect("enrage")])
+    g.frame()
+    g.flinch(0b001)
+    assert g.entered() == [(0, 2)] and flags(g) & START_FLAG
+
+
+def test_lua_queues_the_rage_for_the_brain(g: Game) -> None:
+    assert g.lib.mhfu_em_rage(1) == 1
+    assert flags(g) == 0  # the caller's thread writes nothing
+    g.frame()
+    assert flags(g) == START_FLAG and g.board("RAGE") == 0
+    g.poke(a.ENTITY.FLAGS, "I", 0)
+    g.frame()
+    assert flags(g) == 0  # asked once
+    g.poke(a.ENTITY.FLAGS, "I", ENRAGED_FLAG)
+    assert g.lib.mhfu_em_rage(0) == 1
+    g.frame()
+    assert timer(g) == 1
+
+
+def test_the_last_rage_request_wins(g: Game) -> None:
+    g.lib.mhfu_em_rage(1)
+    g.lib.mhfu_em_rage(0)
+    g.frame()
+    assert flags(g) == 0
+
+
+def test_the_cut_holds_a_rage_request(g: Game) -> None:
+    cut(g)
+    g.lib.mhfu_em_rage(1)
+    g.frames(3)
+    assert not flags(g) & START_FLAG
+    drop(g)
+    g.poke(a.ENTITY.FLAGS, "I", 0x4000)
+    g.frame()
+    assert flags(g) & START_FLAG
+
+
+def test_a_new_monster_drops_the_queued_rage(g: Game) -> None:
+    g.lib.mhfu_em_rage(1)
+    g.lib.mhfu_em_host_spawn(ENT2)
+    g.frame()
+    assert flags(g) == 0
+
+
+def test_natural_rage_is_on_by_default(g: Game) -> None:
+    g.poke(a.ENTITY.ANGER_THRESHOLD, "h", 600)
+    g.frames(3)
+    assert threshold(g) == 600 and g.status().natural_rage == 1
+
+
+def test_natural_rage_off_raises_the_threshold_once(g: Game) -> None:
+    g.poke(a.ENTITY.ANGER_THRESHOLD, "h", 600)
+    g.lib.mhfu_em_natural_rage(0)
+    assert threshold(g) == 600  # the brain writes it, in its next frame
+    g.frame()
+    assert threshold(g) == 32767 and g.status().natural_rage == 0
+    g.poke(a.ENTITY.ANGER_THRESHOLD, "h", 500)
+    g.frames(3)
+    assert threshold(g) == 500  # not maintained
+
+
+def test_natural_rage_on_restores_the_species_value(g: Game) -> None:
+    g.poke(a.ENTITY.ANGER_THRESHOLD, "h", 600)
+    g.lib.mhfu_em_natural_rage(0)
+    g.frame()
+    g.lib.mhfu_em_natural_rage(0)  # again: the saved value is the species', not ours
+    g.frame()
+    g.lib.mhfu_em_natural_rage(1)
+    g.frame()
+    assert threshold(g) == 600
+    g.lib.mhfu_em_natural_rage(1)
+    g.frame()
+    assert threshold(g) == 600
+
+
+def test_natural_rage_off_reaches_each_new_monster(g: Game) -> None:
+    g.lib.mhfu_em_natural_rage(0)
+    g.frame()
+    struct.pack_into("<h", g.mem, ENT2 - BASE + a.ENTITY.ANGER_THRESHOLD, 800)
+    g.lib.mhfu_em_host_spawn(ENT2)
+    g.lib.mhfu_em_host_frame(ENT2)
+    read = lambda: struct.unpack_from("<h", g.mem, ENT2 - BASE + a.ENTITY.ANGER_THRESHOLD)[0]  # noqa: E731
+    assert read() == 32767
+    g.lib.mhfu_em_natural_rage(1)
+    g.lib.mhfu_em_host_frame(ENT2)
+    assert read() == 800
+
+
+def test_clear_sets_natural_rage_back_on(g: Game) -> None:
+    g.poke(a.ENTITY.ANGER_THRESHOLD, "h", 600)
+    g.lib.mhfu_em_natural_rage(0)
+    g.frame()
+    g.lib.mhfu_em_clear()
+    g.frame()
+    assert threshold(g) == 600 and g.status().natural_rage == 1
+
+
+def gate(g: Game, ent: int = ENT) -> int:
+    return int(g.lib.mhfu_em_host_gate(ent))
+
+
+def gate_asked(g: Game) -> int:
+    return sum(1 for c in g.calls() if c[0] == "G")
+
+
+def test_the_gate_refuses_at_or_above_the_percent(g: Game) -> None:
+    tailed(g)
+    assert g.lib.mhfu_em_sever_gate(50) == 1
+    for now in (1000, 500):
+        hp(g, now)
+        assert gate(g) == 0
+    assert gate_asked(g) == 0 and g.status().gate_refused == 2
+    hp(g, 499)
+    assert gate(g) == 1 and gate_asked(g) == 1
+
+
+def test_the_gate_keeps_the_species_own_refusals(g: Game) -> None:
+    tailed(g)
+    g.lib.mhfu_em_sever_gate(50)
+    hp(g, 100)
+    g.lib.host_gate(0)
+    assert gate(g) == 0 and gate_asked(g) == 1
+    g.lib.host_gate(1)
+    assert gate(g) == 1
+
+
+def test_the_gate_passes_other_species_through(g: Game) -> None:
+    tailed(g)
+    g.lib.mhfu_em_sever_gate(50)
+    struct.pack_into("<I", g.mem, ENT2 - BASE + a.ENTITY.VTABLE, int(a.GIADROME_VTABLE))
+    struct.pack_into("<HH", g.mem, ENT2 - BASE + a.ENTITY.MAX_HP, 1000, 0)
+    struct.pack_into("<H", g.mem, ENT2 - BASE + a.ENTITY.HP, 1000)
+    assert gate(g, ENT2) == 1 and gate_asked(g) == 1
+    assert g.status().gate_refused == 0
+
+
+def test_the_gate_off_asks_the_species_only(g: Game) -> None:
+    tailed(g)
+    hp(g, 1000)
+    assert gate(g) == 1 and gate_asked(g) == 1  # never set
+    g.lib.mhfu_em_sever_gate(50)
+    assert gate(g) == 0
+    assert g.lib.mhfu_em_sever_gate(0) == 1
+    assert gate(g) == 1 and gate_asked(g) == 1
+
+
+def test_the_gate_needs_a_max_hp(g: Game) -> None:
+    tailed(g)
+    g.lib.mhfu_em_sever_gate(1)
+    hp(g, 0, 0)
+    assert gate(g) == 1 and gate_asked(g) == 1
+
+
+def test_the_gate_takes_a_percent_only(g: Game) -> None:
+    tailed(g)
+    assert g.lib.mhfu_em_sever_gate(101) == 0 and g.lib.mhfu_em_sever_gate(-1) == 0
+    assert g.status().sever_pct == 0
+    assert g.lib.mhfu_em_sever_gate(100) == 1 and g.status().sever_pct == 100
+    hp(g, 1000)
+    assert gate(g) == 0  # at 100 percent of the HP and above
+
+
+def test_clear_lifts_the_gate(g: Game) -> None:
+    tailed(g)
+    g.lib.mhfu_em_sever_gate(50)
+    g.lib.mhfu_em_clear()
+    hp(g, 1000)
+    assert gate(g) == 1 and g.status().sever_pct == 0
 
 
 def flinch_part(g: Game, part: int, count: int) -> None:

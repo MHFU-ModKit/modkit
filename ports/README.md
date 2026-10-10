@@ -133,7 +133,7 @@ nothing. A cooldown waits after the path fired; a limit caps how often.
 | Role | Kinds |
 |---|---|
 | condition | `monster_hp` (share of max HP, from `lo`, below `hi`), `part_broken`, `rage`, `hunter_side` (front, left, right, behind; its left is the monster's own), `chance` (rolled last), `counter_is`, `flag_is` |
-| effect | `counter_add`, `counter_set`, `flag_set`: applied each time the path fires |
+| effect | `counter_add`, `counter_set`, `flag_set`, `enrage`, `calm`: applied each time the path fires |
 | event | `on_signal`: a mod raised it |
 
 Condition and effect blocks may repeat on a path: a rule holds 4 conditions and 2 effects
@@ -168,6 +168,14 @@ AI frame before the host step that flinches, so a counter it tests misses the fl
 counted, in any order. The Zinogre counts flinches on a no-play rule and charges up from idle
 once `flinches` is 2, not on the flinch itself.
 
+`enrage` starts the engine's own rage, roar included, unless the monster is enraged; `calm` ends
+it, if it is. In a mod, `port:enrage()` and `port:calm()` ask the same, applied in the brain's
+next AI frame. `[behaviour] natural_rage = false` stops the monster's own anger from ever
+enraging it, so only an `enrage` effect or a mod does (default: on). `[parts.<name>]
+sever_below = 50` (1..100, on the one severable part, `severable = true`) lets the tail cut only
+below that share of the monster's HP; the module carries it as `sever_below`, and left out, a cut
+lands whenever the engine allows. Both reach the module only when the manifest sets them.
+
 An event fires in the AI frame it is seen; `part` narrows a flinch or a break to one part
 (`[parts]` names them; em75's: 0 head, 1 neck, 2 body, 3 tail, 4/6 the left/right foreleg, 5/7 the
 left/right hind leg). `on_flinch` plays an own move in place of the host's flinch: the engine
@@ -193,7 +201,8 @@ port with them; `mhfu move play --own NAME [--force]` plays one of its own moves
 `framework/lua/examples/ported_brute.lua` loads the Brute Tigrex in place of a Giadrome;
 `ported_zinogre.lua` the Zinogre with its manifest's moves and behaviour.
 
-The Zinogre's paths, after the lunge and dash chains (higher is checked first):
+The Zinogre's paths, after the lunge and dash chains (higher is checked first; 2, 4 and 7 play
+nothing and so run first):
 
 1. The notice plays `notice_howl` at once, before anything that idles.
 2. Combat start sets the flag `in_combat`, combat end clears it; both play nothing.
@@ -204,6 +213,12 @@ The Zinogre's paths, after the lunge and dash chains (higher is checked first):
 5. Idle, in combat: with `flinches` at least 2, set it to 0 and play `charge_up`; with the
    hunter 1500 away, play `dash`, then wait 300; below 30% HP, play `notice_howl` once.
 6. The signal `roar` plays `notice_howl`.
+7. Once `charge_up` has played 120 AI frames, just short of its end (121 by its clip, 125
+   measured), he enrages, then waits 250 frames. The roar starts one AI frame after the enrage,
+   so it comes after the charge; on the charge path itself it would cut the charge after one
+   frame.
+
+His tail cuts only below 50% HP (`sever_below`); natural rage stays on.
 
 ## Status
 

@@ -227,13 +227,14 @@ def test_the_zinogre_opens(
     ws.load(Scene.from_bytes(synthetic_pac, "z", path=zinogre_toml.with_suffix(".bin")), zin)
     p = make(qtbot, ws)
     m = zin.manifest
-    assert len(m.behaviour.blocks) == 36 and len(p.view._shown) == 36 + len(m.moves)
+    assert len(m.behaviour.blocks) == 39 and len(p.view._shown) == 39 + len(m.moves)
     plays = sorted(badge(p, i) for i in m.behaviour.blocks if badge(p, i))
-    assert plays == sorted(f"#{k}" for k in range(1, 17))
+    assert plays == sorted(f"#{k}" for k in range(1, 18))
     for k, path in enumerate(B.read(m).paths, 1):  # a path that plays nothing has its place too
         assert badge(p, path.blocks[-1]) == rank(k)
-    assert [badge(p, i) for i in ("b15", "b17", "b23")] == [rank(1), rank(2), rank(3)]
-    assert badge(p, "b4") == rank(4) and badge(p, "b36") == rank(16)
+    assert [badge(p, i) for i in ("b15", "b17", "b23", "b39")] == [rank(k) for k in (1, 2, 3, 4)]
+    assert badge(p, "b4") == rank(5) and badge(p, "b27") == rank(14)
+    assert badge(p, "b36") == rank(17) and p.rage.isChecked()
     assert field(p, "b23", "counter").get_value() == "flinches"
     assert options(p, "b15", "flag") == ["flinches", "in_combat"]
     assert all(p.view._shown[i].view.opacity() == 1.0 for i in m.behaviour.blocks)
@@ -751,3 +752,21 @@ def test_every_real_kind_draws_and_edits(
     for _ in EDITS:
         doc(ws).undo()
     assert doc(ws).manifest == drawn
+
+
+def test_natural_rage_starts_on(panel: BehaviourPanel) -> None:
+    assert panel.rage.isChecked() and B.natural_rage(panel.ws.manifest)
+
+
+def test_natural_rage_is_one_undo_step(panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
+    before = doc(ws).manifest
+    panel.rage.click()
+    assert doc(ws).manifest.behaviour.natural_rage is False and not panel.rage.isChecked()
+    assert "off" in ws.message
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    assert doc(ws).manifest == before and panel.rage.isChecked()
+    panel.rage.click()
+    panel.rage.click()
+    assert doc(ws).manifest.behaviour.natural_rage is True
