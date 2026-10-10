@@ -236,7 +236,13 @@ def test_zinogre(data):
     assert '{ play = "topple_left", on = "part_broken", part = 4' in text
     assert '{ no_play = true, on = "flinch", effects = { { "var_add", 0, 1 } }' in text
     assert 'conds = { { "var_at_least", 1, 1 }, { "var_at_least", 0, 2 } }, ' in text
-    assert 'effects = { { "var_set", 0, 0 }, { "enrage", 0, 0 } }' in text and "signal = 0" in text
+    assert 'effects = { { "var_set", 0, 0 } }' in text and "signal = 0" in text
+    enrage = '{ no_play = true, from = "charge_up", min_frames = 120, cooldown = 250, '
+    assert enrage + 'effects = { { "enrage", 0, 0 } }' in text
+    # it fires in the last frames of the charge (2 clip frames an AI frame), not in its first
+    rule = next(r for r in behaviour.compile(m) if r.from_move == "charge_up")
+    ai_frames = b.layout.frames[own["charge_up"]] // 2
+    assert ai_frames - 5 <= rule.min_frames < ai_frames and rule.cooldown >= 200
     assert "  sever_below = 50,\n  tip = " in text and "natural_rage" not in text
     assert '{ no_play = true, on = "combat_entered", effects = { { "var_set", 1, 1 } }' in text
     assert 'conds = { { "var_at_least", 1, 1 }, { "hp_below", 0, 30 } }' in text

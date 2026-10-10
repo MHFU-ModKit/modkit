@@ -1110,7 +1110,7 @@ at = [
 next = [
     "b25",
 ]
-label = "2nd flinch -> charge up and enrage"
+label = "2nd flinch -> charge up"
 
 [behaviour.blocks.b25]
 kind = "flag_is"
@@ -1144,16 +1144,6 @@ at = [
 ]
 counter = "flinches"
 to = 0
-next = [
-    "b37",
-]
-
-[behaviour.blocks.b37]
-kind = "enrage"
-at = [
-    1520.0,
-    2400.0,
-]
 play = [
     "charge_up",
 ]
@@ -1258,6 +1248,36 @@ play = [
 ]
 label = "a mod's roar -> howl"
 
+[behaviour.blocks.b37]
+kind = "played_for"
+at = [
+    400.0,
+    3200.0,
+]
+frames = 120
+next = [
+    "b38",
+]
+label = "after the charge -> enrage"
+
+[behaviour.blocks.b38]
+kind = "cooldown"
+at = [
+    680.0,
+    3200.0,
+]
+frames = 250
+next = [
+    "b39",
+]
+
+[behaviour.blocks.b39]
+kind = "enrage"
+at = [
+    960.0,
+    3200.0,
+]
+
 [behaviour.moves.lunge]
 at = [
     0.0,
@@ -1279,7 +1299,7 @@ during = [
 
 [behaviour.moves.stamp]
 at = [
-    1800.0,
+    1520.0,
     400.0,
 ]
 
@@ -1294,36 +1314,39 @@ during = [
 
 [behaviour.moves.notice_howl]
 at = [
-    1800.0,
+    1520.0,
     800.0,
 ]
 
 [behaviour.moves.flinch_head]
 at = [
-    1800.0,
+    1520.0,
     1400.0,
 ]
 
 [behaviour.moves.topple_left]
 at = [
-    1800.0,
+    1520.0,
     1600.0,
 ]
 
 [behaviour.moves.topple_right]
 at = [
-    1800.0,
+    1520.0,
     1800.0,
 ]
 
 [behaviour.moves.break_howl]
 at = [
-    1800.0,
+    1520.0,
     2000.0,
 ]
 
 [behaviour.moves.charge_up]
 at = [
-    1800.0,
-    2400.0,
+    0.0,
+    3200.0,
+]
+during = [
+    "b37",
 ]

@@ -882,6 +882,14 @@ ZINOGRE = [  # the paths that play nothing, then the rest
     ),
     Rule(None, on="flinch", effects=[("var_add", 0, 1)], label="count the flinches"),
     Rule(
+        None,
+        from_move="charge_up",
+        min_frames=120,
+        cooldown=250,
+        effects=[("enrage", 0, 0)],
+        label="after the charge -> enrage",
+    ),
+    Rule(
         "lunge_stop",
         from_move="lunge",
         min_frames=15,
@@ -920,8 +928,8 @@ ZINOGRE = [  # the paths that play nothing, then the rest
         "charge_up",
         from_main=[0],
         conds=[("var_at_least", 1, 1), ("var_at_least", 0, 2)],
-        effects=[("var_set", 0, 0), ("enrage", 0, 0)],
-        label="2nd flinch -> charge up and enrage",
+        effects=[("var_set", 0, 0)],
+        label="2nd flinch -> charge up",
     ),
     Rule(
         "dash",
@@ -947,7 +955,7 @@ def test_zinogre_compiles_to_its_rules():
     assert B.compile(m) == ZINOGRE
     assert B.loose(m) == [] and B.refused(m) == {}
     assert B.vars(m) == {"flinches": 0, "in_combat": 1} and B.signals(m) == {"roar": 0}
-    old = [r for r in ZINOGRE if r.from_move]
+    old = [r for r in ZINOGRE if r.from_move and r.play]
     assert len(old) == 4
     assert all(not r.conds and not r.effects and r.signal is None for r in old)
     assert len(ZINOGRE) <= B.SEAM_RULES
@@ -956,7 +964,7 @@ def test_zinogre_compiles_to_its_rules():
     notice = next(i for i, r in enumerate(ZINOGRE) if r.on == "noticed")
     assert notice < ZINOGRE.index(idle[0]), "the notice scans before the idle paths"
     quiet = [i for i, r in enumerate(ZINOGRE) if r.play is None]
-    assert quiet == [0, 1, 2], "the rules that play nothing run first"
+    assert quiet == [0, 1, 2, 3], "the rules that play nothing run first"
 
 
 def test_zinogre_topples_end_in_the_stamp():
