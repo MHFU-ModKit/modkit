@@ -113,6 +113,16 @@ def hurtbox_of(s: HitSphere, label: str = "") -> Hurtbox:
     )
 
 
+def sever_below(part: Part | None) -> int | None:
+    """`Part.sever_below`, an HP percent; none: the cut works at any HP."""
+    return None if part is None else getattr(part, "sever_below", None)
+
+
+def with_sever_below(part: Part, pct: int | None) -> Part:
+    changes: dict[str, Any] = {"sever_below": pct}
+    return dataclasses.replace(part, **changes)
+
+
 class PartSession:
     """Part, grid and hurtbox edits on a document, each one undo step. `n_bones` (the rig the
     port ships) and `capacity` (the host set's record count) enable their checks."""
@@ -154,23 +164,50 @@ class PartSession:
         """Volumes that would not fit in place at runtime."""
         return 0 if self.capacity is None else max(0, len(self.m.hurtboxes) - self.capacity)
 
+    def severable(self, index: int) -> bool:
+        found = self.part(index)
+        return found is not None and found[1].severable
+
+    def sever_below(self, index: int) -> int | None:
+        found = self.part(index)
+        return sever_below(None if found is None else found[1])
+
+    def set_sever_below(self, index: int, pct: int | None) -> None:
+        """The HP percent under which part `index` can be cut off; 0 or none: at any HP."""
+        found = self.part(index)
+        if found is None or not found[1].severable:
+            raise ManifestError(f"part {index} is not a severable part of yours")
+        want = pct or None
+        if want is not None and want not in range(1, 101):
+            raise ManifestError(f"{want} is not an HP percent, 1 to 100")
+        name = found[0]
+        if want != sever_below(found[1]):
+            self.doc.edit(
+                lambda m: m.parts.__setitem__(name, with_sever_below(m.parts[name], want))
+            )
+
     def name_part(
         self,
         index: int,
         name: str,
         label: str = "",
-        severable: bool = False,
+        severable: bool | None = None,
         hitzone_row: int | None = None,
     ) -> None:
-        """Name accumulator `index`, replacing its old name."""
+        """Name accumulator `index`, replacing its old name; `severable` (and its HP percent)
+        stays as it was unless given."""
         name = check_name(name)
         clash = self.m.parts.get(name)
         if clash is not None and clash.index != index:
             raise ManifestError(f"part {name!r} already names slot {clash.index}")
+        old = self.part(index)
+        flag = bool(old and old[1].severable) if severable is None else severable
+        pct = sever_below(old[1] if old else None) if flag else None
 
         def apply(m: Manifest) -> None:
             m.parts = {n: p for n, p in m.parts.items() if p.index != index}
-            m.parts[name] = Part(index, hitzone_row, severable, label)
+            new = Part(index, hitzone_row, flag, label)
+            m.parts[name] = new if pct is None else with_sever_below(new, pct)
 
         self.doc.edit(apply)
 

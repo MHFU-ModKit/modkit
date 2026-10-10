@@ -746,3 +746,23 @@ def test_every_real_kind_draws_and_edits(
     for _ in EDITS:
         doc(ws).undo()
     assert doc(ws).manifest == drawn
+
+
+def test_natural_rage_starts_on(panel: BehaviourPanel) -> None:
+    assert panel.rage.isChecked() and B.natural_rage(panel.ws.manifest)
+
+
+def test_natural_rage_is_one_undo_step(
+    panel: BehaviourPanel, ws: MonsterWorkspace, rage_field: None
+) -> None:
+    before = doc(ws).manifest
+    panel.rage.click()
+    assert doc(ws).manifest.behaviour.natural_rage is False and not panel.rage.isChecked()
+    assert "off" in ws.message
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    assert doc(ws).manifest == before and panel.rage.isChecked()
+    panel.rage.click()
+    panel.rage.click()
+    assert doc(ws).manifest.behaviour.natural_rage is True
