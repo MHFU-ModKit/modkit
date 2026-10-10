@@ -631,6 +631,63 @@ label = "the howl the moment he notices you, on the roar pair the notice enters"
 [moves.notice_howl.steer]
 walls = false
 
+[moves.topple_left]
+clip = "flinch_roll_left_part_1"
+after = "topple_left_2"
+label = "falls to his left"
+
+[moves.topple_left.steer]
+walls = false
+
+[moves.topple_left_2]
+clip = "on_ground_helpless_right"
+after = "topple_left_3"
+length = 78
+label = "lies helpless, two loops of the clip"
+
+[moves.topple_left_2.steer]
+walls = false
+
+[moves.topple_left_3]
+clip = "flinch_roll_right_part_2"
+after = "stamp"
+label = "gets up, then the stamp"
+
+[moves.topple_left_3.steer]
+walls = false
+
+[moves.topple_right]
+clip = "flinch_roll_right_part_1"
+after = "topple_right_2"
+label = "falls to his right"
+
+[moves.topple_right.steer]
+walls = false
+
+[moves.topple_right_2]
+clip = "on_ground_helpless_left"
+after = "topple_right_3"
+length = 78
+label = "lies helpless, two loops of the clip"
+
+[moves.topple_right_2.steer]
+walls = false
+
+[moves.topple_right_3]
+clip = "flinch_roll_left_part_2"
+after = "stamp"
+label = "gets up, then the stamp"
+
+[moves.topple_right_3.steer]
+walls = false
+
+[moves.charge_up]
+clip = "crouch_charge_up"
+label = "crouches and charges up"
+
+[moves.charge_up.steer]
+walls = false
+
 [parts.head]
 index = 0
 hitzone_row = 0
@@ -917,7 +974,7 @@ play = [
 ]
 
 [behaviour.blocks.b12]
-kind = "on_flinch"
+kind = "on_part_broken"
 at = [
     400.0,
     800.0,
@@ -926,7 +983,7 @@ part = 0
 play = [
     "flinch_head",
 ]
-label = "a flinch of the head: his own tumble, never the host's (4,x)"
+label = "horns break -> head flinch"
 
 [behaviour.blocks.b13]
 kind = "on_part_broken"
@@ -934,27 +991,185 @@ at = [
     400.0,
     1000.0,
 ]
+part = 4
+play = [
+    "topple_left",
+]
+label = "left foreleg breaks -> topple left"
+
+[behaviour.blocks.b14]
+kind = "on_part_broken"
+at = [
+    400.0,
+    1200.0,
+]
+part = 6
+play = [
+    "topple_right",
+]
+label = "right foreleg breaks -> topple right"
+
+[behaviour.blocks.b15]
+kind = "on_part_broken"
+at = [
+    400.0,
+    1400.0,
+]
 play = [
     "break_howl",
 ]
 label = "a part breaks"
 
-[behaviour.blocks.b14]
+[behaviour.blocks.b16]
+kind = "on_flinch"
+at = [
+    400.0,
+    1600.0,
+]
+next = [
+    "b17",
+]
+label = "count the flinches"
+
+[behaviour.blocks.b17]
+kind = "counter_add"
+at = [
+    680.0,
+    1600.0,
+]
+counter = "flinches"
+by = 1
+
+[behaviour.blocks.b18]
+kind = "idle"
+at = [
+    400.0,
+    1800.0,
+]
+next = [
+    "b19",
+]
+label = "2nd flinch -> charge up"
+
+[behaviour.blocks.b19]
+kind = "counter_is"
+at = [
+    680.0,
+    1800.0,
+]
+counter = "flinches"
+test = "at least"
+value = 2
+next = [
+    "b20",
+]
+
+[behaviour.blocks.b20]
+kind = "counter_set"
+at = [
+    960.0,
+    1800.0,
+]
+counter = "flinches"
+to = 0
+play = [
+    "charge_up",
+]
+
+[behaviour.blocks.b21]
+kind = "idle"
+at = [
+    400.0,
+    2000.0,
+]
+next = [
+    "b22",
+]
+label = "hunter far -> dash"
+
+[behaviour.blocks.b22]
+kind = "distance"
+at = [
+    680.0,
+    2000.0,
+]
+lo = 1500.0
+next = [
+    "b23",
+]
+
+[behaviour.blocks.b23]
+kind = "cooldown"
+at = [
+    960.0,
+    2000.0,
+]
+frames = 300
+play = [
+    "dash",
+]
+
+[behaviour.blocks.b24]
+kind = "idle"
+at = [
+    400.0,
+    2200.0,
+]
+next = [
+    "b25",
+]
+label = "below 30% HP -> howl"
+
+[behaviour.blocks.b25]
+kind = "monster_hp"
+at = [
+    680.0,
+    2200.0,
+]
+hi = 30
+next = [
+    "b26",
+]
+
+[behaviour.blocks.b26]
+kind = "limit"
+at = [
+    960.0,
+    2200.0,
+]
+times = 1
+play = [
+    "notice_howl",
+]
+
+[behaviour.blocks.b27]
+kind = "on_signal"
+at = [
+    400.0,
+    2400.0,
+]
+name = "roar"
+play = [
+    "notice_howl",
+]
+label = "a mod's roar -> howl"
+
+[behaviour.blocks.b28]
 kind = "on_noticed"
 at = [
     400.0,
-    1200.0,
+    2600.0,
 ]
 next = [
-    "b15",
+    "b29",
 ]
 label = "the notice: his howl at once, forced, so it does not wait for combat"
 
-[behaviour.blocks.b15]
+[behaviour.blocks.b29]
 kind = "force"
 at = [
     680.0,
-    1200.0,
+    2600.0,
 ]
 play = [
     "notice_howl",
@@ -1000,14 +1215,32 @@ at = [
     800.0,
 ]
 
-[behaviour.moves.break_howl]
+[behaviour.moves.topple_left]
 at = [
     1520.0,
     1000.0,
 ]
 
-[behaviour.moves.notice_howl]
+[behaviour.moves.topple_right]
 at = [
     1520.0,
     1200.0,
+]
+
+[behaviour.moves.break_howl]
+at = [
+    1520.0,
+    1400.0,
+]
+
+[behaviour.moves.charge_up]
+at = [
+    1520.0,
+    1800.0,
+]
+
+[behaviour.moves.notice_howl]
+at = [
+    1520.0,
+    2200.0,
 ]
