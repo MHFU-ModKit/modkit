@@ -298,6 +298,8 @@ class Part:
     """Advisory: the row is per volume and a part may use several."""
     severable: bool = False
     label: str = ""
+    sever_below: int | None = None
+    """An HP percent, 1..100: the tail cuts only below it; None: whenever it can."""
 
 
 @dataclass
@@ -564,6 +566,13 @@ def _validate(m: Manifest) -> None:
     for name, p in m.parts.items():
         _need(p.index in PARTS, f"parts.{name}", f"index {p.index} is not a part")
         _need(p.hitzone_row in (None, *ROWS), f"parts.{name}", "hitzone_row is not a row")
+        if p.sever_below is not None:
+            _need(p.severable, f"parts.{name}", "sever_below goes with severable")
+            _need(
+                1 <= p.sever_below <= 100, f"parts.{name}", "sever_below is an HP percent, 1..100"
+            )
+    gated = [n for n, p in m.parts.items() if p.sever_below is not None]
+    _need(len(gated) <= 1, "parts", f"{', '.join(gated)} all set sever_below; the gate holds one")
     for i, h in enumerate(m.hurtboxes):
         w = f"hurtbox[{i}]"
         _need(h.part in (None, *PARTS), w, f"part {h.part} is not a part")

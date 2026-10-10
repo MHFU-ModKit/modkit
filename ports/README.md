@@ -133,7 +133,7 @@ limit caps how often.
 | Role | Kinds |
 |---|---|
 | condition | `monster_hp` (share of max HP, from `lo`, below `hi`), `part_broken`, `rage`, `hunter_side` (front, left, right, behind; its left is the monster's own), `chance` (rolled last), `counter_is`, `flag_is` |
-| effect | `counter_add`, `counter_set`, `flag_set`: applied each time the path fires |
+| effect | `counter_add`, `counter_set`, `flag_set`, `enrage`, `calm`: applied each time the path fires |
 | event | `on_signal`: a mod raised it |
 
 Condition and effect blocks may repeat on a path: a rule holds 4 conditions and 2 effects
@@ -161,6 +161,14 @@ A signal fires its rules in the AI frame the brain takes it, once. An unknown na
 A flinch rule that plays a move decides when the reaction is armed, before that frame's effects
 run, so a counter it tests misses the flinch being counted. The Zinogre counts flinches on a
 no-play rule and charges up from idle once `flinches` is 2, not on the flinch itself.
+
+`enrage` starts the engine's own rage, roar included, unless the monster is enraged; `calm` ends
+it, if it is. In a mod, `port:enrage()` and `port:calm()` ask the same, applied in the brain's
+next AI frame. `[behaviour] natural_rage = false` stops the monster's own anger from ever
+enraging it, so only an `enrage` effect or a mod does (default: on). `[parts.<name>]
+sever_below = 50` (1..100, on the one severable part, `severable = true`) lets the tail cut only
+below that share of the monster's HP; the module carries it as `sever_below`, and left out, a cut
+lands whenever the engine allows. Both reach the module only when the manifest sets them.
 
 An event fires in the AI frame it is seen; `part` narrows a flinch or a break to one part
 (`[parts]` names them; em75's: 0 head, 1 neck, 2 body, 3 tail, 4/6 the left/right foreleg, 5/7 the
@@ -196,8 +204,11 @@ The Zinogre's paths, after the lunge and dash chains (higher is checked first):
    then `stamp` (`after`).
 4. A flinch adds 1 to `flinches` and plays nothing.
 5. Idle, in combat: with `flinches` at least 2, set it to 0 and play `charge_up`; with the
-   hunter 1500 away, play `dash`, then wait 300; below 30% HP, play `notice_howl` once.
+   hunter 1500 away, play `dash`, then wait 300; below 30% HP, play `notice_howl` once. The
+   charge also enrages him.
 6. The signal `roar` plays `notice_howl`.
+
+His tail cuts only below 50% HP (`sever_below`); natural rage stays on.
 
 ## Status
 

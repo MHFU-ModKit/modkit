@@ -183,6 +183,7 @@ def _v1(extra: str) -> str:
 
 
 MOVE = "[moves.m]\nmain = 1\nsub = 4\nanim = 17\n"
+SEVER = "[parts.p]\nindex = 3\nseverable = true\n"
 RULE = "[[rule]]\nfrom_main = [1]\nplay = 'm'\n"
 OWN = "[moves.o]\nanim = 46\n"
 STAMP = (
@@ -239,6 +240,14 @@ def test_round_trip():
 def test_defaults_left_out():
     text = M.dumps(M.loads(_with("[moves.m]\nmain = 0\nsub = 0\nanim = 1\nlatch = 1\n")))
     assert "latch" not in text and "[build]" not in text
+
+
+def test_sever_below():
+    m = M.loads(_with(SEVER + "sever_below = 50\n"))
+    assert m.parts["p"].sever_below == 50 and "sever_below = 50" in M.dumps(m)
+    assert M.loads(_with(SEVER)).parts["p"].sever_below is None
+    assert "sever_below" not in M.dumps(M.loads(_with(SEVER)))
+    assert M.loads(M.dumps(m)) == m
 
 
 def test_claim_shorthand():
@@ -379,6 +388,15 @@ def test_cuts_share_a_source():
         (CUT + "[clips.c]\nsource = 7\n", "clip 7 is placed by clips.b too"),
         ("[clips.c]\nsource = 7\n" + CUT, "clip 7 is placed by clips.c too"),
         ("[parts.p]\nindex = 8\n", "not a part"),
+        ("[parts.p]\nindex = 3\nsever_below = 50\n", "sever_below goes with severable"),
+        ("[parts.p]\nindex = 3\nsever_bellow = 5\n", "unknown key"),
+        (SEVER + "sever_below = 0\n", "sever_below is an HP percent, 1..100"),
+        (SEVER + "sever_below = 101\n", "sever_below is an HP percent, 1..100"),
+        (SEVER + "sever_below = 5.5\n", "expected an integer"),
+        (
+            SEVER + "sever_below = 5\n" + SEVER.replace("p]", "q]") + "sever_below = 6\n",
+            "p, q all set sever_below; the gate holds one",
+        ),
         ("[[hurtbox]]\nbone = 1\nradius = 1.0\npart = 8\n", "not a part"),
         ("[[hurtbox]]\nbone = 1\nradius = 1.0\nhitzone_row = 7\n", "not a row"),
         ("[[hurtbox]]\nbone = 1\nradius = 1.0\noffset = [0, 0]\n", "x, y, z"),
