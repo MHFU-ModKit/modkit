@@ -36,12 +36,14 @@
  *                 one of: an own move asked for, the move of a rule on the flinch (or on
  *                 the break it made) whose reaction was replaced, the AFTER of one of
  *                 ours that ended, a rule
- *                 ("in pair P or own move M for N frames, or on event E, player at
- *                 [lo,hi), receding -> enter Q or play own move M'", cooldown, budget);
+ *                 ("in pair P or own move M for N frames, or on event E or signal S,
+ *                 player at [lo,hi), receding, every condition holding -> enter Q or play
+ *                 own move M', change counters", cooldown, budget); a rule that plays
+ *                 nothing applies its effects and the scan goes on, in every AI frame;
  *                 last, the rules on the flinch arm the reaction replacement for the
  *                 host step that follows. Own moves sit in a registry by slot
  *                 (mhfu_em_move) and play through the move player (move.cpp) that same
- *                 AI frame.
+ *                 AI frame. The board (counters, signals, broken parts) is the monster's.
  *   BUDGET        slot-32 post + slot-29 one-shot: the ENTITY.ACTION_BUDGET
  *                 override; the stubs carry it, but nothing arms it.
  *   STEP          slot-29 pre: a C function per AI frame (mhfu_em_step), which may
@@ -100,7 +102,9 @@ typedef struct {
     uint8_t  from_mask, from_sub, to_main, to_sub, mode, flags;
     uint8_t  from_move, play_move;   /* own move slot + 1, 0 none (mhfu_em_rule_t) */
     uint32_t min_frames, d2_lo, d2_hi, left, fired, last_fire, cooldown;
-    uint8_t  on, part, force, _pad;  /* a monster event, 0 none; its part or MHFU_EM_ANY_PART */
+    uint8_t  on, part, force, signal;  /* a monster event, 0 none; its part or MHFU_EM_ANY_PART;
+                                        * a board signal + 1 */
+    mhfu_em_op_t conds[MHFU_EM_CONDS], effects[MHFU_EM_EFFECTS];
 } cfg_rule_t;
 typedef struct {
     uint8_t  want_main, want_sub, armed, arm29;    /* +0x00 */
@@ -164,6 +168,17 @@ static_assert(offsetof(cfg_rule_t, cooldown)   == MHFU_EM_RULE_COOLDOWN,   "EM_R
 static_assert(offsetof(cfg_rule_t, on)         == MHFU_EM_RULE_ON,         "EM_RULE layout");
 static_assert(offsetof(cfg_rule_t, part)       == MHFU_EM_RULE_PART,       "EM_RULE layout");
 static_assert(offsetof(cfg_rule_t, force)      == MHFU_EM_RULE_FORCE,      "EM_RULE layout");
+static_assert(offsetof(cfg_rule_t, signal)     == MHFU_EM_RULE_SIGNAL,     "EM_RULE layout");
+static_assert(offsetof(cfg_rule_t, conds)      == MHFU_EM_RULE_CONDS,      "EM_RULE layout");
+static_assert(offsetof(cfg_rule_t, effects)    == MHFU_EM_RULE_EFFECTS,    "EM_RULE layout");
+static_assert(sizeof(mhfu_em_op_t)             == MHFU_EM_OP_SIZE,         "EM_OP layout");
+static_assert(offsetof(mhfu_em_op_t, arg)      == MHFU_EM_OP_ARG,          "EM_OP layout");
+static_assert(offsetof(mhfu_em_op_t, value)    == MHFU_EM_OP_VALUE,        "EM_OP layout");
+static_assert(sizeof(mhfu_em_board_t)          == MHFU_EM_BOARD_SIZE,      "EM_BOARD layout");
+static_assert(offsetof(mhfu_em_board_t, signals) == MHFU_EM_BOARD_SIGNALS, "EM_BOARD layout");
+static_assert(offsetof(mhfu_em_board_t, broken) == MHFU_EM_BOARD_BROKEN,   "EM_BOARD layout");
+static_assert(offsetof(mhfu_em_board_t, rng)   == MHFU_EM_BOARD_RNG,       "EM_BOARD layout");
+static_assert(offsetof(mhfu_em_board_t, entity) == MHFU_EM_BOARD_ENTITY,   "EM_BOARD layout");
 
 #define CFG_CANARY_VAL 0x5645484Bu   /* 'VEHK' */
 
@@ -188,7 +203,7 @@ static_assert(sizeof(tail_t) % 4 == 0, "zeroed word by word after the config");
  * They come from the user partition, and only pointers live here. */
 #define RET_INSNS   4     /* jr ra; nop, padded to 16 bytes */
 #define STUBS       (STUB_AI_INSNS + STUB_ACT_INSNS + STUB_EVT_INSNS + MHFU_WRAP_WORDS + RET_INSNS)
-#define BLOCK_BYTES (STUBS * 4 + CFG_SIZE + sizeof(tail_t) + 128)
+#define BLOCK_BYTES (STUBS * 4 + CFG_SIZE + sizeof(tail_t) + sizeof(mhfu_em_board_t) + 128)
 
 static uint32_t *g_stub_ai;
 static uint32_t *g_stub_act;
@@ -197,6 +212,7 @@ static uint32_t *g_stub_brain;        /* the OBJ_VTABLE.BRAIN wrapper (wrap.h) *
 static uint32_t *g_stub_ret;
 static em_vhook_cfg_t *g_cfgp;
 static volatile tail_t *T;
+static volatile mhfu_em_board_t *g_board;   /* after the tail: the board the rules and Lua share */
 static volatile mhfu_em_moves_t *R;   /* the own-move registry */
 
 #define MOVES_MAGIC 0x564F4D45u        /* 'EMOV' */
@@ -214,8 +230,6 @@ static_assert(offsetof(mhfu_em_moves_t, moves) == MHFU_EM_MOVES_MOVES, "EM_MOVES
 static_assert(offsetof(mhfu_em_moves_t, keys) == MHFU_EM_MOVES_KEYS, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, scratch) == MHFU_EM_MOVES_SCRATCH, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, req_force) == MHFU_EM_MOVES_REQ_FORCE, "EM_MOVES layout");
-static_assert(MHFU_EM_MOVES_MOVES_COUNT == MHFU_EM_MOVES, "EM_MOVES layout");
-static_assert(MHFU_EM_MOVES_KEYS_COUNT == MHFU_EM_KEYS, "EM_MOVES layout");
 
 static void cfg_reset_live(void)
 {
@@ -239,7 +253,8 @@ static void place_block(uint8_t *base)
     g_stub_ret = (uint32_t *)(base + (STUBS - RET_INSNS) * 4);
     g_cfgp     = (em_vhook_cfg_t *)(base + STUBS * 4);
     T          = (volatile tail_t *)(base + STUBS * 4 + CFG_SIZE);
-    for (unsigned k = 0; k < (CFG_SIZE + sizeof(tail_t)) / 4; k++)
+    g_board    = (volatile mhfu_em_board_t *)(base + STUBS * 4 + CFG_SIZE + sizeof(tail_t));
+    for (unsigned k = 0; k < (CFG_SIZE + sizeof(tail_t) + sizeof(mhfu_em_board_t)) / 4; k++)
         ((uint32_t *)g_cfgp)[k] = 0;
     cfg_reset_live();
 }
@@ -282,8 +297,9 @@ static int alloc_block(void)
     uint8_t *base = (uint8_t *)alloc_low("em_vhook", BLOCK_BYTES, &g_block);
     if (!base) return -1;
     place_block(base);
-    mhfu_log("[%s] block @0x%08X (outside the PRX image), cfg @0x%08X",
-             OWNER, (unsigned)(uintptr_t)g_stub_ai, (unsigned)(uintptr_t)g_cfgp);
+    mhfu_log("[%s] block @0x%08X (outside the PRX image), cfg @0x%08X, %u bytes for %d rules",
+             OWNER, (unsigned)(uintptr_t)g_stub_ai, (unsigned)(uintptr_t)g_cfgp,
+             (unsigned)BLOCK_BYTES, MHFU_EM_RULES);
     return 0;
 }
 
@@ -293,7 +309,8 @@ static int alloc_moves(void)
     void *at = alloc_low("em_moves", sizeof(mhfu_em_moves_t) + 64, &uid);
     if (!at) return -1;
     place_moves(at);
-    mhfu_log("[%s] own moves @0x%08X", OWNER, (unsigned)(uintptr_t)R);
+    mhfu_log("[%s] own moves @0x%08X, %u bytes for %d moves", OWNER, (unsigned)(uintptr_t)R,
+             (unsigned)(sizeof(mhfu_em_moves_t) + 64), MHFU_EM_MOVES);
     return 0;
 }
 #endif
@@ -413,35 +430,180 @@ static int gates(const cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_sta
     return g_cfgp->ai_ticks - r->last_fire >= r->cooldown;
 }
 
+/* --- the board: counters and signals the rules and Lua share for the monster ---------------- */
+
+static int16_t sat16(int32_t v) { return (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v); }
+
+static uint32_t rng_next(void)   /* xorshift32; the state is never 0 */
+{
+    uint32_t x = g_board->rng;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    g_board->rng = x;
+    return x;
+}
+
+/* ent's board: counters, signals and parts 0, the generator reseeded; ent 0 for none yet */
+static void board_reset(uint32_t ent)
+{
+    volatile uint32_t *w = (volatile uint32_t *)g_board;
+    for (unsigned k = 0; k < sizeof(mhfu_em_board_t) / 4; k++) w[k] = 0;
+    g_board->entity = ent;
+    g_board->rng = ((ent * 0x9E3779B1u) ^ mhfu_usec()) | 1u;
+    for (int k = 0; k < 4; k++) rng_next();   /* a near seed gives a near first draw */
+}
+
+/* the signals raised since the last take, as a mask by index; cleared as taken */
+static uint16_t take_signals(void)
+{
+    uint16_t s = 0;
+    for (unsigned k = 0; k < MHFU_EM_SIGNALS; k++) {
+        if (!g_board->signals[k]) continue;
+        g_board->signals[k] = 0;
+        s = (uint16_t)(s | (1u << k));
+    }
+    return s;
+}
+
+/* --- the conditions --------------------------------------------------------------------------- */
+
+#define SIDE_FRONT  1u   /* mhfu_em_op_t.arg of side */
+#define SIDE_LEFT   2u   /* the monster's own */
+#define SIDE_RIGHT  4u
+#define SIDE_BEHIND 8u
+#define SIDES       (SIDE_FRONT | SIDE_LEFT | SIDE_RIGHT | SIDE_BEHIND)
+
+/* ENTITY.ROTATION's rows (4 floats each) are the images of the monster's axes, rebuilt from YAW
+ * every frame: row 2 faces forward (YAW is atan2 of its x over its z, as Entity.facing reads it)
+ * and row 0 is its left, the side YAW grows toward. A float index each, x then z two on. */
+#define ROW_FORWARD 8
+#define ROW_LEFT    0
+
+/* The 90 degree sector of the monster's frame the hunter stands in, as a SIDE_*: the hunter's
+ * offset against the two rows with dot products, no trig. The rows may carry the monster's size,
+ * so each dot is taken over its row's length (squared, to avoid the root). */
+static unsigned side_of(uint32_t ent)
+{
+    const uint32_t rot = ent + MHFU_ENTITY_ROTATION;
+    const float dx = mhfu_mem_read_f32(MHFU_PLAYER_ENTITY + MHFU_ENTITY_TRANSLATION)
+                   - mhfu_mem_read_f32(ent + MHFU_ENTITY_POSITION);
+    const float dz = mhfu_mem_read_f32(MHFU_PLAYER_ENTITY + MHFU_ENTITY_TRANSLATION + 8)
+                   - mhfu_mem_read_f32(ent + MHFU_ENTITY_POSITION + 8);
+    const float fx = mhfu_mem_read_f32(rot + 4 * ROW_FORWARD);
+    const float fz = mhfu_mem_read_f32(rot + 4 * (ROW_FORWARD + 2));
+    const float lx = mhfu_mem_read_f32(rot + 4 * ROW_LEFT);
+    const float lz = mhfu_mem_read_f32(rot + 4 * (ROW_LEFT + 2));
+    const float f = dx * fx + dz * fz, l = dx * lx + dz * lz;
+    if (f * f * (lx * lx + lz * lz) >= l * l * (fx * fx + fz * fz))
+        return f >= 0 ? SIDE_FRONT : SIDE_BEHIND;
+    return l >= 0 ? SIDE_LEFT : SIDE_RIGHT;
+}
+
+/* HP * 100 against percent * MAX_HP; both fit 32 bits (u16 times 100, s16 times u16) */
+static int hp_cmp(uint32_t ent, int16_t percent)
+{
+    const int32_t hp = (int32_t)mhfu_mem_read_u16(ent + MHFU_ENTITY_HP) * 100;
+    const int32_t lim = (int32_t)percent * (int32_t)mhfu_mem_read_u16(ent + MHFU_ENTITY_MAX_HP);
+    return hp < lim ? -1 : hp > lim;
+}
+
+/* the conditions whose arg is a counter */
+static int is_var_cond(uint8_t op)
+{
+    return op == MHFU_EM_COND_VAR_AT_LEAST || op == MHFU_EM_COND_VAR_BELOW
+        || op == MHFU_EM_COND_VAR_EQUAL;
+}
+
+/* one condition holds on ent; an op it does not know never does */
+static int cond_ok(const mhfu_em_op_t *c, uint32_t ent)
+{
+    const int var = is_var_cond(c->op) && c->arg < MHFU_EM_VARS ? g_board->vars[c->arg] : 0;
+    switch (c->op) {
+    case MHFU_EM_COND_HP_AT_LEAST: return hp_cmp(ent, c->value) >= 0;
+    case MHFU_EM_COND_HP_BELOW:    return hp_cmp(ent, c->value) < 0;
+    case MHFU_EM_COND_BROKEN:      return c->arg < 8 && ((g_board->broken >> c->arg) & 1);
+    case MHFU_EM_COND_NOT_BROKEN:  return c->arg < 8 && !((g_board->broken >> c->arg) & 1);
+    case MHFU_EM_COND_ENRAGED:     return (mhfu_mem_read_u32(ent + MHFU_ENTITY_FLAGS)
+                                           & MHFU_MONSTER_FLAG_ENRAGED) != 0;
+    case MHFU_EM_COND_CALM:        return (mhfu_mem_read_u32(ent + MHFU_ENTITY_FLAGS)
+                                           & MHFU_MONSTER_FLAG_ENRAGED) == 0;
+    case MHFU_EM_COND_SIDE:        return (c->arg & side_of(ent)) != 0;
+    case MHFU_EM_COND_CHANCE:
+        return c->value >= 100 || (c->value > 0 && rng_next() % 100 < (uint32_t)c->value);
+    case MHFU_EM_COND_VAR_AT_LEAST: return var >= c->value;
+    case MHFU_EM_COND_VAR_BELOW:    return var < c->value;
+    case MHFU_EM_COND_VAR_EQUAL:    return var == c->value;
+    default:                        return 0;
+    }
+}
+
+/* every condition of r holds on ent; the chances are rolled last, only if the rest held */
+static int conds_hold(const cfg_rule_t *r, uint32_t ent)
+{
+    int chance = 0;
+    for (int i = 0; i < MHFU_EM_CONDS; i++) {
+        const mhfu_em_op_t *c = &r->conds[i];
+        if (c->op == MHFU_EM_COND_CHANCE) chance = 1;
+        else if (c->op && !cond_ok(c, ent)) return 0;
+    }
+    for (int i = 0; chance && i < MHFU_EM_CONDS; i++)
+        if (r->conds[i].op == MHFU_EM_COND_CHANCE && !cond_ok(&r->conds[i], ent)) return 0;
+    return 1;
+}
+
+/* r's effects on the board */
+static void apply(const cfg_rule_t *r)
+{
+    for (int i = 0; i < MHFU_EM_EFFECTS; i++) {
+        const mhfu_em_op_t *e = &r->effects[i];
+        if (e->arg >= MHFU_EM_VARS) continue;
+        if (e->op == MHFU_EM_EFFECT_VAR_ADD)
+            g_board->vars[e->arg] = sat16(g_board->vars[e->arg] + e->value);
+        else if (e->op == MHFU_EM_EFFECT_VAR_SET)
+            g_board->vars[e->arg] = e->value;
+    }
+}
+
 static int part_of(const cfg_rule_t *r, uint8_t parts)
 {
     return r->part == MHFU_EM_ANY_PART || (r->part < 8 && ((parts >> r->part) & 1));
 }
 
-/* rule r fires on ent this frame; edges: what the monster events raised, parts: what flinched */
+static int quiet(const cfg_rule_t *r) { return (r->flags & MHFU_EM_RULE_NO_PLAY) != 0; }
+
+/* rule r fires on ent this frame; edges: what the monster events raised, parts: what flinched,
+ * sigs: the signals taken. A rule on the flinch that plays goes through the reaction
+ * replacement. */
 static int holds(const cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_state_t *m,
-                 uint16_t edges, uint8_t parts)
+                 uint16_t edges, uint8_t parts, uint16_t sigs)
 {
-    if (r->on == MHFU_MONSTER_FLINCH) return 0;   /* through the reaction replacement */
+    if (r->on == MHFU_MONSTER_FLINCH && !quiet(r)) return 0;
     if (r->on && (!((edges >> r->on) & 1) || !part_of(r, parts))) return 0;
-    return gates(r, ent, m);
+    if (r->signal && (r->signal > MHFU_EM_SIGNALS || !((sigs >> (r->signal - 1)) & 1))) return 0;
+    return gates(r, ent, m) && conds_hold(r, ent);
 }
 
+/* every fire, whichever path: the budget, the clock, the effects; a rule that plays restarts the
+ * pair's dwell, one that plays nothing leaves it */
 static void count_fire(cfg_rule_t *r)
 {
     if (r->left != MHFU_EM_UNLIMITED) r->left--;
     r->fired++;
     r->last_fire = g_cfgp->ai_ticks;
     g_cfgp->brain_fires++;
-    g_cfgp->frames = 0;
+    if (!quiet(r)) g_cfgp->frames = 0;
+    apply(r);
 }
 
 static int fire(cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_state_t *m)
 {
-    if (r->play_move) {
-        if (!play_slot(ent, r->play_move - 1u, m, r->force)) return 0;
-    } else {
-        enter(ent, r->to_main, r->to_sub, r->mode);
+    if (!quiet(r)) {
+        if (r->play_move) {
+            if (!play_slot(ent, r->play_move - 1u, m, r->force)) return 0;
+        } else {
+            enter(ent, r->to_main, r->to_sub, r->mode);
+        }
     }
     count_fire(r);
     return 1;
@@ -462,12 +624,13 @@ static const volatile mhfu_em_own_t *flinch_move(const cfg_rule_t *r)
     return r->on == MHFU_MONSTER_FLINCH ? rule_move(r) : 0;
 }
 
-static int g_reacts;        /* the brain owns the reaction replacement */
-static uint32_t g_armed;    /* bit i: rule i's gates held when it was armed */
+static int g_reacts;                       /* the brain owns the reaction replacement */
+static uint8_t g_armed[MHFU_EM_RULES];     /* 1: rule i's gates and conditions held when armed */
 
 /* The replacement entered the carrier in place of a flinch in the last host step: a rule on the
- * break that flinch made, whose gates hold and whose own move rides that carrier, else the first
- * rule armed for it whose part flinched, hands the move player its move, which the step starts. */
+ * break that flinch made, whose gates and conditions hold and whose own move rides that carrier,
+ * else the first rule armed for it whose part flinched, hands the move player its move, which the
+ * step starts. */
 static int react_take(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_t edges)
 {
     if (!g_reacts || !mhfu_move_react_pending(ent)) return 0;
@@ -478,14 +641,14 @@ static int react_take(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_
         const volatile mhfu_em_own_t *o = rule_move(r);
         if (r->on == MHFU_MONSTER_PART_BROKEN && o && part_of(r, flinched) && gates(r, ent, m)
             && o->move.carrier_main == g_cfgp->react_to_main
-            && o->move.carrier_sub == g_cfgp->react_to_sub) {
+            && o->move.carrier_sub == g_cfgp->react_to_sub && conds_hold(r, ent)) {
             first = r;
             break;
         }
     }
     for (int i = 0; i < MHFU_EM_RULES && !first; i++) {
         cfg_rule_t *r = &g_cfgp->rules[i];
-        if (((g_armed >> i) & 1) && flinch_move(r) && part_of(r, flinched)) first = r;
+        if (g_armed[i] && flinch_move(r) && part_of(r, flinched)) first = r;
     }
     if (!first) return 1;   /* the rules went meanwhile: the carrier runs as it is */
     const volatile mhfu_em_own_t *o = &R->moves[first->play_move - 1];
@@ -495,28 +658,29 @@ static int react_take(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_
     return 1;
 }
 
-/* The parts the rules on the flinch take in the host step that follows, with their gates as they
- * stand now, on the first such rule's carrier. Off once no rule on the flinch is installed. */
+/* The parts the rules on the flinch take in the host step that follows, with their gates and
+ * conditions as they stand now (a chance is rolled now), on the first such rule's carrier. Off
+ * once no rule on the flinch that plays is installed. */
 static void react_arm(uint32_t ent, const volatile mhfu_move_state_t *m)
 {
     int any = 0, have = 0;
     uint8_t parts = 0, cm = 0, cs = 0;
-    g_armed = 0;
     for (int i = 0; i < MHFU_EM_RULES; i++) {
+        g_armed[i] = 0;
         const cfg_rule_t *r = &g_cfgp->rules[i];
-        if (r->on != MHFU_MONSTER_FLINCH || !r->left) continue;
+        if (r->on != MHFU_MONSTER_FLINCH || !r->left || quiet(r)) continue;
         any = 1;
         const volatile mhfu_em_own_t *o = flinch_move(r);
         if (!o || !gates(r, ent, m)) continue;
+        if (have && (o->move.carrier_main != cm || o->move.carrier_sub != cs)) continue;
+        if (!conds_hold(r, ent)) continue;
         if (!have) {
             cm = o->move.carrier_main;
             cs = o->move.carrier_sub;
             have = 1;
-        } else if (o->move.carrier_main != cm || o->move.carrier_sub != cs) {
-            continue;
         }
         parts |= r->part == MHFU_EM_ANY_PART ? 0xFF : (uint8_t)(1u << (r->part & 7));
-        g_armed |= 1u << i;
+        g_armed[i] = 1;
     }
     if (!any) {
         if (g_reacts) mhfu_move_react_arm(0, 0, 0, 0);
@@ -531,28 +695,40 @@ static void react_arm(uint32_t ent, const volatile mhfu_move_state_t *m)
     g_reacts = 1;
 }
 
-/* at most one thing played or entered; 1 when a replaced reaction waits for the step */
-static int act(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_t edges, uint8_t parts)
+/* The rules in slot order: the first that plays and holds fires and ends the scan; one that plays
+ * nothing fires and the scan goes on. plays 0: the frame already did its one thing, so only the
+ * rules that play nothing are tried (and no chance is rolled for the others). */
+static void scan(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_t edges, uint8_t parts,
+                 uint16_t sigs, int plays)
 {
+    for (int i = 0; i < MHFU_EM_RULES; i++) {
+        cfg_rule_t *r = &g_cfgp->rules[i];
+        if (!r->left || (!plays && !quiet(r))) continue;
+        if (holds(r, ent, m, edges, parts, sigs) && fire(r, ent, m) && !quiet(r)) break;
+    }
+}
+
+/* at most one thing played or entered; 1 when a replaced reaction waits for the step */
+static int act(uint32_t ent, const volatile mhfu_move_state_t *m, uint16_t edges, uint8_t parts,
+               uint16_t sigs)
+{
+    int took = 0, plays = 0;
+    int k = ours(m);
     if (R->req_ent == ent) {
         R->req_ent = 0;
         play_slot(ent, R->req_slot, m, (int)R->req_force);
-        return 0;
-    }
-    if (react_take(ent, m, edges)) return 1;
-    int k = ours(m);
-    if (k >= 0 && m->state == MHFU_MOVE_DONE && m->entity == ent
-        && (m->end == MHFU_MOVE_END_BACK || m->end == MHFU_MOVE_END_WALL)
-        && R->moves[k].after != MHFU_EM_NO_MOVE) {
+    } else if (react_take(ent, m, edges)) {
+        took = 1;
+    } else if (k >= 0 && m->state == MHFU_MOVE_DONE && m->entity == ent
+               && (m->end == MHFU_MOVE_END_BACK || m->end == MHFU_MOVE_END_WALL)
+               && R->moves[k].after != MHFU_EM_NO_MOVE) {
         if (play_slot(ent, R->moves[k].after, m, m->move.force)) R->chained++;
         else R->tag_slot = MHFU_EM_NO_MOVE;   /* an empty AFTER: not again */
-        return 0;
+    } else {
+        plays = 1;
     }
-    for (int i = 0; i < MHFU_EM_RULES; i++) {
-        cfg_rule_t *r = &g_cfgp->rules[i];
-        if (r->left && holds(r, ent, m, edges, parts) && fire(r, ent, m)) break;
-    }
-    return 0;
+    scan(ent, m, edges, parts, sigs, plays);
+    return took;
 }
 
 /* The tail cut runs to its drop: ent is in the cut with SEVERED, TAIL_DROP has yet to run, and
@@ -582,7 +758,8 @@ static void request(uint32_t ent)
     c->frames = 0;   /* the pair just changed: its dwell restarts */
 }
 
-/* The events of the AI frames the cut waited reach the rules in the first one after it. */
+/* The events of the AI frames the cut waited reach the rules in the first one after it; the
+ * signals stay raised on the board until a frame takes them. */
 static void hold(uint32_t ent, uint16_t edges, uint8_t parts)
 {
     if (T->held_ent != ent) {
@@ -608,6 +785,7 @@ static uint16_t held(uint32_t ent, uint8_t *parts)
 static uint32_t brain(uint32_t ent)
 {
     em_vhook_cfg_t *c = g_cfgp;
+    if (!g_board->entity) board_reset(ent);   /* unclaimed: the first monster seen owns it */
     const int waits = cut_waits(ent);
     if (waits) T->waits++;
     else request(ent);
@@ -623,12 +801,14 @@ static uint32_t brain(uint32_t ent)
     if (!m || !R) return 0;
     uint8_t parts;
     uint16_t edges = mhfu_monster_events_frame(ent, m->entity == ent && m->skipping, &parts);
+    if ((edges >> MHFU_MONSTER_PART_BROKEN) & 1) g_board->broken |= parts;
     if (waits) {
         hold(ent, edges, parts);
         return 0;
     }
+    const uint16_t sigs = take_signals();
     edges |= held(ent, &parts);
-    if (!act(ent, m, edges, parts)) react_arm(ent, m);
+    if (!act(ent, m, edges, parts, sigs)) react_arm(ent, m);
     return 0;
 }
 
@@ -808,6 +988,34 @@ extern "C" int mhfu_em_request(uint8_t main_state, uint8_t sub_state, uint8_t mo
     return 1;
 }
 
+/* Why a rule cannot hold, or NULL: the framework refuses to run what it would misread. */
+static const char *op_error(const mhfu_em_op_t *o, int cond)
+{
+    if (!o->op) return 0;
+    if (o->op > (cond ? MHFU_EM_COND_COUNT : MHFU_EM_EFFECT_COUNT)) return "an op it does not know";
+    if (!cond || is_var_cond(o->op))
+        return o->arg < MHFU_EM_VARS ? 0 : "a counter past the board";
+    if (o->op == MHFU_EM_COND_BROKEN || o->op == MHFU_EM_COND_NOT_BROKEN)
+        return o->arg < 8 ? 0 : "a part past 7";
+    if (o->op == MHFU_EM_COND_SIDE) return (o->arg & SIDES) ? 0 : "a side mask with no side";
+    return 0;
+}
+
+static const char *rule_error(const mhfu_em_rule_t *r)
+{
+    if (r->on > MHFU_MONSTER_KINDS) return "an event it cannot take";
+    if (r->on == MHFU_MONSTER_FLINCH && !(r->flags & MHFU_EM_RULE_NO_PLAY) && !r->play_move)
+        return "the flinch plays an own move";
+    if (r->signal > MHFU_EM_SIGNALS) return "a signal it cannot take";
+    if (r->on && r->signal) return "one trigger, an event or a signal";
+    if (!r->from_mask && !r->from_move && !r->on && !r->signal) return "no trigger";
+    for (int i = 0; i < MHFU_EM_CONDS; i++)
+        if (const char *e = op_error(&r->conds[i], 1)) return e;
+    for (int i = 0; i < MHFU_EM_EFFECTS; i++)
+        if (const char *e = op_error(&r->effects[i], 0)) return e;
+    return 0;
+}
+
 /* A native brain rule; NULL clears the slot. Distances go into the block squared,
  * as raw f32 bits, which is what the brain compares. */
 extern "C" void mhfu_em_rule(int slot, const mhfu_em_rule_t *r)
@@ -815,16 +1023,16 @@ extern "C" void mhfu_em_rule(int slot, const mhfu_em_rule_t *r)
     if (!g_cfgp || slot < 0 || slot >= MHFU_EM_RULES) return;
     cfg_rule_t *c = &g_cfgp->rules[slot];
     c->left = 0;                                    /* off while we write */
-    int bad_on = r && (r->on > MHFU_MONSTER_TAIL_CUT
-                       || (r->on == MHFU_MONSTER_FLINCH && !r->play_move));
-    if (!r || r->count == 0 || bad_on || (!r->from_mask && !r->from_move && !r->on)) {
+    const char *bad = r ? rule_error(r) : 0;
+    if (!r || r->count == 0 || bad) {
         c->from_mask = 0;
         c->from_move = 0;
         c->on = 0;
-        mhfu_log("[%s] rule[%d]: cleared%s", OWNER, slot,
-                 bad_on ? " (an event it cannot take; the flinch plays an own move)" : "");
+        c->signal = 0;
+        mhfu_log("[%s] rule[%d]: cleared%s%s", OWNER, slot, bad ? ": " : "", bad ? bad : "");
         return;
     }
+    const int none = (r->flags & MHFU_EM_RULE_NO_PLAY) != 0;
     float lo = r->dist_lo < 0 ? 0 : r->dist_lo;
     float hi = r->dist_hi < 0 ? 0 : r->dist_hi;
     c->from_mask  = r->from_mask;
@@ -834,10 +1042,13 @@ extern "C" void mhfu_em_rule(int slot, const mhfu_em_rule_t *r)
     c->mode       = r->mode;
     c->flags      = r->flags;
     c->from_move  = r->from_move;
-    c->play_move  = r->play_move;
+    c->play_move  = none ? 0 : r->play_move;
     c->on         = r->on;
     c->part       = r->part;
     c->force      = r->force;
+    c->signal     = r->signal;
+    for (int i = 0; i < MHFU_EM_CONDS; i++)   c->conds[i] = r->conds[i];
+    for (int i = 0; i < MHFU_EM_EFFECTS; i++) c->effects[i] = r->effects[i];
     c->min_frames = r->min_frames;
     c->d2_lo      = f32_bits(lo * lo);
     c->d2_hi      = f32_bits(hi * hi);
@@ -845,16 +1056,16 @@ extern "C" void mhfu_em_rule(int slot, const mhfu_em_rule_t *r)
     c->fired      = 0;
     c->last_fire  = 0;
     c->left       = r->count;
-    mhfu_log("[%s] rule[%d]: on %s part %d, from main mask 0x%02X sub %s / own move %d, "
-             ">=%u frames, d in [%d,%d)%s%s -> enter (%u,%u,m%u) / own move %d, cooldown %u, x%s",
+    mhfu_log("[%s] rule[%d]: on %s part %d signal %d, from main mask 0x%02X sub %s / own move %d, "
+             ">=%u frames, d in [%d,%d)%s%s -> %s (%u,%u,m%u) / own move %d, cooldown %u, x%s",
              OWNER, slot, r->on ? mhfu_monster_event_names[r->on - 1] : "-",
-             r->part == MHFU_EM_ANY_PART ? -1 : (int)r->part, r->from_mask,
+             r->part == MHFU_EM_ANY_PART ? -1 : (int)r->part, (int)r->signal - 1, r->from_mask,
              r->from_sub == MHFU_EM_SUB_ANY ? "any" : "exact", (int)r->from_move - 1,
              (unsigned)r->min_frames, (int)lo, (int)hi,
              (r->flags & MHFU_EM_RULE_RECEDING) ? ", receding" : "",
              (r->flags & MHFU_EM_RULE_CLOSING)  ? ", closing"  : "",
-             r->to_main, r->to_sub, r->mode, (int)r->play_move - 1, (unsigned)r->cooldown,
-             r->count == MHFU_EM_UNLIMITED ? "standing" : "n");
+             none ? "no play" : "enter", r->to_main, r->to_sub, r->mode, (int)r->play_move - 1,
+             (unsigned)r->cooldown, r->count == MHFU_EM_UNLIMITED ? "standing" : "n");
 }
 
 extern "C" void mhfu_em_clear(void)
@@ -863,8 +1074,12 @@ extern "C" void mhfu_em_clear(void)
     g_cfgp->req_pending = 0;
     if (R) R->req_ent = 0;
     for (int i = 0; i < MHFU_EM_SUBS; i++)  { g_cfgp->subs[i].left = 0; g_cfgp->subs[i].from_mask = 0; }
-    for (int i = 0; i < MHFU_EM_RULES; i++) { g_cfgp->rules[i].left = 0; g_cfgp->rules[i].from_mask = 0;
-                                               g_cfgp->rules[i].from_move = 0; g_cfgp->rules[i].on = 0; }
+    for (int i = 0; i < MHFU_EM_RULES; i++) {
+        cfg_rule_t *r = &g_cfgp->rules[i];
+        r->left = 0;
+        r->from_mask = r->from_move = r->on = r->signal = 0;
+        g_armed[i] = 0;
+    }
     if (g_reacts) mhfu_move_react_arm(0, 0, 0, 0);
     g_reacts = 0;
     T->held_ent = 0;
@@ -988,6 +1203,36 @@ extern "C" void mhfu_em_status(mhfu_em_status_t *out)
     for (int i = 0; i < MHFU_EM_RULES; i++) { out->rule_fired[i] = g_cfgp->rules[i].fired;
                                                out->rule_left[i]  = g_cfgp->rules[i].left; }
     for (int i = 0; i < MHFU_EM_SUBS; i++)  out->sub_left[i] = g_cfgp->subs[i].left;
+    for (int i = 0; i < MHFU_EM_VARS; i++)  out->vars[i] = g_board->vars[i];
+    out->broken = g_board->broken;
+}
+
+/* --- the board --- */
+
+extern "C" int mhfu_em_var(int k)
+{
+    return g_board && (unsigned)k < MHFU_EM_VARS ? g_board->vars[k] : 0;
+}
+
+extern "C" void mhfu_em_set_var(int k, int v)
+{
+    if (g_board && (unsigned)k < MHFU_EM_VARS) g_board->vars[k] = sat16(v);
+}
+
+extern "C" int mhfu_em_signal(int k)
+{
+    if (!g_board || (unsigned)k >= MHFU_EM_SIGNALS) return 0;
+    g_board->signals[k] = 1;
+    return 1;
+}
+
+extern "C" const volatile mhfu_em_board_t *mhfu_em_board(void) { return g_board; }
+
+/* A new quest: no move is ours and the board belongs to no monster yet. */
+static void quest_reset(void)
+{
+    R->tag_slot = MHFU_EM_NO_MOVE;
+    board_reset(0);
 }
 
 /* --- the reaction replacement: one entry, owned by the move player (move.cpp) ---------- */
@@ -1110,6 +1355,10 @@ static void on_spawn(const mhfu_monster_spawn_ctx_t *ctx)
 {
     if (!ctx) return;
     install_for(ctx->entity_ptr);
+    /* the board is the spawned monster's from now, so a spawn handler that runs after this one
+     * can set its counters; two monsters of the species share it, as they share the dwell */
+    if (g_installed && mhfu_mem_read_u32(ctx->entity_ptr) == g_vtable)
+        board_reset(ctx->entity_ptr);
 }
 
 static void on_quest(const mhfu_event_ctx_t *ctx)
@@ -1123,7 +1372,7 @@ static void on_quest(const mhfu_event_ctx_t *ctx)
     g_cfgp->sub_hits = g_cfgp->sub_landed = g_cfgp->brain_fires = 0;
     g_cfgp->muted = 0;
     g_cfgp->req_done = 0;
-    R->tag_slot = MHFU_EM_NO_MOVE;
+    quest_reset();
 }
 
 extern "C" int mhfu_em_init(void)
@@ -1166,6 +1415,9 @@ extern "C" int mhfu_em_init(void)
 /* the species vtable latched, as install_for's */
 extern "C" void mhfu_em_host_latch(uint32_t vtable) { T->vtable = vtable; }
 
+/* the monster spawned, as on_spawn's */
+extern "C" void mhfu_em_host_spawn(uint32_t ent) { board_reset(ent); }
+
 /* the brain slot as its wrapper runs it: the species brain (em_host.cpp), then the tip */
 extern "C" void mhfu_host_brain(uint32_t ent);
 extern "C" void mhfu_em_host_brain(uint32_t ent)
@@ -1187,7 +1439,7 @@ extern "C" uint32_t mhfu_em_host_frame(uint32_t ent)
 extern "C" void mhfu_em_host_quest(void)
 {
     mhfu_em_clear();
-    R->tag_slot = MHFU_EM_NO_MOVE;
+    quest_reset();
 }
 
 /* the engine's reaction entering (main, sub) mode 2 through the slot-32 stub's replacement,
