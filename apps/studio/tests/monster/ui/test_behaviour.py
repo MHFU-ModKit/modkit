@@ -11,11 +11,11 @@ from typing import Any
 
 import pytest
 from mhfu_port import behaviour as model
-from mhfu_port.behaviour import KINDS, Block, MoveNode, Rule
+from mhfu_port.behaviour import KINDS, Block, Kind, MoveNode, Rule
 from mhfu_port.manifest import Move
 from mhfu_studio.monster import behaviour as B
 from mhfu_studio.monster.document import PortDocument
-from mhfu_studio.monster.panels.behaviour import WARN, BehaviourPanel
+from mhfu_studio.monster.panels.behaviour import EFFECT, WARN, BehaviourPanel, roles
 from mhfu_studio.monster.panels.node_graph import GraphView, LinkSpec
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
@@ -265,7 +265,9 @@ def test_the_palette_offers_every_kind(panel: BehaviourPanel) -> None:
     menu = panel.view.viewer.context_menus()["graph"]
     offered = {a.text() for sub in menu.actions() for a in sub.menu().actions()}
     assert offered == {k.title for k in KINDS.values()}
-    assert [a.text() for a in menu.actions()] == ["Events", "State", "Conditions", "Modifiers"]
+    titles = [a.text() for a in menu.actions()]
+    assert titles[:4] == ["Events", "State", "Conditions", "Modifiers"]
+    assert titles[4:] in ([], ["Effects"])
 
 
 def create(qtbot: Any, p: BehaviourPanel, title: str, where: QPoint) -> None:
@@ -555,3 +557,124 @@ def test_renaming_a_move_keeps_the_graph(panel: BehaviourPanel, ws: MonsterWorks
     panel.sync()
     assert doc(ws).manifest.behaviour.blocks["b1"].play == ["stomp"]
     assert in_step(panel, ws) and badge(panel, "b1") == rank(1)
+
+
+# ---- effects, names, sides and paths that play nothing -------------------------------------- #
+
+
+def test_a_path_that_plays_nothing_has_its_place(
+    panel: BehaviourPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = [model.Path(("b2", "b3"), None, None), model.Path(("b1",), "stamp", "charge")]
+    monkeypatch.setattr(model, "paths", lambda m: paths)
+    monkeypatch.setattr(model, "refused", lambda m: {})
+    monkeypatch.setattr(model, "loose", lambda m: [])
+    panel._drawn = None
+    panel.sync()
+    assert [badge(panel, n) for n in ("b1", "b2", "b3")] == [rank(2), "", rank(1)]
+    assert panel.title.text() == f"3 blocks · 2 of {model.SEAM_RULES} paths"
+    assert panel.view._shown["b2"].view.opacity() == 1.0
+
+
+@pytest.mark.parametrize(
+    ("family", "dark"), [("Ember", True), ("Ember", False), ("Moss", True), ("Moss", False)]
+)
+def test_the_effect_role_has_a_colour_of_its_own(qtbot: Any, family: str, dark: bool) -> None:
+    try:
+        theme.apply(theme.theme(family, dark))
+        seen = {role: theme.color(ink).getRgbF()[:3] for role, ink in roles().items()}
+    finally:
+        theme.apply(theme.theme("Ember", True))
+    assert set(seen) == {"event", "state", "condition", "modifier", "effect", "move"}
+    for role, rgb in seen.items():
+        if role != "effect":
+            gap = max(abs(a - b) for a, b in zip(rgb, seen["effect"], strict=True))
+            assert gap > 0.2, role
+
+
+def test_an_effect_block_wears_the_effect_colour(
+    new_kinds: tuple[Kind, ...], panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    doc(ws).edit(
+        lambda m: m.behaviour.blocks.__setitem__(
+            "b4", Block("t_count", (0.0, 400.0), {"counter": "hits"})
+        )
+    )
+    try:
+        for dark in (True, False):
+            theme.apply(theme.theme("Ember", dark))
+            panel.sync()
+            edge = theme.color(EFFECT[dark])
+            have = panel.view._shown["b4"].view.border_color
+            assert tuple(have[:3]) == (edge.red(), edge.green(), edge.blue())
+    finally:
+        theme.apply(theme.theme("Ember", True))
+
+
+def options(p: BehaviourPanel, node: str, name: str) -> list[str]:
+    ctl = field(p, node, name)._ctl
+    return [ctl.itemText(i) for i in range(ctl.count())]
+
+
+def type_name(qtbot: Any, p: BehaviourPanel, node: str, name: str, text: str) -> None:
+    ctl = field(p, node, name)._ctl
+    ctl.setEditText(text)
+    ctl.lineEdit().editingFinished.emit()
+    qtbot.wait(30)
+
+
+def test_counters_and_flags_through_the_canvas(
+    qtbot: Any, new_kinds: tuple[Kind, ...], panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    count, flag = new_kinds[0], new_kinds[1]
+    create(qtbot, panel, count.title, QPoint(300, 480))
+    assert doc(ws).manifest.behaviour.blocks["b4"].params == {"counter": "counter1", "by": 1}
+    create(qtbot, panel, flag.title, QPoint(60, 480))
+    assert doc(ws).manifest.behaviour.blocks["b5"].params == {"flag": "flag1"}
+    assert options(panel, "b4", "counter") == options(panel, "b5", "flag") == ["counter1", "flag1"]
+    type_name(qtbot, panel, "b5", "flag", "armor_hits")
+    assert doc(ws).manifest.behaviour.blocks["b5"].params == {"flag": "armor_hits"}
+    assert options(panel, "b4", "counter") == ["armor_hits", "counter1"]
+    assert field(panel, "b5", "flag").get_value() == "armor_hits" and in_step(panel, ws)
+    doc(ws).undo()
+    assert doc(ws).manifest.behaviour.blocks["b5"].params == {"flag": "flag1"}
+    doc(ws).redo()
+    ws.refresh()
+    panel.sync()
+    assert options(panel, "b5", "flag") == ["armor_hits", "counter1"]
+    kept = doc(ws).manifest
+    type_name(qtbot, panel, "b5", "flag", "Bad Name")
+    assert doc(ws).manifest is kept and field(panel, "b5", "flag").get_value() == "armor_hits"
+
+
+def test_signals_and_sides_through_the_canvas(
+    qtbot: Any, new_kinds: tuple[Kind, ...], panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    signal, side = new_kinds[2], new_kinds[3]
+    create(qtbot, panel, signal.title, QPoint(300, 480))
+    create(qtbot, panel, side.title, QPoint(60, 480))
+    blocks = doc(ws).manifest.behaviour.blocks
+    assert blocks["b4"].params == {"name": "signal1"} and blocks["b5"].params == {
+        "sides": ["front"]
+    }
+    type_name(qtbot, panel, "b4", "name", "rage")
+    assert doc(ws).manifest.behaviour.blocks["b4"].params == {"name": "rage"}
+    create(qtbot, panel, signal.title, QPoint(500, 480))
+    assert doc(ws).manifest.behaviour.blocks["b6"].params == {"name": "signal1"}
+    assert options(panel, "b4", "name") == ["rage", "signal1"]
+    sides = field(panel, "b5", "sides")._ctl
+    picks = sides.menu().actions()
+    assert [a.text() for a in picks] == list(new_kinds[3].params[0].choices)
+    assert sides.text() == "front"
+    picks[3].trigger()
+    qtbot.wait(30)
+    assert doc(ws).manifest.behaviour.blocks["b5"].params == {"sides": ["front", "behind"]}
+    assert sides.text() == "front, behind" and in_step(panel, ws)
+    picks[0].trigger()
+    qtbot.wait(30)
+    assert doc(ws).manifest.behaviour.blocks["b5"].params == {"sides": ["behind"]}
+    kept = doc(ws).manifest
+    picks[3].trigger()  # none left
+    qtbot.wait(30)
+    assert doc(ws).manifest is kept and "side" in ws.message
+    assert field(panel, "b5", "sides").get_value() == ("behind",)
