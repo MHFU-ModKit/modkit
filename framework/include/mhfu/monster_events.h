@@ -42,8 +42,10 @@ enum {
 };
 #define MHFU_MONSTER_KINDS MHFU_MONSTER_EVENT_KIND_COUNT
 
-/* ENTITY.FLAGS: the monster is enraged (the ENRAGED and CALMED events, the rules' conditions) */
-#define MHFU_MONSTER_FLAG_ENRAGED 0x20u
+/* ENTITY.FLAGS: the monster is enraged (the ENRAGED and CALMED events, the rules' conditions), and
+ * a rage start is pending (set it only while it is not enraged) */
+#define MHFU_MONSTER_FLAG_ENRAGED    0x20u
+#define MHFU_MONSTER_FLAG_RAGE_START 0x400u
 
 /* the kinds' names, MHFU_MONSTER_NOTICED's first, then NULL: Lua's and a manifest's `on` */
 extern const char *const mhfu_monster_event_names[];

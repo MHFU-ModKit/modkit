@@ -15,6 +15,10 @@
  *                 its move in place of the host's reaction;
  *   board         the counters, signals and broken parts the rules and Lua share for the
  *                 wrapped species' monster (mhfu_em_var, mhfu_em_signal);
+ *   rage          the enrage and calm effects and Lua's mhfu_em_rage, applied by the brain; the
+ *                 species' own anger switched off (mhfu_em_natural_rage);
+ *   sever gate    the tail cut's gate, OBJ_VTABLE.CUT_GATE, refused above an HP percent
+ *                 (mhfu_em_sever_gate);
  *   own moves     a port's moves by slot, played by the move player (mhfu/move.h) when asked,
  *                 by a rule, or after the move before them;
  *   step          a C function on every AI frame, on the game thread, before the host step;
@@ -103,6 +107,9 @@ typedef struct {
     uint32_t cut_waits;          /* AI frames the cut held what we start */
     int32_t  vars[MHFU_EM_VARS]; /* the board's counters */
     uint32_t broken;             /* the board's BROKEN: bit k, part k broke */
+    uint32_t sever_pct;          /* mhfu_em_sever_gate's percent, 0 off */
+    uint32_t gate_refused;       /* tail cuts the gate refused */
+    uint32_t natural_rage;       /* mhfu_em_natural_rage */
 } mhfu_em_status_t;
 
 /* 1 while a big monster's vtable is wrapped (from its spawn to the next quest_beginning). */
@@ -214,8 +221,31 @@ typedef struct {
     uint8_t  _pad[3];
     uint32_t rng;                            /* xorshift32 state for chance */
     uint32_t entity;                         /* the monster it belongs to */
-    uint32_t _spare;
+    uint8_t  rage;                           /* a request mhfu_em_rage queued, MHFU_EM_RAGE_* */
+    uint8_t  _pad2[3];
 } mhfu_em_board_t;
+
+/* mhfu_em_board_t.rage */
+#define MHFU_EM_RAGE_NONE 0
+#define MHFU_EM_RAGE_ON   1
+#define MHFU_EM_RAGE_OFF  2
+
+/* Rage, through the engine's own levers (ENTITY.FLAGS, RAGE_TIMER), written by the brain in its
+ * next AI frame: enrage sets the start pending unless the monster is enraged, calm sets one frame
+ * of rage left while it is. mhfu_em_rage queues one on the board for that frame, since Lua must
+ * not write the flags from its thread: 1 queued, 0 while nothing is wrapped. */
+int  mhfu_em_rage(int on);
+
+/* Off keeps the species' anger from ever starting rage (ENTITY.ANGER_THRESHOLD raised once per
+ * monster, when it takes the board and when this is called); on restores the species' value.
+ * On is the default, and the quest's end sets it. */
+void mhfu_em_natural_rage(int on);
+
+/* The tail cut only below pct percent of the monster's HP (1..100), 0 for any. The cut's gate
+ * (OBJ_VTABLE.CUT_GATE) of the wrapped species' vtable is wrapped, and it refuses at or above
+ * pct for a monster of that vtable while the species' own gate runs on every other cut: it has
+ * its own refusals. 0 while nothing is wrapped or pct is out of range. */
+int  mhfu_em_sever_gate(int pct);
 
 /* Counter k's value; 0 for a bad k. */
 int  mhfu_em_var(int k);

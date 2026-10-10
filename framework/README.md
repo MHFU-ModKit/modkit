@@ -158,6 +158,19 @@ far are the monster's board, reset with a new monster; a port names them in its 
 `mhfu.addr.EM_RULE.CONDS_COUNT` conditions and `EFFECTS_COUNT` effects. The partitions em_vhook
 takes grow with the rules and moves; its log lines give their sizes.
 
+## Rage and the tail cut
+
+The `enrage` and `calm` effects (and `mhfu.em_rage(true | false)`, `port:enrage()`, `port:calm()`,
+which queue the same on the board for the brain, since Lua must not write the monster's flags from
+its thread) use the engine's own levers: `enrage` sets the start pending in `ENTITY.FLAGS` unless
+the monster is enraged, so the engine's rage start runs in the next AI frame (it roars), and
+`calm` leaves one frame on `ENTITY.RAGE_TIMER` while it is, so the engine's own end runs.
+`mhfu.em_natural_rage(false)` raises the species' anger threshold once per monster so damage never
+starts rage (`true` restores it). `mhfu.em_sever_gate(pct)` wraps the species' tail-cut gate
+(`OBJ_VTABLE.CUT_GATE`, a vtable swap) so the tail cuts only below `pct` percent of the monster's
+HP; the species' own gate still runs on the cuts it allows. A port's moves module sets the last
+two with `natural_rage = false` and `sever_below = <pct>`; the quest's end drops both.
+
 ## Calling the game from C
 
 C calls a game function through `mhfu_call(fn, a0, ...)` (`mhfu/call.h`, word arguments only).
