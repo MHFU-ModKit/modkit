@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """Synthetic manifests, intel documents and PACs, and the real games and builds."""
 
+import dataclasses
 import typing
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -450,3 +451,20 @@ def new_kinds(monkeypatch: pytest.MonkeyPatch) -> tuple[behaviour.Kind, ...]:
     for k in NEW_KINDS:
         monkeypatch.setitem(behaviour.KINDS, k.name, k)
     return NEW_KINDS
+
+
+def _skip_without(cls: type, name: str) -> None:
+    if name not in {f.name for f in dataclasses.fields(cls)}:
+        pytest.skip(f"the package has no {cls.__name__}.{name} yet")
+
+
+@pytest.fixture
+def sever_field() -> None:
+    """For a test that needs `Part.sever_below`."""
+    _skip_without(manifest.Part, "sever_below")
+
+
+@pytest.fixture
+def rage_field() -> None:
+    """For a test that needs `Behaviour.natural_rage`."""
+    _skip_without(behaviour.Behaviour, "natural_rage")

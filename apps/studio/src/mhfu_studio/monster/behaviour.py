@@ -236,6 +236,23 @@ def start(p: Param, taken: Collection[str] = ()) -> object:
 # edits
 
 
+def natural_rage(m: Manifest) -> bool:
+    """Whether the monster rages by its own anger (`[behaviour] natural_rage`)."""
+    return bool(getattr(m.behaviour, "natural_rage", True))
+
+
+def set_natural_rage(doc: Edits, on: bool) -> str:
+    """The monster's own rage on or off; off, only an Enrage block (or Lua) rages it."""
+    if natural_rage(doc.manifest) == on:
+        return f"natural rage already {'on' if on else 'off'}"
+
+    def change(m: Manifest) -> None:
+        typing.cast(Any, m.behaviour).natural_rage = on
+
+    doc.edit(change)
+    return f"natural rage {'on' if on else 'off'}"
+
+
 def add_block(doc: Edits, kind: str, at: Point) -> str:
     """A block of `kind` at `at`, with valid values."""
     if kind not in KINDS:

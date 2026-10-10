@@ -35,6 +35,47 @@ def test_name_part(doc):
         s.name_part(3, "left wing")
 
 
+def test_a_rename_keeps_the_part_severable(doc):
+    d = doc()
+    s = P.PartSession(d)
+    s.name_part(3, "tail", severable=True)
+    s.name_part(3, "stump")
+    assert d.manifest.parts["stump"].severable and list(d.manifest.parts) == ["stump"]
+    s.name_part(3, "tail", severable=False)
+    assert not d.manifest.parts["tail"].severable
+
+
+def test_sever_below(doc, sever_field):
+    d = doc("\n[parts.tail]\nindex = 3\nseverable = true\n[parts.head]\nindex = 1\n")
+    s = P.PartSession(d)
+    assert s.severable(3) and not s.severable(1) and s.sever_below(3) is None
+    before = d.manifest
+    s.set_sever_below(3, 50)
+    assert d.manifest.parts["tail"].sever_below == 50 and s.sever_below(3) == 50
+    s.set_sever_below(3, 50)
+    d.undo()
+    assert d.manifest == before, "the same value is no second step"
+    s.set_sever_below(3, 50)
+    s.set_sever_below(3, 0)
+    assert d.manifest.parts["tail"].sever_below is None
+    s.set_sever_below(3, 25)
+    s.name_part(3, "stump")
+    assert d.manifest.parts["stump"].sever_below == 25, "a rename keeps it"
+    s.name_part(3, "stump", severable=False)
+    assert d.manifest.parts["stump"].sever_below is None
+
+
+def test_sever_below_refusals(doc, sever_field):
+    d = doc("\n[parts.tail]\nindex = 3\nseverable = true\n[parts.head]\nindex = 1\n")
+    s = P.PartSession(d)
+    with pytest.raises(ManifestError, match="part 1 is not a severable"):
+        s.set_sever_below(1, 50)
+    with pytest.raises(ManifestError, match="part 5 is not a severable"):
+        s.set_sever_below(5, 50)
+    with pytest.raises(ManifestError, match="1 to 100"):
+        s.set_sever_below(3, 101)
+
+
 def test_grid(doc):
     d = doc(GRID)
     s = P.PartSession(d)

@@ -79,6 +79,12 @@ class BehaviourPanel(kit.Panel):
             on=studio.act("spread nodes", lambda: ws.edit("", self._spread)),
             icon="ph.arrows-out-simple",
         )
+        self.rage = kit.check(
+            "Natural rage",
+            tip="On: the monster rages as the game has it, when its anger builds. Off: only an"
+            " Enrage block or a script rages it.",
+            on=self._natural_rage,
+        )
         self.view = GraphView()
         self.view.set_palette(graph.palette())
         v = self.view
@@ -98,7 +104,9 @@ class BehaviourPanel(kit.Panel):
         lay = QVBoxLayout(page)
         lay.setContentsMargins(10, 8, 10, 8)
         lay.setSpacing(6)
-        lay.addWidget(kit.row(self.title, self.hint, self.fit, self.spread, stretch=True))
+        lay.addWidget(
+            kit.row(self.title, self.hint, self.rage, self.fit, self.spread, stretch=True)
+        )
         lay.addWidget(self.view, 1)
         self.no_scene = NoScene(studio)
         self.no_scene.say(
@@ -113,6 +121,13 @@ class BehaviourPanel(kit.Panel):
         if doc is None:
             raise ManifestError("no port manifest open")
         return graph.spread(doc)
+
+    def _natural_rage(self, on: bool) -> None:
+        doc = self.ws.doc
+        if doc is not None:
+            self.studio.act(
+                "natural rage", lambda: self.ws.edit("", lambda: graph.set_natural_rage(doc, on))
+            )()
 
     # what the canvas tells
 
@@ -173,6 +188,7 @@ class BehaviourPanel(kit.Panel):
         if self._drawn is not m:
             self._drawn = m
             self._draw(m)
+            kit.put(self.rage, graph.natural_rage(m))
         self._follow(m)
 
     def _draw(self, m: Manifest) -> None:

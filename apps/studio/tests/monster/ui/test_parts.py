@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 from typing import Any
 
+from mhfu_port.manifest import Part
 from mhfu_studio.monster.panels.parts import PartsPanel
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
@@ -117,3 +118,40 @@ def test_a_bare_pac_has_no_host(qtbot: Any, synthetic_pac: bytes, gl: Any) -> No
     assert p.source.buttons["host"].text() == "No base monster"
     assert "No base monster" in p.no_intel.text()
     ws.close()
+
+
+def severable_tail(ws: MonsterWorkspace, p: PartsPanel) -> None:
+    assert ws.doc is not None
+    ws.doc.edit(lambda m: m.parts.__setitem__("tail", Part(3, severable=True)))
+    ws.sync()
+    p.sync()
+
+
+def test_the_sever_box_is_on_a_severable_part(workspace: MonsterWorkspace, qtbot: Any) -> None:
+    ws, p = workspace, build(workspace, qtbot)
+    severable_tail(ws, p)
+    for part, shown in ((3, True), (1, False), (5, False)):  # tail; head, unsevered; unnamed
+        p.parts.cellClicked.emit(part, 0)
+        assert ws.selected_part == part and p.sever_form.isVisibleTo(p) == shown
+    assert p.sever.minimum() == 0 and p.sever.maximum() == 100 and kit.missing_tips(p) == []
+
+
+def test_sever_below_is_one_undo_step(
+    workspace: MonsterWorkspace, qtbot: Any, sever_field: None
+) -> None:
+    ws, p = workspace, build(workspace, qtbot)
+    severable_tail(ws, p)
+    assert ws.doc is not None
+    p.parts.cellClicked.emit(3, 0)
+    assert p.sever.value() == 0
+    p.sever.setValue(40)
+    assert ws.doc.manifest.parts["tail"].sever_below == 40
+    p.studio.undo()
+    assert ws.doc.manifest.parts["tail"].sever_below is None and p.sever.value() == 0
+    p.sever.setValue(40)
+    p.sever.setValue(0)
+    assert ws.doc.manifest.parts["tail"].sever_below is None
+    p.sever.setValue(30)
+    p.part_name.setText("stump")
+    p.name_button.click()
+    assert ws.doc.manifest.parts["stump"].sever_below == 30 and p.sever.value() == 30

@@ -106,6 +106,11 @@ back. An On signal block fires when Lua raises that name: `port:fire("name")`; `
 reads a counter or flag and `port:var("name", v)` sets it. Hunter side ticks any of front, left,
 right, behind.
 
+Enrage and Calm down are effect blocks too (`port:enrage()` and `port:calm()` do the same from
+Lua). The Natural rage box in the Behaviour dock turns the monster's own anger off, so only those
+rage it. In the Parts dock, a severable part has Severable below HP %: its cut works only once the
+monster's HP is under that percent, 0 at any HP.
+
 ## Tests
 
 `uv run pytest apps/studio` runs offscreen; the Qt tests skip without the `qt` group, and the
