@@ -366,11 +366,14 @@ def test_the_palette_offers_every_kind(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_the_zinogre_reads(ports: Path) -> None:
     m = manifest.load(ports / "zinogre.toml")
     r = B.read(m)
-    assert len(m.behaviour.blocks) == 36 and len(r.paths) == 16
+    assert len(m.behaviour.blocks) == 37 and len(r.paths) == 16
     assert sorted(n for ns in r.priority.values() for n in ns) == list(range(1, 17))
     assert r.loose == [] and r.refused == {} and r.capped is None
     assert [p.blocks[-1] for p in r.paths if p.play is None] == ["b15", "b17", "b23"]
     assert model.names(m, "var") == ["flinches", "in_combat"]
+    charge = r.paths[12]  # the 13th: 2nd flinch, charge up and enrage
+    assert (charge.blocks[-1], charge.play) == ("b37", "charge_up")
+    assert m.behaviour.blocks["b37"].kind == "enrage" and B.natural_rage(m)
     assert min(b.at[0] for b in m.behaviour.blocks.values()) == model.LEFT
     assert {w.dst for w in B.wires(m) if w.dst_port == "play"} >= {"move:flinch_head"}
     assert len(B.spots(m)) == len(m.moves)

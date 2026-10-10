@@ -238,7 +238,7 @@ def start(p: Param, taken: Collection[str] = ()) -> object:
 
 def natural_rage(m: Manifest) -> bool:
     """Whether the monster rages by its own anger (`[behaviour] natural_rage`)."""
-    return bool(getattr(m.behaviour, "natural_rage", True))
+    return m.behaviour.natural_rage
 
 
 def set_natural_rage(doc: Edits, on: bool) -> str:
@@ -247,7 +247,7 @@ def set_natural_rage(doc: Edits, on: bool) -> str:
         return f"natural rage already {'on' if on else 'off'}"
 
     def change(m: Manifest) -> None:
-        typing.cast(Any, m.behaviour).natural_rage = on
+        m.behaviour.natural_rage = on
 
     doc.edit(change)
     return f"natural rage {'on' if on else 'off'}"

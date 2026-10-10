@@ -136,9 +136,7 @@ def test_the_sever_box_is_on_a_severable_part(workspace: MonsterWorkspace, qtbot
     assert p.sever.minimum() == 0 and p.sever.maximum() == 100 and kit.missing_tips(p) == []
 
 
-def test_sever_below_is_one_undo_step(
-    workspace: MonsterWorkspace, qtbot: Any, sever_field: None
-) -> None:
+def test_sever_below_is_one_undo_step(workspace: MonsterWorkspace, qtbot: Any) -> None:
     ws, p = workspace, build(workspace, qtbot)
     severable_tail(ws, p)
     assert ws.doc is not None
@@ -155,3 +153,26 @@ def test_sever_below_is_one_undo_step(
     p.part_name.setText("stump")
     p.name_button.click()
     assert ws.doc.manifest.parts["stump"].sever_below == 30 and p.sever.value() == 30
+
+
+def test_a_refused_sever_below_is_reported_and_goes_back(
+    workspace: MonsterWorkspace, qtbot: Any
+) -> None:
+    ws, p = workspace, build(workspace, qtbot)
+    severable_tail(ws, p)
+    assert ws.doc is not None
+    p.parts.cellClicked.emit(1, 0)  # the head: named, not severable
+    assert not p.sever_form.isVisibleTo(p)
+    before = ws.doc.manifest
+    p.sever.setValue(40)  # as a script or a stale box would
+    assert ws.doc.manifest is before and "sever_below goes with severable" in ws.message
+    ws.doc.edit(lambda m: m.parts.__setitem__("wing", Part(4, severable=True)))
+    ws.sync()
+    p.sync()
+    p.parts.cellClicked.emit(3, 0)
+    p.sever.setValue(50)
+    p.parts.cellClicked.emit(4, 0)
+    assert p.sever_form.isVisibleTo(p) and p.sever.value() == 0
+    p.sever.setValue(30)  # the gate holds one
+    assert "the gate holds one" in ws.message and ws.doc.manifest.parts["wing"].sever_below is None
+    assert p.sever.value() == 0

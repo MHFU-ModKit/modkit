@@ -227,11 +227,12 @@ def test_the_zinogre_opens(
     ws.load(Scene.from_bytes(synthetic_pac, "z", path=zinogre_toml.with_suffix(".bin")), zin)
     p = make(qtbot, ws)
     m = zin.manifest
-    assert len(m.behaviour.blocks) == 36 and len(p.view._shown) == 36 + len(m.moves)
+    assert len(m.behaviour.blocks) == 37 and len(p.view._shown) == 37 + len(m.moves)
     plays = sorted(badge(p, i) for i in m.behaviour.blocks if badge(p, i))
     assert plays == sorted(f"#{k}" for k in range(1, 17))
     for k, path in enumerate(B.read(m).paths, 1):  # a path that plays nothing has its place too
         assert badge(p, path.blocks[-1]) == rank(k)
+    assert badge(p, "b37") == rank(13) and p.rage.isChecked()
     assert field(p, "b23", "counter").get_value() == "flinches"
     assert options(p, "b15", "flag") == ["flinches", "in_combat"]
     assert all(p.view._shown[i].view.opacity() == 1.0 for i in m.behaviour.blocks)
@@ -752,9 +753,7 @@ def test_natural_rage_starts_on(panel: BehaviourPanel) -> None:
     assert panel.rage.isChecked() and B.natural_rage(panel.ws.manifest)
 
 
-def test_natural_rage_is_one_undo_step(
-    panel: BehaviourPanel, ws: MonsterWorkspace, rage_field: None
-) -> None:
+def test_natural_rage_is_one_undo_step(panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
     before = doc(ws).manifest
     panel.rage.click()
     assert doc(ws).manifest.behaviour.natural_rage is False and not panel.rage.isChecked()

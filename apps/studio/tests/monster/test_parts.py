@@ -45,7 +45,7 @@ def test_a_rename_keeps_the_part_severable(doc):
     assert not d.manifest.parts["tail"].severable
 
 
-def test_sever_below(doc, sever_field):
+def test_sever_below(doc):
     d = doc("\n[parts.tail]\nindex = 3\nseverable = true\n[parts.head]\nindex = 1\n")
     s = P.PartSession(d)
     assert s.severable(3) and not s.severable(1) and s.sever_below(3) is None
@@ -65,15 +65,20 @@ def test_sever_below(doc, sever_field):
     assert d.manifest.parts["stump"].sever_below is None
 
 
-def test_sever_below_refusals(doc, sever_field):
+def test_sever_below_refusals(doc):
     d = doc("\n[parts.tail]\nindex = 3\nseverable = true\n[parts.head]\nindex = 1\n")
     s = P.PartSession(d)
-    with pytest.raises(ManifestError, match="part 1 is not a severable"):
+    with pytest.raises(ManifestError, match="sever_below goes with severable"):
         s.set_sever_below(1, 50)
-    with pytest.raises(ManifestError, match="part 5 is not a severable"):
+    with pytest.raises(ManifestError, match="part 5 has no name yet"):
         s.set_sever_below(5, 50)
-    with pytest.raises(ManifestError, match="1 to 100"):
+    with pytest.raises(ManifestError, match="HP percent, 1..100"):
         s.set_sever_below(3, 101)
+    s.name_part(4, "wing", severable=True)
+    s.set_sever_below(3, 50)
+    with pytest.raises(ManifestError, match="the gate holds one"):
+        s.set_sever_below(4, 30)
+    assert d.manifest.parts["wing"].sever_below is None
 
 
 def test_grid(doc):
