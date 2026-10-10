@@ -32,6 +32,7 @@ NOTICED, FLINCH, BROKEN, TAIL = (
     KIND("tail_cut"),
 )
 ENRAGED, CALMED = KIND("enraged"), KIND("calmed")
+ENTERED = KIND("combat_entered")
 NO_PLAY = 4  # MHFU_EM_RULE_NO_PLAY
 RULES = a.EM_CFG.RULES.count or 0
 MOVES = a.EM_MOVES.MOVES.count or 0
@@ -263,6 +264,13 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     lib.mhfu_em_signal.argtypes = [ctypes.c_int]
     lib.mhfu_em_board.restype = ctypes.c_void_p
     lib.mhfu_em_status.argtypes = [ctypes.c_void_p]
+    lib.host_break_row.argtypes = [
+        ctypes.c_int,
+        ctypes.c_uint8,
+        ctypes.c_uint8,
+        ctypes.c_uint8,
+        ctypes.c_uint16,
+    ]
     lib.mhfu_em_tip.argtypes = [ctypes.c_void_p, ctypes.c_int]
     return lib
 
@@ -979,15 +987,37 @@ def test_a_counter_then_a_rule_on_it_in_one_frame(g: Game) -> None:
     assert g.var(0) == 2 and (3, 6) in g.entered()
 
 
-def test_a_rule_before_its_counter_plays_in_the_next_frame(g: Game) -> None:
+def test_a_counter_runs_before_the_rules_that_play_wherever_it_sits(g: Game) -> None:
     g.rule(0, from_mask=1 << 4, to_main=3, to_sub=6, conds=[cond("var_at_least", 0, 2)])
     g.rule(1, on=FLINCH, no_play=True, effects=[effect("var_add", 0, 1)])
     g.frame()
     g.flinch(0b001)
+    assert g.var(0) == 1 and (3, 6) not in g.entered()
     g.flinch(0b001)
-    assert g.var(0) == 2 and (3, 6) not in g.entered()
+    assert g.var(0) == 2 and (3, 6) in g.entered()  # counted this frame, the rule above saw it
+
+
+def test_a_playing_rule_does_not_starve_the_rules_that_count(g: Game) -> None:
+    """A re-notice raises noticed and combat_entered in one frame: the rule on the notice plays,
+    and the counter on combat_entered below it in the slots still counts."""
+    g.rule(0, on=NOTICED, **{"to_main": 3, "to_sub": 6})
+    g.rule(1, on=ENTERED, no_play=True, effects=[effect("var_set", 0, 1)])
+    g.poke(a.ENTITY.FLAGS, "I", 0x8)  # the eye's own condition
     g.frame()
-    assert (3, 6) in g.entered()
+    g.poke(a.ENTITY.AWARE, "B", 1)
+    g.poke(a.ENTITY.COMBAT_MODE, "B", 1)
+    g.frame()
+    assert (3, 6) in g.entered() and g.var(0) == 1
+
+
+def test_a_break_that_flinches_is_counted_whatever_plays(g: Game) -> None:
+    g.rule(0, on=BROKEN, to_main=3, to_sub=6)
+    g.rule(1, on=FLINCH, no_play=True, effects=[effect("var_add", 0, 1)])
+    g.frame()
+    g.poke(a.ENTITY.FLINCH_MASK, "B", 0b001)
+    g.poke(a.ENTITY.BROKEN, "H", 1)
+    g.frame()
+    assert (3, 6) in g.entered() and g.var(0) == 1
 
 
 def test_a_signal_fires_once(g: Game) -> None:
@@ -1164,3 +1194,28 @@ def test_the_last_rule_and_move_slots_work(g: Game) -> None:
     assert g.entered() == [(0, 2)]
     g.frame()
     assert ("X", ENT, 59, 0, 0) in g.calls() and g.lib.mhfu_em_playing() == MOVES - 1
+
+
+def flinch_part(g: Game, part: int, count: int) -> None:
+    g.poke(a.ENTITY.FLINCH_PARTS + part * a.FLINCH_PART.size + a.FLINCH_PART.COUNT, "B", count)
+
+
+def test_the_second_foreleg_break_reaches_its_rule(g: Game) -> None:
+    """Both forelegs break at their first flinch with one BREAK_ID: ENTITY.BROKEN gains no bit for
+    the second, and only the part that reached its count counts as broken."""
+    g.lib.host_break_row(0, 0x4B, 4, 1, 1)
+    g.lib.host_break_row(1, 0x4B, 6, 1, 1)
+    g.poke(a.ENTITY.SPECIES, "B", 0x4B)
+    g.rule(0, on=BROKEN, part=4, to_main=3, to_sub=6)
+    g.rule(1, on=BROKEN, part=6, to_main=3, to_sub=7)
+    g.frame()
+    flinch_part(g, 4, 1)
+    g.poke(a.ENTITY.FLINCH_MASK, "B", 1 << 4)
+    g.poke(a.ENTITY.BROKEN, "H", 0b10)
+    g.frame()
+    assert g.entered() == [(3, 6)] and g.board("BROKEN") == 1 << 4
+    flinch_part(g, 4, 2)
+    flinch_part(g, 6, 1)
+    g.poke(a.ENTITY.FLINCH_MASK, "B", (1 << 4) | (1 << 6))
+    g.frame()
+    assert g.entered() == [(3, 7)] and g.board("BROKEN") == (1 << 4) | (1 << 6)

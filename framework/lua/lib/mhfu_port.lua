@@ -497,8 +497,9 @@ end
 --- A rule also takes conditions that must all hold (`conds = { {"hp_below", 0, 30}, ... }`: op,
 --- arg, value; mhfu.EmCond), effects it applies each time it fires (`effects = { {"var_add", 2, 1} }`),
 --- a `signal` (0-based index) that fires it in place of `on`, and `no_play = true`: it plays
---- nothing (no `play`), applies its effects and the scan goes on to the next rule. The numbers are
---- board indices, which the moves module's `vars` and `signals` give names.
+--- nothing (no `play`) and applies its effects: each AI frame all such rules that hold run first,
+--- wherever they sit, then the first rule that plays. The numbers are board indices, which the
+--- moves module's `vars` and `signals` give names.
 function Port:rule(spec)
   if #self._rules >= MAX_RULES then
     log("[port:%s] rule ignored: the seam holds %d", self.name, MAX_RULES)
