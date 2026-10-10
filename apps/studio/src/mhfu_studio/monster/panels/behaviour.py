@@ -199,7 +199,7 @@ class BehaviourPanel(kit.Panel):
                 elif p.type == "mains":
                     options[p.name] = list(graph.main_options())
                 elif p.type in NAMES:
-                    options[p.name] = [(n, n) for n in graph.names(m, p.type)]
+                    options[p.name] = [(n, n) for n in model.names(m, p.type)]
             out.append(
                 NodeSpec(
                     i,

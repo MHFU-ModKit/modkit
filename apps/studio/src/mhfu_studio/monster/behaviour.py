@@ -206,18 +206,6 @@ def palette() -> list[tuple[str, list[tuple[str, str, str]]]]:
     return [g for g in groups if g[1]]
 
 
-def names(m: Manifest, type_: str) -> list[str]:
-    """Every name a `type_` param (`var`, `signal`) of any block holds, sorted: what a name
-    combo offers."""
-    found: set[str] = set()
-    for blk in m.behaviour.blocks.values():
-        held = behaviour.params(blk)
-        for p in KINDS[blk.kind].params:
-            if p.type == type_ and isinstance(held.get(p.name), str):
-                found.add(held[p.name])
-    return sorted(found)
-
-
 def fresh(stem: str, taken: Collection[str]) -> str:
     """The first of `stem1`, `stem2`, ... not in `taken`."""
     return next(f"{stem}{k}" for k in itertools.count(1) if f"{stem}{k}" not in taken)
@@ -253,7 +241,7 @@ def add_block(doc: Edits, kind: str, at: Point) -> str:
     if kind not in KINDS:
         raise ManifestError(f"{kind!r} is not a kind of block")
     m = doc.manifest
-    taken = {n for p in KINDS[kind].params for n in names(m, p.type)}
+    taken = {n for p in KINDS[kind].params for n in behaviour.names(m, p.type)}
     params: dict[str, object] = {}
     for p in KINDS[kind].params:
         if (v := start(p, taken)) is not None:
