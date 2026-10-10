@@ -191,8 +191,9 @@ def test_pool():
 
 
 def test_manifest_limits():
-    many = "".join(f"[moves.o{i}]\nanim = {i}\n" for i in range(17))
-    with pytest.raises(ManifestError, match="17 own moves, the framework"):
+    n = manifest.OWN_MOVES + 1
+    many = "".join(f"[moves.o{i}]\nanim = {i}\n" for i in range(n))
+    with pytest.raises(ManifestError, match=f"{n} own moves, the framework"):
         _m(many)
 
 
@@ -217,6 +218,13 @@ def test_zinogre(data):
         "flinch_head": 101,
         "break_howl": 112,
         "notice_howl": 2,
+        "topple_left": 103,
+        "topple_left_2": 118,
+        "topple_left_3": 108,
+        "topple_right": 104,
+        "topple_right_2": 117,
+        "topple_right_3": 107,
+        "charge_up": 18,
     }
     assert b.layout.frames[46] == 228 and 6 in moves.records(data.fu, 75)
     assert f'curve = "{b.layout.turns[46].lua()}"' in text
@@ -224,8 +232,16 @@ def test_zinogre(data):
     assert stamp + ", carrier = { 0, 2 }" in text
     assert 'after = "dash_stop"' in text and 'turn = "fixed", total = 90.0, frames = 50' in text
     assert '{ play = "stamp", from = "dash", min_frames = 10' in text
-    assert '{ play = "flinch_head", on = "flinch", part = 0' in text
+    assert '{ play = "flinch_head", on = "part_broken", part = 0' in text
+    assert '{ play = "topple_left", on = "part_broken", part = 4' in text
+    assert '{ no_play = true, on = "flinch", effects = { { "var_add", 0, 1 } }' in text
+    assert 'conds = { { "var_at_least", 1, 1 }, { "var_at_least", 0, 2 } }, ' in text
+    assert 'effects = { { "var_set", 0, 0 } }' in text and "signal = 0" in text
+    assert '{ no_play = true, on = "combat_entered", effects = { { "var_set", 1, 1 } }' in text
+    assert 'conds = { { "var_at_least", 1, 1 }, { "hp_below", 0, 30 } }' in text
+    assert "  vars = { flinches = 0, in_combat = 1 },\n  signals = { roar = 0 },\n  tip = " in text
     assert '{ play = "notice_howl", on = "noticed", force = true' in text
+    assert "length = 78, steer = { walls = false" in text and 'after = "topple_left_2"' in text
 
 
 def test_lua_key():
@@ -245,6 +261,57 @@ def test_events_and_force_reach_the_module():
         '{ play = "stamp", on = "flinch", part = 0, count = 3 },',
         '{ play = "stamp", on = "noticed", force = true },',
     ]
+
+
+def _board() -> manifest.Manifest:
+    def blk(kind, y, nxt=(), play=(), **params):
+        return behaviour.Block(kind, (0.0, y), params, list(nxt), list(play))
+
+    m = _m()
+    m.behaviour = behaviour.Behaviour(
+        {
+            "b1": blk("on_flinch", 0, ["b2"]),
+            "b2": blk("counter_add", 0, counter="hits", by=2),
+            "b3": blk("idle", 100, ["b4"]),
+            "b4": blk("counter_is", 100, ["b5"], counter="hits", value=3),
+            "b5": blk("flag_set", 100, play=["stamp"], flag="end"),
+            "b6": blk("on_signal", 200, ["b7"], name="roar"),
+            "b7": blk("hunter_side", 200, ["b8"], sides=["left", "behind"]),
+            "b8": blk("monster_hp", 200, play=["dash"], lo=10, hi=60),
+        }
+    )
+    return m
+
+
+def test_the_board_reaches_the_module():
+    body = _body(moves.lua(_board(), LAYOUT, {6}))
+    assert body[-6:] == [
+        "rules = {",
+        '{ no_play = true, on = "flinch", effects = { { "var_add", 1, 2 } } },',
+        '{ play = "stamp", from_main = { 0 }, conds = { { "var_at_least", 1, 3 } }, '
+        'effects = { { "var_set", 0, 1 } } },',
+        '{ play = "dash", signal = 0, conds = { { "side", 10, 0 }, { "hp_at_least", 0, 10 }, '
+        '{ "hp_below", 0, 60 } } },',
+        'vars = { ["end"] = 0, hits = 1 },',
+        "signals = { roar = 0 },",
+    ]
+
+
+def test_a_module_without_the_board_has_no_tables():
+    body = _body(moves.lua(_m(), LAYOUT, {6}))
+    assert not any(line.startswith(("vars", "signals")) for line in body)
+    assert not any("conds" in line or "effects" in line or "no_play" in line for line in body)
+
+
+def test_the_board_is_checked_with_the_rest():
+    m = _board()
+    for i in range(behaviour.BOARD_SIGNALS):
+        name = f"s{i}"
+        m.behaviour.blocks[name] = behaviour.Block(
+            "on_signal", (0.0, 400.0 + i), {"name": name}, [], ["dash"]
+        )
+    n = behaviour.BOARD_SIGNALS + 1
+    assert moves.problems(m, LAYOUT, {6}) == [f"behaviour: {n} signals, the board holds 16"]
 
 
 def test_problems_lists_every_one():
