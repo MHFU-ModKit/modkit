@@ -17,6 +17,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
+from mhfu_port.behaviour import ID
 from NodeGraphQt import BaseNode, NodeBaseWidget, NodeGraph, Port
 from NodeGraphQt.qgraphics.node_base import NodeItem
 from PySide6.QtCore import QRectF, QSignalBlocker, Qt, QTimer, Signal
@@ -40,7 +41,13 @@ Point = tuple[float, float]
 Option = tuple[str, object]
 #: a palette group: its title, and its kinds as (kind, title, tip)
 PaletteGroup = tuple[str, Sequence[tuple[str, str, str]]]
-KINDS = ("int", "float", "choice", "part", "mains")
+NUMBERS = ("int", "float")
+#: a multi-select over the options
+PICKS = ("mains", "sides")
+#: an editable combo over the names in use; a new name must match `mhfu_port.behaviour.ID`
+NAMES = ("var", "signal")
+#: the parameter types the view draws
+KINDS = (*NUMBERS, "choice", "part", *PICKS, *NAMES)
 #: the reserved name of a node's note widget; no parameter is called this
 NOTE = "@note"
 NONE = "none"
@@ -75,9 +82,10 @@ class NodeSpec:
 
     `options[name]` is a combo's or a multi-select's list of (label, value), else the
     parameter's `choices`; an option of value `None` is the optional combo's "none" under the
-    owner's own label. `values[name]` is a number, a value of the list, `None` for "none"
-    (an optional parameter), or for `mains` the values picked. `label` is the one free-text
-    note; `tip` the node's tooltip; `dim` draws it faded.
+    owner's own label. A name's options are the names in use, each as (name, name). `values[name]`
+    is a number, a value of the list, a name, `None` for "none" (an optional parameter), or for
+    `mains` and `sides` the values picked. `label` is the one free-text note; `tip` the node's
+    tooltip; `dim` draws it faded.
     """
 
     id: str
@@ -172,6 +180,9 @@ class _Field(NodeBaseWidget):  # type: ignore[misc]
             parent, NOTE if param is None else param.name, "" if param is None else param.title
         )
         self.optional = param is not None and param.optional
+        self._names = param is not None and param.type in NAMES
+        #: a name combo's committed text; what its edit box shows may be ahead of it
+        self._held = ""
         self._vals: list[object] = []
         self._opts: list[Option] = []
         self._built = False
@@ -189,9 +200,9 @@ class _Field(NodeBaseWidget):  # type: ignore[misc]
             line.setMinimumWidth(120)
             line.editingFinished.connect(self.on_value_changed)
             return line
-        if param.type in ("int", "float"):
+        if param.type in NUMBERS:
             return self._number(param)
-        if param.type == "mains":
+        if param.type in PICKS:
             button = QToolButton()
             button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
             button.setMinimumWidth(120)
@@ -201,7 +212,18 @@ class _Field(NodeBaseWidget):  # type: ignore[misc]
             return button
         combo = QComboBox()
         combo.setMinimumWidth(120)
-        combo.currentIndexChanged.connect(self.on_value_changed)
+        if param.type in NAMES:
+            combo.setEditable(True)
+            combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+            combo.setCompleter(cast(Any, None))  # no inline completion: a name may start another
+            combo.currentIndexChanged.connect(self._commit)
+            edit = combo.lineEdit()
+            if edit is not None:
+                edit.editingFinished.connect(self._commit)
+        elif param.type in ("choice", "part"):
+            combo.currentIndexChanged.connect(self.on_value_changed)
+        else:
+            raise ValueError(f"parameter {param.name!r}: unknown type {param.type!r}")
         return combo
 
     def _number(self, param: ParamLike) -> QWidget:
@@ -235,6 +257,8 @@ class _Field(NodeBaseWidget):  # type: ignore[misc]
                 return None
             return int(ctl.value()) if isinstance(ctl, QSpinBox) else float(ctl.value())
         if isinstance(ctl, QComboBox):
+            if self._names:
+                return ctl.currentText()
             return (
                 self._vals[ctl.currentIndex()]
                 if 0 <= ctl.currentIndex() < len(self._vals)
@@ -251,6 +275,12 @@ class _Field(NodeBaseWidget):  # type: ignore[misc]
                 ctl.setText("" if value is None else str(value))
             elif isinstance(ctl, QSpinBox | QDoubleSpinBox):
                 ctl.setValue(cast(Any, ctl.minimum() if value is None else value))
+            elif isinstance(ctl, QComboBox) and self._names:
+                text = "" if value is None else str(value)
+                ctl.setCurrentIndex(ctl.findText(text))  # -1 clears the edit box
+                if ctl.currentText() != text:  # a name the options lack still shows
+                    ctl.setEditText(text)
+                self._held = text
             elif isinstance(ctl, QComboBox):
                 if value not in self._vals:  # a value the options lack still shows
                     self._vals.append(value)
@@ -280,9 +310,13 @@ class _Field(NodeBaseWidget):  # type: ignore[misc]
         built = self._built
         if built and list(options) == self._opts:
             return False
-        keep = self.get_value() if built else None
+        keep = (self._held if self._names else self.get_value()) if built else None
         self._built, self._opts = True, list(options)
-        if isinstance(ctl, QComboBox):
+        if isinstance(ctl, QComboBox) and self._names:
+            with QSignalBlocker(ctl):
+                ctl.clear()
+                ctl.addItems([str(v) for _, v in self._opts])
+        elif isinstance(ctl, QComboBox):
             none = self.optional and all(v is not None for _, v in self._opts)
             self._vals = ([None] if none else []) + [v for _, v in self._opts]
             with QSignalBlocker(ctl):
@@ -310,6 +344,17 @@ class _Field(NodeBaseWidget):  # type: ignore[misc]
         ]
         text = ", ".join(names) if 0 < len(names) <= 2 else f"{len(names)} picked"
         cast(QToolButton, self._ctl).setText(text if names else (NONE if self.optional else "-"))
+
+    def _commit(self, *_: object) -> None:
+        """A name combo's pick or typed text: a name that is not one is put back, unheard."""
+        text = cast(QComboBox, self._ctl).currentText().strip()
+        if text == self._held:
+            return
+        if ID.fullmatch(text) is None:
+            self.set_value(self._held)
+            return
+        self.set_value(text)
+        self.on_value_changed()
 
     def on_value_changed(self, *_: object) -> None:
         if isinstance(self._ctl, QToolButton):

@@ -74,6 +74,19 @@ def test_every_kind_starts_valid(d: PortDocument) -> None:
     assert params["distance"] == {"lo": 0.0}, "the optional far end starts as none"
     assert params["played_for"] == {"frames": 1} and params["hunter_moving"] == {"way": "away"}
     assert params["on_flinch"] == {} and params["force"] == {} and params["mode"] == {"mode": 0}
+    assert params["any_time"] == params["idle"] == {} and params["rage"] == {"state": "enraged"}
+    assert params["monster_hp"] == {"lo": 0} and params["chance"] == {"percent": 1}
+    assert params["part_broken"] == {"part": 0, "state": "broken"}
+    assert params["hunter_side"] == {"sides": ["front"]} and params["on_signal"] == {
+        "name": "signal1"
+    }
+    counters = [params[k] for k in ("counter_is", "counter_add", "counter_set")]
+    assert sorted(c["counter"] for c in counters) == ["counter1", "counter2", "counter3"]
+    flags = [params[k] for k in ("flag_is", "flag_set")]
+    assert sorted(f["flag"] for f in flags) == ["flag1", "flag2"], "a new name is never taken"
+    assert params["counter_add"]["by"] == 1 and params["counter_set"]["to"] == 0
+    assert params["flag_is"]["state"] == params["flag_set"]["state"] == "set"
+    assert params["counter_is"] | {"counter": 0} == {"counter": 0, "test": "at least", "value": 1}
     for _ in KINDS:
         d.undo()
     assert d.manifest == before
@@ -337,7 +350,9 @@ def test_the_cap(d: PortDocument) -> None:
 def test_the_palette_offers_every_kind(monkeypatch: pytest.MonkeyPatch) -> None:
     offered = [k for _, kinds in B.palette() for k, _, _ in kinds]
     assert sorted(offered) == sorted(KINDS)
-    assert [t for t, _ in B.palette()] == ["Events", "State", "Conditions", "Modifiers"]
+    titles = [t for t, _ in B.palette()]
+    assert titles[:4] == ["Events", "State", "Conditions", "Modifiers"]
+    assert titles[4:] in ([], ["Effects"])
     tips = {k: (t, tip) for _, kinds in B.palette() for k, t, tip in kinds}
     assert tips["force"] == (KINDS["force"].title, KINDS["force"].tip)
     monkeypatch.setitem(
@@ -351,9 +366,12 @@ def test_the_palette_offers_every_kind(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_the_zinogre_reads(ports: Path) -> None:
     m = manifest.load(ports / "zinogre.toml")
     r = B.read(m)
-    assert len(m.behaviour.blocks) == 15 and len(r.paths) == 7
-    assert sorted(n for ns in r.priority.values() for n in ns) == list(range(1, 8))
+    assert len(m.behaviour.blocks) == 36 and len(r.paths) == 16
+    assert sorted(n for ns in r.priority.values() for n in ns) == list(range(1, 17))
     assert r.loose == [] and r.refused == {} and r.capped is None
+    assert [p.blocks[-1] for p in r.paths if p.play is None] == ["b15", "b17", "b23"]
+    assert [p.play is None for p in r.paths] == [True] * 3 + [False] * 13, "bookkeeping runs first"
+    assert model.names(m, "var") == ["flinches", "in_combat"]
     assert min(b.at[0] for b in m.behaviour.blocks.values()) == model.LEFT
     assert {w.dst for w in B.wires(m) if w.dst_port == "play"} >= {"move:flinch_head"}
     assert len(B.spots(m)) == len(m.moves)
@@ -380,9 +398,88 @@ def test_renaming_a_move_keeps_its_paths(ports: Path) -> None:
 
 def test_a_move_in_use_is_not_deleted(ports: Path) -> None:
     z = PortDocument(manifest.load(ports / "zinogre.toml"))
-    with pytest.raises(ManifestError, match="block b12 plays it"):
+    with pytest.raises(ManifestError, match="block b18 plays it"):
         clips.drop_move(z, "flinch_head")
     with pytest.raises(ManifestError, match="while lunge plays"):
         clips.drop_move(z, "lunge")
     clips.drop_move(z, "idle")
     assert "idle" not in z.manifest.moves
+
+
+# ---- effects, names and sides ---------------------------------------------------------------- #
+
+
+class Bare:
+    """An `Edits` over a manifest that is never validated: the new param types' checks are the
+    package's."""
+
+    def __init__(self, m: Manifest) -> None:
+        self.manifest = m
+
+    def edit(self, change: Callable[[Manifest], object]) -> None:
+        change(self.manifest)
+
+
+def test_the_palette_has_an_effects_group(new_kinds: tuple[Kind, ...]) -> None:
+    groups = dict(B.palette())
+    assert list(groups) == ["Events", "State", "Conditions", "Modifiers", "Effects"]
+    effects = {k.name for k in KINDS.values() if k.role == "effect"}
+    assert effects >= {"counter_add", "flag_set", new_kinds[0].name, new_kinds[1].name}
+    assert {k for k, _, _ in groups["Effects"]} == effects
+    assert new_kinds[2].name in [k for k, _, _ in groups["Events"]]
+    assert new_kinds[3].name in [k for k, _, _ in groups["Conditions"]]
+
+
+def test_new_blocks_start_with_fresh_names_and_a_side(
+    new_kinds: tuple[Kind, ...], make: Callable[[str], Manifest], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(
+        KINDS,
+        "t_pair",
+        Kind(
+            "t_pair",
+            "event",
+            "Pair",
+            (Param("a", "signal", "A"), Param("b", "signal", "B")),
+            "two signals",
+        ),
+    )
+    d = Bare(make(""))
+    for kind in ("t_count", "t_count", "t_flag", "t_signal", "t_side", "t_pair", "t_signal"):
+        B.add_block(d, kind, (0, 0))
+    got = [blk.params for blk in d.manifest.behaviour.blocks.values()]
+    assert got == [
+        {"counter": "counter1", "by": 1},
+        {"counter": "counter2", "by": 1},
+        {"flag": "flag1"},
+        {"name": "signal1"},
+        {"sides": ["front"]},
+        {"a": "signal2", "b": "signal3"},
+        {"name": "signal4"},
+    ]
+    assert B.fresh("x", {"x1", "x3"}) == "x2"
+
+
+def test_sides_are_stored_in_the_order_of_the_choices(
+    new_kinds: tuple[Kind, ...], make: Callable[[str], Manifest]
+) -> None:
+    d = Bare(make(""))
+    B.add_block(d, "t_side", (0, 0))
+    B.set_param(d, "b1", "sides", ("behind", "front", "front"))
+    assert d.manifest.behaviour.blocks["b1"].params == {"sides": ["front", "behind"]}
+    B.set_param(d, "b1", "sides", ())
+    assert d.manifest.behaviour.blocks["b1"].params == {"sides": []}  # the loader refuses this
+    B.add_block(d, "t_flag", (0, 0))
+    B.set_param(d, "b2", "flag", "armor_2")
+    assert d.manifest.behaviour.blocks["b2"].params == {"flag": "armor_2"}
+
+
+def test_a_path_that_plays_nothing_ranks_on_its_last_block(
+    d: PortDocument, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = [model.Path(("b2", "b3"), None, None), model.Path(("b1",), "stamp", "charge")]
+    monkeypatch.setattr(model, "paths", lambda m: paths)
+    monkeypatch.setattr(model, "refused", lambda m: {})
+    monkeypatch.setattr(model, "loose", lambda m: [])
+    r = B.read(d.manifest)
+    assert r.priority == {"b3": [1], "b1": [2]} and r.capped is None

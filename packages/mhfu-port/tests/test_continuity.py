@@ -130,6 +130,17 @@ def test_the_flinch_roll_parts_chain_crossed(zinogre):
     assert dict(continuity.fits_after(zinogre, 103))[108] < continuity.GOOD
 
 
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_the_topple_steps_meet(zinogre, side):
+    """Fall, lie, get up: each step starts where the last ended, and the last ends upright."""
+    m = manifest.load(PORTS / "zinogre.toml")
+    ids = [m.clips[m.moves[f"topple_{side}{k}"].clip].source for k in ("", "_2", "_3")]
+    for a, b in zip(ids, ids[1:], strict=False):
+        assert dict(continuity.fits_after(zinogre, a))[b] < continuity.GOOD, (a, b)
+    idle = m.clips["idle"].source
+    assert dict(continuity.fits_after(zinogre, ids[-1]))[idle] < continuity.GOOD
+
+
 def test_the_whole_moveset_ranks_fast(zinogre):
     import time
 

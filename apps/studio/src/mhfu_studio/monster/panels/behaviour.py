@@ -19,9 +19,9 @@ from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from mhfu_studio.monster import behaviour as graph
 from mhfu_studio.monster.panels.common import kind
-from mhfu_studio.monster.panels.node_graph import GraphView, LinkSpec, NodeSpec
+from mhfu_studio.monster.panels.node_graph import NAMES, GraphView, LinkSpec, NodeSpec
 from mhfu_studio.monster.panels.widgets import NoScene
-from mhfu_studio.shell.overlay import Ink
+from mhfu_studio.shell.overlay import Color, Ink
 from mhfu_studio.ui import kit, theme
 
 if TYPE_CHECKING:
@@ -29,16 +29,26 @@ if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
 
 #: a node's colour by role; a move has a role of its own
-ROLES = {
+ROLES: dict[str, Color] = {
     "event": Ink.AXIS_X,
     "state": Ink.AXIS_Y,
     "condition": Ink.AXIS_Z,
     "modifier": Ink.WARNING,
     "move": Ink.SELECTION,
 }
+#: the effect role's violet, for a dark theme and a light one: no `Ink` is one
+EFFECT: dict[bool, Color] = {True: (0.82, 0.44, 0.91, 1.0), False: (0.56, 0.14, 0.67, 1.0)}
 MOVE_ROLE = "move"
 WARN = chr(0x26A0)
-HINT = "Right-click adds a block · drag from a port to wire · higher blocks are checked first"
+HINT = (
+    "Right-click adds a block · drag from a port to wire · higher blocks are checked first,"
+    " but paths that play nothing run before all of them"
+)
+
+
+def roles() -> dict[str, Color]:
+    """`ROLES` and the effect's violet, for the current theme."""
+    return {**ROLES, "effect": EFFECT[theme.current().dark]}
 
 
 class BehaviourPanel(kit.Panel):
@@ -161,7 +171,7 @@ class BehaviourPanel(kit.Panel):
             return
         if theme.current() is not self._theme:
             self._theme = theme.current()
-            self.view.set_roles(ROLES)
+            self.view.set_roles(roles())
             self.view.set_canvas(theme.current().view)
         if self._drawn is not m:
             self._drawn = m
@@ -191,6 +201,8 @@ class BehaviourPanel(kit.Panel):
                     options[p.name] = list(graph.part_options(m, p.optional))
                 elif p.type == "mains":
                     options[p.name] = list(graph.main_options())
+                elif p.type in NAMES:
+                    options[p.name] = [(n, n) for n in model.names(m, p.type)]
             out.append(
                 NodeSpec(
                     i,

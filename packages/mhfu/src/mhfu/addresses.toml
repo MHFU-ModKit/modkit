@@ -892,7 +892,7 @@ VALID = { offset = 0x48, type = "u32", doc = "1 once written; 0 while it is rewr
 
 [struct.EM_MOVES]
 doc = "em_vhook's own-move registry in partition memory (em_vhook.cpp): a port's own moves by slot, played by the move player on the AI step that asks"
-size = 0x1738
+size = 0x2138
 [struct.EM_MOVES.fields]
 MAGIC = { offset = 0x00, type = "u32", doc = "0x564F4D45 (EMOV)" }
 REQ_ENT = { offset = 0x04, type = "ptr", doc = "a play asked for (mhfu_em_play): the monster, taken at its next AI step; 0 none" }
@@ -902,10 +902,10 @@ TAG_STARTED = { offset = 0x10, type = "u32", doc = "MOVE_STATE.STARTED of that m
 PLAYS = { offset = 0x14, type = "u32", doc = "moves started from here: asked, by a rule or by AFTER" }
 CHAINED = { offset = 0x18, type = "u32", doc = "of them by AFTER" }
 KEY_TOP = { offset = 0x1C, type = "u32", doc = "KEYS in use" }
-MOVES = { offset = 0x20, type = "EM_OWN[16]", doc = "the moves by slot" }
-KEYS = { offset = 0x520, type = "u16[2048]", doc = "every move's turn keys, YAW every 2 clip frames" }
-SCRATCH = { offset = 0x1520, type = "STEER_SPEC", doc = "the steering handed to the move player for the move it plays next" }
-REQ_FORCE = { offset = 0x1734, type = "u32", doc = "1: the play asked for starts while the monster's notice runs (MOVE.FORCE)" }
+MOVES = { offset = 0x20, type = "EM_OWN[48]", doc = "the moves by slot" }
+KEYS = { offset = 0xF20, type = "u16[2048]", doc = "every move's turn keys, YAW every 2 clip frames" }
+SCRATCH = { offset = 0x1F20, type = "STEER_SPEC", doc = "the steering handed to the move player for the move it plays next" }
+REQ_FORCE = { offset = 0x2134, type = "u32", doc = "1: the play asked for starts while the monster's notice runs (MOVE.FORCE)" }
 
 [struct.FLINCH_PART]
 doc = "one part's flinch state (ENTITY.FLINCH_PARTS)"
@@ -933,7 +933,7 @@ size = 0x14
 ENTITY = { offset = 0x00, type = "ptr", doc = "the monster" }
 FRAME = { offset = 0x04, type = "u32", doc = "its MONSTER_WATCH.FRAMES the change was seen in: noticed the engine's own AI frame, the others the one after" }
 USEC = { offset = 0x08, type = "u32", doc = "the emulated clock then (sceKernelGetSystemTimeLow)" }
-KIND = { offset = 0x0C, type = "u8", doc = "1 noticed, 2 combat entered, 3 combat left, 4 flinch, 5 part broken, 6 tail cut" }
+KIND = { offset = 0x0C, type = "u8", doc = "1 noticed, 2 combat entered, 3 combat left, 4 flinch, 5 part broken, 6 tail cut, 7 enraged, 8 calmed" }
 PART = { offset = 0x0D, type = "u8", doc = "flinch, part broken: the lowest part in ENTITY.FLINCH_MASK; else 0xFF" }
 MAIN = { offset = 0x0E, type = "u8", doc = "ENTITY.MAIN_STATE then: for a flinch, the reaction the engine entered" }
 SUB = { offset = 0x0F, type = "u8", doc = "ENTITY.SUB_STATE then" }
@@ -948,6 +948,7 @@ FRAMES = { offset = 0x4, type = "u32", doc = "its AI frames the step saw" }
 AWARE = { offset = 0x8, type = "u8", doc = "ENTITY.AWARE last frame" }
 COMBAT = { offset = 0x9, type = "u8", doc = "1 when the player's yellow eye was on for it last frame" }
 SEVERED = { offset = 0xA, type = "u8", doc = "ENTITY.SEVERED bit 0 last frame" }
+ENRAGED = { offset = 0xB, type = "u8", doc = "ENTITY.FLAGS bit 0x20 last frame" }
 BROKEN = { offset = 0xC, type = "u16", doc = "ENTITY.BROKEN last frame" }
 EDGES = { offset = 0xE, type = "u16", doc = "bit KIND: what the last frame raised" }
 
@@ -963,15 +964,15 @@ WATCH = { offset = 0x10, type = "MONSTER_WATCH[2]", doc = "the monsters followed
 RING = { offset = 0x30, type = "MONSTER_EVENT[32]", doc = "the records" }
 
 [struct.EM_RULE]
-doc = "one brain rule in em_vhook's config block (em_vhook.cpp cfg_rule_t): a trigger and what it plays, evaluated each AI frame in C"
-size = 0x28
+doc = "one brain rule in em_vhook's config block (em_vhook.cpp cfg_rule_t): a trigger, its conditions, what it plays and what it changes, evaluated each AI frame in C"
+size = 0x40
 [struct.EM_RULE.fields]
 FROM_MASK = { offset = 0x00, type = "u8", doc = "bit k: may fire while the live pair's main is k; 0 with FROM_MOVE 0: no pair gate" }
 FROM_SUB = { offset = 0x01, type = "u8", doc = "with FROM_MASK: the exact sub, or 0xFE any" }
 TO_MAIN = { offset = 0x02, type = "u8", doc = "the pair entered when PLAY_MOVE is 0" }
 TO_SUB = { offset = 0x03, type = "u8", doc = "with TO_MAIN" }
 MODE = { offset = 0x04, type = "u8", doc = "ENTER_ACTION mode for TO_MAIN, TO_SUB" }
-FLAGS = { offset = 0x05, type = "u8", doc = "1 only while the hunter recedes, 2 only while he closes" }
+FLAGS = { offset = 0x05, type = "u8", doc = "1 only while the hunter recedes, 2 only while they close, 4 plays nothing: applies its EFFECTS and the scan goes on" }
 FROM_MOVE = { offset = 0x06, type = "u8", doc = "own move slot + 1 that must be playing (its AI frames the dwell); 0 none" }
 PLAY_MOVE = { offset = 0x07, type = "u8", doc = "own move slot + 1 played instead of entering TO_MAIN, TO_SUB; 0 none" }
 MIN_FRAMES = { offset = 0x08, type = "u32", doc = "AI frames the pair (or FROM_MOVE) must have stood" }
@@ -984,16 +985,45 @@ COOLDOWN = { offset = 0x20, type = "u32", doc = "AI ticks between two fires" }
 ON = { offset = 0x24, type = "u8", doc = "the monster event that fires it (MONSTER_EVENT.KIND), in the AI frame it is seen; 4, the flinch, replaces the host's reaction; 0 none" }
 PART = { offset = 0x25, type = "u8", doc = "ON 4 or 5: only a flinch or break of this part (ENTITY.FLINCH_MASK bit); 0xFF any" }
 FORCE = { offset = 0x26, type = "u8", doc = "1: PLAY_MOVE starts while the monster's notice runs (MOVE.FORCE)" }
+SIGNAL = { offset = 0x27, type = "u8", doc = "a Lua signal (EM_BOARD.SIGNALS index + 1) that fires it in the AI frame it is seen, like ON; 0 none" }
+CONDS = { offset = 0x28, type = "EM_OP[4]", doc = "conditions that must all hold (OP an EM_COND, 0 none), CHANCE rolled last" }
+EFFECTS = { offset = 0x38, type = "EM_OP[2]", doc = "what it changes when it fires (OP an EM_EFFECT, 0 none)" }
+
+[struct.EM_OP]
+doc = "one condition or effect of a brain rule (EM_RULE.CONDS, EM_RULE.EFFECTS)"
+size = 0x4
+[struct.EM_OP.fields]
+OP = { offset = 0x0, type = "u8", doc = "EM_COND or EM_EFFECT index + 1; 0 none" }
+ARG = { offset = 0x1, type = "u8", doc = "a part (broken), a side mask (side: 1 front, 2 left, 4 right, 8 behind) or an EM_BOARD.VARS index" }
+VALUE = { offset = 0x2, type = "s16", doc = "a percent (hp_*, chance) or a number (var_*)" }
+
+[struct.EM_BOARD]
+doc = "em_vhook's blackboard after its config block: what rules and Lua share for the wrapped species' monster; a new monster resets it"
+size = 0x40
+[struct.EM_BOARD.fields]
+VARS = { offset = 0x00, type = "s16[16]", doc = "counters and flags, by the index the moves module's `vars` names; var_add saturates" }
+SIGNALS = { offset = 0x20, type = "u8[16]", doc = "1: Lua raised the signal (mhfu_em_signal) since the brain's last AI frame, which takes it" }
+BROKEN = { offset = 0x30, type = "u8", doc = "bit k: part k broke on this monster (its part_broken events)" }
+RNG = { offset = 0x34, type = "u32", doc = "xorshift32 state for CHANCE" }
+ENTITY = { offset = 0x38, type = "ptr", doc = "the monster it belongs to" }
+
+[enum.EM_COND]
+doc = "a brain rule's condition, EM_OP.OP - 1: hp_at_least/hp_below HP percent of MAX_HP against VALUE; broken/not_broken part ARG in EM_BOARD.BROKEN; enraged/calm ENTITY.FLAGS 0x20; side the hunter in a sector of the monster's facing in mask ARG (90 degrees each, left the monster's own); chance VALUE percent; var_* EM_BOARD.VARS[ARG] against VALUE"
+names = ["hp_at_least", "hp_below", "broken", "not_broken", "enraged", "calm", "side", "chance", "var_at_least", "var_below", "var_equal"]
+
+[enum.EM_EFFECT]
+doc = "what a brain rule changes when it fires, EM_OP.OP - 1: var_add adds VALUE to EM_BOARD.VARS[ARG], var_set sets it"
+names = ["var_add", "var_set"]
 
 [struct.EM_CFG]
 doc = "em_vhook's config block in partition memory, which its stubs read by the offsets in em_vhook_stubs.h; listed here: the rules"
-size = 0x360
+size = 0xCE0
 [struct.EM_CFG.fields]
-RULES = { offset = 0xE0, type = "EM_RULE[16]", doc = "the brain's rules: their count is the capacity a port's manifest and mhfu_port.lua read" }
+RULES = { offset = 0xE0, type = "EM_RULE[48]", doc = "the brain's rules: their count is the capacity a port's manifest and mhfu_port.lua read" }
 
 [enum.MONSTER_EVENT_KIND]
 doc = "the framework's monster events (MONSTER_EVENT.KIND), a manifest rule's on"
-names = ["noticed", "combat_entered", "combat_left", "flinch", "part_broken", "tail_cut"]
+names = ["noticed", "combat_entered", "combat_left", "flinch", "part_broken", "tail_cut", "enraged", "calmed"]
 
 [enum.MOVE_END]
 doc = "MOVE_STATE.END, why the move player's move ended: its clip ended (the carrier handed off); the clip or LENGTH ended and the back pair was entered; the pair changed under it; stopped; replaced; the enter-action did not land the carrier; another dispatch replaced the clip; a wall ahead; a class-2 wall (the stuck pair entered); a reaction mhfu_move_react replaces started its move"

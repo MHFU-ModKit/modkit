@@ -3,8 +3,10 @@
 """A port's behaviour graph: blocks on a canvas, wired into paths, compiled to the rule table.
 
 A path starts at an event or state block no other block feeds, or at a block a move lists in
-`during`, walks `next` and plays the moves a reached block lists in `play`. One path is one
-`Rule`, in canvas order: higher is checked first. `KINDS` is the schema of a block; the loader,
+`during`, walks `next` and plays the moves a reached block lists in `play`; one that ends at an
+effect block with neither `next` nor `play` plays nothing and only applies its effects. One path
+is one `Rule`: the no-play paths first, then the playing ones, each group in canvas order, higher
+first. That is the order the brain runs them in. `KINDS` is the schema of a block; the loader,
 the compiler and the studio all read it.
 
 This module sits under `manifest`: the names the manifest and the graph share are defined here.
@@ -47,13 +49,25 @@ PART_EVENTS: tuple[Event, ...] = ("flinch", "part_broken")
 """The events a rule's `part` narrows."""
 MAIN_STATES = range(8)
 """A big monster's behaviour main states."""
+IDLE_MAIN = 0
+"""The main state the base monster idles in."""
 PARTS = range(hitzone.PART_MASK + 1)
 SEAM_RULES: int = addresses.EM_CFG.RULES.count or 0
 """Rules the framework's native brain seam holds."""
+SEAM_CONDS: int = addresses.EM_RULE.CONDS.count or 0
+SEAM_EFFECTS: int = addresses.EM_RULE.EFFECTS.count or 0
+"""Conditions and effects one rule holds."""
+BOARD_VARS: int = addresses.EM_BOARD.VARS.count or 0
+BOARD_SIGNALS: int = addresses.EM_BOARD.SIGNALS.count or 0
+"""Counters and flags, and signals, one monster's board holds."""
+SIDES = ("front", "left", "right", "behind")
+"""The hunter's sectors of the monster's facing; bit k of a side mask is `SIDES[k]`."""
+S16 = (-0x8000, 0x7FFF)
+"""A counter's range."""
 UNLIMITED_DIST = 1.0e9
 
-Role = Literal["event", "state", "condition", "modifier"]
-ParamType = Literal["int", "float", "choice", "part", "mains"]
+Role = Literal["event", "state", "condition", "modifier", "effect"]
+ParamType = Literal["int", "float", "choice", "part", "mains", "var", "signal", "sides"]
 
 
 @dataclass(frozen=True)
@@ -62,7 +76,8 @@ class Param:
 
     name: str
     type: ParamType
-    """`part` is a body part index; `mains` a non-empty list of main states."""
+    """`part` is a body part index; `mains` a non-empty list of main states; `var` and `signal`
+    a name (`ID`) and `sides` a non-empty list from `choices`."""
     title: str
     default: object = None
     """None: required unless `optional`."""
@@ -93,10 +108,22 @@ _EVENT_WORDS: dict[Event, tuple[str, str]] = {
     "flinch": ("On flinch", "The monster flinches; its move replaces the base monster's flinch"),
     "part_broken": ("On part break", "A part of the monster breaks"),
     "tail_cut": ("On tail cut", "The monster's tail is cut off"),
+    "enraged": ("On enraged", "The monster becomes enraged"),
+    "calmed": ("On calmed", "The monster calms down"),
 }
 _PART = Param(
     "part", "part", "Of part", optional=True, tip="Only a flinch or break of this part; else any"
 )
+
+
+_TESTS = {"at least": "var_at_least", "below": "var_below", "exactly": "var_equal"}
+"""A counter test -> its condition op."""
+_BROKEN = {"broken": "broken", "not broken": "not_broken"}
+_RAGE = {"enraged": "enraged", "calm": "calm"}
+"""A choice -> its condition op."""
+_FLAG = {"set": 1, "clear": 0}
+"""A flag state -> its value."""
+_NAME_TIP = "A lowercase name: letters, digits and _"
 
 
 def _event(name: Event) -> Kind:
@@ -109,6 +136,31 @@ KINDS: dict[str, Kind] = {
     k.name: k
     for k in (
         *map(_event, EVENTS),
+        Kind(
+            "on_signal",
+            "event",
+            "On signal",
+            (
+                Param(
+                    "name", "signal", "Signal", tip=_NAME_TIP + "; a mod raises it with port:fire"
+                ),
+            ),
+            "A mod raises this signal",
+        ),
+        Kind(
+            "any_time",
+            "state",
+            "Any time (between moves)",
+            (),
+            "Fires every AI frame in any main state of the base monster, while no own move plays",
+        ),
+        Kind(
+            "idle",
+            "state",
+            "Base monster idle (between moves)",
+            (),
+            "Fires every AI frame the base monster idles, while no own move plays",
+        ),
         Kind(
             "host_state",
             "state",
@@ -208,6 +260,139 @@ KINDS: dict[str, Kind] = {
             ),
             "The mode the base monster's action is entered with",
         ),
+        Kind(
+            "monster_hp",
+            "condition",
+            "Monster HP",
+            (
+                Param(
+                    "lo", "int", "At least %", 0, lo=0, hi=100, tip="Its HP share is this or more"
+                ),
+                Param(
+                    "hi",
+                    "int",
+                    "Below %",
+                    optional=True,
+                    lo=0,
+                    hi=100,
+                    tip="Its HP share is under this; else any",
+                ),
+            ),
+            "The monster's HP, as a share of its maximum",
+        ),
+        Kind(
+            "part_broken",
+            "condition",
+            "Part broken",
+            (
+                Param("part", "part", "Part", tip="The body part"),
+                Param(
+                    "state",
+                    "choice",
+                    "State",
+                    "broken",
+                    choices=tuple(_BROKEN),
+                    tip="Whether the part has broken on this monster",
+                ),
+            ),
+            "A body part has, or has not, broken on this monster",
+        ),
+        Kind(
+            "rage",
+            "condition",
+            "Rage",
+            (
+                Param(
+                    "state",
+                    "choice",
+                    "State",
+                    "enraged",
+                    choices=tuple(_RAGE),
+                    tip="Whether the monster is enraged",
+                ),
+            ),
+            "The monster is enraged or calm",
+        ),
+        Kind(
+            "hunter_side",
+            "condition",
+            "Hunter side",
+            (
+                Param(
+                    "sides",
+                    "sides",
+                    "Sides",
+                    choices=SIDES,
+                    tip="Any of these sides of the monster; its left is its own",
+                ),
+            ),
+            "The hunter is on one of these sides of the monster",
+        ),
+        Kind(
+            "chance",
+            "condition",
+            "Chance",
+            (Param("percent", "int", "Percent", lo=1, hi=100, tip="How often it holds"),),
+            "Holds this often; rolled last, once every other block holds",
+        ),
+        Kind(
+            "counter_is",
+            "condition",
+            "Counter is",
+            (
+                Param("counter", "var", "Counter", tip=_NAME_TIP),
+                Param(
+                    "test",
+                    "choice",
+                    "Test",
+                    "at least",
+                    choices=tuple(_TESTS),
+                    tip="How the counter compares with the value",
+                ),
+                Param("value", "int", "Value", 1, lo=S16[0], hi=S16[1], tip="The number"),
+            ),
+            "A counter the rules and mods share, against a number; it starts at 0",
+        ),
+        Kind(
+            "flag_is",
+            "condition",
+            "Flag is",
+            (
+                Param("flag", "var", "Flag", tip=_NAME_TIP),
+                Param("state", "choice", "State", "set", choices=tuple(_FLAG), tip="Set or clear"),
+            ),
+            "A flag the rules and mods share is set; it starts clear",
+        ),
+        Kind(
+            "counter_add",
+            "effect",
+            "Add to counter",
+            (
+                Param("counter", "var", "Counter", tip=_NAME_TIP),
+                Param("by", "int", "By", 1, lo=S16[0], hi=S16[1], tip="Added; negative takes away"),
+            ),
+            "When the path fires, adds to a counter; it stops at the 16-bit limits",
+        ),
+        Kind(
+            "counter_set",
+            "effect",
+            "Set counter",
+            (
+                Param("counter", "var", "Counter", tip=_NAME_TIP),
+                Param("to", "int", "To", 0, lo=S16[0], hi=S16[1], tip="The new value"),
+            ),
+            "When the path fires, sets a counter",
+        ),
+        Kind(
+            "flag_set",
+            "effect",
+            "Set flag",
+            (
+                Param("flag", "var", "Flag", tip=_NAME_TIP),
+                Param("state", "choice", "State", "set", choices=tuple(_FLAG), tip="Set or clear"),
+            ),
+            "When the path fires, sets or clears a flag",
+        ),
     )
 }
 """The schema of a block, by kind name."""
@@ -245,20 +430,26 @@ class Behaviour:
     moves: dict[str, MoveNode] = field(default_factory=dict)
 
 
+Op = tuple[str, int, int]
+"""A condition or effect: its op name (`addresses.EM_COND` / `EM_EFFECT`), arg and value."""
+
+
 @dataclass
 class Rule:
     """A trigger the native seam evaluates every frame: when the live pair is `from_move`'s or in
     `from_main` and has stood `min_frames` (or own move `from_move` has played that long), the
-    hunter is within `dist` and receding or closing as asked, play `play`, a pair or an own move;
-    then wait `cooldown` frames, at most `count` times (None: unlimited). A pair rule waits while
-    an own move plays.
+    hunter is within `dist` and receding or closing as asked, and every one of `conds` holds,
+    play `play`, a pair or an own move, and apply `effects`; then wait `cooldown` frames, at most
+    `count` times (None: unlimited). A pair rule waits while an own move plays. With no `play`
+    the rule only applies its effects and the scan goes on.
 
     With `on`, the rule fires on that monster event instead (`part`: only the flinch or break of
-    that part), under the same distance, cooldown and count; `on = "flinch"` plays its move in
-    place of the host's flinch. An own move asked while the monster's notice runs waits for
-    combat (else it cuts off the "!" and the roar) unless `force`."""
+    that part), or on Lua signal `signal` (a board index), under the same distance, cooldown and
+    count; `on = "flinch"` plays its move in place of the host's flinch. An own move asked while
+    the monster's notice runs waits for combat (else it cuts off the "!" and the roar) unless
+    `force`. An op's arg is a part, a side mask or a board var index."""
 
-    play: str
+    play: str | None
     on: Event | None = None
     part: int | None = None
     from_move: str | None = field(default=None, metadata=toml("from"))
@@ -271,16 +462,20 @@ class Rule:
     cooldown: int = 0
     count: int | None = None
     force: bool = False
+    conds: list[Op] = field(default_factory=list)
+    effects: list[Op] = field(default_factory=list)
+    signal: int | None = None
     label: str = ""
 
 
 @dataclass(frozen=True)
 class Path:
-    """A walk through the graph that plays a move."""
+    """A walk through the graph that plays a move, or ends at an effect block."""
 
     blocks: tuple[str, ...]
     """Block ids in order; never empty."""
-    play: str
+    play: str | None
+    """None: it ends at an effect block and plays nothing."""
     during: str | None
     """The move whose while-playing port feeds `blocks[0]`; None: `blocks[0]` is an event or
     state block with no input."""
@@ -293,8 +488,9 @@ ID = re.compile(r"[a-z][a-z0-9_]*")
 
 
 def event_of(kind: str) -> Event | None:
-    """The monster event an event block fires on; None for any other kind."""
-    return kind.removeprefix(_ON) if KINDS[kind].role == "event" else None
+    """The monster event an event block fires on; None for any other kind, a signal block's too."""
+    event = kind.removeprefix(_ON)
+    return event if KINDS[kind].role == "event" and event in EVENTS else None
 
 
 def new_id(b: Behaviour) -> str:
@@ -330,6 +526,12 @@ def _check_value(p: Param, v: object, w: str) -> None:
         need(v in p.choices, w, f"expected one of {want}, got {v!r}")
     elif p.type == "part":
         need(_int(v) and v in PARTS, w, f"{v!r} is not a part")
+    elif p.type in ("var", "signal"):
+        ok = isinstance(v, str) and ID.fullmatch(v) is not None
+        need(ok, w, f"{v!r} is not a name: a lowercase letter, then letters, digits, _")
+    elif p.type == "sides":
+        ok = isinstance(v, list) and bool(v) and all(s in p.choices for s in v)
+        need(ok, w, f"{v!r} is not a list of sides, from " + ", ".join(p.choices))
     else:
         ok = isinstance(v, list) and bool(v) and all(_int(k) and k in MAIN_STATES for k in v)
         need(ok, w, f"{v!r} is not a list of main states, 0..{MAIN_STATES[-1]}")
@@ -400,7 +602,8 @@ def validate(m: Manifest) -> None:
 
 
 def paths(m: Manifest) -> list[Path]:
-    """Every complete path, in priority order."""
+    """Every complete path in the order the brain runs them: those that play nothing, then the
+    rest, each in canvas order."""
     b = m.behaviour
     fed = {n for blk in b.blocks.values() for n in blk.next}
     listed = {n for node in b.moves.values() for n in node.during}
@@ -415,6 +618,8 @@ def paths(m: Manifest) -> list[Path]:
     def walk(trail: tuple[str, ...], during: str | None) -> None:
         blk = b.blocks[trail[-1]]
         out.extend(Path(trail, mv, during) for mv in blk.play)
+        if KINDS[blk.kind].role == "effect" and not blk.play and not blk.next:
+            out.append(Path(trail, None, during))
         for n in blk.next:
             if n not in trail:  # a cycle is `validate`'s to refuse
                 walk((*trail, n), during)
@@ -425,15 +630,23 @@ def paths(m: Manifest) -> list[Path]:
 
 
 def _priority(m: Manifest, p: Path) -> tuple[Any, ...]:
-    """Higher on the canvas first: each block's `(y, x)` in order, then the played move's."""
+    """No-play paths first, then higher on the canvas: each block's `(y, x)` in order, then the
+    played move's."""
     b = m.behaviour
 
     def row(at: tuple[float, float]) -> tuple[float, float]:
         return at[1], at[0]
 
-    node = b.moves.get(p.play)
+    node = b.moves.get(p.play) if p.play is not None else None
     move = row(node.at) if node is not None else (math.inf, math.inf)
-    return tuple(row(b.blocks[i].at) for i in p.blocks), move, p.blocks, p.play, p.during or ""
+    return (
+        p.play is not None,
+        tuple(row(b.blocks[i].at) for i in p.blocks),
+        move,
+        p.blocks,
+        p.play or "",
+        p.during or "",
+    )
 
 
 def loose(m: Manifest) -> list[str]:
@@ -451,6 +664,8 @@ def _dist(p: dict[str, Any]) -> dict[str, Any]:
 
 
 _APPLY: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    "any_time": lambda p: {"from_main": list(MAIN_STATES)},
+    "idle": lambda p: {"from_main": [IDLE_MAIN]},
     "host_state": lambda p: {"from_main": list(p["mains"])},
     "played_for": lambda p: {"min_frames": p["frames"]},
     "distance": _dist,
@@ -463,30 +678,119 @@ _APPLY: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
 """A block kind's fields of the `Rule`; an event block sets `on` and `part` itself."""
 
 
+def _hp(p: dict[str, Any], _: dict[str, int]) -> list[Op]:
+    lo, hi = p["lo"], p.get("hi")
+    if hi is not None and lo >= hi:
+        raise ManifestError("hp needs lo < hi")
+    return ([("hp_at_least", 0, lo)] if lo else []) + ([] if hi is None else [("hp_below", 0, hi)])
+
+
+def _sides(p: dict[str, Any], _: dict[str, int]) -> list[Op]:
+    return [("side", sum(1 << SIDES.index(s) for s in set(p["sides"])), 0)]
+
+
+_CONDS: dict[str, Callable[[dict[str, Any], dict[str, int]], list[Op]]] = {
+    "monster_hp": _hp,
+    "part_broken": lambda p, _: [(_BROKEN[p["state"]], p["part"], 0)],
+    "rage": lambda p, _: [(_RAGE[p["state"]], 0, 0)],
+    "hunter_side": _sides,
+    "chance": lambda p, _: [("chance", 0, p["percent"])],
+    "counter_is": lambda p, v: [(_TESTS[p["test"]], v[p["counter"]], p["value"])],
+    "flag_is": lambda p, v: [
+        ("var_at_least" if _FLAG[p["state"]] else "var_below", v[p["flag"]], 1)
+    ],
+}
+_EFFECTS: dict[str, Callable[[dict[str, Any], dict[str, int]], list[Op]]] = {
+    "counter_add": lambda p, v: [("var_add", v[p["counter"]], p["by"])],
+    "counter_set": lambda p, v: [("var_set", v[p["counter"]], p["to"])],
+    "flag_set": lambda p, v: [("var_set", v[p["flag"]], _FLAG[p["state"]])],
+}
+"""A block kind's ops, given its params and the vars' indices; each may repeat on a path."""
+REPEATS = frozenset(_CONDS) | frozenset(_EFFECTS)
+_SIGNAL = "on_signal"
+
+
+def names(m: Manifest, type_: str) -> list[str]:
+    """Every name a `type_` param (`var` or `signal`) of any block holds, sorted: a block of no
+    known kind or with no such value adds none. The one place names are collected."""
+    found: set[str] = set()
+    for blk in m.behaviour.blocks.values():
+        if (kind := KINDS.get(blk.kind)) is None:
+            continue
+        held = params(blk)
+        found |= {
+            held[p.name]
+            for p in kind.params
+            if p.type == type_ and isinstance(held.get(p.name), str)
+        }
+    return sorted(found)
+
+
+def _indices(m: Manifest, type_: str) -> dict[str, int]:
+    return {name: i for i, name in enumerate(names(m, type_))}
+
+
+def vars(m: Manifest) -> dict[str, int]:
+    """Every counter and flag the graph names -> its index on the monster's board, by name."""
+    return _indices(m, "var")
+
+
+def signals(m: Manifest) -> dict[str, int]:
+    """Every signal the graph waits for -> its index on the monster's board, by name."""
+    return _indices(m, "signal")
+
+
+def _ops(blocks: list[Block], table: dict[str, Any], v: dict[str, int], w: str) -> list[Op]:
+    out: list[Op] = []
+    for blk in blocks:
+        if blk.kind in table:
+            try:
+                out += table[blk.kind](params(blk), v)
+            except ManifestError as e:
+                raise ManifestError(f"{w}: {e}") from None
+    return out
+
+
 def _rule(m: Manifest, p: Path) -> Rule:
-    w = "behaviour path " + " > ".join(p.blocks) + f" plays {p.play}"
+    w = (
+        "behaviour path "
+        + " > ".join(p.blocks)
+        + (f" plays {p.play}" if p.play is not None else " plays nothing")
+    )
     blocks = [m.behaviour.blocks[i] for i in p.blocks]
     kinds = [blk.kind for blk in blocks]
     for k in kinds:
-        need(kinds.count(k) == 1, w, f"has two {KINDS[k].title!r} blocks")
-    events = [blk for blk in blocks if KINDS[blk.kind].role == "event"]
-    need(len(events) <= 1, w, "has more than one event block")
+        need(k in REPEATS or kinds.count(k) == 1, w, f"has two {KINDS[k].title!r} blocks")
+    for role in ("event", "state"):
+        need([KINDS[k].role for k in kinds].count(role) <= 1, w, f"has more than one {role} block")
     kw: dict[str, Any] = {"play": p.play, "from_move": p.during}
     for blk in blocks:
-        if (event := event_of(blk.kind)) is not None:
+        if blk.kind == _SIGNAL:
+            kw["signal"] = signals(m)[params(blk)["name"]]
+        elif (event := event_of(blk.kind)) is not None:
             kw |= {"on": event, "part": blk.params.get("part")}
-        else:
+        elif blk.kind not in REPEATS:
             kw |= _APPLY[blk.kind](params(blk))
+    v = vars(m)
+    kw |= {"conds": _ops(blocks, _CONDS, v, w), "effects": _ops(blocks, _EFFECTS, v, w)}
     if labels := [blk.label for blk in blocks if blk.label]:
         kw["label"] = "; ".join(labels)
     r = Rule(**kw)
     lo, hi = r.dist
     need(0 <= lo < hi, w, "dist needs 0 <= lo < hi")
-    need(r.from_move != r.play, w, "from and play are the same move")
-    if m.moves[r.play].own:
-        need(r.mode == 0, w, "mode is a pair's: an own move enters its carrier")
+    need(len(r.conds) <= SEAM_CONDS, w, f"{len(r.conds)} conditions, a rule holds {SEAM_CONDS}")
+    need(
+        len(r.effects) <= SEAM_EFFECTS, w, f"{len(r.effects)} effects, a rule holds {SEAM_EFFECTS}"
+    )
+    if r.play is None:
+        need(bool(r.effects), w, "plays nothing and has no effect block")
+        need(not (r.force or r.mode), w, "force and mode go with a move to play")
     else:
-        need(r.on != "flinch", w, "on = flinch plays an own move, in place of the host's reaction")
+        need(r.from_move != r.play, w, "from and play are the same move")
+        if m.moves[r.play].own:
+            need(r.mode == 0, w, "mode is a pair's: an own move enters its carrier")
+        else:
+            need(r.on != "flinch", w, "on = flinch plays an own move, in place of the reaction")
     return r
 
 
@@ -508,6 +812,11 @@ def compile(m: Manifest) -> list[Rule]:
     """One rule per path, in priority order; `ManifestError` for a bad path."""
     rules = [_rule(m, p) for p in paths(m)]
     need(len(rules) <= SEAM_RULES, "behaviour", f"{len(rules)} paths, the seam holds {SEAM_RULES}")
+    for what, found, cap in (
+        ("counters and flags", vars(m), BOARD_VARS),
+        ("signals", signals(m), BOARD_SIGNALS),
+    ):
+        need(len(found) <= cap, "behaviour", f"{len(found)} {what}, the board holds {cap}")
     return rules
 
 
@@ -545,8 +854,13 @@ studio draws a block up to 241 by 174 and a move 355 by 77, so these leave a gap
 a rule starts from sits left of `LEFT`, at x = 0."""
 
 
+_SINCE_V1 = frozenset({"conds", "effects", "signal"})
+"""The `Rule` fields a schema 1 rule does not have."""
+
+
 def _legacy(raw: dict[str, Any], where: str) -> Rule:
-    names = {f.metadata.get("toml", f.name): f.name for f in dataclasses.fields(Rule)}
+    fields = (f for f in dataclasses.fields(Rule) if f.name not in _SINCE_V1)
+    names = {f.metadata.get("toml", f.name): f.name for f in fields}
     unknown = sorted(set(raw) - set(names))
     need(not unknown, where, f"unknown key(s) {', '.join(unknown)}")
     need("play" in raw, where, "play: missing")
@@ -597,6 +911,7 @@ def migrate(rules: list[dict[str, Any]]) -> Behaviour:
     for row, raw in enumerate(rules):
         where = f"rule[{row}]"
         r = _legacy(raw, where)
+        play: str = raw["play"]  # `_legacy` saw it
         chain = _chain(r, where)
         ids = []
         for col, (kind, params) in enumerate(chain):
@@ -605,12 +920,12 @@ def migrate(rules: list[dict[str, Any]]) -> Behaviour:
         for here, there in itertools.pairwise(ids):
             b.blocks[here].next.append(there)
         b.blocks[ids[0]].label = r.label
-        b.blocks[ids[-1]].play.append(r.play)
+        b.blocks[ids[-1]].play.append(play)
         if r.from_move is not None:
             from_row.setdefault(r.from_move, row)
             b.moves.setdefault(r.from_move, MoveNode((0.0, 0.0))).during.append(ids[0])
-        play_row.setdefault(r.play, row)
-        b.moves.setdefault(r.play, MoveNode((0.0, 0.0)))
+        play_row.setdefault(play, row)
+        b.moves.setdefault(play, MoveNode((0.0, 0.0)))
         width = max(width, len(chain))
     for name, node in b.moves.items():
         if name in from_row:

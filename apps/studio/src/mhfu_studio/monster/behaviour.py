@@ -11,8 +11,9 @@ graph for them.
 
 from __future__ import annotations
 
+import itertools
 import typing
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any, NamedTuple, Protocol
 
 from mhfu_port import behaviour, sequence
@@ -27,12 +28,8 @@ MOVE = "move:"
 IN, OUT = "in", "out"
 PLAY, WHILE, THEN = "play", "while playing", "then"
 """A move node's ports: the input, then the two outputs."""
-ROLE_TITLES = {
-    "event": "Events",
-    "state": "State",
-    "condition": "Conditions",
-    "modifier": "Modifiers",
-}
+ROLE_TITLES = {"state": "State"}
+"""A palette group's title where the role in plural is not it."""
 
 
 class Wire(NamedTuple):
@@ -158,7 +155,8 @@ class Reading(NamedTuple):
 
     paths: list[Path]
     priority: dict[str, list[int]]
-    """Block id -> the 1-based places in `paths` of the paths that play from it."""
+    """Block id -> the 1-based places in `paths` of the paths that end at it; a path that plays
+    nothing ends at its last block too."""
     loose: list[str]
     refused: dict[str, str]
     """Block id -> why, for the blocks on a path `compile` refuses."""
@@ -208,19 +206,31 @@ def palette() -> list[tuple[str, list[tuple[str, str, str]]]]:
     return [g for g in groups if g[1]]
 
 
-def start(p: Param) -> object:
-    """A new block's value for `p`: the default, else the least, else the first choice; none
-    for an optional param."""
+def fresh(stem: str, taken: Collection[str]) -> str:
+    """The first of `stem1`, `stem2`, ... not in `taken`."""
+    return next(f"{stem}{k}" for k in itertools.count(1) if f"{stem}{k}" not in taken)
+
+
+def start(p: Param, taken: Collection[str] = ()) -> object:
+    """A new block's value for `p`: the default, else a name not in `taken`, the first main
+    state or side, the least, or the first choice; none for an optional param."""
     if p.optional:
         return None
     if p.default is not None:
         return p.default
-    if p.type == "mains":
+    kind: str = p.type
+    if kind == "mains":
         return [0]
+    if kind == "sides":
+        return list(p.choices[:1])
+    if kind == "var":
+        return fresh(p.name, taken)
+    if kind == "signal":
+        return fresh(kind, taken)
     if p.choices:
         return p.choices[0]
     lo = 0 if p.lo is None else p.lo
-    return float(lo) if p.type == "float" else int(lo)
+    return float(lo) if kind == "float" else int(lo)
 
 
 # edits
@@ -230,8 +240,15 @@ def add_block(doc: Edits, kind: str, at: Point) -> str:
     """A block of `kind` at `at`, with valid values."""
     if kind not in KINDS:
         raise ManifestError(f"{kind!r} is not a kind of block")
-    params = {p.name: v for p in KINDS[kind].params if (v := start(p)) is not None}
-    i = behaviour.new_id(doc.manifest.behaviour)
+    m = doc.manifest
+    taken = {n for p in KINDS[kind].params for n in behaviour.names(m, p.type)}
+    params: dict[str, object] = {}
+    for p in KINDS[kind].params:
+        if (v := start(p, taken)) is not None:
+            params[p.name] = v
+            if isinstance(v, str):
+                taken.add(v)
+    i = behaviour.new_id(m.behaviour)
 
     def add(m: Manifest) -> None:
         m.behaviour.blocks[i] = Block(kind, _at(at), params)
@@ -354,11 +371,15 @@ def set_then(doc: Edits, move: str, then: str | None) -> str:
 def _norm(p: Param, value: object) -> object:
     if value is None:
         return None
-    if p.type == "mains":
+    kind: str = p.type
+    if kind == "mains":
         return sorted({int(k) for k in typing.cast(Sequence[int], value)})
-    if p.type in ("int", "part"):
+    if kind == "sides":
+        picked = set(typing.cast(Sequence[str], value))
+        return [c for c in p.choices if c in picked]
+    if kind in ("int", "part"):
         return int(typing.cast(int, value))
-    if p.type == "float":
+    if kind == "float":
         return float(typing.cast(float, value))
     return value
 

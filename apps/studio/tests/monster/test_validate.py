@@ -281,7 +281,9 @@ def test_a_refused_path_is_a_finding(make):
 
 
 def test_more_paths_than_the_seam_holds(make):
-    blocks = "".join(flinch(i, "o").replace("on_flinch", "on_noticed") for i in range(40))
+    blocks = "".join(
+        flinch(i, "o").replace("on_flinch", "on_noticed") for i in range(SEAM_RULES + 2)
+    )
     m = make(OWN + blocks)
     assert len(m.behaviour.blocks) > SEAM_RULES
     f = found(V.validate(m, sources={1: 1}), "BEHAVIOUR_OVER_CAP")

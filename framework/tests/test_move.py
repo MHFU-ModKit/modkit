@@ -432,6 +432,16 @@ def test_the_script_keeps_its_wake_in_combat(g: Game) -> None:
     assert g.peek(a.ENTITY.SCRIPT_WAKE, "B") == (1,)
 
 
+def test_the_script_is_quieted_on_the_hub_in_combat(g: Game) -> None:
+    """The hub's entry after a reaction wakes the script, which would cut the carrier at once."""
+    notice(g, 1)
+    g.poke(a.ENTITY.SCRIPT_WAKE, "B", 1)
+    g.play(46, carrier_sub=2)  # (0, 2)
+    g.frame()
+    assert g.calls()[0] == ("E", ENT, 0, 2, 0)
+    assert g.peek(a.ENTITY.SCRIPT_WAKE, "B") == (0,)
+
+
 def test_the_wait_has_an_end(g: Game) -> None:
     notice(g, 0)
     g.play(46)

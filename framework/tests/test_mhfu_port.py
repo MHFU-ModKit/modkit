@@ -589,3 +589,77 @@ assert(count("no mhfu.em_tip") == 1)
 def test_tip_on_latch(lua: Any) -> None:
     memory(lua)
     lua.execute(TIP)
+
+
+CONDITIONS = """
+local SEAM = { rules = {}, vars = {}, signals = {} }
+function mhfu.em_installed() return true end
+function mhfu.em_substitute() return true end
+function mhfu.em_rule(slot, r) SEAM.rules[slot] = r; return true end
+function mhfu.em_var(k, v) if v ~= nil then SEAM.vars[k] = v end; return SEAM.vars[k] or 0 end
+function mhfu.em_signal(k) SEAM.signals[#SEAM.signals + 1] = k; return true end
+package.loaded.z_moves = {
+  moves = { stamp = { entry = 46 }, lunge = { main = 1, sub = 4 } },
+  rules = {
+    { play = "stamp", on = "flinch", part = 0, effects = { { "var_add", 2, 1 } },
+      conds = { { "hp_below", 0, 30 }, { "chance", 0, 50 } } },
+    { no_play = true, on = "flinch", effects = { { "var_add", 0, 1 } } },
+    { play = "lunge", signal = 1, from_main = { 0, 1 }, conds = { { "var_at_least", 0, 2 } } },
+    { no_play = true, from_main = { 0 }, effects = { { "var_set", 3, 0 } }, cooldown = 30 },
+    { no_play = true, effects = { { "var_add", 0, 1 } } },
+    { play = "stamp", signal = 99 },
+    { play = "stamp", on = "enraged", conds = { {}, {}, {}, {}, {} } },
+  },
+  vars = { kills = 0, rage = 2 }, signals = { go = 1 },
+}
+local P = require("mhfu_port")
+local z = P.define{ name = "z", species = 75 }
+z.ent = ENT
+ticks(1)
+
+-- the fields pass through; a rule with no play target is the one that plays nothing
+local r = SEAM.rules
+assert(r[0].on == "flinch" and r[0].play_move == 0 and r[0].part == 0 and not r[0].no_play)
+assert(r[0].conds[1][1] == "hp_below" and r[0].conds[1][3] == 30 and r[0].conds[2][1] == "chance")
+assert(r[0].effects[1][1] == "var_add" and r[0].effects[1][2] == 2)
+assert(r[1].no_play == true and r[1].on == "flinch")
+assert(r[1].play_move == nil and r[1].to_main == nil)
+assert(r[1].effects[1][2] == 0)
+assert(r[2].signal == 1 and r[2].from_mask == 3 and r[2].to_main == 1 and r[2].to_sub == 4)
+assert(r[3].no_play and r[3].from_mask == 1 and r[3].cooldown == 30)
+assert(r[4] == nil and count("no `from`, `on` or `signal`") == 1, "a rule with no trigger")
+assert(r[5] == nil and r[6] == nil and count("signal 99 is not 0%.%.") == 1)
+assert(count("holds %d+ conditions") == 1, "more conditions than a rule holds")
+assert(count("rule 2: on flinch, main 0x00") == 1 and count("%-> no play") == 2)
+assert(count("signal 1 %-> 'lunge'") == 1)
+
+-- the board by name
+assert(z:var("rage") == 0 and z:var("rage", 5) == 5 and SEAM.vars[2] == 5 and z:var("rage") == 5)
+assert(z:var("nope") == 0 and z:var("nope") == 0)
+assert(z:fire("go") == true and SEAM.signals[1] == 1)
+assert(z:fire("nope") == false and z:fire("nope") == false)
+ticks(1)
+assert(count("var%('nope'%)") == 1 and count("fire%('nope'%)") == 1, "each said once")
+
+-- a framework without the board
+mhfu.em_var, mhfu.em_signal = nil, nil
+assert(z:var("rage") == 0 and z:fire("go") == false)
+
+-- a hand-written port names its own
+local h = P.define{
+  name = "h", species = 75, moves = { stamp = { entry = 46 } },
+  vars = { n = 4 }, signals = { s = 7 },
+  rules = { { no_play = true, signal = 7, effects = { { "var_add", 4, 1 } } } },
+}
+h.ent = ENT
+mhfu.em_var = function(k) return k end
+mhfu.em_signal = function(k) return k == 7 end
+ticks(2)
+assert(h:var("n") == 4 and h:fire("s") == true)
+assert(SEAM.rules[0].signal == 7 and SEAM.rules[0].no_play)
+"""
+
+
+def test_rule_conditions_and_the_board(lua: Any) -> None:
+    memory(lua)
+    lua.execute(CONDITIONS)

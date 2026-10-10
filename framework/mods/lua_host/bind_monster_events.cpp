@@ -6,9 +6,11 @@
 #include "mhfu/monster_events.h"
 #include "lua_host.h"
 
-#define KINDS (MHFU_MONSTER_TAIL_CUT - MHFU_MONSTER_NOTICED + 1)
+#define KINDS MHFU_MONSTER_KINDS
 
-static int r_kind[KINDS] = {LUA_NOREF, LUA_NOREF, LUA_NOREF, LUA_NOREF, LUA_NOREF, LUA_NOREF};
+/* a handler's registry reference per kind; constant-initialized, so the PRX runs no constructor */
+struct Ref { int v = LUA_NOREF; };
+static Ref r_kind[KINDS];
 
 static const char *const *const k_name = mhfu_monster_event_names;
 
@@ -38,9 +40,9 @@ static void push_event(lua_State *L, const mhfu_monster_event_ctx_t *c)
 static void tramp(const mhfu_monster_event_ctx_t *c)
 {
     int k = c->ev.kind - MHFU_MONSTER_NOTICED;
-    if (k < 0 || k >= KINDS || r_kind[k] == LUA_NOREF || !mhfu_lua_enter()) return;
+    if (k < 0 || k >= KINDS || r_kind[k].v == LUA_NOREF || !mhfu_lua_enter()) return;
     lua_State *L = mhfu_lua_vm;
-    lua_rawgeti(L, LUA_REGISTRYINDEX, r_kind[k]);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, r_kind[k].v);
     push_event(L, c);
     if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
         mhfu_log("[lua_host] %s err: %s", k_name[k],
@@ -55,9 +57,9 @@ static int on(lua_State *L, int kind)
 {
     int k = kind - MHFU_MONSTER_NOTICED;
     luaL_checktype(L, 1, LUA_TFUNCTION);
-    if (r_kind[k] != LUA_NOREF) luaL_unref(L, LUA_REGISTRYINDEX, r_kind[k]);
+    if (r_kind[k].v != LUA_NOREF) luaL_unref(L, LUA_REGISTRYINDEX, r_kind[k].v);
     lua_pushvalue(L, 1);
-    r_kind[k] = luaL_ref(L, LUA_REGISTRYINDEX);
+    r_kind[k].v = luaL_ref(L, LUA_REGISTRYINDEX);
     mhfu_event_id_t id = (mhfu_event_id_t)(MHFU_EVENT_BIGMONSTER_NOTICED + k);
     mhfu_hook_rc_t rc = mhfu_on_monster_event(id, tramp, (int)luaL_optinteger(L, 2, 0),
                                               MHFU_LUA_HOST_ID);
@@ -72,6 +74,8 @@ int lb_on_bigmonster_combat_left(lua_State *L)    { return on(L, MHFU_MONSTER_CO
 int lb_on_bigmonster_flinch(lua_State *L)         { return on(L, MHFU_MONSTER_FLINCH); }
 int lb_on_bigmonster_part_broken(lua_State *L)    { return on(L, MHFU_MONSTER_PART_BROKEN); }
 int lb_on_bigmonster_tail_cut(lua_State *L)       { return on(L, MHFU_MONSTER_TAIL_CUT); }
+int lb_on_bigmonster_enraged(lua_State *L)        { return on(L, MHFU_MONSTER_ENRAGED); }
+int lb_on_bigmonster_calmed(lua_State *L)         { return on(L, MHFU_MONSTER_CALMED); }
 
 /* mhfu.MonsterState of ent, nil for none */
 int lb_monster_state(lua_State *L)
