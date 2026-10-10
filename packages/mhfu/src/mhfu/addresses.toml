@@ -203,7 +203,10 @@ EFFECT_SPAWN_FRAMED = { eu = 0x09ACB9C8, type = "fn", doc = "effect spawn once t
 EM_FACTORY = { eu = 0x09AB15D8, type = "fn", doc = "big-monster entity factory f(ctx, emId): a switch on emId whose cases install a species vtable" }
 ATTACK_SPAWNERS = { eu = 0x09B63000, type = "code", doc = "start of game_task's attack-node constructors, one per species (TIGREX_ATTACK_SPAWN among them), (?, entity, attack id)" }
 ATTACK_SPAWNERS_END = { eu = 0x09B66B00, type = "code", doc = "end of the ATTACK_SPAWNERS run" }
-REACTION_CHECK = { eu = 0x09AC7908, type = "fn", doc = "(entity, out): applies PENDING_DAMAGE while HIT_PENDING and returns the reaction a species AI step enters: 0 none, 2 dead, 12 flinch, 14 hit only, 15/16 damage types 26..30" }
+REACTION_CHECK = { eu = 0x09AC7908, type = "fn", doc = "(entity, out): applies PENDING_DAMAGE while HIT_PENDING and returns the reaction a species AI step enters: 0 none, 2 dead, 12 flinch, 14 hit only, 15/16 damage types 26..30; when the cut counter (FLINCH_PARTS[8]) reaches 0 it asks OBJ_VTABLE.CUT_GATE, and a refusal puts the counter back to 1" }
+RAGE_START = { eu = 0x09AD23D0, type = "fn", doc = "(entity) the rage start: FLAGS |= 0x20, RAGE_TIMER from the species rage row, anim speed, the attack scalar +0x380 and HITZONE_STATE 1; MONSTER_STEP calls it while FLAGS has 0x400 and the monster is not in main 4, +0x523 or +0x4C1 & 8 (else it stays pending), and the AI script roars (3,27)" }
+RAGE_END = { eu = 0x09AD87E8, type = "fn", doc = "(entity) the rage end: MONSTER_STEP calls it when RAGE_TIMER reaches 0; restores the scalars and zeroes ANGER; plays nothing" }
+ANGER_ADD = { eu = 0x09AD37F8, type = "fn", doc = "(entity, hp taken) from the damage resolver on every hit, skipped while enraged: ANGER += the hit times the species rate for the HP bracket; at ANGER_THRESHOLD it sets FLAGS 0x400" }
 EM75_REACTIONS = { eu = 0x09D62B00, type = "ptr[19]", doc = "em75 AI step's jump table over REACTION_CHECK codes; each case enters vt+0x88(entity, 4, 5 or 6, sub, mode 2); code 11, the tail cut, enters (4,4)" }
 EM75_ATTACK_NODE_INIT = { eu = 0x09D4B318, type = "fn", doc = "(node, entity, attack id): fills the ATTACK_NODE, links it at COLLISION_WORLD.LIST_HEAD, clears the owner's COMBAT_ENGAGED and COMBAT_REGISTERED" }
 SET_COMBAT_MODE = { eu = 0x09AC92B0, type = "fn", doc = "(entity, mode, frames): ENTITY.COMBAT_MODE = mode; 0 also forgets ENTITY.AWARE. The AI script sets 1 in the hub after the roar; a hit sets it too" }
@@ -374,7 +377,10 @@ ENGAGE = { offset = 0x5DC, type = "f32", doc = "1.0 while the monster has notice
 AI_TIMER_A = { offset = 0x624, type = "u16", doc = "AI countdown timer read by the stress-response ladder" }
 AI_TIMER_B = { offset = 0x626, type = "u16", doc = "second AI countdown timer read by the stress-response ladder" }
 STRESS = { offset = 0x62E, type = "u16", doc = "stress counter clamped to 75..450" }
-FLAGS = { offset = 0x638, type = "u32", doc = "flags: 0x8000 visibility gate B, 0x20 enraged, 0x2000 the tail cut's gate passed, 0x4000 the tail dropped (TAIL_DROP), bit 0 swaps in ACTION_LIST_REMAP" }
+FLAGS = { offset = 0x638, type = "u32", doc = "flags: 0x8000 visibility gate B, 0x20 enraged, 0x400 rage start pending (RAGE_START; never set it while 0x20 is: the timer restarts and it roars again), 0x2000 the tail cut's gate passed, 0x4000 the tail dropped (TAIL_DROP), bit 0 swaps in ACTION_LIST_REMAP" }
+RAGE_TIMER = { offset = 0x56C, type = "s16", doc = "big monsters: AI frames of rage left, counted down once a frame; at 0 RAGE_END runs, so 1 calms the monster on the next frame" }
+ANGER = { offset = 0x56E, type = "s16", doc = "big monsters: the rage accumulator ANGER_ADD fills" }
+ANGER_THRESHOLD = { offset = 0x570, type = "s16", doc = "big monsters: ANGER at which rage starts (em75 600); 32767 keeps damage from ever starting it" }
 ACTION_LIST = { offset = 0x640, type = "ptr", doc = "action-descriptor list the dispatcher walks; a big monster's is its overlay's table of 8-byte rows, byte 0 the action id" }
 DETECT_RANGES = { offset = 0x64C, type = "f32[3]", doc = "detection ranges (1000, 2700, 5000 on a native); read on evaluate, never written, so zero sticks" }
 DETECT_RANGES_B = { offset = 0x67C, type = "f32[3]", doc = "second detection-range triple with the same values and use as DETECT_RANGES" }
@@ -414,6 +420,7 @@ BRAIN_MEMBER = { offset = 0x3FC, type = "u32[3]", doc = "pointer-to-member OBJ_T
 doc = "an ObjBase class's vtable (NPC_VTABLE, the species vtables) by byte offset"
 [struct.OBJ_VTABLE.fields]
 BRAIN = { offset = 0x38, type = "ptr", doc = "the per-frame brain BRAIN_MEMBER resolves to on every call; swap it to wrap a class, its spawn call included" }
+CUT_GATE = { offset = 0xE0, type = "ptr", doc = "big monsters: (entity) -> may the tail be cut now; REACTION_CHECK's only caller; em75's (0x09D3C738) passes em76 and em88 only at HP <= 25 % of MAX_HP" }
 
 [struct.NPC]
 doc = "a village NPC (NPC_VTABLE) beyond the ENTITY fields it shares"
@@ -1012,8 +1019,8 @@ doc = "a brain rule's condition, EM_OP.OP - 1: hp_at_least/hp_below HP percent o
 names = ["hp_at_least", "hp_below", "broken", "not_broken", "enraged", "calm", "side", "chance", "var_at_least", "var_below", "var_equal"]
 
 [enum.EM_EFFECT]
-doc = "what a brain rule changes when it fires, EM_OP.OP - 1: var_add adds VALUE to EM_BOARD.VARS[ARG], var_set sets it"
-names = ["var_add", "var_set"]
+doc = "what a brain rule changes when it fires, EM_OP.OP - 1: var_add adds VALUE to EM_BOARD.VARS[ARG], var_set sets it; enrage sets FLAGS 0x400 unless enraged, calm sets RAGE_TIMER 1 while enraged"
+names = ["var_add", "var_set", "enrage", "calm"]
 
 [struct.EM_CFG]
 doc = "em_vhook's config block in partition memory, which its stubs read by the offsets in em_vhook_stubs.h; listed here: the rules"
