@@ -1013,6 +1013,7 @@ SIGNALS = { offset = 0x20, type = "u8[16]", doc = "1: Lua raised the signal (mhf
 BROKEN = { offset = 0x30, type = "u8", doc = "bit k: part k broke on this monster (its part_broken events)" }
 RNG = { offset = 0x34, type = "u32", doc = "xorshift32 state for CHANCE" }
 ENTITY = { offset = 0x38, type = "ptr", doc = "the monster it belongs to" }
+RAGE = { offset = 0x3C, type = "u8", doc = "a rage request Lua queued (mhfu_em_rage): 1 enrage, 2 calm, 0 none; the brain applies it as the enrage or calm effect in its next AI frame and clears it" }
 
 [enum.EM_COND]
 doc = "a brain rule's condition, EM_OP.OP - 1: hp_at_least/hp_below HP percent of MAX_HP against VALUE; broken/not_broken part ARG in EM_BOARD.BROKEN; enraged/calm ENTITY.FLAGS 0x20; side the hunter in a sector of the monster's facing in mask ARG (90 degrees each, left the monster's own); chance VALUE percent; var_* EM_BOARD.VARS[ARG] against VALUE"
