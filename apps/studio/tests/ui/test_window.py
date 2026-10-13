@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +11,7 @@ from mhfu_studio.shell.testing import FakeDocument
 from mhfu_studio.shell.workspace import Dock
 from mhfu_studio.ui import about, chrome, dialogs, kit, theme
 from mhfu_studio.ui.testing import FakeWorkspace, elsewhere, gl_or_skip
-from mhfu_studio.ui.window import STATE_VERSION, DockTitle, Window
+from mhfu_studio.ui.window import HOME, STATE_VERSION, DockTitle, Window
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence, QOpenGLContext
 from PySide6.QtWidgets import (
@@ -191,6 +191,217 @@ def test_reset_layout(make_window: Make) -> None:
     w.reset_action.trigger()
     assert w.dockWidgetArea(items) == LEFT and w.dockWidgetArea(notes) == RIGHT
     assert notes.isVisible() and not dock(w, "Findings").isVisible()
+
+
+class Canvas(kit.Panel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.syncs = 0
+
+    def sync(self) -> None:
+        self.syncs += 1
+
+
+class Centred(FakeWorkspace):
+    """Items and Notes open, Extra closed on the right, and a Canvas tab in the centre."""
+
+    def docks(self) -> tuple[Dock, ...]:
+        return (
+            *super().docks(),
+            Dock("Extra", "right", lambda s: kit.Panel(), "A closed panel", shown=False),
+            Dock("Canvas", "centre", lambda s: Canvas(), "A tab of the centre"),
+        )
+
+    def reveal(self, target: Hashable, focus: str = "") -> None:
+        super().reveal(target, focus)
+        self.focus = "Canvas"
+
+
+def centred(make_window: Make) -> Window:
+    return make_window(Centred("map"), Centred("monster"))
+
+
+def open_docks(w: Window) -> dict[str, Any]:
+    """The geometry of every open dock, by name."""
+    return {d.objectName(): d.geometry() for d in w.findChildren(QDockWidget) if d.isVisible()}
+
+
+def canvas(w: Window) -> Canvas:
+    c = w.findChild(Canvas)
+    assert c is not None
+    return c
+
+
+def test_no_tab_bar_without_a_centre_dock(make_window: Make) -> None:
+    w = make_window()
+    assert not w.tabs.isVisible() and w.tabs.count() == 1 and w.centre.count() == 1
+    assert w.centre.currentWidget().isAncestorOf(w.stage)
+
+
+def test_centre_tabs_have_tips_and_the_steps_stay_with_the_view(make_window: Make) -> None:
+    w = centred(make_window)
+    assert w.tabs.isVisible() and [w.tabs.tabText(i) for i in range(w.tabs.count())] == [
+        HOME,
+        "Canvas",
+    ]
+    assert all(w.tabs.tabToolTip(i) for i in range(w.tabs.count()))
+    assert kit.missing_tips(w) == [] and w.centre.widget(0).isAncestorOf(w.steps)
+    w.show_tab("Canvas")
+    assert canvas(w).isVisible() and not w.steps.isVisible() and not w.stage.isVisible()
+
+
+def test_a_centre_tab_has_no_docks_and_the_view_comes_back_exactly(make_window: Make) -> None:
+    w = centred(make_window)
+    before = open_docks(w)
+    assert set(before) == {"map/Items", "map/Notes"}
+    w.tabs.setCurrentIndex(1)
+    assert open_docks(w) == {} and w.centre.currentWidget() is canvas(w)
+    w.tabs.setCurrentIndex(0)
+    assert open_docks(w) == before and w.centre.currentWidget().isAncestorOf(w.stage)
+
+
+def test_a_dock_opened_on_a_centre_tab_stays_with_it(make_window: Make) -> None:
+    w = centred(make_window)
+    extra = dock(w, "map/Extra")
+    w.show_tab("Canvas")
+    extra.toggleViewAction().trigger()
+    assert set(open_docks(w)) == {"map/Extra"}
+    w.show_tab(HOME)
+    assert not extra.isVisible() and dock(w, "map/Items").isVisible()
+    w.show_tab("Canvas")
+    assert set(open_docks(w)) == {"map/Extra"}
+
+
+def test_each_tabs_layout_survives_a_rebuild(make_window: Make) -> None:
+    w = centred(make_window)
+    w.addDockWidget(RIGHT, dock(w, "map/Items"))
+    w.show_tab("Canvas")
+    dock(w, "map/Extra").toggleViewAction().trigger()
+    w.close()
+    again = centred(make_window)
+    assert again.dockWidgetArea(dock(again, "map/Items")) == RIGHT
+    again.show_tab("Canvas")
+    assert set(open_docks(again)) == {"map/Extra"}
+    again.show_tab(HOME)
+    assert set(open_docks(again)) == {"map/Items", "map/Notes"}
+
+
+def test_focus_a_finding_and_the_menu_switch_the_tab(make_window: Make) -> None:
+    w = centred(make_window)
+    ws = w.studio.active
+    ws.focus = "Canvas"
+    w.studio.changed()
+    w.sync()
+    assert w.centre.currentWidget() is canvas(w) and w.tabs.currentIndex() == 1
+    w.show_tab(HOME)
+    ws.doc = FakeDocument()
+    ws.doc.found = [Finding("error", "x", "bad", target=3)]
+    w.studio.findings.stale()
+    w.findings_dock.show()
+    w.sync()
+    w.findings.list.itemClicked.emit(w.findings.list.item(0))
+    w.sync()
+    assert ws.log[-1] == ("reveal", 3) and w.tabs.currentIndex() == 1
+    [opener] = [a for a in w.panels_menu.actions() if a.text() == "Canvas"]
+    assert opener.isChecked() and opener.toolTip()
+    opener.trigger()
+    assert w.tabs.currentIndex() == 0 and not opener.isChecked()
+    opener.trigger()
+    assert w.tabs.currentIndex() == 1 and opener.isChecked()
+
+
+def test_reset_layout_resets_every_tab(make_window: Make) -> None:
+    w = centred(make_window)
+    items = dock(w, "map/Items")
+    w.addDockWidget(RIGHT, items)
+    w.show_tab("Canvas")
+    dock(w, "map/Extra").toggleViewAction().trigger()
+    w.reset_layout()
+    assert open_docks(w) == {}
+    w.show_tab(HOME)
+    assert w.dockWidgetArea(items) == LEFT
+    w.show_tab("Canvas")
+    assert open_docks(w) == {}
+
+
+def test_the_tools_belong_to_the_3d_view(make_window: Make) -> None:
+    w = centred(make_window)
+    assert w.tools.isVisible()
+    w.show_tab("Canvas")
+    assert not w.tools.isVisible()
+    w.sync()
+    assert not w.tools.isVisible()
+    w.show_tab(HOME)
+    assert w.tools.isVisible()
+
+
+def test_findings_stays_open_across_tabs(make_window: Make) -> None:
+    w = centred(make_window)
+    ws = w.studio.active
+    ws.doc = FakeDocument()
+    ws.doc.found = [Finding("error", "x", "bad", target=3)]
+    w.studio.findings.stale()
+    findings = w.findings_dock
+    assert not findings.isVisible()
+    w.show_tab("Canvas")
+    assert not findings.isVisible()  # closed stays closed
+    w.show_tab(HOME)
+    findings.show()
+    before = open_docks(w)
+    w.sync()
+    w.findings.list.itemClicked.emit(w.findings.list.item(0))  # lands on Canvas
+    w.sync()
+    assert w.tabs.currentIndex() == 1 and findings.isVisible()
+    assert set(open_docks(w)) == {"Findings"}
+    findings.close()
+    w.show_tab(HOME)
+    assert not findings.isVisible()
+    findings.show()
+    w.show_tab("Canvas")
+    w.show_tab(HOME)
+    assert findings.isVisible() and set(open_docks(w)) == set(before)
+
+
+def test_a_workspace_switch_keeps_each_tabs_layout(make_window: Make) -> None:
+    w = centred(make_window)
+    w.show_tab("Canvas")
+    dock(w, "map/Extra").toggleViewAction().trigger()
+    switch(w, "monster")
+    assert w.tabs.currentIndex() == 0 and w.centre.currentWidget().isAncestorOf(w.stage)
+    switch(w, "map")
+    assert w.tabs.currentIndex() == 0 and set(open_docks(w)) == {"map/Items", "map/Notes"}
+    [opener] = [a for a in w.panels_menu.actions() if a.text() == "Canvas"]
+    assert not opener.isChecked()
+    w.show_tab("Canvas")
+    assert set(open_docks(w)) == {"map/Extra"}
+
+
+def test_a_centre_panel_syncs_while_its_tab_shows(make_window: Make) -> None:
+    w = centred(make_window)
+    c = canvas(w)
+    w.sync()
+    assert c.syncs == 0
+    w.show_tab("Canvas")
+    n = c.syncs
+    assert n >= 1
+    w.studio.changed()
+    w.sync()
+    assert c.syncs > n
+    w.show_tab(HOME)
+    n = c.syncs
+    w.sync()
+    assert c.syncs == n
+
+
+def test_the_start_page_takes_the_view_back(make_window: Make) -> None:
+    w = centred(make_window)
+    w.show_tab("Canvas")
+    w.studio.show_start(True)
+    w.sync()
+    assert w.tabs.currentIndex() == 0 and not w.tabs.isVisible()
+    w.studio.show_start(False)
+    w.sync()
+    assert w.tabs.isVisible()
 
 
 def test_tabbed_docks_show_only_their_tab(make_window: Make, qtbot: Any) -> None:

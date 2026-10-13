@@ -254,7 +254,7 @@ class MovesPanel(kit.Panel):
 
         self.behaviour = kit.button(
             "Open the behaviour graph",
-            tip="Opens the Behaviour dock: the events, states and conditions that play your moves",
+            tip="Opens the Behaviour tab: the events, states and conditions that play your moves",
             on=act("open behaviour", lambda: ws.focus("Behaviour")),
             icon="ph.tree-structure",
         )

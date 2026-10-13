@@ -153,9 +153,9 @@ def badge(p: BehaviourPanel, node: str) -> str:
 # ---- what it shows --------------------------------------------------------------------------- #
 
 
-def test_the_dock_is_registered_at_the_bottom() -> None:
+def test_the_dock_is_registered_in_the_centre() -> None:
     [dock] = [d for d in MonsterWorkspace().docks() if d.label == "Behaviour"]
-    assert (dock.area, dock.shown, dock.alone) == ("bottom", False, False)
+    assert dock.area == "centre"
 
 
 class Hosted(FakeWorkspace):
@@ -179,16 +179,16 @@ def test_the_window_opens_the_dock(
     own.doc = port_doc
     host = Hosted(own)
     w = make_window(host)
-    dock = w.findChild(QDockWidget, "monster/Behaviour")
-    strip = w.findChild(QDockWidget, "monster/Strip")
-    assert dock is not None and strip is not None and not dock.isVisible()
-    assert isinstance(dock.widget(), BehaviourPanel) and kit.missing_tips(dock.widget()) == []
+    panel, strip = w.findChild(BehaviourPanel), w.findChild(QDockWidget, "monster/Strip")
+    assert panel is not None and strip is not None and not panel.isVisible()
+    assert [w.tabs.tabText(i) for i in range(w.tabs.count())] == ["3D view", "Behaviour"]
+    assert kit.missing_tips(panel) == [] and strip.isVisible()
     host.focus = "Behaviour"  # what the Moves dock's button asks for
     w.studio.changed()
     w.sync()
     qtbot.wait(20)
-    assert dock.isVisible() and w.dockWidgetArea(dock) == Qt.DockWidgetArea.BottomDockWidgetArea
-    assert dock.height() > 2 * strip.height() and dock.geometry().bottom() < strip.geometry().top()
+    assert panel.isVisible() and w.centre.currentWidget() is panel and not strip.isVisible()
+    assert panel.height() > w.height() // 2
 
 
 def open_hosted(
@@ -204,9 +204,9 @@ def open_hosted(
     w.studio.changed()
     w.sync()
     qtbot.wait(60)
-    dock = w.findChild(QDockWidget, "monster/Behaviour")
-    assert dock is not None and isinstance(dock.widget(), BehaviourPanel)
-    return own, dock.widget()
+    panel = w.findChild(BehaviourPanel)
+    assert panel is not None and panel.isVisible()
+    return own, panel
 
 
 def applies(p: BehaviourPanel, node: str, monkeypatch: pytest.MonkeyPatch) -> list[str]:
