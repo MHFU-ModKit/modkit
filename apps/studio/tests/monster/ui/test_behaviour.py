@@ -17,6 +17,7 @@ from mhfu_studio.monster import behaviour as B
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.panels.behaviour import WARN, BehaviourPanel
 from mhfu_studio.monster.panels.node_graph import GraphView, LinkSpec
+from mhfu_studio.monster.panels.properties import PropertyBar
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.shell.workspace import Dock
@@ -124,8 +125,20 @@ def wire(qtbot: Any, p: BehaviourPanel, src: str, src_port: str, dst: str, dst_p
     qtbot.wait(30)
 
 
-def field(p: BehaviourPanel, node: str, name: str) -> Any:
-    return p.view._shown[node].fields[name]
+def select(qtbot: Any, p: BehaviourPanel, node: str) -> PropertyBar:
+    """The bar with `node` clicked, as the user would."""
+    QTest.mouseClick(p.view.viewer.viewport(), LEFT, NONE, title_at(p.view, node))
+    qtbot.wait(30)
+    return p.bar
+
+
+def control(p: BehaviourPanel, name: str) -> Any:
+    """The widget of the bar's editor for param `name`, or for the note."""
+    return (p.bar.note if name == "note" else p.bar.controls[name]).ctl  # type: ignore[union-attr]
+
+
+def summary(p: BehaviourPanel, node: str) -> str:
+    return str(p.view._shown[node].view.summary)
 
 
 def rank(*places: int) -> str:
@@ -196,16 +209,30 @@ def open_hosted(
     return own, dock.widget()
 
 
-def applies(p: BehaviourPanel, node: str, name: str, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
-    """Every value of `node.name` the view is told to draw, in order."""
-    seen: list[Any] = []
+def applies(p: BehaviourPanel, node: str, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every summary of `node` the view is told to draw, in order."""
+    seen: list[str] = []
     real = p.view._apply
 
     def apply(nodes: Any, links: Any) -> None:
-        seen.extend(n.values[name] for n in nodes if n.id == node)
+        seen.extend(n.summary for n in nodes if n.id == node)
         real(nodes, links)
 
     monkeypatch.setattr(p.view, "_apply", apply)
+    return seen
+
+
+def sets(p: BehaviourPanel, name: str, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Every value the bar's editor for `name` is told to show, in order."""
+    seen: list[Any] = []
+    c = p.bar.controls[name]
+    real = c.set_value
+
+    def put(value: object) -> None:
+        seen.append(value)
+        real(value)
+
+    monkeypatch.setattr(c, "set_value", put)
     return seen
 
 
@@ -216,11 +243,13 @@ def test_an_accepted_edit_applies_once_in_the_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     own, p = open_hosted(make_window, qtbot, port_doc)
-    seen = applies(p, "b1", "frames", monkeypatch)
-    field(p, "b1", "frames")._ctl.setValue(45)
+    select(qtbot, p, "b1")
+    seen, shown = applies(p, "b1", monkeypatch), sets(p, "frames", monkeypatch)
+    control(p, "frames").setValue(45)
     qtbot.wait(80)
     assert doc(own).manifest.behaviour.blocks["b1"].params == {"frames": 45}
-    assert seen == [45] and field(p, "b1", "frames").get_value() == 45
+    assert seen == ["45 frames or more"] and p.bar.controls["frames"].get_value() == 45
+    assert shown == [], "the bar already shows what the user typed"
 
 
 def test_a_refused_edit_reverts_once_in_the_window(
@@ -232,12 +261,14 @@ def test_a_refused_edit_reverts_once_in_the_window(
     blk = Block("host_state", (0.0, 0.0), {"mains": [0]})
     port_doc.edit(lambda m: m.behaviour.blocks.__setitem__("b4", blk))
     own, p = open_hosted(make_window, qtbot, port_doc)
+    p.view.select(["b4"])  # it sits under a move: no click would find it
+    p.sync()
     before = doc(own).manifest
-    seen = applies(p, "b4", "mains", monkeypatch)
-    field(p, "b4", "mains")._ctl.menu().actions()[0].trigger()  # unticks the only main state
+    seen, shown = applies(p, "b4", monkeypatch), sets(p, "mains", monkeypatch)
+    control(p, "mains").menu().actions()[0].trigger()  # unticks the only main state
     qtbot.wait(80)
     assert doc(own).manifest is before and "main states" in own.message
-    assert seen == [[0]] and field(p, "b4", "mains").get_value() == (0,)
+    assert seen == [] and shown == [[0]], "the canvas is left alone and the bar goes back once"
 
 
 def test_a_block_made_in_the_window_is_selected(
@@ -304,10 +335,12 @@ def test_the_zinogre_opens(
     assert in_step(p, ws)
     wrote = {i: p.view._shown[i].view.xy_pos for i in m.behaviour.blocks}
     assert wrote["b12"] == [float(model.LEFT), 4.0 * model.ROW]
-    note = field(p, "b12", "@note").get_value()
-    assert note.startswith("a flinch of the head")
-    assert field(p, "b12", "part").get_value() == 0
-    assert field(p, "b2", "hi").get_value() == 1000.0
+    assert summary(p, "b12") == "head" and summary(p, "b2") == "250 \u2013 1000"
+    select(qtbot, p, "b12")
+    assert p.bar.note is not None and p.bar.note.get_value().startswith("a flinch of the head")
+    assert p.bar.controls["part"].get_value() == 0
+    select(qtbot, p, "b2")
+    assert p.bar.controls["hi"].get_value() == 1000.0
 
 
 def test_spread_out_is_one_step(panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
@@ -319,13 +352,17 @@ def test_spread_out_is_one_step(panel: BehaviourPanel, ws: MonsterWorkspace) -> 
     assert doc(ws).manifest == before
 
 
-def test_part_and_main_options(panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
+def test_part_and_main_options(qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
     doc(ws).edit(lambda m: m.behaviour.blocks.__setitem__("b4", Block("on_flinch", (0.0, 0.0))))
     panel.sync()
-    part = field(panel, "b4", "part")
-    labels = [part._ctl.itemText(i) for i in range(part._ctl.count())]
-    assert labels[:3] == ["any", "head", "part 0"] and part.get_value() is None
+    select(qtbot, panel, "b4")
+    ctl = control(panel, "part")
+    labels = [ctl.itemText(i) for i in range(ctl.count())]
+    assert (
+        labels[:3] == ["any", "head", "part 0"] and panel.bar.controls["part"].get_value() is None
+    )
     assert len(labels) == len(model.PARTS) + 1 and "part 1" not in labels
+    assert summary(panel, "b4") == "any part"
 
 
 # ---- gestures -------------------------------------------------------------------------------- #
@@ -356,7 +393,7 @@ def test_the_users_example_through_the_canvas(
     before = doc(ws).manifest
     create(qtbot, panel, KINDS["on_part_broken"].title, QPoint(300, 480))
     assert "b4" in doc(ws).manifest.behaviour.blocks and panel.view.selected() == ["b4"]
-    combo = field(panel, "b4", "part")._ctl
+    combo = control(panel, "part")  # the new block is selected, so the bar holds its editors
     combo.setCurrentIndex(combo.findText("head"))
     qtbot.wait(30)
     assert doc(ws).manifest.behaviour.blocks["b4"].params == {"part": 1}
@@ -419,8 +456,9 @@ def test_then_hands_over_and_replaces(
 
 
 def pick_up(p: BehaviourPanel, w: LinkSpec) -> QPoint:
-    """A point on wire `w` near its input end: that end is picked up."""
-    return at(p.view, p.view._pipes()[w].path().pointAtPercent(0.7))
+    """A point on wire `w` a quarter of its way from its input end (its path starts there): the
+    end nearer the click is the one picked up."""
+    return at(p.view, p.view._pipes()[w].path().pointAtPercent(0.25))
 
 
 def test_a_reroute_is_one_undo_step(
@@ -489,27 +527,55 @@ def test_cutting_a_wire_unlinks_it(qtbot: Any, panel: BehaviourPanel, ws: Monste
 
 def test_params_and_notes(qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
     before = doc(ws).manifest
-    field(panel, "b1", "frames")._ctl.setValue(45)
+    select(qtbot, panel, "b1")
+    control(panel, "frames").setValue(45)
     qtbot.wait(30)
     assert doc(ws).manifest.behaviour.blocks["b1"].params == {"frames": 45}
-    far = field(panel, "b3", "hi")._ctl
+    assert summary(panel, "b1") == "45 frames or more"
+    select(qtbot, panel, "b3")
+    far = control(panel, "hi")
     far.setValue(900)
     qtbot.wait(30)
     assert doc(ws).manifest.behaviour.blocks["b3"].params == {"lo": 0.0, "hi": 900.0}
+    assert summary(panel, "b3") == "0 \u2013 900"
     far.setValue(far.minimum())  # "none"
     qtbot.wait(30)
     assert doc(ws).manifest.behaviour.blocks["b3"].params == {"lo": 0.0}
-    note = field(panel, "b1", "@note")._ctl
+    assert summary(panel, "b3") == "any distance"
+    select(qtbot, panel, "b1")
+    note = control(panel, "note")
     note.setText("the first")
     note.editingFinished.emit()
     qtbot.wait(30)
     assert doc(ws).manifest.behaviour.blocks["b1"].label == "the first"
+    assert "Note: the first" in panel.view._shown["b1"].view.toolTip()
     for _ in range(4):
         doc(ws).undo()
     ws.refresh()
     panel.sync()
     assert doc(ws).manifest == before and in_step(panel, ws)
-    assert field(panel, "b1", "frames").get_value() == 20
+    assert panel.bar.controls["frames"].get_value() == 20
+    assert panel.bar.note is not None and panel.bar.note.get_value() == ""
+
+
+def test_each_bar_edit_is_one_undo_step(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    select(qtbot, panel, "b1")
+    for value in (30, 40):
+        control(panel, "frames").setValue(value)
+        qtbot.wait(30)
+    blocks = doc(ws).manifest.behaviour.blocks
+    assert blocks["b1"].params == {"frames": 40}
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    assert blocks["b1"] is not doc(ws).manifest.behaviour.blocks["b1"]
+    assert doc(ws).manifest.behaviour.blocks["b1"].params == {"frames": 30}
+    assert (
+        panel.bar.controls["frames"].get_value() == 30
+        and summary(panel, "b1") == "30 frames or more"
+    )
 
 
 def test_a_refused_value_goes_back(qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
@@ -517,12 +583,54 @@ def test_a_refused_value_goes_back(qtbot: Any, panel: BehaviourPanel, ws: Monste
     mains.run(lambda e: B.add_block(e, "host_state", (0, 0)))
     ws.edit("", mains.commit)
     panel.sync()
-    picks = field(panel, "b4", "mains")._ctl.menu().actions()
+    select(qtbot, panel, "b4")
+    picks = control(panel, "mains").menu().actions()
     assert [a.isChecked() for a in picks][:2] == [True, False]
     picks[0].trigger()  # unticks the only main state
     qtbot.wait(30)
     assert doc(ws).manifest.behaviour.blocks["b4"].params == {"mains": [0]}
-    assert "main states" in ws.message and field(panel, "b4", "mains").get_value() == (0,)
+    assert "main states" in ws.message and panel.bar.controls["mains"].get_value() == (0,)
+
+
+def test_the_bar_is_empty_for_no_block_and_for_several(qtbot: Any, panel: BehaviourPanel) -> None:
+    assert panel.bar.controls == {} and panel.bar.note is None
+    select(qtbot, panel, "b1")
+    assert list(panel.bar.controls) == ["frames"] and panel.bar.note is not None
+    panel.view.select(["b1", "b3"])
+    panel.sync()
+    assert panel.bar.controls == {} and panel.bar.note is None
+    panel.view.select(["b1"])
+    panel.sync()
+    assert list(panel.bar.controls) == ["frames"]
+    QTest.mouseClick(panel.view.viewer.viewport(), LEFT, NONE, at(panel.view, QPointF(-300, -300)))
+    qtbot.wait(30)
+    assert panel.bar.controls == {}
+
+
+def test_a_move_shows_its_name_and_nothing_to_edit(qtbot: Any, panel: BehaviourPanel) -> None:
+    select(qtbot, panel, STAMP)
+    assert panel.bar.controls == {} and panel.bar.note is None
+    labels = [w.text() for w in panel.bar.findChildren(type(panel.title))]
+    assert labels[0] == "stamp" and "plays walk" in labels[1]
+
+
+def test_every_bar_editor_has_its_tip(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    every = B.Gesture(doc(ws))
+    for kind in KINDS:
+        every.run(lambda e, k=kind: B.add_block(e, k, (0.0, 0.0)))
+    ws.edit("", every.commit)
+    panel.sync()
+    blocks = doc(ws).manifest.behaviour.blocks
+    for i, blk in blocks.items():
+        panel.view.select([i])
+        panel.sync()
+        assert list(panel.bar.controls) == [p.name for p in KINDS[blk.kind].params]
+        for p in KINDS[blk.kind].params:
+            assert control(panel, p.name).toolTip() == p.tip, (blk.kind, p.name)
+        assert panel.bar.note is not None and panel.bar.note.ctl.toolTip()
+        assert kit.missing_tips(panel.bar) == [], blk.kind
 
 
 def test_a_drag_moves_a_node_and_a_group_drag_is_one_step(

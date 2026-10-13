@@ -182,17 +182,24 @@ def capped(m: Manifest, ps: Sequence[Path] | None = None) -> str | None:
 
 def part_options(m: Manifest, optional: bool) -> list[tuple[str, int | None]]:
     """The parts to pick from: the manifest's named ones, then `part k`; `any` for none."""
-    named: dict[int, str] = {}
-    for name, part in m.parts.items():
-        named.setdefault(part.index, name)
     out: list[tuple[str, int | None]] = [("any", None)] if optional else []
-    out += [(name, k) for k, name in named.items()]
-    out += [(f"part {k}", k) for k in behaviour.PARTS if k not in named]
+    out += [(label, k) for k, label in behaviour.part_labels(m).items()]
     return out
 
 
 def main_options() -> list[tuple[str, int]]:
     return [(str(k), k) for k in behaviour.MAIN_STATES]
+
+
+def options(m: Manifest, kind: str) -> dict[str, list[tuple[str, object]]]:
+    """The (label, value) choices of `kind`'s parts and main states, by param."""
+    out: dict[str, list[tuple[str, object]]] = {}
+    for p in KINDS[kind].params:
+        if p.type == "part":
+            out[p.name] = list(part_options(m, p.optional))
+        elif p.type == "mains":
+            out[p.name] = list(main_options())
+    return out
 
 
 def palette() -> list[tuple[str, list[tuple[str, str, str]]]]:

@@ -8,20 +8,23 @@ late (so the owner may rebuild whatever the gesture touched), and the view holds
 change only until then: when no `show` came, the view goes back to what it last showed. A
 refused edit therefore needs no code.
 
-NodeGraphQt's own model, commands and undo are bypassed: its nodes are only items in a scene.
+A node is compact: its title and a line or two of summary, no editors; what a node holds is
+edited in the property bar (`properties.py`). NodeGraphQt's own model, commands and undo are
+bypassed: its nodes are only items in a scene.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import Any, Protocol, cast
+from dataclasses import dataclass
+from typing import Any
 
-from NodeGraphQt import BaseNode, NodeBaseWidget, NodeGraph, Port
+from NodeGraphQt import BaseNode, NodeGraph, Port
 from NodeGraphQt.qgraphics.node_base import NodeItem
-from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, QSignalBlocker, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QFont,
+    QFontMetricsF,
     QInputDevice,
     QKeyEvent,
     QNativeGestureEvent,
@@ -31,31 +34,18 @@ from PySide6.QtGui import (
     QUndoStack,
     QWheelEvent,
 )
-from PySide6.QtWidgets import (
-    QComboBox,
-    QDoubleSpinBox,
-    QLineEdit,
-    QMenu,
-    QSpinBox,
-    QStyleOptionGraphicsItem,
-    QToolButton,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QApplication, QMenu, QStyleOptionGraphicsItem, QVBoxLayout, QWidget
 
 from mhfu_studio.shell.overlay import Color, Ink
 from mhfu_studio.ui import theme
 
 Point = tuple[float, float]
-Option = tuple[str, object]
 #: a palette group: its title, and its kinds as (kind, title, tip)
 PaletteGroup = tuple[str, Sequence[tuple[str, str, str]]]
-KINDS = ("int", "float", "choice", "part", "mains")
-#: the reserved name of a node's note widget; no parameter is called this
-NOTE = "@note"
-NONE = "none"
-#: where a number field with no bound ends
-_FAR = 10**9
+#: a node's least width, the lines of summary it shows, and the room left of them
+NODE_W, SUMMARY_LINES, SUMMARY_X = 168.0, 2, 14.0
+#: NodeGraphQt draws a node narrower than this on screen as a box, with no text
+_PROXY_PX = 70.0
 #: a scroll without pixels moves this many pixels per angle unit (a notch of 120 is ~3 lines)
 _ANGLE_PX = 0.5
 #: the zoom per angle unit of a wheel, as NodeGraphQt has it, and the scale the canvas keeps to
@@ -63,37 +53,10 @@ _WHEEL = 1.001
 _SCALE = (0.05, 3.0)
 
 
-class ParamLike(Protocol):
-    """What the view needs of a parameter; `mhfu_port.behaviour.Param` has these names."""
-
-    @property
-    def name(self) -> str: ...
-    @property
-    def type(self) -> str: ...
-    @property
-    def title(self) -> str: ...
-    @property
-    def lo(self) -> float | None: ...
-    @property
-    def hi(self) -> float | None: ...
-    @property
-    def choices(self) -> Sequence[object]: ...
-    @property
-    def optional(self) -> bool: ...
-    @property
-    def tip(self) -> str: ...
-
-
 @dataclass(frozen=True)
 class NodeSpec:
-    """One node as the owner wants it drawn.
-
-    `options[name]` is a combo's or a multi-select's list of (label, value), else the
-    parameter's `choices`; an option of value `None` is the optional combo's "none" under the
-    owner's own label. `values[name]` is a number, a value of the list, `None` for "none"
-    (an optional parameter), or for `mains` the values picked. `label` is the one free-text
-    note; `tip` the node's tooltip; `dim` draws it faded.
-    """
+    """One node as the owner wants it drawn: a title, a `summary` of a line or two under it, a
+    `badge` in its title bar, the `tip` it carries; `dim` draws it faded."""
 
     id: str
     title: str
@@ -101,12 +64,9 @@ class NodeSpec:
     at: Point
     inputs: tuple[str, ...] = ()
     outputs: tuple[str, ...] = ()
-    params: Sequence[ParamLike] = ()
-    values: Mapping[str, object] = field(default_factory=dict)
-    options: Mapping[str, Sequence[Option]] = field(default_factory=dict)
+    summary: str = ""
     badge: str = ""
     dim: bool = False
-    label: str = ""
     tip: str = ""
 
 
@@ -116,13 +76,6 @@ class LinkSpec:
     src_port: str
     dst: str
     dst_port: str
-
-
-def option(item: object) -> Option:
-    """A choice as (label, value): a pair stays, anything else is its own label."""
-    if isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str):
-        return item[0], item[1]
-    return str(item), item
 
 
 # ---- NodeGraphQt, cut down to a scene of items -------------------------------------------- #
@@ -200,15 +153,66 @@ class _Navigation(QObject):
         v.scale(f, f, v.mapToScene(at))
 
 
+def wrap(text: str, metrics: QFontMetricsF, width: float, lines: int = SUMMARY_LINES) -> list[str]:
+    """`text` in at most `lines` lines of `width`: words kept, the last line elided."""
+    out: list[str] = []
+    line = ""
+    words = text.split()
+    for k, word in enumerate(words):
+        tried = f"{line} {word}".strip()
+        if metrics.horizontalAdvance(tried) <= width or not line:
+            line = tried
+            continue
+        out.append(line)
+        line = word
+        if len(out) == lines - 1:
+            line = " ".join(words[k:])
+            break
+    if line:
+        out.append(metrics.elidedText(line, Qt.TextElideMode.ElideRight, width))
+    return out[:lines]
+
+
 class _Item(NodeItem):  # type: ignore[misc]
-    """A node's drawing: a badge in the title bar, and no renaming."""
+    """A node's drawing: a summary under the title, a badge in the title bar, and no renaming.
+    It overrides `calc_size` (room for the summary, at least `NODE_W` wide), `paint` (draws the
+    summary and the badge) and `mouseDoubleClickEvent`."""
 
     badge = ""
+    summary = ""
+
+    @staticmethod
+    def _font() -> QFont:
+        font = QFont(QApplication.font())
+        font.setPointSizeF(9.0)
+        return font
+
+    def _lines(self, width: float) -> list[str]:
+        return wrap(self.summary, QFontMetricsF(self._font()), width - 2 * SUMMARY_X)
+
+    def _top(self) -> float:
+        return float(self.text_item.boundingRect().height()) + 6.0
+
+    def calc_size(self, add_w: float = 0.0, add_h: float = 0.0) -> tuple[float, float]:
+        width, height = super().calc_size(add_w, add_h)
+        width = max(float(width), NODE_W)
+        if not self.summary:
+            return width, float(height)
+        body = len(self._lines(width)) * QFontMetricsF(self._font()).height()
+        return width, max(float(height), self._top() + body + 8.0)
 
     def paint(
         self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None
     ) -> None:
         super().paint(painter, option, widget)
+        lod = QStyleOptionGraphicsItem.levelOfDetailFromTransform(painter.worldTransform())
+        if self.summary and lod * self.width >= _PROXY_PX:
+            painter.setFont(self._font())
+            painter.setPen(theme.color(Ink.TEXT))
+            metrics = painter.fontMetrics()
+            for k, text in enumerate(self._lines(self.width)):
+                y = self._top() + (k + 1) * metrics.height() - metrics.descent()
+                painter.drawText(QPointF(SUMMARY_X, y), text)
         if self.badge:
             font = QFont(painter.font())
             font.setBold(True)
@@ -232,165 +236,6 @@ class _Node(BaseNode):  # type: ignore[misc]
         super().__init__(qgraphics_item=_Item)
 
 
-# ---- a parameter on a node ---------------------------------------------------------------- #
-
-
-class _Field(NodeBaseWidget):  # type: ignore[misc]
-    """One parameter's control, or the note, on a node; `value_changed` is the user's edit and
-    never `set_value`'s."""
-
-    def __init__(
-        self, parent: Any, param: ParamLike | None, options: Sequence[Option] = ()
-    ) -> None:
-        super().__init__(
-            parent, NOTE if param is None else param.name, "" if param is None else param.title
-        )
-        self.optional = param is not None and param.optional
-        self._vals: list[object] = []
-        self._opts: list[Option] = []
-        self._built = False
-        self._ctl = self._make(param)
-        self.set_custom_widget(self._ctl)
-        if param is not None and param.tip:
-            self.widget().setToolTip(param.tip)  # the group box: the tip of whatever is hovered
-        self.widget().setMaximumWidth(150)
-        self.set_options(options)
-
-    def _make(self, param: ParamLike | None) -> QWidget:
-        if param is None:
-            line = QLineEdit()
-            line.setPlaceholderText("note")
-            line.setMinimumWidth(120)
-            line.editingFinished.connect(self.on_value_changed)
-            return line
-        if param.type in ("int", "float"):
-            return self._number(param)
-        if param.type == "mains":
-            button = QToolButton()
-            button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-            button.setMinimumWidth(120)
-            menu = QMenu(button)
-            menu.triggered.connect(self.on_value_changed)  # a click, not a `setChecked`
-            button.setMenu(menu)
-            return button
-        combo = QComboBox()
-        combo.setMinimumWidth(120)
-        combo.currentIndexChanged.connect(self.on_value_changed)
-        return combo
-
-    def _number(self, param: ParamLike) -> QWidget:
-        lo = -_FAR if param.lo is None else param.lo
-        hi = _FAR if param.hi is None else param.hi
-        box: QSpinBox | QDoubleSpinBox
-        if param.type == "int":
-            box = QSpinBox()
-            box.setRange(int(lo) - param.optional, int(hi))
-        else:
-            box = QDoubleSpinBox()
-            step = 0.1 if hi - lo >= 1 else 0.01
-            box.setDecimals(3)
-            box.setSingleStep(step)
-            box.setRange(lo - step * param.optional, hi)
-        if param.optional:
-            box.setSpecialValueText(NONE)  # the least value shows as "none"
-        box.setKeyboardTracking(False)  # one change per edit, not per keystroke
-        box.setMinimumWidth(80)
-        box.valueChanged.connect(self.on_value_changed)
-        return box
-
-    # -- the value -- #
-
-    def get_value(self) -> object:
-        ctl = self._ctl
-        if isinstance(ctl, QLineEdit):
-            return ctl.text()
-        if isinstance(ctl, QSpinBox | QDoubleSpinBox):
-            if self.optional and ctl.value() == ctl.minimum():
-                return None
-            return int(ctl.value()) if isinstance(ctl, QSpinBox) else float(ctl.value())
-        if isinstance(ctl, QComboBox):
-            return (
-                self._vals[ctl.currentIndex()]
-                if 0 <= ctl.currentIndex() < len(self._vals)
-                else None
-            )
-        return tuple(
-            v for (_, v), a in zip(self._opts, self._actions(), strict=True) if a.isChecked()
-        )
-
-    def set_value(self, value: object) -> None:
-        ctl = self._ctl
-        with QSignalBlocker(ctl):
-            if isinstance(ctl, QLineEdit):
-                ctl.setText("" if value is None else str(value))
-            elif isinstance(ctl, QSpinBox | QDoubleSpinBox):
-                ctl.setValue(cast(Any, ctl.minimum() if value is None else value))
-            elif isinstance(ctl, QComboBox):
-                if value not in self._vals:  # a value the options lack still shows
-                    self._vals.append(value)
-                    ctl.addItem(str(value))
-                ctl.setCurrentIndex(self._vals.index(value))
-            else:
-                picked = list(cast(Any, value or ()))
-                for (_, v), a in zip(self._opts, self._actions(), strict=True):
-                    a.setChecked(v in picked)
-                self._summary()
-
-    def same(self, value: object) -> bool:
-        """Whether the control already shows `value` (numbers to the box's own rounding)."""
-        have = self.get_value()
-        if isinstance(have, float) and isinstance(value, int | float):
-            return abs(have - value) < 5e-4
-        if isinstance(self._ctl, QToolButton):
-            return set(cast(Any, have)) == set(cast(Any, value or ()))
-        return have == value
-
-    def set_options(self, options: Sequence[Option]) -> bool:
-        """Replaces a combo's or a multi-select's entries, keeping what is picked; whether
-        anything changed."""
-        ctl = self._ctl
-        if not isinstance(ctl, QComboBox | QToolButton):
-            return False
-        built = self._built
-        if built and list(options) == self._opts:
-            return False
-        keep = self.get_value() if built else None
-        self._built, self._opts = True, list(options)
-        if isinstance(ctl, QComboBox):
-            none = self.optional and all(v is not None for _, v in self._opts)
-            self._vals = ([None] if none else []) + [v for _, v in self._opts]
-            with QSignalBlocker(ctl):
-                ctl.clear()
-                ctl.addItems([NONE] * none + [label for label, _ in self._opts])
-        else:
-            menu = ctl.menu()
-            menu.clear()
-            for label, _ in self._opts:
-                menu.addAction(label).setCheckable(True)
-        if built:
-            self.set_value(keep)
-        elif isinstance(ctl, QToolButton):
-            self._summary()
-        return True
-
-    def _actions(self) -> list[Any]:
-        return list(cast(QToolButton, self._ctl).menu().actions())
-
-    def _summary(self) -> None:
-        names = [
-            label
-            for (label, _), a in zip(self._opts, self._actions(), strict=True)
-            if a.isChecked()
-        ]
-        text = ", ".join(names) if 0 < len(names) <= 2 else f"{len(names)} picked"
-        cast(QToolButton, self._ctl).setText(text if names else (NONE if self.optional else "-"))
-
-    def on_value_changed(self, *_: object) -> None:
-        if isinstance(self._ctl, QToolButton):
-            self._summary()
-        super().on_value_changed()
-
-
 # ---- the view ----------------------------------------------------------------------------- #
 
 
@@ -402,7 +247,6 @@ class _Shown:
     sig: tuple[object, ...]
     ins: dict[str, Any]
     outs: dict[str, Any]
-    fields: dict[str, _Field]
     #: NodeGraphQt's own body and border colours, for a role with none
     base: tuple[Any, Any]
     tint: tuple[Any, Any] | None = None
@@ -415,8 +259,7 @@ class _Shown:
 
 def _signature(spec: NodeSpec) -> tuple[object, ...]:
     """What a node is built from: a change of it rebuilds the node, any other updates it."""
-    params = tuple((p.name, p.type, p.title, p.lo, p.hi, p.optional, p.tip) for p in spec.params)
-    return spec.inputs, spec.outputs, params
+    return spec.inputs, spec.outputs
 
 
 class GraphView(QWidget):
@@ -427,11 +270,9 @@ class GraphView(QWidget):
     delete_requested = Signal(list)
     #: once per node at a drag's end
     moved = Signal(str, float, float)
-    param_changed = Signal(str, str, object)
     create_requested = Signal(str, float, float)
     #: the id of the one node selected, else `None`
     picked = Signal(object)
-    label_changed = Signal(str, str)
     #: after the intents of one gesture, all of them: the owner applies what it collected and
     #: shows, still before the view would put the canvas back
     settled = Signal()
@@ -584,9 +425,6 @@ class GraphView(QWidget):
         for n in nodes:
             if len(ports[n.id][0]) != len(n.inputs) or len(ports[n.id][1]) != len(n.outputs):
                 raise ValueError(f"node {n.id}: a port name twice")
-            for p in n.params:
-                if p.type not in KINDS:
-                    raise ValueError(f"node {n.id}, parameter {p.name!r}: unknown type {p.type!r}")
         for ln in links:
             if ln.src not in ports or ln.src_port not in ports[ln.src][1]:
                 raise ValueError(f"link from {ln.src}.{ln.src_port}: no such output")
@@ -597,26 +435,20 @@ class GraphView(QWidget):
         node = _Node()
         node.NODE_NAME = spec.id  # unique: the graph then never renames a node
         node.model.id = node.view.id = spec.id
-        ins = {p: node.add_input(p, multi_input=True).view for p in spec.inputs}
-        outs = {p: node.add_output(p, multi_output=True).view for p in spec.outputs}
-        fields: dict[str, _Field] = {}
-        for param in spec.params:
-            fields[param.name] = f = _Field(node.view, param, self._options(spec, param))
-            f.value_changed.connect(lambda name, v, i=spec.id: self._param(i, name, v))
-        fields[NOTE] = note = _Field(node.view, None)
-        note.value_changed.connect(lambda _, v, i=spec.id: self._note(i, cast(str, v)))
-        for f in fields.values():
-            node.view.add_widget(f)
+        # a side with one port needs no name on it
+        named_in, named_out = len(spec.inputs) > 1, len(spec.outputs) > 1
+        ins = {
+            p: node.add_input(p, multi_input=True, display_name=named_in).view for p in spec.inputs
+        }
+        outs = {
+            p: node.add_output(p, multi_output=True, display_name=named_out).view
+            for p in spec.outputs
+        }
         self._graph.add_node(node, pos=spec.at, selected=False, push_undo=False)
         base = (node.view.color, node.view.border_color)
-        shown = _Shown(node, _signature(spec), ins, outs, fields, base)
+        shown = _Shown(node, _signature(spec), ins, outs, base)
         self._shown[spec.id] = shown
         return shown
-
-    @staticmethod
-    def _options(spec: NodeSpec, param: ParamLike) -> list[Option]:
-        got = spec.options.get(param.name)
-        return list(got) if got is not None else [option(c) for c in param.choices]
 
     def _drop(self, node_id: str) -> None:
         shown = self._shown.pop(node_id)
@@ -628,9 +460,9 @@ class GraphView(QWidget):
         self._graph.remove_node(shown.node, push_undo=False)
 
     def _sync(self, s: _Shown, spec: NodeSpec) -> None:
-        """Brings one node to `spec`: what the user can change is read back from the canvas,
-        the rest compared with what was set last."""
+        """Brings one node to `spec`, redrawing it when its title or summary changed."""
         view = s.view
+        resized = s.title != spec.title or view.summary != spec.summary
         if s.title != spec.title:
             s.title = view.name = spec.title
         tint = self._tint(spec.role) or s.base
@@ -644,15 +476,10 @@ class GraphView(QWidget):
         x, y = view.xy_pos
         if abs(x - spec.at[0]) > 1e-3 or abs(y - spec.at[1]) > 1e-3:
             view.xy_pos = spec.at
-        for param in spec.params:
-            f = s.fields[param.name]
-            f.set_options(self._options(spec, param))
-            want = spec.values.get(param.name)
-            if (want is not None or f.optional) and not f.same(want):
-                f.set_value(want)
-        if not s.fields[NOTE].same(spec.label):
-            s.fields[NOTE].set_value(spec.label)
-        view.setToolTip(spec.tip)  # NodeGraphQt sets its own when it draws the node
+        view.summary = spec.summary
+        if resized:
+            view.draw_node()
+        view.setToolTip(spec.tip)  # after `draw_node`, which sets NodeGraphQt's own
 
     def _tint(self, role: str) -> tuple[tuple[int, ...], tuple[int, ...]] | None:
         ink = self._roles.get(role)
@@ -739,16 +566,6 @@ class GraphView(QWidget):
                 self.moved.emit(i, x, y)
 
         self._raise(emit)
-
-    def _param(self, node_id: str, name: str, value: object) -> None:
-        self._raise(lambda: self.param_changed.emit(node_id, name, value))
-
-    def _note(self, node_id: str, text: str) -> None:
-        if text != self._text_of(node_id):
-            self._raise(lambda: self.label_changed.emit(node_id, text))
-
-    def _text_of(self, node_id: str) -> str:
-        return next((n.label for n in self._nodes if n.id == node_id), "")
 
     def _create(self, kind: str) -> None:
         x, y = self._graph.cursor_pos()
