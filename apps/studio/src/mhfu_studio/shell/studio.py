@@ -34,8 +34,8 @@ if TYPE_CHECKING:
 
 
 SLOW_COST, SLOW_EVERY = 0.05, 60.0
-"""A timed re-check that cost more than this many seconds is not repeated for that many: a stall
-is the check's whole length, which the interval's share of the time does not bound. A change
+"""Seconds: a check dearer than the first is not repeated on its own for the second, since a stall
+is the check's whole length and the interval's share of the time does not bound that. A change
 (`Findings.stale`) re-checks at once."""
 
 
