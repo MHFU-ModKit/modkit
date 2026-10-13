@@ -63,7 +63,17 @@ class Game:
     ) -> rg.Read:
         self.calls.append(cfg)
         slots = tuple(
-            Slot(k, rg.kind(r.on), -1, True, r.min_frames, r.cooldown, n, UNLIMITED, 0)
+            Slot(
+                k,
+                rg.kind(r.on),
+                -1 if r.signal is None else r.signal,
+                bool(r.play),
+                r.min_frames,
+                r.cooldown,
+                n,
+                UNLIMITED,
+                0,
+            )
             for k, (r, n) in enumerate(zip(self.rules, self.fired, strict=True))
         )
         return rg.Read(CFG, Brain(CFG, self.ticks, slots))

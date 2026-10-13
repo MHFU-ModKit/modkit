@@ -64,10 +64,30 @@ def brain(m: Manifest, fired: list[int], ticks: int = 100) -> Brain:
         CFG,
         ticks,
         tuple(
-            Slot(k, rg.kind(r.on), -1, True, r.min_frames, r.cooldown, n, UNLIMITED, 0)
+            Slot(
+                k,
+                rg.kind(r.on),
+                -1 if r.signal is None else r.signal,
+                bool(r.play),
+                r.min_frames,
+                r.cooldown,
+                n,
+                UNLIMITED,
+                0,
+            )
             for k, (r, n) in enumerate(zip(model.compile(m), fired, strict=True))
         ),
     )
+
+
+@pytest.fixture
+def ms(m: Manifest) -> Manifest:
+    """`m` and a rule on the signal roar and a rule on a tail cut that only counts."""
+    b = m.behaviour
+    b.blocks["b5"] = Block("on_signal", (260.0, 480.0), {"name": "roar"}, play=["howl"])
+    b.blocks["b6"] = Block("on_tail_cut", (260.0, 640.0), next=["b7"])
+    b.blocks["b7"] = Block("counter_add", (460.0, 640.0), {"counter": "cuts", "by": 1})
+    return m
 
 
 # ---- match ----------------------------------------------------------------------------------- #
@@ -103,6 +123,26 @@ def test_fewer_slots_than_rules_is_another_build_and_more_are_not_looked_at(m: M
     assert rg.match(replace(good, slots=good.slots[:2]), m) == rg.OTHER_BUILD
     extra = Slot(5, rg.kind("tail_cut"), -1, True, 0, 0, 99, UNLIMITED, 0)
     assert rg.match(replace(good, slots=(*good.slots, extra)), m) == {1: 1, 2: 2, 3: 3}
+
+
+def test_a_signal_rule_and_a_rule_that_plays_nothing_match_what_the_slots_say(
+    ms: Manifest,
+) -> None:
+    rules = model.compile(ms)
+    sig = next(k for k, r in enumerate(rules) if r.signal is not None)
+    idle = next(k for k, r in enumerate(rules) if not r.play)
+    good = brain(ms, list(range(10, 10 + len(rules))))
+    assert good.slots[sig].signal == model.signals(ms)["roar"] and not good.slots[idle].plays
+    assert rg.match(good, ms) == {k + 1: 10 + k for k in range(len(rules))}
+    for k, field, value in (
+        (sig, "signal", model.signals(ms)["roar"] + 1),
+        (sig, "signal", -1),
+        (idle, "plays", True),
+        (0, "signal", 0),
+    ):
+        slots = list(good.slots)
+        slots[k] = replace(slots[k], **{field: value})
+        assert rg.match(replace(good, slots=tuple(slots)), ms) == rg.OTHER_BUILD, (k, field)
 
 
 def test_a_changed_manifest_no_longer_matches(m: Manifest) -> None:

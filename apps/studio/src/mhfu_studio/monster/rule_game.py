@@ -34,7 +34,7 @@ OTHER_BUILD = "the game runs another build of these rules: Play in game sends th
 READING = "reading the game…"
 DOT = "·"
 NO_SIGNAL = -1
-"""`Slot.signal` of a rule no signal fires: a manifest of this schema has none."""
+"""`Slot.signal` of a rule no signal fires."""
 
 
 class Read(NamedTuple):
@@ -75,7 +75,7 @@ def match(brain: Brain, m: Manifest) -> dict[int, int] | str:
         s = slots.get(k)
         same = s is not None and (
             s.on == kind(rule.on)
-            and s.signal == NO_SIGNAL
+            and s.signal == (NO_SIGNAL if rule.signal is None else rule.signal)
             and s.plays == bool(rule.play)
             and s.min_frames == rule.min_frames
             and s.cooldown == rule.cooldown
