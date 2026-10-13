@@ -89,28 +89,13 @@ starting where the last stood, facing as it faced, and the Timeline's bar above 
 shows the steps (click one to pick it). Picking or playing anything else starts clips where
 they normally start.
 
-The Behaviour tab beside the 3D view (the button under the moves, or View > Panels) edits the
-port's `[behaviour]` graph as rules. The outline on the left lists what starts a rule: an event,
-a state between moves, or a move playing, each with its rule count and ranks; pick one and its
-rules are rows, or pick All rules for every one. A row is a frame titled `#rank · trigger · note`,
-in the order the game checks them (`#1` first): the rule's blocks left to right, then the move
-it plays as a dashed reference (`×n` when n rules play it) whose tip names those rules and the
-move's `then` sequence. A block or reference you select is edited in the bar below: its params
-and note, the move a reference plays, and Play, which plays the move in the game and is off,
-with the reason in its tip, when it cannot. `+ Rule` adds a rule checked last; right-click a
-block to insert one after it or delete it, and drag a frame to reorder it among its trigger's
-rules (in All, among its own trigger's only; the status says so). `⚠` marks a rule the game
-refuses (the tip says why). Every gesture is one undo step.
-
-All rules has a header toggle: In order (the default, kept per document) shows every rule as a
-row, each starting with its trigger, and Canvas shows the stored graph as a free canvas.
-Right-click adds a block (the palette is `mhfu_port.behaviour.KINDS`); a wire from a block's `out`
-feeds the next block's `in`, or plays a move at its `play`; a move's `while playing` starts a rule
-while it plays, and its `then` hands to another move (`after`); any other wire is refused in the
-status line. Selecting a node dims all but the rules through it. Spread out loosens the layout, a
-faded block is on no complete rule, and rows write no block position. A move is deleted in Moves.
-The tab has no docks until you open one on it, and keeps them apart from the 3D view's; Findings
-stays open across tabs.
+The Behaviour tab edits the port's `[behaviour]` as rules, grouped by what starts them: an event, a
+state between moves, or a move playing. The game checks rules in rank order, `#1` first. Rank is the
+stored canvas order, each block's `(y, x)`, top first: `+ Rule` adds a rule last, dragging a rule's
+frame trades places with its own trigger's rules only, and in All rules › Canvas dragging a node can
+change it. In Canvas a block's `out` wires to the next block's `in` or to a move's `play`; a move's
+`while playing` starts a rule, and `then` sets the move's `after`. The palette is
+`mhfu_port.behaviour.KINDS`. The tab keeps its own docks; Findings stays open across tabs.
 
 ## Tests
 
