@@ -51,7 +51,6 @@ def short(kind: str) -> str:
     """A kind's title as the outline says it: the section already says "When" and "Between
     moves", and the base monster is the only one a state belongs to."""
     title = KINDS[kind].title.removeprefix("On ").removeprefix("Base monster ")
-    title = title.replace(" (between moves)", "")
     return title[:1].upper() + title[1:]
 
 
