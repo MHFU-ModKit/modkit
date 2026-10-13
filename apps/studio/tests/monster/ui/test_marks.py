@@ -20,7 +20,7 @@ from mhfu_studio.monster.panels.behaviour import BehaviourPanel
 from mhfu_studio.monster.panels.node_graph import GLOW_MUTED
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
-from mhfu_studio.ui import kit
+from mhfu_studio.ui import kit, theme
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
@@ -257,6 +257,7 @@ def test_a_rule_that_just_fired_is_outlined_for_a_moment(
     assert len(panel.view._glows) == 1 and panel.glow.isActive()
     rect = panel.view.frame_rects()["frame:5"]
     assert panel.view._glows[0].rect() == rect
+    assert panel.view._glows[0].pen().color() == theme.accent()
     clock[0] += rg.FLASH + 0.1
     panel._marks()
     assert panel.view._glows == []

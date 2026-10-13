@@ -671,10 +671,10 @@ class GraphView(QWidget):
             self._backdrops[fr.id] = node
 
     def _glow(self, rect: QRectF) -> QGraphicsRectItem:
-        """An outline in the theme's second accent round a frame, drawn above it and under the
+        """An outline in the theme's accent round a frame, drawn above it and under the
         nodes; it takes no clicks."""
         item = QGraphicsRectItem(rect)
-        item.setPen(QPen(theme.second(), GLOW_WIDTH))
+        item.setPen(QPen(theme.accent(), GLOW_WIDTH))
         item.setZValue(GLOW_Z)
         item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self.viewer.scene().addItem(item)

@@ -247,9 +247,9 @@ def text(muted: bool = False) -> QColor:
     return QColor(_current.muted if muted else _current.text)
 
 
-def second() -> QColor:
-    """The second accent: a highlight that is not the selection."""
-    return QColor(_current.second)
+def accent() -> QColor:
+    """The theme's accent: what is on, picked or just happened."""
+    return QColor(_current.accent)
 
 
 def level(lv: Level) -> QColor:
