@@ -169,6 +169,103 @@ def test_part_labels_name_the_part_first_then_number_the_rest():
 # paths
 
 
+# sources and triggers
+
+
+def test_sources_are_the_roots_of_the_paths():
+    m = graph(
+        {
+            "b1": blk("on_noticed", to=["b2"]),
+            "b2": blk("force", play=["m"]),
+            "b3": blk("host_state", mains=[1], play=["n"]),
+            "b4": blk("played_for", frames=5, play=["n"]),
+            "b5": blk("force"),
+        },
+        {"m": MoveNode((0, 0), ["b4"])},
+    )
+    assert B.sources(m) == [("b1", None), ("b3", None), ("b4", "m")]
+    assert {p.blocks[0] for p in B.paths(m)} == {i for i, _ in B.sources(m)}
+
+
+def test_triggers_list_every_kind_and_group_the_zinogre_by_what_starts_it():
+    m = M.load(PORTS / "zinogre.toml")
+    ts = B.triggers(m)
+    events = [t.key for t in ts if t.section == "event"]
+    assert events == [k for k, v in B.KINDS.items() if v.role == "event"]
+    assert [t.key for t in ts if t.section == "state"] == ["host_state"]
+    held = {t.key: t.ranks for t in ts if t.ranks}
+    assert held == {
+        "on_noticed": (7,),
+        "on_flinch": (5,),
+        "on_part_broken": (6,),
+        "during:lunge": (1, 2),
+        "during:lunge_stop": (3,),
+        "during:dash": (4,),
+    }
+    assert [t.key for t in ts if t.section == "move"] == [
+        "during:lunge",
+        "during:lunge_stop",
+        "during:dash",
+    ]
+    by_rank = sorted((r, p) for t in ts for r, p in t.rules)
+    assert [p for _, p in by_rank] == B.paths(m) and [r for r, _ in by_rank] == list(range(1, 8))
+
+
+def test_a_flinch_of_any_part_is_one_trigger():
+    m = graph(
+        {
+            "b1": blk("on_flinch", 0, 0, part=1, play=["m"]),
+            "b2": blk("on_flinch", 0, 100, play=["n"]),
+        }
+    )
+    [flinch] = [t for t in B.triggers(m) if t.key == "on_flinch"]
+    assert flinch.ranks == (1, 2) and [p.blocks for _, p in flinch.rules] == [("b1",), ("b2",)]
+
+
+def test_a_move_with_a_while_playing_port_is_a_trigger_even_without_rules():
+    m = graph({"b1": blk("played_for", frames=5)}, {"m": MoveNode((0, 0), ["b1"])})
+    [t] = [t for t in B.triggers(m) if t.section == "move"]
+    assert (t.key, t.name, t.rules) == ("during:m", "m", ())
+
+
+def test_a_kind_with_by_has_a_trigger_per_value_in_use(monkeypatch):
+    on_x = B.Kind(
+        "on_x",
+        "event",
+        "On x",
+        (B.Param("name", "choice", "Name", choices=("a", "b", "c")),),
+        "an x",
+        lambda v: v["name"],
+        by="name",
+    )
+    monkeypatch.setitem(B.KINDS, "on_x", on_x)
+    m = graph({})
+    [none] = [t for t in B.triggers(m) if t.kind == "on_x"]
+    assert (none.key, none.name, none.rules) == ("on_x", "", ())
+    m = graph(
+        {
+            "b1": blk("on_x", 0, 0, name="c", play=["m"]),
+            "b2": blk("on_x", 0, 100, name="a", play=["m"]),
+            "b3": blk("on_x", 0, 200, name="c", play=["n"]),
+        }
+    )
+    named = [(t.key, t.name, t.ranks) for t in B.triggers(m) if t.kind == "on_x"]
+    assert named == [("on_x:a", "a", (2,)), ("on_x:c", "c", (1, 3))]
+
+
+def test_a_shared_block_gives_each_path_to_its_own_trigger():
+    m = graph(
+        {
+            "b1": blk("on_noticed", 0, 0, to=["b3"]),
+            "b2": blk("played_for", 0, 100, frames=5, to=["b3"]),
+            "b3": blk("cooldown", 0, 200, frames=9, play=["n"]),
+        },
+        {"m": MoveNode((0, 0), ["b2"])},
+    )
+    held = {t.key: [p.blocks for _, p in t.rules] for t in B.triggers(m) if t.rules}
+    assert held == {"on_noticed": [("b1", "b3")], "during:m": [("b2", "b3")]}
+
+
 def test_a_chain_is_a_path():
     m = graph({"b1": blk("on_noticed", to=["b2"]), "b2": blk("force", play=["m"])})
     assert B.paths(m) == [B.Path(("b1", "b2"), "m", None)]
