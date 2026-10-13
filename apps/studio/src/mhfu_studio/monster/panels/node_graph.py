@@ -36,7 +36,14 @@ from PySide6.QtGui import (
     QUndoStack,
     QWheelEvent,
 )
-from PySide6.QtWidgets import QApplication, QMenu, QStyleOptionGraphicsItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QGraphicsRectItem,
+    QMenu,
+    QStyleOptionGraphicsItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from mhfu_studio.shell.overlay import Color, Ink
 from mhfu_studio.ui import theme
@@ -53,6 +60,9 @@ _ANGLE_PX = 0.5
 #: the zoom per angle unit of a wheel, as NodeGraphQt has it, and the scale the canvas keeps to
 _WHEEL = 1.001
 _SCALE = (0.05, 3.0)
+GLOW_WIDTH, GLOW_Z, GLOW_MUTED = 3.0, -1.5, 110
+"""A lit frame's outline: its width, its depth (above a frame, under the nodes), and the alpha of
+a muted frame's title."""
 DIM, STAND_IN, FADED = 0.35, 0.8, 0.2
 """The opacity of a dimmed node, of a stand-in node, and of a wire faded back."""
 
@@ -78,12 +88,16 @@ class NodeSpec:
 
 @dataclass(frozen=True)
 class FrameSpec:
-    """A titled frame round the nodes `nodes` (ids), tinted by `role`."""
+    """A titled frame round the nodes `nodes` (ids), tinted by `role`. A `mark` follows the
+    title, never cut; `muted` quiets the title, `lit` outlines the frame."""
 
     id: str
     title: str
     nodes: tuple[str, ...]
     role: str
+    mark: str = ""
+    muted: bool = False
+    lit: bool = False
 
 
 @dataclass(frozen=True)
@@ -328,6 +342,7 @@ class GraphView(QWidget):
         self._links: Sequence[LinkSpec] = ()
         self._frames: Sequence[FrameSpec] = ()
         self._backdrops: dict[str, Any] = {}
+        self._glows: list[QGraphicsRectItem] = []
         self._kept: set[str] = set()
         self._roles: Mapping[str, Color] = {}
         self._menus: list[QMenu] = []
@@ -624,7 +639,9 @@ class GraphView(QWidget):
         self._kept = chosen if not frames else set()  # a pass with no frames keeps the choice
         for old in self._backdrops.values():
             self._graph.remove_node(old, push_undo=False)
-        self._backdrops = {}
+        for glow in self._glows:
+            self.viewer.scene().removeItem(glow)
+        self._backdrops, self._glows = {}, []
         metrics = QFontMetricsF(QApplication.font())
         for fr in frames:
             node = BackdropNode()
@@ -640,12 +657,28 @@ class GraphView(QWidget):
                 held = held.united(self._shown[i].view.sceneBoundingRect())
             node.set_pos(held.left() - FRAME_PAD, held.top() - FRAME_TOP)
             node.set_size(held.width() + 2 * FRAME_PAD, held.height() + FRAME_TOP + FRAME_BOTTOM)
-            node.view.name = metrics.elidedText(
-                fr.title, Qt.TextElideMode.ElideRight, node.view.width - 20.0
+            room = node.view.width - 20.0 - metrics.horizontalAdvance(fr.mark)
+            node.view.name = (
+                metrics.elidedText(fr.title, Qt.TextElideMode.ElideRight, room) + fr.mark
             )
+            if fr.muted:
+                quiet = theme.text(muted=True)
+                node.view.text_color = (quiet.red(), quiet.green(), quiet.blue(), GLOW_MUTED)
+            if fr.lit:
+                self._glows.append(self._glow(node.view.sceneBoundingRect()))
             if fr.id in chosen:
                 node.view.setSelected(True)
             self._backdrops[fr.id] = node
+
+    def _glow(self, rect: QRectF) -> QGraphicsRectItem:
+        """An outline in the theme's accent round a frame, drawn above it and under the
+        nodes; it takes no clicks."""
+        item = QGraphicsRectItem(rect)
+        item.setPen(QPen(theme.accent(), GLOW_WIDTH))
+        item.setZValue(GLOW_Z)
+        item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.viewer.scene().addItem(item)
+        return item
 
     # -- what the canvas tells -- #
 

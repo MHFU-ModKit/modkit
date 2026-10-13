@@ -30,13 +30,30 @@ DASH = "—"
 RANGE = "–"
 SEP = " › "
 DOT = "·"
+TIMES = "×"
 ARROW = " → "
 MOST = 8
 """The most rules a move's tip names."""
-ROW_H, COUNT_W, SPAN_W, PAD_X = 24, 24, 66, 8
-#: the item roles: what the delegate draws, and the key a row stands for
+ROW_H, COUNT_W, SPAN_W, PAD_X, FIRED_W = 24, 24, 66, 8, 46
+WIDTH = 224
+#: the item roles: what the delegate draws, the key a row stands for, and how often the game
+#: fired its rules ("" when not watching)
 CELL = Qt.ItemDataRole.UserRole + 1
 KEY = Qt.ItemDataRole.UserRole
+FIRED = Qt.ItemDataRole.UserRole + 2
+
+
+def times(n: int) -> str:
+    """How often the game fired a rule, `7×`."""
+    return f"{n}{TIMES}"
+
+
+ZERO = times(0)
+
+
+def total(t: Trigger, fires: Mapping[int, int]) -> int:
+    """How often the game fired the rules of `t`."""
+    return sum(fires.get(rank, 0) for rank, _ in t.rules)
 
 
 def span(t: Trigger) -> str:
@@ -143,6 +160,10 @@ class _Row(QStyledItemDelegate):
         room.setRight(room.right() - SPAN_W)
         painter.drawText(room, right, count)
         room.setRight(room.right() - COUNT_W)
+        if fired := index.data(FIRED):
+            painter.setPen(theme.text() if fired != ZERO else quiet)
+            painter.drawText(room, right, fired)
+            room.setRight(room.right() - FIRED_W)
         if kind == "all":
             font.setBold(True)
             painter.setFont(font)
@@ -167,11 +188,12 @@ class Outline(QListWidget):
             "What starts a rule: pick one to see only its rules, in the order they are checked."
             " Greyed: nothing starts from it."
         )
-        self.setFixedWidth(224)
+        self.setFixedWidth(WIDTH)
         self.setItemDelegate(_Row(self))
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setMouseTracking(True)
         self._now = ALL
+        self._fired: Mapping[str, str] = {}
         self.currentItemChanged.connect(self._changed)
 
     def set_triggers(self, ts: Sequence[Trigger], total: int, now: str) -> None:
@@ -192,6 +214,18 @@ class Outline(QListWidget):
             self._add(t.key, (title(t), count, span(t), "row" if t.rules else "none"), tip(t))
         self.setCurrentItem(self.item_of(now))
         self.blockSignals(False)
+        self.set_fired(self._fired)
+
+    def set_fired(self, fired: Mapping[str, str]) -> None:
+        """What each row says of how often the game fired its rules, by key (none: not
+        watching); the rows keep their place, and the outline widens for the extra column."""
+        self._fired = fired
+        for i in range(self.count()):
+            item = self.item(i)
+            if item is not None and item.data(KEY) is not None:
+                item.setData(FIRED, fired.get(str(item.data(KEY)), ""))
+        self.setFixedWidth(WIDTH + FIRED_W if fired else WIDTH)
+        self.viewport().update()
 
     def _add(self, key: str, cell: tuple[str, str, str, str], tip_: str) -> None:
         item = QListWidgetItem()

@@ -248,6 +248,11 @@ def text(muted: bool = False) -> QColor:
     return QColor(_current.muted if muted else _current.text)
 
 
+def accent() -> QColor:
+    """The theme's accent: what is on, picked or just happened."""
+    return QColor(_current.accent)
+
+
 def level(lv: Level) -> QColor:
     return QColor(_level(_current, lv))
 
