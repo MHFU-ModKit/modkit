@@ -214,9 +214,9 @@ def applies(p: BehaviourPanel, node: str, monkeypatch: pytest.MonkeyPatch) -> li
     seen: list[str] = []
     real = p.view._apply
 
-    def apply(nodes: Any, links: Any) -> None:
+    def apply(nodes: Any, links: Any, frames: Any = ()) -> None:
         seen.extend(n.summary for n in nodes if n.id == node)
-        real(nodes, links)
+        real(nodes, links, frames)
 
     monkeypatch.setattr(p.view, "_apply", apply)
     return seen

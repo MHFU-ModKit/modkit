@@ -27,6 +27,8 @@ MOVE = "move:"
 IN, OUT = "in", "out"
 PLAY, WHILE, THEN = "play", "while playing", "then"
 """A move node's ports: the input, then the two outputs."""
+ALL = "all"
+"""The scope that is the whole canvas, as stored; any other is a trigger's key."""
 ROLE_TITLES = {
     "event": "Events",
     "state": "State",

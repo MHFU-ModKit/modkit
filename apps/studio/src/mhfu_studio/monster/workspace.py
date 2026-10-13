@@ -43,6 +43,7 @@ from mhfu_studio.monster import (
     actions,
     align,
     authoring,
+    behaviour,
     clip_browser,
     clip_game,
     clips,
@@ -190,8 +191,10 @@ class MonsterWorkspace(Workspace):
         self.picked_window: int | None = None
         #: the attack id a window drawn on the Timeline gets; None: `window_id`'s default
         self.next_window_id: int | None = None
-        #: a block a finding named, for the Behaviour dock to pick and frame (`take_block`)
+        #: a block a finding named, for the Behaviour tab to pick and frame (`take_block`)
         self._block: str | None = None
+        #: what the Behaviour canvas shows: `behaviour.ALL`, or a trigger's key
+        self.scope = behaviour.ALL
         self.show_joint_ids = False
         self.undriven: dict[int, int] = {}
         self.markers: list[align.Marker] = []
@@ -2005,10 +2008,10 @@ class MonsterWorkspace(Workspace):
             return
         self.message = f"monster {slot} released" + ("" if acked else "; no ack")
 
-    # the behaviour graph (the Behaviour dock)
+    # the behaviour graph (the Behaviour tab)
 
     def take_block(self) -> str | None:
-        """The block a finding named, once; the dock picks and frames it."""
+        """The block a finding named, once; the tab picks and frames it."""
         block, self._block = self._block, None
         return block
 
