@@ -158,3 +158,13 @@ def test_a_signal_the_board_lacks_is_refused() -> None:
     for bad in (-1, a.EM_BOARD.SIGNALS.count or 0):
         with pytest.raises(ValueError, match="the board holds"):
             brain.fire_signal(session(mem), BLOCK, bad)
+
+
+@needs_board
+def test_rage_is_one_byte_of_the_board() -> None:
+    mem = memory(block())
+    at = BLOCK + int(a.EM_BLOCK.BOARD) + int(a.EM_BOARD.RAGE)
+    brain.set_rage(session(mem), BLOCK, True)
+    assert mem.read(at, 1) == bytes([brain.RAGE_ON])
+    brain.set_rage(session(mem), BLOCK, False)
+    assert mem.read(at, 1) == bytes([brain.RAGE_OFF])

@@ -16,7 +16,7 @@ each quest and whenever the port's moves module is re-run. A memory request stop
 a few ms, so read about once a second, never faster.
 
 The board is plain memory the brain takes from in its next AI frame, so a debugger can do what Lua
-does: `fire_signal` is `mhfu.em_signal`.
+does: `fire_signal` is `mhfu.em_signal`, `set_rage` is `mhfu.em_rage`.
 """
 
 from __future__ import annotations
@@ -35,6 +35,8 @@ UNLIMITED = 0xFFFFFFFF
 """`Slot.left` of a standing rule."""
 NO_PLAY = 0x04
 """`EM_RULE.FLAGS` bit: the rule plays nothing and only applies its effects."""
+RAGE_ON, RAGE_OFF = 1, 2
+"""`EM_BOARD.RAGE`: a request for the brain's next AI frame, which clears it."""
 CHUNK = 0x40000
 """Bytes per request while scanning."""
 WINDOW = 0x200000
@@ -173,3 +175,10 @@ def fire_signal(s: Reader, cfg: int, index: int) -> None:
     if not 0 <= index < n:
         raise ValueError(f"signal {index}: the board holds {n}")
     s.mem.write_u8(_board_at(cfg, int(a.EM_BOARD.SIGNALS)) + index, 1)
+
+
+def set_rage(s: Reader, cfg: int, enraged: bool) -> None:
+    """Asks for the monster's rage to start or end: in its next AI frame the brain enrages it, with
+    its roar, unless it is enraged, or calms it while it is. One byte; nothing happens while no
+    monster's vtable is wrapped, which is when Lua's `mhfu.em_rage` says no."""
+    s.mem.write_u8(_board_at(cfg, int(a.EM_BOARD.RAGE)), RAGE_ON if enraged else RAGE_OFF)
