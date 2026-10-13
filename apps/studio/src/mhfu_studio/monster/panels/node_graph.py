@@ -268,6 +268,10 @@ class _Node(BaseNode):  # type: ignore[misc]
         super().__init__(qgraphics_item=_Item)
 
 
+#: the type NodeGraphQt files a `_Node` under, for its context menu
+NODE_TYPE = f"{_Node.__identifier__}.{_Node.__name__}"
+
+
 # ---- the view ----------------------------------------------------------------------------- #
 
 
@@ -300,11 +304,14 @@ class GraphView(QWidget):
     link_requested = Signal(str, str, str, str)
     unlink_requested = Signal(str, str, str, str)
     delete_requested = Signal(list)
-    #: once per node at a drag's end
+    #: once per node at a drag's end, and once per frame (its top left)
     moved = Signal(str, float, float)
+    frame_moved = Signal(str, float, float)
     create_requested = Signal(str, float, float)
-    #: the id of the one node selected, else `None`
+    #: the id of the one frame selected, else of the one node, else `None`
     picked = Signal(object)
+    #: a node was right-clicked: its id, and its (emptied) menu for the owner to fill
+    menu_requested = Signal(str, QMenu)
     #: after the intents of one gesture, all of them: the owner applies what it collected and
     #: shows, still before the view would put the canvas back
     settled = Signal()
@@ -316,7 +323,8 @@ class GraphView(QWidget):
         self._nodes: Sequence[NodeSpec] = ()
         self._links: Sequence[LinkSpec] = ()
         self._frames: Sequence[FrameSpec] = ()
-        self._backdrops: list[Any] = []
+        self._backdrops: dict[str, Any] = {}
+        self._kept: set[str] = set()
         self._roles: Mapping[str, Color] = {}
         self._menus: list[QMenu] = []
         self._pending: list[tuple[Callable[[], None], bool]] = []
@@ -339,6 +347,9 @@ class GraphView(QWidget):
         self._graph.port_connected.connect(lambda inp, out: self._wired("link", inp, out))
         self._graph.port_disconnected.connect(lambda inp, out: self._wired("unlink", inp, out))
         viewer.moved_nodes.connect(self._dragged)
+        # a command makes NodeGraphQt show a node's menu; `_prompt` empties it for the owner
+        self._graph.context_nodes_menu().add_command("-", node_type=NODE_TYPE)
+        self._graph.context_menu_prompt.connect(self._prompt)
         self.set_canvas(theme.current().view)
 
     @property
@@ -407,6 +418,11 @@ class GraphView(QWidget):
         picked = {n.id for n in self.viewer.selected_nodes()}
         return [n.id for n in self._nodes if n.id in picked]
 
+    def selected_frames(self) -> list[str]:
+        """The selected frames' ids, in the order of the last `show`. Clicking a frame selects
+        the nodes it holds as well."""
+        return [i for i, bd in self._backdrops.items() if bd.view.isSelected()]
+
     def frame(self, ids: Sequence[str]) -> None:
         """Centres the canvas on these nodes."""
         nodes = [self._shown[i].node for i in ids if i in self._shown]
@@ -415,7 +431,7 @@ class GraphView(QWidget):
 
     def fit(self) -> None:
         """Frames every node and frame."""
-        views = [s.view for s in self._shown.values()] + [b.view for b in self._backdrops]
+        views = [s.view for s in self._shown.values()] + [b.view for b in self._backdrops.values()]
         if views:
             self.viewer.zoom_to_nodes(views)
 
@@ -582,13 +598,16 @@ class GraphView(QWidget):
     def _frame(self, frames: Sequence[FrameSpec]) -> None:
         """The frames, made again each time: titled backdrops round their nodes. A title is cut
         to the frame's width."""
-        for old in self._backdrops:
+        chosen = {*self.selected_frames(), *self._kept}
+        self._kept = chosen if not frames else set()  # a pass with no frames keeps the choice
+        for old in self._backdrops.values():
             self._graph.remove_node(old, push_undo=False)
-        self._backdrops = []
+        self._backdrops = {}
         metrics = QFontMetricsF(QApplication.font())
         for fr in frames:
             node = BackdropNode()
             node.NODE_NAME = fr.id
+            node.model.id = node.view.id = fr.id
             self._graph.add_node(node, pos=(0.0, 0.0), selected=False, push_undo=False)
             ink = self._roles.get(fr.role)
             if ink is not None:
@@ -602,7 +621,9 @@ class GraphView(QWidget):
             node.view.name = metrics.elidedText(
                 fr.title, Qt.TextElideMode.ElideRight, node.view.width - 20.0
             )
-            self._backdrops.append(node)
+            if fr.id in chosen:
+                node.view.setSelected(True)
+            self._backdrops[fr.id] = node
 
     # -- what the canvas tells -- #
 
@@ -640,19 +661,34 @@ class GraphView(QWidget):
     def _dragged(self, moved: Mapping[Any, Any]) -> None:
         """`moved` is NodeGraphQt's {node item: where it was}, once per drag end."""
         at = [(i.id, *i.xy_pos) for i in moved if i.id in self._shown]
+        framed = set(self._backdrops)
+        held = [(i.id, *i.xy_pos) for i in moved if i.id in framed]
 
         def emit() -> None:
             for i, x, y in at:
                 self.moved.emit(i, x, y)
+            for i, x, y in held:
+                self.frame_moved.emit(i, x, y)
 
         self._raise(emit)
+
+    def _prompt(self, menu: Any, node: Any) -> None:
+        """Just before a node's menu shows: it is emptied and the owner fills it."""
+        if node is None or node.id not in self._shown:
+            return
+        sub = self._graph.context_nodes_menu().qmenu.get_menu(node.type_)
+        if sub is not None:
+            sub.clear()
+            self.menu_requested.emit(node.id, sub)
 
     def _create(self, kind: str) -> None:
         x, y = self._graph.cursor_pos()
         self._raise(lambda: self.create_requested.emit(kind, x, y), revert=False)
 
     def _picked(self) -> str | None:
-        ids = self.selected()
+        frames, ids = self.selected_frames(), self.selected()
+        if len(frames) == 1:
+            return frames[0]
         return ids[0] if len(ids) == 1 else None
 
     def _selection(self) -> None:
@@ -673,7 +709,7 @@ class GraphView(QWidget):
         super().keyPressEvent(event)
 
     def _delete_selected(self) -> None:
-        ids = self.selected()
+        ids = [*self.selected(), *self.selected_frames()]
         cuts = [
             LinkSpec(
                 p.output_port.node.id, p.output_port.name, p.input_port.node.id, p.input_port.name

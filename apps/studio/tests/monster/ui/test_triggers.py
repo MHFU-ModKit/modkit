@@ -15,12 +15,14 @@ from mhfu_studio.monster import behaviour as B
 from mhfu_studio.monster.behaviour import ALL
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.panels import rows, triggers
-from mhfu_studio.monster.panels.behaviour import SCOPED, WARN, BehaviourPanel
+from mhfu_studio.monster.panels.behaviour import SCOPED, SCOPED_HINT, WARN, BehaviourPanel
 from mhfu_studio.monster.panels.node_graph import FRAME_BOTTOM, FRAME_TOP, NodeSpec
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
-from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtCore import QPoint, QPointF, Qt, QTimer
+from PySide6.QtGui import QAction, QContextMenuEvent
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QMenu
 
 LEFT, NONE = Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
 
@@ -180,8 +182,8 @@ def test_the_words_of_a_trigger(ws: MonsterWorkspace) -> None:
         f"All › While charge plays — 2 rules, {rng(1, 2)} of 6"
     )
     assert triggers.says(ts["on_tail_cut"], 6) == "All › Tail cut — no rules"
-    assert triggers.owner(list(ts.values()), "b7") == "on_noticed"
-    assert triggers.owner(list(ts.values()), "nope") is None
+    assert triggers.owner(list(ts.values()), {}, "b7") == "on_noticed"
+    assert triggers.owner(list(ts.values()), {}, "nope") is None
 
 
 # ---- the rows -------------------------------------------------------------------------------- #
@@ -202,11 +204,24 @@ MOVES = {"m": spec("move:m", "m"), "n": spec("move:n", "n")}
 
 
 def test_node_of_maps_a_displayed_node_back(ws: MonsterWorkspace) -> None:
-    assert [rows.node_of(i) for i in ("b1", "b1~2", "ref:stamp:2", "move:charge")] == [
+    shown = ("b1", "b1~2", "ref:b3:stamp", "ref:b3~2:stamp", "open:b3", "frame:4", "move:charge")
+    assert [rows.node_of(i) for i in shown] == [
         "b1",
         "b1",
         "move:stamp",
+        "move:stamp",
+        "",
+        "",
         "move:charge",
+    ]
+    assert [rows.ref_of(i) for i in shown] == [
+        None,
+        None,
+        ("b3", "stamp"),
+        ("b3", "stamp"),
+        ("b3", None),
+        None,
+        None,
     ]
     assert ws.manifest is not None
     assert rows.players(model.paths(ws.manifest)) == {
@@ -222,16 +237,16 @@ def test_a_rule_is_a_row_of_its_blocks_and_the_move_it_plays() -> None:
     plan = rows.plan(t, BLOCKS, NOTES, MOVES, {"m": (1, 2, 9)})
     assert [r.title for r in plan.rows] == [f"{rk(1)} · go", f"{rk(2)} · then"]
     assert [[n.id for n in r.nodes] for r in plan.rows] == [
-        ["b1", "b2", "ref:m:1"],
-        ["b3", "ref:m:2"],
+        ["b1", "b2", "ref:b2:m"],
+        ["b3", "ref:b3:m"],
     ]
     ref = plan.rows[0].nodes[-1]
     assert (ref.title, ref.ref, ref.badge) == ("▸ m", True, "×3")
     assert ref.tip == f"The move m, played by 3 rules: {rk(1, 2, 9)}"
     assert {(w.src, w.dst) for w in plan.links} == {
         ("b1", "b2"),
-        ("b2", "ref:m:1"),
-        ("b3", "ref:m:2"),
+        ("b2", "ref:b2:m"),
+        ("b3", "ref:b3:m"),
     }
     assert all(n.badge == WARN for n in plan.rows[0].nodes[:2]), "the rank is on the frame"
 
@@ -247,9 +262,20 @@ def test_a_rule_with_no_note_says_so() -> None:
     assert plan.rows[0].title == f"{rk(1)} · (no note)"
 
 
-def test_a_rule_that_plays_nothing_ends_at_its_last_block() -> None:
-    plan = rows.plan(trigger(Path(("b1", "b2"), "", None)), BLOCKS, NOTES, MOVES, {})
-    assert [n.id for n in plan.rows[0].nodes] == ["b1", "b2"] and len(plan.links) == 1
+def test_a_rule_with_no_move_yet_ends_in_a_placeholder_after_the_others() -> None:
+    open_rule = Path(("b1", "b2"), "", None)
+    t = trigger(Path(("b3",), "m", None))
+    plan = rows.plan(t, BLOCKS, NOTES, MOVES, {"m": (1,)}, [open_rule])
+    assert [r.rank for r in plan.rows] == [1, None]
+    assert [r.id for r in plan.rows] == ["frame:1", "frame:new:b1:1"]
+    last = plan.rows[1]
+    assert [n.id for n in last.nodes] == ["b1", "b2", "open:b2"]
+    assert last.title == "unfinished \u00b7 go" and last.path == open_rule
+    end = last.nodes[-1]
+    assert (end.title, end.ref) == ("\u25b8 plays\u2026", True) and end.tip
+    assert ("b2", "open:b2") in {(w.src, w.dst) for w in plan.links}
+    assert plan.row_of("open:b2") is last and plan.row_of("frame:1") is plan.rows[0]
+    assert plan.row_of("nope") is None
 
 
 def test_a_while_trigger_starts_from_its_move_once() -> None:
@@ -334,14 +360,14 @@ def test_a_trigger_shows_only_its_rules_in_rank_order(
     assert ws.scope == "on_flinch" and shown(panel) == {
         "b4",
         "b5",
-        "ref:stamp:1",
-        "ref:flinch_head:1",
+        "ref:b4:stamp",
+        "ref:b5:flinch_head",
     }
     assert frames(panel) == [f"{rk(3)} · any flinch", f"{rk(4)} · (no note)"]
     assert panel.title.text() == f"All › Flinch — 2 rules, {rng(3, 4)} of 6"
-    assert not panel.spread.isEnabled() and panel.hint.text() == SCOPED
-    assert panel.view._shown["ref:stamp:1"].view.badge == "×3"
-    assert panel.view._shown["ref:stamp:1"].view.toolTip() == (
+    assert not panel.spread.isEnabled() and panel.hint.text() == SCOPED_HINT
+    assert panel.view._shown["ref:b4:stamp"].view.badge == "×3"
+    assert panel.view._shown["ref:b4:stamp"].view.toolTip() == (
         f"The move stamp, played by 3 rules: {rk(1, 3, 6)}"
     )
     pick(qtbot, panel, ALL)
@@ -353,7 +379,7 @@ def test_a_while_trigger_draws_its_move_once_wired_into_every_row(
 ) -> None:
     pick(qtbot, panel, "during:charge")
     assert B.move_id("charge") in shown(panel)
-    assert {"b1", "b2", "b3", "ref:stamp:1", "ref:stamp_2:1"} <= shown(panel)
+    assert {"b1", "b2", "b3", "ref:b2:stamp", "ref:b3:stamp_2"} <= shown(panel)
     wires = {(w.src, w.dst) for w in panel.view._links}
     assert wires >= {(B.move_id("charge"), "b1"), (B.move_id("charge"), "b3"), ("b1", "b2")}
     assert frames(panel) == [f"{rk(1)} · first", f"{rk(2)} · (no note)"]
@@ -473,20 +499,15 @@ def drag(p: BehaviourPanel, a: QPoint, b: QPoint) -> None:
     QTest.mouseRelease(vp, LEFT, NONE, b)
 
 
-def test_creating_in_a_scope_is_refused_with_the_hint(
-    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+def test_a_trigger_has_no_free_block_menu_and_all_has_it_back(
+    qtbot: Any, panel: BehaviourPanel
 ) -> None:
-    pick(qtbot, panel, "on_flinch")
-    before, where = doc(ws).manifest, QPoint(400, 40)
-    vp = panel.view.viewer.viewport()
-    QTest.mouseMove(vp, where)
-    QTest.mousePress(vp, Qt.MouseButton.RightButton, NONE, where)
-    QTest.mouseRelease(vp, Qt.MouseButton.RightButton, NONE, where)
     menu = panel.view.viewer.context_menus()["graph"]
-    [act] = [a for sub in menu.actions() for a in sub.menu().actions() if a.text() == "Right away"]
-    act.trigger()
-    qtbot.wait(40)
-    assert doc(ws).manifest is before and ws.message == SCOPED
+    assert len(menu.actions()) == 4
+    pick(qtbot, panel, "on_flinch")
+    assert menu.actions() == []
+    pick(qtbot, panel, ALL)
+    assert [a.text() for a in menu.actions()] == ["Events", "State", "Conditions", "Modifiers"]
 
 
 def test_wiring_in_a_scope_is_refused_with_the_hint(
@@ -498,8 +519,8 @@ def test_wiring_in_a_scope_is_refused_with_the_hint(
     qtbot.wait(40)
     assert doc(ws).manifest is before and ws.message == SCOPED
     assert {(w.src, w.dst) for w in panel.view._links} == {
-        ("b4", "ref:stamp:1"),
-        ("b5", "ref:flinch_head:1"),
+        ("b4", "ref:b4:stamp"),
+        ("b5", "ref:b5:flinch_head"),
     }
     ws.message = ""
     pipe = panel.view._pipes()[next(w for w in panel.view._links if w.src == "b4")]
@@ -513,7 +534,7 @@ def test_delete_still_works_in_a_scope_and_a_reference_is_its_move(
     qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
 ) -> None:
     pick(qtbot, panel, "on_flinch")
-    panel.view.select(["b4", "ref:stamp:1"])
+    panel.view.select(["b4", "ref:b4:stamp"])
     QTest.keyClick(panel.view, Qt.Key.Key_Delete)
     qtbot.wait(40)
     blocks = doc(ws).manifest.behaviour.blocks
@@ -528,7 +549,7 @@ def test_picking_a_reference_shows_the_real_move_with_its_note_in_the_bar(
     ws.refresh()
     panel.sync()
     pick(qtbot, panel, "on_flinch")
-    ref = panel.view._shown["ref:stamp:1"].view
+    ref = panel.view._shown["ref:b4:stamp"].view
     QTest.mouseClick(
         panel.view.viewer.viewport(),
         LEFT,
@@ -536,7 +557,7 @@ def test_picking_a_reference_shows_the_real_move_with_its_note_in_the_bar(
         panel.view.viewer.mapFromScene(ref.mapToScene(QPointF(ref.width / 2, 8))),
     )
     qtbot.wait(60)
-    assert panel.view.selected() == ["ref:stamp:1"] and ws.move == "stamp"
+    assert panel.view.selected() == ["ref:b4:stamp"] and ws.move == "stamp"
     assert panel.bar.note is not None and panel.bar.note.get_value() == "the stamp"
     panel.bar.note.ctl.setText("again")
     panel.bar.note.ctl.editingFinished.emit()
@@ -566,3 +587,316 @@ def test_a_scope_writes_no_block_position(
         pick(qtbot, panel, key)
         panel.view.fit()
     assert doc(ws).manifest is before, "looking is not an edit"
+
+
+# ---- editing in a trigger's rows -------------------------------------------------------------- #
+
+
+def node_pos(p: BehaviourPanel, node: str) -> QPoint:
+    item = p.view._shown[node].view
+    return p.view.viewer.mapFromScene(item.mapToScene(QPointF(item.width / 2, 8)))
+
+
+def frame_pos(p: BehaviourPanel, frame: str) -> QPoint:
+    item = p.view._backdrops[frame].view
+    return p.view.viewer.mapFromScene(item.mapToScene(QPointF(item.width / 2, 12)))
+
+
+def click(qtbot: Any, p: BehaviourPanel, where: QPoint) -> None:
+    QTest.mouseClick(p.view.viewer.viewport(), LEFT, NONE, where)
+    qtbot.wait(60)
+
+
+def right_click(qtbot: Any, p: BehaviourPanel, node: str) -> QMenu:
+    """The menu a right-click on `node` offers, shown and closed again."""
+    got: list[QMenu] = []
+    p.view.menu_requested.connect(lambda _i, m: got.append(m))
+    vp, where = p.view.viewer.viewport(), node_pos(p, node)
+    QTest.mouseMove(vp, where + QPoint(3, 3))  # the viewer takes its place from the last move
+    QTest.mouseMove(vp, where)
+
+    def close() -> None:
+        pop = QApplication.activePopupWidget()
+        while pop is not None:
+            pop.close()
+            pop = QApplication.activePopupWidget()
+
+    QTimer.singleShot(150, close)
+    QApplication.sendEvent(
+        vp, QContextMenuEvent(QContextMenuEvent.Reason.Mouse, where, vp.mapToGlobal(where))
+    )
+    qtbot.wait(40)
+    return got[-1]
+
+
+def entry(menu: QMenu, *path: str) -> QAction:
+    """The action at `path` in `menu`'s submenus."""
+    for name in path[:-1]:
+        [menu] = [a.menu() for a in menu.actions() if a.menu() is not None and a.text() == name]
+    [act] = [a for a in menu.actions() if a.text() == path[-1]]
+    return act
+
+
+def names(menu: QMenu, *path: str) -> list[str]:
+    """The texts of the actions of the submenu at `path` of `menu`."""
+    for name in path:
+        [menu] = [a.menu() for a in menu.actions() if a.menu() is not None and a.text() == name]
+    return [a.text() for a in menu.actions()]
+
+
+def blocks(ws: MonsterWorkspace) -> dict[str, Block]:
+    return doc(ws).manifest.behaviour.blocks
+
+
+def test_plus_rule_is_for_a_trigger_and_adds_a_rule_checked_last(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    assert panel.add_rule.isHidden()
+    pick(qtbot, panel, "on_flinch")
+    assert (
+        not panel.add_rule.isHidden()
+        and "checked after every other rule" in panel.add_rule.toolTip()
+    )
+    before = doc(ws).manifest
+    panel.add_rule.click()
+    qtbot.wait(60)
+    new = blocks(ws)["b9"]
+    assert (new.kind, new.params, new.play) == ("on_flinch", {}, [])
+    assert new.at[1] > max(b.at[1] for i, b in blocks(ws).items() if i != "b9")
+    assert model.paths(doc(ws).manifest) == model.paths(before), "no move yet: not a rule yet"
+    assert panel.view.selected() == ["b9"] and "b9" in shown(panel) and "open:b9" in shown(panel)
+    assert frames(panel)[-1] == "unfinished · (no note)"
+    assert list(panel.bar.controls) == ["part"] and panel.bar.note is not None
+    assert panel.outline.item_of("on_flinch").data(triggers.CELL)[1] == "2", "it does not run yet"
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    assert doc(ws).manifest == before and "b9" not in shown(panel)
+
+
+def test_plus_rule_in_a_while_trigger_hangs_from_the_moves_port(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    pick(qtbot, panel, "during:charge")
+    panel.add_rule.click()
+    qtbot.wait(60)
+    assert blocks(ws)["b9"].kind == "played_for"
+    assert doc(ws).manifest.behaviour.moves["charge"].during == ["b1", "b3", "b9"]
+    start = B.move_id("charge")
+    assert (start, "b9") in {(w.src, w.dst) for w in panel.view._links}
+
+
+def test_the_placeholder_picks_the_move_and_the_new_rule_ranks_last(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    pick(qtbot, panel, "on_flinch")
+    panel.add_rule.click()
+    qtbot.wait(60)
+    click(qtbot, panel, node_pos(panel, "open:b9"))
+    assert panel.bar.plays is not None and panel.bar.note is None
+    ctl = panel.bar.plays.ctl
+    assert [ctl.itemText(i) for i in range(ctl.count())][:2] == ["pick a move", "charge"]
+    ctl.setCurrentIndex(ctl.findText("howl"))
+    qtbot.wait(60)
+    assert blocks(ws)["b9"].play == ["howl"]
+    assert [r.play for r in model.compile(doc(ws).manifest)][-1] == "howl"
+    assert panel.view.selected() == ["ref:b9:howl"]
+    assert panel.outline.item_of("on_flinch").data(triggers.CELL)[1:3] == ("3", rng(3, 7))
+    assert frames(panel)[-1] == f"{rk(7)} · (no note)"
+
+
+def test_the_plays_picker_of_a_reference_retargets_or_empties_it(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    pick(qtbot, panel, "on_flinch")
+    click(qtbot, panel, node_pos(panel, "ref:b4:stamp"))
+    assert panel.bar.plays is not None
+    assert panel.bar.plays.get_value() == "stamp"
+    ctl = panel.bar.plays.ctl
+    ctl.setCurrentIndex(ctl.findText("howl"))
+    qtbot.wait(60)
+    assert blocks(ws)["b4"].play == ["howl"] and panel.view.selected() == ["ref:b4:howl"]
+    assert panel.bar.plays.get_value() == "howl"
+    panel.bar.plays.ctl.setCurrentIndex(0)  # nothing
+    qtbot.wait(60)
+    assert blocks(ws)["b4"].play == [] and panel.view.selected() == ["open:b4"]
+    assert [f for f in frames(panel) if f.startswith("unfinished")] == [
+        "unfinished \u00b7 any flinch"
+    ]
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    assert blocks(ws)["b4"].play == ["howl"]
+
+
+def test_the_insert_menu_offers_a_rules_blocks_and_puts_one_after_the_clicked(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    pick(qtbot, panel, "during:charge")
+    menu = right_click(qtbot, panel, "b1")
+    after = entry(menu, "Insert after", "Conditions", "Hunter distance")
+    assert names(menu, "Insert after", "Conditions")[:1] == ["Played for at least"]
+    assert {a.text() for a in menu.actions()} == {"Insert after", "Delete the rule"}
+    assert names(menu, "Insert after") == ["Conditions", "Modifiers"]
+    assert entry(menu, "Delete the rule") is not None
+    before = doc(ws).manifest
+    after.trigger()
+    qtbot.wait(60)
+    b = blocks(ws)
+    assert b["b1"].next == ["b9"] and b["b9"].kind == "distance" and b["b9"].next == ["b2"]
+    assert panel.view.selected() == ["b9"]
+    assert [p.blocks for p in model.paths(doc(ws).manifest)][0] == ("b1", "b9", "b2")
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    assert doc(ws).manifest == before
+
+
+def test_the_menu_of_the_last_block_and_of_a_reference_insert_before_the_play(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    pick(qtbot, panel, "on_flinch")
+    entry(right_click(qtbot, panel, "b4"), "Insert after", "Modifiers", "At most").trigger()
+    qtbot.wait(60)
+    b = blocks(ws)
+    assert b["b4"].next == ["b9"] and b["b4"].play == [] and b["b9"].play == ["stamp"]
+    menu = right_click(qtbot, panel, "ref:b9:stamp")
+    assert {a.text() for a in menu.actions()} == {"Insert before the play", "Delete the play"}
+    entry(menu, "Insert before the play", "Modifiers", "Then wait").trigger()
+    qtbot.wait(60)
+    b = blocks(ws)
+    assert b["b9"].next == ["b10"] and b["b10"].play == ["stamp"] and b["b9"].play == []
+
+
+def test_the_menu_of_the_placeholder_inserts_and_has_no_play(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    pick(qtbot, panel, "on_flinch")
+    panel.add_rule.click()
+    qtbot.wait(60)
+    menu = right_click(qtbot, panel, "open:b9")
+    assert {a.text() for a in menu.actions()} == {"Insert before the play"}
+    entry(menu, "Insert before the play", "Modifiers", "At most").trigger()
+    qtbot.wait(60)
+    assert blocks(ws)["b9"].next == ["b10"] and blocks(ws)["b10"].play == []
+    assert "open:b10" in shown(panel)
+
+
+def three(qtbot: Any, panel: BehaviourPanel) -> None:
+    """Rule 1 of while-charge made b1 -> b9 -> b2."""
+    pick(qtbot, panel, "during:charge")
+    entry(
+        right_click(qtbot, panel, "b1"), "Insert after", "Conditions", "Hunter distance"
+    ).trigger()
+    qtbot.wait(60)
+
+
+def test_deleting_a_block_closes_the_chain_up(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    three(qtbot, panel)
+    mid = doc(ws).manifest
+    click(qtbot, panel, node_pos(panel, "b9"))
+    QTest.keyClick(panel.view, Qt.Key.Key_Delete)
+    qtbot.wait(60)
+    b = blocks(ws)
+    assert "b9" not in b and b["b1"].next == ["b2"] and b["b2"].play == ["stamp"]
+    assert [p.blocks for p in model.paths(doc(ws).manifest)][0] == ("b1", "b2")
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    assert doc(ws).manifest == mid
+
+
+def test_deleting_the_last_block_gives_its_play_back_to_the_one_before(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    three(qtbot, panel)
+    click(qtbot, panel, node_pos(panel, "b2"))
+    QTest.keyClick(panel.view, Qt.Key.Key_Delete)
+    qtbot.wait(60)
+    b = blocks(ws)
+    assert "b2" not in b and b["b9"].play == ["stamp"] and b["b9"].next == []
+    assert "ref:b9:stamp" in shown(panel)
+
+
+def test_deleting_the_first_block_or_the_frame_deletes_the_rule(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    three(qtbot, panel)
+    before = doc(ws).manifest
+    click(qtbot, panel, node_pos(panel, "b1"))
+    QTest.keyClick(panel.view, Qt.Key.Key_Delete)
+    qtbot.wait(60)
+    b = blocks(ws)
+    assert not {"b1", "b9", "b2"} & set(b) and doc(ws).manifest.behaviour.moves[
+        "charge"
+    ].during == ["b3"]
+    assert frames(panel) == [f"{rk(2)} · (no note)"] or len(frames(panel)) == 1
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    assert doc(ws).manifest == before
+    click(qtbot, panel, frame_pos(panel, "frame:2"))
+    assert panel.view.selected_frames() == ["frame:2"]
+    QTest.keyClick(panel.view, Qt.Key.Key_Delete)
+    qtbot.wait(60)
+    assert "b3" not in blocks(ws) and "b1" in blocks(ws)
+
+
+def test_deleting_a_reference_takes_only_the_play(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    pick(qtbot, panel, "on_flinch")
+    click(qtbot, panel, node_pos(panel, "ref:b4:stamp"))
+    QTest.keyClick(panel.view, Qt.Key.Key_Delete)
+    qtbot.wait(60)
+    assert blocks(ws)["b4"].play == [] and "stamp" in doc(ws).manifest.moves
+    assert "open:b4" in shown(panel)
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    assert blocks(ws)["b4"].play == ["stamp"]
+
+
+def test_the_menu_deletes_a_block_or_a_play(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    three(qtbot, panel)
+    entry(right_click(qtbot, panel, "b9"), "Delete the block").trigger()
+    qtbot.wait(60)
+    assert "b9" not in blocks(ws)
+    entry(right_click(qtbot, panel, "ref:b2:stamp"), "Delete the play").trigger()
+    qtbot.wait(60)
+    assert blocks(ws)["b2"].play == [] and panel.view.selected() == ["open:b2"]
+
+
+def test_a_frame_shows_the_rules_note_and_edits_it(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    pick(qtbot, panel, "on_flinch")
+    click(qtbot, panel, frame_pos(panel, "frame:3"))
+    assert panel.view.selected_frames() == ["frame:3"]
+    assert panel.bar.note is not None and panel.bar.note.get_value() == "any flinch"
+    title = [w.text() for w in panel.bar.findChildren(type(panel.title))][0]
+    assert title == f"Rule {rk(3)}" and not panel.bar.controls
+    panel.bar.note.ctl.setText("the flinch rule")
+    panel.bar.note.ctl.editingFinished.emit()
+    qtbot.wait(60)
+    assert blocks(ws)["b4"].label == "the flinch rule"
+    assert frames(panel)[0] == f"{rk(3)} · the flinch rule"
+    assert panel.view.selected_frames() == ["frame:3"], "the frame stays selected"
+    assert panel.bar.note.get_value() == "the flinch rule"
+
+
+def test_a_block_note_is_not_the_rules_note_but_joins_it(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    pick(qtbot, panel, "during:charge")
+    entry(right_click(qtbot, panel, "b1"), "Insert after", "Modifiers", "At most").trigger()
+    qtbot.wait(60)
+    assert panel.bar.note is not None
+    panel.bar.note.ctl.setText("limit it")
+    panel.bar.note.ctl.editingFinished.emit()
+    qtbot.wait(60)
+    assert frames(panel)[0] == f"{rk(1)} · first; limit it"
