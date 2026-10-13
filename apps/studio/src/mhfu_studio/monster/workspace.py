@@ -2019,10 +2019,10 @@ class MonsterWorkspace(Workspace):
 
     # Play in game for an own move (the Moves panel)
 
-    def play_move_blocker(self) -> str | None:
-        """Why Play in game cannot play the selected move now; a game that does not answer is
-        found by the play."""
-        m, name = self.manifest, self.move
+    def play_move_blocker(self, name: str | None = None) -> str | None:
+        """Why Play in game cannot play `name` (the selected move) now; a game that does not
+        answer is found by the play."""
+        m, name = self.manifest, name or self.move
         mv = None if m is None or name is None else m.moves.get(name)
         if mv is None:
             return "pick a move first"

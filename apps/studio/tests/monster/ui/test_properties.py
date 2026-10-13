@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from mhfu_port.behaviour import Param
-from mhfu_studio.monster.panels.properties import Detail, ParamControl, PropertyBar
+from mhfu_studio.monster.panels.properties import Detail, ParamControl, Play, PropertyBar
 from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QLabel, QLineEdit, QSpinBox, QToolButton
 
 COUNT = Param("n", "int", "Times", 1, lo=1, hi=9, tip="how often")
@@ -195,3 +195,18 @@ def test_a_node_without_params_or_a_note_shows_its_name_only(qtbot: Any) -> None
     assert bar.controls == {} and bar.note is None
     texts = [w.text() for w in bar.findChildren(QLabel)]
     assert texts == ["x", "own move"]
+
+
+def test_play_is_off_with_its_reason_in_the_tip_and_comes_back(qtbot: Any) -> None:
+    bar = PropertyBar()
+    qtbot.addWidget(bar)
+    asked: list[str] = []
+    bar.play_requested.connect(asked.append)
+    bar.show_detail(Detail("m", "m", "tip", play=Play("m", "no game running")))
+    assert bar.play is not None and not bar.play.isEnabled()
+    assert bar.play.toolTip() == "Play in game: no game running"
+    bar.play.click()
+    bar.show_detail(Detail("m", "m", "tip", play=Play("m")))
+    assert bar.play is not None and bar.play.isEnabled() and asked == []
+    bar.play.click()
+    assert asked == ["m"]

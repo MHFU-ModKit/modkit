@@ -1047,6 +1047,7 @@ def test_a_reference_plays_in_the_game_from_its_menu_and_the_bar(
 ) -> None:
     played: list[str | None] = []
     monkeypatch.setattr(ws, "play_move_in_game", lambda force=False: played.append(ws.move))
+    monkeypatch.setattr(ws, "play_move_blocker", lambda name=None: None)
     pick(qtbot, panel, "on_flinch")
     menu = right_click(qtbot, panel, "ref:b4:stamp")
     assert {a.text() for a in menu.actions()} == {
@@ -1069,6 +1070,7 @@ def test_the_move_a_while_trigger_starts_from_plays_in_the_game_too(
 ) -> None:
     played: list[str | None] = []
     monkeypatch.setattr(ws, "play_move_in_game", lambda force=False: played.append(ws.move))
+    monkeypatch.setattr(ws, "play_move_blocker", lambda name=None: None)
     pick(qtbot, panel, "during:charge")
     assert "Play in game" in [
         a.text() for a in right_click(qtbot, panel, B.move_id("charge")).actions()
@@ -1080,16 +1082,37 @@ def test_the_move_a_while_trigger_starts_from_plays_in_the_game_too(
     assert played == ["charge"]
 
 
-def test_play_in_game_says_so_when_no_game_is_there(
-    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+def test_play_is_off_with_the_reason_when_the_move_cannot_play(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ws.game_running = lambda: False
+    why = ["no game running"]
+    monkeypatch.setattr(ws, "play_move_blocker", lambda name=None: why[0] or None)
     pick(qtbot, panel, "on_flinch")
     click(qtbot, panel, node_pos(panel, "ref:b4:stamp"))
-    assert panel.bar.play is not None
-    panel.bar.play.click()
+    assert panel.bar.play is not None and not panel.bar.play.isEnabled()
+    assert panel.bar.play.toolTip() == "Play in game: no game running"
+    act = entry(right_click(qtbot, panel, "ref:b4:stamp"), "Play in game")
+    assert not act.isEnabled() and act.toolTip() == "Play in game: no game running"
+    why[0] = ""
+    panel.hide()
+    panel.show()
     qtbot.wait(40)
-    assert ws.message.startswith("not played in the game")
+    assert panel.bar.play is not None and panel.bar.play.isEnabled()
+    assert "Plays stamp in the running game" in panel.bar.play.toolTip()
+    assert entry(right_click(qtbot, panel, "ref:b4:stamp"), "Play in game").isEnabled()
+
+
+def test_a_move_that_rides_the_base_monster_is_off_whatever_the_game_does(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    doc(ws).edit(lambda m: m.moves.__setitem__("charge", Move(main=1, sub=4, clip="walk")))
+    ws.refresh()
+    panel.sync()
+    click(qtbot, panel, node_pos(panel, "start:b1:charge"))
+    assert panel.bar.play is not None and not panel.bar.play.isEnabled()
+    assert "charge rides the base monster's" in panel.bar.play.toolTip()
+    assert (ws.play_move_blocker("charge") or "").startswith("charge rides the base monster's")
+    assert ws.play_move_blocker("nope") == "pick a move first"
 
 
 # ---- All, in order --------------------------------------------------------------------------- #

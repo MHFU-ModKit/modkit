@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from mhfu_port import behaviour as model
 from mhfu_port.behaviour import KINDS, Kind, Path, Trigger
 from mhfu_port.manifest import Manifest, ManifestError, Move
+from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import QHBoxLayout, QMenu, QSizePolicy, QVBoxLayout, QWidget
 
 from mhfu_studio.monster import behaviour as graph
@@ -271,9 +272,18 @@ class BehaviourPanel(kit.Panel):
                 act.setToolTip(tip)
                 act.triggered.connect(lambda _=False, k=kind_: self._insert(after, k, to, play))
 
+    def _playable(self, move: str) -> Play:
+        return Play(move, self.ws.play_move_blocker(move) or "")
+
     def _play_entry(self, menu: QMenu, move: str) -> None:
         act = menu.addAction("Play in game")
-        act.setToolTip("Plays this move in the running game, as Play in game does in Moves")
+        off = self.ws.play_move_blocker(move)
+        act.setEnabled(off is None)
+        act.setToolTip(
+            "Plays this move in the running game, as Play in game does in Moves"
+            if off is None
+            else f"Play in game: {off}"
+        )
         act.triggered.connect(lambda: self._play(move))
 
     def _insert(self, after: str, kind_: str, to: str | None, play: str | None) -> None:
@@ -434,6 +444,10 @@ class BehaviourPanel(kit.Panel):
 
     # showing
 
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._show_bar()  # a game may have started while the tab was away
+
     def sync(self) -> None:
         m = self.ws.manifest
         self.pages.show_page(m is not None)
@@ -505,7 +519,7 @@ class BehaviourPanel(kit.Panel):
             mv = m.moves.get(name)
             if mv is None:
                 return None
-            return Detail(node, name, self._move_tip(mv), label=mv.label, play=Play(name))
+            return Detail(node, name, self._move_tip(mv), label=mv.label, play=self._playable(name))
         blk = m.behaviour.blocks.get(node)
         if blk is None or self._read is None:
             return None
@@ -539,7 +553,7 @@ class BehaviourPanel(kit.Panel):
             label=mv.label,
             note_tip="A note on this move, kept in the port manifest",
             plays=Plays(block, move, tuple(m.moves)),
-            play=Play(move),
+            play=self._playable(move),
         )
 
     @staticmethod
