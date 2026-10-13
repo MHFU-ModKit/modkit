@@ -5,6 +5,7 @@ through the real view."""
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,7 @@ from mhfu_studio.shell.studio import Studio
 from mhfu_studio.shell.workspace import Dock
 from mhfu_studio.ui import kit, theme
 from mhfu_studio.ui.testing import FakeWorkspace
-from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QDockWidget, QToolButton
 
@@ -339,6 +340,21 @@ def test_spread_out_is_one_step(panel: BehaviourPanel, ws: MonsterWorkspace) -> 
     assert panel.view._shown["b2"].view.xy_pos == [390.0, 272.0]
     doc(ws).undo()
     assert doc(ws).manifest == before
+
+
+def test_no_two_nodes_of_the_zinogre_overlap(
+    qtbot: Any, ws: MonsterWorkspace, zinogre_toml: Path, synthetic_pac: bytes
+) -> None:
+    from mhfu_studio.monster.core.scene import Scene
+
+    zin = PortDocument.open(zinogre_toml)
+    ws.load(Scene.from_bytes(synthetic_pac, "z", path=zinogre_toml.with_suffix(".bin")), zin)
+    p = make(qtbot, ws)
+    rects = {
+        i: QRectF(*n.view.xy_pos, n.view.width, n.view.height) for i, n in p.view._shown.items()
+    }
+    clash = [(a, b) for a, b in itertools.combinations(rects, 2) if rects[a].intersects(rects[b])]
+    assert clash == []
 
 
 def test_part_and_main_options(panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
