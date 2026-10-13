@@ -17,7 +17,7 @@ from mhfu_port.manifest import Move
 from mhfu_studio.monster import behaviour as B
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.panels.behaviour import ROLES, WARN, BehaviourPanel
-from mhfu_studio.monster.panels.node_graph import GraphView, LinkSpec
+from mhfu_studio.monster.panels.node_graph import DIM, FADED, GraphView, LinkSpec
 from mhfu_studio.monster.panels.properties import PropertyBar
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.overlay import Ink
@@ -50,6 +50,7 @@ def graph(m: Any) -> None:
 def ws(workspace: MonsterWorkspace) -> MonsterWorkspace:
     assert workspace.doc is not None
     workspace.doc.edit(graph)
+    workspace.all_view = B.CANVAS  # these tests are of the canvas as stored
     workspace.sync()
     return workspace
 
@@ -216,9 +217,9 @@ def applies(p: BehaviourPanel, node: str, monkeypatch: pytest.MonkeyPatch) -> li
     seen: list[str] = []
     real = p.view._apply
 
-    def apply(nodes: Any, links: Any, frames: Any = ()) -> None:
+    def apply(nodes: Any, *rest: Any) -> None:
         seen.extend(n.summary for n in nodes if n.id == node)
-        real(nodes, links, frames)
+        real(nodes, *rest)
 
     monkeypatch.setattr(p.view, "_apply", apply)
     return seen
@@ -245,6 +246,8 @@ def test_an_accepted_edit_applies_once_in_the_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     own, p = open_hosted(make_window, qtbot, port_doc)
+    own.all_view = B.CANVAS
+    p.sync()
     select(qtbot, p, "b1")
     seen, shown = applies(p, "b1", monkeypatch), sets(p, "frames", monkeypatch)
     control(p, "frames").setValue(45)
@@ -263,6 +266,8 @@ def test_a_refused_edit_reverts_once_in_the_window(
     blk = Block("host_state", (0.0, 0.0), {"mains": [0]})
     port_doc.edit(lambda m: m.behaviour.blocks.__setitem__("b4", blk))
     own, p = open_hosted(make_window, qtbot, port_doc)
+    own.all_view = B.CANVAS
+    p.sync()
     p.view.select(["b4"])  # it sits under a move: no click would find it
     p.sync()
     before = doc(own).manifest
@@ -277,6 +282,8 @@ def test_a_block_made_in_the_window_is_selected(
     make_window: Callable[..., Any], qtbot: Any, port_doc: PortDocument
 ) -> None:
     own, p = open_hosted(make_window, qtbot, port_doc)
+    own.all_view = B.CANVAS
+    p.sync()
     create(qtbot, p, KINDS["on_noticed"].title, QPoint(300, 120))
     assert "b4" in doc(own).manifest.behaviour.blocks and p.view.selected() == ["b4"]
 
@@ -328,6 +335,7 @@ def test_the_zinogre_opens(
 
     zin = PortDocument.open(zinogre_toml)
     ws.load(Scene.from_bytes(synthetic_pac, "z", path=zinogre_toml.with_suffix(".bin")), zin)
+    ws.all_view = B.CANVAS  # a loaded document starts in order
     p = make(qtbot, ws)
     m = zin.manifest
     assert len(m.behaviour.blocks) == 36 and len(p.view._shown) == 36 + len(m.moves)
@@ -985,3 +993,118 @@ def test_every_real_kind_draws_and_edits(
     for _ in EDITS:
         doc(ws).undo()
     assert doc(ws).manifest == drawn
+
+
+# ---- focus ----------------------------------------------------------------------------------- #
+
+
+def rules(m: Any) -> None:
+    """stamp is played by b1 (while charge) and b4, then hands to stamp_2; b5 plays flinch_head."""
+    m.moves["stamp"] = Move(clip="walk", after="stamp_2")
+    m.behaviour.blocks["b4"] = Block("on_flinch", (260.0, 460.0), play=["stamp"])
+    m.behaviour.blocks["b5"] = Block(
+        "on_part_broken", (260.0, 600.0), {"part": 1}, play=["flinch_head"]
+    )
+
+
+def bright(p: BehaviourPanel) -> set[str]:
+    return {i for i, s in p.view._shown.items() if s.view.opacity() == 1.0}
+
+
+def wire_ops(p: BehaviourPanel) -> dict[LinkSpec, float]:
+    return {w: pipe.opacity() for w, pipe in p.view._pipes().items()}
+
+
+def test_a_selected_node_dims_what_is_not_on_its_rules(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    doc(ws).edit(rules)
+    ws.refresh()
+    panel.sync()
+    assert bright(panel) == {"b1", "b4", "b5", STAMP, STEP, FLINCH, B.move_id("charge")}
+    select(qtbot, panel, "b4")
+    assert bright(panel) == {"b4", STAMP, STEP}
+    assert panel.view._shown["b1"].view.opacity() == DIM
+    ops = wire_ops(panel)
+    assert ops[LinkSpec("b4", "out", STAMP, "play")] == 1.0
+    assert ops[LinkSpec(STAMP, "then", STEP, "play")] == 1.0
+    assert ops[LinkSpec("b1", "out", STAMP, "play")] == FADED
+    assert ops[LinkSpec(B.move_id("charge"), "while playing", "b1", "in")] == FADED
+    assert ops[LinkSpec("b5", "out", FLINCH, "play")] == FADED
+
+
+def test_a_selected_move_lights_every_rule_that_plays_it(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    doc(ws).edit(rules)
+    ws.refresh()
+    panel.sync()
+    select(qtbot, panel, STAMP)
+    assert bright(panel) == {"b1", "b4", STAMP, STEP, B.move_id("charge")}
+    assert {w for w, o in wire_ops(panel).items() if o == FADED} == {
+        LinkSpec("b5", "out", FLINCH, "play")
+    }
+
+
+def test_clearing_the_selection_undims(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    doc(ws).edit(rules)
+    ws.refresh()
+    panel.sync()
+    before, kept = (bright(panel), wire_ops(panel)), doc(ws).manifest
+    select(qtbot, panel, "b4")
+    assert bright(panel) != before[0]
+    panel.view.viewer.scene().clearSelection()
+    qtbot.wait(40)
+    assert doc(ws).manifest is kept, "a selection writes nothing"
+    assert (bright(panel), wire_ops(panel)) == before and set(before[1].values()) == {1.0}
+
+
+def test_a_node_on_no_rule_stays_bright_alone(qtbot: Any, panel: BehaviourPanel) -> None:
+    select(qtbot, panel, "b2")
+    assert bright(panel) == {"b2"}
+
+
+def test_several_selected_nodes_light_the_rules_through_any_of_them(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    doc(ws).edit(rules)
+    ws.refresh()
+    panel.sync()
+    select(qtbot, panel, "b4")
+    QTest.mouseClick(
+        panel.view.viewer.viewport(),
+        LEFT,
+        Qt.KeyboardModifier.ControlModifier,
+        title_at(panel.view, "b5"),
+    )
+    qtbot.wait(40)
+    assert bright(panel) == {"b4", "b5", STAMP, STEP, FLINCH}
+
+
+def test_the_focus_follows_an_edit_and_an_undo(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    doc(ws).edit(rules)
+    ws.refresh()
+    panel.sync()
+    select(qtbot, panel, "b4")
+    doc(ws).edit(lambda m: setattr(m.behaviour.blocks["b4"], "play", ["flinch_head"]))
+    ws.refresh()
+    panel.sync()
+    assert panel.view.selected() == ["b4"] and bright(panel) == {"b4", FLINCH}
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    assert bright(panel) == {"b4", STAMP, STEP}
+
+
+def test_the_rows_do_not_dim(qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
+    ws.all_view = B.ORDER
+    panel.sync()
+    first = next(i for i in panel.view._shown if i == "b1")
+    QTest.mouseClick(panel.view.viewer.viewport(), LEFT, NONE, title_at(panel.view, first))
+    qtbot.wait(40)
+    assert panel.view.selected() == [first]
+    assert all(s.view.opacity() >= 0.8 for s in panel.view._shown.values())

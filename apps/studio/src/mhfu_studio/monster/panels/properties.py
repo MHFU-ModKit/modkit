@@ -238,9 +238,10 @@ class Plays:
 
 @dataclass(frozen=True)
 class Play:
-    """A Play in game button for `move`."""
+    """A Play in game button for `move`; `off` is why it cannot play now, if it cannot."""
 
     move: str
+    off: str = ""
 
 
 @dataclass(frozen=True)
@@ -372,12 +373,16 @@ class PropertyBar(QWidget):
             self._add(kit.label(d.tip.split("\n")[0], role="muted", wrap=False), 1)
         if d.play is not None:
             move = d.play.move
+            off = d.play.off
             self.play = kit.button(
                 "Play",
-                tip=f"Plays {move} in the running game, as Play in game does in Moves",
+                tip=f"Play in game: {off}"
+                if off
+                else f"Plays {move} in the running game, as Play in game does in Moves",
                 on=lambda: self.play_requested.emit(move),
                 icon="ph.play",
             )
+            self.play.setEnabled(not off)
             self._add(self.play)
 
     def _build_plays(self, plays: Plays) -> None:

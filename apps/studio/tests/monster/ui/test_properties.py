@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 from mhfu_port.behaviour import Param
-from mhfu_studio.monster.panels.properties import Detail, ParamControl, PropertyBar
+from mhfu_studio.monster.panels.properties import Detail, ParamControl, Play, PropertyBar
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QLabel, QLineEdit, QSpinBox, QToolButton
@@ -353,3 +353,18 @@ def test_new_names_keep_what_is_picked(qtbot: Any) -> None:
 def test_an_unknown_type_raises(qtbot: Any) -> None:
     with pytest.raises(ValueError, match="unknown type 'number'"):
         ParamControl(Param("x", "number", "X"))  # type: ignore[arg-type]
+
+
+def test_play_is_off_with_its_reason_in_the_tip_and_comes_back(qtbot: Any) -> None:
+    bar = PropertyBar()
+    qtbot.addWidget(bar)
+    asked: list[str] = []
+    bar.play_requested.connect(asked.append)
+    bar.show_detail(Detail("m", "m", "tip", play=Play("m", "no game running")))
+    assert bar.play is not None and not bar.play.isEnabled()
+    assert bar.play.toolTip() == "Play in game: no game running"
+    bar.play.click()
+    bar.show_detail(Detail("m", "m", "tip", play=Play("m")))
+    assert bar.play is not None and bar.play.isEnabled() and asked == []
+    bar.play.click()
+    assert asked == ["m"]

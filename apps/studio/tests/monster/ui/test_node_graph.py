@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from mhfu_studio.monster.panels.node_graph import (
+    FADED,
     NODE_W,
     GraphView,
     LinkSpec,
@@ -13,10 +14,11 @@ from mhfu_studio.monster.panels.node_graph import (
     wrap,
 )
 from mhfu_studio.shell.overlay import Ink
-from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import (
     QFont,
     QFontMetricsF,
+    QHelpEvent,
     QInputDevice,
     QKeySequence,
     QNativeGestureEvent,
@@ -25,7 +27,7 @@ from PySide6.QtGui import (
     QWheelEvent,
 )
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QToolTip
 
 LEFT, NONE = Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
 
@@ -679,3 +681,43 @@ def test_the_canvas_takes_a_colour_and_frames_nodes(qtbot: Any) -> None:
     node = view._shown["m"].view
     assert abs(centre.x() - (node.scenePos().x() + node.boundingRect().width() / 2)) < 120
     view.frame(["nope"])
+
+
+def test_a_nodes_tip_shows_over_its_title(qtbot: Any) -> None:
+    view = make(qtbot)
+    item = view._shown["m"].view
+    assert item.text_item.toolTip() == ""
+    vp = view.viewer.viewport()
+    where = view.viewer.mapFromScene(item.mapToScene(QPointF(item.width / 2, 8)))
+    QApplication.sendEvent(vp, QHelpEvent(QEvent.Type.ToolTip, where, vp.mapToGlobal(where)))
+    qtbot.wait(20)
+    assert QToolTip.text() == "spins"
+    QToolTip.hideText()
+
+
+def test_faded_links_are_drawn_back_and_come_forward_again(qtbot: Any) -> None:
+    view = make(qtbot)
+
+    def ops() -> dict[LinkSpec, float]:
+        return {w: p.opacity() for w, p in view._pipes().items()}
+
+    assert set(ops().values()) == {1.0}
+    view.show(nodes(), LINKS, faded=[LINKS[0]])
+    assert ops() == {LINKS[0]: FADED, LINKS[1]: 1.0}
+    view.show(nodes(), LINKS)
+    assert set(ops().values()) == {1.0}
+
+
+def test_a_selection_is_told_whole_and_a_show_does_not_tell_it(qtbot: Any) -> None:
+    view = make(qtbot)
+    got: list[list[str]] = []
+    view.selection_changed.connect(got.append)
+    view.select(["t"])
+    qtbot.wait(20)
+    assert got == []
+    view._shown["c"].view.setSelected(True)
+    qtbot.wait(20)
+    assert got == [["t", "c"]]
+    view.show(nodes(), LINKS)
+    qtbot.wait(20)
+    assert got == [["t", "c"]] and view.selected() == ["t", "c"]

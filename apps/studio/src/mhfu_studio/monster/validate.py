@@ -53,7 +53,7 @@ HIT_JOINT, HIT_RADIUS, HIT_END, HIT_GROUP, ATTACK_STATS = (
 CLIP_NAME = "clip name"
 #: the Moves panel's
 MOVE_WINDOWS, MOVE_CLIP = "move windows", "move clip"
-#: the Behaviour dock
+#: the Behaviour tab
 BEHAVIOUR = "behaviour"
 FOCUS = {
     "CLIP_SLOT_MISSING": CLIP_NAME,
@@ -512,7 +512,7 @@ def _layout(
 
 def _refused(m: Manifest, lay: Layout, known: set[int] | None) -> list[Finding]:
     """`moves.check`'s refusal, at the path it names: a move's attack lands on its windows, a
-    clip in no anim on the clip, the flinch carriers on the Behaviour dock. A refused path is
+    clip in no anim on the clip, the flinch carriers on the Behaviour tab. A refused path is
     `_behaviour`'s."""
     try:
         moves.check(m, lay, known)

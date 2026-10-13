@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from mhfu_port import behaviour as model
 from mhfu_port import manifest
-from mhfu_port.behaviour import KINDS, Kind, Param, Rule
+from mhfu_port.behaviour import KINDS, Block, Kind, Param, Rule
 from mhfu_port.manifest import Manifest, ManifestError
 from mhfu_studio.monster import behaviour as B
 from mhfu_studio.monster import clips
@@ -824,3 +824,60 @@ def test_a_rule_made_and_taken_away_leaves_the_zinogres_rules_alone(ports: Path)
     B.drop_block(z, inserted)
     B.drop_rule(z, (new,), "flinch_head")
     assert model.compile(z.manifest) == before
+
+
+def lit(d: PortDocument, *ids: str) -> B.Focus | None:
+    return B.focus(d.manifest, model.paths(d.manifest), ids)
+
+
+def test_focus_lights_every_rule_through_a_node_and_the_moves_they_hand_to(d: PortDocument) -> None:
+    def more(m: Manifest) -> None:
+        b = m.behaviour
+        b.blocks["b2"] = Block("on_flinch", (260.0, 160.0), play=["stamp"])
+        b.blocks["b3"] = Block("on_noticed", (260.0, 320.0), play=["flinch_head"])
+        b.blocks["b4"] = Block("distance", (260.0, 480.0), {"lo": 0.0})
+
+    d.edit(more)
+    stamp, step, charge = (B.move_id(n) for n in ("stamp", "stamp_2", "charge"))
+    f = lit(d, "b2")
+    assert f is not None and f.nodes == {"b2", stamp, step}
+    assert f.wires == {B.Wire("b2", "out", stamp, "play"), B.Wire(stamp, "then", step, "play")}
+    f = lit(d, stamp)
+    assert f is not None and f.nodes == {"b1", "b2", stamp, step, charge}
+    assert B.Wire(charge, "while playing", "b1", "in") in f.wires
+    assert B.Wire("b3", "out", B.move_id("flinch_head"), "play") not in f.wires
+    f = lit(d, step)
+    assert f is not None and f.nodes == {"b1", "b2", stamp, step, charge}, "a move reached by then"
+
+
+def test_focus_keeps_a_node_on_no_rule_and_a_chain_whole(d: PortDocument) -> None:
+    def chain(m: Manifest) -> None:
+        m.behaviour.blocks["b2"] = Block("on_noticed", (260.0, 160.0), next=["b3"])
+        m.behaviour.blocks["b3"] = Block("cooldown", (460.0, 160.0), {"frames": 5}, play=["stamp"])
+        m.behaviour.blocks["b4"] = Block("distance", (260.0, 320.0), {"lo": 1.0})
+
+    d.edit(chain)
+    f = lit(d, "b4")
+    assert f is not None and f.nodes == {"b4"} and not f.wires
+    f = lit(d, "b2")
+    assert f is not None and {"b2", "b3"} <= f.nodes and B.Wire("b2", "out", "b3", "in") in f.wires
+    assert "b1" not in f.nodes
+    assert lit(d) is None
+
+
+def test_focus_reads_a_ring_of_moves_once(d: PortDocument) -> None:
+    d.edit(lambda m: setattr(m.moves["stamp_2"], "after", "stamp"))
+    stamp, step = B.move_id("stamp"), B.move_id("stamp_2")
+    f = lit(d, "b1")
+    assert f is not None and {stamp, step} <= f.nodes
+    assert {B.Wire(stamp, "then", step, "play"), B.Wire(step, "then", stamp, "play")} <= f.wires
+
+
+def test_then_is_the_sequence_after_a_move_and_a_ring_ends_where_it_hands_back(
+    d: PortDocument,
+) -> None:
+    assert B.then(d.manifest, "stamp") == ["stamp_2"]
+    assert B.then(d.manifest, "stamp_2") == [] and B.then(d.manifest, "nope") == []
+    d.edit(lambda m: setattr(m.moves["stamp_2"], "after", "stamp"))
+    assert B.then(d.manifest, "stamp") == ["stamp_2", "stamp"]
+    assert B.then(d.manifest, "stamp_2") == ["stamp", "stamp_2"]
