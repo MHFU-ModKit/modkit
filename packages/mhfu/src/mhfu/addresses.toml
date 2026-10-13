@@ -303,6 +303,7 @@ PAC_COUNT = { eu = 0x088B89A8, type = "fn", doc = "pac_header::count; faults on 
 
 # --- framework regions ---
 MAIN_RAM = { eu = 0x08000000, type = "bytes", doc = "start of main RAM (kernel partition below USER_RAM); the lower bound of the framework's pointer checks" }
+FRAMEWORK_PRX = { eu = 0x09D65000, type = "bytes", doc = "where PPSSPP loads mhfu_framework.prx; the framework's partition blocks (em_vhook's, the move player's) sit just above its image, so a scan for them starts here" }
 PRX_STACK_GUARD = { eu = 0x09D88000, type = "bytes", doc = "framework-owned 16 KB block reserved when the PRX image cannot be: where the engine's construction-thread stack meets the PRX" }
 CLI_BRIDGE_BLOCK = { eu = 0x0A7F0000, type = "bytes", doc = "framework-owned command block (struct CLI_BRIDGE) the debug CLI writes; needs memory=64" }
 CLONE_POOL = { eu = 0x0A800000, type = "bytes", doc = "framework-owned entity-clone pool in the extra-RAM window, up to EXTRA_RAM_END" }
@@ -986,9 +987,11 @@ PART = { offset = 0x25, type = "u8", doc = "ON 4 or 5: only a flinch or break of
 FORCE = { offset = 0x26, type = "u8", doc = "1: PLAY_MOVE starts while the monster's notice runs (MOVE.FORCE)" }
 
 [struct.EM_CFG]
-doc = "em_vhook's config block in partition memory, which its stubs read by the offsets in em_vhook_stubs.h; listed here: the rules"
+doc = "em_vhook's config block in partition memory, which its stubs read by the offsets in em_vhook_stubs.h; listed here: the AI tick count, the canary and the rules"
 size = 0x360
 [struct.EM_CFG.fields]
+AI_TICKS = { offset = 0x10, type = "u32", doc = "AI ticks of the wrapped species since the quest began; a rule's LAST_FIRE is on this clock" }
+CANARY = { offset = 0x1C, type = "u32", doc = "0x5645484B ('VEHK'), written once at init and never again: how a debugger finds the block, which sits in partition memory at an address that moves with the PRX build" }
 RULES = { offset = 0xE0, type = "EM_RULE[16]", doc = "the brain's rules: their count is the capacity a port's manifest and mhfu_port.lua read" }
 
 [enum.MONSTER_EVENT_KIND]
