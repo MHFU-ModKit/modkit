@@ -63,6 +63,7 @@ SCOPED_HINT = (
 ORDER_HINT = (
     "Right-click a block to insert one · Delete removes · drag a frame to reorder · wire in Canvas"
 )
+FIRE_TIP = "Raises {} in the running game now; the rules' counts show whether their conditions held"
 SCOPED = "Wire by dragging ports in All, Canvas"
 UNPLACED = "A rule with no move yet is checked by nothing, so it has no place to move"
 CROSSED = "; a rule moves only among its own trigger's rules, the others keep their places"
@@ -111,6 +112,12 @@ class BehaviourPanel(kit.Panel):
             tip="Adds a rule for this trigger. It is checked after every other rule: drag its"
             " frame up to raise it",
             on=self._add_rule,
+        )
+        self.fire = kit.button(
+            "Fire",
+            tip=FIRE_TIP,
+            on=studio.act("fire in the game", self._fire),
+            icon="ph.lightning",
         )
         self.mode = kit.Segmented(
             [(ORDER, "In order"), (CANVAS, "Canvas")],
@@ -182,6 +189,7 @@ class BehaviourPanel(kit.Panel):
                 self.hint,
                 self.mode,
                 self.add_rule,
+                self.fire,
                 self.fit,
                 self.spread,
                 self.watch,
@@ -516,8 +524,23 @@ class BehaviourPanel(kit.Panel):
         if self.ws.watch.lit():
             self.glow.start(round(rule_game.FLASH * 1000) + 50)
 
+    def _fire(self) -> None:
+        """Raises the scoped trigger in the running game; the game is not the document, so there
+        is no undo step."""
+        t = self._current()
+        if t is not None:
+            self.ws.fire(t)
+
     def _status(self) -> None:
-        """The header's words on the watch, and the outline's totals."""
+        """The header's words on the watch, Fire's state, and the outline's totals."""
+        t = self._current()
+        self.fire.setVisible(t is not None and t.kind in rule_game.FIRE)
+        if t is not None and t.kind in rule_game.FIRE:
+            why = self.ws.fire_blocker(t)
+            self.fire.setEnabled(why is None)
+            self.fire.setToolTip(
+                FIRE_TIP.format(triggers.title(t)) if why is None else f"Fire: {why}"
+            )
         w = self.ws.watch
         self.live.setVisible(w.on)
         self.live.setText(w.status)

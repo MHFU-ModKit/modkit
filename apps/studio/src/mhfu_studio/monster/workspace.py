@@ -31,6 +31,7 @@ from mhfu.em.intel import (
 )
 from mhfu.files import Extracted
 from mhfu_port import continuity, layout, sequence, slots
+from mhfu_port.behaviour import Trigger
 from mhfu_port.data import Data
 from mhfu_port.manifest import MOVE_ATTACKS, AttackWindow, Manifest, ManifestError, Move
 from mhfu_port.manifest import Clip as ManifestClip
@@ -2034,6 +2035,27 @@ class MonsterWorkspace(Workspace):
     def poll_game(self) -> bool:
         """One step of Watch the game, at most one read a second; True when the marks changed."""
         return self.watch.poll(self.manifest, self.game_running(), self._ask_brain)
+
+    def fire_blocker(self, t: Trigger) -> str | None:
+        """Why Fire cannot raise `t` in the game now; None when it can."""
+        if self.manifest is None:
+            return "no port manifest open"
+        if t.kind not in rule_game.FIRE:
+            return "nothing in the studio raises this trigger"
+        return self.watch.blocker()
+
+    def fire(self, t: Trigger) -> None:
+        """Raises `t` in the running game (`rule_game.FIRE`) at the brain Watch the game found. The
+        game is not the document: no undo step, and the status says what was done."""
+        m, cfg, why = self.manifest, self.watch.cfg, self.fire_blocker(t)
+        if why is not None or m is None or cfg is None:
+            self.message = f"not fired: {why}"
+            return
+        try:
+            with self.game_session() as s:
+                self.message = rule_game.FIRE[t.kind](s, cfg, m, t)
+        except (LookupError, OSError, ValueError, DebuggerError) as e:
+            self.message = f"not fired: {e}"
 
     def _ask_brain(self, cfg: int | None) -> Future[rule_game.Read]:
         self._pool = self._pool or ThreadPoolExecutor(1)

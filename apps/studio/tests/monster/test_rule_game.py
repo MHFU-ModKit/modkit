@@ -331,3 +331,23 @@ def test_poll_says_whether_the_marks_changed(game: Game, m: Manifest) -> None:
     game.show(m, [1, 2, 3])
     game.poll(m, dt=1.0)
     assert game.poll(m, dt=0.2) is False
+
+
+def test_the_game_may_be_written_to_only_when_its_brain_is_found_and_runs_these_rules(
+    game: Game, m: Manifest
+) -> None:
+    off = rg.Watch()
+    assert off.blocker() is not None and "Watch the game" in off.blocker()  # type: ignore[operator]
+    assert game.watch.blocker() == "Watch the game has not read the game yet"
+    game.poll(m, running=False)
+    assert game.watch.blocker() == rg.NO_GAME
+    game.answer = lambda: rg.Read(None, None)
+    game.poll(m, running=True, dt=1.0)
+    game.poll(m, dt=1.0)
+    assert game.watch.blocker() == rg.NOT_FOUND
+    game.watch.reset()
+    game.feed(m, [1, 2, 3])
+    assert game.watch.blocker() is None and game.watch.cfg == CFG
+    m.behaviour.blocks["b4"].params["frames"] = 31
+    game.poll(m, dt=1.0)
+    assert game.watch.blocker() == rg.OTHER_BUILD

@@ -98,8 +98,10 @@ block's `in` or to a move's `play`; a move's `while playing` starts a rule, and 
 move's `after`. The palette is `mhfu_port.behaviour.KINDS`. Watch the game, in the header, reads
 the running game once a second while the tab is shown and marks each frame and trigger with how
 often the game fired its rules (`7×`; a frame lights up when its count rises): the game must run
-this port's rules as Play in game sends them, and the header says when it does not. The tab keeps
-its own docks; Findings stays open across tabs.
+this port's rules as Play in game sends them, and the header says when it does not. On a
+Signal trigger, Fire raises that signal in the running game, once Watch the game has found it: the
+rules' counts then show whether their conditions held. It is no edit and has no undo step. The tab
+keeps its own docks; Findings stays open across tabs.
 
 Effect blocks (violet) change the monster's counters and flags when their path fires. A path may
 end at an effect with nothing to play: it applies its effects, keeps its `#n` on that block, and
