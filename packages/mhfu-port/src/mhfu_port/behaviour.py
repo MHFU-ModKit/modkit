@@ -868,8 +868,9 @@ def drop_move(m: Manifest, move: str) -> None:
 
 ROW, COLUMN, LEFT = 200, 280, 400
 """The canvas grid `migrate` lays chains on: a rule a row, a block a column from `LEFT`. The
-studio draws a block up to 241 by 174 and a move 355 by 77, so these leave a gap; a move that
-a rule starts from sits left of `LEFT`, at x = 0."""
+studio draws a block 241 wide and up to 224 high (`counter_is`) and a move 355 by 77: a column
+leaves a gap, a row under a `counter_is` does not. A move that a rule starts from sits left of
+`LEFT`, at x = 0."""
 
 
 _SINCE_V1 = frozenset({"conds", "effects", "signal"})

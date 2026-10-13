@@ -1152,7 +1152,7 @@ play = [
 kind = "idle"
 at = [
     400.0,
-    2600.0,
+    2640.0,
 ]
 next = [
     "b29",
@@ -1163,7 +1163,7 @@ label = "hunter far -> dash"
 kind = "flag_is"
 at = [
     680.0,
-    2600.0,
+    2640.0,
 ]
 flag = "in_combat"
 next = [
@@ -1174,7 +1174,7 @@ next = [
 kind = "distance"
 at = [
     960.0,
-    2600.0,
+    2640.0,
 ]
 lo = 1500.0
 next = [
@@ -1185,7 +1185,7 @@ next = [
 kind = "cooldown"
 at = [
     1240.0,
-    2600.0,
+    2640.0,
 ]
 frames = 300
 play = [
@@ -1196,7 +1196,7 @@ play = [
 kind = "idle"
 at = [
     400.0,
-    2800.0,
+    2840.0,
 ]
 next = [
     "b33",
@@ -1207,7 +1207,7 @@ label = "below 30% HP -> howl"
 kind = "flag_is"
 at = [
     680.0,
-    2800.0,
+    2840.0,
 ]
 flag = "in_combat"
 next = [
@@ -1218,7 +1218,7 @@ next = [
 kind = "monster_hp"
 at = [
     960.0,
-    2800.0,
+    2840.0,
 ]
 hi = 30
 next = [
@@ -1229,7 +1229,7 @@ next = [
 kind = "limit"
 at = [
     1240.0,
-    2800.0,
+    2840.0,
 ]
 times = 1
 play = [
@@ -1240,7 +1240,7 @@ play = [
 kind = "on_signal"
 at = [
     400.0,
-    3000.0,
+    3040.0,
 ]
 name = "roar"
 play = [

@@ -5,6 +5,7 @@ through the real view."""
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,7 @@ from mhfu_studio.shell.studio import Studio
 from mhfu_studio.shell.workspace import Dock
 from mhfu_studio.ui import kit, theme
 from mhfu_studio.ui.testing import FakeWorkspace
-from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QDockWidget, QToolButton
 
@@ -178,6 +179,76 @@ def test_the_window_opens_the_dock(
     assert dock.height() > 2 * strip.height() and dock.geometry().bottom() < strip.geometry().top()
 
 
+def open_hosted(
+    make_window: Callable[..., Any], qtbot: Any, port_doc: PortDocument
+) -> tuple[MonsterWorkspace, BehaviourPanel]:
+    """The dock in a real `Window`, which syncs a turn after a change, over the `graph` port."""
+    own = MonsterWorkspace()
+    own.doc = port_doc
+    port_doc.edit(graph)
+    host = Hosted(own)
+    w = make_window(host)
+    host.focus = "Behaviour"
+    w.studio.changed()
+    w.sync()
+    qtbot.wait(60)
+    dock = w.findChild(QDockWidget, "monster/Behaviour")
+    assert dock is not None and isinstance(dock.widget(), BehaviourPanel)
+    return own, dock.widget()
+
+
+def applies(p: BehaviourPanel, node: str, name: str, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Every value of `node.name` the view is told to draw, in order."""
+    seen: list[Any] = []
+    real = p.view._apply
+
+    def apply(nodes: Any, links: Any) -> None:
+        seen.extend(n.values[name] for n in nodes if n.id == node)
+        real(nodes, links)
+
+    monkeypatch.setattr(p.view, "_apply", apply)
+    return seen
+
+
+def test_an_accepted_edit_applies_once_in_the_window(
+    make_window: Callable[..., Any],
+    qtbot: Any,
+    port_doc: PortDocument,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    own, p = open_hosted(make_window, qtbot, port_doc)
+    seen = applies(p, "b1", "frames", monkeypatch)
+    field(p, "b1", "frames")._ctl.setValue(45)
+    qtbot.wait(80)
+    assert doc(own).manifest.behaviour.blocks["b1"].params == {"frames": 45}
+    assert seen == [45] and field(p, "b1", "frames").get_value() == 45
+
+
+def test_a_refused_edit_reverts_once_in_the_window(
+    make_window: Callable[..., Any],
+    qtbot: Any,
+    port_doc: PortDocument,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blk = Block("host_state", (0.0, 0.0), {"mains": [0]})
+    port_doc.edit(lambda m: m.behaviour.blocks.__setitem__("b4", blk))
+    own, p = open_hosted(make_window, qtbot, port_doc)
+    before = doc(own).manifest
+    seen = applies(p, "b4", "mains", monkeypatch)
+    field(p, "b4", "mains")._ctl.menu().actions()[0].trigger()  # unticks the only main state
+    qtbot.wait(80)
+    assert doc(own).manifest is before and "main states" in own.message
+    assert seen == [[0]] and field(p, "b4", "mains").get_value() == (0,)
+
+
+def test_a_block_made_in_the_window_is_selected(
+    make_window: Callable[..., Any], qtbot: Any, port_doc: PortDocument
+) -> None:
+    own, p = open_hosted(make_window, qtbot, port_doc)
+    create(qtbot, p, KINDS["on_noticed"].title, QPoint(300, 120))
+    assert "b4" in doc(own).manifest.behaviour.blocks and p.view.selected() == ["b4"]
+
+
 def test_empty(qtbot: Any) -> None:
     p = make(qtbot, MonsterWorkspace())
     assert p.pages.currentWidget() is p.no_scene
@@ -247,6 +318,22 @@ def test_the_zinogre_opens(
     assert field(p, "b2", "hi").get_value() == 1000.0
 
 
+def test_a_new_name_keeps_every_node_size_on_the_zinogre(
+    qtbot: Any, ws: MonsterWorkspace, zinogre_toml: Path, synthetic_pac: bytes
+) -> None:
+    from mhfu_studio.monster.core.scene import Scene
+
+    zin = PortDocument.open(zinogre_toml)
+    ws.load(Scene.from_bytes(synthetic_pac, "z", path=zinogre_toml.with_suffix(".bin")), zin)
+    p = make(qtbot, ws)
+    p.view.grab()  # a paint: the fitted graph is small, and NodeGraphQt hides small nodes' widgets
+    sizes = {i: (s.view.width, s.view.height) for i, s in p.view._shown.items()}
+    flag = next(i for i, b in zin.manifest.behaviour.blocks.items() if "flag" in b.params)
+    type_name(qtbot, p, flag, "flag", "brand_new")
+    assert zin.manifest.behaviour.blocks[flag].params["flag"] == "brand_new"
+    assert {i: (s.view.width, s.view.height) for i, s in p.view._shown.items()} == sizes
+
+
 def test_spread_out_is_one_step(panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
     before = doc(ws).manifest
     panel.spread.click()
@@ -254,6 +341,21 @@ def test_spread_out_is_one_step(panel: BehaviourPanel, ws: MonsterWorkspace) -> 
     assert panel.view._shown["b2"].view.xy_pos == [390.0, 272.0]
     doc(ws).undo()
     assert doc(ws).manifest == before
+
+
+def test_no_two_nodes_of_the_zinogre_overlap(
+    qtbot: Any, ws: MonsterWorkspace, zinogre_toml: Path, synthetic_pac: bytes
+) -> None:
+    from mhfu_studio.monster.core.scene import Scene
+
+    zin = PortDocument.open(zinogre_toml)
+    ws.load(Scene.from_bytes(synthetic_pac, "z", path=zinogre_toml.with_suffix(".bin")), zin)
+    p = make(qtbot, ws)
+    rects = {
+        i: QRectF(*n.view.xy_pos, n.view.width, n.view.height) for i, n in p.view._shown.items()
+    }
+    clash = [(a, b) for a, b in itertools.combinations(rects, 2) if rects[a].intersects(rects[b])]
+    assert clash == []
 
 
 def test_part_and_main_options(panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
