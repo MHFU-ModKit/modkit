@@ -14,9 +14,23 @@ from mhfu_studio.monster.panels.node_graph import (
 )
 from mhfu_studio.shell.overlay import Ink
 from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import (
+    QInputDevice,
+    QKeySequence,
+    QNativeGestureEvent,
+    QPointingDevice,
+    QShortcut,
+    QWheelEvent,
+)
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QLineEdit, QSpinBox, QToolButton
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDoubleSpinBox,
+    QLineEdit,
+    QSpinBox,
+    QToolButton,
+)
 
 LEFT, NONE = Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
 
@@ -568,6 +582,119 @@ def test_a_shortcut_of_the_window_gets_ctrl_z(qtbot: Any) -> None:
     view.viewer.setFocus()
     QTest.keyClick(view.viewer, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
     assert hit == [1]
+
+
+# ---- navigation ------------------------------------------------------------------------------ #
+
+PAD = QPointingDevice(
+    "pad",
+    1,
+    QInputDevice.DeviceType.TouchPad,
+    QPointingDevice.PointerType.Finger,
+    QInputDevice.Capability.Position | QInputDevice.Capability.Scroll,
+    1,
+    0,
+)
+HERE = QPoint(500, 200)
+
+
+def scroll(
+    view: GraphView,
+    dx: int,
+    dy: int,
+    *,
+    pad: bool = True,
+    pixels: bool = True,
+    keys: Qt.KeyboardModifier = NONE,
+) -> None:
+    """A wheel event over the canvas: a touchpad's (pixels, a phase) or a mouse wheel's."""
+    vp = view.viewer.viewport()
+    phase = Qt.ScrollPhase.ScrollUpdate if pad else Qt.ScrollPhase.NoScrollPhase
+    px = QPoint(dx, dy) if pad and pixels else QPoint()
+    device = PAD if pad else QPointingDevice.primaryPointingDevice()
+    ev = QWheelEvent(
+        QPointF(HERE),
+        QPointF(vp.mapToGlobal(HERE)),
+        px,
+        QPoint(dx, dy),
+        Qt.MouseButton.NoButton,
+        keys,
+        phase,
+        False,
+        Qt.MouseEventSource.MouseEventNotSynthesized,
+        device,
+    )
+    QApplication.sendEvent(vp, ev)
+
+
+def pinch(view: GraphView, by: float) -> None:
+    pos = QPointF(HERE)
+    glob = QPointF(view.viewer.viewport().mapToGlobal(HERE))
+    ev = QNativeGestureEvent(
+        Qt.NativeGestureType.ZoomNativeGesture, PAD, 2, pos, pos, glob, by, QPointF()
+    )
+    QApplication.sendEvent(view.viewer.viewport(), ev)
+
+
+def look(view: GraphView) -> tuple[float, float, float]:
+    """The scale, and the scene point under the canvas's centre."""
+    v = view.viewer
+    c = v.mapToScene(v.viewport().rect().center())
+    return v.transform().m11(), c.x(), c.y()
+
+
+def test_two_finger_scroll_pans(qtbot: Any) -> None:
+    view = make(qtbot)
+    rec = Rec(view, qtbot)
+    s, x, y = look(view)
+    scroll(view, 40, -30)
+    assert look(view) == pytest.approx((s, x - 40 / s, y + 30 / s))
+    assert rec.got() == [], "a pan is no edit"
+
+
+def test_a_touchpad_scroll_of_angles_pans_too(qtbot: Any) -> None:
+    view = make(qtbot)
+    s, x, y = look(view)
+    scroll(view, 60, 0, pixels=False)
+    s2, x2, y2 = look(view)
+    assert (s2, y2) == pytest.approx((s, y)) and x2 < x
+
+
+def test_a_mouse_wheel_zooms(qtbot: Any) -> None:
+    view = make(qtbot)
+    s = look(view)[0]
+    scroll(view, 0, 120, pad=False)
+    assert look(view)[0] > s
+    scroll(view, 0, -240, pad=False)
+    assert look(view)[0] < s
+
+
+def test_ctrl_scroll_zooms_on_a_touchpad(qtbot: Any) -> None:
+    view = make(qtbot)
+    s = look(view)[0]
+    scroll(view, 0, 40, keys=Qt.KeyboardModifier.ControlModifier)
+    assert look(view)[0] > s
+
+
+def test_a_pinch_zooms(qtbot: Any) -> None:
+    view = make(qtbot)
+    s = look(view)[0]
+    pinch(view, 0.25)
+    assert look(view)[0] == pytest.approx(s * 1.25)
+    pinch(view, -0.2)
+    assert look(view)[0] == pytest.approx(s * 1.25 * 0.8)
+
+
+def test_zoom_keeps_to_its_limits(qtbot: Any) -> None:
+    view = make(qtbot)
+    for _ in range(80):
+        scroll(view, 0, -120, pad=False)
+        pinch(view, -0.2)
+    assert look(view)[0] == pytest.approx(0.05)
+    for _ in range(80):
+        scroll(view, 0, 120, pad=False)
+        pinch(view, 0.2)
+    assert look(view)[0] == pytest.approx(3.0)
 
 
 def test_the_first_show_frames_the_nodes_and_later_ones_do_not(qtbot: Any) -> None:
