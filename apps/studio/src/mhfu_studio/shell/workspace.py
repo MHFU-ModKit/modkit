@@ -31,10 +31,14 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class Dock:
     """A dockable panel. `build` makes its widget once (a QWidget with a `sync()` that re-reads
-    what it shows); the shell calls `sync()` after every change. `tip` says what it is for."""
+    what it shows); the shell calls `sync()` after every change. `tip` says what it is for.
+
+    A `centre` panel is a tab of the centre beside the 3D view, not a dock: each tab keeps a
+    dock layout of its own, and `alone` and `size` mean nothing to it. It is never `shown` in
+    a fresh layout, which is the 3D view's."""
 
     label: str
-    area: Literal["left", "right", "bottom"]
+    area: Literal["left", "right", "bottom", "centre"]
     build: Callable[[Studio], Any]
     tip: str
     #: open in the default layout; the rest wait in View > Panels, tabbed at `area` when opened

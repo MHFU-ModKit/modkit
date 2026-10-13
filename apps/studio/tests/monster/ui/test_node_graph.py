@@ -1,20 +1,22 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import time
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any
 
 import pytest
 from mhfu_studio.monster.panels.node_graph import (
-    NOTE,
+    NODE_W,
     GraphView,
     LinkSpec,
     NodeSpec,
-    option,
+    wrap,
 )
 from mhfu_studio.shell.overlay import Ink
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import (
+    QFont,
+    QFontMetricsF,
     QInputDevice,
     QKeySequence,
     QNativeGestureEvent,
@@ -23,68 +25,20 @@ from PySide6.QtGui import (
     QWheelEvent,
 )
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import (
-    QApplication,
-    QComboBox,
-    QDoubleSpinBox,
-    QLineEdit,
-    QSpinBox,
-    QToolButton,
-)
+from PySide6.QtWidgets import QApplication
 
 LEFT, NONE = Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
 
 
-@dataclass(frozen=True)
-class P:
-    """A parameter, as `mhfu_port.behaviour.Param` will have it."""
-
-    name: str
-    type: str
-    title: str = ""
-    lo: float | None = None
-    hi: float | None = None
-    choices: tuple[object, ...] = ()
-    optional: bool = False
-    tip: str = ""
-
-
-COUNT = P("n", "int", "Times", 1, 9, tip="how often")
-HP = P("hp", "float", "HP below", 0, 1, optional=True, tip="a fraction")
-OP = P("op", "choice", "Compare", choices=("below", "above"), tip="which way")
-PART = P("part", "part", "Part", optional=True, tip="a part")
-MAINS = P("mains", "mains", "Mains", optional=True, tip="mains")
-COUNTER = P("counter", "var", "Counter", tip="which counter")
-SIGNAL = P("name", "signal", "Signal", tip="which signal")
-SIDES = P("sides", "sides", "Sides", choices=("front", "left", "right", "behind"), tip="sides")
 ROLES = {"trigger": Ink.HOT, "condition": Ink.AXIS_Z, "move": Ink.AXIS_X}
+LONG = "a summary that goes on and on past what two lines of a compact node can hold at all"
 
 
 def nodes() -> list[NodeSpec]:
     return [
         NodeSpec("t", "On hit", "trigger", (0, 0), outputs=("out",), badge="2"),
-        NodeSpec(
-            "c",
-            "Check",
-            "condition",
-            (300, 0),
-            ("in",),
-            ("out",),
-            params=(OP, HP, PART),
-            values={"op": "above", "hp": 0.5, "part": 2},
-            options={"part": [("Head", 1), ("Tail", 2)]},
-        ),
-        NodeSpec(
-            "m",
-            "Spin",
-            "move",
-            (600, 0),
-            ("in",),
-            params=(COUNT, MAINS),
-            values={"n": 3, "mains": (1,)},
-            options={"mains": [("one", 1), ("two", 2), ("three", 3)]},
-            tip="spins",
-        ),
+        NodeSpec("c", "Check", "condition", (300, 0), ("in",), ("out",), "above 0.5"),
+        NodeSpec("m", "Spin", "move", (600, 0), ("in",), summary="3 times", tip="spins"),
     ]
 
 
@@ -102,10 +56,8 @@ class Rec:
             "unlink_requested",
             "delete_requested",
             "moved",
-            "param_changed",
             "create_requested",
             "picked",
-            "label_changed",
         ):
             getattr(view, name).connect(lambda *a, n=name: self.calls.append((n, a)))
 
@@ -157,10 +109,6 @@ def drag(view: GraphView, a: QPoint, b: QPoint) -> None:
     QTest.mouseRelease(vp, LEFT, NONE, b)
 
 
-def field(view: GraphView, node: str, name: str) -> Any:
-    return view._shown[node].fields[name]
-
-
 # ---- show ---------------------------------------------------------------------------------- #
 
 
@@ -168,11 +116,9 @@ def test_show_draws(qtbot: Any) -> None:
     view = make(qtbot)
     assert set(view._shown) == {"t", "c", "m"} and pipes(view) == set(LINKS)
     assert view._shown["t"].view.badge == "2" and view._shown["m"].view.toolTip() == "spins"
-    assert (
-        field(view, "c", "op").get_value() == "above" and field(view, "c", "part").get_value() == 2
-    )
-    assert field(view, "m", "mains").get_value() == (1,) and field(view, "m", "n").get_value() == 3
+    assert [view._shown[i].view.summary for i in "tcm"] == ["", "above 0.5", "3 times"]
     assert view._shown["c"].view.xy_pos == [300.0, 0.0]
+    assert all(not s.view.widgets for s in view._shown.values()), "a node holds no editor"
 
 
 def test_show_again_updates_in_place(qtbot: Any) -> None:
@@ -181,22 +127,13 @@ def test_show_again_updates_in_place(qtbot: Any) -> None:
     view.select(["c"])
     zoom, rect = view.viewer.get_zoom(), view.viewer.scene_rect()
     ns = nodes()
-    ns[0] = replace(ns[0], title="On damage", badge="9", dim=True, at=(0, 90), label="why")
-    ns[1] = replace(ns[1], values={"op": "below", "hp": None, "part": 1})
-    ns[2] = replace(ns[2], options={"mains": [("one", 1), ("two", 2), ("three", 3), ("four", 4)]})
+    ns[0] = replace(ns[0], title="On damage", badge="9", dim=True, at=(0, 90))
+    ns[1] = replace(ns[1], summary="below 0.1")
     view.show(ns, [LINKS[0]])
     assert {i: s.view for i, s in view._shown.items()} == items
     t = items["t"]
     assert (t.name, t.badge, t.opacity() < 1, t.xy_pos) == ("On damage", "9", True, [0.0, 90.0])
-    assert field(view, "t", NOTE).get_value() == "why"
-    assert (field(view, "c", "op").get_value(), field(view, "c", "hp").get_value()) == (
-        "below",
-        None,
-    )
-    assert field(view, "c", "part").get_value() == 1
-    assert (
-        field(view, "m", "mains").get_value() == (1,) and len(field(view, "m", "mains")._opts) == 4
-    )
+    assert items["c"].summary == "below 0.1"
     assert pipes(view) == {LINKS[0]}
     assert view.selected() == ["c"]
     assert (view.viewer.get_zoom(), view.viewer.scene_rect()) == (zoom, rect)
@@ -250,8 +187,6 @@ def test_a_bad_spec_is_refused_before_anything_is_drawn(qtbot: Any) -> None:
         view.show([nodes()[0], nodes()[0]], [])
     with pytest.raises(ValueError, match="twice"):
         view.show([replace(nodes()[0], outputs=("out", "out"))], [])
-    with pytest.raises(ValueError, match="unknown type"):
-        view.show([replace(nodes()[0], params=(P("x", "text"),))], [])
     assert pipes(view) == set(LINKS)  # nothing was drawn half way
 
 
@@ -261,16 +196,6 @@ def test_roles_colour_the_nodes(qtbot: Any) -> None:
     assert len(set(colours.values())) == 3
     view.set_roles({})
     assert len({tuple(s.view.border_color) for s in view._shown.values()}) == 1
-
-
-def test_options_come_from_choices_too(qtbot: Any) -> None:
-    assert option("a") == ("a", "a") and option(("A", 1)) == ("A", 1) and option(3) == ("3", 3)
-    view = make(qtbot)
-    combo = field(view, "c", "op")._ctl
-    assert isinstance(combo, QComboBox) and [combo.itemText(i) for i in range(2)] == [
-        "below",
-        "above",
-    ]
 
 
 # ---- intents ------------------------------------------------------------------------------- #
@@ -449,104 +374,44 @@ def test_select_and_show_do_not_pick(qtbot: Any) -> None:
     assert rec.got() == [] and view.selected() == []
 
 
-def test_edits_on_the_node(qtbot: Any) -> None:
-    view = make(qtbot)
-    rec = Rec(view, qtbot)
-    spin, real = field(view, "m", "n")._ctl, field(view, "c", "hp")._ctl
-    combo, part = field(view, "c", "op")._ctl, field(view, "c", "part")._ctl
-    mains, note = field(view, "m", "mains")._ctl, field(view, "t", NOTE)._ctl
-    assert isinstance(spin, QSpinBox) and isinstance(real, QDoubleSpinBox)
-    assert isinstance(mains, QToolButton) and isinstance(note, QLineEdit)
-    spin.setValue(5)
-    real.setValue(0.25)
-    combo.setCurrentIndex(0)
-    part.setCurrentIndex(0)  # "none"
-    mains.menu().actions()[2].trigger()
-    note.setText("why")
-    note.editingFinished.emit()
-    assert rec.got() == [
-        ("param_changed", ("m", "n", 5)),
-        ("param_changed", ("c", "hp", 0.25)),
-        ("param_changed", ("c", "op", "below")),
-        ("param_changed", ("c", "part", None)),
-        ("param_changed", ("m", "mains", (1, 3))),
-        ("label_changed", ("t", "why")),
-    ]
-
-
-def test_an_unchanged_note_says_nothing(qtbot: Any) -> None:
-    view = make(qtbot)
-    rec = Rec(view, qtbot)
-    field(view, "t", NOTE)._ctl.editingFinished.emit()
-    assert rec.got() == []
-
-
-def test_a_refused_edit_goes_back(qtbot: Any) -> None:
-    view = make(qtbot)
-    rec = Rec(view, qtbot)
-    field(view, "m", "n")._ctl.setValue(7)
-    field(view, "c", "op")._ctl.setCurrentIndex(0)
-    field(view, "t", NOTE)._ctl.setText("x")
-    field(view, "t", NOTE)._ctl.editingFinished.emit()
-    assert len(rec.got()) == 3
-    assert field(view, "m", "n").get_value() == 3 and field(view, "c", "op").get_value() == "above"
-    assert field(view, "t", NOTE).get_value() == ""
-
-
-def test_an_accepted_edit_stays(qtbot: Any) -> None:
-    view = make(qtbot)
-
-    def take(i: str, name: str, value: object) -> None:
-        ns = nodes()
-        ns[2] = replace(ns[2], values={**ns[2].values, name: value})
-        view.show(ns, LINKS)
-
-    view.param_changed.connect(take)
-    field(view, "m", "n")._ctl.setValue(7)
-    qtbot.wait(20)
-    assert field(view, "m", "n").get_value() == 7
-
-
-def test_optional_numbers_have_none(qtbot: Any) -> None:
-    view = make(qtbot)
-    real = field(view, "c", "hp")
-    assert real._ctl.specialValueText() == "none" and real.get_value() == 0.5
-    view.show([replace(nodes()[1], values={"hp": None})], [])
-    assert real.get_value() is None and real._ctl.value() == real._ctl.minimum()
-    real._ctl.setValue(0.0)
-    assert real.get_value() == 0.0
-
-
-def test_a_value_the_options_lack_still_shows(qtbot: Any) -> None:
-    view = make(qtbot)
-    view.show([replace(nodes()[1], values={"part": 9})], [])
-    part = field(view, "c", "part")
-    assert part.get_value() == 9 and part._ctl.currentText() == "9"
-
-
-def test_options_change_keeps_the_pick(qtbot: Any) -> None:
-    view = make(qtbot)
-    new = [("Tail", 2), ("Wing", 3)]
-    view.show([replace(nodes()[1], options={"part": new}, values={"part": 2})], [])
-    part = field(view, "c", "part")
-    assert part.get_value() == 2 and part._ctl.count() == 3  # none, Tail, Wing
-
-
 def size(view: GraphView, node: str) -> tuple[float, float]:
     item = view._shown[node].view
     return item.width, item.height
 
 
-def test_new_options_keep_the_node_sizes_when_zoomed_out(qtbot: Any) -> None:
+def test_a_node_is_as_wide_as_its_least_and_as_tall_as_its_summary(qtbot: Any) -> None:
     view = make(qtbot)
-    before = {i: size(view, i) for i in ("c", "m")}
+    assert all(size(view, i)[0] == NODE_W for i in "tcm")
+    none, one = size(view, "t")[1], size(view, "c")[1]
+    ns = nodes()
+    ns[1] = replace(ns[1], summary=LONG)
+    view.show(ns, LINKS)
+    two = size(view, "c")[1]
+    assert none <= one < two and size(view, "c")[0] == NODE_W
+    ns[1] = replace(ns[1], summary="x " * 400)
+    view.show(ns, LINKS)
+    assert size(view, "c")[1] == two, "no more than two lines"
+
+
+def test_the_summary_wraps_to_two_lines_and_elides() -> None:
+    font = QFont(QApplication.font())
+    metrics = QFontMetricsF(font)
+    assert wrap("", metrics, 100) == [] and wrap("short", metrics, 100) == ["short"]
+    lines = wrap(LONG, metrics, 120)
+    assert len(lines) == 2 and lines[1].endswith("\u2026") and lines[0].startswith("a summary")
+    assert all(metrics.horizontalAdvance(ln) <= 120 for ln in lines)
+    assert wrap("unbreakable" * 30, metrics, 100)[0].endswith("\u2026")
+
+
+def test_a_redraw_keeps_the_node_sizes_when_zoomed_out(qtbot: Any) -> None:
+    view = make(qtbot)
+    before = {i: size(view, i) for i in "tcm"}
     view.viewer.scale(0.15, 0.15)
-    view.grab()  # a paint: NodeGraphQt hides a small node's widgets, and a redraw ignores them
-    assert not any(w.isVisible() for w in view._shown["c"].view.widgets.values())
-    c, m = nodes()[1:]
-    c = replace(c, options={"part": [("Head", 1), ("Tail", 2), ("Wing", 3)]})
-    m = replace(m, options={"mains": [("one", 1), ("two", 2)]})
-    view.show([nodes()[0], c, m], LINKS)
+    view.grab()  # a paint: NodeGraphQt draws a small node as a box, and a redraw must not follow
+    ns = nodes()
+    ns[1] = replace(ns[1], summary="below 0.1")
+    ns[2] = replace(ns[2], summary="4 times", title="Spin")
+    view.show(ns, LINKS)
     assert {i: size(view, i) for i in before} == before
 
 
@@ -578,7 +443,6 @@ def test_the_undo_stack_stays_empty(qtbot: Any) -> None:
     drag(view, port_at(view, "c", "out"), port_at(view, "m", "in"))
     a = title_at(view, "c")
     drag(view, a, a + QPoint(30, 30))
-    field(view, "m", "n")._ctl.setValue(8)
     view.show([*nodes(), NodeSpec("x", "X", "move", (0, 300))], [])
     qtbot.wait(20)
     stack = view._graph.undo_stack()
@@ -756,9 +620,7 @@ def test_show_80_nodes_is_cheap_after_the_first_time(qtbot: Any) -> None:
             (i % 10 * 300.0, i // 10 * 200.0),
             ("in",),
             ("out",),
-            params=(OP, HP, PART),
-            values={"op": "above", "hp": 0.5, "part": 2},
-            options={"part": [("Head", 1), ("Tail", 2)]},
+            "above 0.5",
         )
         for i in range(80)
     ]
@@ -772,23 +634,11 @@ def test_show_80_nodes_is_cheap_after_the_first_time(qtbot: Any) -> None:
     t0 = time.perf_counter()
     view.show(ns, ls)
     again = time.perf_counter() - t0
-    ns[7] = replace(ns[7], values={"op": "below", "hp": 0.1, "part": 1}, badge="3")
+    ns[7] = replace(ns[7], summary="below 0.1", badge="3")
     t0 = time.perf_counter()
     view.show(ns, ls)
     one = time.perf_counter() - t0
     assert again < 0.25 and one < 0.25
-
-
-def test_an_option_of_none_is_the_owners_own_none(qtbot: Any) -> None:
-    view = make(qtbot)
-    new = [("any", None), ("Head", 1), ("Tail", 2)]
-    view.show([replace(nodes()[1], options={"part": new}, values={"part": None})], [])
-    part = field(view, "c", "part")
-    assert part._ctl.count() == 3 and part._ctl.itemText(0) == "any" and part.get_value() is None
-    rec = Rec(view, qtbot)
-    part._ctl.setCurrentIndex(2)
-    part._ctl.setCurrentIndex(0)
-    assert [a[2] for n, a in rec.got() if n == "param_changed"] == [2, None]
 
 
 def test_settled_follows_the_intents_of_a_gesture(qtbot: Any) -> None:
@@ -800,7 +650,8 @@ def test_settled_follows_the_intents_of_a_gesture(qtbot: Any) -> None:
     qtbot.wait(20)
     assert calls == ["unlink_requested", "link_requested", "settled"]
     calls.clear()
-    field(view, "m", "n")._ctl.setValue(4)
+    a = title_at(view, "c")
+    drag(view, a, a + QPoint(30, 30))
     qtbot.wait(20)
     assert calls == ["settled"]
 
@@ -828,144 +679,3 @@ def test_the_canvas_takes_a_colour_and_frames_nodes(qtbot: Any) -> None:
     node = view._shown["m"].view
     assert abs(centre.x() - (node.scenePos().x() + node.boundingRect().width() / 2)) < 120
     view.frame(["nope"])
-
-
-# ---- names and sides ----------------------------------------------------------------------- #
-
-
-def named() -> list[NodeSpec]:
-    """A node of a counter, a signal and sides."""
-    return [
-        NodeSpec(
-            "e",
-            "Count",
-            "effect",
-            (0, 0),
-            ("in",),
-            ("out",),
-            params=(COUNTER, SIGNAL, SIDES),
-            values={"counter": "hits", "name": "rage", "sides": ("front",)},
-            options={
-                "counter": [("armor", "armor"), ("hits", "hits")],
-                "name": [("rage", "rage")],
-            },
-        )
-    ]
-
-
-def edits(rec: Rec) -> list[tuple[str, object]]:
-    """The (param, value) of every `param_changed` by now."""
-    return [(a[1], a[2]) for n, a in rec.got() if n == "param_changed"]
-
-
-def test_a_name_is_an_editable_combo_over_the_names_in_use(qtbot: Any) -> None:
-    view = make(qtbot, named(), [])
-    counter, signal = field(view, "e", "counter"), field(view, "e", "name")
-    assert isinstance(counter._ctl, QComboBox) and counter._ctl.isEditable()
-    assert [counter._ctl.itemText(i) for i in range(counter._ctl.count())] == ["armor", "hits"]
-    assert (counter.get_value(), signal.get_value()) == ("hits", "rage")
-    assert counter._ctl.currentIndex() == 1 and counter._ctl.currentText() == "hits"
-    view.show([replace(named()[0], values={"counter": "fresh", "name": "rage"})], [])
-    assert counter.get_value() == "fresh" and counter._ctl.currentIndex() == -1  # not an option
-
-
-def test_sides_are_a_multi_select_over_the_choices(qtbot: Any) -> None:
-    view = make(qtbot, named(), [])
-    sides = field(view, "e", "sides")
-    assert isinstance(sides._ctl, QToolButton) and sides.get_value() == ("front",)
-    assert [a.text() for a in sides._ctl.menu().actions()] == ["front", "left", "right", "behind"]
-    assert sides._ctl.text() == "front"
-    view.show([replace(named()[0], values={"sides": ("left", "behind")})], [])
-    assert sides.get_value() == ("left", "behind") and sides._ctl.text() == "left, behind"
-
-
-def test_each_new_widget_says_its_edit_once(qtbot: Any) -> None:
-    view = make(qtbot, named(), [])
-    rec = Rec(view, qtbot)
-    counter, signal = field(view, "e", "counter")._ctl, field(view, "e", "name")._ctl
-    counter.setCurrentIndex(0)  # a pick
-    assert edits(rec) == [("counter", "armor")]
-    counter.setEditText("fresh_1")  # a new name, finished by Return or by leaving
-    counter.lineEdit().editingFinished.emit()
-    counter.lineEdit().editingFinished.emit()
-    assert edits(rec) == [("counter", "fresh_1")]
-    signal.lineEdit().selectAll()
-    QTest.keyClicks(signal.lineEdit(), "calm")
-    QTest.keyClick(signal.lineEdit(), Qt.Key.Key_Return)
-    assert edits(rec) == [("name", "calm")]
-    field(view, "e", "sides")._ctl.menu().actions()[2].trigger()
-    assert edits(rec) == [("sides", ("front", "right"))]
-
-
-def test_a_name_that_is_not_a_name_goes_back_unheard(qtbot: Any) -> None:
-    view = make(qtbot, named(), [])
-    rec = Rec(view, qtbot)
-    f = field(view, "e", "counter")
-    for bad in ("Hits", "9lives", "two words", "x-y", "", "  "):
-        f._ctl.setEditText(bad)
-        f._ctl.lineEdit().editingFinished.emit()
-        assert f.get_value() == "hits" and f._ctl.currentText() == "hits", bad
-    assert rec.got() == []
-
-
-def test_a_name_with_spaces_around_it_is_the_name(qtbot: Any) -> None:
-    view = make(qtbot, named(), [])
-    rec = Rec(view, qtbot)
-    f = field(view, "e", "counter")
-    f._ctl.setEditText("  fresh ")
-    f._ctl.lineEdit().editingFinished.emit()
-    assert f._ctl.currentText() == "fresh"
-    assert edits(rec) == [("counter", "fresh")]
-
-
-def test_a_refused_name_goes_back_and_is_asked_again(qtbot: Any) -> None:
-    view = make(qtbot, named(), [])
-    rec = Rec(view, qtbot)
-    f = field(view, "e", "counter")
-    for _ in range(2):
-        f._ctl.setEditText("fresh")
-        f._ctl.lineEdit().editingFinished.emit()
-        assert edits(rec) == [("counter", "fresh")]
-        assert f.get_value() == "hits"
-
-
-def test_an_accepted_name_stays_and_is_an_option(qtbot: Any) -> None:
-    view = make(qtbot, named(), [])
-    f = field(view, "e", "counter")
-
-    def take(i: str, name: str, value: object) -> None:
-        opts = [("armor", "armor"), ("fresh", "fresh"), ("hits", "hits")]
-        spec = named()[0]
-        view.show(
-            [replace(spec, values={**spec.values, name: value}, options={"counter": opts})], []
-        )
-
-    view.param_changed.connect(take)
-    f._ctl.setEditText("fresh")
-    f._ctl.lineEdit().editingFinished.emit()
-    qtbot.wait(20)
-    assert f.get_value() == "fresh" and f._ctl.currentIndex() == 1 and f._ctl.count() == 3
-
-
-def test_new_names_keep_what_is_picked(qtbot: Any) -> None:
-    view = make(qtbot, named(), [])
-    f = field(view, "e", "counter")
-    f._ctl.setEditText("half_typ")  # not finished: not held
-    view.show([replace(named()[0], options={"counter": [("hits", "hits"), ("zeta", "zeta")]})], [])
-    assert f.get_value() == "hits" and f._ctl.count() == 2
-
-
-def test_an_unknown_type_raises(qtbot: Any) -> None:
-    view = make(qtbot)
-    with pytest.raises(ValueError, match="unknown type 'number'"):
-        view.show([replace(nodes()[0], params=(P("x", "number"),))], [])
-
-
-def test_a_new_name_keeps_the_node_size_when_zoomed_out(qtbot: Any) -> None:
-    view = make(qtbot, named(), [])
-    before = size(view, "e")
-    view.viewer.scale(0.15, 0.15)
-    view.grab()  # a paint: NodeGraphQt hides a small node's widgets
-    opts = [("armor", "armor"), ("fresh", "fresh"), ("hits", "hits")]
-    view.show([replace(named()[0], options={"counter": opts, "name": opts})], [])
-    assert size(view, "e") == before

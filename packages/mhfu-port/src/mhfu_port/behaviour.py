@@ -18,7 +18,7 @@ import dataclasses
 import itertools
 import math
 import re
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -68,6 +68,8 @@ UNLIMITED_DIST = 1.0e9
 
 Role = Literal["event", "state", "condition", "modifier", "effect"]
 ParamType = Literal["int", "float", "choice", "part", "mains", "var", "signal", "sides"]
+NAMES: tuple[ParamType, ...] = ("var", "signal")
+"""The param types that hold a name (`ID`): a counter or flag, and a signal."""
 
 
 @dataclass(frozen=True)
@@ -89,6 +91,10 @@ class Param:
     tip: str = ""
 
 
+Words = Callable[[Mapping[str, Any]], str]
+"""A kind's wording of its values: its params with their defaults, a `part` as its label."""
+
+
 @dataclass(frozen=True)
 class Kind:
     """One kind of block."""
@@ -98,22 +104,50 @@ class Kind:
     title: str
     params: tuple[Param, ...] = ()
     tip: str = ""
+    summary: Words | None = None
+    """The values in a line or two, for a compact node; None: `summary` words them generically."""
 
 
 _ON = "on_"
-_EVENT_WORDS: dict[Event, tuple[str, str]] = {
-    "noticed": ("On notice", "The monster notices the hunter"),
-    "combat_entered": ("On combat start", "The monster enters combat"),
-    "combat_left": ("On combat end", "The monster leaves combat"),
-    "flinch": ("On flinch", "The monster flinches; its move replaces the base monster's flinch"),
-    "part_broken": ("On part break", "A part of the monster breaks"),
-    "tail_cut": ("On tail cut", "The monster's tail is cut off"),
-    "enraged": ("On enraged", "The monster becomes enraged"),
-    "calmed": ("On calmed", "The monster calms down"),
+_EVENT_WORDS: dict[Event, tuple[str, str, str]] = {
+    "noticed": ("On notice", "The monster notices the hunter", "sees the hunter"),
+    "combat_entered": ("On combat start", "The monster enters combat", "enters combat"),
+    "combat_left": ("On combat end", "The monster leaves combat", "leaves combat"),
+    "flinch": (
+        "On flinch",
+        "The monster flinches; its move replaces the base monster's flinch",
+        "",
+    ),
+    "part_broken": ("On part break", "A part of the monster breaks", ""),
+    "tail_cut": ("On tail cut", "The monster's tail is cut off", "tail cut off"),
+    "enraged": ("On enraged", "The monster becomes enraged", "becomes enraged"),
+    "calmed": ("On calmed", "The monster calms down", "calms down"),
 }
 _PART = Param(
     "part", "part", "Of part", optional=True, tip="Only a flinch or break of this part; else any"
 )
+ANY_PART = "any part"
+
+
+def _n(v: object) -> str:
+    """A number without a needless `.0`."""
+    return str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
+
+
+def _plural(n: object, word: str) -> str:
+    return f"{_n(n)} {word}{'' if n == 1 else 's'}"
+
+
+def _span(lo: object, hi: object) -> str:
+    if hi is not None:
+        return f"{_n(lo)} \u2013 {_n(hi)}"
+    return "any distance" if not lo else f"from {_n(lo)}"
+
+
+def _share(lo: object, hi: object) -> str:
+    if hi is not None:
+        return f"{_n(lo)} \u2013 {_n(hi)} %"
+    return f"{_n(lo)} % or more" if lo else "any HP"
 
 
 _TESTS = {"at least": "var_at_least", "below": "var_below", "exactly": "var_equal"}
@@ -128,8 +162,16 @@ _NAME_TIP = "A lowercase name: letters, digits and _"
 
 def _event(name: Event) -> Kind:
     words = name.replace("_", " ")
-    title, tip = _EVENT_WORDS.get(name, (f"On {words}", f"The monster event {words}"))
-    return Kind(_ON + name, "event", title, (_PART,) if name in PART_EVENTS else (), tip)
+    title, tip, says = _EVENT_WORDS.get(name, (f"On {words}", f"The monster event {words}", words))
+    part = name in PART_EVENTS
+    return Kind(
+        _ON + name,
+        "event",
+        title,
+        (_PART,) if part else (),
+        tip,
+        (lambda v: str(v["part"])) if part else (lambda _: says),
+    )
 
 
 KINDS: dict[str, Kind] = {
@@ -146,20 +188,23 @@ KINDS: dict[str, Kind] = {
                 ),
             ),
             "A mod raises this signal",
+            summary=lambda v: str(v["name"]),
         ),
         Kind(
             "any_time",
             "state",
-            "Any time (between moves)",
+            "Any time",
             (),
             "Fires every AI frame in any main state of the base monster, while no own move plays",
+            summary=lambda _: "between moves",
         ),
         Kind(
             "idle",
             "state",
-            "Base monster idle (between moves)",
+            "Idle",
             (),
             "Fires every AI frame the base monster idles, while no own move plays",
+            summary=lambda _: "between moves",
         ),
         Kind(
             "host_state",
@@ -174,6 +219,7 @@ KINDS: dict[str, Kind] = {
                 ),
             ),
             "Fires while the base monster is in one of these main states",
+            summary=lambda v: "states " + ", ".join(map(str, v["mains"])),
         ),
         Kind(
             "played_for",
@@ -189,6 +235,7 @@ KINDS: dict[str, Kind] = {
                 ),
             ),
             "The move it follows, or the main state, has stood this long",
+            summary=lambda v: f"{_plural(v['frames'], 'frame')} or more",
         ),
         Kind(
             "distance",
@@ -206,6 +253,7 @@ KINDS: dict[str, Kind] = {
                 ),
             ),
             "The hunter is this far from the monster, in world units",
+            summary=lambda v: _span(v["lo"], v.get("hi")),
         ),
         Kind(
             "hunter_moving",
@@ -221,6 +269,7 @@ KINDS: dict[str, Kind] = {
                 ),
             ),
             "The hunter is moving away from the monster or closer to it",
+            summary=lambda v: f"moving {v['way']}",
         ),
         Kind(
             "cooldown",
@@ -228,6 +277,7 @@ KINDS: dict[str, Kind] = {
             "Then wait",
             (Param("frames", "int", "Frames", lo=1, tip="AI frames before it may fire again"),),
             "After it fired, the path waits before it may fire again",
+            summary=lambda v: _plural(v["frames"], "frame"),
         ),
         Kind(
             "limit",
@@ -235,6 +285,7 @@ KINDS: dict[str, Kind] = {
             "At most",
             (Param("times", "int", "Times", lo=1, tip="How often it may fire"),),
             "The path fires at most this often; without it, every time",
+            summary=lambda v: _plural(v["times"], "time"),
         ),
         Kind(
             "force",
@@ -243,6 +294,7 @@ KINDS: dict[str, Kind] = {
             (),
             'An own move asked during the monster\'s notice waits for combat, so the "!" and'
             " the howl play out; this plays it at once",
+            summary=lambda _: "plays at once",
         ),
         Kind(
             "mode",
@@ -259,6 +311,7 @@ KINDS: dict[str, Kind] = {
                 ),
             ),
             "The mode the base monster's action is entered with",
+            summary=lambda v: f"mode {v['mode']}",
         ),
         Kind(
             "monster_hp",
@@ -279,6 +332,7 @@ KINDS: dict[str, Kind] = {
                 ),
             ),
             "The monster's HP, as a share of its maximum",
+            summary=lambda v: _share(v["lo"], v.get("hi")),
         ),
         Kind(
             "part_broken",
@@ -296,6 +350,7 @@ KINDS: dict[str, Kind] = {
                 ),
             ),
             "A body part has, or has not, broken on this monster",
+            summary=lambda v: f"{v['part']} {v['state']}",
         ),
         Kind(
             "rage",
@@ -312,6 +367,7 @@ KINDS: dict[str, Kind] = {
                 ),
             ),
             "The monster is enraged or calm",
+            summary=lambda v: str(v["state"]),
         ),
         Kind(
             "hunter_side",
@@ -327,6 +383,7 @@ KINDS: dict[str, Kind] = {
                 ),
             ),
             "The hunter is on one of these sides of the monster",
+            summary=lambda v: ", ".join(v["sides"]),
         ),
         Kind(
             "chance",
@@ -334,6 +391,7 @@ KINDS: dict[str, Kind] = {
             "Chance",
             (Param("percent", "int", "Percent", lo=1, hi=100, tip="How often it holds"),),
             "Holds this often; rolled last, once every other block holds",
+            summary=lambda v: f"{_n(v['percent'])} %",
         ),
         Kind(
             "counter_is",
@@ -352,6 +410,7 @@ KINDS: dict[str, Kind] = {
                 Param("value", "int", "Value", 1, lo=S16[0], hi=S16[1], tip="The number"),
             ),
             "A counter the rules and mods share, against a number; it starts at 0",
+            summary=lambda v: f"{v['counter']} {v['test']} {v['value']}",
         ),
         Kind(
             "flag_is",
@@ -362,6 +421,7 @@ KINDS: dict[str, Kind] = {
                 Param("state", "choice", "State", "set", choices=tuple(_FLAG), tip="Set or clear"),
             ),
             "A flag the rules and mods share is set; it starts clear",
+            summary=lambda v: f"{v['flag']} is {v['state']}",
         ),
         Kind(
             "counter_add",
@@ -372,6 +432,7 @@ KINDS: dict[str, Kind] = {
                 Param("by", "int", "By", 1, lo=S16[0], hi=S16[1], tip="Added; negative takes away"),
             ),
             "When the path fires, adds to a counter; it stops at the 16-bit limits",
+            summary=lambda v: f"{v['counter']} {v['by']:+}",
         ),
         Kind(
             "counter_set",
@@ -382,6 +443,7 @@ KINDS: dict[str, Kind] = {
                 Param("to", "int", "To", 0, lo=S16[0], hi=S16[1], tip="The new value"),
             ),
             "When the path fires, sets a counter",
+            summary=lambda v: f"{v['counter']} to {v['to']}",
         ),
         Kind(
             "flag_set",
@@ -392,6 +454,7 @@ KINDS: dict[str, Kind] = {
                 Param("state", "choice", "State", "set", choices=tuple(_FLAG), tip="Set or clear"),
             ),
             "When the path fires, sets or clears a flag",
+            summary=lambda v: f"{v['flag']} to {v['state']}",
         ),
         Kind(
             "enrage",
@@ -399,6 +462,7 @@ KINDS: dict[str, Kind] = {
             "Enrage",
             (),
             "When the path fires, the monster becomes enraged, roar and all; none while it is",
+            summary=lambda _: "starts the rage",
         ),
         Kind(
             "calm",
@@ -406,6 +470,7 @@ KINDS: dict[str, Kind] = {
             "Calm down",
             (),
             "When the path fires, an enraged monster calms down; none while it is calm",
+            summary=lambda _: "ends the rage",
         ),
     )
 }
@@ -520,6 +585,35 @@ def params(b: Block) -> dict[str, Any]:
     return out | b.params
 
 
+def part_labels(m: Manifest) -> dict[int, str]:
+    """Every part index with its label: the manifest's first name for it, else `part k`; the
+    named ones first."""
+    named: dict[int, str] = {}
+    for name, part in m.parts.items():
+        named.setdefault(part.index, name)
+    return {**named, **{k: f"part {k}" for k in PARTS if k not in named}}
+
+
+def summary(m: Manifest, b: Block) -> str:
+    """`b`'s values in a line or two, as its kind words them."""
+    kind = KINDS[b.kind]
+    v = params(b)
+    labels = part_labels(m)
+    for p in kind.params:
+        if p.type == "part":
+            part = v.get(p.name)
+            v[p.name] = ANY_PART if part is None else labels.get(part, f"part {part}")
+    words = kind.summary or _generic(kind)
+    return words(v)
+
+
+def _generic(kind: Kind) -> Words:
+    """`title value` for each value a block has, for a kind that words none."""
+    return lambda v: ", ".join(
+        f"{p.title.lower()} {_n(v[p.name])}" for p in kind.params if v.get(p.name) is not None
+    )
+
+
 # validation
 
 
@@ -542,7 +636,7 @@ def _check_value(p: Param, v: object, w: str) -> None:
         need(v in p.choices, w, f"expected one of {want}, got {v!r}")
     elif p.type == "part":
         need(_int(v) and v in PARTS, w, f"{v!r} is not a part")
-    elif p.type in ("var", "signal"):
+    elif p.type in NAMES:
         ok = isinstance(v, str) and ID.fullmatch(v) is not None
         need(ok, w, f"{v!r} is not a name: a lowercase letter, then letters, digits, _")
     elif p.type == "sides":
