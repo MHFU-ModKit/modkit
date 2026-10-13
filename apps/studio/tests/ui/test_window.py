@@ -324,6 +324,44 @@ def test_reset_layout_resets_every_tab(make_window: Make) -> None:
     assert open_docks(w) == {}
 
 
+def test_the_tools_belong_to_the_3d_view(make_window: Make) -> None:
+    w = centred(make_window)
+    assert w.tools.isVisible()
+    w.show_tab("Canvas")
+    assert not w.tools.isVisible()
+    w.sync()
+    assert not w.tools.isVisible()
+    w.show_tab(HOME)
+    assert w.tools.isVisible()
+
+
+def test_findings_stays_open_across_tabs(make_window: Make) -> None:
+    w = centred(make_window)
+    ws = w.studio.active
+    ws.doc = FakeDocument()
+    ws.doc.found = [Finding("error", "x", "bad", target=3)]
+    w.studio.findings.stale()
+    findings = w.findings_dock
+    assert not findings.isVisible()
+    w.show_tab("Canvas")
+    assert not findings.isVisible()  # closed stays closed
+    w.show_tab(HOME)
+    findings.show()
+    before = open_docks(w)
+    w.sync()
+    w.findings.list.itemClicked.emit(w.findings.list.item(0))  # lands on Canvas
+    w.sync()
+    assert w.tabs.currentIndex() == 1 and findings.isVisible()
+    assert set(open_docks(w)) == {"Findings"}
+    findings.close()
+    w.show_tab(HOME)
+    assert not findings.isVisible()
+    findings.show()
+    w.show_tab("Canvas")
+    w.show_tab(HOME)
+    assert findings.isVisible() and set(open_docks(w)) == set(before)
+
+
 def test_a_workspace_switch_keeps_each_tabs_layout(make_window: Make) -> None:
     w = centred(make_window)
     w.show_tab("Canvas")

@@ -513,6 +513,7 @@ class Window(QMainWindow):
         if name is None or label == self._tab or (label != HOME and label not in centres):
             return
         self._layouts[name, self._tab] = self.saveState(STATE_VERSION)
+        findings = self.findings_dock.isVisible()
         self._tab = label
         self.centre.setCurrentWidget(self._home if label == HOME else centres[label].panel)
         with QSignalBlocker(self.tabs):
@@ -520,9 +521,19 @@ class Window(QMainWindow):
         for tab, c in centres.items():
             c.opener.setChecked(tab == label)
         self._lay_out(name)
+        if findings != self.findings_dock.isVisible():  # about the document, not a tab
+            self.findings_dock.setVisible(findings)
+            if findings:
+                self._opened(self.findings_dock, True)
+        self._show_toolbar()
         if label == HOME:
             self.view.setFocus()
         self._sync_tab()
+
+    def _show_toolbar(self) -> None:
+        """The tools are the 3D view's: on its tab, and not on the start page."""
+        have = bool(self._tool_actions) and self._tab == HOME and not self.studio.on_start()
+        self.tools.setVisible(have)
 
     def _sync_tab(self) -> None:
         """The shown centre panel re-reads what it shows."""
@@ -893,7 +904,7 @@ class Window(QMainWindow):
         """The start page or the view; the next steps over the view."""
         on = self.studio.on_start()
         want = self.start_page if on else self.view
-        self.tools.setVisible(bool(self._tool_actions) and not on)  # nothing to work on yet
+        self._show_toolbar()  # nothing to work on yet, on the start page
         self.tabs.setVisible(bool(self._centres.get(self.studio.active.name)) and not on)
         if on:
             self.show_tab(HOME)
