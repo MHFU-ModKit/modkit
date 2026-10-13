@@ -15,7 +15,7 @@ bypassed: its nodes are only items in a scene.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -53,6 +53,8 @@ _ANGLE_PX = 0.5
 #: the zoom per angle unit of a wheel, as NodeGraphQt has it, and the scale the canvas keeps to
 _WHEEL = 1.001
 _SCALE = (0.05, 3.0)
+DIM, STAND_IN, FADED = 0.35, 0.8, 0.2
+"""The opacity of a dimmed node, of a stand-in node, and of a wire faded back."""
 
 
 @dataclass(frozen=True)
@@ -310,6 +312,8 @@ class GraphView(QWidget):
     create_requested = Signal(str, float, float)
     #: the id of the one frame selected, else of the one node, else `None`
     picked = Signal(object)
+    #: the ids of the nodes selected, after any change of them
+    selection_changed = Signal(list)
     #: a node was right-clicked: its id, and its (emptied) menu for the owner to fill
     menu_requested = Signal(str, QMenu)
     #: after the intents of one gesture, all of them: the owner applies what it collected and
@@ -332,6 +336,8 @@ class GraphView(QWidget):
         self._renders = 0
         self._busy = 0
         self._pick: str | None = None
+        self._chosen: list[str] = []
+        self._faded: Collection[LinkSpec] = frozenset()
         self._framed = False  # the first non-empty `show` frames its nodes
 
         viewer = self._graph.viewer()
@@ -363,20 +369,21 @@ class GraphView(QWidget):
         nodes: Sequence[NodeSpec] | None = None,
         links: Sequence[LinkSpec] = (),
         frames: Sequence[FrameSpec] = (),
+        faded: Collection[LinkSpec] = (),
     ) -> None:
-        """Draws `nodes`, `links` and `frames`, and no more than differs from what is drawn.
-        Called bare it is `QWidget.show`."""
+        """Draws `nodes`, `links` (`faded` ones dim) and `frames`, and no more than differs from
+        what is drawn. Called bare it is `QWidget.show`."""
         if nodes is None:
             super().show()
             return
-        self._apply(nodes, links, frames)
+        self._apply(nodes, links, frames, faded)
         if nodes and self.isVisible():
             self._frame_once()
 
     def set_roles(self, colors: Mapping[str, Color]) -> None:
         """A node's colour by `NodeSpec.role`; a role not named keeps NodeGraphQt's grey."""
         self._roles = colors
-        self._apply(self._nodes, self._links, self._frames)
+        self._apply(self._nodes, self._links, self._frames, self._faded)
 
     def set_canvas(self, background: Color) -> None:
         """The canvas's fill, and its grid a shade off it."""
@@ -414,6 +421,7 @@ class GraphView(QWidget):
         finally:
             self._busy -= 1
         self._pick = self._picked()
+        self._chosen = self.selected()
 
     def selected(self) -> list[str]:
         """The selected nodes' ids, in the order of the last `show`."""
@@ -462,10 +470,14 @@ class GraphView(QWidget):
     # -- drawing -- #
 
     def _apply(
-        self, nodes: Sequence[NodeSpec], links: Sequence[LinkSpec], frames: Sequence[FrameSpec] = ()
+        self,
+        nodes: Sequence[NodeSpec],
+        links: Sequence[LinkSpec],
+        frames: Sequence[FrameSpec] = (),
+        faded: Collection[LinkSpec] = (),
     ) -> None:
         self._check(nodes, links, frames)
-        self._nodes, self._links, self._frames = nodes, links, frames
+        self._nodes, self._links, self._frames, self._faded = nodes, links, frames, faded
         self._renders += 1
         self._busy += 1
         try:
@@ -480,6 +492,8 @@ class GraphView(QWidget):
                     have = None
                 self._sync(have or self._make(spec), spec)
             self._relink(links)
+            for ln, pipe in self._pipes().items():
+                pipe.setOpacity(FADED if ln in faded else 1.0)
             self._frame(frames)
             for i in keep & want:
                 if not self._shown[i].view.isSelected():
@@ -487,6 +501,7 @@ class GraphView(QWidget):
         finally:
             self._busy -= 1
         self._pick = self._picked()
+        self._chosen = self.selected()
 
     @staticmethod
     def _check(
@@ -552,7 +567,7 @@ class GraphView(QWidget):
             view.badge = spec.badge
             view.update()
         view.ref = spec.ref
-        view.setOpacity(0.35 if spec.dim else 0.8 if spec.ref else 1.0)
+        view.setOpacity(DIM if spec.dim else STAND_IN if spec.ref else 1.0)
         x, y = view.xy_pos
         if abs(x - spec.at[0]) > 1e-3 or abs(y - spec.at[1]) > 1e-3:
             view.xy_pos = spec.at
@@ -560,6 +575,7 @@ class GraphView(QWidget):
         if resized:
             view.draw_node()
         view.setToolTip(spec.tip)  # after `draw_node`, which sets NodeGraphQt's own
+        view.text_item.setToolTip("")  # NodeGraphQt's rename hint hides the node's tip
 
     def _tint(self, role: str) -> tuple[QColor, QColor] | None:
         """A role's body and edge colours."""
@@ -647,7 +663,7 @@ class GraphView(QWidget):
             fn()
         self.settled.emit()
         if self._renders == seen and any(revert for _, revert in pending):
-            self._apply(self._nodes, self._links, self._frames)
+            self._apply(self._nodes, self._links, self._frames, self._faded)
 
     def _wired(self, kind: str, into: Port, out: Port) -> None:
         """NodeGraphQt applied a connect or a disconnect (a re-route is both, in one turn):
@@ -702,10 +718,13 @@ class GraphView(QWidget):
             self._raise(self._emit_picked, revert=False)
 
     def _emit_picked(self) -> None:
-        now = self._picked()
+        now, ids = self._picked(), self.selected()
         if now != self._pick:
             self._pick = now
             self.picked.emit(now)
+        if ids != self._chosen:
+            self._chosen = ids
+            self.selection_changed.emit(ids)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and not event.modifiers():

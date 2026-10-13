@@ -4,7 +4,7 @@
 made from the clip on screen, renamed, deleted, its fields and steer edited, and played in the
 running game. Its attack windows are drawn on the Timeline. The moves that follow one another are
 a sequence, grouped in the table and edited under the picked move. What plays them, and when, is
-the Behaviour dock's graph."""
+the Behaviour tab's graph."""
 
 from __future__ import annotations
 

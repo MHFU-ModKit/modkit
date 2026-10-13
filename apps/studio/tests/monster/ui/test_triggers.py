@@ -12,10 +12,11 @@ from mhfu_port import behaviour as model
 from mhfu_port.behaviour import Block, MoveNode, Path, Trigger
 from mhfu_port.manifest import Move
 from mhfu_studio.monster import behaviour as B
-from mhfu_studio.monster.behaviour import ALL
+from mhfu_studio.monster.behaviour import ALL, CANVAS, ORDER
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.panels import rows, triggers
 from mhfu_studio.monster.panels.behaviour import (
+    ORDER_HINT,
     SCOPED,
     SCOPED_HINT,
     UNPLACED,
@@ -36,6 +37,11 @@ LEFT, NONE = Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
 def rk(*places: int) -> str:
     """Places as the outline writes them, comma-separated."""
     return ", ".join(f"#{k}" for k in places)
+
+
+def by(place: int, trigger: str) -> str:
+    """A line of a move's tip: a rule and its trigger."""
+    return f"{rk(place)} \u00b7 {trigger}"
 
 
 def rng(lo: int, hi: int) -> str:
@@ -246,7 +252,7 @@ def test_node_of_maps_a_displayed_node_back(ws: MonsterWorkspace) -> None:
 
 def test_a_rule_is_a_row_of_its_blocks_and_the_move_it_plays() -> None:
     t = trigger(Path(("b1", "b2"), "m", None), Path(("b3",), "m", None))
-    plan = rows.plan(t, BLOCKS, NOTES, MOVES, {"m": (1, 2, 9)})
+    plan = rows.plan(t, BLOCKS, NOTES, MOVES, {"m": (1, 2, 9)}, tips={"m": "m's tip"})
     assert [r.title for r in plan.rows] == [f"{rk(1)} · go", f"{rk(2)} · then"]
     assert [[n.id for n in r.nodes] for r in plan.rows] == [
         ["b1", "b2", "ref:b2:m"],
@@ -254,7 +260,7 @@ def test_a_rule_is_a_row_of_its_blocks_and_the_move_it_plays() -> None:
     ]
     ref = plan.rows[0].nodes[-1]
     assert (ref.title, ref.ref, ref.badge) == ("▸ m", True, "×3")
-    assert ref.tip == f"The move m, played by 3 rules: {rk(1, 2, 9)}"
+    assert ref.tip == "m's tip"
     assert {(w.src, w.dst) for w in plan.links} == {
         ("b1", "b2"),
         ("b2", "ref:b2:m"),
@@ -266,7 +272,7 @@ def test_a_rule_is_a_row_of_its_blocks_and_the_move_it_plays() -> None:
 def test_a_move_played_by_one_rule_has_no_count() -> None:
     plan = rows.plan(trigger(Path(("b1",), "m", None)), BLOCKS, NOTES, MOVES, {"m": (1,)})
     ref = plan.rows[0].nodes[-1]
-    assert ref.badge == "" and ref.tip == f"The move m, played by 1 rule: {rk(1)}"
+    assert ref.badge == "" and ref.tip == "m", "the move's name when nothing says more"
 
 
 def test_a_rule_with_no_note_says_so() -> None:
@@ -363,11 +369,25 @@ def test_place_leaves_the_specs_it_was_given_alone() -> None:
 # ---- the scope in the panel ------------------------------------------------------------------ #
 
 
-def test_all_is_the_stored_canvas_unchanged(panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
+def to_canvas(qtbot: Any, panel: BehaviourPanel) -> None:
+    """The Canvas half of the header's toggle, clicked."""
+    QTest.mouseClick(panel.mode.buttons[CANVAS], LEFT, NONE)
+    qtbot.wait(60)
+
+
+def to_order(qtbot: Any, panel: BehaviourPanel) -> None:
+    QTest.mouseClick(panel.mode.buttons[ORDER], LEFT, NONE)
+    qtbot.wait(60)
+
+
+def test_all_canvas_is_the_stored_canvas_unchanged(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    to_canvas(qtbot, panel)
     m = doc(ws).manifest
-    assert panel.ws.scope == ALL
+    assert panel.ws.scope == ALL and ws.all_view == CANVAS
     assert shown(panel) == {*m.behaviour.blocks, *map(B.move_id, m.moves)}
-    assert at(panel, "b2") == [460.0, 0.0] and panel.spread.isEnabled()
+    assert at(panel, "b2") == [460.0, 0.0] and not panel.spread.isHidden()
     assert panel.title.text().startswith("8 blocks · 6 of")
 
 
@@ -383,13 +403,16 @@ def test_a_trigger_shows_only_its_rules_in_rank_order(
     }
     assert frames(panel) == [f"{rk(3)} · any flinch", f"{rk(4)} · (no note)"]
     assert panel.title.text() == f"All › Flinch — 2 rules, {rng(3, 4)} of 6"
-    assert not panel.spread.isEnabled() and panel.hint.text() == SCOPED_HINT
+    assert panel.spread.isHidden() and panel.hint.text() == SCOPED_HINT
     assert panel.view._shown["ref:b4:stamp"].view.badge == "×3"
-    assert panel.view._shown["ref:b4:stamp"].view.toolTip() == (
-        f"The move stamp, played by 3 rules: {rk(1, 3, 6)}"
-    )
+    assert panel.view._shown["ref:b4:stamp"].view.toolTip().splitlines() == [
+        "stamp \u00b7 played by 3 rules",
+        by(1, "while charge"),
+        by(3, "Flinch"),
+        by(6, "Part break"),
+    ]
     pick(qtbot, panel, ALL)
-    assert ws.scope == ALL and "b8" in shown(panel) and panel.spread.isEnabled()
+    assert ws.scope == ALL and "b8" in shown(panel) and panel.spread.isHidden()
 
 
 def test_a_rule_that_plays_nothing_is_a_row_without_a_move(
@@ -493,7 +516,7 @@ def test_a_finding_on_a_loose_block_switches_to_all(
     pick(qtbot, panel, "on_flinch")
     ws.reveal(("block", "b9"), "behaviour")
     panel.sync()
-    assert ws.scope == ALL and panel.view.selected() == ["b9"]
+    assert ws.scope == ALL and panel.view.selected() == ["b9"] and ws.all_view == CANVAS
 
 
 def test_a_move_picked_elsewhere_does_not_switch_the_scope(
@@ -539,6 +562,8 @@ def test_a_trigger_has_no_free_block_menu_and_all_has_it_back(
     qtbot: Any, panel: BehaviourPanel
 ) -> None:
     menu = panel.view.viewer.context_menus()["graph"]
+    assert menu.actions() == [], "the rows of All take no free blocks either"
+    to_canvas(qtbot, panel)
     assert len(menu.actions()) == 5
     pick(qtbot, panel, "on_flinch")
     assert menu.actions() == []
@@ -1087,6 +1112,7 @@ def test_a_reference_plays_in_the_game_from_its_menu_and_the_bar(
 ) -> None:
     played: list[str | None] = []
     monkeypatch.setattr(ws, "play_move_in_game", lambda force=False: played.append(ws.move))
+    monkeypatch.setattr(ws, "play_move_blocker", lambda name=None: None)
     pick(qtbot, panel, "on_flinch")
     menu = right_click(qtbot, panel, "ref:b4:stamp")
     assert {a.text() for a in menu.actions()} == {
@@ -1109,6 +1135,7 @@ def test_the_move_a_while_trigger_starts_from_plays_in_the_game_too(
 ) -> None:
     played: list[str | None] = []
     monkeypatch.setattr(ws, "play_move_in_game", lambda force=False: played.append(ws.move))
+    monkeypatch.setattr(ws, "play_move_blocker", lambda name=None: None)
     pick(qtbot, panel, "during:charge")
     assert "Play in game" in [
         a.text() for a in right_click(qtbot, panel, B.move_id("charge")).actions()
@@ -1120,13 +1147,246 @@ def test_the_move_a_while_trigger_starts_from_plays_in_the_game_too(
     assert played == ["charge"]
 
 
-def test_play_in_game_says_so_when_no_game_is_there(
-    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+def test_play_is_off_with_the_reason_when_the_move_cannot_play(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ws.game_running = lambda: False
+    why = ["no game running"]
+    monkeypatch.setattr(ws, "play_move_blocker", lambda name=None: why[0] or None)
     pick(qtbot, panel, "on_flinch")
     click(qtbot, panel, node_pos(panel, "ref:b4:stamp"))
-    assert panel.bar.play is not None
-    panel.bar.play.click()
+    assert panel.bar.play is not None and not panel.bar.play.isEnabled()
+    assert panel.bar.play.toolTip() == "Play in game: no game running"
+    act = entry(right_click(qtbot, panel, "ref:b4:stamp"), "Play in game")
+    assert not act.isEnabled() and act.toolTip() == "Play in game: no game running"
+    why[0] = ""
+    panel.hide()
+    panel.show()
     qtbot.wait(40)
-    assert ws.message.startswith("not played in the game")
+    assert panel.bar.play is not None and panel.bar.play.isEnabled()
+    assert "Plays stamp in the running game" in panel.bar.play.toolTip()
+    assert entry(right_click(qtbot, panel, "ref:b4:stamp"), "Play in game").isEnabled()
+
+
+def test_a_move_that_rides_the_base_monster_is_off_whatever_the_game_does(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    doc(ws).edit(lambda m: m.moves.__setitem__("charge", Move(main=1, sub=4, clip="walk")))
+    ws.refresh()
+    panel.sync()
+    click(qtbot, panel, node_pos(panel, "start:b1:charge"))
+    assert panel.bar.play is not None and not panel.bar.play.isEnabled()
+    assert "charge rides the base monster's" in panel.bar.play.toolTip()
+    assert (ws.play_move_blocker("charge") or "").startswith("charge rides the base monster's")
+    assert ws.play_move_blocker("nope") == "pick a move first"
+
+
+# ---- All, in order --------------------------------------------------------------------------- #
+
+
+def test_all_opens_in_order_and_the_toggle_is_there_only_for_all(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    assert ws.all_view == ORDER and not panel.mode.isHidden()
+    assert panel.mode.toolTip() and all(b.toolTip() for b in panel.mode.buttons.values())
+    assert panel.mode.value == ORDER and panel.spread.isHidden() and panel.add_rule.isHidden()
+    pick(qtbot, panel, "on_flinch")
+    assert panel.mode.isHidden()
+    pick(qtbot, panel, ALL)
+    assert not panel.mode.isHidden() and panel.hint.text() == ORDER_HINT
+
+
+def test_in_order_draws_every_rule_in_rank_order_and_names_its_trigger(
+    panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    assert frames(panel) == [
+        f"{rk(1)} \u00b7 while charge \u00b7 first",
+        f"{rk(2)} \u00b7 while charge \u00b7 (no note)",
+        f"{rk(3)} \u00b7 Flinch \u00b7 any flinch",
+        f"{rk(4)} \u00b7 Flinch \u00b7 (no note)",
+        f"{rk(5)} \u00b7 Notice \u00b7 at once",
+        f"{rk(6)} \u00b7 Part break \u00b7 (no note)",
+    ]
+    assert panel.title.text() == "All rules \u2014 6 in the order they are checked"
+
+
+def test_in_order_puts_a_rule_that_plays_nothing_first_without_a_reference(
+    panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    def count(m: Any) -> None:
+        b = m.behaviour.blocks
+        b["b9"] = Block("on_tail_cut", (260.0, 600.0), next=["b10"], label="count the cuts")
+        b["b10"] = Block("counter_add", (460.0, 600.0), {"counter": "cuts"})
+
+    doc(ws).edit(count)
+    ws.refresh()
+    panel.sync()
+    assert frames(panel)[0] == f"{rk(1)} \u00b7 Tail cut \u00b7 count the cuts"
+    assert f"{rk(2)} \u00b7 while charge \u00b7 first" in frames(panel)
+    assert {"b9", "b10"} <= shown(panel)
+    assert {(w.src, w.dst) for w in panel.view._links if w.src == "b10"} == set()
+
+
+def test_a_while_rule_starts_from_a_dashed_reference_with_the_count(
+    panel: BehaviourPanel,
+) -> None:
+    start = panel.view._shown["start:b1:charge"].view
+    assert (start.name, start.badge, start.ref) == ("while charge plays", "\u00d72", True)
+    assert "start:b3:charge" in shown(panel)
+    wires = {(w.src, w.src_port, w.dst) for w in panel.view._links}
+    assert ("start:b1:charge", "while playing", "b1") in wires
+    assert B.move_id("charge") not in shown(panel), "the real move is not drawn once for every row"
+    assert at(panel, "start:b1:charge")[0] < at(panel, "b1")[0]
+
+
+def test_in_order_has_no_free_position_to_write(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    before = doc(ws).manifest
+    for key in (ALL, "on_flinch", ALL):
+        pick(qtbot, panel, key)
+    to_canvas(qtbot, panel)
+    to_order(qtbot, panel)
+    assert doc(ws).manifest is before
+
+
+def test_the_choice_belongs_to_the_document_and_outlives_a_panel(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    to_canvas(qtbot, panel)
+    assert ws.all_view == CANVAS and "b8" in shown(panel) and B.move_id("charge") in shown(panel)
+    again = make(qtbot, ws)
+    assert again.mode.value == CANVAS and shown(again) == shown(panel)
+    to_order(qtbot, panel)
+    assert ws.all_view == ORDER and B.move_id("charge") not in shown(panel)
+
+
+def test_a_finding_on_a_block_in_a_rule_keeps_the_rows(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    ws.reveal(("block", "b8"), "behaviour")
+    panel.sync()
+    assert ws.all_view == ORDER and panel.view.selected() == ["b8"]
+
+
+def test_editing_in_order_is_as_in_a_trigger(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    rules = model.compile(doc(ws).manifest)
+    entry(right_click(qtbot, panel, "b4"), "Insert after", "Modifiers", "At most").trigger()
+    qtbot.wait(60)
+    assert blocks(ws)["b4"].next == ["b9"] and blocks(ws)["b9"].play == ["stamp"]
+    assert ws.all_view == ORDER and "b9" in shown(panel)
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    assert model.compile(doc(ws).manifest) == rules
+    click(qtbot, panel, node_pos(panel, "b4"))
+    QTest.keyClick(panel.view, Qt.Key.Key_Delete)
+    qtbot.wait(60)
+    assert "b4" not in blocks(ws) and "b4" not in shown(panel)
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    assert model.compile(doc(ws).manifest) == rules
+    click(qtbot, panel, node_pos(panel, "ref:b4:stamp"))
+    assert panel.bar.plays is not None
+    panel.bar.plays.ctl.setCurrentIndex(panel.bar.plays.ctl.findText("howl"))
+    qtbot.wait(60)
+    assert blocks(ws)["b4"].play == ["howl"]
+    click(qtbot, panel, frame_pos(panel, "frame:3"))
+    assert panel.bar.note is not None and panel.bar.note.get_value() == "any flinch"
+
+
+def test_wiring_and_dragging_are_refused_in_order_as_in_a_trigger(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    before, here = doc(ws).manifest, at(panel, "b4")
+    drag(panel, port_at(panel, "b4", "out"), port_at(panel, "b5", "in"))
+    qtbot.wait(40)
+    assert doc(ws).manifest is before and ws.message == SCOPED
+    item = panel.view._shown["b4"].view
+    a = panel.view.viewer.mapFromScene(item.mapToScene(QPointF(item.width / 2, 8)))
+    drag(panel, a, a + QPoint(40, 60))
+    qtbot.wait(60)
+    assert doc(ws).manifest is before and at(panel, "b4") == here
+
+
+def test_selecting_a_start_shows_its_move_and_deleting_it_does_nothing(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    before = doc(ws).manifest
+    click(qtbot, panel, node_pos(panel, "start:b1:charge"))
+    assert panel.view.selected() == ["start:b1:charge"] and ws.move == "charge"
+    assert [w.text() for w in panel.bar.findChildren(type(panel.title))][0] == "charge"
+    QTest.keyClick(panel.view, Qt.Key.Key_Delete)
+    qtbot.wait(60)
+    assert doc(ws).manifest is before
+
+
+def test_a_drop_among_other_triggers_rules_moves_the_rule_only_among_its_own(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    rules = model.compile(doc(ws).manifest)
+    drag_frame(qtbot, panel, "frame:3", "frame:5")  # past the flinch rule below it and the notice
+    after = model.compile(doc(ws).manifest)
+    assert after[2] == rules[3] and after[3] == rules[2], "swapped with its own trigger's rule"
+    assert after[:2] == rules[:2] and after[4:] == rules[4:], "no other trigger's rule moved"
+    assert "only among its own trigger's rules" in ws.message and ws.message.startswith(
+        "rule moved"
+    )
+
+
+def test_a_drop_among_its_own_rules_says_nothing_of_triggers(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    drag_frame(qtbot, panel, "frame:3", "frame:4")
+    assert ws.message.startswith("rule moved") and "only among" not in ws.message
+
+
+# ---- what a reference says ------------------------------------------------------------------- #
+
+
+def tip(p: BehaviourPanel, node: str) -> str:
+    return p.view._shown[node].view.toolTip()
+
+
+def test_a_reference_lists_the_rules_that_play_the_move_and_the_sequence(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    doc(ws).edit(lambda m: setattr(m.moves["stamp"], "after", "stamp_2"))
+    doc(ws).edit(lambda m: setattr(m.moves["stamp_2"], "after", "howl"))
+    ws.refresh()
+    panel.sync()
+    assert tip(panel, "ref:b2:stamp").splitlines() == [
+        "stamp \u00b7 played by 3 rules",
+        by(1, "while charge"),
+        by(3, "Flinch"),
+        by(6, "Part break"),
+        "then stamp_2 \u2192 howl",
+    ]
+    assert tip(panel, "ref:b3:stamp_2").splitlines() == [
+        "stamp_2 \u00b7 played by 1 rule",
+        by(2, "while charge"),
+        "then howl",
+    ]
+
+
+def test_a_move_no_rule_plays_and_a_ring_are_said_plainly() -> None:
+    assert triggers.plays_tip("m", [], []) == "m \u00b7 no rule plays it"
+    assert triggers.plays_tip("m", [(1, "Flinch")], ["a", "b", "m"]).splitlines()[-1] == (
+        "then a \u2192 b \u2192 m"
+    )
+
+
+def test_a_long_list_is_cut() -> None:
+    by = [(k, "Flinch") for k in range(1, 12)]
+    lines = triggers.plays_tip("m", by, []).splitlines()
+    assert len(lines) == 1 + triggers.MOST + 1 and lines[-1] == f"and {11 - triggers.MOST} more"
+
+
+def test_the_start_of_a_while_rule_says_who_plays_the_move_it_starts_from(
+    panel: BehaviourPanel,
+) -> None:
+    head, *rest = tip(panel, "start:b1:charge").splitlines()
+    assert head == "This rule starts from charge's while-playing port"
+    assert rest[0] == "charge \u00b7 no rule plays it"

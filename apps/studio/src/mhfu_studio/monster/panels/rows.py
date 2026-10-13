@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""One trigger's rules as rows, for the Behaviour canvas: display only, nothing here is written
-to a block's `at`.
+"""Rules as rows, for the Behaviour canvas: display only, nothing here is written to a block's
+`at`.
 
 A row is one rule in the order the brain checks them, in a frame titled `#n · note`: its blocks
 left to right and the move it plays as a reference at its end. A rule with no move yet comes
-after them, ending in a placeholder. A trigger that is a playing move shows that move once, on
-the left, wired into every row. `plan` makes the nodes and wires, `place` puts them where the
-drawn sizes say.
+after them, ending in a placeholder. `plan` draws one trigger's rules; a trigger that is a
+playing move shows that move once, on the left, wired into every row. `plan_all` draws every
+rule, each row starting with its trigger (a dashed reference to the move for a while-playing
+rule) and its frame naming it. `place` puts the nodes where their drawn sizes say.
 """
 
 from __future__ import annotations
@@ -30,8 +31,9 @@ from mhfu_studio.monster.panels.node_graph import (
 )
 
 #: a displayed node's id: the reference after block `b` to move `m` is `ref:b:m`, the placeholder
-#: after it `open:b`; a second drawing of block `b` is `b~2`, and `b~2`'s reference `ref:b~2:m`
-REF, OPEN, COPY = "ref:", "open:", "~"
+#: after it `open:b`, the reference a while-playing rule starts from `start:b:m`; a second drawing
+#: of block `b` is `b~2`, and `b~2`'s reference `ref:b~2:m`
+REF, OPEN, START, COPY = "ref:", "open:", "start:", "~"
 FRAME, NEW = "frame:", "new"
 ARROW = "▸"
 TIMES = "×"
@@ -49,6 +51,8 @@ def node_of(shown: str) -> str:
     ref = ref_of(shown)
     if ref is not None:
         return graph.move_id(ref[1]) if ref[1] else ""
+    if shown.startswith(START):
+        return graph.move_id(shown.split(":")[2])
     if shown.startswith(FRAME):
         return ""
     return shown.split(COPY)[0]
@@ -65,6 +69,11 @@ def ref_of(shown: str) -> tuple[str, str | None] | None:
     return None
 
 
+def is_start(shown: str) -> bool:
+    """Whether a displayed node is the reference a while-playing rule starts from."""
+    return shown.startswith(START)
+
+
 def players(ps: Sequence[Path]) -> dict[str, tuple[int, ...]]:
     """For each move some rule plays, the places in `ps` of the rules that play it."""
     out: dict[str, list[int]] = {}
@@ -77,7 +86,8 @@ def players(ps: Sequence[Path]) -> dict[str, tuple[int, ...]]:
 @dataclass(frozen=True)
 class Row:
     """One rule: its frame `id`, `rank` (None: no move yet), the `path` it is (its `play` empty
-    if it has none), its nodes in order and the `role` that tints its frame."""
+    if it has none), its nodes in order, the displayed ids of its `blocks` among them, the `key`
+    of its trigger and the `role` that tints its frame."""
 
     id: str
     rank: int | None
@@ -85,6 +95,8 @@ class Row:
     nodes: tuple[NodeSpec, ...]
     role: str
     path: Path
+    blocks: tuple[str, ...] = ()
+    key: str = ""
 
 
 @dataclass(frozen=True)
@@ -112,6 +124,10 @@ def note_of(blocks: Mapping[str, str], p: Path) -> str:
     return "; ".join(blocks[i] for i in p.blocks if blocks[i]) or NO_NOTE
 
 
+Entry = tuple[int | None, Path, str]
+"""A rule to draw: its rank (None: no move yet), its path, its trigger's key."""
+
+
 def plan(
     t: Trigger,
     blocks: Mapping[str, NodeSpec],
@@ -119,18 +135,74 @@ def plan(
     moves: Mapping[str, NodeSpec],
     played: Mapping[str, tuple[int, ...]],
     opens: Sequence[Path] = (),
+    tips: Mapping[str, str] | None = None,
 ) -> Plan:
     """`t`'s rules as rows, a frame tinted as the trigger is, then the `opens`: rules of `t` with
     no move yet. `blocks` and `moves` are the specs of the document's nodes, `notes` each
-    block's note, `played` the places of the rules that play each move (`players`)."""
+    block's note, `played` the places of the rules that play each move (`players`), `tips` the
+    tip of each move's reference."""
     start = moves.get(t.name) if t.section == "move" else None
+    entries: list[Entry] = [
+        *((r, p, t.key) for r, p in t.rules),
+        *((None, o, t.key) for o in opens),
+    ]
+    return _plan(entries, blocks, notes, played, start, None, {t.key: t.section}, tips or {})
+
+
+def plan_all(
+    ts: Sequence[Trigger],
+    opens: Sequence[tuple[str, Path]],
+    blocks: Mapping[str, NodeSpec],
+    notes: Mapping[str, str],
+    played: Mapping[str, tuple[int, ...]],
+    labels: Mapping[str, str],
+    tips: Mapping[str, str] | None = None,
+) -> Plan:
+    """Every rule of `ts` in the order the brain checks them, then the `opens` (trigger key, rule)
+    with no move yet. `labels` words each trigger by its key, for the frames."""
+    ranked = sorted((r, p, t.key) for t in ts for r, p in t.rules)
+    entries: list[Entry] = [*ranked, *((None, o, key) for key, o in opens)]
+    sections = {t.key: t.section for t in ts}
+    return _plan(entries, blocks, notes, played, None, labels, sections, tips or {})
+
+
+def _plan(
+    entries: Sequence[Entry],
+    blocks: Mapping[str, NodeSpec],
+    notes: Mapping[str, str],
+    played: Mapping[str, tuple[int, ...]],
+    start: NodeSpec | None,
+    labels: Mapping[str, str] | None,
+    sections: Mapping[str, str],
+    tips: Mapping[str, str],
+) -> Plan:
     seen: Counter[str] = Counter()
     news: Counter[str] = Counter()
+    starts = Counter(p.during for _, p, _ in entries if p.during)
     rows: list[Row] = []
     links: list[LinkSpec] = []
-    for rank, p in [*t.rules, *((None, o) for o in opens)]:
+    for rank, p, key in entries:
         ids: list[str] = []
         nodes: list[NodeSpec] = []
+        if labels is not None and p.during:  # every row names where it starts from
+            nodes.append(
+                NodeSpec(
+                    f"{START}{p.blocks[0]}:{p.during}",
+                    f"while {p.during} plays",
+                    "move",
+                    (0.0, 0.0),
+                    (),
+                    (graph.WHILE,),
+                    badge=f"{TIMES}{starts[p.during]}" if starts[p.during] > 1 else "",
+                    tip="\n".join(
+                        [
+                            f"This rule starts from {p.during}'s while-playing port",
+                            tips.get(p.during, ""),
+                        ]
+                    ).strip(),
+                    ref=True,
+                )
+            )
         for b in p.blocks:  # a block on two rules is drawn twice, the copy faded
             seen[b] += 1
             shown = b if seen[b] == 1 else f"{b}{COPY}{seen[b]}"
@@ -142,6 +214,8 @@ def plan(
         links += [LinkSpec(a, graph.OUT, b, graph.IN) for a, b in zip(ids, ids[1:], strict=False)]
         if start is not None:
             links.append(LinkSpec(start.id, graph.WHILE, ids[0], graph.IN))
+        elif nodes[0].id.startswith(START):
+            links.append(LinkSpec(nodes[0].id, graph.WHILE, ids[0], graph.IN))
         end: NodeSpec | None = None
         if p.play:
             by = played.get(p.play, ())
@@ -152,8 +226,7 @@ def plan(
                 (0.0, 0.0),
                 (graph.PLAY,),
                 badge=f"{TIMES}{len(by)}" if len(by) > 1 else "",
-                tip=f"The move {p.play}, played by {len(by)} "
-                f"rule{'' if len(by) == 1 else 's'}: " + ", ".join(f"#{k}" for k in by),
+                tip=tips.get(p.play, p.play),
                 ref=True,
             )
         elif rank is None:  # a rule that plays nothing by design ends at its last block
@@ -172,10 +245,22 @@ def plan(
             links.append(LinkSpec(ids[-1], graph.OUT, end.id, graph.PLAY))
         if rank is None:
             news[p.blocks[0]] += 1
-            frame, title = f"{FRAME}{NEW}:{p.blocks[0]}:{news[p.blocks[0]]}", UNFINISHED
+            frame, head = f"{FRAME}{NEW}:{p.blocks[0]}:{news[p.blocks[0]]}", UNFINISHED
         else:
-            frame, title = f"{FRAME}{rank}", f"#{rank}"
-        rows.append(Row(frame, rank, f"{title} · {note_of(notes, p)}", tuple(nodes), t.section, p))
+            frame, head = f"{FRAME}{rank}", f"#{rank}"
+        named = f"{head} · {labels[key]} · " if labels is not None else f"{head} · "
+        rows.append(
+            Row(
+                frame,
+                rank,
+                named + note_of(notes, p),
+                tuple(nodes),
+                sections.get(key, "move"),
+                p,
+                tuple(ids),
+                key,
+            )
+        )
     return Plan(tuple(rows), tuple(links), start)
 
 

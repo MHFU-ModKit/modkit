@@ -31,6 +31,9 @@ PLAY, WHILE, THEN = "play", "while playing", "then"
 """A move node's ports: the input, then the two outputs."""
 ALL = "all"
 """The scope that is the whole canvas, as stored; any other is a trigger's key."""
+ORDER, CANVAS = "order", "canvas"
+"""What All shows: every rule as a framed row in the order they are checked, or the canvas as
+stored."""
 INSERTABLE = ("condition", "modifier", "effect")
 """The roles of the blocks a rule holds besides its first."""
 ROLE_TITLES = {"state": "State"}
@@ -139,6 +142,48 @@ def wires(m: Manifest) -> list[Wire]:
         Wire(move_id(n), THEN, move_id(mv.after), PLAY) for n, mv in m.moves.items() if mv.after
     ]
     return out
+
+
+class Focus(NamedTuple):
+    """What stays bright when nodes are selected."""
+
+    nodes: frozenset[str]
+    wires: frozenset[Wire]
+
+
+def focus(m: Manifest, ps: Sequence[Path], ids: Collection[str]) -> Focus | None:
+    """The rules through `ids`, whole, with the moves each hands on to; the nodes `ids` always.
+    None when nothing is selected."""
+    if not ids:
+        return None
+    nodes, lit = set(ids), set[Wire]()
+    for p in ps:
+        names = sequence.chain(m, p.play) if p.play else []
+        steps = [move_id(n) for n in names]
+        start = [move_id(p.during)] if p.during else []
+        if not {*start, *p.blocks, *steps} & set(ids):
+            continue
+        lit.update(Wire(a, OUT, b, IN) for a, b in zip(p.blocks, p.blocks[1:], strict=False))
+        if start:
+            lit.add(Wire(start[0], WHILE, p.blocks[0], IN))
+        if steps:
+            lit.add(Wire(p.blocks[-1], OUT, steps[0], PLAY))
+        lit.update(
+            Wire(move_id(n), THEN, move_id(after), PLAY)
+            for n in names
+            if (after := m.moves[n].after) in m.moves
+        )
+        nodes.update(start, p.blocks, steps)
+    return Focus(frozenset(nodes), frozenset(lit))
+
+
+def then(m: Manifest, name: str) -> list[str]:
+    """The moves `name` hands to in turn; a sequence that rings ends with the move it hands back
+    to."""
+    steps = sequence.chain(m, name)[1:]
+    last = steps[-1] if steps else name
+    back = m.moves[last].after if last in m.moves else None
+    return [*steps, *([back] if back else [])]
 
 
 def spots(m: Manifest) -> dict[str, Point]:

@@ -195,6 +195,8 @@ class MonsterWorkspace(Workspace):
         self._block: str | None = None
         #: what the Behaviour canvas shows: `behaviour.ALL`, or a trigger's key
         self.scope = behaviour.ALL
+        #: and what All shows: its rules in order, or the stored canvas
+        self.all_view = behaviour.ORDER
         self.show_joint_ids = False
         self.undriven: dict[int, int] = {}
         self.markers: list[align.Marker] = []
@@ -2017,10 +2019,10 @@ class MonsterWorkspace(Workspace):
 
     # Play in game for an own move (the Moves panel)
 
-    def play_move_blocker(self) -> str | None:
-        """Why Play in game cannot play the selected move now; a game that does not answer is
-        found by the play."""
-        m, name = self.manifest, self.move
+    def play_move_blocker(self, name: str | None = None) -> str | None:
+        """Why Play in game cannot play `name` (the selected move) now; a game that does not
+        answer is found by the play."""
+        m, name = self.manifest, name or self.move
         mv = None if m is None or name is None else m.moves.get(name)
         if mv is None:
             return "pick a move first"

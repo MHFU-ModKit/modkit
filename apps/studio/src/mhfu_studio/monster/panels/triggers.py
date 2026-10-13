@@ -29,6 +29,10 @@ SECTIONS = {"event": "When", "state": "Between moves", "move": "While a move pla
 DASH = "—"
 RANGE = "–"
 SEP = " › "
+DOT = "·"
+ARROW = " → "
+MOST = 8
+"""The most rules a move's tip names."""
 ROW_H, COUNT_W, SPAN_W, PAD_X = 24, 24, 66, 8
 #: the item roles: what the delegate draws, and the key a row stands for
 CELL = Qt.ItemDataRole.UserRole + 1
@@ -47,7 +51,6 @@ def short(kind: str) -> str:
     """A kind's title as the outline says it: the section already says "When" and "Between
     moves", and the base monster is the only one a state belongs to."""
     title = KINDS[kind].title.removeprefix("On ").removeprefix("Base monster ")
-    title = title.replace(" (between moves)", "")
     return title[:1].upper() + title[1:]
 
 
@@ -56,6 +59,26 @@ def title(t: Trigger) -> str:
     if t.section == "move":
         return t.name
     return f"{short(t.kind)} · {t.name}" if t.name else short(t.kind)
+
+
+def plays_tip(name: str, by: Sequence[tuple[int, str]], then: Sequence[str]) -> str:
+    """A move's tip: the rules that play it, each a rank and its trigger, and what it hands to."""
+    head = f"{name} {DOT} " + (
+        f"played by {len(by)} rule{'' if len(by) == 1 else 's'}" if by else "no rule plays it"
+    )
+    more = [f"and {len(by) - MOST} more"] if len(by) > MOST else []
+    lines = [f"#{k} {DOT} {who}" for k, who in by[:MOST]]
+    return "\n".join([head, *lines, *more, *([f"then {ARROW.join(then)}"] if then else [])])
+
+
+def says_all(total: int) -> str:
+    """The header over All's rows."""
+    return f"All rules {DASH} {total} in the order they are checked"
+
+
+def label(t: Trigger) -> str:
+    """`t` in a frame's title: its row, a move's worded as the while-playing port it is."""
+    return f"while {t.name}" if t.section == "move" else title(t)
 
 
 def tip(t: Trigger) -> str:
