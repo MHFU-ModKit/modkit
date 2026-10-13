@@ -16,10 +16,11 @@ from mhfu_port.behaviour import KINDS, Block, Kind, MoveNode, Rule
 from mhfu_port.manifest import Move
 from mhfu_studio.monster import behaviour as B
 from mhfu_studio.monster.document import PortDocument
-from mhfu_studio.monster.panels.behaviour import EFFECT, WARN, BehaviourPanel, roles
+from mhfu_studio.monster.panels.behaviour import ROLES, WARN, BehaviourPanel
 from mhfu_studio.monster.panels.node_graph import GraphView, LinkSpec
 from mhfu_studio.monster.panels.properties import PropertyBar
 from mhfu_studio.monster.workspace import MonsterWorkspace
+from mhfu_studio.shell.overlay import Ink
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.shell.workspace import Dock
 from mhfu_studio.ui import kit, theme
@@ -215,9 +216,9 @@ def applies(p: BehaviourPanel, node: str, monkeypatch: pytest.MonkeyPatch) -> li
     seen: list[str] = []
     real = p.view._apply
 
-    def apply(nodes: Any, links: Any) -> None:
+    def apply(nodes: Any, links: Any, frames: Any = ()) -> None:
         seen.extend(n.summary for n in nodes if n.id == node)
-        real(nodes, links)
+        real(nodes, links, frames)
 
     monkeypatch.setattr(p.view, "_apply", apply)
     return seen
@@ -816,7 +817,7 @@ def test_a_path_that_plays_nothing_ranks_first_wherever_it_sits(
 def test_the_effect_role_has_a_colour_of_its_own(qtbot: Any, family: str, dark: bool) -> None:
     try:
         theme.apply(theme.theme(family, dark))
-        seen = {role: theme.color(ink).getRgbF()[:3] for role, ink in roles().items()}
+        seen = {role: theme.color(ink).getRgbF()[:3] for role, ink in ROLES.items()}
     finally:
         theme.apply(theme.theme("Ember", True))
     assert set(seen) == {"event", "state", "condition", "modifier", "effect", "move"}
@@ -838,7 +839,7 @@ def test_an_effect_block_wears_the_effect_colour(
         for dark in (True, False):
             theme.apply(theme.theme("Ember", dark))
             panel.sync()
-            edge = theme.color(EFFECT[dark])
+            edge = theme.color(Ink.EFFECT)
             have = panel.view._shown["b4"].view.border_color
             assert tuple(have[:3]) == (edge.red(), edge.green(), edge.blue())
     finally:

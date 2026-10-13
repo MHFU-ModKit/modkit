@@ -54,6 +54,7 @@ def _inks(dark: bool, accent: str) -> dict[Ink, RGBA]:
         Ink.SHADOW: _rgba("#000000", 0.6),
         Ink.WARNING: _rgba("#fbbf24" if dark else "#d97706"),
         Ink.ERROR: _rgba("#f87171" if dark else "#dc2626"),
+        Ink.EFFECT: _rgba("#d170e8" if dark else "#8f24ab"),
     }
 
 
@@ -240,6 +241,11 @@ def bind(target: QAbstractButton | QAction, name: str, *, outlined: bool = False
 def color(c: Color) -> QColor:
     r, g, b, a = _current.ink[c] if isinstance(c, Ink) else c
     return QColor.fromRgbF(r, g, b, a)
+
+
+def text(muted: bool = False) -> QColor:
+    """The theme's text colour, or its muted one."""
+    return QColor(_current.muted if muted else _current.text)
 
 
 def level(lv: Level) -> QColor:

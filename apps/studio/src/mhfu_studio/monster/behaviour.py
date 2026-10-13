@@ -28,6 +28,8 @@ MOVE = "move:"
 IN, OUT = "in", "out"
 PLAY, WHILE, THEN = "play", "while playing", "then"
 """A move node's ports: the input, then the two outputs."""
+ALL = "all"
+"""The scope that is the whole canvas, as stored; any other is a trigger's key."""
 ROLE_TITLES = {"state": "State"}
 """A palette group's title where the role in plural is not it."""
 

@@ -3,22 +3,28 @@
 """The Behaviour tab: the port's behaviour graph (`mhfu_port.behaviour`) on a node canvas.
 
 A node is a move or a block, drawn compact; a wire is a link the manifest stores
-(`monster/behaviour.py`). The selected node's values and note are edited in the bar under the
-canvas. The document is the owner: every gesture of the canvas and every edit of the bar arrives
-as intents, is applied as one undo step, and is shown again from the document.
+(`monster/behaviour.py`). The outline beside the canvas scopes it: All is the canvas as stored,
+a trigger shows only its rules, one framed row each in the order they are checked (`rows`), laid
+out for display and never written to a block's `at`. The selected node's values and note are
+edited in the bar under the canvas. The document is the owner: every gesture of the canvas and
+every edit of the bar arrives as intents, is applied as one undo step, and is shown again from
+the document.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from mhfu_port import behaviour as model
-from mhfu_port.behaviour import KINDS, Kind
+from mhfu_port.behaviour import KINDS, Kind, Trigger
 from mhfu_port.manifest import Manifest, ManifestError, Move
-from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 
 from mhfu_studio.monster import behaviour as graph
+from mhfu_studio.monster.behaviour import ALL
+from mhfu_studio.monster.panels import rows, triggers
 from mhfu_studio.monster.panels.common import kind
 from mhfu_studio.monster.panels.node_graph import GraphView, LinkSpec, NodeSpec
 from mhfu_studio.monster.panels.properties import Detail, PropertyBar
@@ -36,21 +42,17 @@ ROLES: dict[str, Color] = {
     "state": Ink.AXIS_Y,
     "condition": Ink.AXIS_Z,
     "modifier": Ink.WARNING,
+    "effect": Ink.EFFECT,
     "move": Ink.SELECTION,
 }
-#: the effect role's violet, for a dark theme and a light one: no `Ink` is one
-EFFECT: dict[bool, Color] = {True: (0.82, 0.44, 0.91, 1.0), False: (0.56, 0.14, 0.67, 1.0)}
 MOVE_ROLE = "move"
 WARN = chr(0x26A0)
 HINT = (
     "Right-click adds a block · drag from a port to wire · higher blocks are checked first,"
     " but paths that play nothing run before all of them"
 )
-
-
-def roles() -> dict[str, Color]:
-    """`ROLES` and the effect's violet, for the current theme."""
-    return {**ROLES, "effect": EFFECT[theme.current().dark]}
+#: said for the intents a trigger's rows do not take yet, and over the rows
+SCOPED = "Create and wire in All for now"
 
 
 class BehaviourPanel(kit.Panel):
@@ -67,8 +69,11 @@ class BehaviourPanel(kit.Panel):
         self._dropped: dict[str, graph.Point] = {}
         #: the block the gesture creates
         self._made: str | None = None
-        #: what the canvas was last drawn from, for the bar
+        #: what the canvas was last drawn from, for the bar and the outline
         self._read: graph.Reading | None = None
+        self._triggers: list[Trigger] = []
+        self._scope: str | None = None
+        self._outlined: object = None
 
         self.title = kit.label(role="title", wrap=False)
         self.hint = kit.label(HINT, role="muted", wrap=False)
@@ -95,10 +100,10 @@ class BehaviourPanel(kit.Panel):
         self.view = GraphView()
         self.view.set_palette(graph.palette())
         v = self.view
-        v.link_requested.connect(lambda *w: self._collect(lambda e: graph.link(e, *w)))
-        v.unlink_requested.connect(lambda *w: self._collect(lambda e: graph.unlink(e, *w)))
-        v.delete_requested.connect(lambda ids: self._collect(lambda e: graph.delete(e, ids)))
-        v.moved.connect(lambda i, x, y: self._dropped.__setitem__(i, (x, y)))
+        v.link_requested.connect(lambda *w: self._collect(self._wire(graph.link, *w)))
+        v.unlink_requested.connect(lambda *w: self._collect(self._wire(graph.unlink, *w)))
+        v.delete_requested.connect(self._delete)
+        v.moved.connect(self._moved)
         v.create_requested.connect(self._create)
         v.picked.connect(self._picked)
         v.settled.connect(self._settle)
@@ -106,9 +111,17 @@ class BehaviourPanel(kit.Panel):
         self.bar.param_changed.connect(self._param)
         self.bar.label_changed.connect(self._label)
 
+        self.outline = triggers.Outline()
+        self.outline.picked.connect(self._scoped)
         page = QWidget()
-        lay = QVBoxLayout(page)
-        lay.setContentsMargins(10, 8, 10, 8)
+        side = QHBoxLayout(page)
+        side.setContentsMargins(10, 8, 10, 8)
+        side.setSpacing(10)
+        side.addWidget(self.outline)
+        main = QWidget()
+        side.addWidget(main, 1)
+        lay = QVBoxLayout(main)
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
         lay.addWidget(
             kit.row(self.title, self.hint, self.rage, self.fit, self.spread, stretch=True)
@@ -136,6 +149,11 @@ class BehaviourPanel(kit.Panel):
                 "natural rage", lambda: self.ws.edit("", lambda: graph.set_natural_rage(doc, on))
             )()
 
+    def _scoped(self, key: str) -> None:
+        """A row of the outline picked: that trigger's rules, framed to fit."""
+        self.ws.scope = key
+        self.sync()
+
     # what the bar tells: the same intents as the canvas's, one undo step each
 
     def _param(self, node: str, name: str, value: object) -> None:
@@ -156,11 +174,34 @@ class BehaviourPanel(kit.Panel):
             self._gesture = graph.Gesture(doc)
         self._gesture.run(fn)
 
+    def _scope_all(self) -> bool:
+        return self.ws.scope == ALL
+
+    def _wire(self, edit: Callable[..., str], *wire: str) -> Callable[[graph.Edits], str]:
+        """The edit of a wire intent, or the refusal a trigger's rows give for it."""
+        return (lambda e: edit(e, *wire)) if self._scope_all() else self._not_here
+
+    @staticmethod
+    def _not_here(_: graph.Edits) -> str:
+        raise ManifestError(SCOPED)
+
+    def _delete(self, ids: list[str]) -> None:
+        nodes = list(dict.fromkeys(rows.node_of(i) for i in ids))  # a reference is its move
+        self._collect(lambda e: graph.delete(e, nodes))
+
+    def _moved(self, node: str, x: float, y: float) -> None:
+        if self._scope_all():  # the rows are laid out for display: a drag snaps back
+            self._dropped[node] = (x, y)
+
     def _create(self, kind_: str, x: float, y: float) -> None:
         doc = self.ws.doc
-        if doc is not None:
-            self._made = model.new_id(doc.manifest.behaviour)
-            self._collect(lambda e: graph.add_block(e, kind_, (x, y)))
+        if doc is None:
+            return
+        if not self._scope_all():
+            self._collect(self._not_here)
+            return
+        self._made = model.new_id(doc.manifest.behaviour)
+        self._collect(lambda e: graph.add_block(e, kind_, (x, y)))
 
     def _settle(self) -> None:
         """The gesture is whole: one undo step, or one refusal."""
@@ -188,7 +229,7 @@ class BehaviourPanel(kit.Panel):
     def _picked(self, node: object) -> None:
         """A move node picks its move, as the Moves table does; the bar shows the node."""
         self._show_bar()
-        name = graph.move_name(node) if isinstance(node, str) else None
+        name = graph.move_name(rows.node_of(node)) if isinstance(node, str) else None
         if name is None or name == self.ws.move:
             return
 
@@ -207,14 +248,31 @@ class BehaviourPanel(kit.Panel):
             return
         if theme.current() is not self._theme:
             self._theme = theme.current()
-            self.view.set_roles(roles())
+            self.view.set_roles(ROLES)
             self.view.set_canvas(theme.current().view)
+            self._outlined = None
         if self._drawn is not m:
             self._drawn = m
-            self._draw(m)
+            self._read = graph.read(m)
+            self._triggers = model.triggers(m)
+            self._scope = None
             kit.put(self.rage, graph.natural_rage(m))
-        self._follow(m)
+        block = self.ws.take_block()
+        if block in m.behaviour.blocks:
+            self._reach(block)
+        if self.ws.scope not in (ALL, *(t.key for t in self._triggers)):
+            self.ws.scope = ALL  # its trigger is gone
+        if self._scope != self.ws.scope or self._outlined is None:
+            self._draw(m)
+        self._follow(m, block)
         self._show_bar()
+
+    def _reach(self, block: str) -> None:
+        """A block that a finding named and the scope does not draw: its trigger's rows, or All
+        for a block on no rule."""
+        scope = next((t for t in self._triggers if t.key == self.ws.scope), None)
+        if scope is not None and not any(block in p.blocks for _, p in scope.rules):
+            self.ws.scope = triggers.owner(self._triggers, block) or ALL
 
     def _show_bar(self) -> None:
         """The bar shows the one node selected, from the document: a refused edit goes back."""
@@ -222,6 +280,7 @@ class BehaviourPanel(kit.Panel):
         self.bar.show_detail(self._detail(m, ids[0]) if m is not None and len(ids) == 1 else None)
 
     def _detail(self, m: Manifest, node: str) -> Detail | None:
+        node = rows.node_of(node)
         name = graph.move_name(node)
         if name is not None:
             mv = m.moves.get(name)
@@ -252,13 +311,52 @@ class BehaviourPanel(kit.Panel):
         return "\n".join([f"{kind(mv)} · {plays}", *([f"Note: {mv.label}"] if mv.label else [])])
 
     def _draw(self, m: Manifest) -> None:
-        r = self._read = graph.read(m)
-        nodes = self._blocks(m, r) + self._moves(m)
-        self.view.show(nodes, [LinkSpec(*w) for w in graph.wires(m)])
-        loose = f" · {len(r.loose)} loose" if r.loose else ""
-        self.title.setText(
-            f"{len(m.behaviour.blocks)} blocks · {len(r.paths)} of {model.SEAM_RULES} paths" + loose
+        r = self._read
+        assert r is not None
+        scope = self.ws.scope
+        total = len(r.paths)
+        key = (tuple((t.key, t.ranks) for t in self._triggers), total, scope, theme.current())
+        if key != self._outlined:
+            self._outlined = key
+            self.outline.set_triggers(self._triggers, total, scope)
+        blocks, moves = self._blocks(m, r), self._moves(m)
+        t = next((t for t in self._triggers if t.key == scope), None)
+        if t is None:
+            self.view.show(blocks + moves, [LinkSpec(*w) for w in graph.wires(m)])
+            loose = f" · {len(r.loose)} loose" if r.loose else ""
+            self.title.setText(
+                f"{len(m.behaviour.blocks)} blocks · {total} of {model.SEAM_RULES} paths" + loose
+            )
+        else:
+            self._draw_rows(m, r, t, blocks, moves)
+            self.title.setText(triggers.says(t, total))
+        self.hint.setText(HINT if t is None else SCOPED)
+        self.spread.setEnabled(t is None)
+        if self._scope is not None and self._scope != scope:
+            self.view.fit()
+        self._scope = scope
+
+    def _draw_rows(
+        self,
+        m: Manifest,
+        r: graph.Reading,
+        t: Trigger,
+        blocks: list[NodeSpec],
+        moves: list[NodeSpec],
+    ) -> None:
+        """`t`'s rules as rows: drawn once to measure the nodes, then placed."""
+        notes = {i: b.label for i, b in m.behaviour.blocks.items()}
+        plan = rows.plan(
+            t,
+            {n.id: n for n in blocks},
+            notes,
+            dict(zip(m.moves, moves, strict=True)),
+            rows.players(r.paths),
         )
+        links = list(plan.links)
+        self.view.show([dataclasses.replace(n, at=(0.0, 0.0)) for n in plan.nodes], links)
+        placed, frames = rows.place(plan, self.view.sizes())
+        self.view.show(placed, links, frames)
 
     @staticmethod
     def _blocks(m: Manifest, r: graph.Reading) -> list[NodeSpec]:
@@ -302,10 +400,9 @@ class BehaviourPanel(kit.Panel):
             )
         return out
 
-    def _follow(self, m: Manifest) -> None:
+    def _follow(self, m: Manifest, block: str | None) -> None:
         """A block a finding named is picked and framed; a move picked elsewhere is selected."""
         ws = self.ws
-        block = ws.take_block()
         if block in m.behaviour.blocks:
             self.view.select([block])
             self.view.frame([block])
