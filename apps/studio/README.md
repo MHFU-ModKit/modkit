@@ -89,10 +89,17 @@ starting where the last stood, facing as it faced, and the Timeline's bar above 
 shows the steps (click one to pick it). Picking or playing anything else starts clips where
 they normally start.
 
-Under the moves are the rules (`[[rule]]`), each read as a sentence ("after the lunge for 20
-frames, within 1200, play stamp"): New rule plays the picked move once when the monster notices
-the hunter, and every field is a control, the part only for a flinch or a break, the mode only
-for a pair move, `force` as above. A refusal is the manifest's own words, in the status line.
+The Behaviour tab edits the port's `[behaviour]` as rules, grouped by what starts them: an event, a
+state between moves, or a move playing. The game checks rules in rank order, `#1` first. Rank is the
+stored canvas order, each block's `(y, x)`, top first: `+ Rule` adds a rule last, dragging a rule's
+frame trades places with its own trigger's rules only, and in All rules › Canvas dragging a node can
+change it. In Canvas a block's `out` wires to the next block's `in` or to a move's `play`; a move's
+`while playing` starts a rule, and `then` sets the move's `after`. The palette is
+`mhfu_port.behaviour.KINDS`. Watch the game, in the header, reads the running game once a second
+while the tab is shown and marks each frame and trigger with how often the game fired its rules
+(`7×`; a frame lights up when its count rises): the game must run this port's rules as Play in game
+sends them, and the header says when it does not. The tab keeps its own docks; Findings stays open
+across tabs.
 
 ## Tests
 

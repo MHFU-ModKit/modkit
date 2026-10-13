@@ -43,12 +43,13 @@ from mhfu_studio.monster import (
     actions,
     align,
     authoring,
+    behaviour,
     clip_browser,
     clip_game,
     clips,
     inputs,
     move_game,
-    rules,
+    rule_game,
     sequences,
     species,
 )
@@ -180,6 +181,11 @@ class MonsterWorkspace(Workspace):
         #: asks the running port for an own move (Play in game in Moves)
         self.play_own: Callable[[Session, str, bool, int], bool] = move_game.play_own
         self.game_running: Callable[[], bool] = move_game.Running()
+        #: reads the brain's rules from the running game, on a worker (Watch the game)
+        self.read_brain: Callable[
+            [Callable[[], AbstractContextManager[Session]], int | None], rule_game.Read
+        ] = rule_game.fetch
+        self.watch = rule_game.Watch()
         self._reset()
 
     def _reset(self) -> None:
@@ -191,8 +197,13 @@ class MonsterWorkspace(Workspace):
         self.picked_window: int | None = None
         #: the attack id a window drawn on the Timeline gets; None: `window_id`'s default
         self.next_window_id: int | None = None
-        #: the rule picked in Moves, by index
-        self.picked_rule: int | None = None
+        #: a block a finding named, for the Behaviour tab to pick and frame (`take_block`)
+        self._block: str | None = None
+        #: what the Behaviour canvas shows: `behaviour.ALL`, or a trigger's key
+        self.scope = behaviour.ALL
+        #: and what All shows: its rules in order, or the stored canvas
+        self.all_view = behaviour.ORDER
+        self.watch.reset()
         self.show_joint_ids = False
         self.undriven: dict[int, int] = {}
         self.markers: list[align.Marker] = []
@@ -397,7 +408,7 @@ class MonsterWorkspace(Workspace):
             Dock(
                 "Moves", "left", build("moves", "MovesPanel"),
                 "Your moves: on the base monster's actions, or your own, with their attacks and"
-                " turn; and the rules that play them.",
+                " turn.",
                 shown=False,
             ),
             Dock(
@@ -422,6 +433,12 @@ class MonsterWorkspace(Workspace):
             Dock(
                 "Parts", "right", build("parts", "PartsPanel"),
                 "Where the monster can be hit, and how much each spot takes.",
+                shown=False,
+            ),
+            Dock(
+                "Behaviour", "centre", build("behaviour", "BehaviourPanel"),
+                "When the port plays which move: events, states and conditions wired to your"
+                " moves on a canvas; higher blocks are checked first.",
                 shown=False,
             ),
             Dock(
@@ -553,9 +570,11 @@ class MonsterWorkspace(Workspace):
         elif section == "moves" and isinstance(key, str) and key in m.moves:
             self.select_move(key)
             self.focus("Moves" if m.moves[key].own else "Actions")
-        elif section == "rule" and isinstance(key, int) and key < len(m.rules):
-            self.picked_rule = key
-            self.focus("Moves")
+        elif section == "block" and isinstance(key, str) and key in m.behaviour.blocks:
+            self._block = key
+            self.focus("Behaviour")
+        elif section == "behaviour":
+            self.focus("Behaviour")
         elif section == "hurtbox" and isinstance(key, int) and key < len(m.hurtboxes):
             self.show_parts, self.parts_source = True, PORT
             self.sync_hitboxes()
@@ -625,8 +644,6 @@ class MonsterWorkspace(Workspace):
         mv = self.own_move()
         if mv is None or not 0 <= (self.picked_window or 0) < len(mv.attacks):
             self.picked_window = None
-        if m is None or not 0 <= (self.picked_rule or 0) < len(m.rules):
-            self.picked_rule = None  # an undo took the rule away
         self.sync_steer()
         self.sync_hitboxes()
         self.sync_attacks()
@@ -1256,7 +1273,7 @@ class MonsterWorkspace(Workspace):
             self.select_move(name)
 
     def delete_move(self) -> None:
-        """The selected move goes; refused while another move, a rule or an effect names it."""
+        """The selected move goes; refused while another move, a block or an effect names it."""
         doc, name, pair = self.doc, self.move, self.pair
         if doc is None or name is None:
             return
@@ -2000,42 +2017,34 @@ class MonsterWorkspace(Workspace):
             return
         self.message = f"monster {slot} released" + ("" if acked else "; no ack")
 
-    # rules (the Moves panel)
+    # the behaviour graph (the Behaviour tab)
 
-    def new_rule(self) -> None:
-        """A rule that plays the selected move, else the first; picked."""
-        doc, m = self.doc, self.manifest
-        if doc is None or m is None:
-            self.message = "rules live in a port manifest: open one"
-            return
-        play = self.move if self.move in m.moves else next(iter(m.moves), None)
-        if play is None:
-            self.message = "make a move first: a rule plays one"
-            return
-        if self.edit("", lambda: rules.new_rule(doc, play)):
-            self.picked_rule = len(doc.manifest.rules) - 1
+    def take_block(self) -> str | None:
+        """The block a finding named, once; the tab picks and frames it."""
+        block, self._block = self._block, None
+        return block
 
-    def pick_rule(self, index: int | None) -> None:
-        self.picked_rule = index
+    # Watch the game (the Behaviour tab's marks)
 
-    def set_rule(self, **fields: Any) -> bool:
-        """`rules.FIELDS` of the picked rule, one undo step."""
-        doc, i = self.doc, self.picked_rule
-        if doc is None or i is None:
-            return False
-        return self.edit("", lambda: rules.set_rule(doc, i, **fields))
+    @property
+    def fires(self) -> dict[int, int] | None:
+        """How often the game fired each rule, by rank; None when there is nothing to show."""
+        return self.watch.fires
 
-    def delete_rule(self) -> None:
-        doc, i = self.doc, self.picked_rule
-        if doc is not None and i is not None and self.edit("", lambda: rules.remove_rule(doc, i)):
-            self.picked_rule = None
+    def poll_game(self) -> bool:
+        """One step of Watch the game, at most one read a second; True when the marks changed."""
+        return self.watch.poll(self.manifest, self.game_running(), self._ask_brain)
+
+    def _ask_brain(self, cfg: int | None) -> Future[rule_game.Read]:
+        self._pool = self._pool or ThreadPoolExecutor(1)
+        return self._pool.submit(self.read_brain, self.game_session, cfg)
 
     # Play in game for an own move (the Moves panel)
 
-    def play_move_blocker(self) -> str | None:
-        """Why Play in game cannot play the selected move now; a game that does not answer is
-        found by the play."""
-        m, name = self.manifest, self.move
+    def play_move_blocker(self, name: str | None = None) -> str | None:
+        """Why Play in game cannot play `name` (the selected move) now; a game that does not
+        answer is found by the play."""
+        m, name = self.manifest, name or self.move
         mv = None if m is None or name is None else m.moves.get(name)
         if mv is None:
             return "pick a move first"

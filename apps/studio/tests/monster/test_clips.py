@@ -153,23 +153,44 @@ def test_rebind_keeps_the_move(doc):
     assert "clip_05" not in d.manifest.clips and d.manifest.moves["charge"].main == 2
 
 
+GRAPH = """
+[behaviour.blocks.b1]
+kind = "played_for"
+at = [0.0, 0.0]
+frames = 5
+play = ["stop"]
+[behaviour.moves.charge]
+at = [0.0, 0.0]
+during = ["b1"]
+[behaviour.moves.stop]
+at = [9.0, 9.0]
+"""
+
+
 def test_unbind_and_rename(doc):
-    d = doc(REBIND + '\n[[rule]]\nplay = "stop"\nfrom = "charge"\n')
+    d = doc(REBIND + GRAPH)
     s = C.LabelSession(d, {61: (382, False)})
-    with pytest.raises(ManifestError, match="stop is still used by moves.charge .after., rule 0"):
+    with pytest.raises(
+        ManifestError, match="stop is still used by moves.charge .after., block b1 plays it"
+    ):
         s.unbind_move("stop")
     assert s.rename_move("stop", "skid") == "moves.stop is now moves.skid"
     m = d.manifest
-    assert m.moves["charge"].after == "skid" and m.rules[0].play == "skid" and "stop" not in m.moves
+    assert m.moves["charge"].after == "skid" and "stop" not in m.moves
+    assert m.behaviour.blocks["b1"].play == ["skid"]
+    assert list(m.behaviour.moves) == ["charge", "skid"], "its node follows"
     assert s.rename_move("charge", "rush") and m is not d.manifest
-    assert d.manifest.rules[0].from_move == "rush"
+    assert d.manifest.behaviour.moves["rush"].during == ["b1"]
     with pytest.raises(ManifestError, match="already exists"):
         s.rename_move("rush", "skid")
     d.undo()
     d.undo()
-    d.edit(lambda m: setattr(m, "rules", []))
+    with pytest.raises(ManifestError, match="still used by .*while charge plays"):
+        s.unbind_move("charge")
+    d.edit(lambda m: m.behaviour.blocks["b1"].play.clear())
     d.edit(lambda m: setattr(m.moves["charge"], "after", None))
     assert s.unbind_move("stop") == "moves.stop removed" and list(d.manifest.moves) == ["charge"]
+    assert list(d.manifest.behaviour.moves) == ["charge"], "its node goes"
     with pytest.raises(ManifestError, match="no move"):
         s.unbind_move("stop")
 

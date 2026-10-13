@@ -495,11 +495,14 @@ dependencies = [
     { name = "mhfu-port" },
     { name = "mhp-formats" },
     { name = "moderngl" },
+    { name = "nodegraphqt" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pillow" },
     { name = "pyside6-essentials" },
+    { name = "qt-py" },
     { name = "qtawesome" },
+    { name = "setuptools", marker = "python_full_version >= '3.12'" },
     { name = "tomli-w" },
 ]
 
@@ -509,10 +512,13 @@ requires-dist = [
     { name = "mhfu-port", editable = "packages/mhfu-port" },
     { name = "mhp-formats", editable = "packages/mhp-formats" },
     { name = "moderngl", specifier = ">=5.12" },
+    { name = "nodegraphqt", specifier = ">=0.6.44" },
     { name = "numpy", specifier = ">=2" },
     { name = "pillow", specifier = ">=11" },
     { name = "pyside6-essentials", specifier = ">=6.11" },
+    { name = "qt-py", specifier = ">=1.4.8,<2" },
     { name = "qtawesome", specifier = ">=1.4" },
+    { name = "setuptools", marker = "python_full_version >= '3.12'", specifier = ">=70" },
     { name = "tomli-w", specifier = ">=1.2" },
 ]
 
@@ -662,6 +668,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/9a/8e/105de02c1322cfada6d9710d9146ef8026419d433c9d08359a2d35805811/nodeenv-1.11.0.tar.gz", hash = "sha256:3ce8fe5b71d16e8af7039ca65257354100bc772965d6bc549070649e53b1b146", size = 99301, upload-time = "2026-09-26T11:29:21.367Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/c8/12811c9b48fde162bb72b6f2e78fada9a247a09d7bb5be2050a5d099c77b/nodeenv-1.11.0-py2.py3-none-any.whl", hash = "sha256:edaa16e6c14d7cf395d75d4bbd5a26390f4dc06501a33b4e76282b02cc688a25", size = 34277, upload-time = "2026-09-26T11:29:19.933Z" },
+]
+
+[[package]]
+name = "nodegraphqt"
+version = "0.6.44"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "qt-py" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/57/23/4966003f70f6bc18cba62ae7b484d84cb0cb669c6e5992778671c1ea758a/nodegraphqt-0.6.44.tar.gz", hash = "sha256:d905a8c100da5f45dc403d2701c09ed2e4c13bcdc3a21b0da5e8f0f5ceedaeaa", size = 116669, upload-time = "2026-02-04T22:53:18.655Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c5/d7/deb8ddfbe1df5710407acb4f4d4e679845841c78924cd67ee3a4e428b418/nodegraphqt-0.6.44-py3-none-any.whl", hash = "sha256:2ea4bcef7ac73827bd52d7c1bd9120e886cfb8395b187f3dd471244790dd8cb3", size = 141312, upload-time = "2026-02-04T22:53:16.909Z" },
 ]
 
 [[package]]
@@ -1246,6 +1264,18 @@ wheels = [
 ]
 
 [[package]]
+name = "qt-py"
+version = "1.4.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "types-pyside2" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/41/7f/3602c68c0c1545ced4560efc2ef7fa6cf23978380816b462039913db2071/qt_py-1.4.8.tar.gz", hash = "sha256:3ca0e4526bc53cf0a8c6d1fbf1dce2554ed5daa1a4abf0e3e67f73bbc9799b39", size = 62828, upload-time = "2025-10-17T19:57:08.36Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/71/a0/47b2b80fb0aa22fedaf1ceafb1e0a2dccb65ca7de55e61eeb0c07bcde248/qt_py-1.4.8-py2.py3-none-any.whl", hash = "sha256:bccb05611a904689569ef73372adfd2c47bd9307ee9f795477cc2b981b0fce65", size = 44454, upload-time = "2025-10-17T19:57:06.708Z" },
+]
+
+[[package]]
 name = "qtawesome"
 version = "1.4.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1305,6 +1335,15 @@ wheels = [
 ]
 
 [[package]]
+name = "setuptools"
+version = "84.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6d/44/f5da03a8ef95d369145c5bb53050e7877c9f3d312e128605fd9504829143/setuptools-84.0.0.tar.gz", hash = "sha256:f4695c21257f0d9b537ec2692c941d02ee143b7cc1276941349a546573b2ef73", size = 1168449, upload-time = "2026-08-08T18:27:58.365Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/95/9c/c510029fc6ef33a6275cd2c5d3cecd6613dfd6aa401d57c54f1c18852ccf/setuptools-84.0.0-py3-none-any.whl", hash = "sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670", size = 818216, upload-time = "2026-08-08T18:27:56.719Z" },
+]
+
+[[package]]
 name = "shiboken6"
 version = "6.11.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1341,6 +1380,14 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/97/0a/f48b9b0ab5ba8599fd117309e345152bf82c756c72be2ff0f635780c2792/types_psutil-7.2.2.20260906.tar.gz", hash = "sha256:93abf22cf9a62b915f724e433bde702995ac274865425fd4a76d1d9b5828da1a", size = 27396, upload-time = "2026-09-06T06:35:24.499Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/eb/8d/81a86107486e1c23f5ca21bea1e9e5b18a50754242e7a0b82f41f9ae8384/types_psutil-7.2.2.20260906-py3-none-any.whl", hash = "sha256:db00baf7f96c3f63421c4d3d68d373923094a0dfddf13e922c5c5fbc42488159", size = 33383, upload-time = "2026-09-06T06:35:23.575Z" },
+]
+
+[[package]]
+name = "types-pyside2"
+version = "5.15.2.1.8"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0f/13/d22cdd7bd73908767ae96572852b4d77afaaccbfd88357fa153a2e6b13c4/types_pyside2-5.15.2.1.8-py2.py3-none-any.whl", hash = "sha256:8d2d9e506b6db88d8ea6f04c56051d7567203ba630122e41de3b52e4842e6474", size = 576975, upload-time = "2025-11-01T19:30:09.336Z" },
 ]
 
 [[package]]

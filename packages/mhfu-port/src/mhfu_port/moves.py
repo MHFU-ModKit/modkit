@@ -21,8 +21,10 @@ from typing import Any
 from mhfu import addresses, hitbox, inject
 from mhfu.files import Extracted, em_overlay
 
+from . import behaviour
+from .behaviour import Rule
 from .layout import Layout
-from .manifest import Manifest, ManifestError, Move, Rule
+from .manifest import Manifest, ManifestError, Move
 from .rig import Tip
 
 Pair = tuple[int, int]
@@ -127,7 +129,12 @@ def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) 
     if pool > POOL:
         out.append(f"moves: the own moves' turns need {pool} keys, the framework holds {POOL}")
     flinch = set()
-    for r in m.rules:
+    try:
+        rules = behaviour.compile(m)
+    except ManifestError as err:
+        rules = []
+        out.append(str(err))
+    for r in rules:
         if r.on == "flinch" and r.play in m.moves:
             try:
                 flinch.add(carrier(m, r.play))
@@ -284,7 +291,7 @@ def lua(
         body = _own_move(m, name, layout) if mv.own else pair_move(mv)
         out.append(f"    {lua_key(name)} = {lua_value(body)},")
     out += ["  },", "  rules = {"]
-    out += [f"    {lua_value(_rule(r))}," for r in m.rules]
+    out += [f"    {lua_value(_rule(r))}," for r in behaviour.compile(m)]
     out += ["  },"]
     if tip is not None:
         out.append(f"  tip = {lua_value(tip.pairs)},")

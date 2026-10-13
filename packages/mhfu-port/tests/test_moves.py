@@ -3,13 +3,14 @@
 from pathlib import Path
 
 import pytest
-from mhfu_port import build, layout, manifest, moves, travel
+from mhfu_port import behaviour, build, layout, manifest, moves, travel
 from mhfu_port.manifest import ManifestError
 from mhfu_port.rig import Tip
 
 PORTS = Path(__file__).parents[3] / "ports"
 
 HEAD = """
+schema = 1
 [port]
 name = "z"
 host_species = 75
@@ -116,6 +117,21 @@ def test_tip():
     assert not any(line.startswith("tip") for line in _body(moves.lua(_m(), LAYOUT, {6})))
 
 
+def test_graph_makes_the_same_module():
+    m = _m()
+    again = manifest.loads(manifest.dumps(m))
+    assert again.behaviour.blocks and moves.lua(again, LAYOUT, {6}) == moves.lua(m, LAYOUT, {6})
+
+
+def test_rules_follow_the_canvas():
+    m = _m()
+    assert [r.play for r in behaviour.compile(m)] == ["stamp", "lunge"]
+    m.behaviour.blocks["b1"].at = (0.0, 9999.0)
+    text = moves.lua(m, LAYOUT, {6})
+    assert _body(text)[-2].startswith('{ play = "lunge"')
+    assert _body(text)[-1].startswith('{ play = "stamp"')
+
+
 def test_curve_is_the_turns_module_entry():
     """The keys an own move turns by are the turns module's for its entry."""
     turns = layout.turns_lua(_m(), LAYOUT)
@@ -174,16 +190,17 @@ def test_pool():
         moves.check(_m(many), lay)
 
 
-@pytest.mark.parametrize(
-    ("extra", "why"),
-    [
-        ("".join(f"[moves.o{i}]\nanim = {i}\n" for i in range(17)), "17 own moves, the framework"),
-        (OWN + "[[rule]]\nplay = 'spin'\nfrom_main = [1]\nmode = 1\n", "mode is a pair's"),
-    ],
-)
-def test_manifest_limits(extra, why):
-    with pytest.raises(ManifestError, match=why):
-        _m(extra)
+def test_manifest_limits():
+    many = "".join(f"[moves.o{i}]\nanim = {i}\n" for i in range(17))
+    with pytest.raises(ManifestError, match="17 own moves, the framework"):
+        _m(many)
+
+
+def test_mode_is_a_pairs():
+    m = _m(OWN + "[[rule]]\nplay = 'spin'\nfrom_main = [1]\nmode = 1\n")
+    with pytest.raises(ManifestError, match="mode is a pair's"):
+        behaviour.compile(m)
+    assert "mode is a pair's" in moves.problems(m, LAYOUT, {6})[0]
 
 
 def test_zinogre(data):

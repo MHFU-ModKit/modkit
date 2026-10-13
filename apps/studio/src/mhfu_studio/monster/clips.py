@@ -18,8 +18,8 @@ import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
+from mhfu_port import behaviour, motion, slots
 from mhfu_port import layout as layouts
-from mhfu_port import motion, slots
 from mhfu_port.manifest import Clip, Manifest, ManifestError, Move
 from mhfu_port.model import clip_key
 from mhp_formats import anim
@@ -458,7 +458,7 @@ class LabelSession:
 
 
 def drop_move(doc: PortDocument, name: str) -> str:
-    """Drops `[moves.<name>]`; refused while another move, a rule or an effect names it."""
+    """Drops `[moves.<name>]`; refused while another move, a block or an effect names it."""
     if name not in doc.manifest.moves:
         raise ManifestError(f"no move {name!r}")
     users = move_users(doc.manifest, name)
@@ -467,13 +467,14 @@ def drop_move(doc: PortDocument, name: str) -> str:
 
     def drop(m: Manifest) -> None:
         del m.moves[name]
+        behaviour.drop_move(m, name)
 
     doc.edit(drop)
     return f"moves.{name} removed"
 
 
 def rename_move(doc: PortDocument, old: str, new: str) -> str:
-    """Renames a move and every `after`, rule and effect that names it."""
+    """Renames a move and every `after`, block and effect that names it."""
     new = check_name(new)
     if old not in doc.manifest.moves:
         raise ManifestError(f"no move {old!r}")
@@ -486,9 +487,7 @@ def rename_move(doc: PortDocument, old: str, new: str) -> str:
         m.moves = {new if k == old else k: mv for k, mv in m.moves.items()}
         for mv in m.moves.values():
             mv.after = new if mv.after == old else mv.after
-        for r in m.rules:
-            r.play = new if r.play == old else r.play
-            r.from_move = new if r.from_move == old else r.from_move
+        behaviour.rename_move(m, old, new)
         for e in m.effects:
             e.move = new if e.move == old else e.move
 
@@ -497,9 +496,9 @@ def rename_move(doc: PortDocument, old: str, new: str) -> str:
 
 
 def move_users(m: Manifest, name: str) -> list[str]:
-    """What names move `name`: other moves' `after`, rules and effects."""
+    """What names move `name`: other moves' `after`, the behaviour graph and effects."""
     out = [f"moves.{k} (after)" for k, mv in m.moves.items() if mv.after == name]
-    out += [f"rule {r.label or i}" for i, r in enumerate(m.rules) if name in (r.play, r.from_move)]
+    out += behaviour.uses(m, name)
     out += [f"effect {e.id}" for e in m.effects if e.move == name]
     return out
 
