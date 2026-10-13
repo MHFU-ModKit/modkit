@@ -95,7 +95,11 @@ stored canvas order, each block's `(y, x)`, top first: `+ Rule` adds a rule last
 frame trades places with its own trigger's rules only, and in All rules › Canvas dragging a node can
 change it. In Canvas a block's `out` wires to the next block's `in` or to a move's `play`; a move's
 `while playing` starts a rule, and `then` sets the move's `after`. The palette is
-`mhfu_port.behaviour.KINDS`. The tab keeps its own docks; Findings stays open across tabs.
+`mhfu_port.behaviour.KINDS`. Watch the game, in the header, reads the running game once a second
+while the tab is shown and marks each frame and trigger with how often the game fired its rules
+(`7×`; a frame lights up when its count rises): the game must run this port's rules as Play in game
+sends them, and the header says when it does not. The tab keeps its own docks; Findings stays open
+across tabs.
 
 ## Tests
 
