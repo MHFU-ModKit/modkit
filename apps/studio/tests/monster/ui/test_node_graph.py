@@ -529,6 +529,24 @@ def test_options_change_keeps_the_pick(qtbot: Any) -> None:
     assert part.get_value() == 2 and part._ctl.count() == 3  # none, Tail, Wing
 
 
+def size(view: GraphView, node: str) -> tuple[float, float]:
+    item = view._shown[node].view
+    return item.width, item.height
+
+
+def test_new_options_keep_the_node_sizes_when_zoomed_out(qtbot: Any) -> None:
+    view = make(qtbot)
+    before = {i: size(view, i) for i in ("c", "m")}
+    view.viewer.scale(0.15, 0.15)
+    view.grab()  # a paint: NodeGraphQt hides a small node's widgets, and a redraw ignores them
+    assert not any(w.isVisible() for w in view._shown["c"].view.widgets.values())
+    c, m = nodes()[1:]
+    c = replace(c, options={"part": [("Head", 1), ("Tail", 2), ("Wing", 3)]})
+    m = replace(m, options={"mains": [("one", 1), ("two", 2)]})
+    view.show([nodes()[0], c, m], LINKS)
+    assert {i: size(view, i) for i in before} == before
+
+
 def test_the_palette_creates(qtbot: Any) -> None:
     view = make(qtbot)
     rec = Rec(view, qtbot)

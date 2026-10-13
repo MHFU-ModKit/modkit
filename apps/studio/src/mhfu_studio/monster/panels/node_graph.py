@@ -644,20 +644,15 @@ class GraphView(QWidget):
         x, y = view.xy_pos
         if abs(x - spec.at[0]) > 1e-3 or abs(y - spec.at[1]) > 1e-3:
             view.xy_pos = spec.at
-        resized = False
         for param in spec.params:
             f = s.fields[param.name]
-            opts = self._options(spec, param)
-            if f.set_options(opts):
-                resized = True
+            f.set_options(self._options(spec, param))
             want = spec.values.get(param.name)
             if (want is not None or f.optional) and not f.same(want):
                 f.set_value(want)
         if not s.fields[NOTE].same(spec.label):
             s.fields[NOTE].set_value(spec.label)
-        if resized:
-            view.draw_node()
-        view.setToolTip(spec.tip)  # after `draw_node`, which sets NodeGraphQt's own
+        view.setToolTip(spec.tip)  # NodeGraphQt sets its own when it draws the node
 
     def _tint(self, role: str) -> tuple[tuple[int, ...], tuple[int, ...]] | None:
         ink = self._roles.get(role)
