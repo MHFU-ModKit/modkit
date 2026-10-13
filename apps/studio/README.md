@@ -121,7 +121,7 @@ reads a counter or flag and `port:var("name", v)` sets it. Hunter side ticks any
 right, behind.
 
 Enrage and Calm down are effect blocks too (`port:enrage()` and `port:calm()` do the same from
-Lua). The Natural rage box in the Behaviour dock turns the monster's own anger off, so only those
+Lua). The Natural rage box in the Behaviour tab turns the monster's own anger off, so only those
 rage it. In the Parts dock, a severable part has Severable below HP %: its cut works only once the
 monster's HP is under that percent, 0 at any HP.
 
