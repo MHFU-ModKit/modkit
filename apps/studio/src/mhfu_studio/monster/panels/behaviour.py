@@ -130,6 +130,7 @@ class BehaviourPanel(kit.Panel):
         v.moved.connect(self._moved)
         v.create_requested.connect(self._create)
         v.picked.connect(self._picked)
+        v.selection_changed.connect(lambda _: self._focus())
         v.settled.connect(self._settle)
         v.menu_requested.connect(self._menu)
         v.frame_moved.connect(self._frame_moved)
@@ -564,7 +565,7 @@ class BehaviourPanel(kit.Panel):
         free = t is None and self.ws.all_view == CANVAS
         if free:
             self._plan = None
-            self.view.show(blocks + moves, [LinkSpec(*w) for w in graph.wires(m)])
+            self._canvas(m, r, blocks + moves)
             loose = f" · {len(r.loose)} loose" if r.loose else ""
             self.title.setText(
                 f"{len(m.behaviour.blocks)} blocks · {total} of {model.SEAM_RULES} paths" + loose
@@ -586,6 +587,22 @@ class BehaviourPanel(kit.Panel):
         if self._scope is not None and self._scope != here:
             self.view.fit()
         self._scope = here
+
+    def _canvas(self, m: Manifest, r: graph.Reading, nodes: list[NodeSpec]) -> None:
+        """The stored canvas; with a node selected, all but the rules through it is dimmed."""
+        wires = graph.wires(m)
+        rules = [*r.paths, *(o for os in self._opens.values() for o in os)]
+        lit = graph.focus(m, rules, self.view.selected())
+        if lit is not None:
+            nodes = [dataclasses.replace(n, dim=n.id not in lit.nodes) for n in nodes]
+        faded = [] if lit is None else [LinkSpec(*w) for w in wires if w not in lit.wires]
+        self.view.show(nodes, [LinkSpec(*w) for w in wires], faded=faded)
+
+    def _focus(self) -> None:
+        """The selection changed: the stored canvas follows it."""
+        m = self.ws.manifest
+        if m is not None and self._read is not None and self._free():
+            self._canvas(m, self._read, self._blocks(m, self._read) + self._moves(m))
 
     def _draw_rows(
         self,
