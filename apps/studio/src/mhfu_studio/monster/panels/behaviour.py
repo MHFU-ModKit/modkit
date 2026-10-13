@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Behaviour dock: the port's behaviour graph (`mhfu_port.behaviour`) on a node canvas.
+"""The Behaviour tab: the port's behaviour graph (`mhfu_port.behaviour`) on a node canvas.
 
 A node is a move or a block, drawn compact; a wire is a link the manifest stores
 (`monster/behaviour.py`). The selected node's values and note are edited in the bar under the
@@ -199,7 +199,7 @@ class BehaviourPanel(kit.Panel):
         name = graph.move_name(node)
         if name is not None:
             mv = m.moves.get(name)
-            return None if mv is None else Detail(node, name, self._move_tip(mv), note=False)
+            return None if mv is None else Detail(node, name, self._move_tip(mv), label=mv.label)
         blk = m.behaviour.blocks.get(node)
         if blk is None or self._read is None:
             return None
@@ -223,7 +223,7 @@ class BehaviourPanel(kit.Panel):
     @staticmethod
     def _move_tip(mv: Move) -> str:
         plays = f"plays {mv.clip}" if mv.clip else f"plays anim {mv.anim}"
-        return f"{kind(mv)} · {plays}"
+        return "\n".join([f"{kind(mv)} · {plays}", *([f"Note: {mv.label}"] if mv.label else [])])
 
     def _draw(self, m: Manifest) -> None:
         r = self._read = graph.read(m)

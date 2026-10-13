@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Behaviour dock over the synthetic port: what the canvas shows, and each gesture of it
+"""The Behaviour tab over the synthetic port: what the canvas shows, and each gesture of it
 through the real view."""
 
 from __future__ import annotations
@@ -159,7 +159,7 @@ def test_the_dock_is_registered_at_the_bottom() -> None:
 
 
 class Hosted(FakeWorkspace):
-    """A fake workspace carrying the monster workspace's own Behaviour dock, and a strip that
+    """A fake workspace carrying the monster workspace's own Behaviour tab, and a strip that
     is never tabbed under it, as the Timeline is."""
 
     def __init__(self, own: MonsterWorkspace) -> None:
@@ -607,11 +607,22 @@ def test_the_bar_is_empty_for_no_block_and_for_several(qtbot: Any, panel: Behavi
     assert panel.bar.controls == {}
 
 
-def test_a_move_shows_its_name_and_nothing_to_edit(qtbot: Any, panel: BehaviourPanel) -> None:
-    select(qtbot, panel, STAMP)
-    assert panel.bar.controls == {} and panel.bar.note is None
-    labels = [w.text() for w in panel.bar.findChildren(type(panel.title))]
-    assert labels[0] == "stamp" and "plays walk" in labels[1]
+def test_a_move_shows_its_name_and_edits_its_note(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    bar = select(qtbot, panel, STAMP)
+    assert bar.controls == {} and bar.note is not None
+    assert [w.text() for w in bar.findChildren(type(panel.title))][:2] == ["stamp", "Note"]
+    note = control(panel, "note")
+    note.setText("the stamp")
+    note.editingFinished.emit()
+    qtbot.wait(30)
+    assert doc(ws).manifest.moves["stamp"].label == "the stamp"
+    assert "Note: the stamp" in panel.view._shown[STAMP].view.toolTip()
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    assert doc(ws).manifest.moves["stamp"].label == "" and bar.note.get_value() == ""
 
 
 def test_every_bar_editor_has_its_tip(

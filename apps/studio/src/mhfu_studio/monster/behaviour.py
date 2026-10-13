@@ -3,7 +3,7 @@
 """A port's behaviour graph (`mhfu_port.behaviour`) as document edits, and what the canvas shows
 of it.
 
-No toolkit: the Behaviour dock calls these, one undo step per gesture (`Gesture`); a refusal is
+No toolkit: the Behaviour tab calls these, one undo step per gesture (`Gesture`); a refusal is
 the manifest's own `ManifestError`, so its checks are the only ones. Paths, priority, validity
 and references are the package's; this module names the canvas's nodes and ports and reads the
 graph for them.

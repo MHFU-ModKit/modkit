@@ -44,8 +44,6 @@ Point = tuple[float, float]
 PaletteGroup = tuple[str, Sequence[tuple[str, str, str]]]
 #: a node's least width, the lines of summary it shows, and the room left of them
 NODE_W, SUMMARY_LINES, SUMMARY_X = 168.0, 2, 14.0
-#: NodeGraphQt draws a node narrower than this on screen as a box, with no text
-_PROXY_PX = 70.0
 #: a scroll without pixels moves this many pixels per angle unit (a notch of 120 is ~3 lines)
 _ANGLE_PX = 0.5
 #: the zoom per angle unit of a wheel, as NodeGraphQt has it, and the scale the canvas keeps to
@@ -205,8 +203,7 @@ class _Item(NodeItem):  # type: ignore[misc]
         self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None
     ) -> None:
         super().paint(painter, option, widget)
-        lod = QStyleOptionGraphicsItem.levelOfDetailFromTransform(painter.worldTransform())
-        if self.summary and lod * self.width >= _PROXY_PX:
+        if self.summary:
             painter.setFont(self._font())
             painter.setPen(theme.color(Ink.TEXT))
             metrics = painter.fontMetrics()
