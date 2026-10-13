@@ -1189,6 +1189,7 @@ def test_a_finding_on_a_block_in_a_rule_keeps_the_rows(
 def test_editing_in_order_is_as_in_a_trigger(
     qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
 ) -> None:
+    rules = model.compile(doc(ws).manifest)
     entry(right_click(qtbot, panel, "b4"), "Insert after", "Modifiers", "At most").trigger()
     qtbot.wait(60)
     assert blocks(ws)["b4"].next == ["b9"] and blocks(ws)["b9"].play == ["stamp"]
@@ -1196,6 +1197,7 @@ def test_editing_in_order_is_as_in_a_trigger(
     doc(ws).undo()
     ws.refresh()
     panel.sync()
+    assert model.compile(doc(ws).manifest) == rules
     click(qtbot, panel, node_pos(panel, "b4"))
     QTest.keyClick(panel.view, Qt.Key.Key_Delete)
     qtbot.wait(60)
@@ -1203,6 +1205,7 @@ def test_editing_in_order_is_as_in_a_trigger(
     doc(ws).undo()
     ws.refresh()
     panel.sync()
+    assert model.compile(doc(ws).manifest) == rules
     click(qtbot, panel, node_pos(panel, "ref:b4:stamp"))
     assert panel.bar.plays is not None
     panel.bar.plays.ctl.setCurrentIndex(panel.bar.plays.ctl.findText("howl"))

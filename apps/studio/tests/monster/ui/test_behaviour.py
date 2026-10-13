@@ -811,11 +811,12 @@ def test_clearing_the_selection_undims(
     doc(ws).edit(rules)
     ws.refresh()
     panel.sync()
-    before = bright(panel), wire_ops(panel)
+    before, kept = (bright(panel), wire_ops(panel)), doc(ws).manifest
     select(qtbot, panel, "b4")
     assert bright(panel) != before[0]
     panel.view.viewer.scene().clearSelection()
     qtbot.wait(40)
+    assert doc(ws).manifest is kept, "a selection writes nothing"
     assert (bright(panel), wire_ops(panel)) == before and set(before[1].values()) == {1.0}
 
 
