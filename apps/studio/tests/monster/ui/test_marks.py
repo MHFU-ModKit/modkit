@@ -120,6 +120,7 @@ def test_nothing_is_marked_until_the_toggle_is_on(panel: BehaviourPanel, game: F
     assert not panel.ticker.isActive()
     assert all("×" not in t for t in titles(panel))
     assert panel.outline.width() == triggers.WIDTH and game.calls == []
+    assert panel.fit.width() <= panel.fit.sizeHint().width() + 4, "the buttons keep their size"
     assert panel.watch.toolTip() and kit.missing_tips(panel) == []
 
 
