@@ -138,9 +138,11 @@ def scope(qtbot: Any, p: BehaviourPanel, key: str) -> None:
 
 
 def test_nothing_is_marked_until_the_toggle_is_on(panel: BehaviourPanel, game: Game) -> None:
-    assert not panel.watch.isChecked() and panel.live.isHidden() and not panel.ticker.isActive()
+    assert not panel.watch.isChecked() and panel.live.text() == ""
+    assert not panel.ticker.isActive()
     assert all("×" not in t for t in titles(panel))
     assert panel.outline.width() == triggers.WIDTH and game.calls == []
+    assert panel.fit.width() <= panel.fit.sizeHint().width() + 4, "the buttons keep their size"
     assert panel.watch.toolTip() and kit.missing_tips(panel) == []
 
 
@@ -149,13 +151,13 @@ def test_the_toggle_starts_a_poll_once_a_second_while_the_tab_is_shown(
 ) -> None:
     QTest.mouseClick(panel.watch, LEFT, NONE)
     assert panel.ws.watch.on and panel.ticker.isActive() and panel.ticker.interval() == 1000
-    assert not panel.live.isHidden()
+    assert panel.live.text() == rg.READING
     panel.hide()
     assert not panel.ticker.isActive()
     panel.show()
     assert panel.ticker.isActive()
     QTest.mouseClick(panel.watch, LEFT, NONE)
-    assert not panel.ws.watch.on and not panel.ticker.isActive() and panel.live.isHidden()
+    assert not panel.ws.watch.on and not panel.ticker.isActive() and panel.live.text() == ""
 
 
 def test_a_tab_hidden_polls_nothing(

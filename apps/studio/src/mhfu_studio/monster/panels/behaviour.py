@@ -515,7 +515,6 @@ class BehaviourPanel(kit.Panel):
     def _status(self) -> None:
         """The header's words on the watch, and the outline's totals."""
         w = self.ws.watch
-        self.live.setVisible(w.on)
         self.live.setText(w.status)
         self.live.setToolTip(w.status)
         self.live.set_level(None if w.fires is not None else "warning")
