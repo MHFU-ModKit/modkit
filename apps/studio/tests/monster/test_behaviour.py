@@ -717,3 +717,13 @@ def test_focus_reads_a_ring_of_moves_once(d: PortDocument) -> None:
     f = lit(d, "b1")
     assert f is not None and {stamp, step} <= f.nodes
     assert {B.Wire(stamp, "then", step, "play"), B.Wire(step, "then", stamp, "play")} <= f.wires
+
+
+def test_then_is_the_sequence_after_a_move_and_a_ring_ends_where_it_hands_back(
+    d: PortDocument,
+) -> None:
+    assert B.then(d.manifest, "stamp") == ["stamp_2"]
+    assert B.then(d.manifest, "stamp_2") == [] and B.then(d.manifest, "nope") == []
+    d.edit(lambda m: setattr(m.moves["stamp_2"], "after", "stamp"))
+    assert B.then(d.manifest, "stamp") == ["stamp_2", "stamp"]
+    assert B.then(d.manifest, "stamp_2") == ["stamp", "stamp_2"]

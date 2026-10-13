@@ -180,6 +180,15 @@ def focus(m: Manifest, ps: Sequence[Path], ids: Collection[str]) -> Focus | None
     return Focus(frozenset(nodes), frozenset(lit))
 
 
+def then(m: Manifest, name: str) -> list[str]:
+    """The moves `name` hands to in turn; a sequence that rings ends with the move it hands back
+    to."""
+    steps = sequence.chain(m, name)[1:]
+    last = steps[-1] if steps else name
+    back = m.moves[last].after if last in m.moves else None
+    return [*steps, *([back] if back else [])]
+
+
 def spots(m: Manifest) -> dict[str, Point]:
     """Where each move sits: its node's place, else a column right of everything placed, in
     sequence order so a chain sits together."""

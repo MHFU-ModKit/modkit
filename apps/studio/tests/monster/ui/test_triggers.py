@@ -39,6 +39,11 @@ def rk(*places: int) -> str:
     return ", ".join(f"#{k}" for k in places)
 
 
+def by(place: int, trigger: str) -> str:
+    """A line of a move's tip: a rule and its trigger."""
+    return f"{rk(place)} \u00b7 {trigger}"
+
+
 def rng(lo: int, hi: int) -> str:
     return f"#{lo}\u2013#{hi}"
 
@@ -241,7 +246,7 @@ def test_node_of_maps_a_displayed_node_back(ws: MonsterWorkspace) -> None:
 
 def test_a_rule_is_a_row_of_its_blocks_and_the_move_it_plays() -> None:
     t = trigger(Path(("b1", "b2"), "m", None), Path(("b3",), "m", None))
-    plan = rows.plan(t, BLOCKS, NOTES, MOVES, {"m": (1, 2, 9)})
+    plan = rows.plan(t, BLOCKS, NOTES, MOVES, {"m": (1, 2, 9)}, tips={"m": "m's tip"})
     assert [r.title for r in plan.rows] == [f"{rk(1)} · go", f"{rk(2)} · then"]
     assert [[n.id for n in r.nodes] for r in plan.rows] == [
         ["b1", "b2", "ref:b2:m"],
@@ -249,7 +254,7 @@ def test_a_rule_is_a_row_of_its_blocks_and_the_move_it_plays() -> None:
     ]
     ref = plan.rows[0].nodes[-1]
     assert (ref.title, ref.ref, ref.badge) == ("▸ m", True, "×3")
-    assert ref.tip == f"The move m, played by 3 rules: {rk(1, 2, 9)}"
+    assert ref.tip == "m's tip"
     assert {(w.src, w.dst) for w in plan.links} == {
         ("b1", "b2"),
         ("b2", "ref:b2:m"),
@@ -261,7 +266,7 @@ def test_a_rule_is_a_row_of_its_blocks_and_the_move_it_plays() -> None:
 def test_a_move_played_by_one_rule_has_no_count() -> None:
     plan = rows.plan(trigger(Path(("b1",), "m", None)), BLOCKS, NOTES, MOVES, {"m": (1,)})
     ref = plan.rows[0].nodes[-1]
-    assert ref.badge == "" and ref.tip == f"The move m, played by 1 rule: {rk(1)}"
+    assert ref.badge == "" and ref.tip == "m", "the move's name when nothing says more"
 
 
 def test_a_rule_with_no_note_says_so() -> None:
@@ -394,9 +399,12 @@ def test_a_trigger_shows_only_its_rules_in_rank_order(
     assert panel.title.text() == f"All › Flinch — 2 rules, {rng(3, 4)} of 6"
     assert panel.spread.isHidden() and panel.hint.text() == SCOPED_HINT
     assert panel.view._shown["ref:b4:stamp"].view.badge == "×3"
-    assert panel.view._shown["ref:b4:stamp"].view.toolTip() == (
-        f"The move stamp, played by 3 rules: {rk(1, 3, 6)}"
-    )
+    assert panel.view._shown["ref:b4:stamp"].view.toolTip().splitlines() == [
+        "stamp \u00b7 played by 3 rules",
+        by(1, "while charge"),
+        by(3, "Flinch"),
+        by(6, "Part break"),
+    ]
     pick(qtbot, panel, ALL)
     assert ws.scope == ALL and "b8" in shown(panel) and panel.spread.isHidden()
 
@@ -1225,3 +1233,52 @@ def test_a_drop_among_its_own_rules_says_nothing_of_triggers(
 ) -> None:
     drag_frame(qtbot, panel, "frame:3", "frame:4")
     assert ws.message.startswith("rule moved") and "only among" not in ws.message
+
+
+# ---- what a reference says ------------------------------------------------------------------- #
+
+
+def tip(p: BehaviourPanel, node: str) -> str:
+    return p.view._shown[node].view.toolTip()
+
+
+def test_a_reference_lists_the_rules_that_play_the_move_and_the_sequence(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    doc(ws).edit(lambda m: setattr(m.moves["stamp"], "after", "stamp_2"))
+    doc(ws).edit(lambda m: setattr(m.moves["stamp_2"], "after", "howl"))
+    ws.refresh()
+    panel.sync()
+    assert tip(panel, "ref:b2:stamp").splitlines() == [
+        "stamp \u00b7 played by 3 rules",
+        by(1, "while charge"),
+        by(3, "Flinch"),
+        by(6, "Part break"),
+        "then stamp_2 \u2192 howl",
+    ]
+    assert tip(panel, "ref:b3:stamp_2").splitlines() == [
+        "stamp_2 \u00b7 played by 1 rule",
+        by(2, "while charge"),
+        "then howl",
+    ]
+
+
+def test_a_move_no_rule_plays_and_a_ring_are_said_plainly() -> None:
+    assert triggers.plays_tip("m", [], []) == "m \u00b7 no rule plays it"
+    assert triggers.plays_tip("m", [(1, "Flinch")], ["a", "b", "m"]).splitlines()[-1] == (
+        "then a \u2192 b \u2192 m"
+    )
+
+
+def test_a_long_list_is_cut() -> None:
+    by = [(k, "Flinch") for k in range(1, 12)]
+    lines = triggers.plays_tip("m", by, []).splitlines()
+    assert len(lines) == 1 + triggers.MOST + 1 and lines[-1] == f"and {11 - triggers.MOST} more"
+
+
+def test_the_start_of_a_while_rule_says_who_plays_the_move_it_starts_from(
+    panel: BehaviourPanel,
+) -> None:
+    head, *rest = tip(panel, "start:b1:charge").splitlines()
+    assert head == "This rule starts from charge's while-playing port"
+    assert rest[0] == "charge \u00b7 no rule plays it"

@@ -135,16 +135,18 @@ def plan(
     moves: Mapping[str, NodeSpec],
     played: Mapping[str, tuple[int, ...]],
     opens: Sequence[Path] = (),
+    tips: Mapping[str, str] | None = None,
 ) -> Plan:
     """`t`'s rules as rows, a frame tinted as the trigger is, then the `opens`: rules of `t` with
     no move yet. `blocks` and `moves` are the specs of the document's nodes, `notes` each
-    block's note, `played` the places of the rules that play each move (`players`)."""
+    block's note, `played` the places of the rules that play each move (`players`), `tips` the
+    tip of each move's reference."""
     start = moves.get(t.name) if t.section == "move" else None
     entries: list[Entry] = [
         *((r, p, t.key) for r, p in t.rules),
         *((None, o, t.key) for o in opens),
     ]
-    return _plan(entries, blocks, notes, played, start, None, {t.key: t.section})
+    return _plan(entries, blocks, notes, played, start, None, {t.key: t.section}, tips or {})
 
 
 def plan_all(
@@ -154,12 +156,14 @@ def plan_all(
     notes: Mapping[str, str],
     played: Mapping[str, tuple[int, ...]],
     labels: Mapping[str, str],
+    tips: Mapping[str, str] | None = None,
 ) -> Plan:
     """Every rule of `ts` in the order the brain checks them, then the `opens` (trigger key, rule)
     with no move yet. `labels` words each trigger by its key, for the frames."""
     ranked = sorted((r, p, t.key) for t in ts for r, p in t.rules)
     entries: list[Entry] = [*ranked, *((None, o, key) for key, o in opens)]
-    return _plan(entries, blocks, notes, played, None, labels, {t.key: t.section for t in ts})
+    sections = {t.key: t.section for t in ts}
+    return _plan(entries, blocks, notes, played, None, labels, sections, tips or {})
 
 
 def _plan(
@@ -170,6 +174,7 @@ def _plan(
     start: NodeSpec | None,
     labels: Mapping[str, str] | None,
     sections: Mapping[str, str],
+    tips: Mapping[str, str],
 ) -> Plan:
     seen: Counter[str] = Counter()
     news: Counter[str] = Counter()
@@ -189,7 +194,12 @@ def _plan(
                     (),
                     (graph.WHILE,),
                     badge=f"{TIMES}{starts[p.during]}" if starts[p.during] > 1 else "",
-                    tip=f"This rule starts from {p.during}'s while-playing port",
+                    tip="\n".join(
+                        [
+                            f"This rule starts from {p.during}'s while-playing port",
+                            tips.get(p.during, ""),
+                        ]
+                    ).strip(),
                     ref=True,
                 )
             )
@@ -216,8 +226,7 @@ def _plan(
                 (0.0, 0.0),
                 (graph.PLAY,),
                 badge=f"{TIMES}{len(by)}" if len(by) > 1 else "",
-                tip=f"The move {p.play}, played by {len(by)} "
-                f"rule{'' if len(by) == 1 else 's'}: " + ", ".join(f"#{k}" for k in by),
+                tip=tips.get(p.play, p.play),
                 ref=True,
             )
         elif rank is None:  # a rule that plays nothing by design ends at its last block

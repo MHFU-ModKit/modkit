@@ -14,7 +14,7 @@ the document.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -618,16 +618,28 @@ class BehaviourPanel(kit.Panel):
         specs, played = {n.id: n for n in blocks}, rows.players(r.paths)
         if t is not None:
             by_move = dict(zip(m.moves, moves, strict=True))
-            plan = rows.plan(t, specs, notes, by_move, played, self._opens.get(t.key, []))
+            own = self._opens.get(t.key, [])
+            plan = rows.plan(t, specs, notes, by_move, played, own, self._tips(m, played))
         else:
             opens = [(model.trigger_key(m, o), o) for o in graph.open_rules(m)]
             labels = {x.key: triggers.label(x) for x in self._triggers}
-            plan = rows.plan_all(self._triggers, opens, specs, notes, played, labels)
+            tips = self._tips(m, played)
+            plan = rows.plan_all(self._triggers, opens, specs, notes, played, labels, tips)
         self._plan = plan
         links = list(plan.links)
         self.view.show([dataclasses.replace(n, at=(0.0, 0.0)) for n in plan.nodes], links)
         placed, frames = rows.place(plan, self.view.sizes())
         self.view.show(placed, links, frames)
+
+    def _tips(self, m: Manifest, played: Mapping[str, tuple[int, ...]]) -> dict[str, str]:
+        """Each move's tip: the rules that play it, by rank and trigger, and its sequence."""
+        who = {k: triggers.label(t) for t in self._triggers for k, _ in t.rules}
+        return {
+            name: triggers.plays_tip(
+                name, [(k, who[k]) for k in played.get(name, ())], graph.then(m, name)
+            )
+            for name in m.moves
+        }
 
     @staticmethod
     def _blocks(m: Manifest, r: graph.Reading) -> list[NodeSpec]:
