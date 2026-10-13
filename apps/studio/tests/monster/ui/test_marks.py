@@ -240,7 +240,7 @@ def test_the_outline_shows_each_triggers_total_beside_its_ranks(
         return out.item_of(key).data(triggers.FIRED)
 
     assert fired("on_flinch") == "7×" and fired("during:charge") == "3×"
-    assert fired("on_noticed") == "5×" and fired("on_tail_cut") == "0×"
+    assert fired("on_noticed") == "5×" and fired("on_tail_cut") == ""
     assert fired("all") == "21×"
     assert out.width() == triggers.WIDTH + triggers.FIRED_W
     QTest.mouseClick(panel.watch, LEFT, NONE)

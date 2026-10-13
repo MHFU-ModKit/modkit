@@ -259,6 +259,21 @@ def test_alert_recolours(qtbot: Any) -> None:
     assert a.palette().color(a.foregroundRole()).name() == theme.current().text
 
 
+def test_elided_takes_the_spare_room_and_never_widens_its_row(qtbot: Any) -> None:
+    long = "the game runs another build of these rules: Play in game sends them " * 3
+    label, button = kit.Elided(long, None, role="muted"), kit.button("Go", tip="go", on=print)
+    row = kit.row(button, label, grow=label)
+    qtbot.addWidget(row)
+    row.resize(500, 30)
+    row.show()
+    qtbot.waitExposed(row)
+    assert label.width() == row.width() - button.width() - 6
+    assert row.minimumSizeHint().width() < label.fontMetrics().horizontalAdvance(long) / 4
+    row.resize(120, 30)
+    assert row.layout().geometry().width() == 120 and label.width() < 120  # type: ignore[union-attr]
+    assert label.text() == long, "the whole text stays for its tip"
+
+
 def test_wheel_needs_focus(qtbot: Any) -> None:
     p = kit.Panel()
     slider = kit.Slider(0.0, 1.0, 0.5, tip="s")

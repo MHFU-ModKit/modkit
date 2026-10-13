@@ -134,8 +134,7 @@ class BehaviourPanel(kit.Panel):
             on=lambda on: studio.act("watch the game", lambda: self._watching(on))(),
             checked=ws.watch.on,
         )
-        self.live = kit.Alert("", None, role="muted", wrap=False)
-        self.live.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.live = kit.Elided("", None, role="muted")
         self.ticker = QTimer(self)
         self.ticker.setInterval(round(rule_game.PERIOD * 1000))
         self.ticker.timeout.connect(studio.guard("watch the game", self._tick))
@@ -183,7 +182,7 @@ class BehaviourPanel(kit.Panel):
                 self.spread,
                 self.watch,
                 self.live,
-                stretch=True,
+                grow=self.live,
             )
         )
         lay.addWidget(self.view, 1)
@@ -524,7 +523,9 @@ class BehaviourPanel(kit.Panel):
         totals = (
             {}
             if fires is None
-            else {t.key: triggers.times(triggers.total(t, fires)) for t in self._triggers}
+            else {
+                t.key: triggers.times(triggers.total(t, fires)) for t in self._triggers if t.rules
+            }
         )
         self.outline.set_fired(
             {} if fires is None else {ALL: triggers.times(sum(fires.values())), **totals}
