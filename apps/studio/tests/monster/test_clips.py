@@ -216,3 +216,52 @@ def test_zinogre(games, built, ports):
 def test_brute(built):
     table = C.pac_clip_table(built("brute_tigrex"))
     assert len(table) == 77 and table[61] == (382, False) and 24 not in table
+
+
+@pytest.fixture
+def parses(monkeypatch):
+    """The PACs `pac_clip_table` parsed, with a table that says which."""
+    seen: list[bytes] = []
+    monkeypatch.setattr(slots, "anim_of", lambda pac: seen.append(pac) or pac)
+    monkeypatch.setattr(C, "clip_table", lambda pack: {1: (len(pack), True)})
+    C.pac_clip_table.cache_clear()
+    yield seen
+    C.pac_clip_table.cache_clear()
+
+
+def test_a_pac_is_parsed_once_whoever_asks(parses):
+    pac = b"a pac"
+    first = C.pac_clip_table(pac)
+    assert C.pac_clip_table(pac) is first and C.pac_clip_table(bytes(bytearray(pac))) is first
+    assert parses == [pac]
+
+
+def test_other_bytes_are_another_table(parses):
+    one, two = C.pac_clip_table(b"one"), C.pac_clip_table(b"three")
+    assert one is not two and dict(one) == {1: (3, True)} and dict(two) == {1: (5, True)}
+    assert parses == [b"one", b"three"]
+
+
+def test_the_table_is_shared_so_no_caller_can_change_it(parses):
+    table = C.pac_clip_table(b"pac")
+    with pytest.raises(TypeError):
+        table[2] = (1, False)
+    with pytest.raises(TypeError):
+        del table[1]
+    assert dict(C.pac_clip_table(b"pac")) == {1: (3, True)}
+
+
+def test_an_unreadable_pac_is_not_remembered(monkeypatch):
+    tries = []
+
+    def broken(pac):
+        tries.append(pac)
+        raise ValueError("no clips")
+
+    monkeypatch.setattr(slots, "anim_of", broken)
+    C.pac_clip_table.cache_clear()
+    for _ in range(2):
+        with pytest.raises(ValueError, match="no clips"):
+            C.pac_clip_table(b"bad")
+    assert len(tries) == 2
+    C.pac_clip_table.cache_clear()

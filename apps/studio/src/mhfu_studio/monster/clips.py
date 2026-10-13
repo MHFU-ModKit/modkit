@@ -13,10 +13,12 @@ at hand.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 
 from mhfu_port import layout as layouts
 from mhfu_port import motion, slots
@@ -77,8 +79,11 @@ def clip_table(anim: AnimPack) -> dict[int, Fingerprint]:
     return {s: (frames, bool(loop)) for s, (frames, loop) in slots.slot_prints(anim).items()}
 
 
-def pac_clip_table(pac: bytes) -> dict[int, Fingerprint]:
-    return clip_table(slots.anim_of(pac))
+@functools.lru_cache(maxsize=2)
+def pac_clip_table(pac: bytes) -> Mapping[int, Fingerprint]:
+    """`clip_table` of a built PAC, parsed once per PAC: the findings ask every few seconds.
+    Read-only, as the table is shared by every caller."""
+    return MappingProxyType(clip_table(slots.anim_of(pac)))
 
 
 def source_clip_table(moveset: bytes) -> dict[int, Fingerprint]:

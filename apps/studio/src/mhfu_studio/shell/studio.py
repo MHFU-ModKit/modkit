@@ -33,6 +33,12 @@ if TYPE_CHECKING:
     from mhfu_studio.shell.viewport import Viewport
 
 
+SLOW_COST, SLOW_EVERY = 0.05, 60.0
+"""A timed re-check that cost more than this many seconds is not repeated for that many: a stall
+is the check's whole length, which the interval's share of the time does not bound. A change
+(`Findings.stale`) re-checks at once."""
+
+
 class Findings:
     """The active document's findings, re-checked on demand and, when `auto`, now and then.
 
@@ -55,7 +61,8 @@ class Findings:
         if doc is None:
             self.found, self._doc = [], None
             return self.found
-        due = self.auto and now - self._at >= max(1.0, 10 * self._cost)
+        wait = SLOW_EVERY if self._cost > SLOW_COST else max(1.0, 10 * self._cost)
+        due = self.auto and now - self._at >= wait
         if self._stale or doc is not self._doc or due:
             t0 = time.monotonic()
             try:

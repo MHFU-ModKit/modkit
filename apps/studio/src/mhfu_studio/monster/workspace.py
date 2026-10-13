@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import tomllib
-from collections.abc import Callable, Hashable, Sequence
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -924,7 +924,7 @@ class MonsterWorkspace(Workspace):
 
     # clips
 
-    def clip_table(self) -> dict[int, clips.Fingerprint]:
+    def clip_table(self) -> Mapping[int, clips.Fingerprint]:
         """The open build's fingerprints."""
         sc = self.scene
         if sc is None:

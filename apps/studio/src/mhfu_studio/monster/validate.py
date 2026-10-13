@@ -208,7 +208,7 @@ def _pac(m: Manifest, pac: bytes | None, sources: Mapping[int, int]) -> list[Fin
         return []
     out = []
     try:
-        table: dict[int, clips.Fingerprint] | None = clips.pac_clip_table(pac)
+        table: Mapping[int, clips.Fingerprint] | None = clips.pac_clip_table(pac)
     except ValueError as e:
         out.append(_f("error", "PAC_UNREADABLE", "", f"no clip table in the PAC: {e}"))
         table = None
@@ -225,7 +225,7 @@ def _pac(m: Manifest, pac: bytes | None, sources: Mapping[int, int]) -> list[Fin
 
 
 def _clips(
-    m: Manifest, table: dict[int, clips.Fingerprint], sources: Mapping[int, int]
+    m: Manifest, table: Mapping[int, clips.Fingerprint], sources: Mapping[int, int]
 ) -> list[Finding]:
     out = []
     moved = {
