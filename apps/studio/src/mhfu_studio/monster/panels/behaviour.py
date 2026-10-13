@@ -542,7 +542,6 @@ class BehaviourPanel(kit.Panel):
                 FIRE_TIP.format(triggers.title(t)) if why is None else f"Fire: {why}"
             )
         w = self.ws.watch
-        self.live.setVisible(w.on)
         self.live.setText(w.status)
         self.live.setToolTip(w.status)
         self.live.set_level(None if w.fires is not None else "warning")
