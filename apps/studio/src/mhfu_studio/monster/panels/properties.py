@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QMenu,
+    QPushButton,
     QSpinBox,
     QToolButton,
     QWidget,
@@ -225,10 +226,29 @@ class ParamControl(QObject):
 
 
 @dataclass(frozen=True)
+class Plays:
+    """The picker for the move a rule plays: `block` plays `current` (None: none yet) and may be
+    given any of `moves`; `none` words the entry that means no move."""
+
+    block: str
+    current: str | None
+    moves: tuple[str, ...]
+    none: str = "nothing"
+
+
+@dataclass(frozen=True)
+class Play:
+    """A Play in game button for `move`."""
+
+    move: str
+
+
+@dataclass(frozen=True)
 class Detail:
     """What the bar shows of one node: its kind, params with their `values` and `options` (a
-    combo's or a multi-select's (label, value) list, else the param's `choices`), its note.
-    A node with no params and no `note` shows only its title and tip."""
+    combo's or a multi-select's (label, value) list, else the param's `choices`), a `plays`
+    picker, its note and a Play in game button. A node with no params and no `note` shows only
+    its title and tip."""
 
     id: str
     title: str
@@ -238,6 +258,9 @@ class Detail:
     options: Mapping[str, Sequence[Option]] = field(default_factory=dict)
     label: str = ""
     note: bool = True
+    note_tip: str = "A note on this block, kept in the port manifest"
+    plays: Plays | None = None
+    play: Play | None = None
 
 
 class PropertyBar(QWidget):
@@ -245,6 +268,9 @@ class PropertyBar(QWidget):
 
     param_changed = Signal(str, str, object)
     label_changed = Signal(str, str)
+    #: the block, the move it played (None: none yet), the move it plays now (None: none)
+    plays_changed = Signal(str, object, object)
+    play_requested = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -253,11 +279,14 @@ class PropertyBar(QWidget):
         self._lay.setContentsMargins(2, 0, 2, 0)
         self._lay.setSpacing(8)
         self._shape: tuple[object, ...] | None = None
+        self._plays = Plays("", None, ())
         self._id = ""
         #: the note as the document holds it: an edit that leaves it so says nothing
         self._label = ""
         self.controls: dict[str, ParamControl] = {}
         self.note: ParamControl | None = None
+        self.plays: ParamControl | None = None
+        self.play: QPushButton | None = None
         self._owned: list[QWidget] = []
 
     def show_detail(self, d: Detail | None) -> None:
@@ -266,7 +295,14 @@ class PropertyBar(QWidget):
         if d is None:
             self._clear()
             return
-        shape = (d.id, d.title, d.note, tuple((p.name, p.type) for p in d.params))
+        shape = (
+            d.id,
+            d.title,
+            d.note,
+            tuple((p.name, p.type) for p in d.params),
+            None if d.plays is None else d.plays.moves,
+            d.play,
+        )
         if shape != self._shape:
             self._clear()
             self._build(d)
@@ -280,6 +316,10 @@ class PropertyBar(QWidget):
                 c.set_value(want)
         if self.note is not None and not self.note.same(d.label):
             self.note.set_value(d.label)
+        if self.plays is not None and d.plays is not None:
+            self._plays = d.plays
+            if not self.plays.same(d.plays.current):
+                self.plays.set_value(d.plays.current)
 
     @staticmethod
     def _options(d: Detail, p: Param) -> list[Option]:
@@ -294,9 +334,14 @@ class PropertyBar(QWidget):
         for w in self._owned:
             self._lay.removeWidget(w)
             w.deleteLater()
-        for c in [*self.controls.values(), *([self.note] if self.note else [])]:
+        for c in [
+            *self.controls.values(),
+            *([self.note] if self.note else []),
+            *([self.plays] if self.plays else []),
+        ]:
             c.deleteLater()
         self._owned, self.controls, self.note, self._shape = [], {}, None, None
+        self.plays, self.play = None, None
 
     def _add(self, w: QWidget, stretch: int = 0) -> None:
         self._lay.addWidget(w, stretch)
@@ -307,6 +352,8 @@ class PropertyBar(QWidget):
         title = kit.label(d.title, role="title", wrap=False)
         title.setToolTip(d.tip)
         self._add(title)
+        if d.plays is not None:
+            self._build_plays(d.plays)
         for p in d.params:
             self._add(kit.label(p.title, role="muted", wrap=False))
             c = ParamControl(p, self._options(d, p))
@@ -318,8 +365,35 @@ class PropertyBar(QWidget):
         if d.note:
             self._add(kit.label("Note", role="muted", wrap=False))
             note = self.note = ParamControl(None)
-            note.ctl.setToolTip("A note on this block, kept in the port manifest")
+            note.ctl.setToolTip(d.note_tip)
             note.edited.connect(lambda: self._noted(str(note.get_value())))
             self._add(note.ctl, 1)
         else:
             self._add(kit.label(d.tip.split("\n")[0], role="muted", wrap=False), 1)
+        if d.play is not None:
+            move = d.play.move
+            self.play = kit.button(
+                "Play",
+                tip=f"Plays {move} in the running game, as Play in game does in Moves",
+                on=lambda: self.play_requested.emit(move),
+                icon="ph.play",
+            )
+            self._add(self.play)
+
+    def _build_plays(self, plays: Plays) -> None:
+        self._plays = plays
+        self._add(kit.label("Plays", role="muted", wrap=False))
+        param = Param(
+            "plays",
+            "choice",
+            "Plays",
+            choices=plays.moves,
+            tip="The move this rule plays when it fires; nothing leaves the rule unfinished,"
+            " and an unfinished rule does not run",
+        )
+        options: list[Option] = [(plays.none, None), *((m, m) for m in plays.moves)]
+        c = self.plays = ParamControl(param, options)
+        c.edited.connect(
+            lambda: self.plays_changed.emit(self._plays.block, self._plays.current, c.get_value())
+        )
+        self._add(c.ctl)

@@ -8,9 +8,9 @@ The triggers are the package's (`mhfu_port.behaviour.triggers`); this module wor
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
-from mhfu_port.behaviour import KINDS, Trigger
+from mhfu_port.behaviour import KINDS, Path, Trigger
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QFont, QFontMetricsF, QPainter
 from PySide6.QtWidgets import (
@@ -72,10 +72,17 @@ def says(t: Trigger, total: int) -> str:
     return f"All{SEP}{name} {DASH} {tail}"
 
 
-def owner(ts: Sequence[Trigger], block: str) -> str | None:
+def holds(ts: Sequence[Trigger], opens: Mapping[str, Sequence[Path]], key: str, block: str) -> bool:
+    """Whether trigger `key` has a rule, with a move or not, that runs through `block`."""
+    t = next((t for t in ts if t.key == key), None)
+    rules = [p for _, p in t.rules] if t is not None else []
+    return any(block in p.blocks for p in [*rules, *opens.get(key, [])])
+
+
+def owner(ts: Sequence[Trigger], opens: Mapping[str, Sequence[Path]], block: str) -> str | None:
     """The key of the first trigger one of whose rules runs through `block`; None: it is on no
     rule."""
-    return next((t.key for t in ts if any(block in p.blocks for _, p in t.rules)), None)
+    return next((t.key for t in ts if holds(ts, opens, t.key, block)), None)
 
 
 class _Row(QStyledItemDelegate):
