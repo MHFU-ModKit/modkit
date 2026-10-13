@@ -14,6 +14,9 @@ block by scanning for it; `read` then takes the rules in one request.
 A slot's index is the rule's place in `mhfu_port.behaviour.compile(manifest)`. Counters restart with
 each quest and whenever the port's moves module is re-run. A memory request stops the emulator for
 a few ms, so read about once a second, never faster.
+
+The board is plain memory the brain takes from in its next AI frame, so a debugger can do what Lua
+does: `fire_signal` is `mhfu.em_signal`.
 """
 
 from __future__ import annotations
@@ -98,9 +101,10 @@ def _live(mem: Memory, entity: int) -> bool:
 
 def _board() -> int | None:
     """Where the board's ENTITY word is in the block; None for a build with no board."""
-    board = a.table().structs.get("EM_BOARD")
-    at = getattr(a.EM_CFG, "BOARD", None)
-    return None if board is None or at is None else int(at) + int(board.ENTITY)
+    structs = a.table().structs
+    if "EM_BLOCK" not in structs or "EM_BOARD" not in structs:
+        return None
+    return int(a.EM_BLOCK.BOARD) + int(a.EM_BOARD.ENTITY)
 
 
 def _owned(mem: Memory, cfg: int) -> bool:
@@ -156,3 +160,16 @@ def _decode(index: int, r: bytes) -> Slot | None:
     return Slot(
         index, on, signal, not r[rule.FLAGS] & NO_PLAY, min_frames, cooldown, fired, left, last
     )
+
+
+def _board_at(cfg: int, field: int) -> int:
+    return cfg + int(a.EM_BLOCK.BOARD) + field
+
+
+def fire_signal(s: Reader, cfg: int, index: int) -> None:
+    """Raises board signal `index` (a name's place in `mhfu_port.behaviour.signals`): the rules on
+    it fire in the monster's next AI frame. One byte, which the brain clears when it takes it."""
+    n = a.EM_BOARD.SIGNALS.count or 0
+    if not 0 <= index < n:
+        raise ValueError(f"signal {index}: the board holds {n}")
+    s.mem.write_u8(_board_at(cfg, int(a.EM_BOARD.SIGNALS)) + index, 1)

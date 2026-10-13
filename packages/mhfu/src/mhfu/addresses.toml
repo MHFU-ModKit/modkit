@@ -1008,6 +1008,13 @@ BROKEN = { offset = 0x30, type = "u8", doc = "bit k: part k broke on this monste
 RNG = { offset = 0x34, type = "u32", doc = "xorshift32 state for CHANCE" }
 ENTITY = { offset = 0x38, type = "ptr", doc = "the monster it belongs to" }
 
+[struct.EM_BLOCK]
+doc = "em_vhook's partition block from its config block on (em_vhook.cpp place_block): the config block, the tail's map and the cut's wait, then the board; the block's address moves with the PRX build, a debugger finds it by EM_CFG.CANARY"
+size = 0xD68
+[struct.EM_BLOCK.fields]
+CFG = { offset = 0x00, type = "EM_CFG", doc = "the config block" }
+BOARD = { offset = 0xD08, type = "EM_BOARD", doc = "the board, after the tail: sizeof(tail_t) is 0x28" }
+
 [enum.EM_COND]
 doc = "a brain rule's condition, EM_OP.OP - 1: hp_at_least/hp_below HP percent of MAX_HP against VALUE; broken/not_broken part ARG in EM_BOARD.BROKEN; enraged/calm ENTITY.FLAGS 0x20; side the hunter in a sector of the monster's facing in mask ARG (90 degrees each, left the monster's own); chance VALUE percent; var_* EM_BOARD.VARS[ARG] against VALUE"
 names = ["hp_at_least", "hp_below", "broken", "not_broken", "enraged", "calm", "side", "chance", "var_at_least", "var_below", "var_equal"]
