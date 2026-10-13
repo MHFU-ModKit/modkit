@@ -575,6 +575,7 @@ class GraphView(QWidget):
         if resized:
             view.draw_node()
         view.setToolTip(spec.tip)  # after `draw_node`, which sets NodeGraphQt's own
+        view.text_item.setToolTip("")  # NodeGraphQt's rename hint hides the node's tip
 
     def _tint(self, role: str) -> tuple[QColor, QColor] | None:
         """A role's body and edge colours."""
