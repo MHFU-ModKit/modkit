@@ -19,16 +19,18 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from NodeGraphQt import BaseNode, NodeGraph, Port
+from NodeGraphQt import BackdropNode, BaseNode, NodeGraph, Port
 from NodeGraphQt.qgraphics.node_base import NodeItem
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
+    QColor,
     QFont,
     QFontMetricsF,
     QInputDevice,
     QKeyEvent,
     QNativeGestureEvent,
     QPainter,
+    QPen,
     QShowEvent,
     QUndoCommand,
     QUndoStack,
@@ -44,6 +46,8 @@ Point = tuple[float, float]
 PaletteGroup = tuple[str, Sequence[tuple[str, str, str]]]
 #: a node's least width, the lines of summary it shows, and the room left of them
 NODE_W, SUMMARY_LINES, SUMMARY_X = 168.0, 2, 14.0
+#: a frame's room round its nodes: the sides, the title bar with the gap under it, the bottom
+FRAME_PAD, FRAME_TOP, FRAME_BOTTOM = 18.0, 38.0, 14.0
 #: a scroll without pixels moves this many pixels per angle unit (a notch of 120 is ~3 lines)
 _ANGLE_PX = 0.5
 #: the zoom per angle unit of a wheel, as NodeGraphQt has it, and the scale the canvas keeps to
@@ -54,7 +58,8 @@ _SCALE = (0.05, 3.0)
 @dataclass(frozen=True)
 class NodeSpec:
     """One node as the owner wants it drawn: a title, a `summary` of a line or two under it, a
-    `badge` in its title bar, the `tip` it carries; `dim` draws it faded."""
+    `badge` in its title bar, the `tip` it carries; `dim` draws it faded; `ref` draws a stand-in
+    for a node shown elsewhere: dashed and a little faded."""
 
     id: str
     title: str
@@ -66,6 +71,17 @@ class NodeSpec:
     badge: str = ""
     dim: bool = False
     tip: str = ""
+    ref: bool = False
+
+
+@dataclass(frozen=True)
+class FrameSpec:
+    """A titled frame round the nodes `nodes` (ids), tinted by `role`."""
+
+    id: str
+    title: str
+    nodes: tuple[str, ...]
+    role: str
 
 
 @dataclass(frozen=True)
@@ -151,6 +167,14 @@ class _Navigation(QObject):
         v.scale(f, f, v.mapToScene(at))
 
 
+def _tuples(body: QColor, edge: QColor) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """A node's body and edge colours as the (r, g, b, a) tuples NodeGraphQt takes."""
+    return (
+        (body.red(), body.green(), body.blue(), 255),
+        (edge.red(), edge.green(), edge.blue(), 255),
+    )
+
+
 def wrap(text: str, metrics: QFontMetricsF, width: float, lines: int = SUMMARY_LINES) -> list[str]:
     """`text` in at most `lines` lines of `width`: words kept, the last line elided."""
     out: list[str] = []
@@ -172,12 +196,16 @@ def wrap(text: str, metrics: QFontMetricsF, width: float, lines: int = SUMMARY_L
 
 
 class _Item(NodeItem):  # type: ignore[misc]
-    """A node's drawing: a summary under the title, a badge in the title bar, and no renaming.
-    It overrides `calc_size` (room for the summary, at least `NODE_W` wide), `paint` (draws the
-    summary and the badge) and `mouseDoubleClickEvent`."""
+    """A node's drawing: a summary under the title, a badge in the title bar, a dashed edge for a
+    reference, and no renaming. It overrides `calc_size` (room for the summary, at least
+    `NODE_W` wide), `paint` (draws those) and `mouseDoubleClickEvent`."""
 
     badge = ""
     summary = ""
+    ref = False
+    #: the node's body and edge colours, for a reference's dashed edge
+    body: QColor | None = None
+    edge: QColor | None = None
 
     @staticmethod
     def _font() -> QFont:
@@ -203,6 +231,13 @@ class _Item(NodeItem):  # type: ignore[misc]
         self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None
     ) -> None:
         super().paint(painter, option, widget)
+        if self.ref and self.body is not None and self.edge is not None:
+            area = QRectF(self.boundingRect()).adjusted(1.0, 1.0, -1.0, -1.0)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(self.body, 3.0))  # over the solid edge, then dashed
+            painter.drawRoundedRect(area, 3.0, 3.0)
+            painter.setPen(QPen(self.edge, 1.6, Qt.PenStyle.DashLine))
+            painter.drawRoundedRect(area, 3.0, 3.0)
         if self.summary:
             painter.setFont(self._font())
             painter.setPen(theme.color(Ink.TEXT))
@@ -280,6 +315,8 @@ class GraphView(QWidget):
         self._shown: dict[str, _Shown] = {}
         self._nodes: Sequence[NodeSpec] = ()
         self._links: Sequence[LinkSpec] = ()
+        self._frames: Sequence[FrameSpec] = ()
+        self._backdrops: list[Any] = []
         self._roles: Mapping[str, Color] = {}
         self._menus: list[QMenu] = []
         self._pending: list[tuple[Callable[[], None], bool]] = []
@@ -310,20 +347,25 @@ class GraphView(QWidget):
 
     # -- what the owner calls -- #
 
-    def show(self, nodes: Sequence[NodeSpec] | None = None, links: Sequence[LinkSpec] = ()) -> None:
-        """Draws `nodes` and `links`, and no more than differs from what is drawn. Called bare
-        it is `QWidget.show`."""
+    def show(
+        self,
+        nodes: Sequence[NodeSpec] | None = None,
+        links: Sequence[LinkSpec] = (),
+        frames: Sequence[FrameSpec] = (),
+    ) -> None:
+        """Draws `nodes`, `links` and `frames`, and no more than differs from what is drawn.
+        Called bare it is `QWidget.show`."""
         if nodes is None:
             super().show()
             return
-        self._apply(nodes, links)
+        self._apply(nodes, links, frames)
         if nodes and self.isVisible():
             self._frame_once()
 
     def set_roles(self, colors: Mapping[str, Color]) -> None:
         """A node's colour by `NodeSpec.role`; a role not named keeps NodeGraphQt's grey."""
         self._roles = colors
-        self._apply(self._nodes, self._links)
+        self._apply(self._nodes, self._links, self._frames)
 
     def set_canvas(self, background: Color) -> None:
         """The canvas's fill, and its grid a shade off it."""
@@ -372,10 +414,18 @@ class GraphView(QWidget):
             self._graph.center_on(nodes)
 
     def fit(self) -> None:
-        """Frames every node."""
-        views = [s.view for s in self._shown.values()]
+        """Frames every node and frame."""
+        views = [s.view for s in self._shown.values()] + [b.view for b in self._backdrops]
         if views:
             self.viewer.zoom_to_nodes(views)
+
+    def sizes(self) -> dict[str, tuple[float, float]]:
+        """Each shown node's drawn width and height, in scene units."""
+        out = {}
+        for i, s in self._shown.items():
+            r = s.view.sceneBoundingRect()
+            out[i] = (r.width(), r.height())
+        return out
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
         super().showEvent(event)
@@ -389,9 +439,11 @@ class GraphView(QWidget):
 
     # -- drawing -- #
 
-    def _apply(self, nodes: Sequence[NodeSpec], links: Sequence[LinkSpec]) -> None:
-        self._check(nodes, links)
-        self._nodes, self._links = nodes, links
+    def _apply(
+        self, nodes: Sequence[NodeSpec], links: Sequence[LinkSpec], frames: Sequence[FrameSpec] = ()
+    ) -> None:
+        self._check(nodes, links, frames)
+        self._nodes, self._links, self._frames = nodes, links, frames
         self._renders += 1
         self._busy += 1
         try:
@@ -406,6 +458,7 @@ class GraphView(QWidget):
                     have = None
                 self._sync(have or self._make(spec), spec)
             self._relink(links)
+            self._frame(frames)
             for i in keep & want:
                 if not self._shown[i].view.isSelected():
                     self._shown[i].view.setSelected(True)
@@ -414,7 +467,9 @@ class GraphView(QWidget):
         self._pick = self._picked()
 
     @staticmethod
-    def _check(nodes: Sequence[NodeSpec], links: Sequence[LinkSpec]) -> None:
+    def _check(
+        nodes: Sequence[NodeSpec], links: Sequence[LinkSpec], frames: Sequence[FrameSpec] = ()
+    ) -> None:
         """Everything that could fail half way, before anything is drawn."""
         ports = {n.id: (set(n.inputs), set(n.outputs)) for n in nodes}
         if len(ports) != len(nodes):
@@ -422,6 +477,9 @@ class GraphView(QWidget):
         for n in nodes:
             if len(ports[n.id][0]) != len(n.inputs) or len(ports[n.id][1]) != len(n.outputs):
                 raise ValueError(f"node {n.id}: a port name twice")
+        for fr in frames:
+            if not all(i in ports for i in fr.nodes):
+                raise ValueError(f"frame {fr.id}: a node it holds is not listed")
         for ln in links:
             if ln.src not in ports or ln.src_port not in ports[ln.src][1]:
                 raise ValueError(f"link from {ln.src}.{ln.src_port}: no such output")
@@ -462,14 +520,17 @@ class GraphView(QWidget):
         resized = s.title != spec.title or view.summary != spec.summary
         if s.title != spec.title:
             s.title = view.name = spec.title
-        tint = self._tint(spec.role) or s.base
+        ink = self._tint(spec.role)
+        tint = s.base if ink is None else _tuples(*ink)
         if tint != s.tint:
             s.tint = tint
             view.color, view.border_color = tint
+            view.body, view.edge = (None, None) if ink is None else ink
         if view.badge != spec.badge:
             view.badge = spec.badge
             view.update()
-        view.setOpacity(0.35 if spec.dim else 1.0)
+        view.ref = spec.ref
+        view.setOpacity(0.35 if spec.dim else 0.8 if spec.ref else 1.0)
         x, y = view.xy_pos
         if abs(x - spec.at[0]) > 1e-3 or abs(y - spec.at[1]) > 1e-3:
             view.xy_pos = spec.at
@@ -478,16 +539,13 @@ class GraphView(QWidget):
             view.draw_node()
         view.setToolTip(spec.tip)  # after `draw_node`, which sets NodeGraphQt's own
 
-    def _tint(self, role: str) -> tuple[tuple[int, ...], tuple[int, ...]] | None:
+    def _tint(self, role: str) -> tuple[QColor, QColor] | None:
+        """A role's body and edge colours."""
         ink = self._roles.get(role)
         if ink is None:
             return None
         edge = theme.color(ink)
-        body = edge.darker(320)
-        return (
-            (body.red(), body.green(), body.blue(), 255),
-            (edge.red(), edge.green(), edge.blue(), 255),
-        )
+        return edge.darker(320), edge
 
     def _pipes(self) -> dict[LinkSpec, Any]:
         out: dict[LinkSpec, Any] = {}
@@ -521,6 +579,31 @@ class GraphView(QWidget):
                 src.disconnect_from(dst, push_undo=False, emit_signal=False)
             src.connect_to(dst, push_undo=False, emit_signal=False)
 
+    def _frame(self, frames: Sequence[FrameSpec]) -> None:
+        """The frames, made again each time: titled backdrops round their nodes. A title is cut
+        to the frame's width."""
+        for old in self._backdrops:
+            self._graph.remove_node(old, push_undo=False)
+        self._backdrops = []
+        metrics = QFontMetricsF(QApplication.font())
+        for fr in frames:
+            node = BackdropNode()
+            node.NODE_NAME = fr.id
+            self._graph.add_node(node, pos=(0.0, 0.0), selected=False, push_undo=False)
+            ink = self._roles.get(fr.role)
+            if ink is not None:
+                edge = theme.color(ink).darker(220)
+                node.set_color(edge.red(), edge.green(), edge.blue())
+            held = QRectF()
+            for i in fr.nodes:
+                held = held.united(self._shown[i].view.sceneBoundingRect())
+            node.set_pos(held.left() - FRAME_PAD, held.top() - FRAME_TOP)
+            node.set_size(held.width() + 2 * FRAME_PAD, held.height() + FRAME_TOP + FRAME_BOTTOM)
+            node.view.name = metrics.elidedText(
+                fr.title, Qt.TextElideMode.ElideRight, node.view.width - 20.0
+            )
+            self._backdrops.append(node)
+
     # -- what the canvas tells -- #
 
     def _raise(self, fn: Callable[[], None], *, revert: bool = True) -> None:
@@ -537,7 +620,7 @@ class GraphView(QWidget):
             fn()
         self.settled.emit()
         if self._renders == seen and any(revert for _, revert in pending):
-            self._apply(self._nodes, self._links)
+            self._apply(self._nodes, self._links, self._frames)
 
     def _wired(self, kind: str, into: Port, out: Port) -> None:
         """NodeGraphQt applied a connect or a disconnect (a re-route is both, in one turn):

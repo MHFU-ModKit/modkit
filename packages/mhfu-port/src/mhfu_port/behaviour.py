@@ -106,6 +106,9 @@ class Kind:
     tip: str = ""
     summary: Words | None = None
     """The values in a line or two, for a compact node; None: `summary` words them generically."""
+    by: str = ""
+    """An event kind's param whose value tells its rules apart: each value is a trigger of its
+    own (a signal's name). Empty: the kind is one trigger."""
 
 
 _ON = "on_"
@@ -189,6 +192,7 @@ KINDS: dict[str, Kind] = {
             ),
             "A mod raises this signal",
             summary=lambda v: str(v["name"]),
+            by="name",
         ),
         Kind(
             "any_time",
@@ -693,18 +697,24 @@ def validate(m: Manifest) -> None:
 # paths
 
 
-def paths(m: Manifest) -> list[Path]:
-    """Every complete path in the order the brain runs them: those that play nothing, then the
-    rest, each in canvas order."""
+def sources(m: Manifest) -> list[tuple[str, str | None]]:
+    """Where paths start, as (block, move): each event or state block nothing feeds, with no
+    move, and each block a move's while-playing port feeds, with that move."""
     b = m.behaviour
     fed = {n for blk in b.blocks.values() for n in blk.next}
     listed = {n for node in b.moves.values() for n in node.during}
-    sources: list[tuple[str, str | None]] = [
+    out: list[tuple[str, str | None]] = [
         (i, None)
         for i, blk in b.blocks.items()
         if KINDS[blk.kind].role in ("event", "state") and i not in fed | listed
     ]
-    sources += [(i, name) for name, node in b.moves.items() for i in node.during]
+    return out + [(i, name) for name, node in b.moves.items() for i in node.during]
+
+
+def paths(m: Manifest) -> list[Path]:
+    """Every complete path in the order the brain runs them: those that play nothing, then the
+    rest, each in canvas order."""
+    b = m.behaviour
     out: list[Path] = []
 
     def walk(trail: tuple[str, ...], during: str | None) -> None:
@@ -716,9 +726,71 @@ def paths(m: Manifest) -> list[Path]:
             if n not in trail:  # a cycle is `validate`'s to refuse
                 walk((*trail, n), during)
 
-    for i, during in sources:
+    for i, during in sources(m):
         walk((i,), during)
     return sorted(out, key=lambda p: _priority(m, p))
+
+
+DURING = "during:"
+"""The key prefix of a trigger that is a playing move."""
+Section = Literal["event", "state", "move"]
+
+
+@dataclass(frozen=True)
+class Trigger:
+    """What starts rules: an event kind (one trigger per value of its `by` param), a state kind,
+    or a move playing. `rules` are its paths with their places in `paths(m)`, counted from 1."""
+
+    key: str
+    section: Section
+    kind: str = ""
+    """The root block's kind; empty for a move."""
+    name: str = ""
+    """The `by` value of an event kind, or the move."""
+    rules: tuple[tuple[int, Path], ...] = ()
+
+    @property
+    def ranks(self) -> tuple[int, ...]:
+        return tuple(rank for rank, _ in self.rules)
+
+
+def trigger_key(m: Manifest, p: Path) -> str:
+    """The key of the trigger `p` belongs to: its move's, else its root block's kind."""
+    if p.during:
+        return DURING + p.during
+    blk = m.behaviour.blocks[p.blocks[0]]
+    kind = KINDS[blk.kind]
+    return f"{kind.name}:{params(blk).get(kind.by)}" if kind.by else kind.name
+
+
+def triggers(m: Manifest) -> list[Trigger]:
+    """Every trigger, in the order to list them: each event kind (a kind with `by`: each value
+    in use, else one empty), each state kind, then each move with a while-playing port, the one
+    whose rules come first first. A trigger with no rules is there, empty."""
+    held: dict[str, list[tuple[int, Path]]] = {}
+    for rank, p in enumerate(paths(m), 1):
+        held.setdefault(trigger_key(m, p), []).append((rank, p))
+    out: list[Trigger] = []
+    for section in ("event", "state"):
+        for kind in (k for k in KINDS.values() if k.role == section):
+            if not kind.by:
+                out.append(
+                    Trigger(kind.name, section, kind.name, "", tuple(held.get(kind.name, ())))
+                )
+                continue
+            named = sorted(k.partition(":")[2] for k in held if k.startswith(f"{kind.name}:"))
+            out += [
+                Trigger(f"{kind.name}:{n}", section, kind.name, n, tuple(held[f"{kind.name}:{n}"]))
+                for n in named
+            ] or [Trigger(kind.name, section, kind.name)]
+    first = {k: v[0][0] for k, v in held.items()}
+    moving = sorted(
+        (n for n, node in m.behaviour.moves.items() if node.during),
+        key=lambda n: (first.get(DURING + n, math.inf), n),
+    )
+    return out + [
+        Trigger(DURING + n, "move", "", n, tuple(held.get(DURING + n, ()))) for n in moving
+    ]
 
 
 def _priority(m: Manifest, p: Path) -> tuple[Any, ...]:
