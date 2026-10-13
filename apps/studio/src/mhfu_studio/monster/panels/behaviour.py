@@ -28,7 +28,7 @@ from mhfu_studio.monster.behaviour import ALL
 from mhfu_studio.monster.panels import rows, triggers
 from mhfu_studio.monster.panels.common import kind
 from mhfu_studio.monster.panels.node_graph import GraphView, LinkSpec, NodeSpec
-from mhfu_studio.monster.panels.properties import Detail, Plays, PropertyBar
+from mhfu_studio.monster.panels.properties import Detail, Play, Plays, PropertyBar
 from mhfu_studio.monster.panels.widgets import NoScene
 from mhfu_studio.shell.overlay import Ink
 from mhfu_studio.ui import kit, theme
@@ -54,6 +54,7 @@ SCOPED_HINT = (
     " ports in All"
 )
 SCOPED = "Wire by dragging ports in All"
+UNPLACED = "A rule with no move yet is checked by nothing, so it has no place to move"
 
 
 class BehaviourPanel(kit.Panel):
@@ -78,6 +79,7 @@ class BehaviourPanel(kit.Panel):
         #: the rows now drawn (None: All), and what to pick once the next edit is drawn
         self._plan: rows.Plan | None = None
         self._after: tuple[str, str | None] | None = None
+        self._frame_after: str | None = None
         self._scope: str | None = None
         self._outlined: object = None
         self._palette = ALL
@@ -96,7 +98,6 @@ class BehaviourPanel(kit.Panel):
             tip="Adds a rule for this trigger. It is checked after every other rule: drag its"
             " frame up to raise it",
             on=self._add_rule,
-            icon="ph.plus",
         )
         self.spread = kit.button(
             "Spread out",
@@ -116,10 +117,12 @@ class BehaviourPanel(kit.Panel):
         v.picked.connect(self._picked)
         v.settled.connect(self._settle)
         v.menu_requested.connect(self._menu)
+        v.frame_moved.connect(self._frame_moved)
         self.bar = PropertyBar()
         self.bar.param_changed.connect(self._param)
         self.bar.label_changed.connect(self._label)
         self.bar.plays_changed.connect(self._plays)
+        self.bar.play_requested.connect(self._play)
 
         self.outline = triggers.Outline()
         self.outline.picked.connect(self._scoped)
@@ -177,6 +180,16 @@ class BehaviourPanel(kit.Panel):
         self._after = (block, new)
         self._settle()
 
+    def _play(self, move: str) -> None:
+        """Play in game, as the Moves panel does it, for `move`."""
+
+        def play() -> None:
+            if self.ws.move != move:
+                self.ws.select_move(move)
+            self.ws.play_move_in_game()
+
+        self.studio.act("play move in game", play)()
+
     def _add_rule(self) -> None:
         t, doc = self._current(), self.ws.doc
         if t is None or doc is None:
@@ -196,6 +209,9 @@ class BehaviourPanel(kit.Panel):
         row = plan.row_of(node) if plan is not None else None
         menu.setToolTipsVisible(True)
         if m is None or row is None:
+            move = graph.move_name(node)
+            if move is not None and plan is not None:
+                self._play_entry(menu, move)
             return
         ref = rows.ref_of(node)
         if ref is not None:  # a reference or the placeholder: before the play
@@ -205,6 +221,7 @@ class BehaviourPanel(kit.Panel):
                 menu.addAction("Delete the play").triggered.connect(
                     lambda: self._drop_play(block, move)
                 )
+                self._play_entry(menu, move)
             return
         shown = [n.id for n in row.nodes]
         k, block = shown.index(node), row.path.blocks[shown.index(node)]
@@ -226,6 +243,11 @@ class BehaviourPanel(kit.Panel):
                 act = inner.addAction(name)
                 act.setToolTip(tip)
                 act.triggered.connect(lambda _=False, k=kind_: self._insert(after, k, to, play))
+
+    def _play_entry(self, menu: QMenu, move: str) -> None:
+        act = menu.addAction("Play in game")
+        act.setToolTip("Plays this move in the running game, as Play in game does in Moves")
+        act.triggered.connect(lambda: self._play(move))
 
     def _insert(self, after: str, kind_: str, to: str | None, play: str | None) -> None:
         doc = self.ws.doc
@@ -255,11 +277,7 @@ class BehaviourPanel(kit.Panel):
 
     def _wire(self, edit: Callable[..., str], *wire: str) -> Callable[[graph.Edits], str]:
         """The edit of a wire intent, or the refusal a trigger's rows give for it."""
-        return (lambda e: edit(e, *wire)) if self._scope_all() else self._not_here
-
-    @staticmethod
-    def _not_here(_: graph.Edits) -> str:
-        raise ManifestError(SCOPED)
+        return (lambda e: edit(e, *wire)) if self._scope_all() else self._refuse(SCOPED)
 
     def _delete(self, ids: list[str]) -> None:
         plan = self._plan
@@ -288,6 +306,31 @@ class BehaviourPanel(kit.Panel):
             else:
                 self._collect(partial(graph.drop_block, block=rows.node_of(i)))
 
+    def _frame_moved(self, frame: str, x: float, y: float) -> None:
+        """A rule's frame dropped: the rule takes the place among its trigger's rules that the
+        drop is at, or the drop is refused and the frame goes back."""
+        plan = self._plan
+        row = next((r for r in plan.rows if r.id == frame), None) if plan is not None else None
+        if plan is None or row is None:
+            return
+        if row.rank is None:
+            self._collect(self._refuse(UNPLACED))
+            return
+        ranked = [r for r in plan.rows if r.rank is not None]
+        rects = self.view.frame_rects()
+        middle = rects[frame].center().y()
+        to = sum(1 for r in ranked if r is not row and rects[r.id].center().y() < middle)
+        paths = [r.path for r in ranked]
+        self._frame_after = f"{rows.FRAME}{ranked[to].rank}"  # the places are handed round
+        self._collect(lambda e: graph.move_rule(e, paths, ranked.index(row), to))
+
+    @staticmethod
+    def _refuse(why: str) -> Callable[[graph.Edits], str]:
+        def refuse(_: graph.Edits) -> str:
+            raise ManifestError(why)
+
+        return refuse
+
     def _delete_now(self, ids: list[str]) -> None:
         self._delete(ids)
         self._settle()
@@ -301,7 +344,7 @@ class BehaviourPanel(kit.Panel):
         if doc is None:
             return
         if not self._scope_all():
-            self._collect(self._not_here)
+            self._collect(self._refuse(SCOPED))
             return
         self._made = model.new_id(doc.manifest.behaviour)
         self._collect(lambda e: graph.add_block(e, kind_, (x, y)))
@@ -311,6 +354,7 @@ class BehaviourPanel(kit.Panel):
         doc, gesture, dropped = self.ws.doc, self._gesture, self._dropped
         made, self._gesture, self._dropped, self._made = self._made, None, {}, None
         after, self._after = self._after, None
+        frame, self._frame_after = self._frame_after, None
         if doc is None:
             return
         if dropped:
@@ -318,7 +362,7 @@ class BehaviourPanel(kit.Panel):
             gesture.run(lambda e: graph.move_nodes(e, dropped))
         if gesture is None:
             return
-        done = gesture
+        done, was = gesture, doc.manifest
 
         def edit() -> None:
             self.ws.edit("", done.commit)
@@ -328,6 +372,9 @@ class BehaviourPanel(kit.Panel):
         m = self.ws.manifest
         if made is not None and m is not None and made in m.behaviour.blocks:
             self.view.select([made])
+            self._show_bar()
+        elif frame is not None and m is not was and frame in self.view.frame_rects():
+            self.view.select([frame])
             self._show_bar()
         elif after is not None and self._plan is not None:
             ends = [n.id for r in self._plan.rows for n in r.nodes if rows.ref_of(n.id) == after]
@@ -418,7 +465,7 @@ class BehaviourPanel(kit.Panel):
             mv = m.moves.get(name)
             if mv is None:
                 return None
-            return Detail(node, name, self._move_tip(mv), label=mv.label)
+            return Detail(node, name, self._move_tip(mv), label=mv.label, play=Play(name))
         blk = m.behaviour.blocks.get(node)
         if blk is None or self._read is None:
             return None
@@ -452,6 +499,7 @@ class BehaviourPanel(kit.Panel):
             label=mv.label,
             note_tip="A note on this move, kept in the port manifest",
             plays=Plays(block, move, tuple(m.moves)),
+            play=Play(move),
         )
 
     @staticmethod

@@ -15,7 +15,13 @@ from mhfu_studio.monster import behaviour as B
 from mhfu_studio.monster.behaviour import ALL
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.panels import rows, triggers
-from mhfu_studio.monster.panels.behaviour import SCOPED, SCOPED_HINT, WARN, BehaviourPanel
+from mhfu_studio.monster.panels.behaviour import (
+    SCOPED,
+    SCOPED_HINT,
+    UNPLACED,
+    WARN,
+    BehaviourPanel,
+)
 from mhfu_studio.monster.panels.node_graph import FRAME_BOTTOM, FRAME_TOP, NodeSpec
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
@@ -693,7 +699,7 @@ def test_the_placeholder_picks_the_move_and_the_new_rule_ranks_last(
     panel.add_rule.click()
     qtbot.wait(60)
     click(qtbot, panel, node_pos(panel, "open:b9"))
-    assert panel.bar.plays is not None and panel.bar.note is None
+    assert panel.bar.plays is not None and panel.bar.play is None and panel.bar.note is None
     ctl = panel.bar.plays.ctl
     assert [ctl.itemText(i) for i in range(ctl.count())][:2] == ["pick a move", "charge"]
     ctl.setCurrentIndex(ctl.findText("howl"))
@@ -710,7 +716,7 @@ def test_the_plays_picker_of_a_reference_retargets_or_empties_it(
 ) -> None:
     pick(qtbot, panel, "on_flinch")
     click(qtbot, panel, node_pos(panel, "ref:b4:stamp"))
-    assert panel.bar.plays is not None
+    assert panel.bar.plays is not None and panel.bar.play is not None
     assert panel.bar.plays.get_value() == "stamp"
     ctl = panel.bar.plays.ctl
     ctl.setCurrentIndex(ctl.findText("howl"))
@@ -761,7 +767,11 @@ def test_the_menu_of_the_last_block_and_of_a_reference_insert_before_the_play(
     b = blocks(ws)
     assert b["b4"].next == ["b9"] and b["b4"].play == [] and b["b9"].play == ["stamp"]
     menu = right_click(qtbot, panel, "ref:b9:stamp")
-    assert {a.text() for a in menu.actions()} == {"Insert before the play", "Delete the play"}
+    assert {a.text() for a in menu.actions()} == {
+        "Insert before the play",
+        "Delete the play",
+        "Play in game",
+    }
     entry(menu, "Insert before the play", "Modifiers", "Then wait").trigger()
     qtbot.wait(60)
     b = blocks(ws)
@@ -900,3 +910,152 @@ def test_a_block_note_is_not_the_rules_note_but_joins_it(
     panel.bar.note.ctl.editingFinished.emit()
     qtbot.wait(60)
     assert frames(panel)[0] == f"{rk(1)} · first; limit it"
+
+
+# ---- order and play ------------------------------------------------------------------------- #
+
+
+def drag_frame(qtbot: Any, p: BehaviourPanel, frame: str, onto: str, below: bool = True) -> None:
+    """A frame's title dragged to the title of another frame, a little past it."""
+    vp, a = p.view.viewer.viewport(), frame_pos(p, frame)
+    b = frame_pos(p, onto) + QPoint(0, 24 if below else -24)
+    QTest.mousePress(vp, LEFT, NONE, a)
+    for k in range(1, 8):
+        QTest.mouseMove(vp, a + (b - a) * (k / 7))
+    QTest.mouseRelease(vp, LEFT, NONE, b)
+    qtbot.wait(80)
+
+
+def order(ws: MonsterWorkspace) -> list[str]:
+    return [r.play for r in model.compile(doc(ws).manifest)]
+
+
+def test_dragging_a_frame_down_swaps_two_ranks_and_leaves_the_rest(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    pick(qtbot, panel, "on_flinch")
+    before, rules = doc(ws).manifest, model.compile(doc(ws).manifest)
+    assert order(ws) == ["stamp", "stamp_2", "stamp", "flinch_head", "howl", "stamp"]
+    drag_frame(qtbot, panel, "frame:3", "frame:4")
+    after = model.compile(doc(ws).manifest)
+    assert after[2] == rules[3] and after[3] == rules[2]
+    assert after[:2] == rules[:2] and after[4:] == rules[4:], "no other rule changes its place"
+    assert frames(panel) == [f"{rk(3)} · (no note)", f"{rk(4)} · any flinch"]
+    assert ws.message.startswith("rule moved")
+    b = blocks(ws)
+    assert (b["b4"].at[1], b["b5"].at[1]) == (300.0, 200.0), "the places were handed round"
+    assert panel.view.selected_frames() == ["frame:4"], "the frame that was dragged stays picked"
+    assert panel.bar.note is not None and panel.bar.note.get_value() == "any flinch"
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    assert doc(ws).manifest == before and model.compile(doc(ws).manifest) == rules
+
+
+def test_dragging_a_frame_up_takes_the_place_above(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    pick(qtbot, panel, "during:charge")
+    rules = model.compile(doc(ws).manifest)
+    drag_frame(qtbot, panel, "frame:2", "frame:1", below=False)
+    after = model.compile(doc(ws).manifest)
+    assert after[0] == rules[1] and after[1] == rules[0] and after[2:] == rules[2:]
+
+
+def test_a_drop_in_the_same_place_changes_nothing(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    pick(qtbot, panel, "on_flinch")
+    before, here = doc(ws).manifest, panel.view.frame_rects()["frame:3"]
+    vp, a = panel.view.viewer.viewport(), frame_pos(panel, "frame:3")
+    QTest.mousePress(vp, LEFT, NONE, a)
+    for k in range(1, 5):
+        QTest.mouseMove(vp, a + QPoint(0, 3 * k))
+    QTest.mouseRelease(vp, LEFT, NONE, a + QPoint(0, 12))
+    qtbot.wait(80)
+    assert doc(ws).manifest is before
+    assert panel.view.frame_rects()["frame:3"] == here, "the frame went back"
+
+
+def test_a_drop_that_cannot_change_the_rank_is_refused_and_says_why(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    doc(ws).edit(lambda m: setattr(m.behaviour.blocks["b5"], "at", (260.0, 200.0)))  # level with b4
+    ws.refresh()
+    panel.sync()
+    pick(qtbot, panel, "on_flinch")
+    before = doc(ws).manifest
+    drag_frame(qtbot, panel, "frame:4", "frame:3", below=False)
+    assert doc(ws).manifest is before and "would not change the rule's rank" in ws.message
+
+
+def test_a_rule_with_no_move_cannot_be_dragged(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    pick(qtbot, panel, "on_flinch")
+    panel.add_rule.click()
+    qtbot.wait(60)
+    before = doc(ws).manifest
+    drag_frame(qtbot, panel, "frame:new:b9:1", "frame:3", below=False)
+    assert doc(ws).manifest is before and ws.message == UNPLACED
+
+
+def test_a_reorder_moves_a_rules_own_blocks_with_it_and_no_move_node(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    pick(qtbot, panel, "during:charge")
+    nodes = {i: n.at for i, n in doc(ws).manifest.behaviour.moves.items()}
+    drag_frame(qtbot, panel, "frame:1", "frame:2")
+    b = blocks(ws)
+    assert (b["b1"].at, b["b2"].at, b["b3"].at) == ((260.0, 100.0), (460.0, 100.0), (260.0, 0.0))
+    assert {i: n.at for i, n in doc(ws).manifest.behaviour.moves.items()} == nodes
+
+
+def test_a_reference_plays_in_the_game_from_its_menu_and_the_bar(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    played: list[str | None] = []
+    monkeypatch.setattr(ws, "play_move_in_game", lambda force=False: played.append(ws.move))
+    pick(qtbot, panel, "on_flinch")
+    menu = right_click(qtbot, panel, "ref:b4:stamp")
+    assert {a.text() for a in menu.actions()} == {
+        "Insert before the play",
+        "Delete the play",
+        "Play in game",
+    }
+    entry(menu, "Play in game").trigger()
+    qtbot.wait(40)
+    assert played == ["stamp"]
+    click(qtbot, panel, node_pos(panel, "ref:b5:flinch_head"))
+    assert panel.bar.play is not None
+    panel.bar.play.click()
+    qtbot.wait(40)
+    assert played == ["stamp", "flinch_head"]
+
+
+def test_the_move_a_while_trigger_starts_from_plays_in_the_game_too(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    played: list[str | None] = []
+    monkeypatch.setattr(ws, "play_move_in_game", lambda force=False: played.append(ws.move))
+    pick(qtbot, panel, "during:charge")
+    assert "Play in game" in [
+        a.text() for a in right_click(qtbot, panel, B.move_id("charge")).actions()
+    ]
+    click(qtbot, panel, node_pos(panel, B.move_id("charge")))
+    assert panel.bar.play is not None and panel.bar.plays is None
+    panel.bar.play.click()
+    qtbot.wait(40)
+    assert played == ["charge"]
+
+
+def test_play_in_game_says_so_when_no_game_is_there(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    ws.game_running = lambda: False
+    pick(qtbot, panel, "on_flinch")
+    click(qtbot, panel, node_pos(panel, "ref:b4:stamp"))
+    assert panel.bar.play is not None
+    panel.bar.play.click()
+    qtbot.wait(40)
+    assert ws.message.startswith("not played in the game")

@@ -402,13 +402,15 @@ class GraphView(QWidget):
                 act.triggered.connect(lambda _=False, k=kind: self._create(k))
 
     def select(self, ids: Sequence[str]) -> None:
-        """Selects exactly these nodes, without a `picked`."""
+        """Selects exactly these nodes and frames, without a `picked`."""
         self._busy += 1
         try:
             self.viewer.scene().clearSelection()
             for i in ids:
                 if i in self._shown:
                     self._shown[i].view.setSelected(True)
+                elif i in self._backdrops:
+                    self._backdrops[i].view.setSelected(True)
         finally:
             self._busy -= 1
         self._pick = self._picked()
@@ -417,6 +419,10 @@ class GraphView(QWidget):
         """The selected nodes' ids, in the order of the last `show`."""
         picked = {n.id for n in self.viewer.selected_nodes()}
         return [n.id for n in self._nodes if n.id in picked]
+
+    def frame_rects(self) -> dict[str, QRectF]:
+        """Where each frame is now, in scene units."""
+        return {i: bd.view.sceneBoundingRect() for i, bd in self._backdrops.items()}
 
     def selected_frames(self) -> list[str]:
         """The selected frames' ids, in the order of the last `show`. Clicking a frame selects

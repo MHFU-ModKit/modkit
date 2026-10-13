@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QMenu,
+    QPushButton,
     QSpinBox,
     QToolButton,
     QWidget,
@@ -196,10 +197,17 @@ class Plays:
 
 
 @dataclass(frozen=True)
+class Play:
+    """A Play in game button for `move`."""
+
+    move: str
+
+
+@dataclass(frozen=True)
 class Detail:
     """What the bar shows of one node: its kind, params with their `values` and `options` (a
     combo's or a multi-select's (label, value) list, else the param's `choices`), a `plays`
-    picker and its note. A node with no params and no `note` shows only
+    picker, its note and a Play in game button. A node with no params and no `note` shows only
     its title and tip."""
 
     id: str
@@ -212,6 +220,7 @@ class Detail:
     note: bool = True
     note_tip: str = "A note on this block, kept in the port manifest"
     plays: Plays | None = None
+    play: Play | None = None
 
 
 class PropertyBar(QWidget):
@@ -221,6 +230,7 @@ class PropertyBar(QWidget):
     label_changed = Signal(str, str)
     #: the block, the move it played (None: none yet), the move it plays now (None: none)
     plays_changed = Signal(str, object, object)
+    play_requested = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -236,6 +246,7 @@ class PropertyBar(QWidget):
         self.controls: dict[str, ParamControl] = {}
         self.note: ParamControl | None = None
         self.plays: ParamControl | None = None
+        self.play: QPushButton | None = None
         self._owned: list[QWidget] = []
 
     def show_detail(self, d: Detail | None) -> None:
@@ -250,6 +261,7 @@ class PropertyBar(QWidget):
             d.note,
             tuple((p.name, p.type) for p in d.params),
             None if d.plays is None else d.plays.moves,
+            d.play,
         )
         if shape != self._shape:
             self._clear()
@@ -289,7 +301,7 @@ class PropertyBar(QWidget):
         ]:
             c.deleteLater()
         self._owned, self.controls, self.note, self._shape = [], {}, None, None
-        self.plays = None
+        self.plays, self.play = None, None
 
     def _add(self, w: QWidget, stretch: int = 0) -> None:
         self._lay.addWidget(w, stretch)
@@ -318,6 +330,15 @@ class PropertyBar(QWidget):
             self._add(note.ctl, 1)
         else:
             self._add(kit.label(d.tip.split("\n")[0], role="muted", wrap=False), 1)
+        if d.play is not None:
+            move = d.play.move
+            self.play = kit.button(
+                "Play",
+                tip=f"Plays {move} in the running game, as Play in game does in Moves",
+                on=lambda: self.play_requested.emit(move),
+                icon="ph.play",
+            )
+            self._add(self.play)
 
     def _build_plays(self, plays: Plays) -> None:
         self._plays = plays
