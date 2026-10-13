@@ -135,7 +135,12 @@ class BehaviourPanel(kit.Panel):
         if gesture is None:
             return
         done = gesture
-        self.studio.act("edit behaviour", lambda: self.ws.edit("", done.commit))()
+
+        def edit() -> None:
+            self.ws.edit("", done.commit)
+            self.sync()  # the window syncs a turn on: after the view would have put the canvas back
+
+        self.studio.act("edit behaviour", edit)()
         m = self.ws.manifest
         if made is not None and m is not None and made in m.behaviour.blocks:
             self.view.select([made])
