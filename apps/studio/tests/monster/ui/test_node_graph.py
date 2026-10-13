@@ -959,3 +959,13 @@ def test_an_unknown_type_raises(qtbot: Any) -> None:
     view = make(qtbot)
     with pytest.raises(ValueError, match="unknown type 'number'"):
         view.show([replace(nodes()[0], params=(P("x", "number"),))], [])
+
+
+def test_a_new_name_keeps_the_node_size_when_zoomed_out(qtbot: Any) -> None:
+    view = make(qtbot, named(), [])
+    before = size(view, "e")
+    view.viewer.scale(0.15, 0.15)
+    view.grab()  # a paint: NodeGraphQt hides a small node's widgets
+    opts = [("armor", "armor"), ("fresh", "fresh"), ("hits", "hits")]
+    view.show([replace(named()[0], options={"counter": opts, "name": opts})], [])
+    assert size(view, "e") == before

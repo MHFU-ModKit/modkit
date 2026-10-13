@@ -316,6 +316,22 @@ def test_the_zinogre_opens(
     assert field(p, "b2", "hi").get_value() == 1000.0
 
 
+def test_a_new_name_keeps_every_node_size_on_the_zinogre(
+    qtbot: Any, ws: MonsterWorkspace, zinogre_toml: Path, synthetic_pac: bytes
+) -> None:
+    from mhfu_studio.monster.core.scene import Scene
+
+    zin = PortDocument.open(zinogre_toml)
+    ws.load(Scene.from_bytes(synthetic_pac, "z", path=zinogre_toml.with_suffix(".bin")), zin)
+    p = make(qtbot, ws)
+    p.view.grab()  # a paint: the fitted graph is small, and NodeGraphQt hides small nodes' widgets
+    sizes = {i: (s.view.width, s.view.height) for i, s in p.view._shown.items()}
+    flag = next(i for i, b in zin.manifest.behaviour.blocks.items() if "flag" in b.params)
+    type_name(qtbot, p, flag, "flag", "brand_new")
+    assert zin.manifest.behaviour.blocks[flag].params["flag"] == "brand_new"
+    assert {i: (s.view.width, s.view.height) for i, s in p.view._shown.items()} == sizes
+
+
 def test_spread_out_is_one_step(panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
     before = doc(ws).manifest
     panel.spread.click()
