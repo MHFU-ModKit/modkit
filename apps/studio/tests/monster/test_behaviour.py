@@ -488,3 +488,344 @@ def test_a_path_that_plays_nothing_ranks_on_its_last_block(
     monkeypatch.setattr(model, "loose", lambda m: [])
     r = B.read(d.manifest)
     assert r.priority == {"b3": [1], "b1": [2]} and r.capped is None
+
+
+# rules: what a trigger's rows edit
+
+
+def trigger(m: Manifest, key: str) -> model.Trigger:
+    return next(t for t in model.triggers(m) if t.key == key)
+
+
+def two_rules(d: PortDocument) -> PortDocument:
+    """The `d` rule, and a second one from charge's while-playing port below it."""
+    d.edit(
+        lambda m: (
+            m.behaviour.blocks.update(
+                {
+                    "b2": model.Block(
+                        "played_for", (260.0, 200.0), {"frames": 60}, play=["stamp_2"]
+                    ),
+                    "b3": model.Block(
+                        "played_for", (260.0, 400.0), {"frames": 90}, play=["flinch_head"]
+                    ),
+                }
+            ),
+            m.behaviour.moves["charge"].during.extend(["b2", "b3"]),
+        )
+    )
+    return d
+
+
+def plays(m: Manifest) -> list[str]:
+    return [p.play for p in model.paths(m)]
+
+
+def test_open_rules_are_the_chains_that_play_nothing_yet(d: PortDocument) -> None:
+    assert B.open_rules(d.manifest) == []
+    d.edit(
+        lambda m: m.behaviour.blocks.update(
+            {
+                "b2": model.Block("on_noticed", (260.0, 200.0), next=["b3"]),
+                "b3": model.Block("force", (460.0, 200.0)),
+            }
+        )
+    )
+    [rule] = B.open_rules(d.manifest)
+    assert (rule.blocks, rule.play, rule.during) == (("b2", "b3"), "", None)
+    assert model.trigger_key(d.manifest, rule) == "on_noticed"
+
+
+def test_a_new_rule_for_an_event_is_checked_last_and_plays_nothing(d: PortDocument) -> None:
+    before = d.manifest
+    B.add_rule(d, trigger(d.manifest, "on_flinch"))
+    blk = d.manifest.behaviour.blocks["b2"]
+    assert (blk.kind, blk.params, blk.at) == (
+        "on_flinch",
+        {},
+        (float(model.LEFT), float(model.ROW)),
+    )
+    assert model.paths(d.manifest) == model.paths(before), "no move yet: no rule yet"
+    [rule] = B.open_rules(d.manifest)
+    assert rule.blocks == ("b2",) and model.trigger_key(d.manifest, rule) == "on_flinch"
+    B.set_play(d, "b2", None, "flinch_head")
+    assert plays(d.manifest) == ["stamp", "flinch_head"], "it ranks last"
+    assert model.compile(d.manifest)[-1].play == "flinch_head"
+    d.undo()
+    d.undo()
+    assert d.manifest == before
+
+
+def test_a_new_rule_for_a_signal_carries_its_name(d: PortDocument) -> None:
+    d.edit(
+        lambda m: m.behaviour.blocks.update(
+            {"b2": model.Block("on_signal", (260.0, 200.0), {"name": "roar"}, play=["stamp"])}
+        )
+    )
+    B.add_rule(d, trigger(d.manifest, "on_signal:roar"))
+    made = d.manifest.behaviour.blocks["b3"]
+    assert (made.kind, made.params) == ("on_signal", {"name": "roar"})
+    [rule] = B.open_rules(d.manifest)
+    assert model.trigger_key(d.manifest, rule) == "on_signal:roar"
+    B.set_play(d, "b3", None, "flinch_head")
+    assert [
+        r.signal for r in model.compile(d.manifest) if r.on is None and r.signal is not None
+    ] == [0, 0]
+
+
+def test_a_rule_that_ends_at_an_effect_is_complete_not_open(d: PortDocument) -> None:
+    d.edit(
+        lambda m: m.behaviour.blocks.update(
+            {
+                "b2": model.Block("on_noticed", (260.0, 200.0), next=["b3"]),
+                "b3": model.Block("counter_add", (460.0, 200.0), {"counter": "hits"}),
+            }
+        )
+    )
+    assert B.open_rules(d.manifest) == []
+    assert [(p.blocks, p.play) for p in model.paths(d.manifest)][0] == (("b2", "b3"), None)
+
+
+def test_a_reorder_that_no_play_first_forbids_is_refused_and_says_so(d: PortDocument) -> None:
+    d.edit(
+        lambda m: m.behaviour.blocks.update(
+            {
+                "b2": model.Block("on_noticed", (260.0, 200.0), play=["stamp"]),
+                "b3": model.Block("on_noticed", (260.0, 400.0), next=["b4"]),
+                "b4": model.Block("counter_add", (460.0, 400.0), {"counter": "hits"}),
+            }
+        )
+    )
+    rules = [p for _, p in trigger(d.manifest, "on_noticed").rules]
+    assert [p.play for p in rules] == [None, "stamp"], "the rule that plays nothing is first"
+    before = d.manifest
+    with pytest.raises(ManifestError, match="rules that play nothing go first"):
+        B.move_rule(d, rules, 1, 0)
+    assert d.manifest is before
+
+
+def test_a_new_rule_for_a_state_has_the_states_values(d: PortDocument) -> None:
+    B.add_rule(d, trigger(d.manifest, "host_state"))
+    assert d.manifest.behaviour.blocks["b2"].params == {"mains": [0]}
+
+
+def test_a_new_rule_for_a_move_hangs_from_its_while_playing_port(d: PortDocument) -> None:
+    B.add_rule(d, trigger(d.manifest, "during:charge"))
+    m = d.manifest
+    assert m.behaviour.blocks["b2"].kind == "played_for" and m.behaviour.moves["charge"].during == [
+        "b1",
+        "b2",
+    ]
+    assert [model.trigger_key(m, p) for p in B.open_rules(m)] == ["during:charge"]
+
+
+def test_a_new_rule_for_a_kind_with_by_carries_the_value(
+    d: PortDocument, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    named = Kind(
+        "on_x",
+        "event",
+        "On x",
+        (Param("name", "choice", "Name", choices=("a", "b")),),
+        "x",
+        lambda v: v["name"],
+        by="name",
+    )
+    monkeypatch.setitem(KINDS, "on_x", named)
+    B.add_rule(d, model.Trigger("on_x:b", "event", "on_x", "b"))
+    assert d.manifest.behaviour.blocks["b2"].params == {"name": "b"}
+    assert [model.trigger_key(d.manifest, p) for p in B.open_rules(d.manifest)] == ["on_x:b"]
+
+
+def test_a_block_goes_in_after_another_and_a_play_moves_to_the_new_end(d: PortDocument) -> None:
+    before = d.manifest
+    B.insert_block(d, "b1", "cooldown", None, "stamp")
+    blocks = d.manifest.behaviour.blocks
+    assert (blocks["b1"].next, blocks["b1"].play) == (["b2"], [])
+    assert (blocks["b2"].kind, blocks["b2"].next, blocks["b2"].play) == ("cooldown", [], ["stamp"])
+    assert [p.blocks for p in model.paths(d.manifest)] == [("b1", "b2")]
+    B.insert_block(d, "b1", "distance", "b2", None)
+    blocks = d.manifest.behaviour.blocks
+    assert (
+        blocks["b1"].next == ["b3"]
+        and blocks["b3"].next == ["b2"]
+        and blocks["b3"].kind == "distance"
+    )
+    assert [p.blocks for p in model.paths(d.manifest)] == [("b1", "b3", "b2")]
+    d.undo()
+    d.undo()
+    assert d.manifest == before
+
+
+def test_an_insert_refuses_what_is_not_a_block_of_a_rule(d: PortDocument) -> None:
+    with pytest.raises(ManifestError, match="not a block a rule holds"):
+        B.insert_block(d, "b1", "on_noticed", None, "stamp")
+    with pytest.raises(ManifestError, match="does not play"):
+        B.insert_block(d, "b1", "cooldown", None, "stamp_2")
+    with pytest.raises(ManifestError, match="no block b9"):
+        B.insert_block(d, "b1", "cooldown", "b9", None)
+
+
+def chain(d: PortDocument) -> PortDocument:
+    """b1 -> b2 -> b3, b3 plays stamp."""
+    B.insert_block(d, "b1", "cooldown", None, "stamp")
+    B.insert_block(d, "b2", "limit", None, "stamp")
+    return d
+
+
+def test_a_block_in_a_rule_closes_the_chain_up(d: PortDocument) -> None:
+    chain(d)
+    mid = d.manifest
+    B.drop_block(d, "b2")
+    blocks = d.manifest.behaviour.blocks
+    assert "b2" not in blocks and blocks["b1"].next == ["b3"] and blocks["b3"].play == ["stamp"]
+    assert undone(d, mid)
+    B.drop_block(d, "b3")
+    blocks = d.manifest.behaviour.blocks
+    assert blocks["b2"].next == [] and blocks["b2"].play == ["stamp"] and "b3" not in blocks
+    assert [p.blocks for p in model.paths(d.manifest)] == [("b1", "b2")]
+
+
+def test_the_first_block_of_a_rule_goes_with_the_rule(d: PortDocument) -> None:
+    with pytest.raises(ManifestError, match="goes with the rule"):
+        B.drop_block(d, "b1")
+
+
+def test_a_rule_goes_with_the_blocks_only_it_ran_through(d: PortDocument) -> None:
+    before = chain(d).manifest
+    B.drop_rule(d, ("b1", "b2", "b3"), "stamp")
+    assert d.manifest.behaviour.blocks == {}
+    assert d.manifest.behaviour.moves["charge"].during == []
+    d.undo()
+    assert d.manifest == before
+
+
+def test_a_rule_that_shares_its_start_leaves_the_shared_blocks(d: PortDocument) -> None:
+    d.edit(
+        lambda m: (
+            m.behaviour.blocks["b1"].next.append("b2")
+            or m.behaviour.blocks.__setitem__(
+                "b2", model.Block("cooldown", (460.0, 0.0), {"frames": 5}, play=["stamp_2"])
+            )
+        )
+    )
+    assert [p.blocks for p in model.paths(d.manifest)] == [("b1",), ("b1", "b2")]
+    B.drop_rule(d, ("b1", "b2"), "stamp_2")
+    blocks = d.manifest.behaviour.blocks
+    assert list(blocks) == ["b1"] and blocks["b1"].next == [] and blocks["b1"].play == ["stamp"]
+    B.drop_rule(d, ("b1",), "stamp")
+    assert d.manifest.behaviour.blocks == {} and d.manifest.behaviour.moves["charge"].during == []
+
+
+def test_an_unfinished_rule_goes_too(d: PortDocument) -> None:
+    B.add_rule(d, trigger(d.manifest, "on_noticed"))
+    B.drop_rule(d, ("b2",), None)
+    assert list(d.manifest.behaviour.blocks) == ["b1"]
+
+
+def test_the_move_a_rule_plays_is_changed_added_and_taken_away(d: PortDocument) -> None:
+    before = d.manifest
+    B.set_play(d, "b1", "stamp", "stamp_2")
+    assert d.manifest.behaviour.blocks["b1"].play == ["stamp_2"]
+    B.set_play(d, "b1", "stamp_2", None)
+    assert d.manifest.behaviour.blocks["b1"].play == [] and [
+        p.blocks for p in B.open_rules(d.manifest)
+    ] == [("b1",)]
+    B.set_play(d, "b1", None, "flinch_head")
+    assert d.manifest.behaviour.blocks["b1"].play == ["flinch_head"]
+    for _ in range(3):
+        d.undo()
+    assert d.manifest == before
+    with pytest.raises(ManifestError, match="no longer plays"):
+        B.set_play(d, "b1", "stamp_2", "flinch_head")
+    with pytest.raises(ManifestError, match="no move"):
+        B.set_play(d, "b1", "stamp", "nope")
+
+
+def test_a_move_cannot_be_played_twice_by_a_block(d: PortDocument) -> None:
+    B.set_play(d, "b1", None, "stamp_2")
+    with pytest.raises(ManifestError, match="one twice"):
+        B.set_play(d, "b1", "stamp_2", "stamp")
+
+
+def test_a_rule_takes_another_rules_place(d: PortDocument) -> None:
+    two_rules(d)
+    rules = trigger(d.manifest, "during:charge").rules
+    assert plays(d.manifest) == ["stamp", "stamp_2", "flinch_head"]
+    paths = [p for _, p in rules]
+    before = d.manifest
+    B.move_rule(d, paths, 2, 0)
+    assert plays(d.manifest) == ["flinch_head", "stamp", "stamp_2"]
+    blocks = d.manifest.behaviour.blocks
+    assert [blocks[i].at for i in ("b1", "b2", "b3")] == [
+        (260.0, 200.0),
+        (260.0, 400.0),
+        (260.0, 0.0),
+    ]
+    assert d.manifest.behaviour.moves["charge"].at == before.behaviour.moves["charge"].at
+    assert undone(d, before)
+    B.move_rule(d, paths, 0, 1)
+    assert plays(d.manifest) == ["stamp_2", "stamp", "flinch_head"]
+
+
+def test_a_move_to_the_same_place_is_no_change(d: PortDocument) -> None:
+    two_rules(d)
+    paths = [p for _, p in trigger(d.manifest, "during:charge").rules]
+    before = d.manifest
+    assert B.move_rule(d, paths, 1, 1) == "unchanged"
+    assert d.manifest is before
+
+
+def test_a_rule_that_would_keep_its_place_is_refused(d: PortDocument) -> None:
+    two_rules(d)
+    d.edit(lambda m: setattr(m.behaviour.blocks["b2"], "at", (260.0, 0.0)))  # level with b1
+    paths = [p for _, p in trigger(d.manifest, "during:charge").rules]
+    before = d.manifest
+    with pytest.raises(ManifestError, match="would not change the rule's rank"):
+        B.move_rule(d, paths, 1, 0)
+    assert d.manifest is before
+
+
+def test_rules_that_share_their_first_block_cannot_be_reordered(d: PortDocument) -> None:
+    d.edit(lambda m: m.behaviour.blocks["b1"].play.append("stamp_2"))
+    paths = [p for _, p in trigger(d.manifest, "during:charge").rules]
+    assert len(paths) == 2
+    with pytest.raises(ManifestError, match="same block"):
+        B.move_rule(d, paths, 0, 1)
+
+
+def test_a_reorder_leaves_the_other_triggers_ranks_alone(ports: Path) -> None:
+    z = PortDocument(manifest.load(ports / "zinogre.toml"))
+    before = model.compile(z.manifest)
+    ranks = trigger(z.manifest, "during:lunge").ranks
+    paths = [p for _, p in trigger(z.manifest, "during:lunge").rules]
+    B.move_rule(z, paths, 0, 0)
+    assert model.compile(z.manifest) == before, "a no-op changes nothing"
+    B.move_rule(z, paths, 0, 1)
+    after = model.compile(z.manifest)
+    lo, hi = ranks[0] - 1, ranks[1] - 1
+    assert after[lo] == before[hi] and after[hi] == before[lo]
+    assert [r for k, r in enumerate(after) if k not in (lo, hi)] == [
+        r for k, r in enumerate(before) if k not in (lo, hi)
+    ]
+    z.undo()
+    assert model.compile(z.manifest) == before
+
+
+def test_a_rule_made_and_taken_away_leaves_the_zinogres_rules_alone(ports: Path) -> None:
+    z = PortDocument(manifest.load(ports / "zinogre.toml"))
+    before = model.compile(z.manifest)
+    old = set(z.manifest.behaviour.blocks)
+    anchor = next(i for i, b in z.manifest.behaviour.blocks.items() if "flinch_head" in b.play)
+    B.add_rule(z, trigger(z.manifest, "on_flinch"))
+    [new] = set(z.manifest.behaviour.blocks) - old
+    assert model.compile(z.manifest) == before, "no move yet"
+    B.set_play(z, new, None, "flinch_head")
+    after = model.compile(z.manifest)
+    [made] = [r for r in after if r.on == "flinch" and r.play == "flinch_head"]
+    assert [r for r in after if r is not made] == before
+    B.insert_block(z, anchor, "cooldown", None, "flinch_head")
+    [inserted] = set(z.manifest.behaviour.blocks) - old - {new}
+    B.drop_block(z, inserted)
+    B.drop_rule(z, (new,), "flinch_head")
+    assert model.compile(z.manifest) == before

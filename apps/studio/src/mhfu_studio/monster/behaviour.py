@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import itertools
 import typing
+from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any, NamedTuple, Protocol
 
 from mhfu_port import behaviour, sequence
-from mhfu_port.behaviour import KINDS, Block, MoveNode, Param, Path
+from mhfu_port.behaviour import KINDS, Block, MoveNode, Param, Path, Trigger
 from mhfu_port.manifest import Manifest, ManifestError
 
 from mhfu_studio.monster.document import PortDocument
@@ -30,6 +31,8 @@ PLAY, WHILE, THEN = "play", "while playing", "then"
 """A move node's ports: the input, then the two outputs."""
 ALL = "all"
 """The scope that is the whole canvas, as stored; any other is a trigger's key."""
+INSERTABLE = ("condition", "modifier", "effect")
+"""The roles of the blocks a rule holds besides its first."""
 ROLE_TITLES = {"state": "State"}
 """A palette group's title where the role in plural is not it."""
 
@@ -205,9 +208,10 @@ def options(m: Manifest, kind: str) -> dict[str, list[tuple[str, object]]]:
     return out
 
 
-def palette() -> list[tuple[str, list[tuple[str, str, str]]]]:
-    """The kinds a block can be, a group per role: (kind, title, tip). All from `KINDS`."""
-    roles = typing.get_args(behaviour.Role)
+def palette(only: Collection[str] | None = None) -> list[tuple[str, list[tuple[str, str, str]]]]:
+    """The kinds a block can be, a group per role (only those in `only`, if given): (kind,
+    title, tip). All from `KINDS`."""
+    roles = [r for r in typing.get_args(behaviour.Role) if only is None or r in only]
     groups = [
         (
             ROLE_TITLES.get(role, role.capitalize() + "s"),
@@ -216,6 +220,11 @@ def palette() -> list[tuple[str, list[tuple[str, str, str]]]]:
         for role in roles
     ]
     return [g for g in groups if g[1]]
+
+
+def insertable() -> list[tuple[str, list[tuple[str, str, str]]]]:
+    """The palette of what goes inside a rule: not the event or state that starts it."""
+    return palette(INSERTABLE)
 
 
 def fresh(stem: str, taken: Collection[str]) -> str:
@@ -506,3 +515,208 @@ def spread(doc: Edits, kx: float = 1.5, ky: float = 1.7) -> str:
 
     doc.edit(scale)
     return f"{len(b.blocks) + len(b.moves)} nodes spread out"
+
+
+# rules: what a trigger's rows edit
+
+#: the gap that puts a new rule's first block below every other block
+FRESH = float(behaviour.ROW)
+
+
+def open_rules(m: Manifest) -> list[Path]:
+    """The chains from a source that stop at a block that plays nothing and feeds nothing: rules
+    that have no move yet, which the brain does not check. First block's place first."""
+    b = m.behaviour
+    done = {p.blocks for p in behaviour.paths(m)}
+    out: list[Path] = []
+
+    def walk(trail: tuple[str, ...], during: str | None) -> None:
+        blk = b.blocks[trail[-1]]
+        if not blk.play and not blk.next and trail not in done:
+            out.append(Path(trail, "", during))
+        for n in blk.next:
+            if n not in trail:
+                walk((*trail, n), during)
+
+    for i, during in behaviour.sources(m):
+        walk((i,), during)
+    return sorted(out, key=lambda p: (b.blocks[p.blocks[0]].at[1], b.blocks[p.blocks[0]].at[0]))
+
+
+def _values(kind: str, by: str = "") -> dict[str, object]:
+    """A new block's params: valid ones, the trigger's `by` value among them."""
+    params = {p.name: v for p in KINDS[kind].params if (v := start(p)) is not None}
+    if by and KINDS[kind].by:
+        params[KINDS[kind].by] = by
+    return params
+
+
+def add_rule(doc: Edits, t: Trigger) -> str:
+    """A rule for trigger `t`: its first block (the event or state kind with the trigger's
+    value; for a move's while-playing port a Played for block fed by it), below every other
+    block, so it is checked last. It plays no move yet."""
+    m = doc.manifest
+    b = m.behaviour
+    if t.section == "move":
+        if t.name not in b.moves:
+            raise ManifestError(f"no move {t.name!r}")
+        kind = "played_for"
+    else:
+        kind = t.kind
+    if kind not in KINDS:
+        raise ManifestError(f"{kind!r} is not a kind of block")
+    params = _values(kind, t.name if t.section == "event" else "")
+    i = behaviour.new_id(b)
+    y = max((blk.at[1] for blk in b.blocks.values()), default=-FRESH) + FRESH
+    at = _at((float(behaviour.LEFT), y))
+
+    def add(m: Manifest) -> None:
+        m.behaviour.blocks[i] = Block(kind, at, params)
+        if t.section == "move":
+            m.behaviour.moves[t.name].during.append(i)
+
+    doc.edit(add)
+    return f"{KINDS[kind].title}: a rule added, checked last"
+
+
+def insert_block(doc: Edits, after: str, kind: str, to: str | None, play: str | None) -> str:
+    """A block of `kind` in a rule after block `after`. `to` is the block the rule goes on to
+    from `after`, and `play` the move it ends in when it ends there: the new block takes that
+    place, so `after` feeds it and it feeds `to` or plays `play`."""
+    m = doc.manifest
+    here = _block(m, after)
+    if kind not in KINDS or KINDS[kind].role not in INSERTABLE:
+        raise ManifestError(f"{kind!r} is not a block a rule holds")
+    if to is not None and to not in here.next:
+        raise ManifestError(f"{_say(m, after)} does not feed {_say(m, to)}")
+    if play is not None and play not in here.play:
+        raise ManifestError(f"{_say(m, after)} does not play {play}")
+    i = behaviour.new_id(m.behaviour)
+    x = (here.at[0] + _block(m, to).at[0]) / 2 if to is not None else here.at[0] + behaviour.COLUMN
+    at, params = _at((x, here.at[1])), _values(kind)
+
+    def add(m: Manifest) -> None:
+        blocks = m.behaviour.blocks
+        a, new = blocks[after], Block(kind, at, params)
+        if to is not None:
+            new.next = [to]
+            a.next = [i if n == to else n for n in a.next]
+        else:
+            if play is not None:
+                new.play = [play]
+                a.play = [p for p in a.play if p != play]
+            a.next = [*a.next, i]
+        blocks[i] = new
+
+    doc.edit(add)
+    return f"{KINDS[kind].title} inserted after {_say(m, after)}"
+
+
+def drop_block(doc: Edits, block: str) -> str:
+    """A block out of every rule that holds it, the chain closing up: what fed it feeds what it
+    fed, and moves it played are played by what fed it. Not the first block of a rule."""
+    m = doc.manifest
+    _block(m, block)
+    if not any(block in blk.next for blk in m.behaviour.blocks.values()):
+        raise ManifestError("the first block of a rule goes with the rule")
+
+    def close(m: Manifest) -> None:
+        blocks = m.behaviour.blocks
+        gone = blocks.pop(block)
+        for blk in blocks.values():
+            if block in blk.next:
+                blk.next = list(
+                    dict.fromkeys(n for x in blk.next for n in (gone.next if x == block else [x]))
+                )
+                blk.play = list(dict.fromkeys([*blk.play, *gone.play]))
+
+    doc.edit(close)
+    return f"{_say(m, block)} deleted"
+
+
+def drop_rule(doc: Edits, blocks: Sequence[str], play: str | None) -> str:
+    """A rule out: its move, then each block from its end back that has nothing left to feed or
+    play. Blocks other rules still run through stay."""
+    m = doc.manifest
+    for i in blocks:
+        _block(m, i)
+
+    def drop(m: Manifest) -> None:
+        b = m.behaviour
+        if play is not None:
+            b.blocks[blocks[-1]].play = [p for p in b.blocks[blocks[-1]].play if p != play]
+        for i in reversed(blocks):
+            if i not in b.blocks or b.blocks[i].next or b.blocks[i].play:
+                break
+            del b.blocks[i]
+            for other in b.blocks.values():
+                other.next = [n for n in other.next if n != i]
+            for node in b.moves.values():
+                node.during = [n for n in node.during if n != i]
+
+    doc.edit(drop)
+    return "rule deleted"
+
+
+def set_play(doc: Edits, block: str, old: str | None, new: str | None) -> str:
+    """The move `block` plays: `old` becomes `new`; no `old` adds one, no `new` takes it away."""
+    m = doc.manifest
+    here = _block(m, block)
+    if new is not None:
+        _move(m, new)
+    if old is not None and old not in here.play:
+        raise ManifestError(f"{_say(m, block)} no longer plays {old}")
+    if old == new:
+        return f"{_say(m, block)}: unchanged"
+
+    def change(m: Manifest) -> None:
+        plays = m.behaviour.blocks[block].play
+        if old is None and new is not None:
+            plays.append(new)
+        elif old is not None and new is None:
+            plays.remove(old)
+        elif old is not None and new is not None:
+            plays[plays.index(old)] = new
+
+    doc.edit(change)
+    return (
+        f"{_say(m, block)}: plays {new}" if new is not None else f"{_say(m, block)}: plays nothing"
+    )
+
+
+def move_rule(doc: Edits, rules: Sequence[Path], moved: int, to: int) -> str:
+    """Of one trigger's `rules`, in the order they are checked, the one at `moved` takes place
+    `to`. The places of the rules' first blocks are handed round among them, so every other rule
+    keeps its place in the whole order; a rule's own blocks move with its first block, a move
+    node never. Refused if the rule would keep its place."""
+    m = doc.manifest
+    roots = [p.blocks[0] for p in rules]
+    if len(set(roots)) != len(roots):
+        raise ManifestError("rules that start from the same block cannot be put in another order")
+    if moved == to:
+        return "unchanged"
+    order = list(range(len(rules)))
+    order.insert(to, order.pop(moved))
+    heights = sorted(m.behaviour.blocks[r].at[1] for r in roots)
+    new_y = {roots[old]: heights[k] for k, old in enumerate(order)}
+    held = Counter(i for p in [*behaviour.paths(m), *open_rules(m)] for i in set(p.blocks))
+    key = behaviour.trigger_key(m, rules[0])
+    want = [roots[old] for old in order]
+
+    def shift(m: Manifest) -> None:
+        blocks = m.behaviour.blocks
+        for old, root in enumerate(roots):
+            dy = new_y[root] - blocks[root].at[1]
+            for i in rules[old].blocks:
+                if dy and (i == root or held[i] == 1):
+                    x, y = blocks[i].at
+                    blocks[i].at = _at((x, y + dy))
+        got = next(t for t in behaviour.triggers(m) if t.key == key)
+        if [p.blocks[0] for _, p in got.rules] != want:
+            raise ManifestError(
+                "that would not change the rule's rank: rules at the same height are checked"
+                " left to right, and rules that play nothing go first"
+            )
+
+    doc.edit(shift)
+    return f"rule moved to place {to + 1} of its trigger"
