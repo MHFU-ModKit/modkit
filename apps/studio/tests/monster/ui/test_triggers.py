@@ -284,6 +284,12 @@ def test_a_rule_with_no_move_yet_ends_in_a_placeholder_after_the_others() -> Non
     assert plan.row_of("nope") is None
 
 
+def test_a_rule_that_plays_nothing_by_design_ends_at_its_last_block() -> None:
+    plan = rows.plan(trigger(Path(("b1", "b2"), "", None)), BLOCKS, NOTES, MOVES, {})
+    assert [n.id for n in plan.rows[0].nodes] == ["b1", "b2"] and len(plan.links) == 1
+    assert plan.rows[0].rank == 1
+
+
 def test_a_while_trigger_starts_from_its_move_once() -> None:
     t = trigger(Path(("b1",), "n", "m"), Path(("b3",), "n", "m"), section="move", name="m")
     plan = rows.plan(t, BLOCKS, NOTES, MOVES, {"n": (1, 2)})

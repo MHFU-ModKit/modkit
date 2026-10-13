@@ -142,6 +142,7 @@ def plan(
         links += [LinkSpec(a, graph.OUT, b, graph.IN) for a, b in zip(ids, ids[1:], strict=False)]
         if start is not None:
             links.append(LinkSpec(start.id, graph.WHILE, ids[0], graph.IN))
+        end: NodeSpec | None = None
         if p.play:
             by = played.get(p.play, ())
             end = NodeSpec(
@@ -155,7 +156,7 @@ def plan(
                 f"rule{'' if len(by) == 1 else 's'}: " + ", ".join(f"#{k}" for k in by),
                 ref=True,
             )
-        else:
+        elif rank is None:  # a rule that plays nothing by design ends at its last block
             end = NodeSpec(
                 f"{OPEN}{ids[-1]}",
                 PLACEHOLDER,
@@ -166,8 +167,9 @@ def plan(
                 " in the bar",
                 ref=True,
             )
-        nodes.append(end)
-        links.append(LinkSpec(ids[-1], graph.OUT, end.id, graph.PLAY))
+        if end is not None:
+            nodes.append(end)
+            links.append(LinkSpec(ids[-1], graph.OUT, end.id, graph.PLAY))
         if rank is None:
             news[p.blocks[0]] += 1
             frame, title = f"{FRAME}{NEW}:{p.blocks[0]}:{news[p.blocks[0]]}", UNFINISHED
