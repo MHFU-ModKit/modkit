@@ -10,10 +10,11 @@ event-loop turn, which re-reads everything it shows. Nothing else updates a cont
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QByteArray, QPoint, QSettings, QSize, Qt, QTimer
+from PySide6.QtCore import QByteArray, QPoint, QSettings, QSignalBlocker, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QDialog,
@@ -47,7 +48,10 @@ if TYPE_CHECKING:
     from mhfu_studio.shell.studio import Studio
 
 #: bump when the docks change shape, so an old saved layout is not forced onto new docks
-STATE_VERSION = 3
+STATE_VERSION = 4
+#: the centre's first tab, the 3D view; a workspace's `centre` docks are the others
+HOME = "3D view"
+HOME_TIP = "The 3D view, the next steps and the panels you left open around it"
 FINDINGS = "Findings"
 FINDINGS_TIP = "What the checks found in the document: errors, warnings and notes"
 STOP_TIP = "Stops the running Send to game job; nothing runs now"
@@ -68,6 +72,15 @@ MODES: dict[theme.Mode, tuple[str, str]] = {
     "dark": ("Dark", "Always dark, whatever the system is set to"),
     "light": ("Light", "Always light, whatever the system is set to"),
 }
+
+
+@dataclass
+class _Centre:
+    """A `centre` dock: its spec, its panel in the centre's stack and its View > Panels entry."""
+
+    spec: Dock
+    panel: Any
+    opener: QAction
 
 
 class DockTitle(QWidget):
@@ -124,12 +137,28 @@ class Window(QMainWindow):
         self.stage.addWidget(self.view)
         self.stage.addWidget(self.start_page)
         self.steps = steps.Steps(studio)
+        home = QWidget()  # the 3D view tab: the next steps over the stage
+        home_lay = QVBoxLayout(home)
+        home_lay.setContentsMargins(0, 0, 0, 0)
+        home_lay.setSpacing(0)
+        home_lay.addWidget(self.steps)
+        home_lay.addWidget(self.stage)
+        #: the centre's pages: the 3D view's, then a workspace's `centre` panels as built
+        self.centre = QStackedWidget()
+        self.centre.addWidget(home)
+        self._home = home
+        #: one tab for the 3D view and one per `centre` dock of the shown workspace
+        self.tabs = QTabBar()
+        self.tabs.setDrawBase(False)
+        self.tabs.setExpanding(False)
+        self.tabs.hide()
+        self.tabs.currentChanged.connect(self._tab_picked)
         card = QWidget()
         lay = QVBoxLayout(card)
         lay.setContentsMargins(4, 0, 4, 2)
         lay.setSpacing(0)
-        lay.addWidget(self.steps)
-        lay.addWidget(self.stage)
+        lay.addWidget(self.tabs)
+        lay.addWidget(self.centre, 1)
         self.setCentralWidget(card)
         self.bar = chrome.TitleBar(self, studio, native)
         self.setMenuWidget(self.bar)
@@ -153,6 +182,12 @@ class Window(QMainWindow):
         }
         self._panels: dict[QDockWidget, Any] = {self.findings_dock: self.findings}
         self._shown: str | None = None
+        #: per workspace: its `centre` docks by label
+        self._centres: dict[str, dict[str, _Centre]] = {}
+        #: the shown workspace's shown tab
+        self._tab = HOME
+        #: per (workspace, tab): the dock layout the tab left, else the one it was saved with
+        self._layouts: dict[tuple[str, str], QByteArray] = {}
 
         studio.runner = self.runner = ProcessRunner(studio, self)
         self._log: JobLog | None = None
@@ -271,11 +306,23 @@ class Window(QMainWindow):
         out = []
         for spec in ws.docks():
             widget = self._panel(spec)
+            if spec.area == "centre":
+                self._centres.setdefault(ws.name, {})[spec.label] = self._centre(spec, widget)
+                continue
             d = self._dock(f"{ws.name}/{spec.label}", spec.label, widget, spec.tip)
             self._specs[d] = spec
             self._panels[d] = widget
             out.append(d)
         return out
+
+    def _centre(self, spec: Dock, widget: QWidget) -> _Centre:
+        """A `centre` dock's panel into the centre's stack, with its View > Panels entry."""
+        self.centre.addWidget(widget)
+        opener = QAction(spec.label, self)
+        opener.setCheckable(True)
+        opener.setToolTip(spec.tip)
+        opener.triggered.connect(lambda on: self.show_tab(spec.label if on else HOME))
+        return _Centre(spec, widget, opener)
 
     def _panel(self, spec: Dock) -> Any:
         """`spec`'s widget, or a note saying why there is none."""
@@ -357,24 +404,35 @@ class Window(QMainWindow):
         last document comes back the first time (`Studio.resume`)."""
         self.studio.guard("reopen", self.studio.resume)()
         if self._shown is not None:
-            self._save_layout(self._shown)
+            self._save_layouts(self._shown)
         self._shown = ws.name
         self._hide_others()
         if ws.name not in self._docks:
             self._docks[ws.name] = self._build(ws)
-        # restored or arranged, never both: a replaced layout keeps its tab bars a loop turn
-        if self._restore(ws.name):
-            self._hide_others()  # in case a saved layout knew them as shown
-        else:
-            self._arrange(ws.name)
-        self._retitle()
+        self._tab = HOME
+        self.centre.setCurrentIndex(0)
+        self._fill_tabs(ws.name)
+        self._lay_out(ws.name)
         self._fill_view_menu(ws)
         self._show_tools(ws)
 
-    def _restore(self, name: str) -> bool:
-        """`name`'s saved layout, if it has one; a dock the layout does not know joins its side."""
-        state = self.settings.value(f"layout/{name}")
-        if not (isinstance(state, QByteArray) and self.restoreState(state, STATE_VERSION)):
+    def _lay_out(self, name: str) -> None:
+        """The shown tab's docks: its saved layout, else the default (the 3D view's) or none
+        (a centre tab's, which has docks only once one is opened on it)."""
+        state = self._saved(name, self._tab)
+        # restored or arranged, never both: a replaced layout keeps its tab bars a loop turn
+        if state is not None and self._restore(name, state):
+            self._hide_others()  # in case a saved layout knew them as shown
+        elif self._tab == HOME:
+            self._arrange(name)
+        else:
+            for d in [*self._docks[name], self.findings_dock]:
+                d.hide()
+        self._retitle()
+
+    def _restore(self, name: str, state: QByteArray) -> bool:
+        """`state` as the layout, if it fits; a dock it does not know joins its side."""
+        if not self.restoreState(state, STATE_VERSION):
             return False
         for d in [*self._docks[name], self.findings_dock]:
             if not d.isFloating() and self.dockWidgetArea(d) == Qt.DockWidgetArea.NoDockWidgetArea:
@@ -388,20 +446,90 @@ class Window(QMainWindow):
                 for d in docks:
                     d.hide()
 
-    def _save_layout(self, name: str) -> None:
-        self.settings.setValue(f"layout/{name}", self.saveState(STATE_VERSION))
+    @staticmethod
+    def _key(name: str, tab: str) -> str:
+        return f"layout/{name}" if tab == HOME else f"layout/{name}@{tab}"
+
+    def _saved(self, name: str, tab: str) -> QByteArray | None:
+        """The layout `tab` of `name` left in this run, else the one it was saved with."""
+        state = self._layouts.get((name, tab))
+        if state is None:
+            state = self.settings.value(self._key(name, tab))
+        return state if isinstance(state, QByteArray) else None
+
+    def _save_layouts(self, name: str) -> None:
+        """Keeps the shown tab's layout, and writes every tab's of `name`."""
+        self._layouts[name, self._tab] = self.saveState(STATE_VERSION)
+        for (ws, tab), state in self._layouts.items():
+            if ws == name:
+                self.settings.setValue(self._key(ws, tab), state)
 
     def reset_layout(self) -> None:
-        if self._shown is not None:
-            self._arrange(self._shown)
+        """Every tab of the workspace back to its default layout."""
+        name = self._shown
+        if name is None:
+            return
+        for tab in (HOME, *self._centres.get(name, {})):
+            self._layouts.pop((name, tab), None)
+            self.settings.remove(self._key(name, tab))
+        self._lay_out(name)
 
     def _take_focus(self, ws: Workspace) -> None:
-        """The dock `ws` asks for, opened if it was closed."""
+        """The dock or centre tab `ws` asks for, opened if it was closed."""
         label = ws.take_focus()
+        if label in self._centres.get(ws.name, {}):
+            self.show_tab(label)
+            return
         d = self.findChild(QDockWidget, f"{ws.name}/{label}") if label else None
         if d is not None:
             d.show()
             self._opened(d, True)
+
+    # ---- centre tabs ----------------------------------------------------------------- #
+
+    def _fill_tabs(self, name: str) -> None:
+        """The tab bar of workspace `name`: the 3D view, then its `centre` docks."""
+        tabs = [
+            (HOME, HOME_TIP),
+            *((c.spec.label, c.spec.tip) for c in self._centres.get(name, {}).values()),
+        ]
+        with QSignalBlocker(self.tabs):
+            while self.tabs.count():
+                self.tabs.removeTab(0)
+            for label, tip in tabs:
+                i = self.tabs.addTab(label)
+                self.tabs.setTabData(i, label)
+                self.tabs.setTabToolTip(i, tip)
+        for c in self._centres.get(name, {}).values():
+            c.opener.setChecked(False)
+
+    def _tab_picked(self, index: int) -> None:
+        self.show_tab(str(self.tabs.tabData(index)))
+
+    def show_tab(self, label: str) -> None:
+        """Shows centre tab `label` or the 3D view (`HOME`), each with the docks it left open."""
+        name = self._shown
+        centres = self._centres.get(name or "", {})
+        if name is None or label == self._tab or (label != HOME and label not in centres):
+            return
+        self._layouts[name, self._tab] = self.saveState(STATE_VERSION)
+        self._tab = label
+        self.centre.setCurrentWidget(self._home if label == HOME else centres[label].panel)
+        with QSignalBlocker(self.tabs):
+            self.tabs.setCurrentIndex(([HOME, *centres]).index(label))
+        for tab, c in centres.items():
+            c.opener.setChecked(tab == label)
+        self._lay_out(name)
+        if label == HOME:
+            self.view.setFocus()
+        self._sync_tab()
+
+    def _sync_tab(self) -> None:
+        """The shown centre panel re-reads what it shows."""
+        c = self._centres.get(self._shown or "", {}).get(self._tab)
+        sync = getattr(c.panel, "sync", None) if c is not None else None
+        if callable(sync):
+            self.studio.guard(f"{self._tab} panel", sync)()
 
     # ---- toolbar --------------------------------------------------------------------- #
 
@@ -552,7 +680,7 @@ class Window(QMainWindow):
         self.steps_action.setCheckable(True)
         self.reset_action = self._action(
             "Reset layout",
-            "Puts this workspace's panels back where they started",
+            "Puts this workspace's panels back where they started, on every tab",
             self.reset_layout,
         )
         self.theme_menu = QMenu("Theme", self)
@@ -618,6 +746,10 @@ class Window(QMainWindow):
             p.addActions([d.toggleViewAction() for d in docks])
             if docks:
                 p.addSeparator()
+        tabs = self._centres.get(ws.name, {}).values()
+        p.addActions([c.opener for c in tabs])
+        if tabs:
+            p.addSeparator()
         p.addAction(self.findings_dock.toggleViewAction())
         m = self.view_menu
         m.clear()
@@ -748,6 +880,7 @@ class Window(QMainWindow):
         for d in [*self._docks.get(ws.name, []), self.findings_dock]:
             if d.isVisible():
                 self._sync_panel(d)
+        self._sync_tab()
         self.studio.guard("send to game", self._sync_send)()
         self.studio.guard("start page", self._sync_start)()
         self.studio.guard("sync", lambda: self._sync_window(ws))()
@@ -761,6 +894,9 @@ class Window(QMainWindow):
         on = self.studio.on_start()
         want = self.start_page if on else self.view
         self.tools.setVisible(bool(self._tool_actions) and not on)  # nothing to work on yet
+        self.tabs.setVisible(bool(self._centres.get(self.studio.active.name)) and not on)
+        if on:
+            self.show_tab(HOME)
         if self.stage.currentWidget() is not want:
             self.stage.setCurrentWidget(want)
             if not on:
@@ -835,7 +971,7 @@ class Window(QMainWindow):
         self._slow.stop()
         self._retitling.stop()
         if self._shown is not None:
-            self._save_layout(self._shown)
+            self._save_layouts(self._shown)
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.sync()
         self.runner.close()
