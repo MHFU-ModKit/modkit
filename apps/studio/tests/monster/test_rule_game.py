@@ -10,9 +10,10 @@ from dataclasses import replace
 from typing import Any
 
 import pytest
-from mhfu.live.brain import UNLIMITED, Brain, Slot
+from mhfu import addresses as a
+from mhfu.live.brain import RAGE_OFF, RAGE_ON, UNLIMITED, Brain, Slot
 from mhfu_port import behaviour as model
-from mhfu_port.behaviour import Block
+from mhfu_port.behaviour import Block, Trigger
 from mhfu_port.manifest import Manifest, ManifestError
 from mhfu_studio.monster import rule_game as rg
 from mhfu_studio.monster.document import PortDocument
@@ -351,3 +352,28 @@ def test_the_game_may_be_written_to_only_when_its_brain_is_found_and_runs_these_
     m.behaviour.blocks["b4"].params["frames"] = 31
     game.poll(m, dt=1.0)
     assert game.watch.blocker() == rg.OTHER_BUILD
+
+
+class Board:
+    """A session whose memory records the bytes written."""
+
+    def __init__(self) -> None:
+        self.mem = self
+        self.writes: list[tuple[int, int]] = []
+
+    def write_u8(self, address: int, value: int) -> None:
+        self.writes.append((address, value))
+
+
+@pytest.mark.parametrize(
+    ("kind", "byte"), [("on_enraged", RAGE_ON), ("on_calmed", RAGE_OFF)], ids=["enrage", "calm"]
+)
+def test_enraged_and_calmed_write_the_boards_rage_byte(m: Manifest, kind: str, byte: int) -> None:
+    s = Board()
+    said = rg.FIRE[kind](s, CFG, m, Trigger(kind, "event", kind))  # type: ignore[arg-type]
+    assert s.writes == [(CFG + int(a.EM_BLOCK.BOARD) + int(a.EM_BOARD.RAGE), byte)]
+    assert said.startswith("asked the game to ")
+
+
+def test_fire_has_an_entry_for_a_signal_enraged_and_calmed_only() -> None:
+    assert set(rg.FIRE) == {"on_signal", "on_enraged", "on_calmed"}

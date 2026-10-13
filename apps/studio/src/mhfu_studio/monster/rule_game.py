@@ -97,7 +97,17 @@ def _signal(s: Reader, cfg: int, m: Manifest, t: Trigger) -> str:
     return f"raised signal {t.name} in the game (board signal {index})"
 
 
-FIRE: dict[str, Writer] = {"on_signal": _signal}
+def _enrage(s: Reader, cfg: int, m: Manifest, t: Trigger) -> str:
+    live.set_rage(s, cfg, True)
+    return "asked the game to enrage the monster (no effect while it is enraged)"
+
+
+def _calm(s: Reader, cfg: int, m: Manifest, t: Trigger) -> str:
+    live.set_rage(s, cfg, False)
+    return "asked the game to calm the monster (no effect while it is calm)"
+
+
+FIRE: dict[str, Writer] = {"on_signal": _signal, "on_enraged": _enrage, "on_calmed": _calm}
 """What Fire can raise in the running game, by the trigger's kind, and how: the one table. A
 trigger with no entry has no Fire button."""
 
