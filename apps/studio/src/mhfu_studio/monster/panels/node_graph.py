@@ -20,8 +20,18 @@ from typing import Any, Protocol, cast
 from mhfu_port.behaviour import ID
 from NodeGraphQt import BaseNode, NodeBaseWidget, NodeGraph, Port
 from NodeGraphQt.qgraphics.node_base import NodeItem
-from PySide6.QtCore import QRectF, QSignalBlocker, Qt, QTimer, Signal
-from PySide6.QtGui import QFont, QKeyEvent, QPainter, QShowEvent, QUndoCommand, QUndoStack
+from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, QSignalBlocker, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QFont,
+    QInputDevice,
+    QKeyEvent,
+    QNativeGestureEvent,
+    QPainter,
+    QShowEvent,
+    QUndoCommand,
+    QUndoStack,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -53,6 +63,11 @@ NOTE = "@note"
 NONE = "none"
 #: where a number field with no bound ends
 _FAR = 10**9
+#: a scroll without pixels moves this many pixels per angle unit (a notch of 120 is ~3 lines)
+_ANGLE_PX = 0.5
+#: the zoom per angle unit of a wheel, as NodeGraphQt has it, and the scale the canvas keeps to
+_WHEEL = 1.001
+_SCALE = (0.05, 3.0)
 
 
 class ParamLike(Protocol):
@@ -132,6 +147,65 @@ class _NoUndo(QUndoStack):
 
     def endMacro(self) -> None:  # noqa: N802
         pass
+
+
+class _Navigation(QObject):
+    """The canvas as macOS canvas apps move: two-finger scroll pans; a pinch, Ctrl/Cmd+scroll and
+    a mouse wheel zoom, within `_SCALE`. NodeGraphQt's own wheel zoom has no limit."""
+
+    def __init__(self, viewer: Any) -> None:
+        super().__init__(viewer)
+        self._viewer = viewer
+        viewer.viewport().installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if isinstance(event, QWheelEvent):
+            if self._pad(event):
+                self._pan(event.pixelDelta(), event.angleDelta())
+            else:
+                angle = event.angleDelta()
+                self._zoom(_WHEEL ** (angle.y() or angle.x()), event.position().toPoint())
+            return True
+        if (
+            isinstance(event, QNativeGestureEvent)
+            and event.gestureType() == Qt.NativeGestureType.ZoomNativeGesture
+        ):
+            self._zoom(1.0 + event.value(), event.position().toPoint())
+            return True
+        return False
+
+    @staticmethod
+    def _pad(ev: QWheelEvent) -> bool:
+        """A scroll from a touchpad (or any device sending pixels or phases), not zooming."""
+        if ev.modifiers() & (
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier
+        ):
+            return False
+        return (
+            not ev.pixelDelta().isNull()
+            or ev.phase() != Qt.ScrollPhase.NoScrollPhase
+            or ev.pointingDevice().type() == QInputDevice.DeviceType.TouchPad
+        )
+
+    def _pan(self, pixels: QPoint, angle: QPoint) -> None:
+        """The content follows the fingers: the scene rect moves against them."""
+        dx, dy = (
+            (pixels.x(), pixels.y())
+            if not pixels.isNull()
+            else (angle.x() * _ANGLE_PX, angle.y() * _ANGLE_PX)
+        )
+        v = self._viewer
+        a, b = v.mapToScene(QPoint(0, 0)), v.mapToScene(QPoint(round(dx), round(dy)))
+        x, y, w, h = v.scene_rect()
+        v.set_scene_rect([x + a.x() - b.x(), y + a.y() - b.y(), w, h])
+
+    def _zoom(self, factor: float, at: QPoint) -> None:
+        """Scales about `at` (view pixels); a canvas past a limit may still come back."""
+        v = self._viewer
+        now = v.transform().m11()
+        lo, hi = min(_SCALE[0], now), max(_SCALE[1], now)
+        f = min(max(factor, lo / now), hi / now)
+        v.scale(f, f, v.mapToScene(at))
 
 
 class _Item(NodeItem):  # type: ignore[misc]
@@ -423,6 +497,7 @@ class GraphView(QWidget):
         self._framed = False  # the first non-empty `show` frames its nodes
 
         viewer = self._graph.viewer()
+        self._navigation = _Navigation(viewer)
         viewer.setMinimumSize(240, 160)
         for act in (viewer.qaction_for_undo(), viewer.qaction_for_redo()):
             act.setShortcuts([])  # else Ctrl+Z stops here, at an empty stack, not at the studio
@@ -614,20 +689,15 @@ class GraphView(QWidget):
         x, y = view.xy_pos
         if abs(x - spec.at[0]) > 1e-3 or abs(y - spec.at[1]) > 1e-3:
             view.xy_pos = spec.at
-        resized = False
         for param in spec.params:
             f = s.fields[param.name]
-            opts = self._options(spec, param)
-            if f.set_options(opts):
-                resized = True
+            f.set_options(self._options(spec, param))
             want = spec.values.get(param.name)
             if (want is not None or f.optional) and not f.same(want):
                 f.set_value(want)
         if not s.fields[NOTE].same(spec.label):
             s.fields[NOTE].set_value(spec.label)
-        if resized:
-            view.draw_node()
-        view.setToolTip(spec.tip)  # after `draw_node`, which sets NodeGraphQt's own
+        view.setToolTip(spec.tip)  # NodeGraphQt sets its own when it draws the node
 
     def _tint(self, role: str) -> tuple[tuple[int, ...], tuple[int, ...]] | None:
         ink = self._roles.get(role)

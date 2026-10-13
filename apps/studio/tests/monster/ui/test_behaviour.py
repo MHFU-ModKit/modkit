@@ -178,6 +178,76 @@ def test_the_window_opens_the_dock(
     assert dock.height() > 2 * strip.height() and dock.geometry().bottom() < strip.geometry().top()
 
 
+def open_hosted(
+    make_window: Callable[..., Any], qtbot: Any, port_doc: PortDocument
+) -> tuple[MonsterWorkspace, BehaviourPanel]:
+    """The dock in a real `Window`, which syncs a turn after a change, over the `graph` port."""
+    own = MonsterWorkspace()
+    own.doc = port_doc
+    port_doc.edit(graph)
+    host = Hosted(own)
+    w = make_window(host)
+    host.focus = "Behaviour"
+    w.studio.changed()
+    w.sync()
+    qtbot.wait(60)
+    dock = w.findChild(QDockWidget, "monster/Behaviour")
+    assert dock is not None and isinstance(dock.widget(), BehaviourPanel)
+    return own, dock.widget()
+
+
+def applies(p: BehaviourPanel, node: str, name: str, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Every value of `node.name` the view is told to draw, in order."""
+    seen: list[Any] = []
+    real = p.view._apply
+
+    def apply(nodes: Any, links: Any) -> None:
+        seen.extend(n.values[name] for n in nodes if n.id == node)
+        real(nodes, links)
+
+    monkeypatch.setattr(p.view, "_apply", apply)
+    return seen
+
+
+def test_an_accepted_edit_applies_once_in_the_window(
+    make_window: Callable[..., Any],
+    qtbot: Any,
+    port_doc: PortDocument,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    own, p = open_hosted(make_window, qtbot, port_doc)
+    seen = applies(p, "b1", "frames", monkeypatch)
+    field(p, "b1", "frames")._ctl.setValue(45)
+    qtbot.wait(80)
+    assert doc(own).manifest.behaviour.blocks["b1"].params == {"frames": 45}
+    assert seen == [45] and field(p, "b1", "frames").get_value() == 45
+
+
+def test_a_refused_edit_reverts_once_in_the_window(
+    make_window: Callable[..., Any],
+    qtbot: Any,
+    port_doc: PortDocument,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blk = Block("host_state", (0.0, 0.0), {"mains": [0]})
+    port_doc.edit(lambda m: m.behaviour.blocks.__setitem__("b4", blk))
+    own, p = open_hosted(make_window, qtbot, port_doc)
+    before = doc(own).manifest
+    seen = applies(p, "b4", "mains", monkeypatch)
+    field(p, "b4", "mains")._ctl.menu().actions()[0].trigger()  # unticks the only main state
+    qtbot.wait(80)
+    assert doc(own).manifest is before and "main states" in own.message
+    assert seen == [[0]] and field(p, "b4", "mains").get_value() == (0,)
+
+
+def test_a_block_made_in_the_window_is_selected(
+    make_window: Callable[..., Any], qtbot: Any, port_doc: PortDocument
+) -> None:
+    own, p = open_hosted(make_window, qtbot, port_doc)
+    create(qtbot, p, KINDS["on_noticed"].title, QPoint(300, 120))
+    assert "b4" in doc(own).manifest.behaviour.blocks and p.view.selected() == ["b4"]
+
+
 def test_empty(qtbot: Any) -> None:
     p = make(qtbot, MonsterWorkspace())
     assert p.pages.currentWidget() is p.no_scene
