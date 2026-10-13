@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from mhfu_port.behaviour import Param
+from mhfu_port.behaviour import ID, NAMES, Param
 from PySide6.QtCore import QObject, QSignalBlocker, Signal
 from PySide6.QtWidgets import (
     QComboBox,
@@ -30,6 +30,9 @@ from PySide6.QtWidgets import (
 from mhfu_studio.ui import kit
 
 Option = tuple[str, object]
+NUMBERS = ("int", "float")
+#: a multi-select over the options
+PICKS = ("mains", "sides")
 NONE = "none"
 #: where a number field with no bound ends
 _FAR = 10**9
@@ -44,6 +47,9 @@ class ParamControl(QObject):
     def __init__(self, param: Param | None, options: Sequence[Option] = ()) -> None:
         super().__init__()
         self.optional = param is not None and param.optional
+        self._names = param is not None and param.type in NAMES
+        #: a name combo's committed text; what its edit box shows may be ahead of it
+        self._held = ""
         self._vals: list[object] = []
         self._opts: list[Option] = []
         self._built = False
@@ -59,9 +65,9 @@ class ParamControl(QObject):
             line.setMinimumWidth(160)
             line.editingFinished.connect(self._changed)
             return line
-        if param.type in ("int", "float"):
+        if param.type in NUMBERS:
             return self._number(param)
-        if param.type == "mains":
+        if param.type in PICKS:
             button = QToolButton()
             button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
             button.setMinimumWidth(120)
@@ -71,7 +77,18 @@ class ParamControl(QObject):
             return button
         combo = QComboBox()
         combo.setMinimumWidth(120)
-        combo.currentIndexChanged.connect(self._changed)
+        if param.type in NAMES:
+            combo.setEditable(True)
+            combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+            combo.setCompleter(cast(Any, None))  # no inline completion: a name may start another
+            combo.currentIndexChanged.connect(self._commit)
+            edit = combo.lineEdit()
+            if edit is not None:
+                edit.editingFinished.connect(self._commit)
+        elif param.type in ("choice", "part"):
+            combo.currentIndexChanged.connect(self._changed)
+        else:
+            raise ValueError(f"parameter {param.name!r}: unknown type {param.type!r}")
         return combo
 
     def _number(self, param: Param) -> QWidget:
@@ -105,6 +122,8 @@ class ParamControl(QObject):
                 return None
             return int(ctl.value()) if isinstance(ctl, QSpinBox) else float(ctl.value())
         if isinstance(ctl, QComboBox):
+            if self._names:
+                return ctl.currentText()
             return (
                 self._vals[ctl.currentIndex()]
                 if 0 <= ctl.currentIndex() < len(self._vals)
@@ -121,6 +140,12 @@ class ParamControl(QObject):
                 ctl.setText("" if value is None else str(value))
             elif isinstance(ctl, QSpinBox | QDoubleSpinBox):
                 ctl.setValue(cast(Any, ctl.minimum() if value is None else value))
+            elif isinstance(ctl, QComboBox) and self._names:
+                text = "" if value is None else str(value)
+                ctl.setCurrentIndex(ctl.findText(text))  # -1 clears the edit box
+                if ctl.currentText() != text:  # a name the options lack still shows
+                    ctl.setEditText(text)
+                self._held = text
             elif isinstance(ctl, QComboBox):
                 if value not in self._vals:  # a value the options lack still shows
                     self._vals.append(value)
@@ -149,9 +174,13 @@ class ParamControl(QObject):
         built = self._built
         if built and list(options) == self._opts:
             return
-        keep = self.get_value() if built else None
+        keep = (self._held if self._names else self.get_value()) if built else None
         self._built, self._opts = True, list(options)
-        if isinstance(ctl, QComboBox):
+        if isinstance(ctl, QComboBox) and self._names:
+            with QSignalBlocker(ctl):
+                ctl.clear()
+                ctl.addItems([str(v) for _, v in self._opts])
+        elif isinstance(ctl, QComboBox):
             none = self.optional and all(v is not None for _, v in self._opts)
             self._vals = ([None] if none else []) + [v for _, v in self._opts]
             with QSignalBlocker(ctl):
@@ -178,6 +207,17 @@ class ParamControl(QObject):
         ]
         text = ", ".join(names) if 0 < len(names) <= 2 else f"{len(names)} picked"
         cast(QToolButton, self.ctl).setText(text if names else (NONE if self.optional else "-"))
+
+    def _commit(self, *_: object) -> None:
+        """A name combo's pick or typed text: a name that is not one is put back, unheard."""
+        text = cast(QComboBox, self.ctl).currentText().strip()
+        if text == self._held:
+            return
+        if ID.fullmatch(text) is None:
+            self.set_value(self._held)
+            return
+        self.set_value(text)
+        self._changed()
 
     def _changed(self, *_: object) -> None:
         if isinstance(self.ctl, QToolButton):

@@ -5,27 +5,29 @@ through the real view."""
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 from mhfu_port import behaviour as model
-from mhfu_port.behaviour import KINDS, Block, MoveNode, Rule
+from mhfu_port.behaviour import KINDS, Block, Kind, MoveNode, Rule
 from mhfu_port.manifest import Move
 from mhfu_studio.monster import behaviour as B
 from mhfu_studio.monster.document import PortDocument
-from mhfu_studio.monster.panels.behaviour import WARN, BehaviourPanel
+from mhfu_studio.monster.panels.behaviour import ROLES, WARN, BehaviourPanel
 from mhfu_studio.monster.panels.node_graph import DIM, FADED, GraphView, LinkSpec
 from mhfu_studio.monster.panels.properties import PropertyBar
 from mhfu_studio.monster.workspace import MonsterWorkspace
+from mhfu_studio.shell.overlay import Ink
 from mhfu_studio.shell.studio import Studio
 from mhfu_studio.shell.workspace import Dock
 from mhfu_studio.ui import kit, theme
 from mhfu_studio.ui.testing import FakeWorkspace
-from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDockWidget
+from PySide6.QtWidgets import QComboBox, QDockWidget, QToolButton
 
 LEFT, NONE = Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
 STAMP, FLINCH, STEP = B.move_id("stamp"), B.move_id("flinch_head"), B.move_id("stamp_2")
@@ -336,19 +338,44 @@ def test_the_zinogre_opens(
     ws.all_view = B.CANVAS  # a loaded document starts in order
     p = make(qtbot, ws)
     m = zin.manifest
-    assert len(m.behaviour.blocks) == 15 and len(p.view._shown) == 15 + len(m.moves)
+    assert len(m.behaviour.blocks) == 36 and len(p.view._shown) == 36 + len(m.moves)
     plays = sorted(badge(p, i) for i in m.behaviour.blocks if badge(p, i))
-    assert plays == sorted(f"#{k}" for k in range(1, 8))
+    assert plays == sorted(f"#{k}" for k in range(1, 17))
+    for k, path in enumerate(B.read(m).paths, 1):  # a path that plays nothing has its place too
+        assert badge(p, path.blocks[-1]) == rank(k)
+    assert [badge(p, i) for i in ("b15", "b17", "b23")] == [rank(1), rank(2), rank(3)]
+    assert badge(p, "b4") == rank(4) and badge(p, "b36") == rank(16)
+    assert bar_on(p, "b23").controls["counter"].get_value() == "flinches"
+    assert options(p, "b15", "flag") == ["flinches", "in_combat"]
     assert all(p.view._shown[i].view.opacity() == 1.0 for i in m.behaviour.blocks)
     assert in_step(p, ws)
     wrote = {i: p.view._shown[i].view.xy_pos for i in m.behaviour.blocks}
     assert wrote["b12"] == [float(model.LEFT), 4.0 * model.ROW]
-    assert summary(p, "b12") == "head" and summary(p, "b2") == "250 \u2013 1000"
-    select(qtbot, p, "b12")
-    assert p.bar.note is not None and p.bar.note.get_value().startswith("a flinch of the head")
+    assert summary(p, "b18") == "head" and summary(p, "b2") == "250 \u2013 1000"
+    select(qtbot, p, "b18")
+    assert p.bar.note is not None and p.bar.note.get_value().startswith("horns break")
     assert p.bar.controls["part"].get_value() == 0
     select(qtbot, p, "b2")
     assert p.bar.controls["hi"].get_value() == 1000.0
+
+
+def test_a_new_name_leaves_the_other_node_sizes_on_the_zinogre(
+    qtbot: Any, ws: MonsterWorkspace, zinogre_toml: Path, synthetic_pac: bytes
+) -> None:
+    from mhfu_studio.monster.core.scene import Scene
+
+    zin = PortDocument.open(zinogre_toml)
+    ws.load(Scene.from_bytes(synthetic_pac, "z", path=zinogre_toml.with_suffix(".bin")), zin)
+    p = make(qtbot, ws)
+    sizes = {i: (s.view.width, s.view.height) for i, s in p.view._shown.items()}
+    flag = next(i for i, b in zin.manifest.behaviour.blocks.items() if "flag" in b.params)
+    type_name(qtbot, p, flag, "flag", "brand_new")
+    assert zin.manifest.behaviour.blocks[flag].params["flag"] == "brand_new"
+    now = {i: (s.view.width, s.view.height) for i, s in p.view._shown.items()}
+    assert {i: v for i, v in now.items() if i != flag} == {
+        i: v for i, v in sizes.items() if i != flag
+    }
+    assert summary(p, flag).startswith("brand_new")
 
 
 def test_spread_out_is_one_step(panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
@@ -358,6 +385,21 @@ def test_spread_out_is_one_step(panel: BehaviourPanel, ws: MonsterWorkspace) -> 
     assert panel.view._shown["b2"].view.xy_pos == [390.0, 272.0]
     doc(ws).undo()
     assert doc(ws).manifest == before
+
+
+def test_no_two_nodes_of_the_zinogre_overlap(
+    qtbot: Any, ws: MonsterWorkspace, zinogre_toml: Path, synthetic_pac: bytes
+) -> None:
+    from mhfu_studio.monster.core.scene import Scene
+
+    zin = PortDocument.open(zinogre_toml)
+    ws.load(Scene.from_bytes(synthetic_pac, "z", path=zinogre_toml.with_suffix(".bin")), zin)
+    p = make(qtbot, ws)
+    rects = {
+        i: QRectF(*n.view.xy_pos, n.view.width, n.view.height) for i, n in p.view._shown.items()
+    }
+    clash = [(a, b) for a, b in itertools.combinations(rects, 2) if rects[a].intersects(rects[b])]
+    assert clash == []
 
 
 def test_part_and_main_options(qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
@@ -380,7 +422,9 @@ def test_the_palette_offers_every_kind(panel: BehaviourPanel) -> None:
     menu = panel.view.viewer.context_menus()["graph"]
     offered = {a.text() for sub in menu.actions() for a in sub.menu().actions()}
     assert offered == {k.title for k in KINDS.values()}
-    assert [a.text() for a in menu.actions()] == ["Events", "State", "Conditions", "Modifiers"]
+    titles = [a.text() for a in menu.actions()]
+    assert titles[:4] == ["Events", "State", "Conditions", "Modifiers"]
+    assert titles[4:] in ([], ["Effects"])
 
 
 def create(qtbot: Any, p: BehaviourPanel, title: str, where: QPoint) -> None:
@@ -752,6 +796,203 @@ def test_renaming_a_move_keeps_the_graph(panel: BehaviourPanel, ws: MonsterWorks
     panel.sync()
     assert doc(ws).manifest.behaviour.blocks["b1"].play == ["stomp"]
     assert in_step(panel, ws) and badge(panel, "b1") == rank(1)
+
+
+# ---- effects, names, sides and paths that play nothing -------------------------------------- #
+
+
+def test_a_path_that_plays_nothing_ranks_first_wherever_it_sits(
+    panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    def add(m: Any) -> None:
+        b = m.behaviour.blocks
+        b["b4"] = Block("on_enraged", (260.0, 500.0), next=["b5"])
+        b["b5"] = Block("counter_add", (540.0, 500.0), {"counter": "hits"})
+
+    doc(ws).edit(add)
+    ws.sync()
+    panel.sync()
+    assert [badge(panel, n) for n in ("b1", "b2", "b3", "b5")] == [rank(2), "", "", rank(1)]
+    assert panel.title.text() == f"5 blocks · 2 of {model.SEAM_RULES} paths · 2 loose"
+    assert panel.view._shown["b5"].view.opacity() == 1.0
+    assert "play nothing run before" in panel.hint.text()
+
+
+@pytest.mark.parametrize(
+    ("family", "dark"), [("Ember", True), ("Ember", False), ("Moss", True), ("Moss", False)]
+)
+def test_the_effect_role_has_a_colour_of_its_own(qtbot: Any, family: str, dark: bool) -> None:
+    try:
+        theme.apply(theme.theme(family, dark))
+        seen = {role: theme.color(ink).getRgbF()[:3] for role, ink in ROLES.items()}
+    finally:
+        theme.apply(theme.theme("Ember", True))
+    assert set(seen) == {"event", "state", "condition", "modifier", "effect", "move"}
+    for role, rgb in seen.items():
+        if role != "effect":
+            gap = max(abs(a - b) for a, b in zip(rgb, seen["effect"], strict=True))
+            assert gap > 0.2, role
+
+
+def test_an_effect_block_wears_the_effect_colour(
+    new_kinds: tuple[Kind, ...], panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    doc(ws).edit(
+        lambda m: m.behaviour.blocks.__setitem__(
+            "b4", Block("t_count", (0.0, 400.0), {"counter": "hits"})
+        )
+    )
+    try:
+        for dark in (True, False):
+            theme.apply(theme.theme("Ember", dark))
+            panel.sync()
+            edge = theme.color(Ink.EFFECT)
+            have = panel.view._shown["b4"].view.border_color
+            assert tuple(have[:3]) == (edge.red(), edge.green(), edge.blue())
+    finally:
+        theme.apply(theme.theme("Ember", True))
+
+
+def bar_on(p: BehaviourPanel, node: str) -> PropertyBar:
+    """The bar showing `node`, selected from the code: it may sit off the screen."""
+    p.view.select([node])
+    p.sync()
+    return p.bar
+
+
+def options(p: BehaviourPanel, node: str, name: str) -> list[str]:
+    ctl = bar_on(p, node).controls[name].ctl
+    return [ctl.itemText(i) for i in range(ctl.count())]
+
+
+def type_name(qtbot: Any, p: BehaviourPanel, node: str, name: str, text: str) -> None:
+    ctl = bar_on(p, node).controls[name].ctl
+    ctl.setEditText(text)
+    ctl.lineEdit().editingFinished.emit()
+    qtbot.wait(30)
+
+
+def test_counters_and_flags_through_the_canvas(
+    qtbot: Any, new_kinds: tuple[Kind, ...], panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    count, flag = new_kinds[0], new_kinds[1]
+    create(qtbot, panel, count.title, QPoint(300, 480))
+    assert doc(ws).manifest.behaviour.blocks["b4"].params == {"counter": "counter1", "by": 1}
+    create(qtbot, panel, flag.title, QPoint(60, 480))
+    assert doc(ws).manifest.behaviour.blocks["b5"].params == {"flag": "flag1"}
+    assert options(panel, "b4", "counter") == options(panel, "b5", "flag") == ["counter1", "flag1"]
+    type_name(qtbot, panel, "b5", "flag", "armor_hits")
+    assert doc(ws).manifest.behaviour.blocks["b5"].params == {"flag": "armor_hits"}
+    assert options(panel, "b4", "counter") == ["armor_hits", "counter1"]
+    assert bar_on(panel, "b5").controls["flag"].get_value() == "armor_hits"
+    assert in_step(panel, ws)
+    doc(ws).undo()
+    assert doc(ws).manifest.behaviour.blocks["b5"].params == {"flag": "flag1"}
+    doc(ws).redo()
+    ws.refresh()
+    panel.sync()
+    assert options(panel, "b5", "flag") == ["armor_hits", "counter1"]
+    kept = doc(ws).manifest
+    type_name(qtbot, panel, "b5", "flag", "Bad Name")
+    assert doc(ws).manifest is kept
+    assert bar_on(panel, "b5").controls["flag"].get_value() == "armor_hits"
+
+
+def test_signals_and_sides_through_the_canvas(
+    qtbot: Any, new_kinds: tuple[Kind, ...], panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    signal, side = new_kinds[2], new_kinds[3]
+    create(qtbot, panel, signal.title, QPoint(300, 480))
+    create(qtbot, panel, side.title, QPoint(60, 480))
+    blocks = doc(ws).manifest.behaviour.blocks
+    assert blocks["b4"].params == {"name": "signal1"} and blocks["b5"].params == {
+        "sides": ["front"]
+    }
+    type_name(qtbot, panel, "b4", "name", "rage")
+    assert doc(ws).manifest.behaviour.blocks["b4"].params == {"name": "rage"}
+    create(qtbot, panel, signal.title, QPoint(500, 480))
+    assert doc(ws).manifest.behaviour.blocks["b6"].params == {"name": "signal1"}
+    assert options(panel, "b4", "name") == ["rage", "signal1"]
+    sides = bar_on(panel, "b5").controls["sides"].ctl
+    picks = sides.menu().actions()
+    assert [a.text() for a in picks] == list(new_kinds[3].params[0].choices)
+    assert sides.text() == "front"
+    picks[3].trigger()
+    qtbot.wait(30)
+    assert doc(ws).manifest.behaviour.blocks["b5"].params == {"sides": ["front", "behind"]}
+    assert sides.text() == "front, behind" and in_step(panel, ws)
+    picks[0].trigger()
+    qtbot.wait(30)
+    assert doc(ws).manifest.behaviour.blocks["b5"].params == {"sides": ["behind"]}
+    kept = doc(ws).manifest
+    picks[3].trigger()  # none left
+    qtbot.wait(30)
+    assert doc(ws).manifest is kept and "side" in ws.message
+    assert bar_on(panel, "b5").controls["sides"].get_value() == ("behind",)
+
+
+def put(qtbot: Any, p: BehaviourPanel, node: str, name: str, value: Any) -> None:
+    """Sets a node's parameter through its widget, as a hand would."""
+    ctl = bar_on(p, node).controls[name].ctl
+    if isinstance(ctl, QToolButton):
+        [act] = [a for a in ctl.menu().actions() if a.text() == value]
+        act.trigger()
+    elif isinstance(ctl, QComboBox) and ctl.isEditable():
+        type_name(qtbot, p, node, name, value)
+        return
+    elif isinstance(ctl, QComboBox):
+        ctl.setCurrentIndex(ctl.findText(value))
+    else:
+        ctl.setValue(value)
+    qtbot.wait(30)
+
+
+#: (kind, param, what is put in the widget, what the manifest then holds)
+EDITS = [
+    ("counter_is", "counter", "hits_taken", "hits_taken"),
+    ("counter_is", "test", "below", "below"),
+    ("counter_is", "value", 7, 7),
+    ("flag_is", "flag", "armor", "armor"),
+    ("flag_is", "state", "clear", "clear"),
+    ("counter_add", "by", -3, -3),
+    ("counter_set", "to", 9, 9),
+    ("flag_set", "state", "clear", "clear"),
+    ("monster_hp", "lo", 10, 10),
+    ("monster_hp", "hi", 50, 50),
+    ("part_broken", "part", "head", 1),
+    ("part_broken", "state", "not broken", "not broken"),
+    ("rage", "state", "calm", "calm"),
+    ("hunter_side", "sides", "left", ["front", "left"]),
+    ("chance", "percent", 50, 50),
+    ("on_signal", "name", "roar", "roar"),
+]
+
+
+def test_every_real_kind_draws_and_edits(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    ids: dict[str, str] = {}
+    for n, kind in enumerate(KINDS):
+        ids[kind] = model.new_id(doc(ws).manifest.behaviour)
+        B.add_block(doc(ws), kind, (300.0 + 20 * n, 900.0 + 60 * n))
+    ws.sync()
+    panel.sync()
+    assert in_step(panel, ws)
+    blocks = doc(ws).manifest.behaviour.blocks
+    for kind, i in ids.items():
+        held = model.params(blocks[i])
+        for p in KINDS[kind].params:
+            shown = bar_on(panel, i).controls[p.name].get_value()
+            want = held.get(p.name)
+            assert shown == (tuple(want) if isinstance(want, list) else want), (kind, p.name)
+    drawn = doc(ws).manifest
+    for kind, name, put_, stored in EDITS:
+        put(qtbot, panel, ids[kind], name, put_)
+        assert doc(ws).manifest.behaviour.blocks[ids[kind]].params[name] == stored, (kind, name)
+        assert in_step(panel, ws)
+    for _ in EDITS:
+        doc(ws).undo()
+    assert doc(ws).manifest == drawn
 
 
 # ---- focus ----------------------------------------------------------------------------------- #

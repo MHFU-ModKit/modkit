@@ -74,6 +74,19 @@ def test_every_kind_starts_valid(d: PortDocument) -> None:
     assert params["distance"] == {"lo": 0.0}, "the optional far end starts as none"
     assert params["played_for"] == {"frames": 1} and params["hunter_moving"] == {"way": "away"}
     assert params["on_flinch"] == {} and params["force"] == {} and params["mode"] == {"mode": 0}
+    assert params["any_time"] == params["idle"] == {} and params["rage"] == {"state": "enraged"}
+    assert params["monster_hp"] == {"lo": 0} and params["chance"] == {"percent": 1}
+    assert params["part_broken"] == {"part": 0, "state": "broken"}
+    assert params["hunter_side"] == {"sides": ["front"]} and params["on_signal"] == {
+        "name": "signal1"
+    }
+    counters = [params[k] for k in ("counter_is", "counter_add", "counter_set")]
+    assert sorted(c["counter"] for c in counters) == ["counter1", "counter2", "counter3"]
+    flags = [params[k] for k in ("flag_is", "flag_set")]
+    assert sorted(f["flag"] for f in flags) == ["flag1", "flag2"], "a new name is never taken"
+    assert params["counter_add"]["by"] == 1 and params["counter_set"]["to"] == 0
+    assert params["flag_is"]["state"] == params["flag_set"]["state"] == "set"
+    assert params["counter_is"] | {"counter": 0} == {"counter": 0, "test": "at least", "value": 1}
     for _ in KINDS:
         d.undo()
     assert d.manifest == before
@@ -337,7 +350,9 @@ def test_the_cap(d: PortDocument) -> None:
 def test_the_palette_offers_every_kind(monkeypatch: pytest.MonkeyPatch) -> None:
     offered = [k for _, kinds in B.palette() for k, _, _ in kinds]
     assert sorted(offered) == sorted(KINDS)
-    assert [t for t, _ in B.palette()] == ["Events", "State", "Conditions", "Modifiers"]
+    titles = [t for t, _ in B.palette()]
+    assert titles[:4] == ["Events", "State", "Conditions", "Modifiers"]
+    assert titles[4:] in ([], ["Effects"])
     tips = {k: (t, tip) for _, kinds in B.palette() for k, t, tip in kinds}
     assert tips["force"] == (KINDS["force"].title, KINDS["force"].tip)
     monkeypatch.setitem(
@@ -351,9 +366,12 @@ def test_the_palette_offers_every_kind(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_the_zinogre_reads(ports: Path) -> None:
     m = manifest.load(ports / "zinogre.toml")
     r = B.read(m)
-    assert len(m.behaviour.blocks) == 15 and len(r.paths) == 7
-    assert sorted(n for ns in r.priority.values() for n in ns) == list(range(1, 8))
+    assert len(m.behaviour.blocks) == 36 and len(r.paths) == 16
+    assert sorted(n for ns in r.priority.values() for n in ns) == list(range(1, 17))
     assert r.loose == [] and r.refused == {} and r.capped is None
+    assert [p.blocks[-1] for p in r.paths if p.play is None] == ["b15", "b17", "b23"]
+    assert [p.play is None for p in r.paths] == [True] * 3 + [False] * 13, "bookkeeping runs first"
+    assert model.names(m, "var") == ["flinches", "in_combat"]
     assert min(b.at[0] for b in m.behaviour.blocks.values()) == model.LEFT
     assert {w.dst for w in B.wires(m) if w.dst_port == "play"} >= {"move:flinch_head"}
     assert len(B.spots(m)) == len(m.moves)
@@ -380,12 +398,91 @@ def test_renaming_a_move_keeps_its_paths(ports: Path) -> None:
 
 def test_a_move_in_use_is_not_deleted(ports: Path) -> None:
     z = PortDocument(manifest.load(ports / "zinogre.toml"))
-    with pytest.raises(ManifestError, match="block b12 plays it"):
+    with pytest.raises(ManifestError, match="block b18 plays it"):
         clips.drop_move(z, "flinch_head")
     with pytest.raises(ManifestError, match="while lunge plays"):
         clips.drop_move(z, "lunge")
     clips.drop_move(z, "idle")
     assert "idle" not in z.manifest.moves
+
+
+# ---- effects, names and sides ---------------------------------------------------------------- #
+
+
+class Bare:
+    """An `Edits` over a manifest that is never validated: the new param types' checks are the
+    package's."""
+
+    def __init__(self, m: Manifest) -> None:
+        self.manifest = m
+
+    def edit(self, change: Callable[[Manifest], object]) -> None:
+        change(self.manifest)
+
+
+def test_the_palette_has_an_effects_group(new_kinds: tuple[Kind, ...]) -> None:
+    groups = dict(B.palette())
+    assert list(groups) == ["Events", "State", "Conditions", "Modifiers", "Effects"]
+    effects = {k.name for k in KINDS.values() if k.role == "effect"}
+    assert effects >= {"counter_add", "flag_set", new_kinds[0].name, new_kinds[1].name}
+    assert {k for k, _, _ in groups["Effects"]} == effects
+    assert new_kinds[2].name in [k for k, _, _ in groups["Events"]]
+    assert new_kinds[3].name in [k for k, _, _ in groups["Conditions"]]
+
+
+def test_new_blocks_start_with_fresh_names_and_a_side(
+    new_kinds: tuple[Kind, ...], make: Callable[[str], Manifest], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(
+        KINDS,
+        "t_pair",
+        Kind(
+            "t_pair",
+            "event",
+            "Pair",
+            (Param("a", "signal", "A"), Param("b", "signal", "B")),
+            "two signals",
+        ),
+    )
+    d = Bare(make(""))
+    for kind in ("t_count", "t_count", "t_flag", "t_signal", "t_side", "t_pair", "t_signal"):
+        B.add_block(d, kind, (0, 0))
+    got = [blk.params for blk in d.manifest.behaviour.blocks.values()]
+    assert got == [
+        {"counter": "counter1", "by": 1},
+        {"counter": "counter2", "by": 1},
+        {"flag": "flag1"},
+        {"name": "signal1"},
+        {"sides": ["front"]},
+        {"a": "signal2", "b": "signal3"},
+        {"name": "signal4"},
+    ]
+    assert B.fresh("x", {"x1", "x3"}) == "x2"
+
+
+def test_sides_are_stored_in_the_order_of_the_choices(
+    new_kinds: tuple[Kind, ...], make: Callable[[str], Manifest]
+) -> None:
+    d = Bare(make(""))
+    B.add_block(d, "t_side", (0, 0))
+    B.set_param(d, "b1", "sides", ("behind", "front", "front"))
+    assert d.manifest.behaviour.blocks["b1"].params == {"sides": ["front", "behind"]}
+    B.set_param(d, "b1", "sides", ())
+    assert d.manifest.behaviour.blocks["b1"].params == {"sides": []}  # the loader refuses this
+    B.add_block(d, "t_flag", (0, 0))
+    B.set_param(d, "b2", "flag", "armor_2")
+    assert d.manifest.behaviour.blocks["b2"].params == {"flag": "armor_2"}
+
+
+def test_a_path_that_plays_nothing_ranks_on_its_last_block(
+    d: PortDocument, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = [model.Path(("b2", "b3"), None, None), model.Path(("b1",), "stamp", "charge")]
+    monkeypatch.setattr(model, "paths", lambda m: paths)
+    monkeypatch.setattr(model, "refused", lambda m: {})
+    monkeypatch.setattr(model, "loose", lambda m: [])
+    r = B.read(d.manifest)
+    assert r.priority == {"b3": [1], "b1": [2]} and r.capped is None
 
 
 # rules: what a trigger's rows edit
@@ -452,6 +549,54 @@ def test_a_new_rule_for_an_event_is_checked_last_and_plays_nothing(d: PortDocume
     d.undo()
     d.undo()
     assert d.manifest == before
+
+
+def test_a_new_rule_for_a_signal_carries_its_name(d: PortDocument) -> None:
+    d.edit(
+        lambda m: m.behaviour.blocks.update(
+            {"b2": model.Block("on_signal", (260.0, 200.0), {"name": "roar"}, play=["stamp"])}
+        )
+    )
+    B.add_rule(d, trigger(d.manifest, "on_signal:roar"))
+    made = d.manifest.behaviour.blocks["b3"]
+    assert (made.kind, made.params) == ("on_signal", {"name": "roar"})
+    [rule] = B.open_rules(d.manifest)
+    assert model.trigger_key(d.manifest, rule) == "on_signal:roar"
+    B.set_play(d, "b3", None, "flinch_head")
+    assert [
+        r.signal for r in model.compile(d.manifest) if r.on is None and r.signal is not None
+    ] == [0, 0]
+
+
+def test_a_rule_that_ends_at_an_effect_is_complete_not_open(d: PortDocument) -> None:
+    d.edit(
+        lambda m: m.behaviour.blocks.update(
+            {
+                "b2": model.Block("on_noticed", (260.0, 200.0), next=["b3"]),
+                "b3": model.Block("counter_add", (460.0, 200.0), {"counter": "hits"}),
+            }
+        )
+    )
+    assert B.open_rules(d.manifest) == []
+    assert [(p.blocks, p.play) for p in model.paths(d.manifest)][0] == (("b2", "b3"), None)
+
+
+def test_a_reorder_that_no_play_first_forbids_is_refused_and_says_so(d: PortDocument) -> None:
+    d.edit(
+        lambda m: m.behaviour.blocks.update(
+            {
+                "b2": model.Block("on_noticed", (260.0, 200.0), play=["stamp"]),
+                "b3": model.Block("on_noticed", (260.0, 400.0), next=["b4"]),
+                "b4": model.Block("counter_add", (460.0, 400.0), {"counter": "hits"}),
+            }
+        )
+    )
+    rules = [p for _, p in trigger(d.manifest, "on_noticed").rules]
+    assert [p.play for p in rules] == [None, "stamp"], "the rule that plays nothing is first"
+    before = d.manifest
+    with pytest.raises(ManifestError, match="rules that play nothing go first"):
+        B.move_rule(d, rules, 1, 0)
+    assert d.manifest is before
 
 
 def test_a_new_rule_for_a_state_has_the_states_values(d: PortDocument) -> None:
@@ -647,12 +792,17 @@ def test_rules_that_share_their_first_block_cannot_be_reordered(d: PortDocument)
 def test_a_reorder_leaves_the_other_triggers_ranks_alone(ports: Path) -> None:
     z = PortDocument(manifest.load(ports / "zinogre.toml"))
     before = model.compile(z.manifest)
+    ranks = trigger(z.manifest, "during:lunge").ranks
     paths = [p for _, p in trigger(z.manifest, "during:lunge").rules]
     B.move_rule(z, paths, 0, 0)
     assert model.compile(z.manifest) == before, "a no-op changes nothing"
     B.move_rule(z, paths, 0, 1)
     after = model.compile(z.manifest)
-    assert after[0] == before[1] and after[1] == before[0] and after[2:] == before[2:]
+    lo, hi = ranks[0] - 1, ranks[1] - 1
+    assert after[lo] == before[hi] and after[hi] == before[lo]
+    assert [r for k, r in enumerate(after) if k not in (lo, hi)] == [
+        r for k, r in enumerate(before) if k not in (lo, hi)
+    ]
     z.undo()
     assert model.compile(z.manifest) == before
 
@@ -660,14 +810,18 @@ def test_a_reorder_leaves_the_other_triggers_ranks_alone(ports: Path) -> None:
 def test_a_rule_made_and_taken_away_leaves_the_zinogres_rules_alone(ports: Path) -> None:
     z = PortDocument(manifest.load(ports / "zinogre.toml"))
     before = model.compile(z.manifest)
+    old = set(z.manifest.behaviour.blocks)
+    anchor = next(i for i, b in z.manifest.behaviour.blocks.items() if "flinch_head" in b.play)
     B.add_rule(z, trigger(z.manifest, "on_flinch"))
-    new = next(i for i in z.manifest.behaviour.blocks if i not in {f"b{k}" for k in range(1, 16)})
+    [new] = set(z.manifest.behaviour.blocks) - old
     assert model.compile(z.manifest) == before, "no move yet"
     B.set_play(z, new, None, "flinch_head")
     after = model.compile(z.manifest)
-    assert after[:-1] == before and after[-1].play == "flinch_head" and after[-1].on == "flinch"
-    B.insert_block(z, "b12", "cooldown", None, "flinch_head")
-    B.drop_block(z, "b16" if new != "b16" else "b17")
+    [made] = [r for r in after if r.on == "flinch" and r.play == "flinch_head"]
+    assert [r for r in after if r is not made] == before
+    B.insert_block(z, anchor, "cooldown", None, "flinch_head")
+    [inserted] = set(z.manifest.behaviour.blocks) - old - {new}
+    B.drop_block(z, inserted)
     B.drop_rule(z, (new,), "flinch_head")
     assert model.compile(z.manifest) == before
 

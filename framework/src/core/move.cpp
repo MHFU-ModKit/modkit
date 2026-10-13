@@ -251,10 +251,13 @@ static void start(uint32_t ent)
 {
     copy_words(&S->move, &S->next, sizeof(mhfu_move_t));
     S->pending = 0;
-    int quiet = noticing(ent);
+    /* the notice has woken the AI script, and so has the hub's entry after a reaction: its next
+     * pair would cut the carrier at once. Quiet it, as the stuck end does; the hub wakes it again
+     * once the carrier ends */
+    const int quiet = noticing(ent)
+                   || (S->next.carrier_main == MHFU_MOVE_HUB_MAIN
+                       && S->next.carrier_sub == MHFU_MOVE_HUB_SUB);
     enter(ent, S->next.carrier_main, S->next.carrier_sub, 0);
-    /* the notice has woken the AI script, whose next pair would cut the carrier at once: quiet it,
-     * as the stuck end does; the hub wakes it again once the carrier ends */
     if (quiet) mhfu_mem_write_u8(ent + MHFU_ENTITY_SCRIPT_WAKE, 0);
     begin(ent);
 }
@@ -418,8 +421,8 @@ extern "C" void mhfu_move_init_spec(mhfu_move_t *mv, uint16_t entry)
     uint8_t *b = (uint8_t *)mv;
     for (unsigned k = 0; k < sizeof(*mv); k++) b[k] = 0;
     mv->entry = entry;
-    mv->carrier_main = 0;
-    mv->carrier_sub = 2;
+    mv->carrier_main = MHFU_MOVE_HUB_MAIN;
+    mv->carrier_sub = MHFU_MOVE_HUB_SUB;
     mv->back_main = MHFU_MOVE_NO_PAIR;
 }
 

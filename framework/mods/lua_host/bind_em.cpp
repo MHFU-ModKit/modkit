@@ -50,19 +50,50 @@ static int tbl_bool(lua_State *L, int idx, const char *k)
     lua_pop(L, 1);
     return v;
 }
+/* the op names in addresses.toml's order: luaL_checkoption's index + 1 is the op */
+static const char *const k_conds[] = { MHFU_EM_COND_NAMES, 0 };
+static const char *const k_effects[] = { MHFU_EM_EFFECT_NAMES, 0 };
+
+/* t[key] = { "op", arg, value, ... } at most `max` of them, arg and value default 0 */
+static void tbl_ops(lua_State *L, int idx, const char *key, const char *const *names,
+                    mhfu_em_op_t *out, int max)
+{
+    lua_getfield(L, idx, key);
+    if (!lua_isnil(L, -1)) {
+        luaL_checktype(L, -1, LUA_TTABLE);
+        const int n = (int)luaL_len(L, -1);
+        luaL_argcheck(L, n <= max, 2, "too many entries in conds/effects");
+        for (int i = 0; i < n; i++) {
+            lua_rawgeti(L, -1, i + 1);
+            luaL_checktype(L, -1, LUA_TTABLE);
+            lua_rawgeti(L, -1, 1);
+            out[i].op = (uint8_t)(luaL_checkoption(L, -1, NULL, names) + 1);
+            lua_rawgeti(L, -2, 2);
+            out[i].arg = lua_isnil(L, -1) ? 0 : (uint8_t)luaL_checkinteger(L, -1);
+            lua_rawgeti(L, -3, 3);
+            const lua_Integer v = lua_isnil(L, -1) ? 0 : luaL_checkinteger(L, -1);
+            luaL_argcheck(L, v >= -32768 && v <= 32767, 2, "a value past a s16");
+            out[i].value = (int16_t)v;
+            lua_pop(L, 4);
+        }
+    }
+    lua_pop(L, 1);
+}
+
 int lb_em_rule(lua_State *L)
 {
     int slot = (int)luaL_checkinteger(L, 1);
     if (lua_isnoneornil(L, 2)) { mhfu_em_rule(slot, 0); lua_pushboolean(L, 1); return 1; }
     luaL_checktype(L, 2, LUA_TTABLE);
-    mhfu_em_rule_t r;
+    mhfu_em_rule_t r = {};
     r.from_mask  = (uint8_t)tbl_int(L, 2, "from_mask", 0);
     r.from_sub   = (uint8_t)tbl_int(L, 2, "from_sub", MHFU_EM_SUB_ANY);
     r.to_main    = (uint8_t)tbl_int(L, 2, "to_main", 0);
     r.to_sub     = (uint8_t)tbl_int(L, 2, "to_sub", 0);
     r.mode       = (uint8_t)tbl_int(L, 2, "mode", 0);
     r.flags      = (uint8_t)((tbl_bool(L, 2, "receding") ? MHFU_EM_RULE_RECEDING : 0)
-                           | (tbl_bool(L, 2, "closing")  ? MHFU_EM_RULE_CLOSING  : 0));
+                           | (tbl_bool(L, 2, "closing")  ? MHFU_EM_RULE_CLOSING  : 0)
+                           | (tbl_bool(L, 2, "no_play")  ? MHFU_EM_RULE_NO_PLAY  : 0));
     r.min_frames = (uint32_t)tbl_int(L, 2, "min_frames", 0);
     r.dist_lo    = (float)tbl_num(L, 2, "dist_lo", 0.0);
     r.dist_hi    = (float)tbl_num(L, 2, "dist_hi", 1.0e9);
@@ -76,7 +107,9 @@ int lb_em_rule(lua_State *L)
     lua_pop(L, 1);
     r.part       = (uint8_t)tbl_int(L, 2, "part", MHFU_EM_ANY_PART);
     r.force      = (uint8_t)tbl_bool(L, 2, "force");
-    r._pad       = 0;
+    r.signal     = (uint8_t)(tbl_int(L, 2, "signal", -1) + 1);
+    tbl_ops(L, 2, "conds", k_conds, r.conds, MHFU_EM_CONDS);
+    tbl_ops(L, 2, "effects", k_effects, r.effects, MHFU_EM_EFFECTS);
     mhfu_em_rule(slot, &r);
     lua_pushboolean(L, 1);
     return 1;
@@ -110,6 +143,7 @@ int lb_em_status(lua_State *L)
     SF_INT("tip_pairs",  st.tip_pairs);
     SF_INT("tip_copies", st.tip_copies);
     SF_INT("cut_waits",  st.cut_waits);
+    SF_INT("broken",     st.broken);
     SF_INT("req_pending", st.req_pending);
     SF_INT("req_done",    st.req_done);
     SF_INT("req_main",   (st.req_result >> 8) & 0xFF);
@@ -135,7 +169,25 @@ int lb_em_status(lua_State *L)
     lua_newtable(L);
     for (int i = 0; i < MHFU_EM_SUBS; i++) { lua_pushinteger(L, (lua_Integer)st.sub_left[i]); lua_rawseti(L, -2, i + 1); }
     lua_setfield(L, -2, "sub_left");
+    lua_newtable(L);
+    for (int i = 0; i < MHFU_EM_VARS; i++) { lua_pushinteger(L, st.vars[i]); lua_rawseti(L, -2, i + 1); }
+    lua_setfield(L, -2, "vars");
 #undef SF_INT
+    return 1;
+}
+
+/* the board: em_var(k [, v]) reads or sets counter k; em_signal(k) raises signal k */
+int lb_em_var(lua_State *L)
+{
+    const int k = (int)luaL_checkinteger(L, 1);
+    if (!lua_isnoneornil(L, 2)) mhfu_em_set_var(k, (int)luaL_checkinteger(L, 2));
+    lua_pushinteger(L, mhfu_em_var(k));
+    return 1;
+}
+
+int lb_em_signal(lua_State *L)
+{
+    lua_pushboolean(L, mhfu_em_signal((int)luaL_checkinteger(L, 1)));
     return 1;
 }
 

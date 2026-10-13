@@ -93,7 +93,8 @@ walls = true        # a wall ahead ends it
 (the moves a path that gets here plays) and `label`. A move on the canvas is
 `[behaviour.moves.<name>]`: `at` and `during`, the blocks fed while it plays. The kinds and their
 params are `mhfu_port.behaviour.KINDS`, which the studio's palette shows: events (`on_noticed`,
-`on_flinch`, ...), the base monster's state, conditions and modifiers.
+`on_flinch`, `on_signal`, ...), the base monster's state (`idle`, `any_time`, `host_state`),
+conditions, modifiers and effects.
 
 ```toml
 [behaviour.blocks.b1]     # the head flinches: play flinch_head in place of the host's flinch
@@ -121,10 +122,51 @@ during = ["b2"]
 
 A path starts at an event or state block nothing feeds, or at a block a move lists in `during`,
 follows `next` and plays the moves in each `play` it reaches; fan-out and fan-in make more paths.
-Each path is one rule the framework checks every AI frame in C, and one fires a frame; a pair rule
-waits while an own move plays. Higher on the canvas is checked first. A path holds one event and
-at most one block of a kind; a block on no complete path is loose, which loads but does nothing.
-A cooldown waits after the path fired; a limit caps how often.
+Each path is one rule the framework checks every AI frame in C, and one playing path fires a frame;
+a pair rule waits while an own move plays. Among the paths that play, higher on the canvas is
+checked first. A path holds one event, one state and at most one block of a kind, but for
+conditions and effects (below); a block on no complete path is loose, which loads but does
+nothing. A cooldown waits after the path fired; a limit caps how often.
+
+### Conditions, effects, counters and signals
+
+| Role | Kinds |
+|---|---|
+| condition | `monster_hp` (share of max HP, from `lo`, below `hi`), `part_broken`, `rage`, `hunter_side` (front, left, right, behind; its left is the monster's own), `chance` (rolled last), `counter_is`, `flag_is` |
+| effect | `counter_add`, `counter_set`, `flag_set`: applied each time the path fires |
+| event | `on_signal`: a mod raised it |
+
+Condition and effect blocks may repeat on a path: a rule holds 4 conditions and 2 effects
+(`monster_hp` with both bounds is two conditions). All conditions hold, or it does not fire.
+
+A path that ends at an effect block with no `next` and no `play` plays nothing: it applies its
+effects and counts as fired (cooldown and limit work). The rule table lists every no-play path
+first, then the playing paths, each group by canvas order (higher first), and the framework runs
+it in that order every AI frame: all the no-play paths, then the first playing path that holds. A
+path's rank (the studio's `#n`) is its place in the table, so a no-play path outranks every
+playing path wherever it sits on the canvas. On `on_flinch` a no-play path never replaces the
+host's reaction. Its `force` and `mode` have nothing to act on, so a no-play path refuses them.
+`any_time` and `idle` are pair gates: a path from them waits while an own move plays, and fires in
+the frames between moves.
+
+Counters and flags are named in the blocks (`[a-z][a-z0-9_]*`) and made on first use: 16 a
+monster, signed 16 bits, 0 at first and again for a new monster (a flag is a counter that is 0 or
+1). Signals are named the same, 16 a monster. `<name>_moves.lua` carries each rule's `conds`,
+`effects` (`{ op, arg, value }`, the board indices resolved), `signal` and `no_play`, and the
+top-level `vars` and `signals` tables that number the names by sorted name. In a mod:
+
+```lua
+local n = port:var("flinches")      -- the counter's value
+port:var("flinches", 0)             -- set it
+port:fire("roar")                   -- raise a signal: true if the port has it
+```
+
+A signal fires its rules in the AI frame the brain takes it, once. An unknown name is logged once.
+
+A flinch rule that plays a move is armed ahead of the flinch: its conditions are judged in the
+AI frame before the host step that flinches, so a counter it tests misses the flinch about to be
+counted, in any order. The Zinogre counts flinches on a no-play rule and charges up from idle
+once `flinches` is 2, not on the flinch itself.
 
 An event fires in the AI frame it is seen; `part` narrows a flinch or a break to one part
 (`[parts]` names them; em75's: 0 head, 1 neck, 2 body, 3 tail, 4/6 the left/right foreleg, 5/7 the
@@ -150,6 +192,18 @@ port with them; `mhfu move play --own NAME [--force]` plays one of its own moves
 
 `framework/lua/examples/ported_brute.lua` loads the Brute Tigrex in place of a Giadrome;
 `ported_zinogre.lua` the Zinogre with its manifest's moves and behaviour.
+
+The Zinogre's paths, after the lunge and dash chains (higher is checked first):
+
+1. The notice plays `notice_howl` at once, before anything that idles.
+2. Combat start sets the flag `in_combat`, combat end clears it; both play nothing.
+3. A break of the head plays `flinch_head`; of the left foreleg `topple_left`; of the right
+   `topple_right`; of any part `break_howl`. A topple is a sequence: fall, lie helpless, get up,
+   then `stamp` (`after`).
+4. A flinch adds 1 to `flinches` and plays nothing.
+5. Idle, in combat: with `flinches` at least 2, set it to 0 and play `charge_up`; with the
+   hunter 1500 away, play `dash`, then wait 300; below 30% HP, play `notice_howl` once.
+6. The signal `roar` plays `notice_howl`.
 
 ## Status
 

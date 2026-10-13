@@ -17,8 +17,9 @@ from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, NamedTuple
 
 from mhfu.live import brain as live
-from mhfu.live.brain import Brain
+from mhfu.live.brain import Brain, Reader
 from mhfu_port import behaviour
+from mhfu_port.behaviour import Trigger
 from mhfu_port.manifest import Manifest, ManifestError
 from ppsspp_debug import DebuggerError
 
@@ -34,7 +35,7 @@ OTHER_BUILD = "the game runs another build of these rules: Play in game sends th
 READING = "reading the game…"
 DOT = "·"
 NO_SIGNAL = -1
-"""`Slot.signal` of a rule no signal fires: a manifest of this schema has none."""
+"""`Slot.signal` of a rule no signal fires."""
 
 
 class Read(NamedTuple):
@@ -75,7 +76,7 @@ def match(brain: Brain, m: Manifest) -> dict[int, int] | str:
         s = slots.get(k)
         same = s is not None and (
             s.on == kind(rule.on)
-            and s.signal == NO_SIGNAL
+            and s.signal == (NO_SIGNAL if rule.signal is None else rule.signal)
             and s.plays == bool(rule.play)
             and s.min_frames == rule.min_frames
             and s.cooldown == rule.cooldown
@@ -84,6 +85,21 @@ def match(brain: Brain, m: Manifest) -> dict[int, int] | str:
             return OTHER_BUILD
         out[k + 1] = s.fired
     return out
+
+
+Writer = Callable[[Reader, int, Manifest, Trigger], str]
+"""Raises a trigger in the game at the brain `cfg`; says what it did."""
+
+
+def _signal(s: Reader, cfg: int, m: Manifest, t: Trigger) -> str:
+    index = behaviour.signals(m)[t.name]
+    live.fire_signal(s, cfg, index)
+    return f"raised signal {t.name} in the game (board signal {index})"
+
+
+FIRE: dict[str, Writer] = {"on_signal": _signal}
+"""What Fire can raise in the running game, by the trigger's kind, and how: the one table. A
+trigger with no entry has no Fire button."""
 
 
 class Watch:
@@ -100,6 +116,24 @@ class Watch:
         self._job: Future[Read] | None = None
         self._asked = self._lost = float("-inf")
         self._since: int | None = None
+
+    @property
+    def cfg(self) -> int | None:
+        """Where the brain was found in this attach; None until it is."""
+        return self._cfg
+
+    def blocker(self) -> str | None:
+        """Why the game cannot be written to now: it is not watched, not running, its brain not
+        found or not these rules. None when the brain is found and runs this port's rules."""
+        if not self.on:
+            return "turn on Watch the game first: it finds the framework in the game"
+        if self.fires is None or self._cfg is None:
+            return (
+                self.status
+                if self.status != READING
+                else "Watch the game has not read the game yet"
+            )
+        return None
 
     def set(self, on: bool) -> None:
         self.on = on

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -66,3 +67,20 @@ def test_the_declaration_parses() -> None:
     api = tool.parse((FRAMEWORK / "lua" / "meta" / "mhfu.d.lua").read_text(encoding="utf-8"))
     assert api.version >= 1
     assert "on_bigmonster_action" in api.funcs
+
+
+def test_the_name_lists_follow_the_addresses() -> None:
+    """The rule ops and monster events are named in addresses.toml; the declaration lists them
+    for completion, and a name added there must be added here."""
+    from mhfu import addresses
+
+    text = (FRAMEWORK / "lua" / "meta" / "mhfu.d.lua").read_text(encoding="utf-8")
+
+    def names(alias: str) -> tuple[str, ...]:
+        found = re.search(rf"^---@alias {re.escape(alias)} (.+)$", text, re.M)
+        assert found, alias
+        return tuple(re.findall(r'"(\w+)"', found[1]))
+
+    assert names("mhfu.EmCond") == addresses.EM_COND.names
+    assert names("mhfu.EmEffect") == addresses.EM_EFFECT.names
+    assert names("mhfu.MonsterEventKind") == addresses.MONSTER_EVENT_KIND.names

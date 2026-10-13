@@ -14,6 +14,7 @@ from mhfu.live import monster_events
 BASE = 0x09000000  # move_host.cpp's memory; noaddr
 ENT = BASE + 0x1000
 NOTICED, ENTERED, LEFT, FLINCH, BROKEN, TAIL = range(1, 7)
+ENRAGED, CALMED = a.MONSTER_EVENT_KIND.number("enraged"), a.MONSTER_EVENT_KIND.number("calmed")
 
 
 class Event(ctypes.Structure):
@@ -44,7 +45,19 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     )
     lib.host_mem.restype = ctypes.c_void_p
     lib.host_set.argtypes = [ctypes.c_int, ctypes.c_float]
-    lib.mhfu_monster_events_frame.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_void_p]
+    lib.mhfu_monster_events_frame.argtypes = [
+        ctypes.c_uint32,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.host_break_row.argtypes = [
+        ctypes.c_int,
+        ctypes.c_uint8,
+        ctypes.c_uint8,
+        ctypes.c_uint8,
+        ctypes.c_uint16,
+    ]
     lib.mhfu_monster_events_frame.restype = ctypes.c_uint16
     lib.mhfu_monster_events.restype = ctypes.c_void_p
     return lib
@@ -59,10 +72,20 @@ class Game:
         struct.pack_into("<" + fmt, self.mem, ENT - BASE + off, *values)
 
     def frame(self, stale: int = 0) -> tuple[int, int]:
-        """(edges, parts) of one frame."""
-        parts = ctypes.c_uint8()
-        edges = self.lib.mhfu_monster_events_frame(ENT, stale, ctypes.byref(parts))
+        """(edges, parts) of one frame; self.broke the parts that broke in it."""
+        parts, broke = ctypes.c_uint8(), ctypes.c_uint8()
+        edges = self.lib.mhfu_monster_events_frame(
+            ENT, stale, ctypes.byref(parts), ctypes.byref(broke)
+        )
+        self.broke = broke.value
         return int(edges), parts.value
+
+    def flinch_part(self, part: int, count: int) -> None:
+        """A flinch of `part` that took its flinch count to `count`."""
+        self.poke(
+            a.ENTITY.FLINCH_PARTS + part * a.FLINCH_PART.size + a.FLINCH_PART.COUNT, "B", count
+        )
+        self.poke(a.ENTITY.FLINCH_MASK, "B", 1 << part)
 
     def raised(self) -> list[tuple[int, int, int, int]]:
         """(kind, part, data, frame) of each event the poll raises."""
@@ -85,6 +108,7 @@ def g(lib: ctypes.CDLL) -> Game:
 
 def test_first_sight_raises_nothing(g: Game) -> None:
     g.poke(a.ENTITY.AWARE, "B", 1)
+    g.poke(a.ENTITY.FLAGS, "I", 0x8 | 0x20)
     g.poke(a.ENTITY.BROKEN, "H", 4)
     g.lib.mhfu_monster_events_host_quest()
     g.frame()
@@ -132,6 +156,68 @@ def test_break_and_tail_once(g: Game) -> None:
     g.poke(a.ENTITY.FLINCH_MASK, "B", 0)
     g.frame()
     assert g.raised() == [(FLINCH, 0, 1, 2), (BROKEN, 0, 4, 2), (TAIL, 0xFF, 1, 2)]
+
+
+def test_enraged_and_calmed_once(g: Game) -> None:
+    g.poke(a.ENTITY.FLAGS, "I", 0x8 | 0x20)
+    g.frame()
+    g.frame()
+    g.poke(a.ENTITY.FLAGS, "I", 0x8)
+    g.frame()
+    assert g.raised() == [(ENRAGED, 0xFF, 1, 2), (CALMED, 0xFF, 0, 4)]
+
+
+def test_parts_sharing_a_break_id_each_break(g: Game) -> None:
+    """em75's forelegs break at their first flinch with one BREAK_ID, so ENTITY.BROKEN gains a bit
+    for the first only; the head breaks at its second, with another."""
+    g.lib.host_break_row(0, 0x4B, 4, 1, 1)
+    g.lib.host_break_row(1, 0x4B, 6, 1, 1)
+    g.lib.host_break_row(2, 0x4B, 0, 2, 2)
+    g.poke(a.ENTITY.SPECIES, "B", 0x4B)
+    g.flinch_part(4, 1)
+    g.poke(a.ENTITY.BROKEN, "H", 0b10)
+    g.frame()
+    assert g.broke == 1 << 4
+    g.flinch_part(6, 1)  # BROKEN has the bit already
+    g.frame()
+    assert g.broke == 1 << 6
+    g.flinch_part(0, 1)  # the head's first flinch breaks nothing
+    g.frame()
+    assert g.broke == 0
+    g.flinch_part(0, 2)
+    g.poke(a.ENTITY.BROKEN, "H", 0b110)
+    g.frame()
+    assert g.broke == 1 << 0
+    kinds = [(r[0], r[1], r[2]) for r in g.raised() if r[0] == BROKEN]
+    assert kinds == [(BROKEN, 4, 0b10), (BROKEN, 6, 0b10), (BROKEN, 0, 0b100)]
+
+
+def test_a_part_breaks_once(g: Game) -> None:
+    g.lib.host_break_row(0, 0x4B, 6, 1, 1)
+    g.poke(a.ENTITY.SPECIES, "B", 0x4B)
+    g.flinch_part(6, 1)
+    g.frame()
+    for count in (2, 3):  # later flinches pass the row's count
+        g.flinch_part(6, count)
+        g.frame()
+    assert [r[0] for r in g.raised()].count(BROKEN) == 1
+
+
+def test_another_species_row_or_a_stale_frame_breaks_nothing(g: Game) -> None:
+    g.lib.host_break_row(0, 0x4C, 6, 1, 1)
+    g.poke(a.ENTITY.SPECIES, "B", 0x4B)
+    g.flinch_part(6, 1)
+    g.frame()
+    g.lib.host_break_row(1, 0x4B, 6, 1, 1)
+    g.frame(stale=1)  # the host step did not run: the mask is left over
+    assert BROKEN not in [r[0] for r in g.raised()]
+
+
+def test_a_break_the_table_does_not_explain_is_still_raised(g: Game) -> None:
+    g.poke(a.ENTITY.FLINCH_MASK, "B", 0b100)
+    g.poke(a.ENTITY.BROKEN, "H", 0b100)
+    g.frame()
+    assert g.broke == 0b100 and g.raised()[-1][:3] == (BROKEN, 2, 0b100)
 
 
 def test_a_full_ring_drops(g: Game) -> None:

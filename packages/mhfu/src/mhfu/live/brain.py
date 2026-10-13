@@ -86,9 +86,10 @@ def _live(mem: Memory, entity: int) -> bool:
 
 def _board() -> int | None:
     """The board's ENTITY word in the block; None for a build with no board."""
-    board = a.table().structs.get("EM_BOARD")
-    at = getattr(a.EM_CFG, "BOARD", None)
-    return None if board is None or at is None else int(at) + int(board.ENTITY)
+    structs = a.table().structs
+    if "EM_BLOCK" not in structs or "EM_BOARD" not in structs:
+        return None
+    return int(a.EM_BLOCK.BOARD) + int(a.EM_BOARD.ENTITY)
 
 
 def _owned(mem: Memory, cfg: int) -> bool:
@@ -142,3 +143,16 @@ def _decode(index: int, r: bytes) -> Slot | None:
     return Slot(
         index, on, signal, not r[rule.FLAGS] & NO_PLAY, min_frames, cooldown, fired, left, last
     )
+
+
+def _board_at(cfg: int, field: int) -> int:
+    return cfg + int(a.EM_BLOCK.BOARD) + field
+
+
+def fire_signal(s: Reader, cfg: int, index: int) -> None:
+    """Raises board signal `index` (its place in `behaviour.signals`), as Lua's `em_signal` does;
+    the brain clears it as it fires the rules."""
+    n = a.EM_BOARD.SIGNALS.count or 0
+    if not 0 <= index < n:
+        raise ValueError(f"signal {index}: the board holds {n}")
+    s.mem.write_u8(_board_at(cfg, int(a.EM_BOARD.SIGNALS)) + index, 1)

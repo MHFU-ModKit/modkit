@@ -19,6 +19,7 @@ BOARD_AT = brain._board() or SIZE + 0x40
 """The ENTITY word's place in the block: the build's, else a made-up one."""
 RULES = int(a.EM_CFG.RULES)
 EVENT = a.MONSTER_EVENT_KIND.number("flinch")
+needs_board = pytest.mark.skipif(brain._board() is None, reason="this build has no board")
 needs_signal = pytest.mark.skipif(
     not hasattr(a.EM_RULE, "SIGNAL"), reason="this build has no signals"
 )
@@ -139,3 +140,21 @@ def test_a_read_is_one_request() -> None:
     mem = memory(block({"r0": {"ON": EVENT, "LEFT": brain.UNLIMITED}}))
     brain.read(session(mem), BLOCK)
     assert mem.reads == [(BLOCK, RULES + (a.EM_CFG.RULES.count or 0) * a.EM_RULE.step)]
+
+
+@needs_board
+def test_a_signal_is_one_byte_of_the_board() -> None:
+    mem = memory(block())
+    before = mem.read(BLOCK, len(block()))
+    brain.fire_signal(session(mem), BLOCK, 3)
+    after = mem.read(BLOCK, len(block()))
+    at = int(a.EM_BLOCK.BOARD) + int(a.EM_BOARD.SIGNALS) + 3
+    assert [k for k in range(len(before)) if before[k] != after[k]] == [at] and after[at] == 1
+
+
+@needs_board
+def test_a_signal_the_board_lacks_is_refused() -> None:
+    mem = memory(block())
+    for bad in (-1, a.EM_BOARD.SIGNALS.count or 0):
+        with pytest.raises(ValueError, match="the board holds"):
+            brain.fire_signal(session(mem), BLOCK, bad)

@@ -15,10 +15,10 @@
 #ifndef MHFU_HOST
 #include <pspsysmem.h>
 #include <pspthreadman.h>
-static uint32_t now_usec(void) { return sceKernelGetSystemTimeLow(); }
+extern "C" uint32_t mhfu_usec(void) { return sceKernelGetSystemTimeLow(); }
 #else
 extern "C" uint32_t mhfu_host_usec(void);
-static uint32_t now_usec(void) { return mhfu_host_usec(); }
+extern "C" uint32_t mhfu_usec(void) { return mhfu_host_usec(); }
 #endif
 
 #define OWNER "mhfu_events"
@@ -31,14 +31,15 @@ static_assert(sizeof(mhfu_monster_event_t) == MHFU_MONSTER_EVENT_SIZE, "MONSTER_
 static_assert(offsetof(mhfu_monster_event_t, kind) == MHFU_MONSTER_EVENT_KIND, "MONSTER_EVENT layout");
 static_assert(offsetof(mhfu_monster_event_t, data) == MHFU_MONSTER_EVENT_DATA, "MONSTER_EVENT layout");
 static_assert(sizeof(mhfu_monster_watch_t) == MHFU_MONSTER_WATCH_SIZE, "MONSTER_WATCH layout");
+static_assert(offsetof(mhfu_monster_watch_t, enraged) == MHFU_MONSTER_WATCH_ENRAGED, "MONSTER_WATCH layout");
 static_assert(offsetof(mhfu_monster_watch_t, edges) == MHFU_MONSTER_WATCH_EDGES, "MONSTER_WATCH layout");
 static_assert(offsetof(mhfu_monster_events_t, watch) == MHFU_MONSTER_EVENTS_WATCH, "MONSTER_EVENTS layout");
 static_assert(offsetof(mhfu_monster_events_t, ring) == MHFU_MONSTER_EVENTS_RING, "MONSTER_EVENTS layout");
 static_assert(sizeof(mhfu_monster_events_t) == MHFU_MONSTER_EVENTS_SIZE, "MONSTER_EVENTS layout");
 static_assert(MHFU_MONSTER_EVENTS_RING_COUNT == MHFU_MONSTER_EVENT_RING, "MONSTER_EVENTS layout");
 static_assert(MHFU_MONSTER_EVENTS_WATCH_COUNT == MHFU_MONSTER_EVENT_WATCH, "MONSTER_EVENTS layout");
-static_assert(MHFU_EVENT_BIGMONSTER_TAIL_CUT - MHFU_EVENT_BIGMONSTER_NOTICED
-              == MHFU_MONSTER_TAIL_CUT - MHFU_MONSTER_NOTICED, "kind order is event order");
+static_assert(MHFU_EVENT_BIGMONSTER_CALMED - MHFU_EVENT_BIGMONSTER_NOTICED
+              == MHFU_MONSTER_CALMED - MHFU_MONSTER_NOTICED, "kind order is event order");
 
 static volatile mhfu_monster_events_t *B;
 
@@ -46,7 +47,7 @@ extern "C" const char *const mhfu_monster_event_names[] = {
     MHFU_MONSTER_EVENT_KIND_NAMES, 0,
 };
 static_assert(sizeof(mhfu_monster_event_names) / sizeof(mhfu_monster_event_names[0]) - 1
-              == MHFU_MONSTER_TAIL_CUT, "a name per kind");
+              == MHFU_MONSTER_KINDS, "a name per kind");
 
 /* --- the step side ----------------------------------------------------------------------- */
 
@@ -127,9 +128,24 @@ static uint8_t lowest(uint16_t bits)
     return MHFU_MONSTER_NO_PART;
 }
 
-extern "C" uint16_t mhfu_monster_events_frame(uint32_t ent, int stale, uint8_t *parts)
+/* The BREAK_TABLE row of the species' part, or 0: PART_BREAK walks the table to its zero row. The
+ * species is compared as the row has it. */
+static uint32_t break_row(uint8_t species, uint8_t part)
+{
+    for (int i = 0; i < MHFU_BREAK_TABLE_COUNT; i++) {
+        const uint32_t row = MHFU_BREAK_TABLE + (uint32_t)i * MHFU_BREAK_ROW_SIZE;
+        const uint8_t sp = mhfu_mem_read_u8(row + MHFU_BREAK_ROW_SPECIES);
+        if (!sp) break;
+        if (sp == species && mhfu_mem_read_u8(row + MHFU_BREAK_ROW_PART) == part) return row;
+    }
+    return 0;
+}
+
+extern "C" uint16_t mhfu_monster_events_frame(uint32_t ent, int stale, uint8_t *parts,
+                                              uint8_t *broke)
 {
     if (parts) *parts = 0;
+    if (broke) *broke = 0;
     if (!B || !ent) return 0;
     int fresh;
     volatile mhfu_monster_watch_t *w = watch_of(ent, &fresh);
@@ -138,11 +154,12 @@ extern "C" uint16_t mhfu_monster_events_frame(uint32_t ent, int stale, uint8_t *
     uint8_t aware = mhfu_mem_read_u8(ent + MHFU_ENTITY_AWARE);
     uint8_t combat = in_combat(ent, aware);
     uint8_t severed = (uint8_t)(mhfu_mem_read_u8(ent + MHFU_ENTITY_SEVERED) & TAIL_BIT);
+    uint8_t enraged = (mhfu_mem_read_u32(ent + MHFU_ENTITY_FLAGS) & MHFU_MONSTER_FLAG_ENRAGED) != 0;
     uint16_t broken = mhfu_mem_read_u16(ent + MHFU_ENTITY_BROKEN);
     uint8_t flinched = stale ? 0 : mhfu_mem_read_u8(ent + MHFU_ENTITY_FLINCH_MASK);
     if (parts) *parts = flinched;
     if (!fresh) {
-        uint32_t usec = now_usec();
+        uint32_t usec = mhfu_usec();
         uint8_t part = lowest(flinched);
         if (aware & ~w->aware & player_bit())
             put(w, ent, MHFU_MONSTER_NOTICED, MHFU_MONSTER_NO_PART, aware, usec);
@@ -150,15 +167,42 @@ extern "C" uint16_t mhfu_monster_events_frame(uint32_t ent, int stale, uint8_t *
             put(w, ent, combat ? MHFU_MONSTER_COMBAT_ENTERED : MHFU_MONSTER_COMBAT_LEFT,
                 MHFU_MONSTER_NO_PART, combat, usec);
         if (flinched) put(w, ent, MHFU_MONSTER_FLINCH, part, flinched, usec);
-        if (broken & ~w->broken)
-            put(w, ent, MHFU_MONSTER_PART_BROKEN, part, (uint16_t)(broken & ~w->broken), usec);
+        /* PART_BREAK's rule: a flinched part whose count reached its row's broke, the event's
+         * data the row's BREAK_ID bit. The count only grows, so it is once per part */
+        uint8_t broke_now = 0;
+        uint16_t claimed = 0;
+        const uint8_t species = mhfu_mem_read_u8(ent + MHFU_ENTITY_SPECIES);
+        for (uint8_t p = 0; flinched && p < 8; p++) {
+            if (!((flinched >> p) & 1)) continue;
+            const uint32_t row = break_row(species, p);
+            const uint32_t count_at = ent + MHFU_ENTITY_FLINCH_PARTS
+                                    + p * MHFU_FLINCH_PART_SIZE + MHFU_FLINCH_PART_COUNT;
+            if (!row || mhfu_mem_read_u8(count_at) != mhfu_mem_read_u8(row + MHFU_BREAK_ROW_COUNT))
+                continue;
+            const uint16_t id = mhfu_mem_read_u16(row + MHFU_BREAK_ROW_BREAK_ID);
+            const uint16_t bit = id < 16 ? (uint16_t)(1u << id) : 0;
+            put(w, ent, MHFU_MONSTER_PART_BROKEN, p, bit, usec);
+            broke_now |= (uint8_t)(1u << p);
+            claimed |= bit;
+        }
+        /* a break the table does not explain */
+        const uint16_t fresh_bits = (uint16_t)(broken & ~w->broken & ~claimed);
+        if (fresh_bits) {
+            put(w, ent, MHFU_MONSTER_PART_BROKEN, part, fresh_bits, usec);
+            if (part < 8) broke_now |= (uint8_t)(1u << part);
+        }
+        if (broke) *broke = broke_now;
         if (severed && !w->severed)
             put(w, ent, MHFU_MONSTER_TAIL_CUT, MHFU_MONSTER_NO_PART,
                 mhfu_mem_read_u8(ent + MHFU_ENTITY_SEVER_COUNT), usec);
+        if (enraged != w->enraged)
+            put(w, ent, enraged ? MHFU_MONSTER_ENRAGED : MHFU_MONSTER_CALMED,
+                MHFU_MONSTER_NO_PART, enraged, usec);
     }
     w->aware = aware;
     w->combat = combat;
     w->severed = severed;
+    w->enraged = enraged;
     w->broken = broken;
     return w->edges;
 }
@@ -181,9 +225,9 @@ extern "C" void mhfu_monster_events_drain(void)
         c.ev.data = e->data;
         c.ev._pad = 0;
         B->tail++;
-        if (c.ev.kind < MHFU_MONSTER_NOTICED || c.ev.kind > MHFU_MONSTER_TAIL_CUT) continue;
+        if (c.ev.kind < MHFU_MONSTER_NOTICED || c.ev.kind > MHFU_MONSTER_KINDS) continue;
         c.event_id = (mhfu_event_id_t)(MHFU_EVENT_BIGMONSTER_NOTICED + c.ev.kind - 1);
-        c.delay = now_usec() - c.ev.usec;
+        c.delay = mhfu_usec() - c.ev.usec;
         mhfu_event_fire(c.event_id, &c);
     }
 }

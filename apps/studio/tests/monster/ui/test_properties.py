@@ -7,8 +7,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from mhfu_port.behaviour import Param
 from mhfu_studio.monster.panels.properties import Detail, ParamControl, Play, PropertyBar
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QLabel, QLineEdit, QSpinBox, QToolButton
 
 COUNT = Param("n", "int", "Times", 1, lo=1, hi=9, tip="how often")
@@ -195,6 +198,161 @@ def test_a_node_without_params_or_a_note_shows_its_name_only(qtbot: Any) -> None
     assert bar.controls == {} and bar.note is None
     texts = [w.text() for w in bar.findChildren(QLabel)]
     assert texts == ["x", "own move"]
+
+
+# ---- names and sides ----------------------------------------------------------------------- #
+
+COUNTER = Param("counter", "var", "Counter", tip="which counter")
+SIGNAL = Param("name", "signal", "Signal", tip="which signal")
+SIDES = Param("sides", "sides", "Sides", choices=("front", "left", "right", "behind"), tip="sides")
+NAMES_IN_USE = [("armor", "armor"), ("hits", "hits")]
+
+
+def named(**kw: Any) -> Detail:
+    """A node of a counter, a signal and sides."""
+    base: dict[str, Any] = {
+        "id": "e",
+        "title": "Count",
+        "tip": "counts",
+        "params": (COUNTER, SIGNAL, SIDES),
+        "values": {"counter": "hits", "name": "rage", "sides": ("front",)},
+        "options": {"counter": NAMES_IN_USE, "name": [("rage", "rage")]},
+    }
+    return Detail(**(base | kw))
+
+
+def shown(qtbot: Any) -> tuple[PropertyBar, list[tuple[str, str, object]]]:
+    """A bar showing `named()`, and every edit it tells."""
+    bar = PropertyBar()
+    qtbot.addWidget(bar)
+    bar.show_detail(named())
+    got: list[tuple[str, str, object]] = []
+    bar.param_changed.connect(lambda *a: got.append(a))
+    return bar, got
+
+
+def combo(bar: PropertyBar, name: str) -> QComboBox:
+    ctl = bar.controls[name].ctl
+    assert isinstance(ctl, QComboBox)
+    return ctl
+
+
+def test_a_name_is_an_editable_combo_over_the_names_in_use(qtbot: Any) -> None:
+    bar, _ = shown(qtbot)
+    counter = combo(bar, "counter")
+    assert counter.isEditable()
+    assert [counter.itemText(i) for i in range(counter.count())] == ["armor", "hits"]
+    assert (bar.controls["counter"].get_value(), bar.controls["name"].get_value()) == (
+        "hits",
+        "rage",
+    )
+    assert counter.currentIndex() == 1 and counter.currentText() == "hits"
+    bar.show_detail(named(values={"counter": "fresh", "name": "rage"}))
+    assert bar.controls["counter"].get_value() == "fresh" and counter.currentIndex() == -1
+
+
+def test_sides_are_a_multi_select_over_the_choices(qtbot: Any) -> None:
+    bar, _ = shown(qtbot)
+    sides = bar.controls["sides"]
+    assert isinstance(sides.ctl, QToolButton) and sides.get_value() == ("front",)
+    assert [a.text() for a in sides.ctl.menu().actions()] == ["front", "left", "right", "behind"]
+    assert sides.ctl.text() == "front"
+    bar.show_detail(named(values={"sides": ("left", "behind")}))
+    assert sides.get_value() == ("left", "behind") and sides.ctl.text() == "left, behind"
+
+
+def test_each_new_control_says_its_edit_once(qtbot: Any) -> None:
+    bar, got = shown(qtbot)
+    counter, signal = combo(bar, "counter"), combo(bar, "name")
+    counter.setCurrentIndex(0)  # a pick
+    assert got == [("e", "counter", "armor")]
+    got.clear()
+    counter.setEditText("fresh_1")  # a new name, finished by Return or by leaving
+    edit = counter.lineEdit()
+    assert edit is not None
+    edit.editingFinished.emit()
+    edit.editingFinished.emit()
+    assert got == [("e", "counter", "fresh_1")]
+    got.clear()
+    sig = signal.lineEdit()
+    assert sig is not None
+    sig.selectAll()
+    QTest.keyClicks(sig, "calm")
+    QTest.keyClick(sig, Qt.Key.Key_Return)
+    assert got == [("e", "name", "calm")]
+    got.clear()
+    sides = bar.controls["sides"].ctl
+    assert isinstance(sides, QToolButton)
+    sides.menu().actions()[2].trigger()
+    assert got == [("e", "sides", ("front", "right"))]
+
+
+def test_a_name_that_is_not_a_name_goes_back_unheard(qtbot: Any) -> None:
+    bar, got = shown(qtbot)
+    counter = combo(bar, "counter")
+    edit = counter.lineEdit()
+    assert edit is not None
+    for bad in ("Hits", "9lives", "two words", "x-y", "", "  "):
+        counter.setEditText(bad)
+        edit.editingFinished.emit()
+        assert bar.controls["counter"].get_value() == "hits" and counter.currentText() == "hits", (
+            bad
+        )
+    assert got == []
+
+
+def test_a_name_with_spaces_around_it_is_the_name(qtbot: Any) -> None:
+    bar, got = shown(qtbot)
+    counter = combo(bar, "counter")
+    edit = counter.lineEdit()
+    assert edit is not None
+    counter.setEditText("  fresh ")
+    edit.editingFinished.emit()
+    assert counter.currentText() == "fresh" and got == [("e", "counter", "fresh")]
+
+
+def test_a_refused_name_goes_back_and_is_asked_again(qtbot: Any) -> None:
+    bar, got = shown(qtbot)
+    counter = combo(bar, "counter")
+    edit = counter.lineEdit()
+    assert edit is not None
+    for _ in range(2):
+        got.clear()
+        counter.setEditText("fresh")
+        edit.editingFinished.emit()
+        assert got == [("e", "counter", "fresh")]
+        bar.show_detail(named())  # the document refused it: shown as it holds it
+        assert bar.controls["counter"].get_value() == "hits"
+
+
+def test_an_accepted_name_stays_and_is_an_option(qtbot: Any) -> None:
+    bar, _ = shown(qtbot)
+    counter = combo(bar, "counter")
+    edit = counter.lineEdit()
+    assert edit is not None
+
+    def take(i: str, name: str, value: object) -> None:
+        opts = [("armor", "armor"), ("fresh", "fresh"), ("hits", "hits")]
+        bar.show_detail(named(values={"counter": value}, options={"counter": opts}))
+
+    bar.param_changed.connect(take)
+    counter.setEditText("fresh")
+    edit.editingFinished.emit()
+    assert bar.controls["counter"].get_value() == "fresh"
+    assert counter.currentIndex() == 1 and counter.count() == 3
+
+
+def test_new_names_keep_what_is_picked(qtbot: Any) -> None:
+    bar, _ = shown(qtbot)
+    counter = combo(bar, "counter")
+    counter.setEditText("half_typ")  # not finished: not held
+    bar.show_detail(named(options={"counter": [("hits", "hits"), ("zeta", "zeta")]}))
+    assert bar.controls["counter"].get_value() == "hits" and counter.count() == 2
+
+
+def test_an_unknown_type_raises(qtbot: Any) -> None:
+    with pytest.raises(ValueError, match="unknown type 'number'"):
+        ParamControl(Param("x", "number", "X"))  # type: ignore[arg-type]
 
 
 def test_play_is_off_with_its_reason_in_the_tip_and_comes_back(qtbot: Any) -> None:

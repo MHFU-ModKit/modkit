@@ -30,6 +30,8 @@ class Ink(enum.Enum):
     SHADOW = "shadow"
     WARNING = "warning"
     ERROR = "error"
+    #: a behaviour effect block: a violet apart from the axes
+    EFFECT = "effect"
 
 
 RGBA = tuple[float, float, float, float]

@@ -54,6 +54,7 @@ def _inks(dark: bool, accent: str) -> dict[Ink, RGBA]:
         Ink.SHADOW: _rgba("#000000", 0.6),
         Ink.WARNING: _rgba("#fbbf24" if dark else "#d97706"),
         Ink.ERROR: _rgba("#f87171" if dark else "#dc2626"),
+        Ink.EFFECT: _rgba("#d170e8" if dark else "#8f24ab"),
     }
 
 

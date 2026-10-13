@@ -149,14 +149,20 @@ def test_the_outline_lists_all_then_every_trigger_with_its_count_and_range(
 
 def test_a_trigger_with_no_rules_is_greyed_and_dashed(panel: BehaviourPanel) -> None:
     rowsby = cells(panel)
-    for key in ("on_combat_entered", "on_combat_left", "on_tail_cut", "host_state"):
-        assert rowsby[key][1:] == ("—", "", "none"), key
-    assert [k for k, c in rowsby.items() if c[3] == "none"] == [
+    empty = [
         "on_combat_entered",
         "on_combat_left",
         "on_tail_cut",
+        "on_enraged",
+        "on_calmed",
+        "on_signal",
+        "any_time",
+        "idle",
         "host_state",
     ]
+    for key in empty:
+        assert rowsby[key][1:] == ("—", "", "none"), key
+    assert [k for k, c in rowsby.items() if c[3] == "none"] == empty
     assert rowsby["host_state"][0] == "In state"
 
 
@@ -291,7 +297,7 @@ def test_a_rule_with_no_move_yet_ends_in_a_placeholder_after_the_others() -> Non
 
 
 def test_a_rule_that_plays_nothing_by_design_ends_at_its_last_block() -> None:
-    plan = rows.plan(trigger(Path(("b1", "b2"), "", None)), BLOCKS, NOTES, MOVES, {})
+    plan = rows.plan(trigger(Path(("b1", "b2"), None, None)), BLOCKS, NOTES, MOVES, {})
     assert [n.id for n in plan.rows[0].nodes] == ["b1", "b2"] and len(plan.links) == 1
     assert plan.rows[0].rank == 1
 
@@ -407,6 +413,24 @@ def test_a_trigger_shows_only_its_rules_in_rank_order(
     ]
     pick(qtbot, panel, ALL)
     assert ws.scope == ALL and "b8" in shown(panel) and panel.spread.isHidden()
+
+
+def test_a_rule_that_plays_nothing_is_a_row_without_a_move(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    def count(m: Any) -> None:
+        b = m.behaviour.blocks
+        b["b9"] = Block("on_tail_cut", (260.0, 600.0), next=["b10"], label="count the cuts")
+        b["b10"] = Block("counter_add", (460.0, 600.0), {"counter": "cuts"})
+
+    doc(ws).edit(count)
+    ws.sync()
+    panel.sync()
+    pick(qtbot, panel, "on_tail_cut")
+    assert shown(panel) == {"b9", "b10"}
+    assert frames(panel) == [f"{rk(1)} · count the cuts"], "a rule that plays nothing ranks first"
+    assert {(w.src, w.dst) for w in panel.view._links} == {("b9", "b10")}
+    assert panel.title.text() == f"All › Tail cut — 1 rule, {rk(1)} of 7"
 
 
 def test_a_while_trigger_draws_its_move_once_wired_into_every_row(
@@ -540,11 +564,17 @@ def test_a_trigger_has_no_free_block_menu_and_all_has_it_back(
     menu = panel.view.viewer.context_menus()["graph"]
     assert menu.actions() == [], "the rows of All take no free blocks either"
     to_canvas(qtbot, panel)
-    assert len(menu.actions()) == 4
+    assert len(menu.actions()) == 5
     pick(qtbot, panel, "on_flinch")
     assert menu.actions() == []
     pick(qtbot, panel, ALL)
-    assert [a.text() for a in menu.actions()] == ["Events", "State", "Conditions", "Modifiers"]
+    assert [a.text() for a in menu.actions()] == [
+        "Events",
+        "State",
+        "Conditions",
+        "Modifiers",
+        "Effects",
+    ]
 
 
 def test_wiring_in_a_scope_is_refused_with_the_hint(
@@ -774,7 +804,7 @@ def test_the_insert_menu_offers_a_rules_blocks_and_puts_one_after_the_clicked(
     after = entry(menu, "Insert after", "Conditions", "Hunter distance")
     assert names(menu, "Insert after", "Conditions")[:1] == ["Played for at least"]
     assert {a.text() for a in menu.actions()} == {"Insert after", "Delete the rule"}
-    assert names(menu, "Insert after") == ["Conditions", "Modifiers"]
+    assert names(menu, "Insert after") == ["Conditions", "Modifiers", "Effects"]
     assert entry(menu, "Delete the rule") is not None
     before = doc(ws).manifest
     after.trigger()
@@ -1020,6 +1050,41 @@ def test_a_drop_that_cannot_change_the_rank_is_refused_and_says_why(
     assert doc(ws).manifest is before and "would not change the rule's rank" in ws.message
 
 
+def test_a_drop_above_a_rule_that_plays_nothing_is_refused_and_says_why(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    def count(m: Any) -> None:
+        b = m.behaviour.blocks
+        b["b9"] = Block("on_flinch", (260.0, 600.0), next=["b10"], label="count")
+        b["b10"] = Block("counter_add", (460.0, 600.0), {"counter": "hits"})
+
+    doc(ws).edit(count)
+    ws.refresh()
+    panel.sync()
+    pick(qtbot, panel, "on_flinch")
+    assert frames(panel)[0] == f"{rk(1)} · count", "a rule that plays nothing is first"
+    before = doc(ws).manifest
+    drag_frame(qtbot, panel, "frame:4", "frame:1", below=False)
+    assert doc(ws).manifest is before and "rules that play nothing go first" in ws.message
+
+
+def test_a_signals_new_rule_is_an_on_signal_block_of_that_name(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    doc(ws).edit(
+        lambda m: m.behaviour.blocks.__setitem__(
+            "b9", Block("on_signal", (260.0, 600.0), {"name": "roar"}, play=["howl"])
+        )
+    )
+    ws.refresh()
+    panel.sync()
+    pick(qtbot, panel, "on_signal:roar")
+    panel.add_rule.click()
+    qtbot.wait(60)
+    made = blocks(ws)["b10"]
+    assert (made.kind, made.params) == ("on_signal", {"name": "roar"})
+
+
 def test_a_rule_with_no_move_cannot_be_dragged(
     qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
 ) -> None:
@@ -1142,6 +1207,23 @@ def test_in_order_draws_every_rule_in_rank_order_and_names_its_trigger(
         f"{rk(6)} \u00b7 Part break \u00b7 (no note)",
     ]
     assert panel.title.text() == "All rules \u2014 6 in the order they are checked"
+
+
+def test_in_order_puts_a_rule_that_plays_nothing_first_without_a_reference(
+    panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    def count(m: Any) -> None:
+        b = m.behaviour.blocks
+        b["b9"] = Block("on_tail_cut", (260.0, 600.0), next=["b10"], label="count the cuts")
+        b["b10"] = Block("counter_add", (460.0, 600.0), {"counter": "cuts"})
+
+    doc(ws).edit(count)
+    ws.refresh()
+    panel.sync()
+    assert frames(panel)[0] == f"{rk(1)} \u00b7 Tail cut \u00b7 count the cuts"
+    assert f"{rk(2)} \u00b7 while charge \u00b7 first" in frames(panel)
+    assert {"b9", "b10"} <= shown(panel)
+    assert {(w.src, w.dst) for w in panel.view._links if w.src == "b10"} == set()
 
 
 def test_a_while_rule_starts_from_a_dashed_reference_with_the_count(

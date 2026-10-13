@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """Synthetic manifests, intel documents and PACs, and the real games and builds."""
 
+import typing
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,7 @@ from typing import Any
 import pytest
 from mhfu.em import intel
 from mhfu.em.intel import HostSummary, SpeciesIntel
-from mhfu_port import build, manifest, mesh
+from mhfu_port import behaviour, build, manifest, mesh
 from mhfu_port.data import Data
 from mhfu_port.manifest import Manifest
 from mhfu_port.mesh import Part, Skinned
@@ -385,3 +386,67 @@ def zinogre_toml(ports: Path, tmp_path: Path) -> Path:
     used = {mv.clip for mv in m.moves.values()}
     m.clips = {"welcome_howl": howl, **{n: c for n, c in m.clips.items() if n in used}}
     return manifest.save(m, tmp_path / "zinogre.toml")
+
+
+SIDES = ("front", "left", "right", "behind")
+#: small kinds of the effect role and of the var, signal and sides param types; named apart
+#: from the package's own, which are none of their business
+NEW_KINDS = (
+    behaviour.Kind(
+        "t_count",
+        "effect",
+        "Test count",
+        (
+            behaviour.Param("counter", "var", "Counter", tip="which counter"),
+            behaviour.Param("by", "int", "By", 1, tip="how much"),
+        ),
+        "Adds to a counter",
+    ),
+    behaviour.Kind(
+        "t_flag",
+        "effect",
+        "Test flag",
+        (behaviour.Param("flag", "var", "Flag", tip="which flag"),),
+        "Sets a flag",
+    ),
+    behaviour.Kind(
+        "t_signal",
+        "event",
+        "Test signal",
+        (behaviour.Param("name", "signal", "Signal", tip="which signal"),),
+        "A signal from Lua",
+    ),
+    behaviour.Kind(
+        "t_side",
+        "condition",
+        "Test side",
+        (behaviour.Param("sides", "sides", "Sides", choices=SIDES, tip="which sides"),),
+        "The hunter stands on one of these sides",
+    ),
+)
+
+
+@pytest.fixture
+def new_kinds(monkeypatch: pytest.MonkeyPatch) -> tuple[behaviour.Kind, ...]:
+    """`NEW_KINDS` in `behaviour.KINDS`, the effect role in `Role`, and the loader's checks of
+    the new param types where the package has none yet. Ask for it before a panel is built."""
+    roles = typing.get_args(behaviour.Role)
+    if "effect" not in roles:
+        monkeypatch.setattr(behaviour, "Role", typing.Literal[(*roles, "effect")])
+    if not {"var", "signal", "sides"} <= set(typing.get_args(behaviour.ParamType)):
+        real = behaviour._check_value
+
+        def check(p: behaviour.Param, v: object, where: str) -> None:
+            if p.type in ("var", "signal"):
+                ok = isinstance(v, str) and behaviour.ID.fullmatch(v) is not None
+                behaviour.need(ok, where, f"{v!r} is not a name")
+            elif p.type == "sides":
+                ok = isinstance(v, list) and bool(v) and all(k in p.choices for k in v)
+                behaviour.need(ok, where, f"{v!r} is not a list of sides")
+            else:
+                real(p, v, where)
+
+        monkeypatch.setattr(behaviour, "_check_value", check)
+    for k in NEW_KINDS:
+        monkeypatch.setitem(behaviour.KINDS, k.name, k)
+    return NEW_KINDS

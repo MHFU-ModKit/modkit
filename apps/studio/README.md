@@ -90,16 +90,26 @@ shows the steps (click one to pick it). Picking or playing anything else starts 
 they normally start.
 
 The Behaviour tab edits the port's `[behaviour]` as rules, grouped by what starts them: an event, a
-state between moves, or a move playing. The game checks rules in rank order, `#1` first. Rank is the
-stored canvas order, each block's `(y, x)`, top first: `+ Rule` adds a rule last, dragging a rule's
-frame trades places with its own trigger's rules only, and in All rules › Canvas dragging a node can
-change it. In Canvas a block's `out` wires to the next block's `in` or to a move's `play`; a move's
-`while playing` starts a rule, and `then` sets the move's `after`. The palette is
-`mhfu_port.behaviour.KINDS`. Watch the game, in the header, reads the running game once a second
-while the tab is shown and marks each frame and trigger with how often the game fired its rules
-(`7×`; a frame lights up when its count rises): the game must run this port's rules as Play in game
-sends them, and the header says when it does not. The tab keeps its own docks; Findings stays open
-across tabs.
+state between moves, or a move playing. The game checks rules in rank order, `#1` first, rules that
+play nothing before all others. Rank is the stored canvas order, each block's `(y, x)`, top first:
+`+ Rule` adds a rule last, dragging a rule's frame trades places with its own trigger's rules only,
+and in All rules › Canvas dragging a node can change it. In Canvas a block's `out` wires to the next
+block's `in` or to a move's `play`; a move's `while playing` starts a rule, and `then` sets the
+move's `after`. The palette is `mhfu_port.behaviour.KINDS`. Watch the game, in the header, reads
+the running game once a second while the tab is shown and marks each frame and trigger with how
+often the game fired its rules (`7×`; a frame lights up when its count rises): the game must run
+this port's rules as Play in game sends them, and the header says when it does not. On a
+Signal trigger, Fire raises that signal in the running game, once Watch the game has found it: the
+rules' counts then show whether their conditions held. It is no edit and has no undo step. The tab
+keeps its own docks; Findings stays open across tabs.
+
+Effect blocks (violet) change the monster's counters and flags when their path fires. A path may
+end at an effect with nothing to play: it applies its effects, keeps its `#n` on that block, and
+the scan goes on to the next path. A counter, flag or signal name is a box of the names the graph
+already uses; type a new one (lowercase letters, digits, `_`, starting with a letter) or it is put
+back. An On signal block fires when Lua raises that name: `port:fire("name")`; `port:var("name")`
+reads a counter or flag and `port:var("name", v)` sets it. Hunter side ticks any of front, left,
+right, behind.
 
 ## Tests
 

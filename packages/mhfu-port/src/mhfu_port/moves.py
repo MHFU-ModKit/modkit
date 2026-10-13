@@ -2,7 +2,9 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """A port's moves and rules as the game runs them: `<port>_moves.lua`, written with the clips
 module from the same build. `mhfu_port.lua`'s `P.define` reads it when a mod gives no `moves`
-or `rules`.
+or `rules`. A rule carries its `conds` and `effects` as `{ op, arg, value }` with the board
+indices resolved, its `signal` index and, for a path that plays nothing, `no_play`; `vars` and
+`signals` name those indices for `port:var` and `port:fire`.
 
 A pair move goes as the runtime paints it on its host pair. An own move goes as the move player
 takes it (`mhfu.move_play`): its clip's executor entry and, for `turn = "clip"`, its turn keys,
@@ -215,11 +217,13 @@ def _own_move(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
 
 
 def _rule(r: Rule) -> dict[str, Any]:
-    out: dict[str, Any] = {"play": r.play}
+    out: dict[str, Any] = {"no_play": True} if r.play is None else {"play": r.play}
     if r.on is not None:
         out["on"] = r.on
     if r.part is not None:
         out["part"] = r.part
+    if r.signal is not None:
+        out["signal"] = r.signal
     if r.from_move is not None:
         out["from"] = r.from_move
     if r.from_main:
@@ -238,6 +242,9 @@ def _rule(r: Rule) -> dict[str, Any]:
         out["count"] = r.count
     if r.force:
         out["force"] = True
+    for k in ("conds", "effects"):
+        if ops := getattr(r, k):
+            out[k] = [list(op) for op in ops]
     if r.label:
         out["label"] = r.label
     return out
@@ -293,6 +300,9 @@ def lua(
     out += ["  },", "  rules = {"]
     out += [f"    {lua_value(_rule(r))}," for r in behaviour.compile(m)]
     out += ["  },"]
+    for k, names in (("vars", behaviour.vars(m)), ("signals", behaviour.signals(m))):
+        if names:
+            out.append(f"  {k} = {lua_value(names)},")
     if tip is not None:
         out.append(f"  tip = {lua_value(tip.pairs)},")
     out += ["}", ""]

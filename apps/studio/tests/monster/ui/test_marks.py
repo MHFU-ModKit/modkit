@@ -6,11 +6,9 @@ flash, and when it polls. A fake reader stands in for the game."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import AbstractContextManager
 from typing import Any
 
 import pytest
-from mhfu.live.brain import UNLIMITED, Brain, Slot
 from mhfu_port import behaviour as model
 from mhfu_port.behaviour import Block, MoveNode
 from mhfu_port.manifest import Manifest, Move
@@ -24,8 +22,9 @@ from mhfu_studio.ui import kit, theme
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
+from .conftest import CFG, FakeGame
+
 LEFT, NONE = Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
-CFG = 0x1000
 
 
 def graph(m: Any) -> None:
@@ -48,27 +47,6 @@ def graph(m: Any) -> None:
         b.moves[name] = MoveNode((900.0, 160.0 * k))
 
 
-class Game:
-    """The game: it runs the rules of `m` as sent, fired `fired` times each; `calls` is where
-    each read was told the brain was."""
-
-    def __init__(self, m: Manifest) -> None:
-        self.rules = model.compile(m)
-        self.fired = [0] * len(self.rules)
-        self.ticks = 100
-        self.calls: list[int | None] = []
-
-    def __call__(
-        self, attach: Callable[[], AbstractContextManager[Any]], cfg: int | None
-    ) -> rg.Read:
-        self.calls.append(cfg)
-        slots = tuple(
-            Slot(k, rg.kind(r.on), -1, True, r.min_frames, r.cooldown, n, UNLIMITED, 0)
-            for k, (r, n) in enumerate(zip(self.rules, self.fired, strict=True))
-        )
-        return rg.Read(CFG, Brain(CFG, self.ticks, slots))
-
-
 @pytest.fixture
 def ws(workspace: MonsterWorkspace) -> MonsterWorkspace:
     assert workspace.doc is not None
@@ -79,8 +57,8 @@ def ws(workspace: MonsterWorkspace) -> MonsterWorkspace:
 
 
 @pytest.fixture
-def game(ws: MonsterWorkspace) -> Game:
-    g = Game(ws.manifest)  # type: ignore[arg-type]
+def game(ws: MonsterWorkspace) -> FakeGame:
+    g = FakeGame(ws.manifest)  # type: ignore[arg-type]
     ws.read_brain = g
     return g
 
@@ -93,7 +71,7 @@ def clock(ws: MonsterWorkspace) -> list[float]:
 
 
 @pytest.fixture
-def panel(qtbot: Any, ws: MonsterWorkspace, game: Game, clock: list[float]) -> BehaviourPanel:
+def panel(qtbot: Any, ws: MonsterWorkspace, game: FakeGame, clock: list[float]) -> BehaviourPanel:
     studio = Studio([ws])
     p = BehaviourPanel(ws, studio)
     studio.listen(p.sync)
@@ -137,7 +115,7 @@ def scope(qtbot: Any, p: BehaviourPanel, key: str) -> None:
     qtbot.wait(40)
 
 
-def test_nothing_is_marked_until_the_toggle_is_on(panel: BehaviourPanel, game: Game) -> None:
+def test_nothing_is_marked_until_the_toggle_is_on(panel: BehaviourPanel, game: FakeGame) -> None:
     assert not panel.watch.isChecked() and panel.live.text() == ""
     assert not panel.ticker.isActive()
     assert all("×" not in t for t in titles(panel))
@@ -161,7 +139,7 @@ def test_the_toggle_starts_a_poll_once_a_second_while_the_tab_is_shown(
 
 
 def test_a_tab_hidden_polls_nothing(
-    qtbot: Any, panel: BehaviourPanel, game: Game, clock: list[float]
+    qtbot: Any, panel: BehaviourPanel, game: FakeGame, clock: list[float]
 ) -> None:
     watch(qtbot, panel, clock)
     panel.hide()
@@ -174,7 +152,7 @@ def test_a_tab_hidden_polls_nothing(
 
 
 def test_it_reads_at_most_once_a_second_whatever_the_ticks(
-    qtbot: Any, panel: BehaviourPanel, game: Game, clock: list[float]
+    qtbot: Any, panel: BehaviourPanel, game: FakeGame, clock: list[float]
 ) -> None:
     QTest.mouseClick(panel.watch, LEFT, NONE)
     for _ in range(40):
@@ -187,7 +165,7 @@ def test_it_reads_at_most_once_a_second_whatever_the_ticks(
 
 
 def test_a_trigger_view_marks_every_frame_and_quiets_what_never_fired(
-    qtbot: Any, panel: BehaviourPanel, game: Game, clock: list[float]
+    qtbot: Any, panel: BehaviourPanel, game: FakeGame, clock: list[float]
 ) -> None:
     game.fired = [0, 0, 7, 0, 0, 0]
     watch(qtbot, panel, clock)
@@ -200,7 +178,7 @@ def test_a_trigger_view_marks_every_frame_and_quiets_what_never_fired(
 
 
 def test_in_order_marks_every_rule_and_the_status_says_the_tick(
-    qtbot: Any, panel: BehaviourPanel, game: Game, clock: list[float]
+    qtbot: Any, panel: BehaviourPanel, game: FakeGame, clock: list[float]
 ) -> None:
     game.fired, game.ticks = [1, 2, 3, 4, 5, 6], 4321
     watch(qtbot, panel, clock)
@@ -216,7 +194,7 @@ def test_in_order_marks_every_rule_and_the_status_says_the_tick(
 
 
 def test_a_long_title_is_cut_before_its_mark_never_through_it(
-    qtbot: Any, panel: BehaviourPanel, game: Game, clock: list[float]
+    qtbot: Any, panel: BehaviourPanel, game: FakeGame, clock: list[float]
 ) -> None:
     def note(m: Manifest) -> None:
         m.behaviour.blocks["b4"].label = "a note that goes on and on and on " * 6
@@ -232,7 +210,7 @@ def test_a_long_title_is_cut_before_its_mark_never_through_it(
 
 
 def test_the_outline_shows_each_triggers_total_beside_its_ranks(
-    qtbot: Any, panel: BehaviourPanel, game: Game, clock: list[float]
+    qtbot: Any, panel: BehaviourPanel, game: FakeGame, clock: list[float]
 ) -> None:
     game.fired = [1, 2, 3, 4, 5, 6]
     watch(qtbot, panel, clock)
@@ -250,7 +228,7 @@ def test_the_outline_shows_each_triggers_total_beside_its_ranks(
 
 
 def test_a_rule_that_just_fired_is_outlined_for_a_moment(
-    qtbot: Any, panel: BehaviourPanel, game: Game, clock: list[float]
+    qtbot: Any, panel: BehaviourPanel, game: FakeGame, clock: list[float]
 ) -> None:
     watch(qtbot, panel, clock)
     assert panel.view._glows == []
@@ -266,7 +244,7 @@ def test_a_rule_that_just_fired_is_outlined_for_a_moment(
 
 
 def test_counts_that_fall_are_taken_and_say_since_when(
-    qtbot: Any, panel: BehaviourPanel, game: Game, clock: list[float]
+    qtbot: Any, panel: BehaviourPanel, game: FakeGame, clock: list[float]
 ) -> None:
     game.fired = [5, 5, 5, 5, 5, 5]
     watch(qtbot, panel, clock)
@@ -277,7 +255,7 @@ def test_counts_that_fall_are_taken_and_say_since_when(
 
 
 def test_a_game_running_other_rules_shows_no_marks_and_says_so(
-    qtbot: Any, panel: BehaviourPanel, game: Game, clock: list[float]
+    qtbot: Any, panel: BehaviourPanel, game: FakeGame, clock: list[float]
 ) -> None:
     game.fired = [1, 2, 3, 4, 5, 6]
     watch(qtbot, panel, clock)
@@ -296,7 +274,7 @@ def test_a_game_running_other_rules_shows_no_marks_and_says_so(
 
 
 def test_no_game_running_is_said_and_nothing_is_read(
-    qtbot: Any, panel: BehaviourPanel, game: Game, clock: list[float]
+    qtbot: Any, panel: BehaviourPanel, game: FakeGame, clock: list[float]
 ) -> None:
     panel.ws.game_running = lambda: False
     QTest.mouseClick(panel.watch, LEFT, NONE)
@@ -306,7 +284,7 @@ def test_no_game_running_is_said_and_nothing_is_read(
 
 
 def test_the_canvas_has_no_frames_to_mark_but_still_says_how_it_goes(
-    qtbot: Any, panel: BehaviourPanel, game: Game, clock: list[float]
+    qtbot: Any, panel: BehaviourPanel, game: FakeGame, clock: list[float]
 ) -> None:
     panel.ws.all_view = "canvas"
     panel.sync()
