@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QSize, Qt, Signal
-from PySide6.QtGui import QFont, QFontMetrics, QIcon, QPixmap
+from PySide6.QtGui import QFont, QFontMetrics, QIcon, QPainter, QPaintEvent, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
     QSpinBox,
     QStackedWidget,
@@ -443,6 +444,27 @@ class Alert(QLabel):
             self.style().polish(self)
 
 
+class Elided(Alert):
+    """A one-line `Alert` that takes the room it is given and ends in an ellipsis where that
+    runs out, so a long word never widens its panel; its tip should carry the whole."""
+
+    def __init__(
+        self, text: str = "", level: Level | None = "warning", *, role: LabelRole = "body"
+    ) -> None:
+        super().__init__(text, level, role=role, wrap=False)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setFont(self.font())
+        p.setPen(self.palette().color(QPalette.ColorRole.WindowText))
+        room = self.contentsRect()
+        shown = self.fontMetrics().elidedText(
+            self.text(), Qt.TextElideMode.ElideRight, room.width()
+        )
+        p.drawText(room, int(LEFT), shown)
+
+
 def pill(lv: Level, text: str | None = None) -> Alert:
     """A one-line `Alert` that names its level unless given `text`."""
     return Alert(lv if text is None else text, lv, wrap=False)
@@ -474,13 +496,17 @@ class Swatch(QLabel):
 # ---- layout ------------------------------------------------------------------------------ #
 
 
-def row(*widgets: QWidget, stretch: bool = False, spacing: int = 6) -> QWidget:
+def row(
+    *widgets: QWidget, stretch: bool = False, spacing: int = 6, grow: QWidget | None = None
+) -> QWidget:
+    """`widgets` side by side; `stretch` leaves the spare room at the end, `grow` gives it to one
+    of them instead."""
     w = QWidget()
     lay = QHBoxLayout(w)
     lay.setContentsMargins(0, 0, 0, 0)
     lay.setSpacing(spacing)
     for x in widgets:
-        lay.addWidget(x)
+        lay.addWidget(x, int(x is grow))
     if stretch:
         lay.addStretch(1)
     return w

@@ -31,6 +31,7 @@ from mhfu.em.intel import (
 )
 from mhfu.files import Extracted
 from mhfu_port import continuity, layout, sequence, slots
+from mhfu_port.behaviour import Trigger
 from mhfu_port.data import Data
 from mhfu_port.manifest import MOVE_ATTACKS, AttackWindow, Manifest, ManifestError, Move
 from mhfu_port.manifest import Clip as ManifestClip
@@ -49,6 +50,7 @@ from mhfu_studio.monster import (
     clips,
     inputs,
     move_game,
+    rule_game,
     sequences,
     species,
 )
@@ -180,6 +182,11 @@ class MonsterWorkspace(Workspace):
         #: asks the running port for an own move (Play in game in Moves)
         self.play_own: Callable[[Session, str, bool, int], bool] = move_game.play_own
         self.game_running: Callable[[], bool] = move_game.Running()
+        #: reads the brain's rules from the running game, on a worker (Watch the game)
+        self.read_brain: Callable[
+            [Callable[[], AbstractContextManager[Session]], int | None], rule_game.Read
+        ] = rule_game.fetch
+        self.watch = rule_game.Watch()
         self._reset()
 
     def _reset(self) -> None:
@@ -197,6 +204,7 @@ class MonsterWorkspace(Workspace):
         self.scope = behaviour.ALL
         #: and what All shows: its rules in order, or the stored canvas
         self.all_view = behaviour.ORDER
+        self.watch.reset()
         self.show_joint_ids = False
         self.undriven: dict[int, int] = {}
         self.markers: list[align.Marker] = []
@@ -2016,6 +2024,42 @@ class MonsterWorkspace(Workspace):
         """The block a finding named, once; the tab picks and frames it."""
         block, self._block = self._block, None
         return block
+
+    # Watch the game (the Behaviour tab's marks)
+
+    @property
+    def fires(self) -> dict[int, int] | None:
+        """How often the game fired each rule, by rank; None when there is nothing to show."""
+        return self.watch.fires
+
+    def poll_game(self) -> bool:
+        """One step of Watch the game, at most one read a second; True when the marks changed."""
+        return self.watch.poll(self.manifest, self.game_running(), self._ask_brain)
+
+    def fire_blocker(self, t: Trigger) -> str | None:
+        """Why Fire cannot raise `t` in the game now; None when it can."""
+        if self.manifest is None:
+            return "no port manifest open"
+        if t.kind not in rule_game.FIRE:
+            return "nothing in the studio raises this trigger"
+        return self.watch.blocker()
+
+    def fire(self, t: Trigger) -> None:
+        """Raises `t` in the running game (`rule_game.FIRE`) at the brain Watch the game found. The
+        game is not the document: no undo step, and the status says what was done."""
+        m, cfg, why = self.manifest, self.watch.cfg, self.fire_blocker(t)
+        if why is not None or m is None or cfg is None:
+            self.message = f"not fired: {why}"
+            return
+        try:
+            with self.game_session() as s:
+                self.message = rule_game.FIRE[t.kind](s, cfg, m, t)
+        except (LookupError, OSError, ValueError, DebuggerError) as e:
+            self.message = f"not fired: {e}"
+
+    def _ask_brain(self, cfg: int | None) -> Future[rule_game.Read]:
+        self._pool = self._pool or ThreadPoolExecutor(1)
+        return self._pool.submit(self.read_brain, self.game_session, cfg)
 
     # Play in game for an own move (the Moves panel)
 
