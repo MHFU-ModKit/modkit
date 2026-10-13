@@ -12,10 +12,11 @@ from mhfu_port import behaviour as model
 from mhfu_port.behaviour import Block, MoveNode, Path, Trigger
 from mhfu_port.manifest import Move
 from mhfu_studio.monster import behaviour as B
-from mhfu_studio.monster.behaviour import ALL
+from mhfu_studio.monster.behaviour import ALL, CANVAS, ORDER
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.panels import rows, triggers
 from mhfu_studio.monster.panels.behaviour import (
+    ORDER_HINT,
     SCOPED,
     SCOPED_HINT,
     UNPLACED,
@@ -357,11 +358,25 @@ def test_place_leaves_the_specs_it_was_given_alone() -> None:
 # ---- the scope in the panel ------------------------------------------------------------------ #
 
 
-def test_all_is_the_stored_canvas_unchanged(panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
+def to_canvas(qtbot: Any, panel: BehaviourPanel) -> None:
+    """The Canvas half of the header's toggle, clicked."""
+    QTest.mouseClick(panel.mode.buttons[CANVAS], LEFT, NONE)
+    qtbot.wait(60)
+
+
+def to_order(qtbot: Any, panel: BehaviourPanel) -> None:
+    QTest.mouseClick(panel.mode.buttons[ORDER], LEFT, NONE)
+    qtbot.wait(60)
+
+
+def test_all_canvas_is_the_stored_canvas_unchanged(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    to_canvas(qtbot, panel)
     m = doc(ws).manifest
-    assert panel.ws.scope == ALL
+    assert panel.ws.scope == ALL and ws.all_view == CANVAS
     assert shown(panel) == {*m.behaviour.blocks, *map(B.move_id, m.moves)}
-    assert at(panel, "b2") == [460.0, 0.0] and panel.spread.isEnabled()
+    assert at(panel, "b2") == [460.0, 0.0] and not panel.spread.isHidden()
     assert panel.title.text().startswith("8 blocks · 6 of")
 
 
@@ -377,13 +392,13 @@ def test_a_trigger_shows_only_its_rules_in_rank_order(
     }
     assert frames(panel) == [f"{rk(3)} · any flinch", f"{rk(4)} · (no note)"]
     assert panel.title.text() == f"All › Flinch — 2 rules, {rng(3, 4)} of 6"
-    assert not panel.spread.isEnabled() and panel.hint.text() == SCOPED_HINT
+    assert panel.spread.isHidden() and panel.hint.text() == SCOPED_HINT
     assert panel.view._shown["ref:b4:stamp"].view.badge == "×3"
     assert panel.view._shown["ref:b4:stamp"].view.toolTip() == (
         f"The move stamp, played by 3 rules: {rk(1, 3, 6)}"
     )
     pick(qtbot, panel, ALL)
-    assert ws.scope == ALL and "b8" in shown(panel) and panel.spread.isEnabled()
+    assert ws.scope == ALL and "b8" in shown(panel) and panel.spread.isHidden()
 
 
 def test_a_while_trigger_draws_its_move_once_wired_into_every_row(
@@ -469,7 +484,7 @@ def test_a_finding_on_a_loose_block_switches_to_all(
     pick(qtbot, panel, "on_flinch")
     ws.reveal(("block", "b9"), "behaviour")
     panel.sync()
-    assert ws.scope == ALL and panel.view.selected() == ["b9"]
+    assert ws.scope == ALL and panel.view.selected() == ["b9"] and ws.all_view == CANVAS
 
 
 def test_a_move_picked_elsewhere_does_not_switch_the_scope(
@@ -515,6 +530,8 @@ def test_a_trigger_has_no_free_block_menu_and_all_has_it_back(
     qtbot: Any, panel: BehaviourPanel
 ) -> None:
     menu = panel.view.viewer.context_menus()["graph"]
+    assert menu.actions() == [], "the rows of All take no free blocks either"
+    to_canvas(qtbot, panel)
     assert len(menu.actions()) == 4
     pick(qtbot, panel, "on_flinch")
     assert menu.actions() == []
@@ -1065,3 +1082,146 @@ def test_play_in_game_says_so_when_no_game_is_there(
     panel.bar.play.click()
     qtbot.wait(40)
     assert ws.message.startswith("not played in the game")
+
+
+# ---- All, in order --------------------------------------------------------------------------- #
+
+
+def test_all_opens_in_order_and_the_toggle_is_there_only_for_all(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    assert ws.all_view == ORDER and not panel.mode.isHidden()
+    assert panel.mode.toolTip() and all(b.toolTip() for b in panel.mode.buttons.values())
+    assert panel.mode.value == ORDER and panel.spread.isHidden() and panel.add_rule.isHidden()
+    pick(qtbot, panel, "on_flinch")
+    assert panel.mode.isHidden()
+    pick(qtbot, panel, ALL)
+    assert not panel.mode.isHidden() and panel.hint.text() == ORDER_HINT
+
+
+def test_in_order_draws_every_rule_in_rank_order_and_names_its_trigger(
+    panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    assert frames(panel) == [
+        f"{rk(1)} \u00b7 while charge \u00b7 first",
+        f"{rk(2)} \u00b7 while charge \u00b7 (no note)",
+        f"{rk(3)} \u00b7 Flinch \u00b7 any flinch",
+        f"{rk(4)} \u00b7 Flinch \u00b7 (no note)",
+        f"{rk(5)} \u00b7 Notice \u00b7 at once",
+        f"{rk(6)} \u00b7 Part break \u00b7 (no note)",
+    ]
+    assert panel.title.text() == "All rules \u2014 6 in the order they are checked"
+
+
+def test_a_while_rule_starts_from_a_dashed_reference_with_the_count(
+    panel: BehaviourPanel,
+) -> None:
+    start = panel.view._shown["start:b1:charge"].view
+    assert (start.name, start.badge, start.ref) == ("while charge plays", "\u00d72", True)
+    assert "start:b3:charge" in shown(panel)
+    wires = {(w.src, w.src_port, w.dst) for w in panel.view._links}
+    assert ("start:b1:charge", "while playing", "b1") in wires
+    assert B.move_id("charge") not in shown(panel), "the real move is not drawn once for every row"
+    assert at(panel, "start:b1:charge")[0] < at(panel, "b1")[0]
+
+
+def test_in_order_has_no_free_position_to_write(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    before = doc(ws).manifest
+    for key in (ALL, "on_flinch", ALL):
+        pick(qtbot, panel, key)
+    to_canvas(qtbot, panel)
+    to_order(qtbot, panel)
+    assert doc(ws).manifest is before
+
+
+def test_the_choice_belongs_to_the_document_and_outlives_a_panel(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    to_canvas(qtbot, panel)
+    assert ws.all_view == CANVAS and "b8" in shown(panel) and B.move_id("charge") in shown(panel)
+    again = make(qtbot, ws)
+    assert again.mode.value == CANVAS and shown(again) == shown(panel)
+    to_order(qtbot, panel)
+    assert ws.all_view == ORDER and B.move_id("charge") not in shown(panel)
+
+
+def test_a_finding_on_a_block_in_a_rule_keeps_the_rows(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    ws.reveal(("block", "b8"), "behaviour")
+    panel.sync()
+    assert ws.all_view == ORDER and panel.view.selected() == ["b8"]
+
+
+def test_editing_in_order_is_as_in_a_trigger(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    entry(right_click(qtbot, panel, "b4"), "Insert after", "Modifiers", "At most").trigger()
+    qtbot.wait(60)
+    assert blocks(ws)["b4"].next == ["b9"] and blocks(ws)["b9"].play == ["stamp"]
+    assert ws.all_view == ORDER and "b9" in shown(panel)
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    click(qtbot, panel, node_pos(panel, "b4"))
+    QTest.keyClick(panel.view, Qt.Key.Key_Delete)
+    qtbot.wait(60)
+    assert "b4" not in blocks(ws) and "b4" not in shown(panel)
+    doc(ws).undo()
+    ws.refresh()
+    panel.sync()
+    click(qtbot, panel, node_pos(panel, "ref:b4:stamp"))
+    assert panel.bar.plays is not None
+    panel.bar.plays.ctl.setCurrentIndex(panel.bar.plays.ctl.findText("howl"))
+    qtbot.wait(60)
+    assert blocks(ws)["b4"].play == ["howl"]
+    click(qtbot, panel, frame_pos(panel, "frame:3"))
+    assert panel.bar.note is not None and panel.bar.note.get_value() == "any flinch"
+
+
+def test_wiring_and_dragging_are_refused_in_order_as_in_a_trigger(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    before, here = doc(ws).manifest, at(panel, "b4")
+    drag(panel, port_at(panel, "b4", "out"), port_at(panel, "b5", "in"))
+    qtbot.wait(40)
+    assert doc(ws).manifest is before and ws.message == SCOPED
+    item = panel.view._shown["b4"].view
+    a = panel.view.viewer.mapFromScene(item.mapToScene(QPointF(item.width / 2, 8)))
+    drag(panel, a, a + QPoint(40, 60))
+    qtbot.wait(60)
+    assert doc(ws).manifest is before and at(panel, "b4") == here
+
+
+def test_selecting_a_start_shows_its_move_and_deleting_it_does_nothing(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    before = doc(ws).manifest
+    click(qtbot, panel, node_pos(panel, "start:b1:charge"))
+    assert panel.view.selected() == ["start:b1:charge"] and ws.move == "charge"
+    assert [w.text() for w in panel.bar.findChildren(type(panel.title))][0] == "charge"
+    QTest.keyClick(panel.view, Qt.Key.Key_Delete)
+    qtbot.wait(60)
+    assert doc(ws).manifest is before
+
+
+def test_a_drop_among_other_triggers_rules_moves_the_rule_only_among_its_own(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    rules = model.compile(doc(ws).manifest)
+    drag_frame(qtbot, panel, "frame:3", "frame:5")  # past the flinch rule below it and the notice
+    after = model.compile(doc(ws).manifest)
+    assert after[2] == rules[3] and after[3] == rules[2], "swapped with its own trigger's rule"
+    assert after[:2] == rules[:2] and after[4:] == rules[4:], "no other trigger's rule moved"
+    assert "only among its own trigger's rules" in ws.message and ws.message.startswith(
+        "rule moved"
+    )
+
+
+def test_a_drop_among_its_own_rules_says_nothing_of_triggers(
+    qtbot: Any, panel: BehaviourPanel, ws: MonsterWorkspace
+) -> None:
+    drag_frame(qtbot, panel, "frame:3", "frame:4")
+    assert ws.message.startswith("rule moved") and "only among" not in ws.message

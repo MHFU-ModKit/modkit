@@ -58,6 +58,16 @@ def title(t: Trigger) -> str:
     return f"{short(t.kind)} · {t.name}" if t.name else short(t.kind)
 
 
+def says_all(total: int) -> str:
+    """The header over All's rows."""
+    return f"All rules {DASH} {total} in the order they are checked"
+
+
+def label(t: Trigger) -> str:
+    """`t` in a frame's title: its row, a move's worded as the while-playing port it is."""
+    return f"while {t.name}" if t.section == "move" else title(t)
+
+
 def tip(t: Trigger) -> str:
     if t.section == "move":
         return f"The rules that start from the while-playing port of {t.name}"

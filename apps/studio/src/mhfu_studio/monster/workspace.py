@@ -195,6 +195,8 @@ class MonsterWorkspace(Workspace):
         self._block: str | None = None
         #: what the Behaviour canvas shows: `behaviour.ALL`, or a trigger's key
         self.scope = behaviour.ALL
+        #: and what All shows: its rules in order, or the stored canvas
+        self.all_view = behaviour.ORDER
         self.show_joint_ids = False
         self.undriven: dict[int, int] = {}
         self.markers: list[align.Marker] = []

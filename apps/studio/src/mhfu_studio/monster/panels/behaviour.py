@@ -24,7 +24,7 @@ from mhfu_port.manifest import Manifest, ManifestError, Move
 from PySide6.QtWidgets import QHBoxLayout, QMenu, QSizePolicy, QVBoxLayout, QWidget
 
 from mhfu_studio.monster import behaviour as graph
-from mhfu_studio.monster.behaviour import ALL
+from mhfu_studio.monster.behaviour import ALL, CANVAS, ORDER
 from mhfu_studio.monster.panels import rows, triggers
 from mhfu_studio.monster.panels.common import kind
 from mhfu_studio.monster.panels.node_graph import GraphView, LinkSpec, NodeSpec
@@ -50,11 +50,15 @@ WARN = chr(0x26A0)
 HINT = "Right-click adds a block · drag from a port to wire · higher blocks are checked first"
 #: over a trigger's rows, and what a wire dragged there is told
 SCOPED_HINT = (
-    "+ Rule adds a rule · right-click a block to insert one · Delete removes · wire by dragging"
-    " ports in All"
+    "+ Rule adds a rule · right-click a block to insert one · Delete removes · drag a frame to"
+    " reorder · wire in All, Canvas"
 )
-SCOPED = "Wire by dragging ports in All"
+ORDER_HINT = (
+    "Right-click a block to insert one · Delete removes · drag a frame to reorder · wire in Canvas"
+)
+SCOPED = "Wire by dragging ports in All, Canvas"
 UNPLACED = "A rule with no move yet is checked by nothing, so it has no place to move"
+CROSSED = "; a rule moves only among its own trigger's rules, the others keep their places"
 
 
 class BehaviourPanel(kit.Panel):
@@ -80,7 +84,7 @@ class BehaviourPanel(kit.Panel):
         self._plan: rows.Plan | None = None
         self._after: tuple[str, str | None] | None = None
         self._frame_after: str | None = None
-        self._scope: str | None = None
+        self._scope: tuple[str, str] | None = None
         self._outlined: object = None
         self._palette = ALL
 
@@ -98,6 +102,17 @@ class BehaviourPanel(kit.Panel):
             tip="Adds a rule for this trigger. It is checked after every other rule: drag its"
             " frame up to raise it",
             on=self._add_rule,
+        )
+        self.mode = kit.Segmented(
+            [(ORDER, "In order"), (CANVAS, "Canvas")],
+            tip="All rules: each as a framed row in the order they are checked, or the free"
+            " canvas as stored",
+            on=self._mode,
+            current=ws.all_view,
+            tips={
+                ORDER: "Every rule as a row, first checked first; edit them here as in a trigger",
+                CANVAS: "The canvas as stored: free blocks, free wires, and how every path crosses",
+            },
         )
         self.spread = kit.button(
             "Spread out",
@@ -137,7 +152,9 @@ class BehaviourPanel(kit.Panel):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
         lay.addWidget(
-            kit.row(self.title, self.hint, self.add_rule, self.fit, self.spread, stretch=True)
+            kit.row(
+                self.title, self.hint, self.mode, self.add_rule, self.fit, self.spread, stretch=True
+            )
         )
         lay.addWidget(self.view, 1)
         lay.addWidget(self.bar)
@@ -158,6 +175,11 @@ class BehaviourPanel(kit.Panel):
     def _scoped(self, key: str) -> None:
         """A row of the outline picked: that trigger's rules, framed to fit."""
         self.ws.scope = key
+        self.sync()
+
+    def _mode(self, mode: str) -> None:
+        """In order or Canvas picked for All."""
+        self.ws.all_view = mode
         self.sync()
 
     # what the bar tells: the same intents as the canvas's, one undo step each
@@ -223,8 +245,12 @@ class BehaviourPanel(kit.Panel):
                 )
                 self._play_entry(menu, move)
             return
-        shown = [n.id for n in row.nodes]
-        k, block = shown.index(node), row.path.blocks[shown.index(node)]
+        if rows.is_start(node):  # a while-playing rule's start: its move
+            move = graph.move_name(rows.node_of(node))
+            if move is not None:
+                self._play_entry(menu, move)
+            return
+        k, block = row.blocks.index(node), row.path.blocks[row.blocks.index(node)]
         last = k == len(row.path.blocks) - 1
         to = None if last else row.path.blocks[k + 1]
         self._insert_menu(menu, "Insert after", block, to, row.path.play or None if last else None)
@@ -272,12 +298,13 @@ class BehaviourPanel(kit.Panel):
             self._gesture = graph.Gesture(doc)
         self._gesture.run(fn)
 
-    def _scope_all(self) -> bool:
-        return self.ws.scope == ALL
+    def _free(self) -> bool:
+        """Whether the canvas is the stored one, where blocks and wires are free."""
+        return self.ws.scope == ALL and self.ws.all_view == CANVAS
 
     def _wire(self, edit: Callable[..., str], *wire: str) -> Callable[[graph.Edits], str]:
-        """The edit of a wire intent, or the refusal a trigger's rows give for it."""
-        return (lambda e: edit(e, *wire)) if self._scope_all() else self._refuse(SCOPED)
+        """The edit of a wire intent, or the refusal the rows give for it."""
+        return (lambda e: edit(e, *wire)) if self._free() else self._refuse(SCOPED)
 
     def _delete(self, ids: list[str]) -> None:
         plan = self._plan
@@ -287,7 +314,7 @@ class BehaviourPanel(kit.Panel):
         whole = {  # a rule goes with its frame or its first block
             r.id
             for i in ids
-            if (r := plan.row_of(i)) is not None and (i == r.id or i == r.nodes[0].id)
+            if (r := plan.row_of(i)) is not None and (i == r.id or i == r.blocks[0])
         }
         for r in plan.rows:
             if r.id in whole:
@@ -298,7 +325,7 @@ class BehaviourPanel(kit.Panel):
             row, ref = plan.row_of(i), rows.ref_of(i)
             if row is None:  # a move: refused, as in All
                 self._collect(partial(graph.delete, ids=[i]))
-            elif row.id in whole:
+            elif row.id in whole or rows.is_start(i):
                 continue
             elif ref is not None:
                 if ref[1] is not None:
@@ -316,13 +343,22 @@ class BehaviourPanel(kit.Panel):
         if row.rank is None:
             self._collect(self._refuse(UNPLACED))
             return
-        ranked = [r for r in plan.rows if r.rank is not None]
+        ranked = [r for r in plan.rows if r.rank is not None and r.key == row.key]
         rects = self.view.frame_rects()
         middle = rects[frame].center().y()
+        every = [r for r in plan.rows if r.rank is not None]
         to = sum(1 for r in ranked if r is not row and rects[r.id].center().y() < middle)
+        above = sum(1 for r in every if r is not row and rects[r.id].center().y() < middle)
         paths = [r.path for r in ranked]
+        k = ranked.index(row)
         self._frame_after = f"{rows.FRAME}{ranked[to].rank}"  # the places are handed round
-        self._collect(lambda e: graph.move_rule(e, paths, ranked.index(row), to))
+        crossed = every.index(ranked[to]) != above  # the drop was among other triggers' rules
+
+        def move(e: graph.Edits) -> str:
+            said = graph.move_rule(e, paths, k, to)
+            return said + (CROSSED if crossed else "")
+
+        self._collect(move)
 
     @staticmethod
     def _refuse(why: str) -> Callable[[graph.Edits], str]:
@@ -336,14 +372,14 @@ class BehaviourPanel(kit.Panel):
         self._settle()
 
     def _moved(self, node: str, x: float, y: float) -> None:
-        if self._scope_all():  # the rows are laid out for display: a drag snaps back
+        if self._free():  # the rows are laid out for display: a drag snaps back
             self._dropped[node] = (x, y)
 
     def _create(self, kind_: str, x: float, y: float) -> None:
         doc = self.ws.doc
         if doc is None:
             return
-        if not self._scope_all():
+        if not self._free():
             self._collect(self._refuse(SCOPED))
             return
         self._made = model.new_id(doc.manifest.behaviour)
@@ -420,7 +456,7 @@ class BehaviourPanel(kit.Panel):
             self._reach(block)
         if self.ws.scope not in (ALL, *(t.key for t in self._triggers)):
             self.ws.scope = ALL  # its trigger is gone
-        if self._scope != self.ws.scope or self._outlined is None:
+        if self._scope != (self.ws.scope, self.ws.all_view) or self._outlined is None:
             self._draw(m)
         self._follow(m, block)
         self._show_bar()
@@ -429,8 +465,11 @@ class BehaviourPanel(kit.Panel):
         """A block that a finding named and the scope does not draw: its trigger's rows, or All
         for a block on no rule."""
         key = self.ws.scope
+        on_rule = triggers.owner(self._triggers, self._opens, block)
         if key != ALL and not triggers.holds(self._triggers, self._opens, key, block):
-            self.ws.scope = triggers.owner(self._triggers, self._opens, block) or ALL
+            self.ws.scope = on_rule or ALL
+        if self.ws.scope == ALL and on_rule is None:
+            self.ws.all_view = CANVAS  # a block on no rule is not in the rows
 
     def _show_bar(self) -> None:
         """The bar shows the one frame or node selected, from the document: a refused edit goes
@@ -522,7 +561,8 @@ class BehaviourPanel(kit.Panel):
             self.outline.set_triggers(self._triggers, total, scope)
         blocks, moves = self._blocks(m, r), self._moves(m)
         t = self._current()
-        if t is None:
+        free = t is None and self.ws.all_view == CANVAS
+        if free:
             self._plan = None
             self.view.show(blocks + moves, [LinkSpec(*w) for w in graph.wires(m)])
             loose = f" · {len(r.loose)} loose" if r.loose else ""
@@ -531,35 +571,41 @@ class BehaviourPanel(kit.Panel):
             )
         else:
             self._draw_rows(m, r, t, blocks, moves)
-            self.title.setText(triggers.says(t, total))
-        self.hint.setText(HINT if t is None else SCOPED_HINT)
-        self.spread.setEnabled(t is None)
+            self.title.setText(
+                triggers.says(t, total) if t is not None else triggers.says_all(total)
+            )
+        self.hint.setText(HINT if free else SCOPED_HINT if t is not None else ORDER_HINT)
+        self.mode.setVisible(t is None)
+        self.mode.set(self.ws.all_view)
+        self.spread.setVisible(free)
         self.add_rule.setVisible(t is not None)
-        if self._palette != (ALL if t is None else ""):  # a trigger's rows take no free blocks
-            self._palette = ALL if t is None else ""
-            self.view.set_palette(graph.palette() if t is None else [])
-        if self._scope is not None and self._scope != scope:
+        if self._palette != (ALL if free else ""):  # rows take no free blocks
+            self._palette = ALL if free else ""
+            self.view.set_palette(graph.palette() if free else [])
+        here = (scope, self.ws.all_view)
+        if self._scope is not None and self._scope != here:
             self.view.fit()
-        self._scope = scope
+        self._scope = here
 
     def _draw_rows(
         self,
         m: Manifest,
         r: graph.Reading,
-        t: Trigger,
+        t: Trigger | None,
         blocks: list[NodeSpec],
         moves: list[NodeSpec],
     ) -> None:
-        """`t`'s rules as rows: drawn once to measure the nodes, then placed."""
+        """`t`'s rules as rows (every rule if None): drawn once to measure the nodes, then
+        placed."""
         notes = {i: b.label for i, b in m.behaviour.blocks.items()}
-        plan = rows.plan(
-            t,
-            {n.id: n for n in blocks},
-            notes,
-            dict(zip(m.moves, moves, strict=True)),
-            rows.players(r.paths),
-            self._opens.get(t.key, []),
-        )
+        specs, played = {n.id: n for n in blocks}, rows.players(r.paths)
+        if t is not None:
+            by_move = dict(zip(m.moves, moves, strict=True))
+            plan = rows.plan(t, specs, notes, by_move, played, self._opens.get(t.key, []))
+        else:
+            opens = [(model.trigger_key(m, o), o) for o in graph.open_rules(m)]
+            labels = {x.key: triggers.label(x) for x in self._triggers}
+            plan = rows.plan_all(self._triggers, opens, specs, notes, played, labels)
         self._plan = plan
         links = list(plan.links)
         self.view.show([dataclasses.replace(n, at=(0.0, 0.0)) for n in plan.nodes], links)

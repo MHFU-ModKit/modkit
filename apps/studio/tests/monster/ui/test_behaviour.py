@@ -48,6 +48,7 @@ def graph(m: Any) -> None:
 def ws(workspace: MonsterWorkspace) -> MonsterWorkspace:
     assert workspace.doc is not None
     workspace.doc.edit(graph)
+    workspace.all_view = B.CANVAS  # these tests are of the canvas as stored
     workspace.sync()
     return workspace
 
@@ -243,6 +244,8 @@ def test_an_accepted_edit_applies_once_in_the_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     own, p = open_hosted(make_window, qtbot, port_doc)
+    own.all_view = B.CANVAS
+    p.sync()
     select(qtbot, p, "b1")
     seen, shown = applies(p, "b1", monkeypatch), sets(p, "frames", monkeypatch)
     control(p, "frames").setValue(45)
@@ -261,6 +264,8 @@ def test_a_refused_edit_reverts_once_in_the_window(
     blk = Block("host_state", (0.0, 0.0), {"mains": [0]})
     port_doc.edit(lambda m: m.behaviour.blocks.__setitem__("b4", blk))
     own, p = open_hosted(make_window, qtbot, port_doc)
+    own.all_view = B.CANVAS
+    p.sync()
     p.view.select(["b4"])  # it sits under a move: no click would find it
     p.sync()
     before = doc(own).manifest
@@ -275,6 +280,8 @@ def test_a_block_made_in_the_window_is_selected(
     make_window: Callable[..., Any], qtbot: Any, port_doc: PortDocument
 ) -> None:
     own, p = open_hosted(make_window, qtbot, port_doc)
+    own.all_view = B.CANVAS
+    p.sync()
     create(qtbot, p, KINDS["on_noticed"].title, QPoint(300, 120))
     assert "b4" in doc(own).manifest.behaviour.blocks and p.view.selected() == ["b4"]
 
@@ -326,6 +333,7 @@ def test_the_zinogre_opens(
 
     zin = PortDocument.open(zinogre_toml)
     ws.load(Scene.from_bytes(synthetic_pac, "z", path=zinogre_toml.with_suffix(".bin")), zin)
+    ws.all_view = B.CANVAS  # a loaded document starts in order
     p = make(qtbot, ws)
     m = zin.manifest
     assert len(m.behaviour.blocks) == 15 and len(p.view._shown) == 15 + len(m.moves)

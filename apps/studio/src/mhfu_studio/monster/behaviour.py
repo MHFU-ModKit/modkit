@@ -30,6 +30,9 @@ PLAY, WHILE, THEN = "play", "while playing", "then"
 """A move node's ports: the input, then the two outputs."""
 ALL = "all"
 """The scope that is the whole canvas, as stored; any other is a trigger's key."""
+ORDER, CANVAS = "order", "canvas"
+"""What All shows: every rule as a framed row in the order they are checked, or the canvas as
+stored."""
 INSERTABLE = ("condition", "modifier", "effect")
 """The roles of the blocks a rule holds besides its first."""
 ROLE_TITLES = {
