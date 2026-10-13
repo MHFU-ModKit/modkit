@@ -23,6 +23,8 @@ UNLIMITED = 0xFFFFFFFF
 """`Slot.left` of a standing rule."""
 NO_PLAY = 0x04
 """`EM_RULE.FLAGS` bit: the rule plays nothing and only applies its effects."""
+RAGE_ON, RAGE_OFF = 1, 2
+"""`EM_BOARD.RAGE`: a request for the brain's next AI frame, which clears it."""
 CHUNK = 0x40000
 """Bytes per request while scanning."""
 WINDOW = 0x200000
@@ -156,3 +158,9 @@ def fire_signal(s: Reader, cfg: int, index: int) -> None:
     if not 0 <= index < n:
         raise ValueError(f"signal {index}: the board holds {n}")
     s.mem.write_u8(_board_at(cfg, int(a.EM_BOARD.SIGNALS)) + index, 1)
+
+
+def set_rage(s: Reader, cfg: int, enraged: bool) -> None:
+    """Requests rage (calm if not `enraged`) for the brain's next AI frame, as Lua's `em_rage` does.
+    A no-op while no monster is wrapped; it enrages with a roar and calms only while enraged."""
+    s.mem.write_u8(_board_at(cfg, int(a.EM_BOARD.RAGE)), RAGE_ON if enraged else RAGE_OFF)

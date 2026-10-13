@@ -144,6 +144,9 @@ int lb_em_status(lua_State *L)
     SF_INT("tip_copies", st.tip_copies);
     SF_INT("cut_waits",  st.cut_waits);
     SF_INT("broken",     st.broken);
+    SF_INT("sever_pct",  st.sever_pct);
+    SF_INT("gate_refused", st.gate_refused);
+    lua_pushboolean(L, (int)st.natural_rage); lua_setfield(L, -2, "natural_rage");
     SF_INT("req_pending", st.req_pending);
     SF_INT("req_done",    st.req_done);
     SF_INT("req_main",   (st.req_result >> 8) & 0xFF);
@@ -188,6 +191,26 @@ int lb_em_var(lua_State *L)
 int lb_em_signal(lua_State *L)
 {
     lua_pushboolean(L, mhfu_em_signal((int)luaL_checkinteger(L, 1)));
+    return 1;
+}
+
+/* rage and the tail cut's gate */
+int lb_em_rage(lua_State *L)
+{
+    lua_pushboolean(L, mhfu_em_rage(lua_toboolean(L, 1)));
+    return 1;
+}
+
+int lb_em_natural_rage(lua_State *L)
+{
+    mhfu_em_natural_rage(lua_toboolean(L, 1));
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+int lb_em_sever_gate(lua_State *L)
+{
+    lua_pushboolean(L, mhfu_em_sever_gate((int)luaL_checkinteger(L, 1)));
     return 1;
 }
 

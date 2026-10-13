@@ -154,23 +154,45 @@ class PartSession:
         """Volumes that would not fit in place at runtime."""
         return 0 if self.capacity is None else max(0, len(self.m.hurtboxes) - self.capacity)
 
+    def severable(self, index: int) -> bool:
+        found = self.part(index)
+        return found is not None and found[1].severable
+
+    def sever_below(self, index: int) -> int | None:
+        found = self.part(index)
+        return None if found is None else found[1].sever_below
+
+    def set_sever_below(self, index: int, pct: int | None) -> None:
+        """The HP percent under which part `index` can be cut off; 0 or none: at any HP. The
+        loader refuses one on a part that is not severable, or a second."""
+        found = self.part(index)
+        if found is None:
+            raise ManifestError(f"part {index} has no name yet: name it first")
+        name, want = found[0], pct or None
+        if want != found[1].sever_below:
+            self.doc.edit(lambda m: setattr(m.parts[name], "sever_below", want))
+
     def name_part(
         self,
         index: int,
         name: str,
         label: str = "",
-        severable: bool = False,
+        severable: bool | None = None,
         hitzone_row: int | None = None,
     ) -> None:
-        """Name accumulator `index`, replacing its old name."""
+        """Name accumulator `index`, replacing its old name; `severable` (and its HP percent)
+        stays as it was unless given."""
         name = check_name(name)
         clash = self.m.parts.get(name)
         if clash is not None and clash.index != index:
             raise ManifestError(f"part {name!r} already names slot {clash.index}")
+        old = self.part(index)
+        flag = bool(old and old[1].severable) if severable is None else severable
+        pct = old[1].sever_below if old and flag else None
 
         def apply(m: Manifest) -> None:
             m.parts = {n: p for n, p in m.parts.items() if p.index != index}
-            m.parts[name] = Part(index, hitzone_row, severable, label)
+            m.parts[name] = Part(index, hitzone_row, flag, label, pct)
 
         self.doc.edit(apply)
 

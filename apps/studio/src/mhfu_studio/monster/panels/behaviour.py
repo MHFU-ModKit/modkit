@@ -137,6 +137,12 @@ class BehaviourPanel(kit.Panel):
             on=studio.act("spread nodes", lambda: ws.edit("", self._spread)),
             icon="ph.arrows-out-simple",
         )
+        self.rage = kit.check(
+            "Natural rage",
+            tip="On: the monster rages as the game has it, when its anger builds. Off: only an"
+            " Enrage block or a script rages it.",
+            on=self._natural_rage,
+        )
         self.watch = kit.check(
             "Watch the game",
             tip="Marks every rule with how often the running game has fired it, read once a"
@@ -177,7 +183,13 @@ class BehaviourPanel(kit.Panel):
         side = QHBoxLayout(page)
         side.setContentsMargins(10, 8, 10, 8)
         side.setSpacing(10)
-        side.addWidget(self.outline)
+        left = QWidget()
+        col = QVBoxLayout(left)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(6)
+        col.addWidget(self.outline, 1)
+        col.addWidget(self.rage)  # not in the header: with Watch and Fire it needs 1586 px
+        side.addWidget(left)
         main = QWidget()
         side.addWidget(main, 1)
         lay = QVBoxLayout(main)
@@ -212,6 +224,13 @@ class BehaviourPanel(kit.Panel):
         if doc is None:
             raise ManifestError("no port manifest open")
         return graph.spread(doc)
+
+    def _natural_rage(self, on: bool) -> None:
+        doc = self.ws.doc
+        if doc is not None:
+            self.studio.act(
+                "natural rage", lambda: self.ws.edit("", lambda: graph.set_natural_rage(doc, on))
+            )()
 
     def _scoped(self, key: str) -> None:
         """A row of the outline picked: that trigger's rules, framed to fit."""
@@ -596,6 +615,7 @@ class BehaviourPanel(kit.Panel):
             for o in graph.open_rules(m):
                 self._opens.setdefault(model.trigger_key(m, o), []).append(o)
             self._scope = None
+            kit.put(self.rage, graph.natural_rage(m))
         block = self.ws.take_block()
         if block in m.behaviour.blocks:
             self._reach(block)

@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from mhfu import addresses as a
+from mhfu.live.brain import RAGE_OFF, RAGE_ON
 from mhfu_port import behaviour as model
 from mhfu_port.behaviour import Block
 from mhfu_port.manifest import Move
@@ -24,7 +25,7 @@ from PySide6.QtTest import QTest
 from .conftest import CFG, FakeGame
 
 LEFT, NONE = Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
-ROAR, FLINCH = "on_signal:roar", "on_flinch"
+ROAR, FLINCH, ENRAGED, CALMED = "on_signal:roar", "on_flinch", "on_enraged", "on_calmed"
 TIP = (
     "Raises Signal · roar in the running game now; the rules' counts show whether their"
     " conditions held"
@@ -32,13 +33,16 @@ TIP = (
 
 
 def graph(m: Any) -> None:
-    """A rule on the signal `bellow` (board signal 0), one on `roar` (1) and a flinch."""
+    """A rule on the signal `bellow` (board signal 0), one on `roar` (1), a flinch, and one each on
+    enraged and calmed."""
     for name in ("stamp", "howl"):
         m.moves[name] = Move(clip="walk")
     b = m.behaviour
     b.blocks["b1"] = Block("on_signal", (260.0, 0.0), {"name": "bellow"}, play=["stamp"])
     b.blocks["b2"] = Block("on_signal", (260.0, 100.0), {"name": "roar"}, play=["howl"])
     b.blocks["b3"] = Block("on_flinch", (260.0, 200.0), play=["stamp"])
+    b.blocks["b4"] = Block("on_enraged", (260.0, 300.0), play=["howl"])
+    b.blocks["b5"] = Block("on_calmed", (260.0, 400.0), play=["stamp"])
 
 
 class Mem:
@@ -128,10 +132,13 @@ def watching(qtbot: Any, p: BehaviourPanel, clock: list[float]) -> None:
     qtbot.waitUntil(step, timeout=3000)
 
 
-def test_fire_is_there_for_a_signal_trigger_only(qtbot: Any, panel: BehaviourPanel) -> None:
+def test_fire_is_there_for_a_signal_enraged_or_calmed_trigger_only(
+    qtbot: Any, panel: BehaviourPanel
+) -> None:
     assert panel.fire.isHidden()
-    scope(qtbot, panel, ROAR)
-    assert not panel.fire.isHidden() and panel.fire.text() == "Fire"
+    for key in (ROAR, ENRAGED, CALMED):
+        scope(qtbot, panel, key)
+        assert not panel.fire.isHidden() and panel.fire.text() == "Fire"
     scope(qtbot, panel, FLINCH)
     assert panel.fire.isHidden()
     scope(qtbot, panel, "all")
@@ -215,6 +222,42 @@ def test_fire_on_another_signal_writes_its_own_index(
     assert mem.writes == [(board + model.signals(panel.ws.manifest)["bellow"], 1)]  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    ("key", "byte", "said"),
+    [
+        (ENRAGED, RAGE_ON, "asked the game to enrage the monster"),
+        (CALMED, RAGE_OFF, "asked the game to calm the monster"),
+    ],
+    ids=["enraged", "calmed"],
+)
+def test_fire_on_enraged_or_calmed_writes_the_boards_rage_byte(
+    qtbot: Any,
+    panel: BehaviourPanel,
+    mem: Mem,
+    clock: list[float],
+    key: str,
+    byte: int,
+    said: str,
+) -> None:
+    scope(qtbot, panel, key)
+    assert not panel.fire.isEnabled() and "Watch the game" in panel.fire.toolTip()
+    watching(qtbot, panel, clock)
+    assert panel.fire.isEnabled()
+    QTest.mouseClick(panel.fire, LEFT, NONE)
+    assert mem.writes == [(CFG + int(a.EM_BLOCK.BOARD) + int(a.EM_BOARD.RAGE), byte)]
+    assert panel.ws.message.startswith(said)
+
+
+def test_a_disabled_fire_on_enraged_writes_nothing(
+    qtbot: Any, panel: BehaviourPanel, mem: Mem
+) -> None:
+    scope(qtbot, panel, ENRAGED)
+    t = panel._current()
+    assert t is not None and panel.ws.fire_blocker(t) is not None
+    panel.ws.fire(t)
+    assert mem.writes == [] and mem.opened == 0
+
+
 def test_a_click_is_one_act_and_one_session(
     qtbot: Any, panel: BehaviourPanel, mem: Mem, clock: list[float]
 ) -> None:
@@ -248,6 +291,6 @@ def test_a_write_that_fails_says_so(
 
 def test_only_a_trigger_in_the_table_can_fire(panel: BehaviourPanel) -> None:
     flinch = next(t for t in panel._triggers if t.key == FLINCH)
-    assert set(rg.FIRE) == {"on_signal"} and flinch.kind not in rg.FIRE
+    assert set(rg.FIRE) == {"on_signal", "on_enraged", "on_calmed"} and flinch.kind not in rg.FIRE
     assert panel.ws.fire_blocker(flinch) == "nothing in the studio raises this trigger"
     assert triggers.title(next(t for t in panel._triggers if t.key == ROAR)) == "Signal · roar"

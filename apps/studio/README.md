@@ -99,8 +99,9 @@ move's `after`. The palette is `mhfu_port.behaviour.KINDS`. Watch the game, in t
 the running game once a second while the tab is shown and marks each frame and trigger with how
 often the game fired its rules (`7×`; a frame lights up when its count rises): the game must run
 this port's rules as Play in game sends them, and the header says when it does not. On a
-Signal trigger, Fire raises that signal in the running game, once Watch the game has found it: the
-rules' counts then show whether their conditions held. It is no edit and has no undo step. The tab
+Signal trigger, Fire raises that signal in the running game, once Watch the game has found it; on
+Enraged or Calmed it asks the game to enrage or calm the monster. The rules' counts then show
+whether their conditions held. It is no edit and has no undo step. The tab
 keeps its own docks; Findings stays open across tabs.
 
 Effect blocks (violet) change the monster's counters and flags when their path fires. A path may
@@ -110,6 +111,11 @@ already uses; type a new one (lowercase letters, digits, `_`, starting with a le
 back. An On signal block fires when Lua raises that name: `port:fire("name")`; `port:var("name")`
 reads a counter or flag and `port:var("name", v)` sets it. Hunter side ticks any of front, left,
 right, behind.
+
+Enrage and Calm down are effect blocks too (`port:enrage()` and `port:calm()` do the same from
+Lua). The Natural rage box in the Behaviour tab turns the monster's own anger off, so only those
+rage it. In the Parts dock, a severable part has Severable below HP %: its cut works only once the
+monster's HP is under that percent, 0 at any HP.
 
 ## Tests
 

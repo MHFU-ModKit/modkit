@@ -366,12 +366,17 @@ def test_the_palette_offers_every_kind(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_the_zinogre_reads(ports: Path) -> None:
     m = manifest.load(ports / "zinogre.toml")
     r = B.read(m)
-    assert len(m.behaviour.blocks) == 36 and len(r.paths) == 16
-    assert sorted(n for ns in r.priority.values() for n in ns) == list(range(1, 17))
+    assert len(m.behaviour.blocks) == 39 and len(r.paths) == 17
+    assert sorted(n for ns in r.priority.values() for n in ns) == list(range(1, 18))
     assert r.loose == [] and r.refused == {} and r.capped is None
-    assert [p.blocks[-1] for p in r.paths if p.play is None] == ["b15", "b17", "b23"]
-    assert [p.play is None for p in r.paths] == [True] * 3 + [False] * 13, "bookkeeping runs first"
+    assert [p.blocks[-1] for p in r.paths if p.play is None] == ["b15", "b17", "b23", "b39"]
+    assert [p.play is None for p in r.paths] == [True] * 4 + [False] * 13, "bookkeeping runs first"
     assert model.names(m, "var") == ["flinches", "in_combat"]
+    enrage = r.paths[3]  # while charge_up plays: 120 frames, wait 250, enrage
+    assert (enrage.blocks, enrage.during) == (("b37", "b38", "b39"), "charge_up")
+    assert m.behaviour.blocks["b39"].kind == "enrage" and B.natural_rage(m)
+    charge = r.paths[13]  # the 2nd flinch, from idle: charge up
+    assert (charge.blocks[-1], charge.play) == ("b27", "charge_up")
     assert min(b.at[0] for b in m.behaviour.blocks.values()) == model.LEFT
     assert {w.dst for w in B.wires(m) if w.dst_port == "play"} >= {"move:flinch_head"}
     assert len(B.spots(m)) == len(m.moves)

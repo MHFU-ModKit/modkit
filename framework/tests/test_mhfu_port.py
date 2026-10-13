@@ -663,3 +663,52 @@ assert(SEAM.rules[0].signal == 7 and SEAM.rules[0].no_play)
 def test_rule_conditions_and_the_board(lua: Any) -> None:
     memory(lua)
     lua.execute(CONDITIONS)
+
+
+RAGE = """
+local SEAM = { rules = {}, rage = {} }
+function mhfu.em_installed() return true end
+function mhfu.em_substitute() return true end
+function mhfu.em_rule(slot, r) SEAM.rules[slot] = r; return true end
+function mhfu.em_sever_gate(pct) SEAM.gate = pct; return true end
+function mhfu.em_natural_rage(on) SEAM.natural = on; return true end
+function mhfu.em_rage(on) SEAM.rage[#SEAM.rage + 1] = on; return true end
+package.loaded.z_moves = {
+  moves = {}, sever_below = 50, natural_rage = false,
+  rules = { { no_play = true, on = "flinch", effects = { { "enrage", 0, 0 } } } },
+}
+package.loaded.y_moves = { moves = {}, rules = {} }
+local P = require("mhfu_port")
+local z = P.define{ name = "z", species = 75 }
+z.ent = ENT
+ticks(1)
+
+-- the moves module's gate and natural rage go in, the rage effect passes through
+assert(SEAM.gate == 50 and SEAM.natural == false)
+assert(SEAM.rules[0].effects[1][1] == "enrage" and SEAM.rules[0].no_play)
+assert(count("tail cut only below 50%% HP") == 1 and count("natural rage off") == 1)
+assert(z:enrage() == true and z:calm() == true)
+assert(SEAM.rage[1] == true and SEAM.rage[2] == false)
+
+-- none declared: any cut, natural rage on
+local y = P.define{ name = "y", species = 75 }
+y.ent = ENT
+ticks(1)
+assert(SEAM.gate == 0 and SEAM.natural == true)
+
+-- a hand-written port says its own; the redefine re-arms
+P.define{ name = "y", species = 75, sever_below = 30, natural_rage = false }.ent = ENT
+ticks(1)
+assert(SEAM.gate == 30 and SEAM.natural == false)
+
+-- a framework without them
+mhfu.em_rage, mhfu.em_sever_gate, mhfu.em_natural_rage = nil, nil, nil
+assert(z:enrage() == false and z:calm() == false)
+z._native_armed = false
+ticks(1)
+"""
+
+
+def test_rage_and_the_cut_gate(lua: Any) -> None:
+    memory(lua)
+    lua.execute(RAGE)

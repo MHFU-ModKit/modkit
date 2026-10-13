@@ -141,25 +141,38 @@ species brain, so the tail stays whole until it drops.
 A brain rule (`mhfu.em_rule`) with `on = "<event>"` fires in C in the AI frame the event is seen,
 `part` narrowing a flinch or a break; capacity `mhfu.addr.EM_CFG.RULES_COUNT`. A rule on the
 flinch owns the reaction replacement while installed: a flinch of its part, in a frame its gates
-hold, enters its own move's carrier instead of `(4,x)`, and the move plays from the next AI
-frame. `force = true` plays a rule's move past the notice wait. While em75's tail cut `(4,4)`
-waits for its drop, on a model with the mesh 1 the dropped tail draws, requests, plays and rules
-wait with it, and the events seen meanwhile reach them after it. `ports/README.md` "Moves and
-behaviour" has the manifest's side.
+and conditions hold, enters its own move's carrier instead of `(4,x)`, and the move plays from the
+next AI frame. `force = true` plays a rule's move past the notice wait. While em75's tail cut
+`(4,4)` waits for its drop, on a model with the mesh 1 the dropped tail draws, requests, plays and
+rules wait with it, and the events, signals and rage requests seen meanwhile reach them after it.
+`ports/README.md` "Moves and behaviour" has the manifest's side.
 
 A rule also takes `conds` that must all hold (`{ "hp_below", 0, 30 }`: op, arg, value; the ops are
 `mhfu.EmCond`: HP percent, broken parts, enraged or calm, the hunter's side of the monster, a
 chance rolled last, a counter against a number), `effects` it applies each time it fires
-(`var_add`, `var_set` on a counter), a `signal` that fires it in place of `on`, and
-`no_play = true`: it plays nothing and applies its effects. Each AI frame the rules that play
+(`var_add`, `var_set` on a counter; `enrage`, `calm`), a `signal` that fires it in place of `on`,
+and `no_play = true`: it plays nothing and applies its effects. Each AI frame the rules that play
 nothing run first, every one that holds wherever it sits among the others, so a counter counts the
 frame's events whatever plays; then the first rule that plays and holds fires, seeing the
-counters as they stand. The counters (`mhfu.em_var`), signals (`mhfu.em_signal`) and the parts broken so
-far are the monster's board, reset with a new monster; a port names them in its moves module's
-`vars` and `signals` (`port:var`, `port:fire`). The board holds
+counters as they stand. The counters (`mhfu.em_var`), signals (`mhfu.em_signal`) and the parts
+broken so far are the monster's board, reset with a new monster; a port names them in its moves
+module's `vars` and `signals` (`port:var`, `port:fire`). The board holds
 `mhfu.addr.EM_BOARD.VARS_COUNT` counters and `SIGNALS_COUNT` signals, a rule
 `mhfu.addr.EM_RULE.CONDS_COUNT` conditions and `EFFECTS_COUNT` effects. The partitions em_vhook
 takes grow with the rules and moves; its log lines give their sizes.
+
+## Rage and the tail cut
+
+The `enrage` and `calm` effects (and `mhfu.em_rage(true | false)`, `port:enrage()`, `port:calm()`,
+which queue the same on the board for the brain, since Lua must not write the monster's flags from
+its thread) use the engine's own levers: `enrage` sets the start pending in `ENTITY.FLAGS` unless
+the monster is enraged, so the engine's rage start runs in the next AI frame (it roars), and
+`calm` leaves one frame on `ENTITY.RAGE_TIMER` while it is, so the engine's own end runs.
+`mhfu.em_natural_rage(false)` raises the species' anger threshold once per monster so damage never
+starts rage (`true` restores it). `mhfu.em_sever_gate(pct)` wraps the species' tail-cut gate
+(`OBJ_VTABLE.CUT_GATE`, a vtable swap) so the tail cuts only below `pct` percent of the monster's
+HP; the species' own gate still runs on the cuts it allows. A port's moves module sets the last
+two with `natural_rage = false` and `sever_below = <pct>`; the quest's end drops both.
 
 ## Calling the game from C
 
@@ -175,7 +188,7 @@ declared API; it needs a host `c++` (else those tests skip) and `lupa`, which `u
 
 ## Status
 
-Runs in PPSSPP and on a real PSP under PRO CFW, for MHFU EU only. The Lua API is version 4
+Runs in PPSSPP and on a real PSP under PRO CFW, for MHFU EU only. The Lua API is version 5
 (`mhfu.api_version`); `mhfu.clone_combat` is experimental and can crash the game.
 
 ## Licence

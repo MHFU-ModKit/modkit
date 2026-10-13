@@ -163,6 +163,8 @@ WORDS = [
     ("counter_add", {"counter": "hits", "by": -3}, "hits -3"),
     ("counter_set", {"counter": "hits", "to": 0}, "hits to 0"),
     ("flag_set", {"flag": "in_combat", "state": "clear"}, "in_combat to clear"),
+    ("enrage", {}, "starts the rage"),
+    ("calm", {}, "ends the rage"),
 ]
 
 
@@ -229,21 +231,23 @@ def test_triggers_list_every_kind_and_group_the_zinogre_by_what_starts_it():
         "on_combat_entered": (1,),
         "on_combat_left": (2,),
         "on_flinch": (3,),
-        "during:lunge": (4, 5),
-        "during:lunge_stop": (6,),
-        "during:dash": (7,),
-        "on_noticed": (8,),
-        "on_part_broken": (9, 10, 11, 12),
-        "idle": (13, 14, 15),
-        "on_signal:roar": (16,),
+        "during:charge_up": (4,),
+        "during:lunge": (5, 6),
+        "during:lunge_stop": (7,),
+        "during:dash": (8,),
+        "on_noticed": (9,),
+        "on_part_broken": (10, 11, 12, 13),
+        "idle": (14, 15, 16),
+        "on_signal:roar": (17,),
     }
     assert [t.key for t in ts if t.section == "move"] == [
+        "during:charge_up",
         "during:lunge",
         "during:lunge_stop",
         "during:dash",
     ]
     by_rank = sorted((r, p) for t in ts for r, p in t.rules)
-    assert [p for _, p in by_rank] == B.paths(m) and [r for r, _ in by_rank] == list(range(1, 17))
+    assert [p for _, p in by_rank] == B.paths(m) and [r for r, _ in by_rank] == list(range(1, 18))
 
 
 def test_a_flinch_of_any_part_is_one_trigger():
@@ -607,6 +611,8 @@ EFFECTS = [
     ("counter_set", {"counter": "n", "to": 7}, [("var_set", 0, 7)]),
     ("flag_set", {"flag": "n"}, [("var_set", 0, 1)]),
     ("flag_set", {"flag": "n", "state": "clear"}, [("var_set", 0, 0)]),
+    ("enrage", {}, [("enrage", 0, 0)]),
+    ("calm", {}, [("calm", 0, 0)]),
 ]
 
 
@@ -1069,6 +1075,14 @@ ZINOGRE = [  # the paths that play nothing, then the rest
     ),
     Rule(None, on="flinch", effects=[("var_add", 0, 1)], label="count the flinches"),
     Rule(
+        None,
+        from_move="charge_up",
+        min_frames=120,
+        cooldown=250,
+        effects=[("enrage", 0, 0)],
+        label="after the charge -> enrage",
+    ),
+    Rule(
         "lunge_stop",
         from_move="lunge",
         min_frames=15,
@@ -1134,7 +1148,7 @@ def test_zinogre_compiles_to_its_rules():
     assert B.compile(m) == ZINOGRE
     assert B.loose(m) == [] and B.refused(m) == {}
     assert B.vars(m) == {"flinches": 0, "in_combat": 1} and B.signals(m) == {"roar": 0}
-    old = [r for r in ZINOGRE if r.from_move]
+    old = [r for r in ZINOGRE if r.from_move and r.play]
     assert len(old) == 4
     assert all(not r.conds and not r.effects and r.signal is None for r in old)
     assert len(ZINOGRE) <= B.SEAM_RULES
@@ -1143,7 +1157,7 @@ def test_zinogre_compiles_to_its_rules():
     notice = next(i for i, r in enumerate(ZINOGRE) if r.on == "noticed")
     assert notice < ZINOGRE.index(idle[0]), "the notice scans before the idle paths"
     quiet = [i for i, r in enumerate(ZINOGRE) if r.play is None]
-    assert quiet == [0, 1, 2], "the rules that play nothing run first"
+    assert quiet == [0, 1, 2, 3], "the rules that play nothing run first"
 
 
 def test_zinogre_topples_end_in_the_stamp():
@@ -1154,6 +1168,30 @@ def test_zinogre_topples_end_in_the_stamp():
         assert all(m.moves[n].own and not m.moves[n].steer.walls for n in steps[:-1])
         assert m.moves[steps[1]].length == 78 and m.moves[steps[1]].carrier is None
     assert sum(mv.own for mv in m.moves.values()) <= M.OWN_MOVES
+
+
+def test_zinogre_cuts_its_tail_below_half():
+    m = M.load(PORTS / "zinogre.toml")
+    assert [n for n, p in m.parts.items() if p.sever_below] == ["tail"]
+    assert m.parts["tail"].severable and m.parts["tail"].sever_below == 50
+    assert m.behaviour.natural_rage
+
+
+def test_enrage_and_calm_play_nothing_alone():
+    m = _chain(blk("on_combat_entered"), blk("enrage"), play=None)
+    assert B.compile(m) == [Rule(None, on="combat_entered", effects=[("enrage", 0, 0)])]
+    assert B.KINDS["enrage"].role == B.KINDS["calm"].role == "effect"
+    assert not B.KINDS["enrage"].params and not B.KINDS["calm"].params
+    with pytest.raises(ManifestError, match="unknown param"):
+        M.check(graph({"b1": blk("calm", by=1)}))
+
+
+def test_natural_rage_is_on_unless_the_graph_says():
+    m = graph({})
+    assert m.behaviour.natural_rage and "natural_rage" not in M.dumps(m)
+    m.behaviour.natural_rage = False
+    assert "[behaviour]\nnatural_rage = false" in M.dumps(m)
+    assert M.loads(M.dumps(m)).behaviour.natural_rage is False
 
 
 def test_brute_has_no_rules():

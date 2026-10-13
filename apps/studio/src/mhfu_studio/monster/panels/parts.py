@@ -132,7 +132,16 @@ class PartsPanel(kit.Panel):
             "Name", tip="Names the picked part in your manifest", on=self._name_part
         )
         self.name_row = kit.row(self.part_name, self.name_button)
-        for w in (self.summary, self.orphans, self.parts, self.name_row):
+        self.sever = kit.integer(
+            tip="The picked part can be cut off only once the monster's HP is under this percent."
+            " 0: at any HP.",
+            lo=0,
+            hi=100,
+            on=self._sever_below,
+        )
+        self.sever_form = kit.Form()
+        self.sever_form.row("Severable below HP %", self.sever)
+        for w in (self.summary, self.orphans, self.parts, self.name_row, self.sever_form):
             parts.body.addWidget(w)
         lay.addWidget(parts)
 
@@ -337,6 +346,17 @@ class PartsPanel(kit.Panel):
                 self.ws.edit(f"part {part} = {name}", lambda: sess.name_part(part, name))
 
         self._act("name part", run)
+
+    def _sever_below(self, pct: int) -> None:
+        part = self.ws.selected_part
+
+        def run() -> None:
+            sess = self._session()
+            if part is not None:
+                msg = f"part {part}: cut only below {pct}% HP" if pct else f"part {part}: any HP"
+                self.ws.edit(msg, lambda: sess.set_sever_below(part, pct))
+
+        self._act("sever below", run)
 
     def _pick_volume(self, index: object) -> None:
         if isinstance(index, int):
@@ -582,6 +602,11 @@ class PartsPanel(kit.Panel):
         if naming and ws.selected_part is not None:
             self.name_button.setText(f"Name part {ws.selected_part}")
             kit.put(self.part_name, ws.part_name_buf)
+        part = ws.selected_part
+        cuts = sess is not None and part is not None and sess.severable(part)
+        self.sever_form.setVisible(cuts)
+        if sess is not None and part is not None and cuts:
+            kit.put(self.sever, sess.sever_below(part) or 0)
 
     def _volumes(self, sess: PartSession | None, port: bool) -> None:
         ws = self.ws

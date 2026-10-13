@@ -4,7 +4,8 @@
 module from the same build. `mhfu_port.lua`'s `P.define` reads it when a mod gives no `moves`
 or `rules`. A rule carries its `conds` and `effects` as `{ op, arg, value }` with the board
 indices resolved, its `signal` index and, for a path that plays nothing, `no_play`; `vars` and
-`signals` name those indices for `port:var` and `port:fire`.
+`signals` name those indices for `port:var` and `port:fire`. `sever_below` (the tail-cut gate's HP
+percent) and `natural_rage = false` appear only when the manifest sets them.
 
 A pair move goes as the runtime paints it on its host pair. An own move goes as the move player
 takes it (`mhfu.move_play`): its clip's executor entry and, for `turn = "clip"`, its turn keys,
@@ -58,6 +59,11 @@ def build_of(text: str) -> int:
     "any"); 0 for a text without one."""
     found = BUILD.search(text)
     return int(found.group(1), 16) if found else 0
+
+
+def sever_below(m: Manifest) -> int | None:
+    """The HP percent the tail-cut gate holds, from the one part that sets it."""
+    return next((p.sever_below for p in m.parts.values() if p.sever_below is not None), None)
 
 
 def carrier(m: Manifest, name: str) -> Pair:
@@ -303,6 +309,10 @@ def lua(
     for k, names in (("vars", behaviour.vars(m)), ("signals", behaviour.signals(m))):
         if names:
             out.append(f"  {k} = {lua_value(names)},")
+    if (pct := sever_below(m)) is not None:
+        out.append(f"  sever_below = {pct},")
+    if not m.behaviour.natural_rage:
+        out.append("  natural_rage = false,")
     if tip is not None:
         out.append(f"  tip = {lua_value(tip.pairs)},")
     out += ["}", ""]
