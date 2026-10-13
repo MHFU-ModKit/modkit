@@ -99,12 +99,12 @@ def _signal(s: Reader, cfg: int, m: Manifest, t: Trigger) -> str:
 
 def _enrage(s: Reader, cfg: int, m: Manifest, t: Trigger) -> str:
     live.set_rage(s, cfg, True)
-    return "asked the game to enrage the monster (no effect while it is enraged)"
+    return "asked the game to enrage the monster; nothing happens if it already is"
 
 
 def _calm(s: Reader, cfg: int, m: Manifest, t: Trigger) -> str:
     live.set_rage(s, cfg, False)
-    return "asked the game to calm the monster (no effect while it is calm)"
+    return "asked the game to calm the monster; nothing happens if it already is"
 
 
 FIRE: dict[str, Writer] = {"on_signal": _signal, "on_enraged": _enrage, "on_calmed": _calm}
