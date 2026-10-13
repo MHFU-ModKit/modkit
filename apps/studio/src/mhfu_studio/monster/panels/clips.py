@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from mhfu_port import continuity
 from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
@@ -50,6 +51,8 @@ STATUS = {
     clips.UNCHECKABLE: "unchecked",
 }
 UNPLACED = "in no anim: the base monster has no anim left for it"
+ORDERS = (("id", "By id"), ("fit", "Fits after the one on screen"))
+FIT_COLUMN = 5
 
 
 def _page() -> tuple[QWidget, QVBoxLayout]:
@@ -110,12 +113,27 @@ class ClipsPanel(kit.Panel):
         )
         self.filter.textChanged.connect(self._filter)
         lay.addWidget(self.filter)
+        self.order = kit.Segmented(
+            list(ORDERS),
+            tip="By id: the original's order. Fits after the one on screen: best first by how"
+            " well each clip's first pose continues where the clip on screen ends, to find the"
+            " next part of a chain.",
+            on=lambda v: self.studio.act(
+                "order clips", lambda: setattr(self.ws, "clip_order", v)
+            )(),
+            current=ws.clip_order,
+        )
+        self.order_note = kit.label(role="muted")
+        lay.addWidget(kit.row(self.order, stretch=True))
+        lay.addWidget(self.order_note)
         self.table = kit.Table(
-            ["Id", "Anim", "Frames", "Travel", "Name"],
+            ["Id", "Anim", "Frames", "Travel", "Name", "Fit", "Used in"],
             tip="Every clip of the original by its MHP3rd id (stream x 100 + slot), and the anim"
             " that plays it: what a script passes to force it. Click one, or step with the arrow"
             " keys, to play it from the start; a clip that repeats says loop after its frames;"
-            " Travel is how far the clip carries the body.",
+            " Travel is how far the clip carries the body; Fit, when ordered by it, is the mean"
+            " angle between the clip on screen's last pose and this clip's first; Used in names"
+            " the moves that play it.",
             swatch_column=1,
         )
         self.table.picked.connect(self._clicked)
@@ -374,8 +392,9 @@ class ClipsPanel(kit.Panel):
         kit.put(self.filter, ws.clip_filter)
         needle = ws.clip_filter.strip().lower()
         speed = DEFAULT_SPEED if vp is None or vp.actor is None else vp.playback.speed
+        fit = self._fits()
         rows, data, colors, tips, levels = [], [], [], [], []
-        for r in self._rows:
+        for r in rated_first(self._rows, fit):
             cov = None if r.entry is None else vocab.coverage.slots.get(r.entry)
             text = " ".join(
                 [
@@ -384,6 +403,7 @@ class ClipsPanel(kit.Panel):
                     r.name or "unnamed",
                     kind_text(cov),
                     r.label,
+                    *r.used,
                 ]
             )
             if needle and needle not in text.lower():
@@ -396,11 +416,13 @@ class ClipsPanel(kit.Panel):
                     f"{r.frames} loop" if r.loop else str(r.frames),
                     f"{net:.0f}" if net >= 1.0 else "",
                     r.name,
+                    fit_text(fit.get(r.id)) if r.id is not None else "",
+                    ", ".join(r.used),
                 )
             )
             data.append(r.key)
             colors.append(None if cov is None else COVERAGE[cov.kind])
-            tips.append(row_tip(r, cov, speed))
+            tips.append(row_tip(r, cov, speed, fit.get(r.id) if r.id is not None else None))
             levels.append(level_of(cov))
         playing = self._playing()
         with QSignalBlocker(self.table):
@@ -409,6 +431,19 @@ class ClipsPanel(kit.Panel):
                 self.table.clearSelection()
             else:
                 self.table.select_data(playing)
+
+    def _fits(self) -> dict[int, float]:
+        """How well each clip follows the one on screen, when the table is ordered by it."""
+        ws = self.ws
+        kit.put(self.order, ws.clip_order)
+        by_fit = ws.clip_order == "fit"
+        self.table.setColumnHidden(FIT_COLUMN, not by_fit)
+        fit = ws.fits_after() if by_fit else {}
+        self.order_note.setVisible(by_fit and not fit)
+        self.order_note.setText(
+            ws.ends_note or "Play a clip of the original to rank the rest by it"
+        )
+        return fit
 
     def _editor(self, vocab: Vocabulary) -> None:
         ws = self.ws
@@ -476,12 +511,24 @@ def level_of(cov: SlotCoverage | None) -> Level | None:
     return "warning" if cov is not None and cov.kind == clips.FILLER else None
 
 
-def row_tip(r: SourceClip, cov: SlotCoverage | None, speed: float) -> str:
+def rated_first(rows: list[SourceClip], fit: dict[int, float]) -> list[SourceClip]:
+    """`rows` with the clips `fit` rates first, best first, the rest as they were."""
+    place = {cid: k for k, cid in enumerate(fit)}
+    return sorted(rows, key=lambda r: len(place) if r.id is None else place.get(r.id, len(place)))
+
+
+def fit_text(degrees: float | None) -> str:
+    return "" if degrees is None else f"{degrees:.0f}\u00b0 {continuity.word(degrees)}"
+
+
+def row_tip(r: SourceClip, cov: SlotCoverage | None, speed: float, fit: float | None = None) -> str:
     lines = []
     if r.id is not None:
         lines.append(f"MHP3rd clip {r.id}: stream {r.stream}, slot {r.id % 100}")
     lines.append(cov.why() if cov else UNPLACED if r.entry is None else "Kind unknown")
     lines.append(f"{wall_clock(r.frames, speed):.2f} s at speed {speed:.2f}")
+    if fit is not None:
+        lines.append(f"{fit_text(fit)} from the end of the clip on screen")
     if r.label:
         lines.append(r.label)
     return "\n".join(lines)

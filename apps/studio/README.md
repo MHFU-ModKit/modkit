@@ -54,6 +54,12 @@ builds the port again. Play in game holds the clip's anim on the running game's 
 plays the build last injected, so a clip placed since the manifest was saved is refused until it
 is saved and injected again (`mhfu-port inject`).
 
+Used in names the moves that play a clip. Order by "Fits after the one on screen" sorts the list
+by how well each clip's first pose continues where the playing clip ends (the mean angle between
+the two poses, the body's heading left out), to find the next part of a chain: up to 10 degrees is
+good, up to 20 fair, past it poor. It rates poses only, so a part the engine blends into can score
+poor; the picker's Neighbours order lists clips by source number instead.
+
 ## A port's own moves
 
 An own move plays one clip on every body part through the framework's move player, with attacks of
@@ -73,6 +79,15 @@ injected from the file. It writes only the modules that changed, and asks for th
 moves module just built, so a new or edited move plays once the game has re-run that module.
 A move asked while the monster has noticed the hunter but is not yet in combat waits for combat,
 so the "!" and the howl play out; Force beside the button plays it at once.
+
+Moves that hand to one another by Then are a sequence: the table groups them under the first,
+and the picked move's Sequence strip shows one chip per step. Add step after lists the clips,
+best fit after the step's clip first, and makes the one you click a new own move that follows it;
+Change clip, Remove step, Earlier, Later and Split here edit the chain, each one undo step; a
+pair move is shown but never edited here. Play sequence plays the steps back to back, each
+starting where the last stood, facing as it faced, and the Timeline's bar above the transport
+shows the steps (click one to pick it). Picking or playing anything else starts clips where
+they normally start.
 
 Under the moves are the rules (`[[rule]]`), each read as a sentence ("after the lunge for 20
 frames, within 1200, play stamp"): New rule plays the picked move once when the monster notices

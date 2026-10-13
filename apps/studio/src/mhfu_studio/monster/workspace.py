@@ -30,7 +30,7 @@ from mhfu.em.intel import (
     SpeciesIntel,
 )
 from mhfu.files import Extracted
-from mhfu_port import layout, slots
+from mhfu_port import continuity, layout, sequence, slots
 from mhfu_port.data import Data
 from mhfu_port.manifest import MOVE_ATTACKS, AttackWindow, Manifest, ManifestError, Move
 from mhfu_port.manifest import Clip as ManifestClip
@@ -49,6 +49,7 @@ from mhfu_studio.monster import (
     inputs,
     move_game,
     rules,
+    sequences,
     species,
 )
 from mhfu_studio.monster.attacks import AttackSession, hitbox_of
@@ -202,6 +203,13 @@ class MonsterWorkspace(Workspace):
         self.host_clip: int | None = None
         self.pair: Pair | None = None
         self.move: str | None = None
+        #: the step of a played sequence on screen (`play_sequence`)
+        self.playing_step: str | None = None
+        #: the played sequence went on to a step since the Timeline last looked
+        self._stepped = False
+        #: how the clip picker orders the clips (`sequences.BY`), and the Clips table (id, fit)
+        self.pick_by = "fit"
+        self.clip_order = "id"
         self.graph = MoveGraph()
         self.clip_filter = ""
         self.show_parts = False
@@ -238,6 +246,10 @@ class MonsterWorkspace(Workspace):
         self._browser: ClipBrowser | None = None
         #: why there is no browser
         self.browser_note = ""
+        #: the donor's end poses and what they were read for (`ends`)
+        self._ends: tuple[object, continuity.Ends | None] | None = None
+        #: why there are none
+        self.ends_note = ""
         self._previews: dict[int, SceneClip] = {}
         #: the scene and the layout it was built with (`_relayout`)
         self._built_for: Scene | None = None
@@ -433,6 +445,7 @@ class MonsterWorkspace(Workspace):
             self.sync()
         if self.vp is not None:
             self.vp.tick(dt)
+            self._advance_sequence()
             self.light_live()
 
     def animating(self) -> bool:
@@ -792,7 +805,7 @@ class MonsterWorkspace(Workspace):
         self.intel_errors.clear()
         self.host_scenes.clear()
         self.hosts, self._survey = None, None
-        self._coverage = self._vocab = None
+        self._coverage = self._vocab = self._ends = None
         if self.doc is not None:
             self.doc.intel = self.host_intel()
 
@@ -1211,12 +1224,16 @@ class MonsterWorkspace(Workspace):
         self.clear_pair()
         self.move, self.picked_window, self.next_window_id = name, None, None
         self.graph.picked = None
+        self.play_move_clip(mv)
+        self.sync_steer()
+
+    def play_move_clip(self, mv: Move) -> None:
+        """Plays `mv`'s clip from frame 0."""
         slot = self.move_slot(mv)
         if slot is not None and slot < 0:
             self.play_source(-1 - slot)
         elif slot is not None:
             self.play_slot(slot)
-        self.sync_steer()
 
     def new_move(self, name: str = "") -> None:
         """An own move playing the clip on screen, named after it unless `name`; selected."""
@@ -1314,6 +1331,168 @@ class MonsterWorkspace(Workspace):
         if ok:
             vp.repose()
         return ok
+
+    # sequences (the Moves panel, the Timeline's bar, the Clips table)
+
+    def sequence_of(self, name: str | None = None) -> list[str]:
+        """The moves of the sequence `name` (else the selected move) is in, in order."""
+        m, name = self.manifest, name or self.move
+        if m is None or name is None or name not in m.moves:
+            return []
+        return sequence.chain(m, sequence.head_of(m, name))
+
+    def step_of(self, name: str) -> sequences.Step:
+        """Move `name` as the strip and the bar show it: its clip's frames, else the scene's."""
+        m = self.manifest
+        assert m is not None
+        mv = m.moves[name]
+        c = m.clips.get(mv.clip or "")
+        frames = None if c is None else c.frames
+        slot = self.move_slot(mv)
+        if frames is None and self.scene is not None and slot is not None and slot >= 0:
+            frames = next((k.frames for k in self.scene.clips if k.slot == slot), None)
+        return sequences.Step(name, mv.clip, frames, c.label if c else mv.label, mv.own)
+
+    def ends(self) -> continuity.Ends | None:
+        """The donor's clips' end poses, read once per donor; None with `ends_note` saying why."""
+        m = self.manifest
+        if m is None:
+            return None
+        key = (m.source, m.build)
+        if self._ends is None or self._ends[0] != key:
+            found, note = None, ""
+            try:
+                found = continuity.donor_ends(m, self.games())
+            except (OSError, ValueError) as e:
+                note = f"no original moveset to rate the clips ({e})"
+            self._ends, self.ends_note = (key, found), note
+        return self._ends[1]
+
+    def fits_after(self, cid: int | None = None) -> dict[int, float]:
+        """Degrees from the end of donor clip `cid` (else the one on screen) to the start of
+        each donor clip, best first; empty without the donor or the clip."""
+        cid = self.playing_clip() if cid is None else cid
+        e = self.ends()
+        if e is None or cid is None or cid not in e.ids:
+            return {}
+        return dict(continuity.fits_after(e, cid, itself=True))
+
+    def pick_rows(self, after: str | None) -> list[sequences.PickRow]:
+        """The clips of the manifest as a step after clip `after`, in the picker's order."""
+        m = self.manifest
+        return [] if m is None else sequences.pick_rows(m, self.ends(), after, self.pick_by)
+
+    def add_step(self, clip: str) -> None:
+        """A step playing `clip` after the selected move; selected."""
+        doc, m, after = self.doc, self.manifest, self.move
+        if doc is None or m is None or after is None:
+            return
+        new = sequence.step_name(m, sequence.head_of(m, after))
+        if self.edit("", lambda: sequences.append_step(doc, after, clip)):
+            self.select_move(new)
+
+    def remove_step(self) -> None:
+        """The selected step goes; the one before it, else after it, is selected."""
+        doc, name, steps = self.doc, self.move, self.sequence_of()
+        if doc is None or name not in steps:
+            return
+        i = steps.index(name)
+        near = steps[i - 1] if i else steps[1] if len(steps) > 1 else None
+        if self.edit("", lambda: sequences.remove_step(doc, name)):
+            if near is not None:
+                self.select_move(near)
+            else:
+                self.move = None
+                self.sync_steer()
+
+    def move_step(self, delta: int) -> None:
+        """The selected step one place earlier (-1) or later (1)."""
+        doc, name = self.doc, self.move
+        if doc is not None and name is not None:
+            self.edit("", lambda: sequences.move_step(doc, name, delta))
+
+    def split_step(self) -> None:
+        """The selected step starts a sequence of its own."""
+        doc, name = self.doc, self.move
+        if doc is not None and name is not None:
+            self.edit("", lambda: sequences.split(doc, name))
+
+    def set_step_clip(self, clip: str) -> None:
+        """The selected step plays `clip` instead, from its start."""
+        doc, name = self.doc, self.move
+        if (
+            doc is not None
+            and name is not None
+            and self.edit("", lambda: sequences.set_clip(doc, name, clip))
+        ):
+            self.select_move(name)
+
+    def play_sequence(self) -> None:
+        """Plays the selected move's sequence from its head, step after step."""
+        steps = self.sequence_of()
+        if not steps:
+            self.message = "pick a move first"
+            return
+        self._play_step(steps[0])
+
+    def _play_step(self, name: str) -> None:
+        """Plays move `name` once through, turning as it steers."""
+        m, vp = self.manifest, self.vp
+        assert m is not None
+        mv = m.moves[name]
+        self.select_move(name)
+        if mv.pair is not None:
+            self.play_move_clip(mv)
+        if vp is not None and vp.clip is not None:
+            vp.playback.loop = False
+            vp.playback.play()
+            self.playing_step = name
+
+    def _advance_sequence(self) -> None:
+        """The played sequence on to the step its step hands to once that has ended: the clip
+        played out, or the move's Length reached. Something else picked or played stops it."""
+        m, vp, name = self.manifest, self.vp, self.playing_step
+        mv = None if m is None or name is None else m.moves.get(name)
+        if mv is None or vp is None or vp.clip is None:
+            self.playing_step = None
+            return
+        if self.move != name or self.move_slot(mv) != vp.clip.slot:
+            self.playing_step = None
+            return
+        pb = vp.playback
+        if not (pb.at_end or (mv.length and pb.phase >= mv.length * pb.speed)):
+            return
+        self.playing_step = None
+        self._stepped = True
+        if mv.after is not None:
+            self._play_after(mv.after)
+
+    def _play_after(self, name: str) -> None:
+        """Plays step `name` where the step on screen stands: facing as it faces, from its root."""
+        from mhfu_studio.monster.render.playback import carry_after
+
+        vp = self.vp
+        assert vp is not None and vp.actor is not None and vp.clip is not None
+        a, clip, phase = vp.actor, vp.clip, vp.playback.phase
+        was = a.steer, a.carry
+        self._play_step(name)
+        if self.playing_step == name and vp.clip is not None:
+            carry = carry_after(
+                a.scene,
+                clip,
+                phase,
+                vp.clip,
+                strip_root=a.strip_root,
+                steer=was[0],
+                speed=vp.playback.speed,
+                carry=was[1],
+            )
+            vp.set_carry(carry)
+
+    def take_stepped(self) -> bool:
+        """Whether the played sequence went on (or ended) since the last ask."""
+        stepped, self._stepped = self._stepped, False
+        return stepped
 
     # the attack windows of the selected own move
 
@@ -1659,7 +1838,8 @@ class MonsterWorkspace(Workspace):
         assert self.scene is not None
         c, found = self.scene.clip(slot), self.manifest_clip(slot)
         name, label = (found[0], found[1].label) if found else ("", "")
-        return SourceClip(None, slot, c.frames, c.loop, name, label)
+        used = tuple(sequences.used_in(self.manifest, name)) if name and self.manifest else ()
+        return SourceClip(None, slot, c.frames, c.loop, name, label, used)
 
     def source_clip(self, cid: int) -> SceneClip:
         """What plays donor clip `cid`: the open build's anim holding it, else its preview."""

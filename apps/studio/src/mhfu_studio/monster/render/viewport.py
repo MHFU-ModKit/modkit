@@ -25,7 +25,7 @@ from mhfu_studio.shell.viewport import Viewport, depth_write_off
 from .ground import Ground, point_cloud_geometry
 from .hitboxes import HitboxOverlay, Palette, Volume
 from .mesh import SkinnedMesh, default_pose
-from .playback import Playback, pose_at
+from .playback import Carry, Playback, pose_at
 from .skeleton import SkeletonOverlay
 
 OVERLAYS: tuple[tuple[str, Palette], ...] = (("hitboxes", "part"), ("attacks", "set"))
@@ -65,6 +65,8 @@ class Actor:
         self.strip_root = False
         #: an own move's turn instead of the clip's
         self.steer: Steer | None = None
+        #: where the steps of a played sequence before this clip left the body
+        self.carry: Carry | None = None
 
     def pose(self, clip: Clip | None, frame: float = 0.0) -> None:
         self.clip, self.frame = clip, float(frame)
@@ -75,6 +77,7 @@ class Actor:
             strip_root=self.strip_root,
             steer=self.steer,
             speed=self.playback.speed,
+            carry=self.carry,
         )
         self.mesh.set_pose(p)  # bind included: the tail tip moves onto the tail
         self.skeleton.set_positions(p.joints)
@@ -88,7 +91,8 @@ class Actor:
         self.pose(self.clip, self.frame)
 
     def play(self, clip: Clip | None, frame: float = 0.0) -> None:
-        """Binds `clip` to the transport, posed at `frame`."""
+        """Binds `clip` to the transport, posed at `frame`, where the clip normally starts."""
+        self.carry = None
         self.playback.set_clip(clip)
         if clip is None:
             self.pose(None)
@@ -256,6 +260,13 @@ class MonsterViewport(Viewport):
         """The port turns as an own move's `steer` says, None as its clip does."""
         if self.actor is not None and self.actor.steer != steer:
             self.actor.steer = steer
+            self.actor.repose()
+
+    def set_carry(self, carry: Carry | None) -> None:
+        """The port starts its clip where a played sequence's steps left it; the next clip played
+        starts where clips start."""
+        if self.actor is not None and self.actor.carry != carry:
+            self.actor.carry = carry
             self.actor.repose()
 
     def set_pose(self, clip: Clip | None, frame: float = 0.0) -> None:
