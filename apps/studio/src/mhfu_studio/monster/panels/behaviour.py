@@ -21,14 +21,16 @@ from typing import TYPE_CHECKING
 from mhfu_port import behaviour as model
 from mhfu_port.behaviour import KINDS, Kind, Path, Trigger
 from mhfu_port.manifest import Manifest, ManifestError, Move
-from PySide6.QtGui import QShowEvent
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QHideEvent, QShowEvent
 from PySide6.QtWidgets import QHBoxLayout, QMenu, QSizePolicy, QVBoxLayout, QWidget
 
 from mhfu_studio.monster import behaviour as graph
+from mhfu_studio.monster import rule_game
 from mhfu_studio.monster.behaviour import ALL, CANVAS, ORDER
 from mhfu_studio.monster.panels import rows, triggers
 from mhfu_studio.monster.panels.common import kind
-from mhfu_studio.monster.panels.node_graph import GraphView, LinkSpec, NodeSpec
+from mhfu_studio.monster.panels.node_graph import FrameSpec, GraphView, LinkSpec, NodeSpec
 from mhfu_studio.monster.panels.properties import Detail, Play, Plays, PropertyBar
 from mhfu_studio.monster.panels.widgets import NoScene
 from mhfu_studio.shell.overlay import Ink
@@ -87,6 +89,8 @@ class BehaviourPanel(kit.Panel):
         self._frame_after: str | None = None
         self._scope: tuple[str, str] | None = None
         self._outlined: object = None
+        #: the rows as last laid out (nodes, wires, frames), for the marks to draw again
+        self._laid: tuple[list[NodeSpec], list[LinkSpec], list[FrameSpec]] | None = None
         self._palette = ALL
 
         self.title = kit.label(role="title", wrap=False)
@@ -122,6 +126,22 @@ class BehaviourPanel(kit.Panel):
             on=studio.act("spread nodes", lambda: ws.edit("", self._spread)),
             icon="ph.arrows-out-simple",
         )
+        self.watch = kit.check(
+            "Watch the game",
+            tip="Marks every rule with how often the running game has fired it, read once a"
+            " second while this tab is open. The game must run this port's rules: Play in game"
+            " sends them",
+            on=lambda on: studio.act("watch the game", lambda: self._watching(on))(),
+            checked=ws.watch.on,
+        )
+        self.live = kit.Alert("", None, role="muted", wrap=False)
+        self.live.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.ticker = QTimer(self)
+        self.ticker.setInterval(round(rule_game.PERIOD * 1000))
+        self.ticker.timeout.connect(studio.guard("watch the game", self._tick))
+        self.glow = QTimer(self)
+        self.glow.setSingleShot(True)
+        self.glow.timeout.connect(self._marks)
         self.view = GraphView()
         self.view.set_palette(graph.palette())
         v = self.view
@@ -155,7 +175,15 @@ class BehaviourPanel(kit.Panel):
         lay.setSpacing(6)
         lay.addWidget(
             kit.row(
-                self.title, self.hint, self.mode, self.add_rule, self.fit, self.spread, stretch=True
+                self.title,
+                self.hint,
+                self.mode,
+                self.add_rule,
+                self.fit,
+                self.spread,
+                self.watch,
+                self.live,
+                stretch=True,
             )
         )
         lay.addWidget(self.view, 1)
@@ -447,6 +475,81 @@ class BehaviourPanel(kit.Panel):
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
         super().showEvent(event)
         self._show_bar()  # a game may have started while the tab was away
+        self._arm()
+
+    def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802
+        super().hideEvent(event)
+        self._arm()
+
+    # Watch the game: the marks
+
+    def _watching(self, on: bool) -> None:
+        self.ws.watch.set(on)
+        self._arm()
+        if on:
+            self.ws.poll_game()
+        self._marks()
+
+    def _arm(self) -> None:
+        """Polls once a second while the toggle is on and this tab is shown, else not at all."""
+        if self.ws.watch.on and self.isVisible():
+            if not self.ticker.isActive():
+                self.ticker.start()
+        else:
+            self.ticker.stop()
+
+    def _tick(self) -> None:
+        if self.ws.poll_game():
+            self._marks()
+
+    def _marks(self) -> None:
+        """Draws the status and the marks again, nothing else of the canvas."""
+        self._status()
+        if self.ws.manifest is None or self._read is None:
+            return
+        if self._laid is not None:
+            nodes, links, frames = self._laid
+            self.view.show(nodes, links, self._marked(frames))
+        if self.ws.watch.lit():
+            self.glow.start(round(rule_game.FLASH * 1000) + 50)
+
+    def _status(self) -> None:
+        """The header's words on the watch, and the outline's totals."""
+        w = self.ws.watch
+        self.live.setVisible(w.on)
+        self.live.setText(w.status)
+        self.live.setToolTip(w.status)
+        self.live.set_level(None if w.fires is not None else "warning")
+        fires = w.fires
+        totals = (
+            {}
+            if fires is None
+            else {t.key: triggers.times(triggers.total(t, fires)) for t in self._triggers}
+        )
+        self.outline.set_fired(
+            {} if fires is None else {ALL: triggers.times(sum(fires.values())), **totals}
+        )
+
+    def _marked(self, frames: list[FrameSpec]) -> list[FrameSpec]:
+        """`frames` with how often the game fired each rule after its title, quiet at none and
+        outlined when the count just rose."""
+        fires, plan = self.ws.fires, self._plan
+        if fires is None or plan is None:
+            return frames
+        lit, place = self.ws.watch.lit(), {r.id: r.rank for r in plan.rows}
+        out = []
+        for fr in frames:
+            rank = place.get(fr.id)
+            if rank is None:  # a rule with no move yet is checked by nothing
+                out.append(fr)
+                continue
+            n = fires.get(rank, 0)
+            out.append(
+                dataclasses.replace(
+                    fr, mark=f" {triggers.DOT} {triggers.times(n)}", muted=n == 0, lit=rank in lit
+                )
+            )
+        return out
 
     def sync(self) -> None:
         m = self.ws.manifest
@@ -577,6 +680,7 @@ class BehaviourPanel(kit.Panel):
         blocks, moves = self._blocks(m, r), self._moves(m)
         t = self._current()
         free = t is None and self.ws.all_view == CANVAS
+        self._laid = None
         if free:
             self._plan = None
             self._canvas(m, r, blocks + moves)
@@ -597,6 +701,7 @@ class BehaviourPanel(kit.Panel):
         if self._palette != (ALL if free else ""):  # rows take no free blocks
             self._palette = ALL if free else ""
             self.view.set_palette(graph.palette() if free else [])
+        self._status()
         here = (scope, self.ws.all_view)
         if self._scope is not None and self._scope != here:
             self.view.fit()
@@ -643,7 +748,8 @@ class BehaviourPanel(kit.Panel):
         links = list(plan.links)
         self.view.show([dataclasses.replace(n, at=(0.0, 0.0)) for n in plan.nodes], links)
         placed, frames = rows.place(plan, self.view.sizes())
-        self.view.show(placed, links, frames)
+        self._laid = (placed, links, frames)
+        self.view.show(placed, links, self._marked(frames))
 
     def _tips(self, m: Manifest, played: Mapping[str, tuple[int, ...]]) -> dict[str, str]:
         """Each move's tip: the rules that play it, by rank and trigger, and its sequence."""
