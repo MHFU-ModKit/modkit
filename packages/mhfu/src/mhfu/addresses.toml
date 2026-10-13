@@ -306,6 +306,7 @@ PAC_COUNT = { eu = 0x088B89A8, type = "fn", doc = "pac_header::count; faults on 
 
 # --- framework regions ---
 MAIN_RAM = { eu = 0x08000000, type = "bytes", doc = "start of main RAM (kernel partition below USER_RAM); the lower bound of the framework's pointer checks" }
+FRAMEWORK_PRX = { eu = 0x09D65000, type = "bytes", doc = "where PPSSPP loads mhfu_framework.prx; the framework's partition blocks (em_vhook's, the move player's) sit just above its image, so a scan for them starts here" }
 PRX_STACK_GUARD = { eu = 0x09D88000, type = "bytes", doc = "framework-owned 16 KB block reserved when the PRX image cannot be: where the engine's construction-thread stack meets the PRX" }
 CLI_BRIDGE_BLOCK = { eu = 0x0A7F0000, type = "bytes", doc = "framework-owned command block (struct CLI_BRIDGE) the debug CLI writes; needs memory=64" }
 CLONE_POOL = { eu = 0x0A800000, type = "bytes", doc = "framework-owned entity-clone pool in the extra-RAM window, up to EXTRA_RAM_END" }
@@ -1015,6 +1016,13 @@ RNG = { offset = 0x34, type = "u32", doc = "xorshift32 state for CHANCE" }
 ENTITY = { offset = 0x38, type = "ptr", doc = "the monster it belongs to" }
 RAGE = { offset = 0x3C, type = "u8", doc = "a rage request Lua queued (mhfu_em_rage): 1 enrage, 2 calm, 0 none; the brain applies it as the enrage or calm effect in its next AI frame and clears it" }
 
+[struct.EM_BLOCK]
+doc = "em_vhook's partition block from its config block on (em_vhook.cpp place_block): the config block, the tail's map and the cut's wait, then the board; the block's address moves with the PRX build, a debugger finds it by EM_CFG.CANARY"
+size = 0xD68
+[struct.EM_BLOCK.fields]
+CFG = { offset = 0x00, type = "EM_CFG", doc = "the config block" }
+BOARD = { offset = 0xD08, type = "EM_BOARD", doc = "the board, after the tail: sizeof(tail_t) is 0x28" }
+
 [enum.EM_COND]
 doc = "a brain rule's condition, EM_OP.OP - 1: hp_at_least/hp_below HP percent of MAX_HP against VALUE; broken/not_broken part ARG in EM_BOARD.BROKEN; enraged/calm ENTITY.FLAGS 0x20; side the hunter in a sector of the monster's facing in mask ARG (90 degrees each, left the monster's own); chance VALUE percent; var_* EM_BOARD.VARS[ARG] against VALUE"
 names = ["hp_at_least", "hp_below", "broken", "not_broken", "enraged", "calm", "side", "chance", "var_at_least", "var_below", "var_equal"]
@@ -1024,9 +1032,11 @@ doc = "what a brain rule changes when it fires, EM_OP.OP - 1: var_add adds VALUE
 names = ["var_add", "var_set", "enrage", "calm"]
 
 [struct.EM_CFG]
-doc = "em_vhook's config block in partition memory, which its stubs read by the offsets in em_vhook_stubs.h; listed here: the rules"
+doc = "em_vhook's config block in partition memory, which its stubs read by the offsets in em_vhook_stubs.h; listed here: the AI tick count, the canary and the rules"
 size = 0xCE0
 [struct.EM_CFG.fields]
+AI_TICKS = { offset = 0x10, type = "u32", doc = "AI ticks of the wrapped species since the quest began; a rule's LAST_FIRE is on this clock" }
+CANARY = { offset = 0x1C, type = "u32", doc = "0x5645484B ('VEHK'), written once at init and never again: how a debugger finds the block, which sits in partition memory at an address that moves with the PRX build" }
 RULES = { offset = 0xE0, type = "EM_RULE[48]", doc = "the brain's rules: their count is the capacity a port's manifest and mhfu_port.lua read" }
 
 [enum.MONSTER_EVENT_KIND]
