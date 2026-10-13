@@ -89,15 +89,16 @@ starting where the last stood, facing as it faced, and the Timeline's bar above 
 shows the steps (click one to pick it). Picking or playing anything else starts clips where
 they normally start.
 
-The Behaviour dock (the button under the moves, or View > Panels) draws the port's `[behaviour]`
-graph: every move and every block is a node, and right-click adds a block (the palette is
-`mhfu_port.behaviour.KINDS`). A wire from a block's `out` feeds the next block's `in`, or plays a
-move at its `play`; a move's `while playing` starts a path while it plays, and its `then` hands to
-another move (`after`). Any other wire is refused in the status line. `#2` on a block is its path's
-rank (higher on the canvas is checked first, but every path that plays nothing runs before all
-the others), `⚠` a path the game refuses (the tip says why),
-faded a block on no complete path. Delete removes blocks and their links; a move is deleted in
-Moves. Every gesture is one undo step.
+The Behaviour tab beside the 3D view (the button under the moves, or View > Panels) draws the
+port's `[behaviour]` graph: every move and block is a node, and right-click adds a block (the
+palette is `mhfu_port.behaviour.KINDS`). A wire from a block's `out` feeds the next block's `in`,
+or plays a move at its `play`; a move's `while playing` starts a path while it plays, and its
+`then` hands to another move (`after`). Any other wire is refused in the status line. `#2` is a
+block's path rank (higher on the canvas is checked first, but every path that plays nothing runs
+before all the others), `⚠` a path the game refuses (the tip says why), faded a block on no
+complete path. Delete removes blocks and their links; a move is
+deleted in Moves. Every gesture is one undo step. The tab has no docks until you open one on it,
+and keeps them apart from the 3D view's; Findings stays open across tabs.
 
 Effect blocks (violet) change the monster's counters and flags when their path fires. A path may
 end at an effect with nothing to play: it applies its effects, keeps its `#n` on that block, and

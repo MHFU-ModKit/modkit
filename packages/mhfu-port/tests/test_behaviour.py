@@ -121,6 +121,77 @@ def test_defaults_fill_in():
     assert B.params(blk("distance", hi=9, lo=2)) == {"lo": 2, "hi": 9}
 
 
+# summaries
+
+WORDS = [
+    ("on_noticed", {}, "sees the hunter"),
+    ("on_combat_entered", {}, "enters combat"),
+    ("on_combat_left", {}, "leaves combat"),
+    ("on_flinch", {}, "any part"),
+    ("on_flinch", {"part": 3}, "part 3"),
+    ("on_part_broken", {"part": 0}, "head"),
+    ("on_tail_cut", {}, "tail cut off"),
+    ("on_enraged", {}, "becomes enraged"),
+    ("on_calmed", {}, "calms down"),
+    ("on_signal", {"name": "roar"}, "roar"),
+    ("any_time", {}, "between moves"),
+    ("idle", {}, "between moves"),
+    ("host_state", {"mains": [1, 4]}, "states 1, 4"),
+    ("played_for", {"frames": 15}, "15 frames or more"),
+    ("played_for", {"frames": 1}, "1 frame or more"),
+    ("distance", {"lo": 250.0, "hi": 1000.0}, "250 \u2013 1000"),
+    ("distance", {"lo": 250.5}, "from 250.5"),
+    ("distance", {}, "any distance"),
+    ("hunter_moving", {"way": "away"}, "moving away"),
+    ("cooldown", {"frames": 30}, "30 frames"),
+    ("limit", {"times": 1}, "1 time"),
+    ("limit", {"times": 3}, "3 times"),
+    ("force", {}, "plays at once"),
+    ("mode", {"mode": 3}, "mode 3"),
+    ("monster_hp", {"lo": 30, "hi": 50}, "30 \u2013 50 %"),
+    ("monster_hp", {"lo": 30}, "30 % or more"),
+    ("monster_hp", {}, "any HP"),
+    ("part_broken", {"part": 0}, "head broken"),
+    ("part_broken", {"part": 0, "state": "not broken"}, "head not broken"),
+    ("rage", {}, "enraged"),
+    ("hunter_side", {"sides": ["front", "left"]}, "front, left"),
+    ("chance", {"percent": 30}, "30 %"),
+    ("counter_is", {"counter": "hits"}, "hits at least 1"),
+    ("counter_is", {"counter": "hits", "test": "below", "value": 3}, "hits below 3"),
+    ("flag_is", {"flag": "in_combat"}, "in_combat is set"),
+    ("counter_add", {"counter": "hits"}, "hits +1"),
+    ("counter_add", {"counter": "hits", "by": -3}, "hits -3"),
+    ("counter_set", {"counter": "hits", "to": 0}, "hits to 0"),
+    ("flag_set", {"flag": "in_combat", "state": "clear"}, "in_combat to clear"),
+]
+
+
+def test_every_kind_words_its_own_summary():
+    assert [k for k, v in B.KINDS.items() if v.summary is None] == []
+    assert {k for k, _, _ in WORDS} == set(B.KINDS)
+
+
+@pytest.mark.parametrize(("kind", "values", "says"), WORDS)
+def test_a_block_is_summed_up_in_words(kind, values, says):
+    m = graph({}, extra="[parts.head]\nindex = 0\n")
+    assert B.summary(m, blk(kind, **values)) == says
+
+
+def test_a_kind_without_words_gets_the_generic_ones():
+    bare = dataclasses.replace(B.KINDS["distance"], summary=None)
+    assert B._generic(bare)({"lo": 2.0, "hi": 9}) == "nearest 2, farthest 9"
+    assert B._generic(bare)({"lo": 0.0}) == "nearest 0"
+
+
+def test_part_labels_name_the_part_first_then_number_the_rest():
+    m = graph(
+        {}, extra="[parts.head]\nindex = 0\n[parts.neck]\nindex = 0\n[parts.tail]\nindex = 5\n"
+    )
+    labels = B.part_labels(m)
+    assert list(labels)[:2] == [0, 5] and labels[0] == "head" and labels[5] == "tail"
+    assert labels[1] == "part 1" and set(labels) == set(B.PARTS)
+
+
 # paths
 
 
@@ -443,16 +514,14 @@ def test_idle_and_any_time_are_main_states():
 
 def test_idle_and_any_time_say_they_wait_for_own_moves():
     for k in ("any_time", "idle"):
-        assert "between moves" in B.KINDS[k].title and "no own move plays" in B.KINDS[k].tip
+        assert B.KINDS[k].summary({}) == "between moves" and "no own move plays" in B.KINDS[k].tip
 
 
 def test_one_state_block_a_path():
     m = _chain(blk("idle"), blk("host_state", mains=[1]))
     with pytest.raises(ManifestError, match="b1 > b2 plays m: has more than one state block"):
         B.compile(m)
-    with pytest.raises(
-        ManifestError, match="has two 'Base monster idle \\(between moves\\)' blocks"
-    ):
+    with pytest.raises(ManifestError, match="has two 'Idle' blocks"):
         B.compile(_chain(blk("idle"), blk("idle")))
 
 

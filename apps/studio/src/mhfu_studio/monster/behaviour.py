@@ -3,7 +3,7 @@
 """A port's behaviour graph (`mhfu_port.behaviour`) as document edits, and what the canvas shows
 of it.
 
-No toolkit: the Behaviour dock calls these, one undo step per gesture (`Gesture`); a refusal is
+No toolkit: the Behaviour tab calls these, one undo step per gesture (`Gesture`); a refusal is
 the manifest's own `ManifestError`, so its checks are the only ones. Paths, priority, validity
 and references are the package's; this module names the canvas's nodes and ports and reads the
 graph for them.
@@ -180,17 +180,27 @@ def capped(m: Manifest, ps: Sequence[Path] | None = None) -> str | None:
 
 def part_options(m: Manifest, optional: bool) -> list[tuple[str, int | None]]:
     """The parts to pick from: the manifest's named ones, then `part k`; `any` for none."""
-    named: dict[int, str] = {}
-    for name, part in m.parts.items():
-        named.setdefault(part.index, name)
     out: list[tuple[str, int | None]] = [("any", None)] if optional else []
-    out += [(name, k) for k, name in named.items()]
-    out += [(f"part {k}", k) for k in behaviour.PARTS if k not in named]
+    out += [(label, k) for k, label in behaviour.part_labels(m).items()]
     return out
 
 
 def main_options() -> list[tuple[str, int]]:
     return [(str(k), k) for k in behaviour.MAIN_STATES]
+
+
+def options(m: Manifest, kind: str) -> dict[str, list[tuple[str, object]]]:
+    """The (label, value) choices of `kind`'s parts and main states, and the names in use, by
+    param."""
+    out: dict[str, list[tuple[str, object]]] = {}
+    for p in KINDS[kind].params:
+        if p.type == "part":
+            out[p.name] = list(part_options(m, p.optional))
+        elif p.type == "mains":
+            out[p.name] = list(main_options())
+        elif p.type in behaviour.NAMES:
+            out[p.name] = [(n, n) for n in behaviour.names(m, p.type)]
+    return out
 
 
 def palette() -> list[tuple[str, list[tuple[str, str, str]]]]:

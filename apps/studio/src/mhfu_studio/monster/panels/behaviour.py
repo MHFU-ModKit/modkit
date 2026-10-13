@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Behaviour dock: the port's behaviour graph (`mhfu_port.behaviour`) on a node canvas.
+"""The Behaviour tab: the port's behaviour graph (`mhfu_port.behaviour`) on a node canvas.
 
-A node is a move or a block; a wire is a link the manifest stores (`monster/behaviour.py`). The
-document is the owner: every gesture of the canvas arrives as intents, is applied as one undo
-step, and the canvas is shown again from the document.
+A node is a move or a block, drawn compact; a wire is a link the manifest stores
+(`monster/behaviour.py`). The selected node's values and note are edited in the bar under the
+canvas. The document is the owner: every gesture of the canvas and every edit of the bar arrives
+as intents, is applied as one undo step, and is shown again from the document.
 """
 
 from __future__ import annotations
@@ -13,13 +14,14 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from mhfu_port import behaviour as model
-from mhfu_port.behaviour import KINDS
-from mhfu_port.manifest import Manifest, ManifestError
+from mhfu_port.behaviour import KINDS, Kind
+from mhfu_port.manifest import Manifest, ManifestError, Move
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from mhfu_studio.monster import behaviour as graph
 from mhfu_studio.monster.panels.common import kind
-from mhfu_studio.monster.panels.node_graph import NAMES, GraphView, LinkSpec, NodeSpec
+from mhfu_studio.monster.panels.node_graph import GraphView, LinkSpec, NodeSpec
+from mhfu_studio.monster.panels.properties import Detail, PropertyBar
 from mhfu_studio.monster.panels.widgets import NoScene
 from mhfu_studio.shell.overlay import Color, Ink
 from mhfu_studio.ui import kit, theme
@@ -65,6 +67,8 @@ class BehaviourPanel(kit.Panel):
         self._dropped: dict[str, graph.Point] = {}
         #: the block the gesture creates
         self._made: str | None = None
+        #: what the canvas was last drawn from, for the bar
+        self._read: graph.Reading | None = None
 
         self.title = kit.label(role="title", wrap=False)
         self.hint = kit.label(HINT, role="muted", wrap=False)
@@ -88,14 +92,13 @@ class BehaviourPanel(kit.Panel):
         v.link_requested.connect(lambda *w: self._collect(lambda e: graph.link(e, *w)))
         v.unlink_requested.connect(lambda *w: self._collect(lambda e: graph.unlink(e, *w)))
         v.delete_requested.connect(lambda ids: self._collect(lambda e: graph.delete(e, ids)))
-        v.param_changed.connect(
-            lambda i, n, x: self._collect(lambda e: graph.set_param(e, i, n, x))
-        )
-        v.label_changed.connect(lambda i, t: self._collect(lambda e: graph.set_label(e, i, t)))
         v.moved.connect(lambda i, x, y: self._dropped.__setitem__(i, (x, y)))
         v.create_requested.connect(self._create)
         v.picked.connect(self._picked)
         v.settled.connect(self._settle)
+        self.bar = PropertyBar()
+        self.bar.param_changed.connect(self._param)
+        self.bar.label_changed.connect(self._label)
 
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -103,6 +106,7 @@ class BehaviourPanel(kit.Panel):
         lay.setSpacing(6)
         lay.addWidget(kit.row(self.title, self.hint, self.fit, self.spread, stretch=True))
         lay.addWidget(self.view, 1)
+        lay.addWidget(self.bar)
         self.no_scene = NoScene(studio)
         self.no_scene.say(
             "No port manifest",
@@ -116,6 +120,16 @@ class BehaviourPanel(kit.Panel):
         if doc is None:
             raise ManifestError("no port manifest open")
         return graph.spread(doc)
+
+    # what the bar tells: the same intents as the canvas's, one undo step each
+
+    def _param(self, node: str, name: str, value: object) -> None:
+        self._collect(lambda e: graph.set_param(e, node, name, value))
+        self._settle()
+
+    def _label(self, node: str, text: str) -> None:
+        self._collect(lambda e: graph.set_label(e, node, text))
+        self._settle()
 
     # what the canvas tells
 
@@ -154,9 +168,11 @@ class BehaviourPanel(kit.Panel):
         m = self.ws.manifest
         if made is not None and m is not None and made in m.behaviour.blocks:
             self.view.select([made])
+            self._show_bar()
 
     def _picked(self, node: object) -> None:
-        """A move node picks its move, as the Moves table does."""
+        """A move node picks its move, as the Moves table does; the bar shows the node."""
+        self._show_bar()
         name = graph.move_name(node) if isinstance(node, str) else None
         if name is None or name == self.ws.move:
             return
@@ -182,9 +198,45 @@ class BehaviourPanel(kit.Panel):
             self._drawn = m
             self._draw(m)
         self._follow(m)
+        self._show_bar()
+
+    def _show_bar(self) -> None:
+        """The bar shows the one node selected, from the document: a refused edit goes back."""
+        m, ids = self.ws.manifest, self.view.selected()
+        self.bar.show_detail(self._detail(m, ids[0]) if m is not None and len(ids) == 1 else None)
+
+    def _detail(self, m: Manifest, node: str) -> Detail | None:
+        name = graph.move_name(node)
+        if name is not None:
+            mv = m.moves.get(name)
+            return None if mv is None else Detail(node, name, self._move_tip(mv), label=mv.label)
+        blk = m.behaviour.blocks.get(node)
+        if blk is None or self._read is None:
+            return None
+        k = KINDS[blk.kind]
+        values = model.params(blk)
+        tip = self._block_tip(k, self._read.refused.get(node))
+        return Detail(
+            node,
+            k.title,
+            tip,
+            k.params,
+            {p.name: values.get(p.name) for p in k.params},
+            graph.options(m, blk.kind),
+            blk.label,
+        )
+
+    @staticmethod
+    def _block_tip(k: Kind, why: str | None) -> str:
+        return "\n".join([k.tip, *([f"{WARN} {why}"] if why else [])])
+
+    @staticmethod
+    def _move_tip(mv: Move) -> str:
+        plays = f"plays {mv.clip}" if mv.clip else f"plays anim {mv.anim}"
+        return "\n".join([f"{kind(mv)} · {plays}", *([f"Note: {mv.label}"] if mv.label else [])])
 
     def _draw(self, m: Manifest) -> None:
-        r = graph.read(m)
+        r = self._read = graph.read(m)
         nodes = self._blocks(m, r) + self._moves(m)
         self.view.show(nodes, [LinkSpec(*w) for w in graph.wires(m)])
         loose = f" · {len(r.loose)} loose" if r.loose else ""
@@ -199,15 +251,7 @@ class BehaviourPanel(kit.Panel):
             k = KINDS[blk.kind]
             why = r.refused.get(i)
             marks = [*(f"#{n}" for n in r.priority.get(i, [])), *([WARN] if why else [])]
-            values = model.params(blk)
-            options: dict[str, list[tuple[str, object]]] = {}
-            for p in k.params:
-                if p.type == "part":
-                    options[p.name] = list(graph.part_options(m, p.optional))
-                elif p.type == "mains":
-                    options[p.name] = list(graph.main_options())
-                elif p.type in NAMES:
-                    options[p.name] = [(n, n) for n in model.names(m, p.type)]
+            note = [f"Note: {blk.label}"] if blk.label else []
             out.append(
                 NodeSpec(
                     i,
@@ -216,13 +260,10 @@ class BehaviourPanel(kit.Panel):
                     blk.at,
                     (graph.IN,),
                     (graph.OUT,),
-                    k.params,
-                    {p.name: values.get(p.name) for p in k.params},
-                    options,
+                    model.summary(m, blk),
                     " ".join(marks),
                     i in r.loose,
-                    blk.label,
-                    "\n".join([k.tip, *([f"{WARN} {why}"] if why else [])]),
+                    "\n".join([BehaviourPanel._block_tip(k, why), *note]),
                 )
             )
         return out
@@ -232,7 +273,6 @@ class BehaviourPanel(kit.Panel):
         spots = graph.spots(m)
         out = []
         for name, mv in m.moves.items():
-            plays = f"plays {mv.clip}" if mv.clip else f"plays anim {mv.anim}"
             out.append(
                 NodeSpec(
                     graph.move_id(name),
@@ -241,8 +281,7 @@ class BehaviourPanel(kit.Panel):
                     spots[name],
                     (graph.PLAY,),
                     (graph.WHILE, graph.THEN),
-                    label=mv.label,
-                    tip=f"{kind(mv)} · {plays}",
+                    tip=BehaviourPanel._move_tip(mv),
                 )
             )
         return out
