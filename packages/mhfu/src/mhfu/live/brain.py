@@ -2,18 +2,9 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The framework's brain rules, read from game memory: how often each rule has fired.
 
-em_vhook's config block (`EM_CFG`) lives in partition memory at an address that moves with the PRX
-build, and nothing publishes it. Its word at `EM_CFG.CANARY` is a fixed value, so `locate` finds the
-block by scanning for it; `read` then takes the rules in one request.
-
-    with Rig.attach() as rig:
-        cfg = brain.locate(rig.s)             # cache it for the attach
-        for slot in brain.read(rig.s, cfg).slots:
-            print(slot.index, slot.fired)
-
-A slot's index is the rule's place in `mhfu_port.behaviour.compile(manifest)`. Counters restart with
-each quest and whenever the port's moves module is re-run. A memory request stops the emulator for
-a few ms, so read about once a second, never faster.
+`locate` finds em_vhook's config block by its `EM_CFG.CANARY` word (the block moves with the PRX
+build), `read` takes the rules in one request. Slot k is `mhfu_port.behaviour.compile(manifest)[k]`;
+counters restart with each quest. Read about once a second: a request stops the emulator for ms.
 """
 
 from __future__ import annotations
@@ -47,8 +38,6 @@ class Reader(Protocol):
 
 @dataclass(frozen=True)
 class Slot:
-    """One installed rule, as the block holds it."""
-
     index: int
     on: int
     """The monster event that fires it (`MONSTER_EVENT_KIND` number); 0 for none."""
@@ -71,11 +60,10 @@ class Brain:
     ticks: int
     """AI ticks since the quest began."""
     slots: tuple[Slot, ...]
-    """The installed rules, by slot."""
 
 
 def _scan(mem: Memory, lo: int, hi: int) -> Iterator[int]:
-    """The blocks whose canary word lies in [lo, hi): the word is aligned, so no chunk splits it."""
+    """Blocks with the canary in [lo, hi); the word is aligned, so no chunk splits it."""
     word = struct.pack("<I", CANARY)
     for at in range(lo, hi, CHUNK):
         try:
@@ -90,30 +78,28 @@ def _scan(mem: Memory, lo: int, hi: int) -> Iterator[int]:
 
 
 def _live(mem: Memory, entity: int) -> bool:
-    """Whether `entity` is a monster in the entity registry."""
+    """A monster in the entity registry (past slot 0)."""
     registry = a.ENTITY_REGISTRY
     ptrs = struct.unpack(f"<{registry.count}I", mem.read(registry, 4 * (registry.count or 0)))
     return entity != 0 and entity in ptrs[1:]
 
 
 def _board() -> int | None:
-    """Where the board's ENTITY word is in the block; None for a build with no board."""
+    """The board's ENTITY word in the block; None for a build with no board."""
     board = a.table().structs.get("EM_BOARD")
     at = getattr(a.EM_CFG, "BOARD", None)
     return None if board is None or at is None else int(at) + int(board.ENTITY)
 
 
 def _owned(mem: Memory, cfg: int) -> bool:
-    """Whether the board belongs to a live monster; a build with no board has none to ask."""
+    """The board's monster is live; true for a build with no board."""
     at = _board()
     return at is None or _live(mem, mem.u32(cfg + at))
 
 
 def locate(s: Reader) -> int | None:
-    """The config block: the canary found in the window above the PRX, else in user RAM, and the
-    board it holds names a live monster. None while there is no such block, which is also the case
-    from a quest's start until a monster of the wrapped species takes its first AI step. The caller
-    keeps the answer for the attach."""
+    """The config block's address, or None until a wrapped monster has taken its first AI step.
+    Scans the window above the PRX, then user RAM (~1 s): cache the answer."""
     mem = s.mem
     first = int(a.FRAMEWORK_PRX)
     seen = False
@@ -142,7 +128,7 @@ def read(s: Reader, cfg: int) -> Brain:
 
 
 def _decode(index: int, r: bytes) -> Slot | None:
-    """Rule `index` of the block, or None for a slot nothing is installed in."""
+    """None for a slot nothing is installed in."""
     rule = a.EM_RULE
     left, fired, last = struct.unpack_from("<3I", r, rule.LEFT)
     on = r[rule.ON]
