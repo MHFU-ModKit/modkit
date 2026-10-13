@@ -191,6 +191,7 @@ def test_fire_writes_the_triggers_board_signal_where_watch_found_the_brain(
 ) -> None:
     scope(qtbot, panel, ROAR)
     watching(qtbot, panel, clock)
+    qtbot.wait(100)  # the read the last tick asked has landed on its worker
     reads, doc = len(game.calls), panel.ws.doc
     assert doc is not None
     before = (doc.manifest, doc.can_undo())
