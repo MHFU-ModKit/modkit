@@ -183,7 +183,13 @@ class BehaviourPanel(kit.Panel):
         side = QHBoxLayout(page)
         side.setContentsMargins(10, 8, 10, 8)
         side.setSpacing(10)
-        side.addWidget(self.outline)
+        left = QWidget()
+        col = QVBoxLayout(left)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(6)
+        col.addWidget(self.outline, 1)
+        col.addWidget(self.rage)  # not in the header: with Watch and Fire it needs 1586 px
+        side.addWidget(left)
         main = QWidget()
         side.addWidget(main, 1)
         lay = QVBoxLayout(main)
@@ -196,7 +202,6 @@ class BehaviourPanel(kit.Panel):
                 self.mode,
                 self.add_rule,
                 self.fire,
-                self.rage,
                 self.fit,
                 self.spread,
                 self.watch,

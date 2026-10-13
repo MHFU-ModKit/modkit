@@ -1000,6 +1000,11 @@ def test_natural_rage_starts_on(panel: BehaviourPanel) -> None:
     assert panel.rage.isChecked() and B.natural_rage(panel.ws.manifest)
 
 
+def test_natural_rage_stays_out_of_the_header(panel: BehaviourPanel) -> None:
+    """With Watch and Fire in it the header makes the window 1586 px wide: wider than a laptop."""
+    assert panel.rage.parent() is not panel.fit.parent()
+
+
 def test_natural_rage_is_one_undo_step(panel: BehaviourPanel, ws: MonsterWorkspace) -> None:
     before = doc(ws).manifest
     panel.rage.click()
