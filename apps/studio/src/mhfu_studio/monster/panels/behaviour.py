@@ -36,21 +36,15 @@ ROLES: dict[str, Color] = {
     "state": Ink.AXIS_Y,
     "condition": Ink.AXIS_Z,
     "modifier": Ink.WARNING,
+    "effect": Ink.EFFECT,
     "move": Ink.SELECTION,
 }
-#: the effect role's violet, for a dark theme and a light one: no `Ink` is one
-EFFECT: dict[bool, Color] = {True: (0.82, 0.44, 0.91, 1.0), False: (0.56, 0.14, 0.67, 1.0)}
 MOVE_ROLE = "move"
 WARN = chr(0x26A0)
 HINT = (
     "Right-click adds a block · drag from a port to wire · higher blocks are checked first,"
     " but paths that play nothing run before all of them"
 )
-
-
-def roles() -> dict[str, Color]:
-    """`ROLES` and the effect's violet, for the current theme."""
-    return {**ROLES, "effect": EFFECT[theme.current().dark]}
 
 
 class BehaviourPanel(kit.Panel):
@@ -192,7 +186,7 @@ class BehaviourPanel(kit.Panel):
             return
         if theme.current() is not self._theme:
             self._theme = theme.current()
-            self.view.set_roles(roles())
+            self.view.set_roles(ROLES)
             self.view.set_canvas(theme.current().view)
         if self._drawn is not m:
             self._drawn = m
