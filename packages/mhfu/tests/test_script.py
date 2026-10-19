@@ -118,9 +118,9 @@ def test_fetch():
     assert script.fetch(reader("0603aabbcc"), BASE).args == {
         "kind": 3,
         "a": 0xAA,
-        "b": 0xBB,
-        "x4": 0xCC,
+        "section": 0xBBCC,
     }
+    assert script.fetch(reader("0601aabbcc"), BASE).args == {"kind": 1, "a": 0xAA, "b": 0xBB}
     assert script.fetch(reader("420020"), BASE).args == {"deg": 0x20}
     assert script.fetch(reader("420080"), BASE).args == {"deg": -128}
     assert script.fetch(reader("ff00"), BASE).mnemonic == "end.base"
@@ -128,9 +128,9 @@ def test_fetch():
 
 def test_fetch_refs():
     assert script.fetch(reader("0f0102030405"), BASE).refs == (
+        Ref("stages", 2, 3),
         Ref("walk", 2, 4),
         Ref("walk", 2, 5),
-        Ref("stages", 2, 3),
     )
     assert script.fetch(reader("820304"), BASE).refs == (Ref("call", 18, 4),)
     assert script.fetch(reader("1605"), BASE).refs == (Ref("call", 9, 5),)
