@@ -164,6 +164,7 @@ class _Lines(QStyledItemDelegate):
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         text, opt.text = opt.text, ""
+        opt.state &= ~QStyle.StateFlag.State_HasFocus  # the selected band marks the current row
         widget = option.widget
         (widget.style() if widget else QApplication.style()).drawControl(
             QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget
