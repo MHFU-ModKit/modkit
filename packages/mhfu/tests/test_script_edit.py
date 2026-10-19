@@ -1,13 +1,15 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import struct
+import time
 
 import pytest
 from mhfu.em import script
-from mhfu.em.script import asm, disasm, edit, ir, lift, walk
+from mhfu.em.script import asm, check, disasm, edit, ir, lift, walk
 from mhfu.em.script.edit import EditError
-from mhfu.em.script.opcodes import BY_NAME, Ref
+from mhfu.em.script.opcodes import BY_NAME, Ref, slot
 from mhfu.files import EM_SPECIES
+from mhfu.memory import Image, Space
 
 BASE = 0x0010_0000
 MOVED = 0x0020_0000
@@ -740,6 +742,188 @@ def test_resolve_list_limit():
     assert edit.resolve(full).items[0].body[0].args["routine"] == 255
 
 
+# ---- checks
+
+
+def codes(p, img=None):
+    """The (level, code) of each finding of the resolved program."""
+    return [(f.level, f.code) for f in check.check(edit.resolve(p), img)]
+
+
+def found(p):
+    return {f.code for f in check.check(edit.resolve(p))}
+
+
+def test_native_world_is_clean():
+    p = world()
+    assert check.check(p) == []
+    top, pick = p.items[0].body[0], p.items[1].body[0]
+    edit.insert(p, top.head[0].id, [edit.insn("wait", 1)])  # a touched block: still fine
+    edit.insert(p, pick.arms[0].id, [edit.insn("wait", 1)])
+    assert check.check(p) == []
+
+
+def test_unresolved():
+    p = world()
+    edit.add(p, ir.Routine("spin", [edit.insn("end", 1)]))
+    edit.put(p, "base_0", [edit.insn("call", ir.Sym("spin"))])
+    (f,) = check.check(p)
+    assert (f.level, f.code, f.node, f.item) == ("error", "UNRESOLVED", "n12", "base_0")
+    assert "label 'spin'" in f.text
+    assert check.check(edit.resolve(p)) == []
+
+
+def test_random_weights():
+    p = world()
+    bad = blk("random", arms=[arm(1, weight=10), arm(1, weight=10)])
+    edit.put(p, "base_0", [bad])
+    assert ("error", "RANDOM_WEIGHTS") in codes(p)
+    q = world()
+    edit.put(q, "base_0", [edit.random([(10, []), (10, [])])])
+    assert codes(q) == []
+    pick = q.items[1].body[0]  # a native random that gets a branch more
+    edit.insert(q, pick.arms[1].id, [edit.insn("wait", 1)])
+    assert codes(q) == []
+    pick.arms.append(ir.Arm(1, {"weight": 5}, [], "n99"))
+    assert codes(q) == [("error", "RANDOM_WEIGHTS")]
+
+
+def test_random_nested():
+    inner = edit.random([(8, [])], shift=3)
+    p = world()
+    edit.put(p, "base_0", [edit.random([(16, [inner])])])
+    assert {"RANDOM_NESTED", "SKIP_DISAGREES"} <= found(p)  # and the game's scan agrees
+    q = world()
+    edit.put(
+        q, "base_0", [edit.random([(16, [edit.if_("if_latch", then=[edit.clone([inner])[0]])])])]
+    )
+    assert "RANDOM_NESTED" in found(q)
+    ok = world()
+    edit.put(
+        ok, "base_0", [edit.random([(16, [edit.random([(8, [])])])]), edit.random([], shift=3)]
+    )
+    assert codes(ok) == []  # a random in a random is skipped whole
+
+
+def test_skip_short():
+    p = world()
+    edit.put(p, "base_0", [edit.switch("switch_enemy_var", cases=[(4, [])])])
+    assert found(p) == {"SKIP_SHORT", "SKIP_DISAGREES"}
+    q = world()
+    edit.put(q, "base_0", [edit.switch("switch_hp", cases=[(4, [])])])
+    assert codes(q) == []
+
+
+@pytest.mark.parametrize(("value", "code"), [(0, "SKIP_STALL"), (0x95, "SKIP_SENTINEL")])
+def test_skip_stops(value, code):
+    p = world()  # the first case value is where the game's scan lands, and reads as an opcode
+    edit.put(p, "base_0", [edit.switch("switch_enemy_var", cases=[(value, [])])])
+    assert code in found(p)
+
+
+def test_skip_guard():
+    def nops(n):
+        p = world()
+        edit.put(p, "base_0", [edit.if_("if_latch", then=[edit.insn("nop")] * n)])
+        return found(p)
+
+    assert nops(1000) == {"SKIP_GUARD"}
+    assert nops(999) == set()  # the marker is the 1000th step
+
+
+def test_repeat():
+    p = world()
+    edit.put(p, "base_0", [edit.repeat(0, [edit.insn("wait", 1)])])
+    assert codes(p) == [("error", "REPEAT_COUNT")]
+    nested = world()
+    edit.put(nested, "base_0", [edit.repeat(2, [edit.repeat(2, [])])])
+    assert codes(nested) == [("error", "REPEAT_NESTED")]
+    around = world()
+    inner = edit.repeat(2, [])
+    edit.put(around, "base_0", [edit.repeat(2, [edit.if_("if_latch", then=[inner])])])
+    assert codes(around) == [("error", "REPEAT_NESTED")]
+    ok = world()
+    edit.put(ok, "base_0", [edit.repeat(2, []), edit.repeat(1, [edit.insn("wait", 1)])])
+    assert codes(ok) == []
+
+
+def test_ordered():
+    def switch(*cases, name="switch_species"):
+        p = world()
+        edit.put(p, "base_0", [edit.switch(name, cases=[(c, []) for c in cases])])
+        return codes(p)
+
+    assert switch(3, 5, 9) == []
+    assert switch(5, 3) == [("error", "ORDERED")]
+    assert switch(3, 3) == [("error", "ORDERED")]
+    assert switch(5, 3, name="switch_hp") == []  # only some switches stop at the first case above
+
+
+def test_native_equal_cases_stay():
+    sw = blk("switch_species", arms=[arm(1, case=6), arm(1, case=6)])
+    p = native(ir.Program(1, BASE, [ir.Routine("r", [sw, ins("end", kind=0)])]))
+    assert check.check(p) == []
+    edit.insert(p, sw.arms[1].id, [edit.insn("wait", 1)])  # a touched block with a pair as it was
+    assert check.check(p) == []
+    edit.insert(p, sw.arms[1].id, [edit.insn("wait", 1)], after=True)
+    p.items[0].body[0].arms.append(ir.Arm(1, {"case": 6}, [], "n99"))
+    assert [f.code for f in check.check(p)] == ["ORDERED"]
+
+
+def test_index_checks():
+    def with_call(index, p=None):
+        p = p or world()
+        edit.put(p, "base_0", [edit.insn("call", index)])
+        return [(f.level, f.code) for f in check.check(p)]
+
+    assert with_call(0) == []
+    assert with_call(1) == [("warning", "EMPTY_SLOT")]
+    assert with_call(2) == [("error", "INDEX_PAST_LIST")]
+    bare = world()
+    bare.item("h0").fields[1] = None
+    assert with_call(0, bare) == [("error", "INDEX_PAST_LIST")]
+    edit.add(bare, ir.Routine("orphan", [edit.insn("end", 1)]))
+    edit.put(bare, "orphan", [edit.insn("call", 9)])
+    assert [f.item for f in check.check(bare)] == ["base_0"]  # nothing runs the orphan
+
+
+def test_list_too_long():
+    p = world()
+    p.item("call_l").slots += ["call_0"] * 255
+    (f,) = check.check(p)
+    assert (f.level, f.code, f.item) == ("error", "LIST_TOO_LONG", "call_l")
+    p.item("call_l").slots.pop()
+    assert check.check(p) == []
+
+
+def test_decode():
+    p = world()
+    edit.add(p, ir.Routine("loose", [edit.insn("wait", 1)]))  # falls off its end
+    edit.set_slot(p, "call_l", 2, "loose")
+    (f,) = check.check(p)
+    assert (f.code, f.item) == ("DECODE", "loose") and "does not decode" in f.text
+    q = world()
+    edit.add(q, ir.Routine("dead", [edit.insn("end", 1), edit.insn("wait", 1)]))
+    edit.set_slot(q, "call_l", 2, "dead")
+    (f,) = check.check(q)
+    assert (f.code, f.item, f.node) == ("DECODE", "dead", "n12")
+    assert f.text == "dead decodes to nothing, not wait 1"
+    ok = world()
+    edit.add(ok, ir.Routine("fine", [edit.insn("end", 1)]))
+    edit.set_slot(ok, "call_l", 2, "fine")
+    assert check.check(ok) == []
+
+
+def test_check_takes_an_image():
+    p = world()
+    edit.put(p, "base_0", [edit.insn("wait", 5)])
+    img = asm.assemble(p, MOVED)
+    assert check.check(p, img) == []
+    tree = check.decoded(img, "base_0")
+    assert [n.op.name for n in tree] == ["wait", "if_latch", "call", "end"]
+    assert tree[0].args == {"frames": 5} and tree[1].arms[0].sub == 1
+
+
 # ---- the game
 
 
@@ -772,3 +956,139 @@ def test_game_scan(rows):
                         off.append((em, n.op.name))
     assert blocks > 5000 and short == 9 and longest == 794
     assert off == [(83, "random")]  # a random_shifted inside it shares its markers
+
+
+def plain(nodes):
+    """A tree as nested tuples, without ids and addresses."""
+    return [
+        (n.op.name, sorted(n.args.items()))
+        if isinstance(n, ir.Insn)
+        else (
+            n.op.name,
+            sorted(n.args.items()),
+            plain(n.head),
+            [(a.sub, sorted(a.args.items()), plain(a.body)) for a in n.arms],
+        )
+        for n in nodes
+    ]
+
+
+def flat(tree):
+    """The nodes of a `plain` tree in order, a block as its opener."""
+    for n in tree:
+        if len(n) == 2:
+            yield n
+        else:
+            yield n[:2]
+            yield from flat(n[2])
+            for _, _, body in n[3]:
+                yield from flat(body)
+
+
+def hub(p):
+    """The `enter 0 1 0` of em75's base routine 0, where it picks the hub move."""
+    (n,) = [
+        n
+        for n in ir.walk(p.item("base_0").body)
+        if isinstance(n, ir.Insn)
+        and n.op.name == "enter"
+        and n.args == {"main": 0, "sub": 1, "gate": 0}
+    ]
+    return n
+
+
+def header_of(img, p, name):
+    """A header as the moved image has it, its lists read from the tables' words. (The floats
+    behind a header are not carried, so `Header.read` would take the next items for fields.)"""
+    data = img.at(MOVED)
+
+    def u32(off):
+        return struct.unpack_from("<I", data, off)[0]
+
+    h = p.item(name)
+    tables = p.tables()
+    fields = tuple(u32(img.items[name][0] + 4 * i) for i in range(len(h.fields)))
+    words = {
+        f: tuple(u32(img.items[t][0] + 4 * i) for i in range(len(tables[t].slots)))
+        for f, t in enumerate(h.fields)
+        if isinstance(t, str)
+    }
+    lists = {f: ws for f, ws in words.items() if slot(f).kind != "data"}
+    return script.Header(MOVED + img.items[name][0], fields, lists, words)
+
+
+def test_game_replace_hub(rows):
+    sc, ps = rows[75]
+    p = lift.lift(sc, 75)
+    before = plain(p.item("base_0").body)
+    native = asm.assemble(p).data
+    at = hub(p).pc - p.base
+    edit.replace(p, hub(p).id, edit.insn("enter", 3, 0, 0))
+    img = asm.assemble(p, MOVED)
+    assert check.check(p, img) == []
+    assert [i for i, (a, b) in enumerate(zip(native, img.at(p.base), strict=True)) if a != b] == [
+        at + 1,
+        at + 2,
+    ]
+    got = plain(check.decoded(img, "base_0"))
+    assert got == plain(p.item("base_0").body) and got != before
+    changed = [(a, b) for a, b in zip(flat(before), flat(got), strict=True) if a != b]
+    assert changed == [
+        (
+            ("enter", [("gate", 0), ("main", 0), ("sub", 1)]),
+            ("enter", [("gate", 0), ("main", 3), ("sub", 0)]),
+        )
+    ]
+
+
+def test_game_new_routine_by_label(rows):
+    sc, ps = rows[75]
+    p = lift.lift(sc, 75)
+    edit.add(p, ir.Routine("it", [edit.insn("enter", 3, 0, 0), edit.insn("end", 1)]))
+    edit.put(p, "base_0", [edit.insn("call", ir.Sym("it"))])
+    assert {f.code for f in check.check(p)} == {"UNRESOLVED"}
+    q = edit.resolve(p)
+    slots = q.item("call_l").slots
+    assert len(slots) == 23 and slots[-1] == "it" and len(p.item("call_l").slots) == 22
+    assert q.item("base_0").body[0].args == {"routine": 22}
+    img = asm.assemble(q)
+    assert check.check(q, img) == []
+    native = q.end - q.base
+    assert img.items["call_l"][0] >= native and img.items["it"][0] >= native  # it grew, so it moved
+    h = img.items["h0"][0]
+    assert word(img, "h0", 1) == q.base + img.items["call_l"][0] and h < native
+    assert word(img, "call_l", 22) == q.base + img.items["it"][0]
+    space = Space([Image(img.at(MOVED), MOVED), sc.ovl])
+    want, got = sc.listing(p.headers()[0].va), script.disassemble(space.u8, header_of(img, q, "h0"))
+    assert len(got.routines) == len(want.routines) + 1 and all(
+        r.clean for r in got.routines.values()
+    )
+    assert MOVED + img.items["it"][0] in got.routines
+
+
+def test_game_every_routine_grows(rows):
+    sc, ps = rows[75]
+    p = lift.lift(sc, 75)
+    for r in p.routines():
+        edit.put(p, r.name, [edit.insn("nop")])
+    img = asm.assemble(p)
+    moved = [r.name for r in p.routines() if img.items[r.name][0] >= p.end - p.base]
+    assert 0 < len(moved) < len(p.routines())  # a zero tail takes the byte, or the routine moves
+    assert check.check(p, img) == []
+    space = Space([Image(img.at(MOVED), MOVED), sc.ovl])
+    want, got = sc.listing(p.headers()[0].va), script.disassemble(space.u8, header_of(img, p, "h0"))
+    assert len(got.routines) == len(want.routines) and all(r.clean for r in got.routines.values())
+    assert got.stats().instructions == want.stats().instructions + len(want.routines)
+
+
+def test_game_rows_are_clean(rows):
+    for em, (_, ps) in rows.items():
+        for row, p in ps.items():
+            assert check.check(p) == [], (em, row)
+
+
+def test_game_check_time(rows):
+    p = rows[1][1][1]
+    start = time.perf_counter()
+    assert check.check(p) == []
+    assert time.perf_counter() - start < 30
