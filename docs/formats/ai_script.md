@@ -93,3 +93,29 @@ that walk; `OPCODES` follows it, except for 0x94's header, which it steps one by
 - **Checks.** New code must keep random weights at 32, ordered cases ascending, repeat counts
   at 1 or more, and every list index inside its list; the assembled bytes must scan as the tree
   says and decode back to it.
+
+## Source text
+
+`mhfu script EM --source` writes a row as text, `--check FILE` and `--build FILE -o OUT` read an
+edited one back (`mhfu.em.script.parse`). Lines and indentation, one item per top-level line:
+
+| Line | Item |
+|---|---|
+| `row N at ADDR end ADDR sha1 HEX` | First line: it must be the row and game build the text is edited against |
+| `routine NAME` | Its instructions indented under it, then `tail 00 01` and `: 00 01` rows |
+| `table NAME: a b - extern ADDR` | A list: item names, `-` an empty slot, `extern` a word outside the program |
+| `data NAME` | Rows `label: 00 01` and `: 00 01`; a label names the offset of its row |
+| `blob` | Rows `: 00 01`, bytes kept as they are |
+| `header NAME variants 0-4,6` | One `FIELD entry` line per field, in order, named as in the field table (then `deep0`, `deep1`, ...) |
+
+- An instruction is its name and operands by position, decimal or `0x`; `end` takes a kind by
+  name or number. An operand of a list index may be `@NAME` instead: the routine or list entry a
+  new line names, which `--check` turns into its slot.
+- A block's opener has its contents indented under it. Its arms (`else`, `case N`, `default`,
+  `branch WEIGHT`, `bucket`) sit level with the opener, in the shape's order, and a dedent closes
+  the block: the closing marker, the count and the marker numbers are implied.
+- `#` starts a comment and blank lines are ignored; any consistent indentation will do.
+- Unchanged code keeps its native place: items by name, routine nodes by aligning the lines
+  against the row's own. What the text adds or changes is new code, which `check` holds to the
+  rules; code moved elsewhere is new too.
+- A syntax error names its line. `--build` refuses while a finding is an error.

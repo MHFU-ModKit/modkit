@@ -9,10 +9,13 @@
     mhfu script 75 --json           # the same as data
     mhfu script 75 --row 76         # a sibling species the overlay serves
     mhfu script 75 --source -o F    # the species row as source text, to a file
+    mhfu script 75 --check F        # F edited: parse, resolve and vet it, a line per finding
+    mhfu script 75 --build F -o OUT # the same, then the image to OUT: --base ADDR, --map MAP
     mhfu script --all               # one coverage line per big-monster overlay
 
 The coverage line counts routines, instructions, opcodes the game has no case for and routines
-that do not end cleanly; the exit status is 1 if any is not zero.
+that do not end cleanly; the exit status is 1 if any is not zero, or for --check and --build if a
+finding is an error, which also stops --build.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..em import script
+from ..em.script.parse import ParseError
 from ..files import EM_SPECIES, Extracted
 from .binary import _address
 from .intel import species
@@ -45,6 +49,10 @@ def register(sub: Subparsers) -> None:
         action="store_true",
         help="the row as source text (a game listing: keep it out of repos)",
     )
+    p.add_argument("--check", type=Path, metavar="FILE", help="vet the edited source FILE")
+    p.add_argument("--build", type=Path, metavar="FILE", help="assemble the edited source to -o")
+    p.add_argument("--base", type=_address, metavar="ADDR", help="--build: place it at ADDR")
+    p.add_argument("--map", type=Path, metavar="MAP", help="--build: write where things landed")
     p.add_argument("-o", "--out", type=Path, metavar="FILE", help="write the output to FILE")
     p.add_argument("--all", action="store_true", help="one coverage line per overlay")
     p.add_argument("--data", type=Path, help="extracted game (default: $MHFU_DATA)")
@@ -58,6 +66,8 @@ def run(args: argparse.Namespace) -> int:
     if args.species is None:
         raise ValueError("name an em overlay (75, em75), or pass --all")
     sc = script.Scripts(game, args.species)
+    if args.check or args.build:
+        return edited(sc, args)
     if args.source:
         lines = script.source.render(script.lift.lift(sc, args.row))
         emit("\n".join(line.text for line in lines), args.out)
@@ -76,6 +86,46 @@ def run(args: argparse.Namespace) -> int:
     else:
         emit(lst.text(only), args.out)
     return 0
+
+
+def edited(sc: script.Scripts, args: argparse.Namespace) -> int:
+    """Parse the edited source against the row it came from, resolve and check it; `--build`
+    then writes the image, unless a finding is an error."""
+    if args.check and args.build:
+        raise ValueError("--check and --build are exclusive: --build checks first")
+    if args.build and args.out is None:
+        raise ValueError("--build needs -o OUT")
+    path = args.check or args.build
+    like = script.lift.lift(sc, args.row)
+    try:
+        prog = script.edit.resolve(script.parse.parse(path.read_text(), like=like))
+    except ParseError as e:
+        raise ValueError(f"{path}: {e}") from e
+    findings = script.check.check(prog)
+    for f in findings:
+        print(f"{f.level} {f.code} {f.node or f.item or '-'}: {f.text}")
+    if any(f.level == "error" for f in findings):
+        return 1
+    if args.build:
+        img = script.asm.assemble(prog, args.base)
+        args.out.write_bytes(img.data)
+        if args.map is not None:
+            args.map.write_text(json.dumps(image_map(img), indent=1) + "\n")
+        print(f"{args.out}: {len(img.data)} bytes")
+    return 0
+
+
+def image_map(img: script.asm.Image) -> dict[str, object]:
+    """Where an image put things, for a tool that patches a running game."""
+    return {
+        "base": img.base,
+        "size": len(img.data),
+        "relocs": img.relocs,
+        "headers": {f"0x{va:08X}": at for va, at in img.headers.items()},
+        "origin": {f"0x{pc:08X}": at for pc, at in img.origin.items()},
+        "items": {name: list(span) for name, span in img.items.items()},
+        "closes": img.closes,
+    }
 
 
 def emit(text: str, out: Path | None) -> None:

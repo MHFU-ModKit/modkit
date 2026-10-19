@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from . import disasm, ir
 from .disasm import BadScript, Scripts
-from .opcodes import COUNT, COUNTED, NUMBERED, Shape, derived_count, marker_sub, slot
+from .opcodes import COUNT, NUMBERED, Shape, derived_count, marker_sub, slot
 
 _HEADLESS = frozenset({Shape.SWITCH, Shape.RANDOM, Shape.BUCKET, Shape.ZONE})
 """Shapes whose first marker follows the header with nothing between."""
@@ -54,9 +54,7 @@ def _tree(row: int, insns: Sequence[disasm.Insn]) -> list[ir.Node]:
         if role is None:
             cur.append(ir.Insn(op, dict(ins.args), nid, ins.pc))
         elif role == "open":
-            args: dict[str, ir.Value] = {
-                k: v for k, v in ins.args.items() if not (k == COUNT and op.shape in COUNTED)
-            }
+            args: dict[str, ir.Value] = {o.name: ins.args[o.name] for o in op.opener}
             block = ir.Block(op, args, [], [], nid, ins.pc)
             cur.append(block)
             stack.append(_Frame(block, cur, block.head, ins.args.get(COUNT)))

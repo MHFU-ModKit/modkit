@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
 from . import ir
-from .opcodes import BY_NAME, COUNT, COUNTED, FIRST_DEEP, Op, Operand, Ref, Shape, operands, slot
+from .opcodes import BY_NAME, FIRST_DEEP, Op, Operand, Ref, Shape, operands, slot
 
 _RANDOM_TOTAL = 32
 _RANDOM_BRANCHES = 13
@@ -57,11 +57,6 @@ def _bind(what: str, names: Sequence[Operand], values: Sequence[ir.Value]) -> di
     return {o.name: v for o, v in zip(names, values, strict=True)}
 
 
-def _opener(op: Op) -> tuple[Operand, ...]:
-    """The operands a block's builder takes: its opener's, less the derived count."""
-    return tuple(o for o in operands(op.args) if not (o.name == COUNT and op.shape in COUNTED))
-
-
 def _block(name: str, *shapes: Shape) -> Op:
     op = _op(name)
     if op.shape not in shapes:
@@ -88,7 +83,7 @@ def if_(
 ) -> ir.Block:
     op = _block(name, Shape.IF)
     arms = [] if else_ is None else [ir.Arm(1, {}, list(else_))]
-    return ir.Block(op, _bind(name, _opener(op), args), list(then), arms)
+    return ir.Block(op, _bind(name, op.opener, args), list(then), arms)
 
 
 def switch(
@@ -107,7 +102,7 @@ def switch(
         arms.append(ir.Arm(1, _bind(f"{name} case", operands(op.label), vals), list(body)))
     if default is not None:
         arms.append(ir.Arm(2, {}, list(default)))
-    return ir.Block(op, _bind(name, _opener(op), args), [], arms)
+    return ir.Block(op, _bind(name, op.opener, args), [], arms)
 
 
 def random(branches: Sequence[tuple[int, Sequence[ir.Node]]], shift: int | None = None) -> ir.Block:
@@ -122,12 +117,12 @@ def random(branches: Sequence[tuple[int, Sequence[ir.Node]]], shift: int | None 
     if len(arms) > _RANDOM_BRANCHES:
         raise EditError(f"a random has at most {_RANDOM_BRANCHES} branches")
     op = _op("random" if shift is None else "random_shifted")
-    return ir.Block(op, {} if shift is None else _bind(op.name, _opener(op), [shift]), [], arms)
+    return ir.Block(op, {} if shift is None else _bind(op.name, op.opener, [shift]), [], arms)
 
 
 def repeat(count: int, body: Sequence[ir.Node]) -> ir.Block:
     op = _op("repeat")
-    return ir.Block(op, _bind("repeat", _opener(op), [count]), list(body), [])
+    return ir.Block(op, _bind("repeat", op.opener, [count]), list(body), [])
 
 
 # ---- copies

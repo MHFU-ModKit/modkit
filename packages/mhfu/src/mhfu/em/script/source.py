@@ -17,7 +17,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from . import ir
-from .opcodes import BLOCKS, COUNT, COUNTED, END_KINDS, Flow, Op, operands, slot
+from .opcodes import BLOCKS, END_KINDS, Flow, Op, operands, slot
 
 _INDENT = "  "
 _ROW = 16
@@ -54,8 +54,8 @@ def _value(op: Op, name: str, v: ir.Value, size: int) -> str:
     return f"0x{v:04X}" if size == 2 else str(v)
 
 
-def _args(op: Op, layout: str, args: Mapping[str, ir.Value], skip: str | None = None) -> list[str]:
-    return [_value(op, o.name, args[o.name], o.size) for o in operands(layout) if o.name != skip]
+def _args(op: Op, layout: str, args: Mapping[str, ir.Value]) -> list[str]:
+    return [_value(op, o.name, args[o.name], o.size) for o in operands(layout)]
 
 
 def _entry(e: ir.Entry) -> str:
@@ -140,8 +140,8 @@ class _Writer:
 
     def block(self, routine: str, b: ir.Block, depth: int) -> None:
         op, kind = b.op, _kind(b.op)
-        skip = COUNT if op.shape in COUNTED else None
-        self.add(depth, " ".join([op.name, *_args(op, op.args, b.args, skip)]), kind, b.id, b.pc)
+        args = [_value(op, o.name, b.args[o.name], o.size) for o in op.opener]
+        self.add(depth, " ".join([op.name, *args]), kind, b.id, b.pc)
         self.body(routine, b.head, depth + 1)
         for arm in b.arms:
             name = BLOCKS[op.shape][arm.sub]

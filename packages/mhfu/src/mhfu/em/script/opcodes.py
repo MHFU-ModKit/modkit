@@ -195,6 +195,13 @@ class Op:
     """The routines it names with no operand."""
 
     @property
+    def opener(self) -> tuple[Operand, ...]:
+        """A block opener's operands as the tree keeps them: all but a counted shape's `n`."""
+        return tuple(
+            o for o in operands(self.args) if not (o.name == COUNT and self.shape in COUNTED)
+        )
+
+    @property
     def coded(self) -> bool:
         return self.shape is not Shape.PLAIN
 
