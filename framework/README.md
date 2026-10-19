@@ -178,14 +178,23 @@ two with `natural_rage = false` and `sever_below = <pct>`; the quest's end drops
 
 ## AI scripts from the stick
 
-`mhfu brain deploy EM [FILE]` writes a species' AI script as an `MHAI` stick container to
-`brain/` and a mod beside the others that calls `mhfu.brain_install(path)`. The framework stages
-the container in extra RAM and points the species row's header words at it now and after every
-quest load re-reads the overlay (`include/mhfu/brain.h`): a monster that starts its script later
-runs it, one already running keeps the game's. `mhfu.brain_status(row)` says which of the row's
-words are on it. Like model injection it needs extra RAM, so a real PSP installs nothing. The
-mod is one of the scripts hot reload tracks, which are few. `docs/formats/ai_script.md` has the
+`mhfu brain deploy EM [FILE]` writes a species' AI script as an `MHAI` stick container,
+`brain/brain_row_NN.mhai`, and a mod beside the others, `mods/brain_row_NN.lua`, that calls
+`mhfu.brain_install(path)` (`mhfu brain build` writes the container alone). The framework checks
+the container, stages it in extra RAM and points the species row's header words at it now and after
+every quest load re-reads the overlay (`include/mhfu/brain.h`): a monster that starts its script
+later runs it, one already running keeps the game's. `brain_install` returns the row, or nil and
+why; installing a row again replaces it, and the replaced image stays in extra RAM, which is never
+freed; `mhfu.BRAIN_MAX` rows fit. `mhfu.brain_status(row)` gives the container's `id`, where the
+image sits and, as `maps`, the map types whose header word points into it now. Like model
+injection it needs extra RAM, so a real PSP installs nothing. The mod is one of the 16 scripts hot
+reload tracks, and reloads, so installs again, when it changes. `docs/formats/ai_script.md` has the
 container.
+
+Checked in PPSSPP with an edited Tigrex script (`--lane`, a cold boot into a quest with a native
+Tigrex): `framework.log` gives `[brain] row 75: 17 word(s) to image ...` once per quest load, the
+monster's script words lie in the image and every instruction it dispatches runs there, and a
+second quest without a cold boot repoints the row again (`brain_status(75).patched` counts both).
 
 ## Calling the game from C
 

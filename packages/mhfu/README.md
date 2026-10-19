@@ -71,7 +71,7 @@ and constants; the commands below are built on it.
 | `mhfu dis ADDR [COUNT]`, `xref ADDR`, `switch ADDR` | Disassembly, references, jump tables, in BOOT.BIN or `--overlay` |
 | `mhfu reloc OVERLAY DELTA -o OUT` | An overlay moved to another address |
 | `mhfu moveset`, `phases`, `chain SPECIES` | A big monster's moves, what ends each, what follows it |
-| `mhfu script EM`, `--all`, `--source` | A big monster's AI script, disassembled: routines, structure, stats; `--source` writes a species row as source text |
+| `mhfu script EM`, `--all`, `--source` | A big monster's AI script, disassembled: routines, structure, stats; `--source` writes a species row as source text (a game listing: keep it out of repositories) |
 | `mhfu script EM --check FILE`, `--build FILE -o OUT` | An edited source text vetted, one line per finding; `--build` writes the image (`--base ADDR`, `--map MAP` for where things landed) unless a finding is an error |
 | `mhfu effects`, `attacks` | The effects and attacks each move spawns |
 | `mhfu abi inventory\|vtables\|interface\|factory\|classes\|callers` | The engine-to-overlay interface: overlays, entity vtables and their slots, em id to overlay, calls through a slot |
@@ -82,6 +82,9 @@ and constants; the commands below are built on it.
 | `mhfu stage spots\|spawns` | In the running game: the quest's gathering spots and small-monster spawns |
 | `mhfu inject FILE_ID FILE` | Places a finished file for the framework's live injection |
 | `mhfu names build\|show\|coverage` | Names for EU code, matched from the MHP2G decomp's JP symbols (needs the JP disc, for research) |
+
+The AI script's format, how it is edited and how it travels into the game are in
+[`docs/formats/ai_script.md`](../../docs/formats/ai_script.md).
 
 ## The running game
 
@@ -106,9 +109,14 @@ with Session.launch(cold=True) as s:  # PPSSPP here, or in the modkit container
 | `mhfu shell` | A debug shell on the running game: player, monsters, animations, hit volumes |
 | `mhfu rig load\|save\|where\|teleport\|summon\|pin\|speed` | Set up a live experiment: savestates, the player on the floor at x, z, a big monster beside the player, pinned HP (`--cull`: no small monsters in the section), fast-forward |
 | `mhfu rig hold\|aim BONE` | A big monster's AI script held until its next reaction; the player put before one of its bones, facing it |
-| `mhfu brain push EM [FILE]`, `restore EM`, `status`, `build EM [FILE] -o OUT`, `deploy EM [FILE]` | A species' AI script, as lifted or edited: into the running quest (64 MB mode) with its monsters moved onto it, and the game's own back; what runs where; or as a stick container, in a file (`build`) or on the memory stick with the mod that has the framework install it for every quest (`deploy`) |
+| `mhfu brain push EM [FILE]`, `restore EM`, `status` | A species' AI script, as lifted or edited (`FILE` is `mhfu script EM --source` edited, checked first), pushed into the running quest (PPSSPP's 64 MB mode) with its monsters moved onto it, until the next quest load; the game's own back; what is pushed and who runs it |
+| `mhfu brain build EM [FILE] -o OUT`, `deploy EM [FILE]` | The same script as a stick container, in a file (`build`) or on the memory stick with the mod that has the framework install it in every quest (`deploy`, no game needed; a monster already running keeps the game's script) |
 | `mhfu rig points\|goto\|walk` | Named points of a map document; the player put at one (one area change away) or walked to it, exit to exit |
 | `mhfu observe trace\|cost` | Which engine functions a big monster's overlay calls in each of its states, and how often, without stopping the game |
+
+`mhfu.live.script` reads a big monster's AI script state from the running game (`monsters(mem)`:
+its header, where each context resumes, the interrupts raised), which the studio's Brain tab marks
+on the script's lines.
 
 Named points live in a map document's `map.toml` (`mhfu.points`; the studio's map editor sets
 them). `mhfu rig goto NAME --map DIR` changes area straight to the point's stage and puts the
