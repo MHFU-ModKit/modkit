@@ -46,7 +46,7 @@ from .opcodes import (
 Reader = Callable[[int], int]
 """The byte at an address."""
 
-VARIANTS = 17
+VARIANTS: int = a.SCRIPT_HEADERS.count or 0
 """Headers per species row: one per map type."""
 SCAN_LIMIT = 100_000
 """Instructions a scan for the end of a block steps before it is taken for a runaway."""

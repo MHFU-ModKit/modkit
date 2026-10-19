@@ -11,6 +11,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import addresses
 from .eboot import Eboot
 from .overlay import Overlay
 
@@ -29,7 +30,7 @@ EM_SPECIES = (1, 2, 7, 14, 15, 17, 20, 21, 33, 40, 54, 55, 58, 59, 75, 82, 83)
 EM_FIRST = 6094
 MONSTER_PAC = 6110
 """A species' model PAC is MONSTER_PAC + species (Tigrex 75: 6185)."""
-SPECIES_ROWS = 0x5A
+SPECIES_ROWS: int = addresses.SPECIES_TABLE.count or 0
 """Species rows 0 to 0x59 have a script header; the ids above are no monsters."""
 
 STAGES = range(0, 267)
