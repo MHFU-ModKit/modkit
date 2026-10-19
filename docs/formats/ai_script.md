@@ -151,3 +151,11 @@ native address of an offset.
 `SCRIPT_HEADERS` words at it and moves each live monster's script words across the maps, restarting at
 base routine 0 the monster with a word that has no place. It lasts until the next quest load re-reads
 the overlay.
+
+The framework loads a stick container from `PLUGINS/mhfu_framework/brain` (`mhfu brain deploy`
+writes it with the mod that calls `mhfu.brain_install`). It stages the file in extra RAM, adds the
+image's address to every reloc word, and points each word of the row's `SCRIPT_HEADERS` that holds a
+patch's native address at the image: at install, and after every chunk of the overlay that
+`SCRIPT_HEADERS` lies in, since each quest load re-reads it. A monster that starts its script later
+runs the container's; one already running keeps the game's. Extra RAM is PPSSPP's, so a real PSP
+installs nothing.

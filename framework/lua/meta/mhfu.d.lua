@@ -11,7 +11,7 @@ mhfu = {}
 
 ---The API's version, raised whenever a declaration here changes; a mod that needs something added
 ---in version N checks `mhfu.api_version >= N`.
-mhfu.api_version = 5
+mhfu.api_version = 6
 
 -- log, memory and world state (bind_memory.cpp) ----------------------------------------------
 
@@ -977,3 +977,33 @@ function mhfu.npc_status(slot) end
 
 ---How many NPCs `npc_add` takes.
 mhfu.NPC_MAX = 4 -- MHFU_NPC_MAX
+
+-- AI scripts from the memory stick (bind_brain.cpp) -------------------------------------------
+
+---Installs the AI script container at `path` (an `MHAI` stick container, as `mhfu brain build`
+---writes it; a path as `inject_register` takes it) for the species row it names: staged in extra
+---RAM, relocated, and the row's header words pointed at it now and after every overlay read, so a
+---monster that starts its script later runs it. A monster already running keeps the script it
+---has. Installing a row again replaces it. Reads the Memory Stick: call it while mods load. It
+---fails on a real PSP, which has no extra RAM to keep.
+---@param path string
+---@return integer? row
+---@return string? err
+function mhfu.brain_install(path) end
+
+---row's install as of now, or nil while the row has none.
+---@param row integer
+---@return mhfu.BrainStatus?
+function mhfu.brain_status(row) end
+
+---What `mhfu.brain_status` returns.
+---@class mhfu.BrainStatus
+---@field id integer the container's id, a u32 that is negative from 0x80000000: format it with %08X
+---@field image integer where the relocated image sits
+---@field size integer the image's bytes
+---@field headers integer the headers it carries
+---@field patched integer row words pointed at the image since the install, the install's included
+---@field maps integer[] the map types whose header word points into the image now
+
+---How many rows `brain_install` holds at once.
+mhfu.BRAIN_MAX = 8 -- MHFU_BRAIN_MAX

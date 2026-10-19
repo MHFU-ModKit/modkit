@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
- * Private to inject.cpp, xram.cpp, volatile_interposer.cpp and npc.cpp: the injected-file
- * table and the extra RAM its buffers live in.
+ * Private to inject.cpp, xram.cpp, volatile_interposer.cpp, npc.cpp and brain.cpp: the
+ * injected-file table and the extra RAM its buffers live in.
  */
 #ifndef MHFU_CORE_XRAM_H
 #define MHFU_CORE_XRAM_H
