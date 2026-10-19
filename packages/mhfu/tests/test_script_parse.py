@@ -1,9 +1,14 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import hashlib
+import json
+import re
 import time
+from types import SimpleNamespace
 
 import pytest
+from mhfu.cli import main
+from mhfu.cli import script as cli
 from mhfu.em import script
 from mhfu.em.script import asm, check, edit, ir, lift, source
 from mhfu.em.script.opcodes import BLOCKS, BY_NAME, CLOSE
@@ -507,3 +512,129 @@ def test_game_misordered_case_is_found(em75):
     lines[i + 1 : i + 1] = [indent(lines[i]) + "case 4", indent(lines[i]) + "  wait 1"]
     found = check.check(edit.resolve(parse("\n".join(lines), like=p)))
     assert [f.code for f in found] == ["ORDERED"]
+
+
+# ---- the command
+
+
+@pytest.fixture
+def synthetic(monkeypatch):
+    p = world()
+    monkeypatch.setattr(cli, "Extracted", SimpleNamespace(find=lambda root: None))
+    monkeypatch.setattr(script, "Scripts", lambda game, em: None)
+    monkeypatch.setattr(lift, "lift", lambda sc, row=None: p)
+    return p
+
+
+def write(tmp_path, lines, name="edited.txt"):
+    path = tmp_path / name
+    path.write_text("\n".join(lines) + "\n")
+    return str(path)
+
+
+def test_cli_check_clean(synthetic, tmp_path, capsys):
+    f = write(tmp_path, lines_of(synthetic))
+    assert main(["script", "75", "--check", f]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_cli_check_lists_findings(synthetic, tmp_path, capsys):
+    lines = lines_of(synthetic)
+    i = where(lines, "random_shifted 3")
+    lines[i + 1] = lines[i + 1].replace("branch 10", "branch 11")
+    assert main(["script", "75", "--check", write(tmp_path, lines)]) == 1
+    (out,) = capsys.readouterr().out.splitlines()
+    assert re.fullmatch(r"error RANDOM_WEIGHTS \S+: random_shifted weights add up to 33.*", out)
+
+
+def test_cli_check_index_past_list(synthetic, tmp_path, capsys):
+    lines = lines_of(synthetic)
+    i = where(lines, "call 0")
+    lines[i] = indent(lines[i]) + "call 2"
+    assert main(["script", "75", "--check", write(tmp_path, lines)]) == 1
+    assert "error INDEX_PAST_LIST n0: call call[2] under h0" in capsys.readouterr().out
+
+
+def test_cli_check_warning_passes(synthetic, tmp_path, capsys):
+    lines = lines_of(synthetic)
+    i = where(lines, "end return", where(lines, "routine call_0"))
+    lines[i] = indent(lines[i]) + "goto 1"
+    assert main(["script", "75", "--check", write(tmp_path, lines)]) == 0
+    assert capsys.readouterr().out.startswith("warning EMPTY_SLOT n0: goto base[1] under h0")
+
+
+def test_cli_parse_error(synthetic, tmp_path, capsys):
+    lines = lines_of(synthetic)
+    lines[where(lines, "enter 0 2 0")] += " 1"
+    f = write(tmp_path, lines)
+    assert main(["script", "75", "--check", f]) == 1
+    err = capsys.readouterr().err
+    assert f in err and "enter takes 3 operand(s)" in err and "line " in err
+
+
+def test_cli_build(synthetic, tmp_path, capsys):
+    lines = lines_of(synthetic)
+    out, tab = tmp_path / "out.bin", tmp_path / "out.json"
+    f = write(tmp_path, lines)
+    assert main(["script", "75", "--build", f, "-o", str(out), "--map", str(tab)]) == 0
+    img = asm.assemble(synthetic)
+    assert out.read_bytes() == img.data and "bytes" in capsys.readouterr().out
+    m = json.loads(tab.read_text())
+    assert m["base"] == BASE and m["size"] == len(img.data) and m["relocs"] == img.relocs
+    assert m["headers"] == {f"0x{va:08X}": at for va, at in img.headers.items()}
+    assert m["origin"] == {f"0x{pc:08X}": at for pc, at in img.origin.items()}
+    assert m["items"]["call_0"] == list(img.items["call_0"]) and m["closes"] == img.closes
+
+
+def test_cli_build_edited_at_a_base(synthetic, tmp_path):
+    lines = lines_of(synthetic)
+    i = where(lines, "enter 0 2 0")
+    lines.insert(i, indent(lines[i]) + "wait 9")
+    out = tmp_path / "out.bin"
+    argv = ["script", "75", "--build", write(tmp_path, lines), "-o", str(out)]
+    assert main([*argv, "--base", "0x00300000"]) == 0
+    got = out.read_bytes()
+    assert got != asm.assemble(synthetic).data
+    q = edit.resolve(parse("\n".join(lines), like=synthetic))
+    assert got == asm.assemble(q, 0x0030_0000).data
+
+
+def test_cli_build_refuses_an_error(synthetic, tmp_path, capsys):
+    lines = lines_of(synthetic)
+    i = where(lines, "random_shifted 3")
+    lines[i + 1] = lines[i + 1].replace("branch 10", "branch 11")
+    out = tmp_path / "out.bin"
+    assert main(["script", "75", "--build", write(tmp_path, lines), "-o", str(out)]) == 1
+    assert not out.exists() and "error RANDOM_WEIGHTS" in capsys.readouterr().out
+
+
+def test_cli_build_arguments(synthetic, tmp_path, capsys):
+    f = write(tmp_path, lines_of(synthetic))
+    assert main(["script", "75", "--build", f]) == 1
+    assert "--build needs -o OUT" in capsys.readouterr().err
+    assert main(["script", "75", "--build", f, "--check", f, "-o", str(tmp_path / "x")]) == 1
+    assert "exclusive" in capsys.readouterr().err
+    assert main(["script", "75", "--check", str(tmp_path / "missing.txt")]) == 1
+
+
+def test_cli_game(game, tmp_path, capsys):
+    data = str(game.root)
+    src = tmp_path / "em75.txt"
+    assert main(["script", "75", "--source", "-o", str(src), "--data", data]) == 0
+    assert main(["script", "75", "--check", str(src), "--data", data]) == 0
+    assert capsys.readouterr().out == ""
+    out, tab = tmp_path / "em75.bin", tmp_path / "em75.json"
+    argv = ["script", "75", "--build", str(src), "-o", str(out), "--map", str(tab), "--data", data]
+    assert main(argv) == 0
+    sc = script.Scripts(game, 75)
+    p = lift.lift(sc)
+    assert out.read_bytes() == sc.ovl.read(p.base, p.end - p.base)
+    assert json.loads(tab.read_text())["headers"][f"0x{p.headers()[0].va:08X}"] >= 0
+    lines = src.read_text().split("\n")
+    i = where(lines, "enter 0 1 0", routine_start(lines, "base_0"))
+    lines[i] = indent(lines[i]) + "enter 3 0 0"
+    edited = write(tmp_path, lines)
+    assert main(["script", "75", "--build", edited, "-o", str(out), "--data", data]) == 0
+    got, was = out.read_bytes(), sc.ovl.read(p.base, p.end - p.base)
+    assert len(got) == len(was) and [k for k in range(len(was)) if got[k] != was[k]] != []
+    assert main(["script", "75", "--check", edited, "--row", "76", "--data", data]) == 1
