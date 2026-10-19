@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """Push a port's hit tables into the running game through the debugger: `runtime.plan`, the
-writes the memory stick's module carries, written and read back. Nothing goes on the stick.
+writes the memory stick's module carries, written and read back by `mhfu.writes.apply`.
+Nothing goes on the stick.
 
 Every guard is read before anything is written, and one that fails refuses the whole push. A
 record lever applies from the next attack a move spawns (`ATTACK_TABLE_SETTER` copies the
@@ -12,78 +13,24 @@ its set). A reload of the overlay (the next quest) puts the game's own tables ba
 from __future__ import annotations
 
 import re
-import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from pathlib import Path
 
-from mhfu.memory import Memory, Unmapped
 from mhfu.structs import Game
+from mhfu.writes import Pushed, Refused, apply
 from mhfu_port.manifest import Manifest
 
 from . import runtime, species
-from .runtime import Host, Plan, Write
+from .runtime import Host
 
 ATTACH_TIMEOUT = 5.0
 """Seconds to wait for the debugger before a push gives up."""
-
-
-class Refused(ValueError):
-    """Why nothing was written."""
-
-
-@dataclass
-class Pushed:
-    plan: Plan
-    seconds: float
-    """Guards, writes and read-back."""
-    mismatched: list[str] = field(default_factory=list)
-    """Writes whose read-back is not what was written."""
-    where: str = ""
-
-    def describe(self) -> str:
-        w = self.plan.writes
-        head = (
-            f"pushed {len(w)} write(s), {self.plan.size} bytes, into {self.where or 'the game'}"
-            f" in {self.seconds:.2f} s"
-        )
-        if self.mismatched:
-            return f"{head}; read back DIFFERS at {', '.join(self.mismatched)}"
-        notes = "".join(f"; {n}" for n in self.plan.notes)
-        return f"{head}; read back matches{notes}"
-
-
-def failing(mem: Memory, writes: tuple[Write, ...]) -> str | None:
-    """The first guard that does not hold, in words; None when all do."""
-    seen: dict[tuple[int, int], bytes] = {}
-    for w in writes:
-        for at, want in w.guards:
-            key = (at, len(want))
-            if key not in seen:
-                try:
-                    seen[key] = mem.read(at, len(want))
-                except Unmapped:
-                    seen[key] = b""
-            if seen[key] != want:
-                got = seen[key].hex().upper() or "nothing"
-                return f"{w.what}: 0x{at:08X} reads {got}, the plan expects {want.hex().upper()}"
-    return None
-
-
-def apply(mem: Memory, p: Plan, where: str = "") -> Pushed:
-    """Every write of `p`, all or nothing, then read back."""
-    t0 = time.monotonic()
-    why = failing(mem, p.writes)
-    if why is not None:
-        raise Refused(
-            f"the game does not hold the tables this plan was built against ({why}): another"
-            " overlay, or a relocated one"
-        )
-    for w in p.writes:
-        mem.write(w.at, w.data)
-    bad = [w.what for w in p.writes if mem.read(w.at, len(w.data)) != w.data]
-    return Pushed(p, time.monotonic() - t0, bad, where)
+STALE = (
+    "the game does not hold the tables this plan was built against ({why}): another overlay,"
+    " or a relocated one"
+)
+"""The refusal when a guard fails; `mhfu.writes.apply` fills in `why`."""
 
 
 def present(game: Game, host: Host) -> bool:
@@ -120,7 +67,7 @@ def to_game(m: Manifest, host: Host | None, source: str = "") -> Pushed:
                 f"no {species.label(host.species)} in {where}: its tables are loaded only"
                 " while one is in the quest"
             )
-        return apply(game.mem, p, where)
+        return apply(game.mem, p, where, STALE)
 
 
 ID = re.compile(r'^\s*id = "([0-9a-f]{8})",', re.M)

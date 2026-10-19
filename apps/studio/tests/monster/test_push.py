@@ -12,6 +12,7 @@ import pytest
 from mhfu import addresses as a
 from mhfu.em.intel import SpeciesIntel
 from mhfu.memory import Memory
+from mhfu.writes import Plan
 from mhfu_studio.monster import push
 from mhfu_studio.monster import runtime as RT
 from mhfu_studio.monster.core.scene import Scene
@@ -27,18 +28,16 @@ class Monster:
 
 
 class Sparse(Memory):
-    """Zeroes everywhere; `drop` loses the writes to one address."""
+    """Zeroes everywhere."""
 
-    def __init__(self, drop: int = -1) -> None:
+    def __init__(self) -> None:
         self.bytes: dict[int, int] = {}
-        self.drop = drop
 
     def read(self, address: int, size: int) -> bytes:
         return bytes(self.bytes.get(address + i, 0) for i in range(size))
 
     def write(self, address: int, data: bytes) -> None:
-        if address != self.drop:
-            self.bytes.update((address + i, b) for i, b in enumerate(data))
+        self.bytes.update((address + i, b) for i, b in enumerate(data))
 
 
 @dataclass
@@ -50,9 +49,9 @@ class Game:
         return {i + 1: Monster(s) for i, s in enumerate(self.species)}
 
 
-def memory(p: RT.Plan, drop: int = -1) -> Sparse:
+def memory(p: Plan) -> Sparse:
     """The plan's guards in place, zeroes elsewhere."""
-    mem = Sparse(drop)
+    mem = Sparse()
     for w in p.writes:
         for at, b in w.guards:
             mem.write(at, b)
@@ -113,14 +112,6 @@ def test_no_game(ws: MonsterWorkspace, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(rig, "running", lambda launcher: False)
     ws.push()
     assert ws.message == "push failed: no game attached: no PPSSPP with its debugger runs on lane 9"
-
-
-def test_mismatch(ws: MonsterWorkspace) -> None:
-    m, host, _ = ws._module()
-    p = RT.plan(m, host)
-    done = push.apply(memory(p, drop=p.writes[1].at), p, "here")
-    assert done.mismatched == [p.writes[1].what]
-    assert "read back DIFFERS at attack set 2" in done.describe()
 
 
 def test_blockers(ws: MonsterWorkspace) -> None:
