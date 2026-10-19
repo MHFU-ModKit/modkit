@@ -71,7 +71,7 @@ and constants; the commands below are built on it.
 | `mhfu dis ADDR [COUNT]`, `xref ADDR`, `switch ADDR` | Disassembly, references, jump tables, in BOOT.BIN or `--overlay` |
 | `mhfu reloc OVERLAY DELTA -o OUT` | An overlay moved to another address |
 | `mhfu moveset`, `phases`, `chain SPECIES` | A big monster's moves, what ends each, what follows it |
-| `mhfu script EM`, `--all` | A big monster's AI script, disassembled: routines, structure, stats |
+| `mhfu script EM`, `--all`, `--source` | A big monster's AI script, disassembled: routines, structure, stats; `--source` writes a species row as source text |
 | `mhfu effects`, `attacks` | The effects and attacks each move spawns |
 | `mhfu abi inventory\|vtables\|interface\|factory\|classes\|callers` | The engine-to-overlay interface: overlays, entity vtables and their slots, em id to overlay, calls through a slot |
 | `mhfu hitzones`, `hitboxes SPECIES` | Where a monster can be hit, and where it hits |

@@ -24,13 +24,24 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
-from enum import Enum
-from functools import cached_property
+from functools import cached_property, partial
 
-from .. import addresses as a
-from ..files import GAME_TASK, Extracted
-from ..memory import Space, Unmapped
-from ..overlay import Overlay
+from ... import addresses as a
+from ...files import GAME_TASK, Extracted
+from ...memory import Memory, Space, Unmapped
+from ...overlay import Overlay
+from .opcodes import (
+    CLOSE,
+    END_KINDS,
+    FIRST_DEEP,
+    OPCODES,
+    Flow,
+    Op,
+    Ref,
+    Shape,
+    operands,
+    slot,
+)
 
 Reader = Callable[[int], int]
 """The byte at an address."""
@@ -41,314 +52,11 @@ SCAN_LIMIT = 100_000
 """Instructions a scan for the end of a block steps before it is taken for a runaway."""
 SENTINEL = 0x95
 """The byte a scan for the end of a block stops on; no script holds it."""
+ROWS = 0x5A
+"""Species rows 0 to 0x59 have a script header; the ids above are no monsters."""
 _MAX_FIELDS = 64
-_U16 = ":u16"
-
-
-class Shape(Enum):
-    """How the byte after an opcode, its sub-code, structures the stream. 0 always opens a
-    block; the markers of BLOCKS follow, the last of them ends it."""
-
-    PLAIN = "plain"
-    IF = "if"
-    SWITCH = "switch"
-    """The first case follows the header as an ordinary case marker."""
-    REPEAT = "repeat"
-    RANDOM = "random"
-    BUCKET = "bucket"
-    ZONE = "zone"
-
-
-BLOCKS: Mapping[Shape, Mapping[int, str]] = {
-    Shape.IF: {1: "else", 2: "end"},
-    Shape.SWITCH: {1: "case", 2: "default", 3: "end"},
-    Shape.REPEAT: {1: "end"},
-    Shape.RANDOM: {**dict.fromkeys(range(1, 14), "branch"), 0xFF: "end"},
-    Shape.BUCKET: {**dict.fromkeys(range(1, 6), "bucket"), 0xFF: "end"},
-    Shape.ZONE: {**dict.fromkeys(range(1, 4), "case"), 0xFF: "end"},
-}
-"""A block's marker sub-codes and what each is called; the one called `end` closes it."""
-_LABELLED = ("case", "branch")
-"""Markers that carry the operands of `Op.label`."""
-
-
-CLOSE = {
-    shape: next(s for s, name in marks.items() if name == "end") for shape, marks in BLOCKS.items()
-}
-"""The sub-code that ends each shape's block."""
-
-
-def _size(layout: str) -> int:
-    """Bytes of an operand layout: names, `_` for a byte the game ignores, `name:s8` signed,
-    `name:u16` a big-endian pair."""
-    return sum(2 if tok.endswith(_U16) else 1 for tok in layout.split())
-
-
-class Flow(Enum):
-    NEXT = "next"
-    CALL = "call"
-    """Runs another routine, which returns to the next instruction."""
-    GOTO = "goto"
-    """Continues in another routine and does not come back."""
-    END = "end"
-    """Returns, or ends the thread; the kind says where."""
-
-
-@dataclass(frozen=True)
-class Op:
-    """One opcode: its name, kind, operand layout and length rule."""
-
-    code: int
-    name: str
-    kind: str
-    """flow, condition, action, state, random, wait or other."""
-    shape: Shape
-    args: str
-    """Operand layout after the opcode, or after the sub-code of a block's opener."""
-    label: str
-    """Operand layout of a block's `case` and `branch` markers."""
-    lengths: Mapping[int, int]
-    """Length by the byte after the opcode; for a block, by its sub-code."""
-    size: int
-    """Length for any other byte: all of a fixed opcode, one for a sub-code it has none for."""
-    flow: Flow
-    marker: int
-    """The opcode of the markers inside a block this opcode opens."""
-
-    @property
-    def coded(self) -> bool:
-        return self.shape is not Shape.PLAIN
-
-    def valid(self, sub: int) -> bool:
-        return not self.coded or sub in self.lengths
-
-    def role(self, sub: int | None) -> str | None:
-        """open, mid or close for a block's sub-codes, else None."""
-        if not self.coded or sub is None or sub not in self.lengths:
-            return None
-        if sub == 0:
-            return "open"
-        return "close" if sub == CLOSE[self.shape] else "mid"
-
-    def mnemonic(self, sub: int | None) -> str:
-        """The name, a marker's sub-code spelled out: `if_enraged.else`."""
-        if self.role(sub) in (None, "open") or sub is None:
-            return self.name
-        return f"{self.name}.{BLOCKS[self.shape][sub]}"
-
-    def layout(self, sub: int | None) -> str:
-        """The operand layout of the instruction with this sub-code."""
-        if not self.coded or sub == 0:
-            return self.args
-        marks = BLOCKS[self.shape]
-        return self.label if sub is not None and marks.get(sub) in _LABELLED else ""
-
-
-def _op(
-    code: int,
-    name: str,
-    kind: str,
-    args: str = "",
-    *,
-    shape: Shape = Shape.PLAIN,
-    label: str = "",
-    by: Mapping[int, int] | None = None,
-    flow: Flow = Flow.NEXT,
-    marker: int | None = None,
-) -> Op:
-    """An Op whose lengths follow from its layouts; `by` sets the length for a byte after a
-    plain opcode."""
-    if shape is Shape.PLAIN:
-        lengths = dict(by or {})
-        size = 1 + _size(args)
-    else:
-        lengths = {0: 2 + _size(args)}
-        for sub, mark in BLOCKS[shape].items():
-            lengths[sub] = 2 + (_size(label) if mark in _LABELLED else 0)
-        size = 1
-    return Op(
-        code,
-        name,
-        kind,
-        shape,
-        args,
-        label,
-        lengths,
-        size,
-        flow,
-        code if marker is None else marker,
-    )
-
-
-C, F, S, A = "condition", "flow", "state", "action"
-_IF, _SW = Shape.IF, Shape.SWITCH
-
-OPCODES: Mapping[int, Op] = {
-    o.code: o
-    for o in (
-        _op(0x01, "if_provoked", C, shape=_IF),
-        _op(0x02, "if_aware", C, shape=_IF),
-        _op(0x03, "if_goal_elsewhere", C, shape=_IF),
-        _op(0x04, "goto_base", F, flow=Flow.GOTO),
-        _op(0x05, "enter", A, "main sub gate"),
-        _op(0x06, "set_target", S, "kind a b", by={3: 5}),
-        _op(0x07, "goto", F, "routine", flow=Flow.GOTO),
-        _op(0x08, "if_mode0", C, shape=_IF),
-        _op(0x09, "if_mode2", C, shape=_IF),
-        _op(0x0A, "set_aux", S, "value"),
-        _op(0x0B, "if_combat_mode", C, "mode", shape=_IF),
-        _op(0x0C, "set_var", S, "var value"),
-        _op(0x0D, "reset_var", S, "var"),
-        _op(0x0E, "if_in_section", C, "section:u16", shape=_IF),
-        _op(0x0F, "walk", F, "mode limit stages step arrive", flow=Flow.CALL),
-        _op(0x10, "walk_next", S),
-        _op(0x11, "target_provoker", S),
-        _op(0x12, "target_last_aware", S),
-        _op(0x13, "target_remembered", S),
-        _op(0x14, "if_off_facing", C, "deg", shape=_IF),
-        _op(0x15, "switch_section", C, "n", shape=_SW, label="section:u16"),
-        _op(0x16, "call_ret", F, "routine", flow=Flow.CALL),
-        _op(0x17, "route_arm", S, "list count body loop"),
-        _op(0x18, "route_run", F, flow=Flow.CALL),
-        _op(0x19, "target_saved_section", S),
-        _op(0x1A, "target_hop", S, "section:u16"),
-        _op(0x1B, "if_counter", C, "value", shape=_IF),
-        _op(0x1C, "switch_hp", C, "n", shape=_SW, label="case"),
-        _op(0x1D, "switch_counter", C, "n", shape=_SW, label="case"),
-        _op(0x1E, "clear_counters", S),
-        _op(0x1F, "if_mode1", C, shape=_IF),
-        _op(0x20, "switch_yaw", C, "n", shape=_SW, label="case"),
-        _op(0x21, "if_gauge_a_low", C, shape=_IF),
-        _op(0x22, "if_dist_flat", C, "dist", shape=_IF),
-        _op(0x24, "repeat", F, "count", shape=Shape.REPEAT),
-        _op(0x25, "reset_repeat", S),
-        _op(0x26, "set_lock", S, "value"),
-        _op(0x27, "switch_flags16", C, "n", shape=_SW, label="case"),
-        _op(0x28, "if_hunter_here", C, shape=_IF),
-        _op(0x29, "if_timer_a_done", C, shape=_IF),
-        _op(0x2A, "if_timer_b_done", C, shape=_IF),
-        _op(0x2B, "if_var", C, "var value", shape=_IF),
-        _op(0x2C, "switch_species_group", C, "n", shape=_SW, label="case"),
-        _op(0x2D, "target_saved_spot", S),
-        _op(0x2E, "select_row", S, "row"),
-        _op(0x2F, "if_hunter_special", C, shape=_IF),
-        _op(0x30, "hunter_special", S),
-        _op(0x31, "target_kind8", S),
-        _op(0x32, "if_aux", C, "value", shape=_IF),
-        _op(0x33, "switch_aux", C, "n", shape=_SW, label="case"),
-        _op(0x34, "if_in_pair", C, "main sub", shape=_IF),
-        _op(0x35, "if_enraged", C, shape=_IF),
-        _op(0x36, "if_dist_3d", C, "dist", shape=_IF),
-        _op(0x38, "if_cell_flag", C, shape=_IF),
-        _op(0x39, "if_latch", C, shape=_IF),
-        _op(0x3A, "if_var3_zero", C, shape=_IF),
-        _op(0x3B, "if_partner", C, shape=_IF),
-        _op(0x3C, "if_partner_fighting", C, shape=_IF),
-        _op(0x3D, "if_dest_section", C, "section:u16", shape=_IF),
-        _op(0x3E, "switch_dest_section", C, "n", shape=_SW, label="section:u16"),
-        _op(0x3F, "call_spot", F, "section:u16 radius", flow=Flow.CALL),
-        _op(0x40, "set_combat", S, "on"),
-        _op(0x41, "self_heal", A, "apply"),
-        _op(0x42, "if_pursuit_off_facing", C, "deg:s8", shape=_IF),
-        _op(0x43, "if_quest_flag", C, shape=_IF),
-        _op(0x44, "if_partner_here", C, shape=_IF),
-        _op(0x45, "if_sole_hunter", C, shape=_IF),
-        _op(0x46, "if_hunter_in_pair", C, "main sub", shape=_IF),
-        _op(0x47, "if_flag40", C, shape=_IF),
-        _op(0x48, "wait", "wait", "frames"),
-        _op(0x49, "target_remembered_param", S, "param"),
-        _op(0x4A, "if_sensed", C, shape=_IF),
-        _op(0x4B, "forget_hunter_timer", S),
-        _op(0x4C, "clear_notice", S),
-        _op(0x4D, "refresh_pursuit", S),
-        _op(0x4E, "refill_gauge_a", S, "apply"),
-        _op(0x4F, "refill_gauge_b", S, "apply"),
-        _op(0x50, "refill_gauge_c", S, "apply"),
-        _op(0x51, "if_mode4", C, shape=_IF),
-        _op(0x52, "pick_target", S),
-        _op(0x53, "pick_target_drawn", S),
-        _op(0x54, "if_target_drawn", C, shape=_IF),
-        _op(0x55, "if_target_noticed", C, shape=_IF),
-        _op(0x56, "switch_var5f3", C, "n", shape=_SW, label="case"),
-        _op(0x57, "switch_class", C, "n", shape=_SW, label="case"),
-        _op(0x58, "target_attacker", S),
-        _op(0x59, "if_var529", C, shape=_IF),
-        _op(0x5A, "if_hunter_zone", C, "zone", shape=_IF),
-        _op(0x5B, "forget_unsensed", S, "apply"),
-        _op(0x5C, "if_valid_ground", C, shape=_IF),
-        _op(0x5D, "if_pursuit_valid", C, shape=_IF),
-        _op(0x5E, "if_zone", C, "zone", shape=_IF),
-        _op(0x5F, "pick_target_zone", S),
-        _op(0x60, "if_stage_flag", C, shape=_IF),
-        _op(0x61, "set_timer_b", S),
-        _op(0x62, "switch_zone_relation", C, shape=Shape.ZONE),
-        _op(0x63, "if_flags16_mask", C, "mask", shape=_IF),
-        _op(0x64, "if_target_notice", C, "level", shape=_IF),
-        _op(0x65, "forget_all", S),
-        _op(0x66, "if_hunter_mark", C, shape=_IF),
-        _op(0x67, "if_active", C, shape=_IF),
-        _op(0x68, "script_reset", S),
-        _op(0x69, "if_request_off_facing", C, "deg:s8", shape=_IF),
-        _op(0x70, "switch_species", C, "n", shape=_SW, label="case"),
-        _op(0x71, "if_class_at_least", C, "min", shape=_IF),
-        _op(0x75, "switch_var492", C, "n", shape=_SW, label="case"),
-        _op(0x76, "switch_zero", C, "n", shape=_SW, label="case"),
-        _op(0x77, "if_area_unmapped", C, shape=_IF),
-        _op(0x78, "if_target_in_arc", C, "lo hi", shape=_IF),
-        _op(0x79, "switch_query", C, "n arg", shape=_SW, label="case"),
-        _op(0x7A, "switch_area", C, "n", shape=_SW, label="case"),
-        _op(0x7B, "rng_step", S),
-        _op(0x7C, "if_area_listed", C, shape=_IF),
-        _op(0x7D, "if_never", C, shape=_IF),
-        _op(0x7E, "switch_dist", C, "n", shape=_SW, label="case"),
-        _op(0x80, "random", "random", "n", shape=Shape.RANDOM, label="weight"),
-        _op(0x81, "call", F, "routine", flow=Flow.CALL),
-        _op(0x82, "call_deep", F, "table routine", flow=Flow.CALL),
-        _op(0x83, "switch_range", C, "n", shape=Shape.BUCKET),
-        _op(0x84, "rng_step2", S),
-        _op(
-            0x85,
-            "random_shifted",
-            "random",
-            "n shift",
-            shape=Shape.RANDOM,
-            label="weight",
-            marker=0x80,
-        ),
-        _op(0x86, "pick_target_role", S, "mask:u16"),
-        _op(0x87, "if_role_hunter", C, "mask:u16", shape=_IF),
-        _op(0x90, "warp", A, "waypoint"),
-        _op(0x91, "face_waypoint", A, "waypoint"),
-        _op(0x92, "nop", "other"),
-        _op(0x93, "nop2", "other"),
-        # SCRIPT_SKIP steps this header one byte short, onto the first case value
-        _op(0x94, "switch_enemy_var", C, "n", shape=_SW, label="case"),
-        _op(0x99, "face", A, "yaw"),
-        _op(0xFF, "end", F, "kind", flow=Flow.END),
-    )
-}
-"""Every opcode the game's dispatch has a case for."""
-
-END_KINDS: Mapping[int, str] = {
-    0: "base",
-    1: "return",
-    2: "return2",
-    3: "return_ret",
-    4: "route",
-    5: "route2",
-    0xF5: "int_0x40",
-    0xF6: "int_0x80",
-    0xF7: "forget",
-    0xF8: "int_0x08",
-    0xF9: "int_0x04",
-    0xFA: "int_0x02",
-    0xFB: "loop_next",
-    0xFC: "notice",
-    0xFD: "int_0x10",
-    0xFE: "walk_step",
-    0xFF: "walk_loop",
-}
-"""The kinds of `end` the game acts on, named by where they go; any other it ignores."""
+_MIN_ROUTINES = 5
+"""Fewer routines than this is not a species' script."""
 
 
 @dataclass(frozen=True)
@@ -415,16 +123,6 @@ def markers(read: Reader, pc: int) -> list[int]:
 
 
 @dataclass(frozen=True)
-class Ref:
-    """An instruction that names a routine by list and index."""
-
-    kind: str
-    """goto, call, walk (a routine of the walk) or stages (a stage array, which is data)."""
-    field: int
-    index: int
-
-
-@dataclass(frozen=True)
 class Insn:
     """One decoded instruction."""
 
@@ -460,43 +158,13 @@ class Insn:
 
 
 def _operands(op: Op, sub: int | None, raw: bytes) -> dict[str, int]:
+    key = sub if op.coded else (raw[1] if op.by and len(raw) > 1 else None)
     out: dict[str, int] = {}
     at = 1 if sub is None else 2
-    for tok in op.layout(sub).split():
-        name, _, kind = tok.partition(":")
-        if kind == "u16":
-            value, size = int.from_bytes(raw[at : at + 2], "big"), 2
-        else:
-            value, size = raw[at], 1
-            if kind == "s8" and value > 0x7F:
-                value -= 0x100
-        if name != "_":
-            out[name] = value
-        at += size
-    out |= {f"x{i}": b for i, b in enumerate(raw[at:], at)}
+    for o in operands(op.layout(key)):
+        out[o.name] = int.from_bytes(raw[at : at + o.size], "big", signed=o.signed)
+        at += o.size
     return out
-
-
-def _refs(op: Op, args: Mapping[str, int]) -> tuple[Ref, ...]:
-    """The routines an instruction names; a walk's stage array is data, not a routine."""
-    match op.name:
-        case "goto_base":
-            return (Ref("goto", 0, 0),)
-        case "goto":
-            return (Ref("goto", 0, args["routine"]),)
-        case "call":
-            return (Ref("call", 1, args["routine"]),)
-        case "call_ret":
-            return (Ref("call", 9, args["routine"]),)
-        case "call_deep":
-            return (Ref("call", _FIRST_DEEP + args["table"], args["routine"]),)
-        case "walk":
-            return (
-                Ref("walk", 2, args["step"]),
-                Ref("walk", 2, args["arrive"]),
-                Ref("stages", 2, args["stages"]),
-            )
-    return ()
 
 
 def fetch(read: Reader, pc: int) -> Insn:
@@ -511,7 +179,9 @@ def fetch(read: Reader, pc: int) -> Insn:
         raise BadScript(
             "end", pc, f"end 0x{args['kind']:02X} at 0x{pc:08X} is no kind the game acts on"
         )
-    return Insn(pc, op, sub, raw, args, refs=_refs(op, args))
+    # a route's lists are not followed: its bodies are roots already, its stage arrays data
+    refs = tuple(r for r in op.refs(args, sub) if r.kind != "route")
+    return Insn(pc, op, sub, raw, args, refs=refs)
 
 
 @dataclass(frozen=True)
@@ -612,42 +282,6 @@ def _depth(ins: Insn, blocks: list[tuple[int, int]]) -> int:
 
 
 @dataclass(frozen=True)
-class Slot:
-    """A header field: what its list holds."""
-
-    name: str
-    kind: str
-    """routines, walk (routines among stage arrays) or data."""
-    interrupt: int = 0
-    """The bit of the pending-interrupt byte whose handler is the list's first routine."""
-
-
-SLOTS = (
-    Slot("base", "routines"),
-    Slot("call", "routines"),
-    Slot("walk", "walk"),
-    Slot("int_0x10", "routines", 0x10),
-    Slot("int_0x20", "routines", 0x20),
-    Slot("stages", "data"),
-    Slot("loop", "routines"),
-    Slot("pick", "data"),
-    Slot("int_0x02", "routines", 0x02),
-    Slot("ret", "routines"),
-    Slot("int_0x04", "routines", 0x04),
-    Slot("int_0x08", "routines", 0x08),
-    Slot("node", "routines"),
-    Slot("int_0x80", "routines", 0x80),
-    Slot("int_0x40", "routines", 0x40),
-)
-"""Header fields 0 to 14, then one routine list per `call_deep` table."""
-_FIRST_DEEP = len(SLOTS)
-
-
-def slot(field: int) -> Slot:
-    return SLOTS[field] if field < _FIRST_DEEP else Slot(f"deep{field - _FIRST_DEEP}", "routines")
-
-
-@dataclass(frozen=True)
 class Source:
     """Where an entry point came from: a header field and an index in its list."""
 
@@ -656,6 +290,10 @@ class Source:
 
     def __str__(self) -> str:
         return f"{slot(self.field).name}[{self.index}]"
+
+
+def _word(read: Reader, at: int) -> int:
+    return int.from_bytes(bytes(read(at + i) for i in range(4)), "little")
 
 
 def _plausible(word: int, window: range) -> bool:
@@ -671,29 +309,46 @@ class Header:
     fields: tuple[int, ...]
     """The pointer fields, 0 for none; floats follow them in memory."""
     lists: Mapping[int, tuple[int, ...]]
-    """The words of each list field, up to the next list or the header. A list has no
-    terminator: a slot that is 0 is unused."""
+    """The words of each routine or walk list field, up to the next list or the header. A list
+    has no terminator: a slot that is 0 is unused."""
+    pointers: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
+    """The same for every field, the data lists (stages, pick) too."""
 
     @classmethod
-    def read(cls, ovl: Overlay, va: int) -> Header:
-        """The header at `va`, in the overlay that holds it."""
-        window = range(ovl.text.stop, ovl.bss.stop)
-        words = [ovl.u32(va + 4 * i) for i in range(min(_MAX_FIELDS, (ovl.end - va) // 4))]
+    def read(
+        cls, mem: Memory | Reader, va: int, window: range | None = None, data: range | None = None
+    ) -> Header:
+        """The header at `va`, read through a memory or a byte reader. `window` is where its
+        words may point (an overlay's data and bss by default) and `data` where its lists can
+        be read (the overlay's initialised data)."""
+        if window is None or data is None:
+            if not isinstance(mem, Overlay):
+                raise ValueError("a memory that is no overlay needs its window and data ranges")
+            window = window or range(mem.text.stop, mem.bss.stop)
+            data = data or range(mem.text.stop, mem.initialised.stop)
+        u32 = mem.u32 if isinstance(mem, Memory) else partial(_word, mem)
+        words = []
+        for i in range(_MAX_FIELDS):
+            try:
+                words.append(u32(va + 4 * i))
+            except Unmapped:
+                break
         valid = next((i for i, w in enumerate(words) if not _plausible(w, window)), len(words))
-        if valid < _FIRST_DEEP or not words[0]:
+        if valid < FIRST_DEEP or not words[0]:
             raise BadScript("structure", va, f"0x{va:08X} is not a script header")
-        last = max(i for i in range(valid) if words[i] or i < _FIRST_DEEP)
+        last = max(i for i in range(valid) if words[i] or i < FIRST_DEEP)
         fields = tuple(words[: last + 1])
-        bounds = sorted({va, ovl.initialised.stop, *(w for w in fields if w)})
-        lists = {}
+        bounds = sorted({va, data.stop, *(w for w in fields if w)})
+        pointers = {}
         for f, p in enumerate(fields):
-            if p and p < ovl.initialised.stop and slot(f).kind != "data":
-                stop = next((b for b in bounds if b > p), ovl.initialised.stop)
+            if p in data:
+                stop = next((b for b in bounds if b > p), data.stop)
                 n = 0
-                while p + 4 * n < stop and _plausible(ovl.u32(p + 4 * n), window):
+                while p + 4 * n < stop and _plausible(u32(p + 4 * n), window):
                     n += 1
-                lists[f] = tuple(ovl.u32(p + 4 * i) for i in range(n))
-        return cls(va, fields, lists)
+                pointers[f] = tuple(u32(p + 4 * i) for i in range(n))
+        lists = {f: ws for f, ws in pointers.items() if slot(f).kind != "data"}
+        return cls(va, fields, lists, pointers)
 
     def entries(self) -> list[tuple[Source, int]]:
         """Every nonzero slot of the routine lists and the walk list, in header order."""
@@ -920,6 +575,7 @@ class Scripts:
         self.ovl = game.em(species)
         self.task = game.overlay(GAME_TASK)
         self.mem = Space([self.task, self.ovl])
+        self._listings: dict[int, Listing] = {}
 
     def header_at(self, variant: int, row: int | None = None) -> int:
         """The header a species row has for a map type. `row` is a species id, by default this
@@ -940,19 +596,49 @@ class Scripts:
             out.setdefault(self.header_at(v, row), []).append(v)
         return {va: tuple(vs) for va, vs in out.items()}
 
-    def header(self, variant: int = 0, row: int | None = None) -> Header:
-        va = self.header_at(variant, row)
+    def header_in(self, va: int) -> Header:
+        """The header at `va`, in this overlay or in game_task."""
         holder = next((o for o in (self.ovl, self.task) if va in o), None)
         if holder is None:
             raise ValueError(f"0x{va:08X} is in neither game_task nor em{self.species:02d}")
         return Header.read(holder, va)
 
+    def header(self, variant: int = 0, row: int | None = None) -> Header:
+        return self.header_in(self.header_at(variant, row))
+
+    def listing(self, va: int) -> Listing:
+        """Every routine the header at `va` reaches; each header is disassembled once."""
+        if va not in self._listings:
+            self._listings[va] = disassemble(self.mem.u8, self.header_in(va))
+        return self._listings[va]
+
     def disassemble(self, variant: int = 0, row: int | None = None) -> Listing:
-        return disassemble(self.mem.u8, self.header(variant, row))
+        return self.listing(self.header_at(variant, row))
 
     def listings(self, row: int | None = None) -> dict[int, Listing]:
         """One listing per distinct header of the row, by header address."""
-        return {va: self.disassemble(vs[0], row) for va, vs in self.variants(row).items()}
+        return {va: self.listing(va) for va in self.variants(row)}
 
     def stats(self, row: int | None = None) -> Stats:
         return merge(self.listings(row).values())
+
+    @cached_property
+    def rows(self) -> tuple[int, ...]:
+        """The species rows whose headers all sit in this overlay: its own and its siblings'. A
+        row of another overlay points at the same addresses and does not decode cleanly here."""
+        return tuple(r for r in range(ROWS) if self._serves(r))
+
+    def _serves(self, row: int) -> bool:
+        try:
+            for va in self.variants(row):
+                if va not in self.ovl.initialised:
+                    return False
+                first = self.header_in(va).lists[0][0]
+                if not decode(self.mem.u8, first).clean:
+                    return False
+                s = self.listing(va).stats()
+                if s.unknown or s.unterminated or s.routines < _MIN_ROUTINES:
+                    return False
+        except (BadScript, Unmapped, ValueError, KeyError, IndexError):
+            return False
+        return True

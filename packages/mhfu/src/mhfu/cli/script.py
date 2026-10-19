@@ -8,6 +8,7 @@
     mhfu script 75 --stats          # counts by kind and opcode, enter pairs, conditions
     mhfu script 75 --json           # the same as data
     mhfu script 75 --row 76         # a sibling species the overlay serves
+    mhfu script 75 --source -o F    # the species row as source text, to a file
     mhfu script --all               # one coverage line per big-monster overlay
 
 The coverage line counts routines, instructions, opcodes the game has no case for and routines
@@ -39,6 +40,12 @@ def register(sub: Subparsers) -> None:
     p.add_argument("--routine", type=_address, metavar="ADDR", help="only this routine")
     p.add_argument("--stats", action="store_true", help="counts instead of the listing")
     p.add_argument("--json", action="store_true", help="data instead of text")
+    p.add_argument(
+        "--source",
+        action="store_true",
+        help="the row as source text (a game listing: keep it out of repos)",
+    )
+    p.add_argument("-o", "--out", type=Path, metavar="FILE", help="write the output to FILE")
     p.add_argument("--all", action="store_true", help="one coverage line per overlay")
     p.add_argument("--data", type=Path, help="extracted game (default: $MHFU_DATA)")
     p.set_defaults(run=run)
@@ -51,6 +58,10 @@ def run(args: argparse.Namespace) -> int:
     if args.species is None:
         raise ValueError("name an em overlay (75, em75), or pass --all")
     sc = script.Scripts(game, args.species)
+    if args.source:
+        lines = script.source.render(script.lift.lift(sc, args.row))
+        emit("\n".join(line.text for line in lines), args.out)
+        return 0
     lst = sc.disassemble(args.variant, args.row)
     only: list[int] | None = None
     if args.routine is not None:
@@ -59,12 +70,19 @@ def run(args: argparse.Namespace) -> int:
             lst = replace(lst, routines={args.routine: script.decode(sc.mem.u8, args.routine)})
     if args.stats:
         stats = lst.stats(only)
-        print(json.dumps(stats.as_dict(), indent=1) if args.json else stats_text(stats))
+        emit(json.dumps(stats.as_dict(), indent=1) if args.json else stats_text(stats), args.out)
     elif args.json:
-        print(json.dumps(lst.to_dict(only), indent=1))
+        emit(json.dumps(lst.to_dict(only), indent=1), args.out)
     else:
-        print(lst.text(only))
+        emit(lst.text(only), args.out)
     return 0
+
+
+def emit(text: str, out: Path | None) -> None:
+    if out is None:
+        print(text)
+    else:
+        out.write_text(text + "\n")
 
 
 def stats_text(s: script.Stats) -> str:
