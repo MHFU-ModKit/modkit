@@ -15,7 +15,7 @@ import pytest
 from mhfu.em.script import ir, source
 from mhfu.files import Extracted
 from mhfu_port.data import Data
-from mhfu_studio.monster import brain, species
+from mhfu_studio.monster import brain, brain_game, species
 from mhfu_studio.monster.brain import BrainView
 from mhfu_studio.monster.panels.brain import (
     KIND,
@@ -637,6 +637,25 @@ def test_current_theme(qapp: Any) -> None:
     dark = theme.code("flow")
     theme.apply(theme.theme("Moss", False))
     assert theme.code("flow") != dark and theme.code("no such kind") == theme.text()
+
+
+@pytest.mark.parametrize("family", theme.FAMILIES)
+@pytest.mark.parametrize("dark", [True, False])
+def test_theme_marks(family: str, dark: bool) -> None:
+    t = theme.theme(family, dark)
+    assert set(t.marks) == {*theme.MARK_KINDS, "ink"} and len(set(t.marks.values())) == 4
+
+
+def test_every_mark_has_a_colour() -> None:
+    assert brain_game.KINDS == theme.MARK_KINDS
+
+
+def test_current_marks(qapp: Any) -> None:
+    theme.apply(theme.theme("Moss", True))
+    dark = theme.mark("next")
+    theme.apply(theme.theme("Moss", False))
+    assert theme.mark("next") != dark and theme.mark("no such kind") == theme.accent()
+    assert theme.mark("ink") != theme.mark("next")
 
 
 # ---- the real scripts -------------------------------------------------------------------------- #
