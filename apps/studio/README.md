@@ -5,7 +5,8 @@ One Qt window for authoring MHFU mods offline, with the commands behind it. Two 
 - **Monster**: a ported monster's clips, labels, parts, hitboxes and moves, kept in its manifest
   in [`ports/`](../../ports), checked against the base monster's data from the game. Its hit
   tables are one set of writes over the base monster's, exported as a Lua module the framework
-  loads (`<name>_hit.lua`) or pushed into the running game through PPSSPP's debugger.
+  loads (`<name>_hit.lua`) or pushed into the running game through PPSSPP's debugger. Its Brain
+  tab reads the base monster's AI script.
 - **Map**: edits to a stage's mesh, collision and textures, kept as edit lists in a `map.toml`
   document and pushed into the running game through PPSSPP's debugger; and named points (the
   Point tool, the Points panel), which `mhfu rig goto|walk` takes the hunter to.
@@ -116,6 +117,29 @@ Enrage and Calm down are effect blocks too (`port:enrage()` and `port:calm()` do
 Lua). The Natural rage box in the Behaviour tab turns the monster's own anger off, so only those
 rage it. In the Parts dock, a severable part has Severable below HP %: its cut works only once the
 monster's HP is under that percent, 0 at any HP.
+
+## The Brain tab
+
+The Brain tab (View > Panels) shows the AI script that picks a big monster's next move, as code
+and read only. It reads the species of the port's base monster, else of the monster PAC that is
+open; the species box picks any other of the 42 species the overlays carry a script for. The
+lines are `mhfu script EM --source`'s, in a tree: a routine opens to everything in it, an
+underlined call, goto or walk follows on a double-click or Return, and Back and Forward (Alt+Left,
+Alt+Right) retrace the steps. The header's lists (base routines, interrupts, calls) are beside it.
+Find takes text, or an address (`0x...`). A species with different scripts for different map types
+has a box to pick one. An `enter` line says what it plays: in the open port for its base monster,
+from the species' own intel for another. Copy takes the selected lines, or with one selected the
+routine it is in; More > Show addresses adds a column with each line's address in the game's
+memory. A script is decoded on a worker of its own and kept for the session.
+
+Follow the game, in the header, reads the running game once a second while the tab is shown and
+marks the first monster of the species it finds: NEXT is the line its script resumes at, PLAYING
+the `enter` that ran last (the line says "plays 3 3 instead" when the monster plays another move
+than that `enter` asked for), PARKED where each of its other contexts waits. A monster that runs a
+script pushed with `mhfu brain push` is followed too, mapped back onto the native lines, and the
+tab switches to the version it runs. Following a link, find, Back and Forward, or picking another
+species or version ends Follow. The tab edits nothing and adds nothing to Findings; edits go
+through the source text (`mhfu script`, `mhfu brain`).
 
 ## Tests
 
