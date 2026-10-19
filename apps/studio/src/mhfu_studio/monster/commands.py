@@ -9,6 +9,7 @@ import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from mhfu.writes import Refused
 from mhfu_port import data
 
 from mhfu_studio.cli import Groups
@@ -411,7 +412,7 @@ def run_push(args: argparse.Namespace) -> int:
         return 0
     try:
         print(push.to_game(m, host).describe())
-    except push.Refused as e:
+    except Refused as e:
         print(f"refused: {e}")
         return 1
     return 0

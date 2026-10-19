@@ -28,6 +28,7 @@ from pathlib import Path
 from mhfu import addresses as a
 from mhfu import hitzone
 from mhfu.em.intel import SpeciesIntel
+from mhfu.writes import Plan, Write
 from mhfu_port.manifest import Hitbox, Hurtbox, Manifest, ManifestError
 
 from mhfu_studio.shell import places
@@ -138,32 +139,6 @@ def host(intel: SpeciesIntel | None) -> Host | None:
         tuple(s.va for s in pt.states),
         tables,
     )
-
-
-@dataclass(frozen=True)
-class Write:
-    """`data` at `at`, once every guard reads back as given; no write changes a guard."""
-
-    what: str
-    at: int
-    pieces: tuple[tuple[bytes, str], ...]
-    """The bytes in order, each with a label for the module."""
-    guards: tuple[tuple[int, bytes], ...] = ()
-
-    @property
-    def data(self) -> bytes:
-        return b"".join(p for p, _ in self.pieces)
-
-
-@dataclass(frozen=True)
-class Plan:
-    writes: tuple[Write, ...]
-    notes: tuple[str, ...] = ()
-    """What the host has no room for, left out."""
-
-    @property
-    def size(self) -> int:
-        return sum(len(w.data) for w in self.writes)
 
 
 def sets_of(m: Manifest) -> dict[int, list[Hitbox]]:

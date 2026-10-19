@@ -10,8 +10,8 @@ from mhfu import addresses as a
 from mhfu import files, hitzone
 from mhfu.hitzone import HitVolume
 from mhfu.memory import Image, Space
+from mhfu.writes import Refused, Write, apply
 from mhfu_port.manifest import Attack, Hitbox, HitzoneState, Hurtbox, ManifestError
-from mhfu_studio.monster import push
 from mhfu_studio.monster import runtime as RT
 
 FRAMEWORK = Path(__file__).parents[4] / "framework"
@@ -267,7 +267,7 @@ def game(games: Any) -> Any:
     return Space([Image(bytes(o.data), o.base) for o in ovls])
 
 
-def seed(mem: Mem, space: Any, writes: tuple[RT.Write, ...]) -> None:
+def seed(mem: Mem, space: Any, writes: tuple[Write, ...]) -> None:
     """The game's bytes under every write and guard into the Lua byte map."""
     for w in writes:
         mem.load(w.at, space.read(w.at, len(w.data)))
@@ -290,7 +290,7 @@ def test_both_routes_write_the_same_bytes(lua, make, games, em75):
     space = game(games)
     mem = Mem(lua)
     seed(mem, space, p.writes)
-    done = push.apply(space, p)
+    done = apply(space, p)
     assert not done.mismatched and not p.notes
     (line,) = applied(run(lua, RT.lua_hit_module(m, host)))
     assert f"{len(p.writes)} write(s), {p.size} byte(s)" in line
@@ -317,8 +317,8 @@ def test_a_failing_guard_writes_nothing(lua, make, games, em75):
     mem.load(moved, elsewhere)
     space.write(moved, elsewhere)
     before = [space.read(w.at, len(w.data)) for w in p.writes]
-    with pytest.raises(push.Refused, match="attack set 2: .* reads 0000000A"):
-        push.apply(space, p)
+    with pytest.raises(Refused, match="attack set 2: .* reads 0000000A"):
+        apply(space, p)
     logs = run(lua, RT.lua_hit_module(m, host))
     assert not applied(logs) and any("NOT written: attack set 2" in x for x in logs), logs
     for w, b in zip(p.writes, before, strict=True):
