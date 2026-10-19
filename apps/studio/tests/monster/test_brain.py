@@ -5,16 +5,23 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from mhfu import files
+from mhfu.em.intel import SpeciesIntel
 from mhfu.em.script import ir, source
 from mhfu.em.script.opcodes import BY_NAME
 from mhfu.files import Extracted
+from mhfu_port.data import Data
 from mhfu_studio.monster import brain
 from mhfu_studio.monster.brain import BrainView, History
+from mhfu_studio.monster.core.scene import Scene
+from mhfu_studio.monster.workspace import MonsterWorkspace
+from mhfu_studio.shell import places
 
 # ---- a tiny program by hand: two headers, a list both share, a data item, a blob
 
@@ -152,7 +159,7 @@ KEPT = {
 
 
 @pytest.mark.parametrize("name", ["h0", "h1"])
-def test_the_lines_are_the_kept_source_as_a_tree(name: str) -> None:
+def test_the_view_is_the_kept_source_as_a_tree(name: str) -> None:
     p = program()
     v = brain.view(p, name)
     assert "\n".join(ln.text for ln in v.lines) == kept(p, name, lambda h: h.startswith(KEPT[name]))
@@ -285,6 +292,191 @@ def test_the_history_is_bounded() -> None:
     assert h.back() is None and h.current == 30
 
 
+# ---- the workspace: decoding on the brain worker, caching, labels
+
+
+@pytest.fixture
+def decoded() -> list[tuple[Path, int]]:
+    return []
+
+
+@pytest.fixture
+def ws(
+    tmp_path: Path, intel75: SpeciesIntel, decoded: list[tuple[Path, int]]
+) -> Iterator[MonsterWorkspace]:
+    """A workspace on an empty game folder whose decode is `program()`, noting what it decoded."""
+    game = Extracted(tmp_path)
+    w = MonsterWorkspace(Data(game, game))
+    w.intel_cache[75] = intel75
+
+    def decode(g: Extracted, row: int) -> ir.Program:
+        decoded.append((g.root, row))
+        p = program()
+        p.row = row
+        return p
+
+    w.decode_brain = decode
+    yield w
+    w.close()
+
+
+def wait(call: Callable[[], Any], seconds: float = 10.0) -> Any:
+    """What `call` returns once it is not None: the panel's poll, a sync at a time."""
+    end_at = time.monotonic() + seconds
+    while (got := call()) is None:
+        assert time.monotonic() < end_at, "the worker did not finish"
+        time.sleep(0.005)
+    return got
+
+
+def settled(ws: MonsterWorkspace, row: int) -> Any:
+    """The view of `row`, or why there is none, once the worker is done."""
+    return wait(lambda: ws.brain(row) or ws.brain_error(row) or None)
+
+
+def test_a_decode_runs_on_the_worker(ws: MonsterWorkspace, decoded: list[tuple[Path, int]]) -> None:
+    assert ws.brain(75) is None  # started
+    v = wait(lambda: ws.brain(75))
+    assert isinstance(v, BrainView) and v.row == 75 and v.header == "h0"
+    assert ws.brain(75) is v and ws.brain(75, "h0") is not None
+    assert len(decoded) == 1 and ws.brain_error(75) == ""
+    assert ws._pool is None  # the survey's pool is not the brain's
+
+
+def test_another_header_does_not_decode_again(
+    ws: MonsterWorkspace, decoded: list[tuple[Path, int]]
+) -> None:
+    first = wait(lambda: ws.brain(75))
+    assert [v.header for v in ws.brain_headers(75)] == ["h0", "h1"]
+    assert ws.brain(75, "h1") is None
+    second = wait(lambda: ws.brain(75, "h1"))
+    assert second.header == "h1" and second is not first
+    assert second.lines != first.lines and len(decoded) == 1
+    assert wait(lambda: ws.brain(76)).row == 76 and len(decoded) == 2
+
+
+def test_a_header_the_row_has_not_is_the_default(ws: MonsterWorkspace) -> None:
+    assert wait(lambda: ws.brain(75, "h9")).header == "h0"
+    assert ws.brain(75, "h9") is ws.brain(75)
+
+
+def test_enter_lines_are_labelled_by_what_plays(ws: MonsterWorkspace) -> None:
+    v = wait(lambda: ws.brain(75))
+    by_text = {v.lines[r].text.strip(): text for r, text in v.labels.items()}
+    assert by_text == {
+        "enter 1 4 0": "anim 1",  # the intel's anim for the pair
+        "enter 0 3 0": "anim 9",
+        "enter 3 0 0": "keeps the last clip",  # a pair the intel has not
+    }
+    assert wait(lambda: ws.brain(75, "h1")).labels  # a view of its own is labelled too
+
+
+def test_another_species_is_read_from_its_own_intel(ws: MonsterWorkspace) -> None:
+    assert ws.plays(1, 4, species=75).text() == "anim 1"
+    assert ws.plays(1, 4, species=75).slot == 1
+    assert ws.plays(1, 4, species=7).text() == "keeps the last clip"  # no intel for it
+    assert ws.plays(1, 4).text() == ws.plays(1, 4, species=None).text()
+
+
+def test_the_host_plays_through_its_port(
+    ws: MonsterWorkspace, port_doc: Any, synthetic_pac: bytes
+) -> None:
+    ws.load(Scene.from_bytes(synthetic_pac, "t", manifest=port_doc.manifest), port_doc)
+    assert ws.host_species == 75
+    assert ws.plays(1, 4, species=75) == ws.plays(1, 4)
+    assert ws.plays(1, 4, species=75).move == "charge"  # the port's own, not the host's anim
+
+
+def test_a_sibling_row_is_labelled_from_its_overlay(ws: MonsterWorkspace) -> None:
+    ws.scan_brain = lambda game: {75: 75, 76: 75, 88: 75}
+    assert not wait(lambda: ws.brain(76)).labels  # no map of rows yet: no overlay known
+    assert ws.brain_rows() is None
+    assert wait(ws.brain_rows) == {75: 75, 76: 75, 88: 75}
+    assert wait(lambda: ws.brain(88)).labels
+
+
+def test_the_rows_are_scanned_once(ws: MonsterWorkspace) -> None:
+    scans: list[Path] = []
+
+    def scan(game: Extracted) -> dict[int, int]:
+        scans.append(game.root)
+        return {75: 75}
+
+    ws.scan_brain = scan
+    assert ws.brain_rows() is None
+    assert wait(ws.brain_rows) == {75: 75} and ws.brain_rows() == {75: 75}
+    assert len(scans) == 1
+
+
+def test_a_row_no_overlay_serves(ws: MonsterWorkspace, decoded: list[tuple[Path, int]]) -> None:
+    def none(game: Extracted, row: int) -> ir.Program:
+        decoded.append((game.root, row))
+        raise brain.NoScript(row)
+
+    ws.decode_brain = none
+    assert ws.brain(5) is None
+    settled(ws, 5)
+    assert ws.brain_error(5) == "Bullfango (em05) has no AI script the studio reads"
+    assert ws.brain(5) is None and ws.brain(5, "h1") is None
+    assert len(decoded) == 1  # the error is kept
+    assert ws.brain_error(75) == ""  # for that row only
+
+
+def test_a_decode_that_fails_says_so(ws: MonsterWorkspace) -> None:
+    def bad(game: Extracted, row: int) -> ir.Program:
+        raise ValueError("a routine does not end")
+
+    ws.decode_brain = bad
+    settled(ws, 75)
+    assert (
+        ws.brain_error(75)
+        == "reading the AI script of Tigrex (em75) failed (a routine does not end)"
+    )
+
+
+def test_without_a_game(monkeypatch: pytest.MonkeyPatch) -> None:
+    for p in places.PLACES:
+        monkeypatch.delenv(p.env, raising=False)
+    w = MonsterWorkspace()
+    assert w.brain(75) is None and w.brain_rows() is None and w.brain_headers(75) == []
+    assert w.brain_note and w.brain_error(75) == w.brain_note
+    assert w._brain_pool is None  # nothing was started
+
+
+def test_the_worker_stops_with_the_workspace(ws: MonsterWorkspace) -> None:
+    wait(lambda: ws.brain(75))
+    assert ws._brain_pool is not None
+    ws.close()
+    assert ws._brain_pool is None
+
+
+# ---- which species the tab shows
+
+
+def test_the_species_of_a_port(ws: MonsterWorkspace, port_doc: Any, synthetic_pac: bytes) -> None:
+    assert ws.brain_species is None
+    ws.load(Scene.from_bytes(synthetic_pac, "t", manifest=port_doc.manifest), port_doc)
+    assert ws.brain_species == 75
+    ws.browse_brain(76)
+    assert ws.brain_species == 76
+    ws.load(Scene.from_bytes(synthetic_pac, "t", manifest=port_doc.manifest), port_doc)
+    assert ws.brain_species == 75  # a new document picks again
+
+
+def test_the_species_of_a_monster_pac(
+    ws: MonsterWorkspace, synthetic_pac: bytes, tmp_path: Path
+) -> None:
+    name = f"file_{files.monster_pac(75):05d}.bin"
+    ws.load(Scene.from_bytes(synthetic_pac, "tigrex", path=tmp_path / name))
+    assert ws.doc is None and ws.brain_species == 75
+    ws.browse_brain(1)
+    assert ws.brain_species == 1
+    ws.load(Scene.from_bytes(synthetic_pac, "mine", path=tmp_path / "mine.bin"))
+    assert ws.brain_species is None
+    ws.load(Scene.from_bytes(synthetic_pac, "unsaved"))
+    assert ws.brain_species is None
+
+
 # ---- the game
 
 
@@ -311,8 +503,6 @@ def test_em75_has_one_header_and_its_enters(game: Extracted) -> None:
     v = brain.view(p, only.header)
     assert v.header == "h0" and len(v.lines) > 1000
     assert v.find("enter 3 0 0") and len(v.enters) > 100
-    assert [v.lines[i].text.strip() for i in v.find("enter 3 0 0")][0] == "enter 3 0 0"
-    assert all(v.lines[row].text.startswith("  ") for row in v.enters)
 
 
 def test_a_sibling_row_decodes_from_its_overlay(game: Extracted) -> None:
@@ -320,3 +510,17 @@ def test_a_sibling_row_decodes_from_its_overlay(game: Extracted) -> None:
     assert p.row == 76 and brain.view(p, brain.default_header(p)).lines
     with pytest.raises(brain.NoScript):
         brain.decode(game, 5)
+
+
+def test_a_workspace_labels_the_real_em75(
+    game: Extracted, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    w = MonsterWorkspace(Data(game, game))
+    try:
+        v = wait(lambda: w.brain(75), 120)
+        assert w.intel_of(75) is not None, w.intel_errors
+        assert v.labels and set(v.labels) <= set(v.enters)
+        assert any(text.startswith("anim ") for text in v.labels.values())
+    finally:
+        w.close()

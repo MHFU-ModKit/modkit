@@ -29,6 +29,7 @@ from mhfu.em.intel import (
     PartIntel,
     SpeciesIntel,
 )
+from mhfu.em.script import ir
 from mhfu.files import Extracted
 from mhfu_port import continuity, layout, sequence, slots
 from mhfu_port.behaviour import Trigger
@@ -45,6 +46,7 @@ from mhfu_studio.monster import (
     align,
     authoring,
     behaviour,
+    brain,
     clip_browser,
     clip_game,
     clips,
@@ -55,6 +57,7 @@ from mhfu_studio.monster import (
     species,
 )
 from mhfu_studio.monster.attacks import AttackSession, hitbox_of
+from mhfu_studio.monster.brain import BrainView
 from mhfu_studio.monster.clip_browser import ClipBrowser, SourceClip
 from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.document import PortDocument
@@ -187,6 +190,20 @@ class MonsterWorkspace(Workspace):
             [Callable[[], AbstractContextManager[Session]], int | None], rule_game.Read
         ] = rule_game.fetch
         self.watch = rule_game.Watch()
+        #: a species row's program and the rows each overlay serves, read from the extracted game
+        self.decode_brain: Callable[[Extracted, int], ir.Program] = brain.decode
+        self.scan_brain: Callable[[Extracted], dict[int, int]] = brain.rows
+        #: why there is no game to read the AI scripts from
+        self.brain_note = ""
+        #: the brain worker: a decode never queues behind the host survey on `_pool`
+        self._brain_pool: ThreadPoolExecutor | None = None
+        #: by game root and species row, then the header asked for
+        self._programs: dict[tuple[Path, int], ir.Program] = {}
+        self._brain_views: dict[tuple[Path, int, str | None], BrainView] = {}
+        self._brain_jobs: dict[tuple[Path, int, str | None], Future[BrainView]] = {}
+        self._brain_errors: dict[tuple[Path, int], str] = {}
+        self._brain_rows: dict[Path, dict[int, int]] = {}
+        self._brain_scans: dict[Path, Future[dict[int, int]]] = {}
         self._reset()
 
     def _reset(self) -> None:
@@ -210,6 +227,8 @@ class MonsterWorkspace(Workspace):
         self.markers: list[align.Marker] = []
         self.alignment: align.Alignment | None = None
         self.browse: int | None = None
+        #: the species row `browse_brain` picked for the Brain tab
+        self.brain_pick: int | None = None
         self.show_host = False
         self.host_scenes: dict[int, Scene | None] = {}
         self.host_clip: int | None = None
@@ -625,6 +644,9 @@ class MonsterWorkspace(Workspace):
         if self._pool is not None:
             self._pool.shutdown(wait=False, cancel_futures=True)
             self._pool = None
+        if self._brain_pool is not None:
+            self._brain_pool.shutdown(wait=False, cancel_futures=True)
+            self._brain_pool = None
 
     # what the document says
 
@@ -925,6 +947,131 @@ class MonsterWorkspace(Workspace):
             self.hosts = []
         return self.hosts
 
+    # the AI script
+
+    @property
+    def brain_species(self) -> int | None:
+        """The species row the Brain tab shows: the one `browse_brain` picked, else the port's
+        base monster, else the opened monster PAC's."""
+        if self.brain_pick is not None:
+            return self.brain_pick
+        if self.host_species is not None:
+            return self.host_species
+        path = None if self.scene is None else self.scene.path
+        return None if path is None else species.of_model_file(path)
+
+    def browse_brain(self, row: int) -> None:
+        self.brain_pick = int(row)
+
+    def _brain_game(self) -> Extracted | None:
+        """The game the scripts are read from; None, `brain_note` saying why, without one."""
+        try:
+            game = self.fu()
+        except places.Missing as e:
+            self.brain_note = e.words
+            return None
+        self.brain_note = ""
+        return game
+
+    def _brain_worker(self) -> ThreadPoolExecutor:
+        self._brain_pool = self._brain_pool or ThreadPoolExecutor(1)
+        return self._brain_pool
+
+    def brain_rows(self) -> dict[int, int] | None:
+        """The script rows the overlays serve, each with its overlay's species: what the choice
+        of species lists. The first call starts the scan (seconds, on the brain worker, behind
+        any decode asked before it); None until it is done."""
+        game = self._brain_game()
+        if game is None:
+            return None
+        root = game.root
+        if root not in self._brain_rows:
+            scan = self._brain_scans.get(root)
+            if scan is None:
+                self._brain_scans[root] = self._brain_worker().submit(self.scan_brain, game)
+                return None
+            if not scan.done():
+                return None
+            del self._brain_scans[root]
+            try:
+                self._brain_rows[root] = scan.result()
+            except (OSError, ValueError, LookupError) as e:
+                self.message = f"could not list the AI scripts: {e}"
+                self._brain_rows[root] = {}
+        return self._brain_rows[root]
+
+    def brain_headers(self, row: int) -> list[brain.Variant]:
+        """The row's headers and the map types each runs; empty until its program is decoded."""
+        game = self._brain_game()
+        p = None if game is None else self._programs.get((game.root, row))
+        return [] if p is None else brain.variants(p)
+
+    def brain_error(self, row: int) -> str:
+        """Why `row` has no script view: a sentence; empty while it is on its way or there."""
+        game = self._brain_game()
+        if game is None:
+            return self.brain_note
+        return self._brain_errors.get((game.root, row), "")
+
+    def brain(self, row: int, header: str | None = None) -> BrainView | None:
+        """Species row `row`'s script as `header` runs it: by default the header most map types
+        use, and an unknown one is the default. None until the brain worker has decoded it
+        (seconds for the biggest): ask again from the next sync, until `brain_error` has a
+        reason. Another header of a decoded row is quick."""
+        game = self._brain_game()
+        if game is None:
+            return None
+        root = game.root
+        asked = (root, row, header)
+        decoded = self._programs.get((root, row))
+        key = asked if decoded is None else (root, row, brain.pick_header(decoded, header))
+        if key in self._brain_views:
+            return self._brain_views[key]
+        if (root, row) in self._brain_errors:
+            return None
+        job = self._brain_jobs.get(asked)
+        if job is None:
+            self._brain_jobs[asked] = self._brain_worker().submit(
+                self._make_brain, game, row, header
+            )
+            return None
+        if not job.done():
+            return None
+        del self._brain_jobs[asked]
+        label = species.label(row)
+        try:
+            built = job.result()
+        except brain.NoScript:
+            self._brain_errors[root, row] = f"{label} has no AI script the studio reads"
+            return None
+        except (OSError, ValueError, LookupError) as e:
+            self._brain_errors[root, row] = f"reading the AI script of {label} failed ({e})"
+            return None
+        self._label_brain(built, root)
+        self._brain_views[key] = self._brain_views[root, row, built.header] = built
+        return built
+
+    def _make_brain(self, game: Extracted, row: int, header: str | None) -> BrainView:
+        """On the brain worker: the program (decoded once per row) as `header` runs it."""
+        p = self._programs.get((game.root, row))
+        if p is None:
+            p = self._programs[game.root, row] = self.decode_brain(game, row)
+        return brain.view(p, brain.pick_header(p, header))
+
+    def _label_brain(self, view: BrainView, root: Path) -> None:
+        """What each `enter` line plays, from the intel of the overlay that serves the row. On
+        the GUI thread: building intel is not thread safe, and the first of a species takes a
+        while."""
+        sp = (
+            view.row
+            if view.row in files.EM_SPECIES
+            else self._brain_rows.get(root, {}).get(view.row)
+        )
+        if sp is None or self.intel_of(sp) is None:
+            return
+        for at, (main, sub) in view.enters.items():
+            view.labels[at] = self.plays(main, sub, species=sp).text()
+
     # sessions
 
     @property
@@ -1113,8 +1260,15 @@ class MonsterWorkspace(Workspace):
             self._rows = made, actions.rows(m, si, cov, self.host_attacks(), self.host_species)
         return self._rows[1]
 
-    def plays(self, main: int, sub: int, move: str | None = None) -> actions.Plays:
-        """What plays in this port while the game is in the base monster's `(main, sub)`."""
+    def plays(
+        self, main: int, sub: int, move: str | None = None, species: int | None = None
+    ) -> actions.Plays:
+        """What plays in this port while the game is in the base monster's `(main, sub)`. For
+        another `species`, what its own intel says: no port, so no clip names."""
+        if species is not None and species != self.host_species:
+            other = self.intel_of(species)
+            p = None if other is None else other.pair(main, sub)
+            return actions.plays_now(None, p, main, sub, None, clips.Coverage())
         si = self.host_intel()
         p = None if si is None else si.pair(main, sub)
         return actions.plays_now(self.manifest, p, main, sub, move, self.coverage()[0])
