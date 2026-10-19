@@ -54,22 +54,19 @@ _ENTRY = (4, 8, 8, 16)
 """Bytes of a reloc, patch, origin and item entry."""
 
 _E = a.ENTITY
-_INT = {0x08: _E.SCRIPT_INT_08, 0x02: _E.SCRIPT_INT_02, 0x04: _E.SCRIPT_INT_04}
-_SPARE = int(_E.SCRIPT_LOOP_RETURN) + 4
-"""The pointer word after SCRIPT_LOOP_RETURN, unnamed: mapped like the others."""
 _PLAIN = (
     _E.SCRIPT_HEADER,
-    *_INT.values(),
+    *live_script.INTERRUPT_STARTS.values(),
     _E.SCRIPT_CALL_RETURN,
     _E.SCRIPT_WALK_RETURN,
     _E.SCRIPT_ROUTE,
     _E.SCRIPT_DEEP_RETURN,
     _E.SCRIPT_LOOP_RETURN,
+    _E.SCRIPT_SPARE,
 )
 _NAMES = {
     **{int(f): str(f.name) for f in _PLAIN},
     **{int(_E.SCRIPT_PCS) + 4 * i: f"SCRIPT_PCS[{i}]" for i in range(len(live_script.CONTEXTS))},
-    _SPARE: f"+0x{_SPARE:X}",
 }
 """The entity's script words by offset."""
 
@@ -370,7 +367,7 @@ class _Route:
     """The routine a restarted entity begins at, by its new header."""
 
 
-def _words(s: ScriptState, spare: int) -> dict[int, int]:
+def _words(s: ScriptState) -> dict[int, int]:
     """The entity's script words by offset."""
     out = {
         int(_E.SCRIPT_HEADER): s.header,
@@ -379,9 +376,9 @@ def _words(s: ScriptState, spare: int) -> dict[int, int]:
         int(_E.SCRIPT_ROUTE): s.route,
         int(_E.SCRIPT_DEEP_RETURN): s.deep_return,
         int(_E.SCRIPT_LOOP_RETURN): s.loop_return,
-        _SPARE: spare,
+        int(_E.SCRIPT_SPARE): s.spare,
     }
-    out |= {int(f): s.interrupts[bit] for bit, f in _INT.items()}
+    out |= {int(f): s.interrupts[bit] for bit, f in live_script.INTERRUPT_STARTS.items()}
     out |= {int(_E.SCRIPT_PCS) + 4 * i: pc for i, pc in enumerate(s.pcs)}
     return dict(sorted(out.items()))
 
@@ -399,9 +396,9 @@ def _runs(
     return [(at, tuple(pieces)) for at, pieces in out]
 
 
-def _bind(route: _Route, s: ScriptState, spare: int) -> tuple[list[Write], str]:
+def _bind(route: _Route, s: ScriptState) -> tuple[list[Write], str]:
     """The writes that move one entity's script onto `route`, and a note on how."""
-    old = _words(s, spare)
+    old = _words(s)
     new = dict(old)
     stuck = []
     for off, w in old.items():
@@ -502,13 +499,10 @@ def plan(
     live: Sequence[ScriptState],
     row_words: Sequence[int],
     home: bytes,
-    *,
-    spare: Mapping[int, int] | None = None,
 ) -> Plan:
     """The writes that put `source` at SCRIPT_PUSH, point the row at it and rebind the live
     monsters running it. `row_words` are the row's header words and `home` the bytes at
-    SCRIPT_PUSH (the whole container if there is one) as the game holds them; `spare` is each
-    entity's unnamed word after SCRIPT_LOOP_RETURN, 0 where missing."""
+    SCRIPT_PUSH (the whole container if there is one) as the game holds them."""
     _check_row(p.row, row_words)
     old = _old(home, p.row)
     data = _placed(p, source)
@@ -544,7 +538,7 @@ def plan(
     notes = []
     targets = [s for s in live if s.header in headers]
     for s in targets:
-        more, note = _bind(route, s, (spare or {}).get(s.entity, 0))
+        more, note = _bind(route, s)
         writes += more
         notes.append(note)
     if not targets:
@@ -558,8 +552,6 @@ def plan_restore(
     row_words: Sequence[int],
     home: bytes,
     entry: Callable[[int], int | None],
-    *,
-    spare: Mapping[int, int] | None = None,
 ) -> Plan:
     """The writes that put the game's own script back: the row's header words and the monsters
     running the container at SCRIPT_PUSH, which is then cleared. `entry(header)` is the routine
@@ -583,7 +575,7 @@ def plan_restore(
     else:
         notes.append(f"no header word of row {row} pointed into the container")
     for s in (s for s in live if s.header in headers):
-        more, note = _bind(route, s, (spare or {}).get(s.entity, 0))
+        more, note = _bind(route, s)
         writes += more
         notes.append(note)
     at = int(a.SCRIPT_PUSH)
@@ -599,7 +591,6 @@ def plan_restore(
 @dataclass(frozen=True)
 class _Snapshot:
     live: list[ScriptState]
-    spare: dict[int, int]
     row_words: tuple[int, ...]
     home: bytes
 
@@ -626,9 +617,8 @@ def _species(mem: Memory, row: int) -> list[ScriptState]:
 
 def _snapshot(mem: Memory, row: int) -> _Snapshot:
     live = _species(mem, row)
-    spare = {s.entity: mem.u32(s.entity + _SPARE) for s in live}
     words = struct.unpack(f"<{VARIANTS}I", mem.read(_row_at(row), 4 * VARIANTS))
-    return _Snapshot(live, spare, words, _home(mem))
+    return _Snapshot(live, words, _home(mem))
 
 
 def _stop(client: Client, entities: Sequence[int], timeout: float) -> str:
@@ -671,7 +661,7 @@ def push(s: Session, p: ir.Program, img: asm.Image, *, timeout: float = TIMEOUT)
         s,
         p.row,
         timeout,
-        lambda st: plan(p, img, st.live, st.row_words, st.home, spare=st.spare),
+        lambda st: plan(p, img, st.live, st.row_words, st.home),
     )
 
 
@@ -690,7 +680,7 @@ def restore(s: Session, row: int, *, timeout: float = TIMEOUT) -> Pushed:
         s,
         row,
         timeout,
-        lambda st: plan_restore(row, st.live, st.row_words, st.home, first, spare=st.spare),
+        lambda st: plan_restore(row, st.live, st.row_words, st.home, first),
     )
 
 

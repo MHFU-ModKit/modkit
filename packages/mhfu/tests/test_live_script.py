@@ -71,6 +71,7 @@ FIELDS: dict[str, Any] = dict(
     SCRIPT_ROUTE=a.USER_RAM + 0x603,
     SCRIPT_DEEP_RETURN=a.USER_RAM + 0x604,
     SCRIPT_LOOP_RETURN=a.USER_RAM + 0x605,
+    SCRIPT_SPARE=a.USER_RAM + 0x606,
     SCRIPT_BASE=3,
     SCRIPT_WAIT=-5,
 )
@@ -96,6 +97,7 @@ def test_one_request_reads_every_field() -> None:
         a.USER_RAM + 0x604,
         a.USER_RAM + 0x605,
         3,
+        a.USER_RAM + 0x606,
     )
 
 

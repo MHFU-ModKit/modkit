@@ -230,8 +230,7 @@ def test_native_is_the_lowest_of_several():
 
 
 def test_names_cover_the_entity_words():
-    assert set(inject._words(state(), 0)) == set(inject._NAMES)
-    assert tuple(inject._INT) == live_script.INTERRUPTS
+    assert set(inject._words(state())) == set(inject._NAMES)
     first = int(E.SCRIPT_HEADER)
     assert sorted(inject._NAMES) == list(range(first, first + 4 * len(inject._NAMES), 4))
 
@@ -264,7 +263,7 @@ def state(k=0, **over):
     return replace(s, **over)
 
 
-def entity_image(s, spare=0):
+def entity_image(s):
     raw = bytearray(0x800)
 
     def put(field, *values):
@@ -286,7 +285,7 @@ def entity_image(s, spare=0):
     put(E.SCRIPT_LOOP_RETURN, s.loop_return)
     put(E.SCRIPT_BASE, s.base)
     put(E.SCRIPT_WAIT, s.wait)
-    struct.pack_into("<I", raw, inject._SPARE, spare)
+    put(E.SCRIPT_SPARE, s.spare)
     return bytes(raw)
 
 
@@ -294,17 +293,16 @@ def row_at():
     return inject._row_at(ROW)
 
 
-def parts(states=(), *, words=None, spare=None):
+def parts(states=(), *, words=None):
     """Address and bytes of the synthetic game: the native region, the row, the registry, the
     entities."""
-    spare = spare or {}
     slots = [s.entity for s in states]
     registry = u32s(0, *slots, *[0] * (20 - len(slots)))
     return [
         (N, NATIVE),
         (row_at(), u32s(*(words or [N + 0x38] * 17))),
         (int(a.ENTITY_REGISTRY), registry),
-        *((s.entity, entity_image(s, spare.get(s.entity, 0))) for s in states),
+        *((s.entity, entity_image(s)) for s in states),
     ]
 
 
@@ -315,7 +313,7 @@ def world(states=(), **kw):
 
 def make_plan(mem, p, img):
     snap = inject._snapshot(mem, ROW)
-    return inject.plan(p, img, snap.live, snap.row_words, snap.home, spare=snap.spare)
+    return inject.plan(p, img, snap.live, snap.row_words, snap.home)
 
 
 def row_words_at(mem, at):
@@ -422,11 +420,11 @@ def test_plan_moves_the_header_words_it_knows():
 
 
 def test_plan_reads_the_spare_word():
-    mem = world([state(0), state(1)], spare={ent(0): N + 0x1C, ent(1): N + 0x0C})
+    mem = world([state(0, spare=N + 0x1C), state(1, spare=N + 0x0C)])
     plan = make_plan(mem, *program())
-    assert plan.notes[0].endswith("rebased") and "restarted: +0x4FC 0x" in plan.notes[1]
+    assert plan.notes[0].endswith("rebased") and "restarted: SCRIPT_SPARE 0x" in plan.notes[1]
     apply(mem, plan)
-    assert mem.u32(ent(0) + inject._SPARE) == LOAD + 0x1C
+    assert mem.u32(ent(0) + int(E.SCRIPT_SPARE)) == LOAD + 0x1C
 
 
 def test_plan_repushes_over_the_old_container():
@@ -491,7 +489,7 @@ def test_guards_cover_the_row_the_entities_and_the_home():
 
     stale(lambda mem: mem.write_u32(row_at() + 8, 0x1234))
     stale(lambda mem: mem.write_u32(ent(0) + int(E.SCRIPT_PCS), 0x1234))
-    stale(lambda mem: mem.write_u32(ent(0) + inject._SPARE, 0x1234))
+    stale(lambda mem: mem.write_u32(ent(0) + int(E.SCRIPT_SPARE), 0x1234))
     stale(lambda mem: mem.write_u8(ent(0) + int(E.SCRIPT_CONTEXT), 0x10))
     stale(lambda mem: mem.write_u16(ent(0) + int(E.SCRIPT_BASE), 7))
     stale(lambda mem: mem.write_u8(PUSH + 5, 1))
@@ -553,7 +551,7 @@ def native_first(mem):
 def restore_plan(mem):
     snap = inject._snapshot(mem, ROW)
     entry = native_first(mem)
-    return inject.plan_restore(ROW, snap.live, snap.row_words, snap.home, entry, spare=snap.spare)
+    return inject.plan_restore(ROW, snap.live, snap.row_words, snap.home, entry)
 
 
 def test_restore_puts_the_native_words_back():
