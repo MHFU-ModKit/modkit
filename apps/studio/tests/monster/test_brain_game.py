@@ -232,7 +232,7 @@ class Game:
         self.follow = bg.Follow(clock=lambda: self.t)
         self.follow.set(True)
 
-    def ask(self, row: int) -> Future[bg.Read]:
+    def ask(self, row: int, known: Container | None = None) -> Future[bg.Read]:
         self.asked.append((self.t, row))
         f: Future[bg.Read] = Future()
         try:
@@ -299,7 +299,7 @@ def test_a_read_that_is_not_done_is_waited_for_not_asked_again(game: Game) -> No
     pending: Future[bg.Read] = Future()
     asked: list[float] = []
 
-    def ask(row: int) -> Future[bg.Read]:
+    def ask(row: int, known: Container | None = None) -> Future[bg.Read]:
         asked.append(game.t)
         return pending
 
@@ -451,6 +451,23 @@ def test_fetch_reads_the_monsters_of_the_row_with_their_pair() -> None:
 def test_fetch_reads_nothing_more_when_no_monster_is_there() -> None:
     got = bg.fetch(Attached(world(monster(76))), 75)
     assert got.monsters == {} and got.box is None
+
+
+def test_follow_hands_the_last_container_to_the_next_read(game: Game) -> None:
+    p = program()
+    box = Container.read(inject.container(p, asm.assemble(p), int(a.SCRIPT_PUSH) + 0x40))
+    known: list[Container | None] = []
+    game.answer = lambda: bg.Read(75, {2: state()}, box)
+    real = game.ask
+
+    def ask(row: int, last: Container | None = None) -> Future[bg.Read]:
+        known.append(last)
+        return real(row, last)
+
+    game.ask = ask  # type: ignore[method-assign]
+    game.poll()
+    game.poll(dt=1.0)
+    assert known == [None, box]
 
 
 def test_fetch_brings_the_pushed_container() -> None:

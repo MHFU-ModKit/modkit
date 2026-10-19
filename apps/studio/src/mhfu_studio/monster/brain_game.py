@@ -65,12 +65,15 @@ class Read(NamedTuple):
     """The container at SCRIPT_PUSH, when there is one."""
 
 
-def fetch(attach: Callable[[], AbstractContextManager[Session]], row: int) -> Read:
+def fetch(
+    attach: Callable[[], AbstractContextManager[Session]], row: int, known: Container | None = None
+) -> Read:
     """Attaches to the game and reads the monsters of species `row` and the container pushed into
-    it. The seam the tests fake; it runs on a worker."""
+    it (`known`, the last read's, is not read again). The seam the tests fake; it runs on a
+    worker."""
     with attach() as s:
         found = {k: m for k, m in script.monsters(s.mem).items() if m.species == row}
-        return Read(row, found, inject.pushed(s.mem) if found else None)
+        return Read(row, found, inject.pushed(s.mem, known) if found else None)
 
 
 def context_words(context: int) -> str:
@@ -154,10 +157,11 @@ class Follow:
         view: BrainView | None,
         heads: Sequence[Variant],
         running: bool,
-        ask: Callable[[int], Future[Read]],
+        ask: Callable[[int, Container | None], Future[Read]],
     ) -> bool:
         """Takes a finished read, and asks for the next when `PERIOD` has passed (`ask` runs it
-        on a worker, told the species row). True when what the tab shows changed."""
+        on a worker, told the species row and the container read last). True when what the tab
+        shows changed."""
         if not self.on or view is None:
             return False
         before = self._shown()
@@ -175,7 +179,7 @@ class Follow:
                 self._why = ""
             if now - self._asked >= PERIOD and now - self._lost >= RETRY:
                 self._asked = now
-                self._job = ask(view.row)
+                self._job = ask(view.row, None if self._read is None else self._read.box)
         self._place(view, heads)
         return before != self._shown()
 

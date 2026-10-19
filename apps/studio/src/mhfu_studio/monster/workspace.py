@@ -30,6 +30,7 @@ from mhfu.em.intel import (
     SpeciesIntel,
 )
 from mhfu.em.script import ir
+from mhfu.em.script.inject import Container
 from mhfu.files import Extracted
 from mhfu_port import continuity, layout, sequence, slots
 from mhfu_port.behaviour import Trigger
@@ -204,7 +205,8 @@ class MonsterWorkspace(Workspace):
         self.watch = rule_game.Watch()
         #: reads the species row's live monsters, on a worker (Follow the game)
         self.read_follow: Callable[
-            [Callable[[], AbstractContextManager[Session]], int], brain_game.Read
+            [Callable[[], AbstractContextManager[Session]], int, Container | None],
+            brain_game.Read,
         ] = brain_game.fetch
         self.follow = brain_game.Follow()
         #: a species row's program and the rows each overlay serves, read from the extracted game
@@ -1113,9 +1115,9 @@ class MonsterWorkspace(Workspace):
         heads = [] if view is None else self.brain_headers(view.row)
         return self.follow.place(view, heads)
 
-    def _ask_follow(self, row: int) -> Future[brain_game.Read]:
+    def _ask_follow(self, row: int, known: Container | None) -> Future[brain_game.Read]:
         self._pool = self._pool or ThreadPoolExecutor(1)
-        return self._pool.submit(self.read_follow, self.game_session, row)
+        return self._pool.submit(self.read_follow, self.game_session, row, known)
 
     # sessions
 

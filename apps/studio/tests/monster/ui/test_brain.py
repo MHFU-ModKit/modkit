@@ -616,7 +616,7 @@ class Running:
         ws.game_running = lambda: self.running
         ws.follow.clock = lambda: self.t[0]
 
-    def read(self, attach: Any, row: int) -> bg.Read:
+    def read(self, attach: Any, row: int, known: Any = None) -> bg.Read:
         self.asked.append(row)
         return bg.Read(row, dict(self.monsters), None)
 

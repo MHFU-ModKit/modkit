@@ -412,6 +412,16 @@ def test_pushed_reads_the_container_at_script_push():
     assert box.native(box.headers[N + 0x38]) == N + 0x38
 
 
+def test_pushed_keeps_a_known_container_with_the_same_header():
+    mem = pushed_world(state(0))
+    box = inject.pushed(mem)
+    assert inject.pushed(mem, box) is box
+    other, other_img = edited()
+    mem.write(PUSH, container(other, other_img, LOAD))
+    again = inject.pushed(mem, box)
+    assert again is not None and again is not box and again.head.id != box.head.id
+
+
 @pytest.mark.parametrize("junk", [bytes(inject.HEAD), b"MHAI" + bytes(60), bytes(range(64))])
 def test_pushed_is_none_without_a_container(junk):
     mem = world()
