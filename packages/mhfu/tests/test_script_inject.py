@@ -562,7 +562,7 @@ def test_restore_puts_the_native_words_back():
     assert row_words(mem) == [N + 0x38] * 17
     assert live_script.read(mem, ent(0)) == state(0)
     assert live_script.read(mem, ent(1)) == state(1, context=0x00)
-    assert mem.read(PUSH, inject.GUARD) == bytes(inject.GUARD)
+    assert mem.read(PUSH, len(FULL)) == bytes(len(FULL))
 
 
 def test_restore_restarts_what_has_no_native_place():
@@ -589,7 +589,7 @@ def test_restore_clears_a_container_nothing_points_at():
     plan = restore_plan(mem)
     assert plan.notes == (f"no header word of row {ROW} pointed into the container",)
     apply(mem, plan)
-    assert mem.read(PUSH, inject.GUARD) == bytes(inject.GUARD)
+    assert mem.read(PUSH, len(FULL)) == bytes(len(FULL))
 
 
 def test_restore_restart_needs_a_base_routine():
