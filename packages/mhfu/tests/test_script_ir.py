@@ -488,6 +488,10 @@ def test_image_decodes_where_it_moves():
     assert all(r.clean for r in lst.routines.values())
     assert lst.stats().instructions == want.stats().instructions
     assert h.fields[0] == MOVED + img.items["base_l"][0]
+    again = script.Header.read(
+        Space([mem, sc.ovl]).u8, h.va, window, range(MOVED, MOVED + len(img.data))
+    )
+    assert again == h
     with pytest.raises(ValueError, match="window"):
         script.Header.read(mem, MOVED)
 

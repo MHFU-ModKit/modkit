@@ -24,7 +24,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
-from functools import cached_property
+from functools import cached_property, partial
 
 from ... import addresses as a
 from ...files import GAME_TASK, Extracted
@@ -292,6 +292,10 @@ class Source:
         return f"{slot(self.field).name}[{self.index}]"
 
 
+def _word(read: Reader, at: int) -> int:
+    return int.from_bytes(bytes(read(at + i) for i in range(4)), "little")
+
+
 def _plausible(word: int, window: range) -> bool:
     """A header word is empty or points past the code, into the overlay's data."""
     return word == 0 or word in window
@@ -312,19 +316,21 @@ class Header:
 
     @classmethod
     def read(
-        cls, mem: Memory, va: int, window: range | None = None, data: range | None = None
+        cls, mem: Memory | Reader, va: int, window: range | None = None, data: range | None = None
     ) -> Header:
-        """The header at `va`. `window` is where its words may point (an overlay's data and bss
-        by default) and `data` where its lists can be read (the overlay's initialised data)."""
+        """The header at `va`, read through a memory or a byte reader. `window` is where its
+        words may point (an overlay's data and bss by default) and `data` where its lists can
+        be read (the overlay's initialised data)."""
         if window is None or data is None:
             if not isinstance(mem, Overlay):
                 raise ValueError("a memory that is no overlay needs its window and data ranges")
             window = window or range(mem.text.stop, mem.bss.stop)
             data = data or range(mem.text.stop, mem.initialised.stop)
+        u32 = mem.u32 if isinstance(mem, Memory) else partial(_word, mem)
         words = []
         for i in range(_MAX_FIELDS):
             try:
-                words.append(mem.u32(va + 4 * i))
+                words.append(u32(va + 4 * i))
             except Unmapped:
                 break
         valid = next((i for i, w in enumerate(words) if not _plausible(w, window)), len(words))
@@ -338,9 +344,9 @@ class Header:
             if p in data:
                 stop = next((b for b in bounds if b > p), data.stop)
                 n = 0
-                while p + 4 * n < stop and _plausible(mem.u32(p + 4 * n), window):
+                while p + 4 * n < stop and _plausible(u32(p + 4 * n), window):
                     n += 1
-                pointers[f] = tuple(mem.u32(p + 4 * i) for i in range(n))
+                pointers[f] = tuple(u32(p + 4 * i) for i in range(n))
         lists = {f: ws for f, ws in pointers.items() if slot(f).kind != "data"}
         return cls(va, fields, lists, pointers)
 

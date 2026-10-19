@@ -242,5 +242,6 @@ def assemble(p: ir.Program, base: int | None = None) -> Image:
         for pc, at in piece.ends:
             ends[pc] = off + at
     img.origin = ends | starts
+    img.relocs.sort()
     img.data = bytes(data)
     return img
