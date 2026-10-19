@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPalette
+from PySide6.QtGui import QAction, QColor, QFont, QGuiApplication, QIcon, QPalette
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -30,6 +30,11 @@ from mhfu_studio.shell.findings import LEVELS, Level
 from mhfu_studio.shell.overlay import RGBA, Color, Ink
 
 FAMILIES = ("Ember", "Moss")
+#: the kinds of a line of AI script (`mhfu.em.script.source.Line.kind`); `code` colours each, and
+#: "label" the words after a line
+CODE_KINDS = ("condition", "action", "random", "flow", "state", "structure", "data")
+#: the monospace families, for code and for the `mono` label role
+MONO = ("Menlo", "DejaVu Sans Mono")
 Mode = Literal["system", "dark", "light"]
 MODES: tuple[Mode, ...] = ("system", "dark", "light")
 
@@ -37,6 +42,19 @@ MODES: tuple[Mode, ...] = ("system", "dark", "light")
 def _rgba(hex_: str, a: float = 1.0) -> RGBA:
     h = hex_.lstrip("#")
     return (int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255, a)
+
+
+def _code(dark: bool) -> dict[str, str]:
+    """Code colours, the same in both families: hue says the kind, the theme says light or dark."""
+    if dark:
+        return {
+            "condition": "#6cb6ff", "action": "#7ee0a0", "random": "#c792ea", "flow": "#ffb454",
+            "state": "#4dd0c8", "structure": "#e8c46a", "data": "#8d99a6", "label": "#a89a8f",
+        }  # fmt: skip
+    return {
+        "condition": "#1f6fb8", "action": "#1b7f3f", "random": "#8a3fb3", "flow": "#b45309",
+        "state": "#0f766e", "structure": "#8a6410", "data": "#6b7785", "label": "#86695a",
+    }  # fmt: skip
 
 
 def _inks(dark: bool, accent: str) -> dict[Ink, RGBA]:
@@ -86,6 +104,8 @@ class Theme:
     #: the viewport's clear colour
     view: RGBA
     ink: dict[Ink, RGBA] = field(compare=False)
+    #: a line of code by its kind, and the words after it
+    code: dict[str, str] = field(compare=False)
 
     @property
     def name(self) -> str:
@@ -99,14 +119,14 @@ def _ember(dark: bool) -> Theme:
             "rgba(255,236,224,0.05)", "rgba(255,236,224,0.10)", "rgba(10,5,3,0.45)",
             "#f4ebe4", "#b9a194", "#ff9f43", "#ffb76b", "#1f1006", "rgba(255,159,67,0.18)",
             "#f25f5c", "#f87171", "#fbbf24", "#241411", _rgba("#1a1311"),
-            _inks(True, "#ff9f43"),
+            _inks(True, "#ff9f43"), _code(True),
         )  # fmt: skip
     return Theme(
         "Ember", False, ("#fdf8f3", "#f7ebe0", "#efd9c6"),
         "rgba(255,255,255,0.72)", "rgba(90,40,10,0.13)", "#fffdfb",
         "#2b1a10", "#86695a", "#e8590c", "#f06f24", "#ffffff", "rgba(232,89,12,0.12)",
         "#c2410c", "#dc2626", "#b45309", "#fffaf5", _rgba("#9b877c"),
-        _inks(False, "#e8590c"),
+        _inks(False, "#e8590c"), _code(False),
     )  # fmt: skip
 
 
@@ -117,14 +137,14 @@ def _moss(dark: bool) -> Theme:
             "rgba(230,255,245,0.05)", "rgba(230,255,245,0.10)", "rgba(2,10,8,0.45)",
             "#e2efe9", "#8fb1a4", "#4ade80", "#7ae9a0", "#06210f", "rgba(74,222,128,0.16)",
             "#fbbf24", "#f87171", "#fbbf24", "#10241e", _rgba("#0f1a17"),
-            _inks(True, "#4ade80"),
+            _inks(True, "#4ade80"), _code(True),
         )  # fmt: skip
     return Theme(
         "Moss", False, ("#f5faf7", "#e5f1ea", "#d2e6db"),
         "rgba(255,255,255,0.72)", "rgba(16,60,40,0.13)", "#fcfefd",
         "#11261e", "#5a786c", "#16a34a", "#22b858", "#ffffff", "rgba(22,163,74,0.12)",
         "#d97706", "#dc2626", "#b45309", "#f8fcfa", _rgba("#80948a"),
-        _inks(False, "#16a34a"),
+        _inks(False, "#16a34a"), _code(False),
     )  # fmt: skip
 
 
@@ -248,6 +268,20 @@ def text(muted: bool = False) -> QColor:
     return QColor(_current.muted if muted else _current.text)
 
 
+def code(kind: str) -> QColor:
+    """The colour of a line of code of `kind` (`CODE_KINDS`), or "label"; the text colour for
+    any other."""
+    return QColor(_current.code.get(kind, _current.text))
+
+
+def mono() -> QFont:
+    """The font of code."""
+    f = QFont()
+    f.setFamilies(list(MONO))
+    f.setStyleHint(QFont.StyleHint.Monospace)
+    return f
+
+
 def accent() -> QColor:
     """The theme's accent: what is on, picked or just happened."""
     return QColor(_current.accent)
@@ -289,6 +323,7 @@ def palette(t: Theme) -> QPalette:
 
 def qss(t: Theme) -> str:
     s0, s1, s2 = t.stops
+    mono = ", ".join([*(f'"{f}"' for f in MONO), "monospace"])
     levels = "\n".join(
         f'QLabel[level="{lv}"], #Problems[level="{lv}"] {{ color: {_level(t, lv)}; }}'
         for lv in LEVELS
@@ -305,7 +340,7 @@ QLabel[role="next"] {{ color: {t.accent}; font-weight: 600; }}
 QLabel[role="dock"] {{ font-size: 13px; font-weight: 600; }}
 QLabel[role="caps"] {{ color: {t.muted}; font-size: 11px; font-weight: 600; }}
 QLabel[role="chip"] {{ color: {t.second}; }}
-QLabel[role="mono"] {{ font-family: "Menlo", "DejaVu Sans Mono", monospace; }}
+QLabel[role="mono"] {{ font-family: {mono}; }}
 {levels}
 #Card {{ background: {t.card}; border: none; border-radius: 8px; }}
 #Start {{ background: transparent; }}
