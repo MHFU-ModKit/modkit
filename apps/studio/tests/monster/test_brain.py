@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import re
+import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -17,7 +18,7 @@ from mhfu.em.script import ir, source
 from mhfu.em.script.opcodes import BY_NAME
 from mhfu.files import Extracted
 from mhfu_port.data import Data
-from mhfu_studio.monster import brain
+from mhfu_studio.monster import brain, species
 from mhfu_studio.monster.brain import BrainView, History
 from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.workspace import MonsterWorkspace
@@ -316,6 +317,7 @@ def ws(
         return p
 
     w.decode_brain = decode
+    w.scan_brain = lambda g: {75: 75, 76: 75, 88: 75}
     yield w
     w.close()
 
@@ -388,11 +390,23 @@ def test_the_host_plays_through_its_port(
 
 
 def test_a_sibling_row_is_labelled_from_its_overlay(ws: MonsterWorkspace) -> None:
-    ws.scan_brain = lambda game: {75: 75, 76: 75, 88: 75}
-    assert not wait(lambda: ws.brain(76)).labels  # no map of rows yet: no overlay known
-    assert ws.brain_rows() is None
-    assert wait(ws.brain_rows) == {75: 75, 76: 75, 88: 75}
     assert wait(lambda: ws.brain(88)).labels
+
+
+def test_the_intel_is_read_on_the_worker(
+    ws: MonsterWorkspace, intel75: SpeciesIntel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    threads: list[threading.Thread] = []
+
+    def find(sp: int, root: Path | None = None, data: Any = None) -> SpeciesIntel:
+        threads.append(threading.current_thread())
+        return intel75
+
+    del ws.intel_cache[75]
+    monkeypatch.setattr(species, "find", find)
+    assert wait(lambda: ws.brain(75)).labels
+    assert threads and threading.main_thread() not in threads
+    assert ws.intel_cache[75] is intel75
 
 
 def test_the_rows_are_scanned_once(ws: MonsterWorkspace) -> None:

@@ -145,6 +145,17 @@ class _Warm:
     intel: SpeciesIntel | None
 
 
+@dataclass(frozen=True)
+class _Brain:
+    """What the brain worker made for `brain`."""
+
+    view: BrainView
+    species: int | None
+    """The species of the overlay that serves the row, whose intel labels it."""
+    intel: SpeciesIntel | None
+    """That intel, read on the worker when the cache had none (building it takes seconds)."""
+
+
 class MonsterWorkspace(Workspace):
     name = "monster"
     filters = ("Port manifest", "*.toml", "Monster PAC", "*.bin *.pac")
@@ -200,7 +211,7 @@ class MonsterWorkspace(Workspace):
         #: by game root and species row, then the header asked for
         self._programs: dict[tuple[Path, int], ir.Program] = {}
         self._brain_views: dict[tuple[Path, int, str | None], BrainView] = {}
-        self._brain_jobs: dict[tuple[Path, int, str | None], Future[BrainView]] = {}
+        self._brain_jobs: dict[tuple[Path, int, str | None], Future[_Brain]] = {}
         self._brain_errors: dict[tuple[Path, int], str] = {}
         self._brain_rows: dict[Path, dict[int, int]] = {}
         self._brain_scans: dict[Path, Future[dict[int, int]]] = {}
@@ -1031,8 +1042,9 @@ class MonsterWorkspace(Workspace):
             return None
         job = self._brain_jobs.get(asked)
         if job is None:
+            known = frozenset(self.intel_cache)
             self._brain_jobs[asked] = self._brain_worker().submit(
-                self._make_brain, game, row, header
+                self._make_brain, game, row, header, known
             )
             return None
         if not job.done():
@@ -1047,26 +1059,33 @@ class MonsterWorkspace(Workspace):
         except (OSError, ValueError, LookupError) as e:
             self._brain_errors[root, row] = f"reading the AI script of {label} failed ({e})"
             return None
-        self._label_brain(built, root)
-        self._brain_views[key] = self._brain_views[root, row, built.header] = built
-        return built
+        if built.species is not None and built.intel is not None:
+            self.intel_cache.setdefault(built.species, built.intel)
+        self._label_brain(built.view, built.species)
+        self._brain_views[key] = self._brain_views[root, row, built.view.header] = built.view
+        return built.view
 
-    def _make_brain(self, game: Extracted, row: int, header: str | None) -> BrainView:
-        """On the brain worker: the program (decoded once per row) as `header` runs it."""
+    def _make_brain(
+        self, game: Extracted, row: int, header: str | None, known: frozenset[int]
+    ) -> _Brain:
+        """On the brain worker: the program (decoded once per row) as `header` runs it, and the
+        intel that labels it unless `known` has it."""
         p = self._programs.get((game.root, row))
         if p is None:
             p = self._programs[game.root, row] = self.decode_brain(game, row)
-        return brain.view(p, brain.pick_header(p, header))
+        view = brain.view(p, brain.pick_header(p, header))
+        sp = row if row in files.EM_SPECIES else self.scan_brain(game).get(row)
+        si = None
+        if sp is not None and sp not in known:
+            root = None if self.intel_root is not None else game.root
+            try:
+                si = species.find(sp, self.intel_root, root)
+            except (OSError, ValueError):
+                pass  # intel_of says why, on the GUI thread
+        return _Brain(view, sp, si)
 
-    def _label_brain(self, view: BrainView, root: Path) -> None:
-        """What each `enter` line plays, from the intel of the overlay that serves the row. On
-        the GUI thread: building intel is not thread safe, and the first of a species takes a
-        while."""
-        sp = (
-            view.row
-            if view.row in files.EM_SPECIES
-            else self._brain_rows.get(root, {}).get(view.row)
-        )
+    def _label_brain(self, view: BrainView, sp: int | None) -> None:
+        """What each `enter` line plays, from the intel of the overlay that serves the row."""
         if sp is None or self.intel_of(sp) is None:
             return
         for at, (main, sub) in view.enters.items():
