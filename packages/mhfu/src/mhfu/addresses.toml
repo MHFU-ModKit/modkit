@@ -317,6 +317,7 @@ EXTRA_RAM_END = { eu = 0x0C000000, type = "bytes", doc = "first address past the
 SCRIPT_HEADERS = { eu = 0x09BB8B14, type = "bytes", doc = "per species row, stride SPECIES.stride (SPECIES_TABLE + 0x354): 17 header pointers, one per map type, into the species' em overlay or game_task; SCRIPT_INIT copies one into the entity's script pointer" }
 SCRIPT_INIT = { eu = 0x09ABAAC0, type = "fn", doc = "(entity) AI-script init, the only writer of the entity's script header pointer: picks the header by the quest's map-type byte and starts the base routine" }
 SCRIPT_SKIP = { eu = 0x09AB7758, type = "fn", doc = "(entity, pc) the instruction after pc: the game's one length table for the AI script, which every block scan steps with" }
+SCRIPT_PUSH = { eu = 0x0A700000, type = "bytes", doc = "free RAM up to CLI_BRIDGE_BLOCK (960 KB) where `mhfu brain push` puts an AI script container; needs memory=64" }
 
 [set]
 FREE_ROAM_SCENES = { of = ["SCENE_ROAM", "SCENE_VILLAGE", "SCENE_VILLAGE_CONTRACT", "SCENE_QUEST", "SCENE_QUEST_ALT"], doc = "SCENE_OBJECT values of free roam with nothing on screen; a prompt zone's are pool values that move, so not here" }
