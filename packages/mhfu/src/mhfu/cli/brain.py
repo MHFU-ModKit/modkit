@@ -4,6 +4,7 @@
 
     mhfu brain status                # what is pushed, and which rows and monsters run it
     mhfu brain push 75               # em75's script as lifted, into the game
+    mhfu brain push 75 F             # F edited (mhfu script 75 --source): checked, then pushed
     mhfu brain push 75 --row 76      # a sibling row the overlay serves
     mhfu brain restore 75            # the game's own script back
 
@@ -27,6 +28,7 @@ from ..files import Extracted
 from ..live.session import Session
 from .intel import species
 from .live import launcher, launcher_args
+from .script import vet
 
 if TYPE_CHECKING:
     from . import Subparsers
@@ -40,8 +42,11 @@ def register(sub: Subparsers) -> None:
     launcher_args(c, paths=False)
     c.set_defaults(run=status)
 
-    c = modes.add_parser("push", help="a species' script, assembled as lifted, into the game")
+    c = modes.add_parser("push", help="a species' script, as lifted or edited, into the game")
     target(c)
+    c.add_argument(
+        "file", nargs="?", type=Path, help="edited source text (default: the row as lifted)"
+    )
     c.add_argument("--data", type=Path, help="extracted game (default: $MHFU_DATA)")
     c.set_defaults(run=push)
 
@@ -63,11 +68,12 @@ def target(c: argparse.ArgumentParser) -> None:
     launcher_args(c, paths=False)
 
 
-def program(args: argparse.Namespace, row: int) -> script.ir.Program:
-    """The program to push: the row as the game has it. A source FILE argument is parsed here,
-    into the same Program."""
+def program(args: argparse.Namespace, row: int) -> script.ir.Program | None:
+    """The program to push: the row as the game has it, or FILE edited from it and checked;
+    None when a finding is an error."""
     sc = script.Scripts(Extracted.find(args.data), args.species)
-    return script.lift.lift(sc, row)
+    like = script.lift.lift(sc, row)
+    return like if args.file is None else vet(args.file, like)
 
 
 def live(args: argparse.Namespace, act: Callable[[Session], int]) -> int:
@@ -82,6 +88,8 @@ def live(args: argparse.Namespace, act: Callable[[Session], int]) -> int:
 
 def push(args: argparse.Namespace) -> int:
     prog = program(args, args.species if args.row is None else args.row)
+    if prog is None:
+        return 1
     image = script.asm.assemble(prog)
 
     def act(s: Session) -> int:

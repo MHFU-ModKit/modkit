@@ -155,6 +155,34 @@ def test_push_status_restore(emu, em75, game, capsys):
     assert all(kw == {"stop_on_exit": False} for _, kw in emu.launched)
 
 
+def edited_text(prog, old, new):
+    """em75's source with the first line reading `old` (stripped) changed to `new`."""
+    lines = [ln.text for ln in script.source.render(prog)]
+    at = next(i for i, text in enumerate(lines) if text.strip() == old)
+    lines[at] = lines[at].replace(old, new)
+    return "\n".join(lines) + "\n"
+
+
+def test_push_an_edited_file(emu, em75, game, tmp_path, capsys):
+    play(emu, em75)
+    path = tmp_path / "em75.txt"
+    path.write_text(edited_text(em75[1], "enter 0 1 0", "enter 3 0 0"))
+    ticking = emu.tick()
+    assert main(["brain", "push", "75", str(path), "--data", str(game.root), "--lane", "1"]) == 0
+    ticking.join()
+    assert "read back matches" in capsys.readouterr().out
+    assert emu.get(PUSH, 4) == b"MHAI"
+
+
+def test_an_edited_file_with_an_error_is_not_pushed(emu, em75, game, tmp_path, capsys):
+    play(emu, em75)
+    path = tmp_path / "em75.txt"
+    path.write_text(edited_text(em75[1], "branch 8", "branch 9"))  # the weights add up to 33
+    assert main(["brain", "push", "75", str(path), "--data", str(game.root), "--lane", "1"]) == 1
+    assert "error RANDOM_WEIGHTS" in capsys.readouterr().out
+    assert emu.get(PUSH, 16) == bytes(16) and not emu.launched
+
+
 def test_push_a_sibling_row(emu, em75, game, capsys):
     play(emu, em75, monster=False)
     argv = ["brain", "push", "75", "--row", "76", "--data", str(game.root), "--lane", "1"]

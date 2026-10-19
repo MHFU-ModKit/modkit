@@ -95,16 +95,8 @@ def edited(sc: script.Scripts, args: argparse.Namespace) -> int:
         raise ValueError("--check and --build are exclusive: --build checks first")
     if args.build and args.out is None:
         raise ValueError("--build needs -o OUT")
-    path = args.check or args.build
-    like = script.lift.lift(sc, args.row)
-    try:
-        prog = script.edit.resolve(script.parse.parse(path.read_text(), like=like))
-    except ParseError as e:
-        raise ValueError(f"{path}: {e}") from e
-    findings = script.check.check(prog)
-    for f in findings:
-        print(f"{f.level} {f.code} {f.node or f.item or '-'}: {f.text}")
-    if any(f.level == "error" for f in findings):
+    prog = vet(args.check or args.build, script.lift.lift(sc, args.row))
+    if prog is None:
         return 1
     if args.build:
         img = script.asm.assemble(prog, args.base)
@@ -113,6 +105,19 @@ def edited(sc: script.Scripts, args: argparse.Namespace) -> int:
             args.map.write_text(json.dumps(image_map(img), indent=1) + "\n")
         print(f"{args.out}: {len(img.data)} bytes")
     return 0
+
+
+def vet(path: Path, like: script.ir.Program) -> script.ir.Program | None:
+    """The edited source at `path` parsed against `like` and resolved, a line printed per
+    finding; None when a finding is an error."""
+    try:
+        prog = script.edit.resolve(script.parse.parse(path.read_text(), like=like))
+    except ParseError as e:
+        raise ValueError(f"{path}: {e}") from e
+    findings = script.check.check(prog)
+    for f in findings:
+        print(f"{f.level} {f.code} {f.node or f.item or '-'}: {f.text}")
+    return None if any(f.level == "error" for f in findings) else prog
 
 
 def image_map(img: script.asm.Image) -> dict[str, object]:
