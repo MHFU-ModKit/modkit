@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The framework's directories on the PPSSPP memory stick, and the files for its live model
-injection in the inject directory.
+"""The framework's directories on the PPSSPP memory stick, the files for its live model
+injection in the inject directory, and its AI script containers in the brain directory.
 
 The framework PRX polls that directory; it overwrites a loaded file's raw buffer with
 `file_<id>.bin`, or relocates a grown file (`file_<id>_grown.bin`) into extra RAM, once the
@@ -30,9 +30,13 @@ MEMSTICK_ENV = "MHFU_MEMSTICK"
 """Names the memory stick's PSP folder, over `MEMSTICK_ROOTS`."""
 LANE_ENV = "MHFU_LANE"
 """Numbers the hidden PPSSPP (`ppsspp_debug.Lane`) this process works in; its stick wins."""
+MS0 = "ms0:/PSP"
+"""The memory stick's PSP folder as the PRX opens it."""
 INJECT_SUBDIR = "PLUGINS/mhfu_framework/inject"
 MODS_SUBDIR = "PLUGINS/mhfu_framework/mods"
 """Where the framework loads Lua mods from; `require` reads its `lib/`."""
+BRAIN_SUBDIR = "PLUGINS/mhfu_framework/brain"
+"""Where the framework loads AI script containers from, a `brain_filename` per species row."""
 LIB = "lib"
 """Where `require` finds a library, under `MODS_SUBDIR`."""
 ORIG = ".orig"
@@ -43,6 +47,25 @@ _NAME = re.compile(r"file_(\d{4,6})\b")
 def port_module(port: str, kind: str) -> str:
     """A port's generated library in `LIB`: its `clips`, `moves` or `turns`."""
     return f"{port}_{kind}.lua"
+
+
+def _brain(row: int) -> str:
+    return f"brain_row_{row:02d}"
+
+
+def brain_filename(row: int) -> str:
+    """Species row `row`'s container in `BRAIN_SUBDIR`."""
+    return f"{_brain(row)}.mhai"
+
+
+def brain_path(row: int) -> str:
+    """Species row `row`'s container as the PRX opens it, the path `mhfu.brain_install` takes."""
+    return f"{MS0}/{BRAIN_SUBDIR}/{brain_filename(row)}"
+
+
+def brain_module(row: int) -> str:
+    """The Lua mod in `MODS_SUBDIR` that installs species row `row`'s container."""
+    return f"{_brain(row)}.lua"
 
 
 def detect() -> Path | None:
@@ -102,6 +125,15 @@ def default_mods_dir(root: str | os.PathLike[str] | None = None) -> Path:
     return d
 
 
+def default_brain_dir(create: bool = True, root: str | os.PathLike[str] | None = None) -> Path:
+    """The brain directory on the memory stick (`memstick(root)`), created unless `create` is
+    off."""
+    d = memstick(root) / BRAIN_SUBDIR
+    if create:
+        d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def file_id_from_name(name: str | os.PathLike[str]) -> int:
     """The file id in a `file_NNNNN.bin` name or path."""
     m = _NAME.search(Path(name).name)
@@ -132,6 +164,13 @@ def _atomic_write(dst: Path, data: bytes) -> None:
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, dst)
+
+
+def write_file(directory: str | os.PathLike[str], name: str, data: bytes) -> Path:
+    """`data` as `directory/name`, through a temp file: a poller never reads half of it."""
+    dst = Path(directory) / name
+    _atomic_write(dst, data)
+    return dst
 
 
 def _place(

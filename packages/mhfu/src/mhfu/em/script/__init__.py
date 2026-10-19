@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """A big monster's AI script: disassembled (`Scripts`, `decode`), lifted into a tree
 (`lift`, `ir`), edited (`edit`, vetted by `check` and `walk`), encoded back (`asm`), written as
-source text (`source`), read back from it (`parse`) and pushed into the running game (`inject`).
+source text (`source`), read back from it (`parse`), pushed into the running game (`inject`) and
+put on the memory stick for the framework to load (`stick`).
 
     from mhfu.em import script
     sc = script.Scripts(game, 75)         # an em overlay and the species table in game_task
@@ -14,7 +15,7 @@ source text (`source`), read back from it (`parse`) and pushed into the running 
 The opcode table is `opcodes.OPCODES`, the one every part reads.
 """
 
-from . import asm, check, edit, inject, ir, lift, opcodes, parse, source, walk
+from . import asm, check, edit, inject, ir, lift, opcodes, parse, source, stick, walk
 from .disasm import (
     SCAN_LIMIT,
     SENTINEL,
@@ -95,6 +96,7 @@ __all__ = [
     "parse",
     "slot",
     "source",
+    "stick",
     "sweep",
     "walk",
 ]

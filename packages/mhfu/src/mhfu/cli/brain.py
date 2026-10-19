@@ -1,16 +1,21 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""`mhfu brain`: a big monster's AI script pushed into the running game, and back.
+"""`mhfu brain`: a big monster's AI script pushed into the running game, and back, or put on the
+memory stick for the framework to load.
 
     mhfu brain status                # what is pushed, and which rows and monsters run it
     mhfu brain push 75               # em75's script as lifted, into the game
     mhfu brain push 75 F             # F edited (mhfu script 75 --source): checked, then pushed
     mhfu brain push 75 --row 76      # a sibling row the overlay serves
     mhfu brain restore 75            # the game's own script back
+    mhfu brain build 75 F -o OUT     # F as the stick container, to place by hand
+    mhfu brain deploy 75 F           # the container and the mod that installs it, on the stick
 
-The game must be in a quest (the row's header words are set when it loads) and in PPSSPP's 64 MB
-mode. A push lasts until the next quest load. Like the other live commands, it takes the emulator
-the options pick: a lane's, the container's, or the one running.
+A push needs the game in a quest (the row's header words are set when it loads) and in PPSSPP's
+64 MB mode, and lasts until the next quest load. Like the other live commands, it takes the
+emulator the options pick: a lane's, the container's, or the one running. A deploy needs no game:
+the framework installs the container at its next mod load, and every quest after runs it. The
+stick is `--stick`, a lane's, `$MHFU_MEMSTICK` or the one found.
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..em import script
-from ..em.script import inject
+from ..em.script import inject, stick
 from ..files import Extracted
 from ..live.session import Session
 from .intel import species
@@ -43,22 +48,43 @@ def register(sub: Subparsers) -> None:
     c.set_defaults(run=status)
 
     c = modes.add_parser("push", help="a species' script, as lifted or edited, into the game")
+    source(c)
+    live_args(c)
+    c.set_defaults(run=push)
+
+    c = modes.add_parser("restore", help="the game's own script back")
+    target(c)
+    live_args(c)
+    c.set_defaults(run=restore)
+
+    c = modes.add_parser("build", help="a species' script as a stick container file")
+    source(c)
+    c.add_argument("-o", "--out", type=Path, required=True, help="the container to write")
+    c.set_defaults(run=build)
+
+    c = modes.add_parser("deploy", help="a species' script and its mod onto the memory stick")
+    source(c)
+    c.add_argument("--stick", type=Path, help="the memory stick's PSP folder (default: found)")
+    c.set_defaults(run=deploy)
+
+
+def target(c: argparse.ArgumentParser) -> None:
+    """The overlay and its row."""
+    c.add_argument("species", type=species, help="em overlay (em75, 75)")
+    c.add_argument("--row", type=int, help="species row the overlay serves (default its own)")
+
+
+def source(c: argparse.ArgumentParser) -> None:
+    """`target`, and the script to take: the row as lifted, or an edited source text."""
     target(c)
     c.add_argument(
         "file", nargs="?", type=Path, help="edited source text (default: the row as lifted)"
     )
     c.add_argument("--data", type=Path, help="extracted game (default: $MHFU_DATA)")
-    c.set_defaults(run=push)
-
-    c = modes.add_parser("restore", help="the game's own script back")
-    target(c)
-    c.set_defaults(run=restore)
 
 
-def target(c: argparse.ArgumentParser) -> None:
-    """The overlay, its row, how long to wait for a tick, and where the emulator runs."""
-    c.add_argument("species", type=species, help="em overlay (em75, 75)")
-    c.add_argument("--row", type=int, help="species row the overlay serves (default its own)")
+def live_args(c: argparse.ArgumentParser) -> None:
+    """How long to wait for a tick, and where the emulator runs."""
     c.add_argument(
         "--timeout",
         type=float,
@@ -66,6 +92,10 @@ def target(c: argparse.ArgumentParser) -> None:
         help="seconds to wait for a monster's tick before pausing the game instead",
     )
     launcher_args(c, paths=False)
+
+
+def row_of(args: argparse.Namespace) -> int:
+    return int(args.species if args.row is None else args.row)
 
 
 def program(args: argparse.Namespace, row: int) -> script.ir.Program | None:
@@ -87,7 +117,7 @@ def live(args: argparse.Namespace, act: Callable[[Session], int]) -> int:
 
 
 def push(args: argparse.Namespace) -> int:
-    prog = program(args, args.species if args.row is None else args.row)
+    prog = program(args, row_of(args))
     if prog is None:
         return 1
     image = script.asm.assemble(prog)
@@ -102,13 +132,34 @@ def push(args: argparse.Namespace) -> int:
 
 def restore(args: argparse.Namespace) -> int:
     def act(s: Session) -> int:
-        pushed = inject.restore(
-            s, args.species if args.row is None else args.row, timeout=args.timeout
-        )
+        pushed = inject.restore(s, row_of(args), timeout=args.timeout)
         print(pushed.describe())
         return int(bool(pushed.mismatched))
 
     return live(args, act)
+
+
+def build(args: argparse.Namespace) -> int:
+    prog = program(args, row_of(args))
+    if prog is None:
+        return 1
+    data = stick.build(prog, script.asm.assemble(prog))
+    args.out.write_bytes(data)
+    print(f"{args.out}: row {prog.row} id {inject.Head.parse(data).id:08X}, {len(data)} bytes")
+    return 0
+
+
+def deploy(args: argparse.Namespace) -> int:
+    prog = program(args, row_of(args))
+    if prog is None:
+        return 1
+    try:
+        written = stick.deploy(prog, script.asm.assemble(prog), args.stick)
+    except FileNotFoundError as e:
+        print(f"mhfu brain: {e}", file=sys.stderr)
+        return 1
+    print("\n".join(f"wrote {path}" for path in written))
+    return 0
 
 
 def status(args: argparse.Namespace) -> int:
