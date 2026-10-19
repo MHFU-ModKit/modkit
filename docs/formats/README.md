@@ -12,7 +12,7 @@ does it.
 | TMH | [tmh.md](tmh.md) | `mhp_formats.tmh.Tmh` | Texture banks |
 | Skeleton, animation | [animation.md](animation.md) | `mhp_formats.skeleton`, `mhp_formats.anim`, `mhp_formats.fu.anim`, `mhp_formats.p3rd.anim`; `mhfu_port.fk` | Bone trees, bind poses, clip packs, and how the engine plays them |
 | Stage | [stage.md](stage.md) | `mhp_formats.fu.stage.Stage`; `mhfu.stage`; `mhfu_studio.stage` | `st<NNN>.pac`: terrain, textures, collision, and the rules for editing a map |
-| AI script | [ai_script.md](ai_script.md) | `mhfu.em.script` (read only) | A big monster's brain: the bytecode that picks its next move |
+| AI script | [ai_script.md](ai_script.md) | `mhfu.em.script` | A big monster's brain: the bytecode that picks its next move |
 
 ## Conventions
 

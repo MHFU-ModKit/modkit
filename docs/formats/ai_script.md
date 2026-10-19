@@ -2,9 +2,9 @@
 
 A big monster's brain is bytecode: game_task's `AI_SCRIPT` interprets it, and each species ships
 its own as data in its em overlay (some species rows point into game_task). The script picks what
-the monster does next; the moves themselves (`(main, sub)` pairs) are code in the overlay. Read by
-`mhfu.em.script` (`mhfu script EM`); nothing writes it yet, so unlike the other pages this one is
-not round-trip checked.
+the monster does next; the moves themselves (`(main, sub)` pairs) are code in the overlay. Read and
+written by `mhfu.em.script` (`mhfu script EM`): every row lifts into a program that assembles back
+to the same bytes.
 
 ## Finding a script
 

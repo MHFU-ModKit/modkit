@@ -17,9 +17,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from . import asm, disasm, ir, walk
-from .disasm import SENTINEL, BadScript, Reader
-from .lift import LiftError, _tree
+from . import asm, ir, walk
+from .disasm import SENTINEL, Reader
+from .lift import LiftError, routine
 from .opcodes import OPCODES, Shape, slot
 
 __all__ = ["Finding", "check", "decoded"]
@@ -208,26 +208,12 @@ def _text(tokens: Sequence[Token], k: int) -> str:
     return "nothing"
 
 
-def decoded(img: asm.Image, routine: str) -> list[ir.Node]:
-    """The tree the bytes of `routine` decode to in an image, as `lift` would read it."""
-    read = _reader(img)
-    entry = img.base + img.items[routine][0]
-    dec = disasm.decode(read, entry)
-    if not dec.clean or not dec.insns:
-        why = dec.problems[0].text if dec.problems else "no instructions"
-        raise LiftError(f"{routine} does not decode: {why}")
-    stop = max(i.pc + i.length for i in dec.insns)
-    insns: list[disasm.Insn] = []
-    pc = entry
+def decoded(img: asm.Image, name: str) -> list[ir.Node]:
+    """The tree the bytes of routine `name` decode to in an image, as `lift` reads it."""
     try:
-        while pc < stop:
-            insns.append(disasm.fetch(read, pc))
-            pc += insns[-1].length
-        if pc != stop:
-            raise LiftError(f"{routine} does not end where its flow does")
-        return _tree(0, insns)
-    except BadScript as e:
-        raise LiftError(f"{routine}: {e}") from e
+        return routine(_reader(img), img.base + img.items[name][0])[0]
+    except LiftError as e:
+        raise LiftError(f"{name}: {e}") from e
 
 
 def _image(c: _Checks, img: asm.Image) -> None:
