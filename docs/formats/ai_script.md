@@ -119,3 +119,30 @@ edited one back (`mhfu.em.script.parse`). Lines and indentation, one item per to
   against the row's own. What the text adds or changes is new code, which `check` holds to the
   rules; code moved elsewhere is new too.
 - A syntax error names its line. `--build` refuses while a finding is an error.
+
+## Container
+
+An assembled script travels as an `MHAI` container: the image, and the maps that carry a native
+address into it and back. Little-endian; every offset counts from the container's first byte; each
+section is 8-aligned.
+
+| Offset | Field |
+|---|---|
+| 0x00 | `char[4]` `MHAI` |
+| 0x04 | `u16` version, 1 |
+| 0x06 | `u16` species row |
+| 0x08 | `u32` id: the first 4 bytes of the SHA-1 of the image written for base 0, read as little-endian |
+| 0x0C | `u32` load: the address the image's pointer words are written for; 0 in a stick container, whose loader adds its own |
+| 0x10 | `u32` image offset, `u32` size |
+| 0x18 | `u32` reloc offset, count: each the image offset of a pointer word that moves with the image |
+| 0x20 | `u32` patch offset, count: each `{u32 native header address, u32 image offset}` |
+| 0x28 | `u32` origin offset, count: each `{u32 native address, u32 image offset}`, sorted: every instruction start, marker and block end |
+| 0x30 | `u32` item offset, count: each `{u32 native address, u32 image offset, u32 size, u32 kind}`, by native address; kind 0 routine, 1 table, 2 data, 3 header, 4 blob |
+| 0x38 | 8 zero bytes |
+
+The image starts at 0x40; relocs, patches, origin and items follow in that order. A stick container
+(the framework loads it from the memory stick) has no origin and no items.
+
+A native address maps into the image by an origin entry or a patch exactly, else by its offset inside a
+table or data item; anything else, such as a routine's tail, has no place. The inverse takes the lowest
+native address of an offset.
