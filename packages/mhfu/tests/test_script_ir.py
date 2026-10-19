@@ -746,6 +746,7 @@ def test_game_relocs(rows):
                 struct.pack_into("<I", expect, off, word)
             assert img.at(FAR) == bytes(expect)  # every other word, an External too, is as it was
             assert img.at(p.base) == img.data
+            assert asm.assemble(p, FAR).data == img.at(FAR)
 
 
 def test_game_moved_image_decodes(rows):
@@ -848,6 +849,17 @@ def test_game_row_split(rows):
     assert ps[1].items != ps[11].items and ps[1].sha1 == ps[11].sha1
     blobs = [i for i in ps[1].items if isinstance(i, ir.Blob)]
     assert any(len(b.data) > 3000 for b in blobs)  # row 11's private items, inside row 1's span
+
+
+def test_game_lookups(rows):
+    p = rows[75][1][75]
+    nodes = list(p.nodes())
+    resumes = [n for n in nodes if isinstance(n, ir.Insn) and n.op.resume]
+    assert len(resumes) > 100
+    for n in resumes:
+        assert p.ending_at(n.pc + n.length) is n
+    for n in nodes[::7]:
+        assert n in p.at(n.pc)
 
 
 def test_game_reach(rows):
