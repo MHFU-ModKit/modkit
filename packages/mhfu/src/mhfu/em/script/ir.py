@@ -14,6 +14,7 @@ numbered markers, a block's closing marker.
       Data(name, data, labels)     bytes with named offsets
       Blob(data)                   bytes kept as they are
       Header(name, fields, variants)
+    Index(prog)                    its nodes by address and by id
 """
 
 from __future__ import annotations
@@ -22,9 +23,11 @@ import re
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 
-from .opcodes import Op, Ref, derived_count, slot
+from .opcodes import Op, Ref, derived_count, operands, slot
 
 _NEW = re.compile(r"n(\d+)")
+MAX_LIST = 256
+"""Entries a header list holds: its index operand is a byte."""
 
 
 @dataclass(frozen=True)
@@ -74,6 +77,8 @@ class Arm:
     body: list[Node]
     id: str = ""
     pc: int | None = None
+    origin: str | None = None
+    """The id of the node this was copied from."""
 
 
 @dataclass
@@ -88,6 +93,8 @@ class Block:
     pc: int | None = None
     close: int | None = None
     """The address of the closing marker."""
+    origin: str | None = None
+    """The id of the node this was copied from."""
 
     @property
     def count(self) -> int | None:
@@ -147,6 +154,20 @@ def refs(n: Node) -> tuple[Ref, ...]:
     return n.op.refs(n.args) if isinstance(n, Insn) else n.op.refs(n.args, 0)
 
 
+def labels(n: Node) -> list[tuple[str, Sym, Ref]]:
+    """The labels on an instruction's `@list` operands: the operand, the label and the Ref its
+    list entry will have, at index 0."""
+    if not isinstance(n, Insn) or not any(isinstance(v, Sym) for v in n.args.values()):
+        return []
+    args = {k: 0 if isinstance(v, Sym) else v for k, v in n.args.items()}
+    tagged = [o.name for o in operands(n.op.plain_layout(args)) if o.ref]
+    out = []
+    for name, ref in zip(tagged, n.op.refs(args)[len(n.op.fixed) :], strict=True):
+        if isinstance(sym := n.args[name], Sym):
+            out.append((name, sym, ref))
+    return out
+
+
 def walk(nodes: Iterable[Node]) -> Iterator[Located]:
     """Every node and arm under `nodes`, in source order."""
     for n in nodes:
@@ -156,6 +177,68 @@ def walk(nodes: Iterable[Node]) -> Iterator[Located]:
             for arm in n.arms:
                 yield arm
                 yield from walk(arm.body)
+
+
+class Index:
+    """A program's nodes by address and by id, built once: an edit changes the tree, so build
+    another after it."""
+
+    def __init__(self, p: Program) -> None:
+        self._at: dict[int, list[Located]] = {}
+        self._ending: dict[int, Node] = {}
+        self._node: dict[str, Located] = {}
+        self._routine: dict[str, Routine] = {}
+        self._home: dict[str, list[Node]] = {}
+        for r in p.routines():
+            self._add(r, r.body)
+
+    def _add(self, r: Routine, nodes: list[Node]) -> None:
+        for n in nodes:
+            self._see(r, n, nodes)
+            if isinstance(n, Block):
+                self._add(r, n.head)
+                for arm in n.arms:
+                    self._see(r, arm, None)
+                    self._add(r, arm.body)
+
+    def _see(self, r: Routine, n: Located, home: list[Node] | None) -> None:
+        if n.pc is not None:
+            self._at.setdefault(n.pc, []).append(n)
+        if isinstance(n, Block) and n.close is not None:
+            self._at.setdefault(n.close, []).append(n)
+        if isinstance(n, Insn) and n.op.resume and n.pc is not None:
+            self._ending.setdefault(n.pc + n.length, n)
+        if n.id:
+            self._node[n.id] = n
+            self._routine[n.id] = r
+            if home is not None:
+                self._home[n.id] = home
+
+    def __contains__(self, nid: str) -> bool:
+        return nid in self._node
+
+    def at(self, pc: int) -> tuple[Located, ...]:
+        """What starts at the native address `pc`: an instruction, a block's opener or a
+        marker; a block's closing marker answers with its block."""
+        return tuple(self._at.get(pc, ()))
+
+    def ending_at(self, pc: int) -> Node | None:
+        """The instruction that saves `pc` as the run's resume address: an enter or a walk whose
+        native end is `pc`."""
+        return self._ending.get(pc)
+
+    def node(self, nid: str) -> Located:
+        """The node or arm with this id; KeyError when there is none."""
+        return self._node[nid]
+
+    def routine(self, nid: str) -> Routine:
+        """The routine the node or arm with this id sits in."""
+        return self._routine[nid]
+
+    def home(self, nid: str) -> list[Node]:
+        """The list a node sits in: a routine's body, a block's head or an arm's body. An arm
+        has none."""
+        return self._home[nid]
 
 
 @dataclass
@@ -187,21 +270,12 @@ class Program:
             yield from walk(r.body)
 
     def at(self, pc: int) -> tuple[Located, ...]:
-        """What starts at the native address `pc`: an instruction, a block's opener or a
-        marker; a block's closing marker answers with its block."""
-        return tuple(
-            n
-            for n in self.nodes()
-            if n.pc == pc or (isinstance(n, Block) and n.close is not None and n.close == pc)
-        )
+        """`Index.at` on a fresh index; build an `Index` to look up many."""
+        return Index(self).at(pc)
 
     def ending_at(self, pc: int) -> Node | None:
-        """The instruction that saves `pc` as the run's resume address: an enter or a walk whose
-        native end is `pc`."""
-        for n in self.nodes():
-            if isinstance(n, Insn) and n.op.resume and n.pc is not None and n.pc + n.length == pc:
-                return n
-        return None
+        """`Index.ending_at` on a fresh index."""
+        return Index(self).ending_at(pc)
 
     def tables(self) -> dict[str, Table]:
         return {t.name: t for t in self.items if isinstance(t, Table)}
@@ -225,9 +299,19 @@ class Program:
 
     def reach(self) -> dict[str, tuple[str, ...]]:
         """The names of the headers that run each routine: the routines in their lists, and
-        what those goto, call and walk to."""
+        what those goto, call and walk to; a label names its routine directly."""
         named = {
             r.name: [x for n in walk(r.body) if isinstance(n, Insn | Block) for x in refs(n)]
+            for r in self.routines()
+        }
+        linked = {
+            r.name: [
+                sym.label
+                for n in walk(r.body)
+                if isinstance(n, Insn)
+                for _, sym, ref in labels(n)
+                if ref.kind != "route" and sym.label in named
+            ]
             for r in self.routines()
         }
         tables = self.tables()
@@ -247,13 +331,14 @@ class Program:
                     continue
                 seen.add(name)
                 out[name].append(h.name)
+                todo += linked[name]
                 for ref in named[name]:
                     nxt = self.entry(h, ref, tables)
                     if ref.kind != "route" and nxt is not None and nxt in named:
                         todo.append(nxt)
         return {k: tuple(v) for k, v in out.items()}
 
-    def fresh(self) -> str:
-        """An id no node has: `n<k>`, one past the highest in use."""
-        used = (int(m[1]) for n in self.nodes() if (m := _NEW.fullmatch(n.id)))
+    def fresh(self, extra: Iterable[Located] = ()) -> str:
+        """An id no node has: `n<k>`, one past the highest in use, in the program or `extra`."""
+        used = (int(m[1]) for n in (*self.nodes(), *extra) if (m := _NEW.fullmatch(n.id)))
         return f"n{max(used, default=-1) + 1}"

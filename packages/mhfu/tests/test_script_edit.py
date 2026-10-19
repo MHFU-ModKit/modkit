@@ -5,7 +5,7 @@ import struct
 import pytest
 from mhfu.em import script
 from mhfu.em.script import asm, disasm, ir, lift, walk
-from mhfu.em.script.opcodes import BY_NAME
+from mhfu.em.script.opcodes import BY_NAME, Ref
 from mhfu.files import EM_SPECIES
 
 BASE = 0x0010_0000
@@ -243,6 +243,67 @@ def test_closes():
     random = p.items[1].body[0]
     assert img.closes[random.id] == img.nodes[random.arms[1].id][0] + 3
     assert img.data[img.closes[random.id] :][:2] == bytes([0x80, 0xFF])
+
+
+# ---- ir
+
+
+def test_index():
+    p = world()
+    idx = ir.Index(p)
+    top = p.items[0].body[0]
+    first, other = top.head[0], top.arms[0]
+    assert idx.at(top.pc) == (top,) and idx.at(top.close) == (top,)
+    assert idx.at(other.pc) == (other,) and idx.at(top.pc + 1) == ()
+    assert idx.ending_at(other.pc) is first and idx.ending_at(top.pc) is None
+    assert idx.node(first.id) is first and idx.node(other.id) is other
+    assert idx.routine(other.id) is p.items[0] and idx.routine(p.items[1].body[1].id) is p.items[1]
+    assert idx.home(first.id) is top.head and idx.home(top.id) is p.items[0].body
+    assert idx.home(other.body[0].id) is other.body
+    assert first.id in idx and "zz" not in idx
+    for bad in (idx.node, idx.routine, idx.home):
+        with pytest.raises(KeyError):
+            bad("zz")
+    with pytest.raises(KeyError):
+        idx.home(other.id)  # an arm sits in no list of nodes
+    assert p.at(top.close) == idx.at(top.close) and p.ending_at(other.pc) is first
+
+
+def test_origin_defaults():
+    assert ins("end", kind=0).origin is None and blk("if_latch").origin is None
+    assert arm(1).origin is None
+
+
+def test_fresh_counts_extra():
+    p = world()
+    assert p.fresh() == "n11"
+    assert p.fresh([ir.Insn(BY_NAME["end"], {"kind": 0}, "n20"), arm(1)]) == "n21"
+
+
+def test_labels():
+    call = ins("call", routine=ir.Sym("x"))
+    assert ir.labels(call) == [("routine", ir.Sym("x"), Ref("call", 1, 0))]
+    walk_ = ins("walk", mode=0, limit=1, stages=ir.Sym("a"), step=2, arrive=ir.Sym("b"))
+    assert [(n, r.kind) for n, _, r in ir.labels(walk_)] == [
+        ("stages", "stages"),
+        ("arrive", "walk"),
+    ]
+    deep = ins("call_deep", table=2, routine=ir.Sym("d"))
+    assert ir.labels(deep) == [("routine", ir.Sym("d"), Ref("call", 17, 0))]
+    assert ir.labels(ins("call", routine=3)) == [] and ir.labels(blk("if_latch")) == []
+    assert ir.labels(ins("enter", main=0, sub=ir.Sym("s"), gate=0)) == []  # no list there
+
+
+def test_reach_follows_labels():
+    p = world()
+    spin = ir.Routine("spin", [ins("end", kind=1)])
+    lone = ir.Routine("lone", [ins("end", kind=1)])
+    p.items += [spin, lone]
+    p.items[0].body.insert(1, ins("call", routine=ir.Sym("spin")))
+    arm_ = ins("route_arm", list=ir.Sym("lone"), count=1, body=ir.Sym("lone"), loop=0)
+    p.items[0].body.insert(1, arm_)  # a route's lists are roots of their own
+    reach = p.reach()
+    assert reach["spin"] == ("h0",) and reach["lone"] == ()
 
 
 # ---- the game
