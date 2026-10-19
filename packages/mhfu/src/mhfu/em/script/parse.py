@@ -31,8 +31,6 @@ from .opcodes import (
     BLOCKS,
     BY_NAME,
     CLOSE,
-    COUNT,
-    COUNTED,
     END_KINDS,
     NUMBERED,
     Flow,
@@ -340,11 +338,7 @@ class _Reader:
             if op is None:
                 self.arm(ln, last)
             elif op.coded:
-                # the opener's operands without the derived count, as source and edit have them
-                opener = [
-                    o for o in operands(op.args) if not (o.name == COUNT and op.shape in COUNTED)
-                ]
-                args = self.bind(ln, op.name, opener, ln.words[1:], op)
+                args = self.bind(ln, op.name, list(op.opener), ln.words[1:], op)
                 last = ir.Block(op, args, self.nodes(ln.kids), [])
                 out.append(last)
             else:
