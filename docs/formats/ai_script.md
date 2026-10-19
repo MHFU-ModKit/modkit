@@ -14,7 +14,9 @@ per map type. `SCRIPT_INIT` copies the one for the quest's map type into the ent
 type; em01 and em20 have seven.
 
 A header is a run of `u32` fields, each the address of a list, followed by `f32` parameters. A list
-is `u32` routine addresses with no terminator; 0 is an unused slot. A species has 17 to 36 fields:
+is `u32` routine addresses with no terminator; 0 is an unused slot. One `call` names one: em82's header
+for map types 5, 13, 14 and 15 calls `call` slot 15, an empty slot inside its list. A species has 17 to 36
+fields:
 
 | Field | Name | Holds |
 |---|---|---|

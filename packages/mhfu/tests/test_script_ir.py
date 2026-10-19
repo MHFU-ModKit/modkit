@@ -5,8 +5,9 @@ import struct
 from collections import Counter
 
 import pytest
+from mhfu.cli import main
 from mhfu.em import script
-from mhfu.em.script import asm, ir, lift, opcodes
+from mhfu.em.script import asm, ir, lift, opcodes, source
 from mhfu.em.script.asm import AssembleError
 from mhfu.em.script.opcodes import BY_NAME, LISTS, OPCODES, Ref, Shape
 from mhfu.files import EM_SPECIES
@@ -241,6 +242,60 @@ def test_duplicate_names():
     d = ir.Program(1, BASE, [ir.Data("a", b"12", {"a": 0, "b": 1}), ir.Table("b", [])])
     with pytest.raises(AssembleError, match="names two things"):
         asm.assemble(d)
+
+
+def test_render_shapes():
+    for shape, (nodes, _) in SHAPES.items():
+        lines = source.render(ir.Program(1, BASE, [ir.Routine("r", [*nodes])]))
+        assert lines[1].text == "routine r"
+        assert all(line.text.startswith("  ") for line in lines[2:]), shape
+
+    def text(*nodes):
+        return [
+            line.text for line in source.render(ir.Program(1, BASE, [ir.Routine("r", [*nodes])]))
+        ][2:]
+
+    assert text(*SHAPES["switch"][0]) == [
+        "  switch_hp",
+        "  case 5",
+        "    enter 0 1 0",
+        "  case 9",
+        "    enter 0 2 0",
+        "  default",
+        "    enter 0 3 0",
+    ]
+    assert text(*SHAPES["random_shifted"][0])[:3] == [
+        "  random_shifted 5",
+        "  branch 16",
+        "    enter 0 1 0",
+    ]
+    assert text(blk("if_in_section", section=0x74)) == ["  if_in_section 0x0074"]
+    assert text(ins("call", routine=ir.Sym("pick"))) == ["  call @pick"]
+    assert text(ins("end", kind=0x7F)) == ["  end 127"]
+    assert text(ins("end", kind=0xFB)) == ["  end loop_next"]
+
+
+def test_render_bytes_and_empty():
+    items = [
+        ir.Data("d", bytes(range(20)), {"d": 0, "e": 18}),
+        ir.Blob(bytes(17)),
+        ir.Table("t", []),
+        ir.Header("h", [None, ir.External(5)]),
+    ]
+    assert [x.text for x in source.render(ir.Program(1, BASE, items))] == [
+        "row 1 at 0x00100000",
+        "data d",
+        "  d: 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f",
+        "  : 10 11",
+        "  e: 12 13",
+        "blob",
+        "  : " + " ".join(["00"] * 16),
+        "  : 00",
+        "table t:",
+        "header h",
+        "  base -",
+        "  call extern 0x00000005",
+    ]
 
 
 def test_edit_that_outgrows():
@@ -486,6 +541,53 @@ def test_reach_and_entry():
     assert set(reach) == {r.name for r in p.routines()}
 
 
+def test_render():
+    sc, at = world()
+    p = lift.lift(sc)
+    lines = source.render(p)
+    text = "\n".join(line.text for line in lines)
+    assert lines[0].text == f"row 1 at 0x{p.base:08X} end 0x{p.end:08X} sha1 {p.sha1}"
+    assert [line.text for line in lines[1:9]] == [
+        "routine base_0",
+        "  if_latch",
+        "    enter 0 1 0",
+        "  else",
+        "    call 0",
+        "  walk 0 1 0 1 2",
+        "  goto 1",
+        "  tail 00 00 00 00",
+    ]
+    assert text == "\n".join(line.text for line in source.render(p))
+    assert "table walk_l: walk_0 walk_1 walk_2 extern 0x" in text
+    assert "table call_l: call_0 -" in text
+    assert "  tail 12 34" in text
+    assert "data walk_0\n  walk_0: 01 02 03 00 00 00 00 00\n  stages_0: 00 01 00 02" in text
+    assert "header h0 variants 0-16\n  base base_l\n  call call_l\n  walk walk_l\n" in text
+    assert "\n  int_0x10 int_0x10_l\n  int_0x20 -\n  stages stages_l\n" in text
+    assert "  loop -" in text and "  deep" not in text
+
+
+def test_render_lines():
+    sc, at = world()
+    p = lift.lift(sc)
+    lines = source.render(p)
+    by_text = {line.text.strip(): line for line in lines if line.node}
+    assert by_text["if_latch"].kind == "condition" and by_text["if_latch"].depth == 1
+    assert by_text["else"].kind == "condition" and by_text["else"].pc == at["main"] + 6
+    assert by_text["enter 0 1 0"].kind == "action"
+    assert by_text["call 0"].kind == "flow"
+    assert by_text["call 0"].target == p.item("call_0").body[0].id
+    assert by_text["walk 0 1 0 1 2"].target == p.item("walk_1").body[0].id
+    assert by_text["goto 1"].target == p.item("base_1").body[0].id
+    assert by_text["walk_next"].kind == "state" and by_text["walk_next"].target is None
+    assert by_text["end walk_step"].kind == "flow"
+    assert {line.kind for line in lines if line.node is None} == {"structure", "data"}
+    assert lines[1].pc == at["main"] and lines[1].depth == 0
+    assert [line.target for line in source.render(p, "h0")] == [line.target for line in lines]
+    with pytest.raises(KeyError):
+        source.render(p, "h9")
+
+
 def test_nested_random():
     code = hexed(
         "800002", "800110", "85000205", "800110", "05000100", "800210", "05000200", "80ff",
@@ -563,6 +665,8 @@ def test_floats_after_inner_header():
     assert [h.name for h in p.headers()] == ["h0", "h1"]
     assert p.item("h1_base_0").va == at["rb"] and p.item("h1_base_l").va == at["lb"]
     assert asm.assemble(p).data == ovl.read(p.base, p.end - p.base)
+    heads = [line.text for line in source.render(p) if line.node is None]
+    assert "header h0 variants 0-4" in heads and "header h1 variants 5-16" in heads
 
 
 def test_shared_lists_and_externals():
@@ -717,6 +821,21 @@ def inner_random(nodes, inside):
     return out
 
 
+def test_game_render(rows):
+    sc, ps = rows[75]
+    p = ps[75]
+    lines = source.render(p)
+    text = "\n".join(line.text for line in lines)
+    assert lines[0].text == f"row 75 at 0x{p.base:08X} end 0x{p.end:08X} sha1 {p.sha1}"
+    assert text.count("\nroutine ") == len(p.routines())
+    ids = [line.node for line in lines if line.node]
+    assert len(ids) == len(set(ids)) == sum(1 for _ in p.nodes())
+    assert any(line.target for line in lines) and text.count("\n") + 1 == len(lines)
+    assert source.render(p) == lines
+    with pytest.raises(ValueError, match="does not serve"):
+        lift.lift(sc, 1)
+
+
 def test_game_row_split(rows):
     sc, ps = rows[1]
     assert sorted(ps) == [1, 11, 37, 41, 42, 49]
@@ -732,3 +851,20 @@ def test_game_reach(rows):
     p = ps[1]
     reach = p.reach()
     assert set(reach) == {r.name for r in p.routines()} and all(reach.values())
+
+
+def test_cli_source(game, capsys, tmp_path):
+    data = str(game.root)
+    assert main(["script", "75", "--source", "--data", data]) == 0
+    out = capsys.readouterr().out
+    want = "\n".join(line.text for line in source.render(lift.lift(script.Scripts(game, 75))))
+    assert out == want + "\n"
+    target = tmp_path / "em75.txt"
+    assert (
+        main(["script", "em75", "--source", "--row", "76", "-o", str(target), "--data", data]) == 0
+    )
+    assert capsys.readouterr().out == "" and target.read_text().startswith("row 76 at 0x")
+    stats = tmp_path / "stats.txt"
+    assert main(["script", "75", "--stats", "-o", str(stats), "--data", data]) == 0
+    assert "unknown opcodes" in stats.read_text()
+    assert main(["script", "75", "--source", "--row", "1", "--data", data]) == 1
