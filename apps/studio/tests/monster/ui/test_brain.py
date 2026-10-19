@@ -8,6 +8,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable, Iterator
+from concurrent.futures import Future
 from pathlib import Path
 from typing import Any
 
@@ -15,12 +16,15 @@ import pytest
 from mhfu.em.script import ir, source
 from mhfu.files import Extracted
 from mhfu_port.data import Data
-from mhfu_studio.monster import brain, brain_game, species
+from mhfu_studio.monster import brain, species
+from mhfu_studio.monster import brain_game as bg
 from mhfu_studio.monster.brain import BrainView
 from mhfu_studio.monster.panels.brain import (
     KIND,
     LABEL,
     LINK,
+    MARKS,
+    PAD,
     PC,
     TEXT,
     BrainPanel,
@@ -37,6 +41,7 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtTest import QTest
 
 from ..conftest import program
+from ..test_brain_game import H0, H1, state
 
 LEFT, NONE = Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
 READING = "Reading Tigrex (em75)'s AI script…"
@@ -579,6 +584,279 @@ def test_tips(panel: BrainPanel) -> None:
     assert panel.studio.errors == []
 
 
+# ---- follow the game --------------------------------------------------------------------------- #
+
+
+class Inline:
+    """An executor that runs a call as it is asked, so a poll's read is done at once."""
+
+    def submit(self, fn: Callable[..., Any], *args: Any) -> Future[Any]:
+        done: Future[Any] = Future()
+        try:
+            done.set_result(fn(*args))
+        except Exception as e:
+            done.set_exception(e)
+        return done
+
+    def shutdown(self, *_: Any, **__: Any) -> None:
+        pass
+
+
+class Running:
+    """A game for Follow to read: `monsters` is what each read finds, `t` the clock in seconds."""
+
+    def __init__(self, ws: MonsterWorkspace) -> None:
+        self.ws = ws
+        self.t = [0.0]
+        self.monsters: dict[int, Any] = {2: state(0x1008)}
+        self.running = True
+        self.asked: list[int] = []
+        ws._pool = Inline()  # type: ignore[assignment]
+        ws.read_follow = self.read
+        ws.game_running = lambda: self.running
+        ws.follow.clock = lambda: self.t[0]
+
+    def read(self, attach: Any, row: int) -> bg.Read:
+        self.asked.append(row)
+        return bg.Read(row, dict(self.monsters), None)
+
+    def tick(self, p: BrainPanel, reads: int = 1) -> None:
+        """A period on, each: a tick asks and the next takes the answer."""
+        for _ in range(reads + 1):
+            self.t[0] += bg.PERIOD
+            p._tick()
+
+
+@pytest.fixture
+def run(ws: MonsterWorkspace) -> Running:
+    return Running(ws)
+
+
+def follow(p: BrainPanel, g: Running) -> None:
+    """Follow on, and one read taken."""
+    p.following.setChecked(True)
+    g.tick(p)
+
+
+def marks_at(p: BrainPanel, row: int) -> list[str]:
+    return [m.kind for m in p.model.data(p.model.index_of(row, TEXT), MARKS)]
+
+
+def test_follow_marks_the_lines(panel: BrainPanel, run: Running) -> None:
+    call, enter = row_of(panel, "call 0"), row_of(panel, "enter 3 0 0")
+    assert not panel.following.isChecked() and not panel.live.isVisible()
+    assert panel.tree.isColumnHidden(PC) and not panel.ticker.isActive()
+    panel.following.setChecked(True)
+    assert panel.ws.follow.on and panel.live.isVisible() and panel.ticker.isActive()
+    assert panel.ticker.interval() == 1000 and not panel.tree.isColumnHidden(PC)
+    run.tick(panel)
+    assert run.asked[0] == 75
+    assert marks_at(panel, call) == ["next"] and marks_at(panel, enter) == ["playing"]
+    assert panel.model.data(panel.model.index_of(call, PC), MARKS)[0].kind == "next"
+    assert panel.live.text() == "following · slot 2" and panel.following.isChecked()
+    assert marks_at(panel, row_of(panel, "routine r_b")) == []
+
+
+def test_follow_goes_to_next_as_it_moves(panel: BrainPanel, run: Running) -> None:
+    call, goto, b = (row_of(panel, t) for t in ("call 0", "goto 1", "routine r_b"))
+    follow(panel, run)
+    assert cursor(panel) == call and opened(panel, row_of(panel, "routine r_a"))
+    run.monsters = {2: state(0x1014)}
+    run.tick(panel)
+    assert cursor(panel) == goto and marks_at(panel, goto) == ["next"]
+    assert marks_at(panel, call) == [] and panel.following.isChecked()
+    assert panel.history.rows == []  # the history is the user's
+    run.monsters = {2: state(0x1018)}  # r_b: a routine folded until now
+    run.tick(panel)
+    assert opened(panel, b) and not opened(panel, row_of(panel, "routine r_a"))
+
+
+def test_a_parked_line_is_kept_in_sight(panel: BrainPanel, run: Running) -> None:
+    a, b, c = (row_of(panel, f"routine r_{x}") for x in "abc")
+    run.monsters = {2: state(0x1008, parked={0x20: 0x1018})}  # r_b's enter
+    follow(panel, run)
+    assert opened(panel, a) and opened(panel, b) and not opened(panel, c)
+    assert marks_at(panel, row_of(panel, "enter 0 3 0")) == ["parked"]
+    run.monsters = {2: state(0x1014, parked={0x20: 0x1018})}  # next moves, within r_a
+    run.tick(panel)
+    assert opened(panel, a) and opened(panel, b)
+    run.monsters = {2: state(0x1014)}  # nothing parks in r_b now, and the next move folds it
+    run.tick(panel)
+    run.monsters = {2: state(0x1008)}
+    run.tick(panel)
+    assert opened(panel, a) and not opened(panel, b)
+
+
+def test_follow_leaves_the_view_where_it_is_while_next_stays(
+    panel: BrainPanel, run: Running
+) -> None:
+    follow(panel, run)
+    other = row_of(panel, "routine r_c")
+    panel.tree.setCurrentIndex(panel.model.index_of(other, TEXT))  # a click is no navigation
+    run.tick(panel)
+    assert cursor(panel) == other and panel.following.isChecked()
+
+
+def test_the_marks_are_drawn_in_the_gutter(panel: BrainPanel, run: Running) -> None:
+    follow(panel, run)
+    call = row_of(panel, "call 0")
+    rect = panel.tree.visualRect(panel.model.index_of(call, PC))
+    pill = panel.tree.viewport().grab().toImage()
+    at = (rect.left() + PAD + 2, rect.center().y())
+    assert pill.pixelColor(*at).name() == theme.mark("next").name()
+    blank = panel.tree.visualRect(panel.model.index_of(row_of(panel, "routine r_a"), PC))
+    cell = {
+        pill.pixel(x, y) for x in range(blank.left(), blank.right()) for y in range(blank.height())
+    }
+    assert len(cell) == 1  # no address, no tag
+
+
+def test_a_label_follows_the_line(panel: BrainPanel, run: Running) -> None:
+    run.monsters = {2: state(0x1008, pair=(0, 3), parked={0x20: 0x1010})}
+    follow(panel, run)
+    enter = row_of(panel, "enter 3 0 0")
+    (mark,) = panel.model.data(panel.model.index_of(enter, TEXT), MARKS)
+    assert mark.label == "plays 0 3 instead (anim 9)"
+    assert panel.model.data(panel.model.index_of(row_of(panel, "enter 1 4 0"), TEXT), MARKS)
+
+
+def test_the_status_says_what_the_game_lacks(panel: BrainPanel, run: Running) -> None:
+    run.running = False
+    panel.following.setChecked(True)
+    assert panel.live.text() == bg.NO_GAME and panel.model.marks == {}
+    run.running = True
+    run.monsters = {}
+    run.tick(panel, 2)
+    assert panel.live.text() == "no Tigrex (em75) in the game" and panel.model.marks == {}
+
+
+def test_follow_off_clears_the_marks(panel: BrainPanel, run: Running) -> None:
+    follow(panel, run)
+    assert panel.model.marks
+    panel.following.setChecked(False)
+    assert panel.model.marks == {} and not panel.live.isVisible() and not panel.ws.follow.on
+    assert panel.tree.isColumnHidden(PC) and not panel.ticker.isActive()
+    asked = len(run.asked)
+    run.tick(panel)
+    assert len(run.asked) == asked
+
+
+def test_the_gutter_keeps_the_addresses(panel: BrainPanel, run: Running) -> None:
+    follow(panel, run)
+    tags = panel.tree.columnWidth(PC)
+    assert not panel.tree.isColumnHidden(PC) and tags > 0 and not panel.delegate.addresses
+    panel.more.set_open(True)
+    panel.addresses.setChecked(True)
+    assert panel.tree.columnWidth(PC) > tags and panel.delegate.addresses
+    panel.following.setChecked(False)
+    assert not panel.tree.isColumnHidden(PC)  # the addresses stay
+    panel.addresses.setChecked(False)
+    assert panel.tree.isColumnHidden(PC)
+
+
+def test_follow_polls_only_while_shown(qtbot: Any, panel: BrainPanel, run: Running) -> None:
+    follow(panel, run)
+    assert panel.ticker.isActive()
+    panel.hide()
+    assert not panel.ticker.isActive() and panel.ws.follow.on
+    panel.show()
+    assert panel.ticker.isActive()
+
+
+def test_follow_switches_to_the_header_the_monster_runs(qtbot: Any, ws: MonsterWorkspace) -> None:
+    def two() -> ir.Program:
+        p = program()
+        p.headers()[1].va = H1
+        return p
+
+    decoding(ws, two)
+    g = Running(ws)
+    p = make(qtbot, ws)
+    g.monsters = {2: state(0x1008, header=H1)}
+    p.following.setChecked(True)
+    g.tick(p)
+    qtbot.waitUntil(lambda: p.model.view is not None and p.model.view.header == "h1")
+    assert p.variant.currentData() == "h1" and p.following.isChecked()
+    call = next(r for r, ln in enumerate(view(p).lines) if ln.text.strip() == "call 0")
+    assert marks_at(p, call) == ["next"] and cursor(p) == call
+    g.monsters = {2: state(0x1008, header=H0)}  # and back, with no help from the user
+    g.tick(p)
+    qtbot.waitUntil(lambda: p.model.view is not None and p.model.view.header == "h0")
+    assert p.following.isChecked() and marks_at(p, row_of(p, "call 0")) == ["next"]
+
+
+def test_follow_waits_for_the_script(qtbot: Any, ws: MonsterWorkspace) -> None:
+    release = threading.Event()
+    ws.decode_brain = lambda g, row: (release.wait(10), program())[1]
+    g = Running(ws)
+    p = make(qtbot, ws, ready=False)
+    p.following.setChecked(True)
+    g.tick(p)
+    assert g.asked == [] and p.live.text() == bg.READING
+    release.set()
+    qtbot.waitUntil(lambda: p.model.view is not None)
+    g.tick(p)
+    assert marks_at(p, row_of(p, "call 0")) == ["next"]
+
+
+def test_another_species_drops_the_marks(qtbot: Any, panel: BrainPanel, run: Running) -> None:
+    follow(panel, run)
+    panel.ws.browse_brain(76)  # a new document, say: not the user's move in this tab
+    panel.sync()
+    assert panel.following.isChecked() and panel.model.marks == {}
+    qtbot.waitUntil(lambda: panel.model.view is not None and panel.model.view.row == 76)
+    assert panel.live.text() == bg.READING
+
+
+@pytest.mark.parametrize(
+    "go",
+    ["goto", "link", "find", "outline", "back", "forward", "species", "variant"],
+)
+def test_going_anywhere_ends_follow(qtbot: Any, panel: BrainPanel, run: Running, go: str) -> None:
+    panel.goto(row_of(panel, "goto 1"))
+    panel.goto(row_of(panel, "call 0"))
+    if go == "forward":
+        panel.back.click()  # one step ahead again
+    qtbot.waitUntil(lambda: panel.species.count() == 3)
+    follow(panel, run)
+    assert panel.following.isChecked()
+    match go:
+        case "goto":
+            panel.goto(row_of(panel, "routine r_b"))
+        case "link":
+            panel._follow(row_of(panel, "goto 1"))
+        case "find":
+            panel.query.setText("enter")
+            qtbot.keyClick(panel.query, Qt.Key.Key_Return)
+        case "outline":
+            lists = panel.lists
+            click(lists, lists.visualItemRect(lists.topLevelItem(0).child(1)).center())
+        case "back":
+            panel.back.click()
+        case "forward":
+            panel.forward.click()
+        case "species":
+            panel.species.setCurrentIndex(1)
+            panel.species.activated.emit(1)
+        case "variant":
+            panel.variant.setCurrentIndex(1)
+            panel.variant.activated.emit(1)
+    assert not panel.following.isChecked() and not panel.ws.follow.on
+    assert panel.model.marks == {} and not panel.ticker.isActive() and not panel.live.isVisible()
+
+
+def test_a_step_with_nowhere_to_go_keeps_follow(panel: BrainPanel, run: Running) -> None:
+    follow(panel, run)
+    panel._step(True)  # Alt+Left with no history
+    assert panel.following.isChecked()
+
+
+def test_follow_has_tips(panel: BrainPanel, run: Running) -> None:
+    follow(panel, run)
+    assert kit.missing_tips(panel) == [] and panel.following.toolTip()
+    assert panel.studio.errors == []
+
+
 # ---- the window ---------------------------------------------------------------------------- #
 
 
@@ -647,7 +925,7 @@ def test_theme_marks(family: str, dark: bool) -> None:
 
 
 def test_every_mark_has_a_colour() -> None:
-    assert brain_game.KINDS == theme.MARK_KINDS
+    assert bg.KINDS == theme.MARK_KINDS
 
 
 def test_current_marks(qapp: Any) -> None:
