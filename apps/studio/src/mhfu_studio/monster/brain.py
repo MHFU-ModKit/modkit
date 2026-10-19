@@ -148,6 +148,18 @@ class BrainView:
             at = self.parent[at]
         return out[::-1]
 
+    def top_of(self, row: int) -> int:
+        """The depth 0 row `row` is under: a routine's, a list's, a header's; `row` itself there."""
+        up = self.ancestors(row)
+        return up[0] if up else row
+
+    def span(self, row: int) -> range:
+        """`row` and every row under it."""
+        end = row + 1
+        while end < len(self.lines) and self.lines[end].depth > self.lines[row].depth:
+            end += 1
+        return range(row, end)
+
     def target_row(self, row: int) -> int | None:
         """The row of the routine a call, goto or walk line leads to."""
         node = self.lines[row].target

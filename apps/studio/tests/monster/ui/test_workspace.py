@@ -27,6 +27,7 @@ DOCKS = (
     "Hitboxes",
     "Parts",
     "Behaviour",
+    "Brain",
     "Timeline",
 )
 

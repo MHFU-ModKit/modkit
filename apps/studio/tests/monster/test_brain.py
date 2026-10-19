@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +15,6 @@ import pytest
 from mhfu import files
 from mhfu.em.intel import SpeciesIntel
 from mhfu.em.script import ir, source
-from mhfu.em.script.opcodes import BY_NAME
 from mhfu.files import Extracted
 from mhfu_port.data import Data
 from mhfu_studio.monster import brain, species
@@ -24,72 +23,7 @@ from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell import places
 
-# ---- a tiny program by hand: two headers, a list both share, a data item, a blob
-
-
-def ins(name: str, **args: int) -> ir.Insn:
-    values: dict[str, ir.Value] = dict(args)
-    return ir.Insn(BY_NAME[name], values)
-
-
-def enter(main: int, sub: int) -> ir.Insn:
-    return ins("enter", main=main, sub=sub, gate=0)
-
-
-def end(kind: int = 1) -> ir.Insn:
-    return ins("end", kind=kind)
-
-
-def routine(name: str, *body: ir.Node, va: int) -> ir.Routine:
-    return ir.Routine(name, list(body), va=va)
-
-
-def header(name: str, variants: tuple[int, ...], **lists: str | None) -> ir.Header:
-    """A header whose fields are the lists named by `slot=table` (base, call, int_0x10, ...)."""
-    names = ("base", "call", "walk", "int_0x10", "int_0x20", "stages")
-    fields: list[ir.Entry] = [lists.get(n) for n in names]
-    return ir.Header(name, fields, variants, va=0x3000)
-
-
-def program() -> ir.Program:
-    """r_a is in both headers' base lists; its `goto 1` leads to r_b for h0 and to r_d for h1.
-    r_c is the shared call list's; r_i is h0's interrupt; r_x is in no list."""
-    r_a = routine(
-        "r_a",
-        ir.Block(
-            BY_NAME["if_latch"],
-            {},
-            [enter(3, 0), ins("call", routine=0)],
-            [ir.Arm(1, {}, [enter(1, 4)])],
-        ),
-        ins("goto", routine=1),
-        va=0x2000,
-    )
-    items: list[ir.Item] = [
-        r_a,
-        routine("r_b", enter(0, 3), end(), va=0x2040),
-        routine("r_c", ins("wait", frames=5), end(), va=0x2060),
-        routine("r_d", enter(7, 7), end(), va=0x2080),
-        routine("r_i", end(0xFD), va=0x20A0),
-        routine("r_x", end(), va=0x20C0),
-        ir.Table("h0_base_l", ["r_a", "r_b"], 0x2100),
-        ir.Table("h1_base_l", ["r_a", "r_d"], 0x2110),
-        ir.Table("call_l", ["r_c", None], 0x2120),
-        ir.Table("stages_l", ["d1"], 0x2130),
-        ir.Table("int_l", ["r_i"], 0x2134),
-        ir.Table("lonely_l", ["r_x"], 0x2138),
-        ir.Blob(bytes(8), 0x2140),
-        ir.Data("d0", bytes(range(20)), {"d0": 0, "d1": 16}, 0x2150),
-        ir.Data("o0", bytes(4), {"o0": 0}, 0x2170),
-        header(
-            "h0", (0, 1, 2, 3), base="h0_base_l", call="call_l", int_0x10="int_l", stages="stages_l"
-        ),
-        header("h1", (4, 5, 6, 8), base="h1_base_l", call="call_l"),
-    ]
-    p = ir.Program(75, 0x2000, items)
-    for k, n in enumerate(p.nodes()):
-        n.id, n.pc = f"n{k}", 0x1000 + 4 * k
-    return p
+from .conftest import program
 
 
 def heads(v: BrainView) -> list[str]:
@@ -239,6 +173,17 @@ def test_ancestors_and_targets() -> None:
     assert v.target_row(inner) is None
 
 
+def test_top_and_span() -> None:
+    v = brain.view(program(), "h0")
+    inner = v.find("enter 3 0 0")[0]
+    top = v.find("routine r_a")[0]
+    assert v.top_of(inner) == v.top_of(top) == top
+    opener, arm = v.find("if_latch")[0], v.find("else")[0]
+    assert list(v.span(opener)) == list(range(opener, arm))  # the arm sits beside its opener
+    assert list(v.span(top))[-1] == v.find("goto")[0] and len(v.span(v.find("table h0")[0])) == 1
+    assert sum(len(v.span(t)) for t in v.top) == len(v.lines)  # the top rows cover every row
+
+
 def test_enters_by_row() -> None:
     v = brain.view(program(), "h0")
     assert {v.lines[r].text.strip(): pair for r, pair in v.enters.items()} == {
@@ -297,29 +242,8 @@ def test_the_history_is_bounded() -> None:
 
 
 @pytest.fixture
-def decoded() -> list[tuple[Path, int]]:
-    return []
-
-
-@pytest.fixture
-def ws(
-    tmp_path: Path, intel75: SpeciesIntel, decoded: list[tuple[Path, int]]
-) -> Iterator[MonsterWorkspace]:
-    """A workspace on an empty game folder whose decode is `program()`, noting what it decoded."""
-    game = Extracted(tmp_path)
-    w = MonsterWorkspace(Data(game, game))
-    w.intel_cache[75] = intel75
-
-    def decode(g: Extracted, row: int) -> ir.Program:
-        decoded.append((g.root, row))
-        p = program()
-        p.row = row
-        return p
-
-    w.decode_brain = decode
-    w.scan_brain = lambda g: {75: 75, 76: 75, 88: 75}
-    yield w
-    w.close()
+def ws(brain_ws: MonsterWorkspace) -> MonsterWorkspace:
+    return brain_ws
 
 
 def wait(call: Callable[[], Any], seconds: float = 10.0) -> Any:

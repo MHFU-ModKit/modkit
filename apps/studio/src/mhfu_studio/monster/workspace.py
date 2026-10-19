@@ -473,6 +473,12 @@ class MonsterWorkspace(Workspace):
                 shown=False,
             ),
             Dock(
+                "Brain", "centre", build("brain", "BrainPanel"),
+                "The AI script that picks the base monster's next move, as code: read it, follow"
+                " its calls, find the line that plays an action.",
+                shown=False,
+            ),
+            Dock(
                 "Timeline", "bottom", build("timeline", "TimelinePanel"),
                 "Play the clip at the game's own speed, and see where the base monster's action"
                 " checks it.",
