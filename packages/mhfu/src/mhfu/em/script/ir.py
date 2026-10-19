@@ -217,7 +217,7 @@ class Program:
         table = header.fields[ref.field]
         if not isinstance(table, str):
             return None
-        found = (tables or self.tables()).get(table)
+        found = (self.tables() if tables is None else tables).get(table)
         if found is None or ref.index >= len(found.slots):
             return None
         name = found.slots[ref.index]
