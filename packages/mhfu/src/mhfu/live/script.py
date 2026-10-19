@@ -25,8 +25,8 @@ from ..structs import Game
 from ..views import layout
 
 CONTEXTS = (0x00, 0x20, 0x10, 0x01)
-"""`ENTITY.SCRIPT_CONTEXT` values in the order of `ENTITY.SCRIPT_PCS`: the base routine, then the
-interrupts that own a resume address."""
+"""`ENTITY.SCRIPT_CONTEXT` bits in the order of `ENTITY.SCRIPT_PCS`: the base routine, then the
+interrupts that own a resume address, in the order the game tests them (`slot`)."""
 _E = a.ENTITY
 INTERRUPT_STARTS: Mapping[int, Field] = {
     0x08: _E.SCRIPT_INT_08,
@@ -45,11 +45,11 @@ _FIELDS = (
     _E.SCRIPT_PCS,
     *INTERRUPT_STARTS.values(),
     _E.SCRIPT_CALL_RETURN,
-    _E.SCRIPT_WALK_RETURN,
+    _E.SCRIPT_RET_RETURN,
     _E.SCRIPT_ROUTE,
     _E.SCRIPT_DEEP_RETURN,
     _E.SCRIPT_LOOP_RETURN,
-    _E.SCRIPT_SPARE,
+    _E.SCRIPT_SPOT_RETURN,
     _E.SCRIPT_BASE,
     _E.SCRIPT_WAIT,
     _E.MAIN_STATE,
@@ -85,14 +85,13 @@ class ScriptState:
     interrupts: dict[int, int]
     """The start of the interrupt routine by pending bit (`INTERRUPTS`)."""
     call_return: int
-    walk_return: int
+    ret_return: int
     route: int
     deep_return: int
     loop_return: int
     base: int
     """The base routine's index."""
-    spare: int = 0
-    """`ENTITY.SCRIPT_SPARE`."""
+    spot_return: int = 0
     main_state: int = 0
     sub_state: int = 0
     """`ENTITY.MAIN_STATE` and `SUB_STATE`: the move the monster plays now."""
@@ -103,9 +102,15 @@ class ScriptState:
         return self.main_state, self.sub_state
 
     @property
-    def pc(self) -> int | None:
-        """Where the running context resumes; None for a context `CONTEXTS` has no slot for."""
-        return self.pcs[CONTEXTS.index(self.context)] if self.context in CONTEXTS else None
+    def pc(self) -> int:
+        """Where the running context resumes."""
+        return self.pcs[slot(self.context)]
+
+
+def slot(context: int) -> int:
+    """The `SCRIPT_PCS` index the game resumes `context` from: the first `CONTEXTS` bit it holds,
+    else the base routine's (an interrupt without a slot of its own shares it)."""
+    return next((i for i, bit in enumerate(CONTEXTS) if context & bit), 0)
 
 
 def read(mem: Memory, entity: int) -> ScriptState:
@@ -128,12 +133,12 @@ def read(mem: Memory, entity: int) -> ScriptState:
         get(_E.SCRIPT_WAIT)[0],
         dict(zip(INTERRUPTS, starts, strict=True)),
         get(_E.SCRIPT_CALL_RETURN)[0],
-        get(_E.SCRIPT_WALK_RETURN)[0],
+        get(_E.SCRIPT_RET_RETURN)[0],
         get(_E.SCRIPT_ROUTE)[0],
         get(_E.SCRIPT_DEEP_RETURN)[0],
         get(_E.SCRIPT_LOOP_RETURN)[0],
         get(_E.SCRIPT_BASE)[0],
-        get(_E.SCRIPT_SPARE)[0],
+        get(_E.SCRIPT_SPOT_RETURN)[0],
         get(_E.MAIN_STATE)[0],
         get(_E.SUB_STATE)[0],
     )

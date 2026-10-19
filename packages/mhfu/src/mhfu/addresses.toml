@@ -411,11 +411,11 @@ SCRIPT_INT_08 = { offset = 0x4DC, type = "ptr", doc = "big monsters: where the i
 SCRIPT_INT_02 = { offset = 0x4E0, type = "ptr", doc = "big monsters: where the interrupt routine for SCRIPT_PENDING bit 0x02 starts" }
 SCRIPT_INT_04 = { offset = 0x4E4, type = "ptr", doc = "big monsters: where the interrupt routine for SCRIPT_PENDING bit 0x04 starts" }
 SCRIPT_CALL_RETURN = { offset = 0x4E8, type = "ptr", doc = "big monsters: the AI script's return address for a call" }
-SCRIPT_WALK_RETURN = { offset = 0x4EC, type = "ptr", doc = "big monsters: the AI script's return address for a walk" }
+SCRIPT_RET_RETURN = { offset = 0x4EC, type = "ptr", doc = "big monsters: the AI script's return address for a call_ret, which `end return_ret` takes" }
 SCRIPT_ROUTE = { offset = 0x4F0, type = "ptr", doc = "big monsters: the route the AI script follows" }
 SCRIPT_DEEP_RETURN = { offset = 0x4F4, type = "ptr", doc = "big monsters: the AI script's return address for a call_deep" }
 SCRIPT_LOOP_RETURN = { offset = 0x4F8, type = "ptr", doc = "big monsters: the AI script's return address for a loop" }
-SCRIPT_SPARE = { offset = 0x4FC, type = "ptr", doc = "big monsters: a pointer word among the AI script's; what it holds is not known, a push maps it like the others" }
+SCRIPT_SPOT_RETURN = { offset = 0x4FC, type = "ptr", doc = "big monsters: the AI script's return address for a call_spot, which `end route` and `end route2` take" }
 SCRIPT_BASE = { offset = 0x500, type = "u16", doc = "big monsters: the index of the base routine the AI script runs; SCRIPT_INIT zeroes it" }
 HUNTER_INDEX = { offset = 0x1E6, type = "u16", doc = "hunters: 0 the player, 1 the Felyne; the bit a big monster's AWARE and COMBAT_SEEN keep for it" }
 MOST_DAMAGED_PART = { offset = 0x286, type = "u8", doc = "big monsters: the part with the most PENDING_DAMAGE in the last frame with a hit; picks the flinch pair" }
