@@ -90,7 +90,8 @@ The plugin loads on a cold boot only; after loading a PPSSPP savestate it no lon
 A library in `mods/lib/` runs once, when a mod first requires it:
 `local port = require("mhfu_port")`. Require at a mod's top level; later, while the Memory Stick
 may be busy, `require` refuses to read a new library. A mod that needs a newer API checks
-`mhfu.api_version`. Errors from the boot load are written to `framework.log` right after it.
+`mhfu.api_version`. Errors from the boot load are written to `framework.log` right after it;
+lines logged while the Memory Stick may be busy (a quest load) follow within half a second of play.
 
 Mods share one 350 KB Lua heap. `framework.log` gives `live=` after each mod and library loads,
 and `VM ready` the largest free block, which bounds what a hot reload can compile.

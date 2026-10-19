@@ -32,12 +32,12 @@ static void flush_early(void)
     unsigned n = g_early_n, dropped = g_early_dropped;
     g_early_n = 0;                       /* before the writes: they re-enter */
     g_early_dropped = 0;
-    static const char hdr[] = "--- boot log (held until ms0 was safe) ---\n";
+    static const char hdr[] = "--- held until ms0 was safe ---\n";
     sceIoWrite(g_log_fd, hdr, sizeof(hdr) - 1);
     sceIoWrite(g_log_fd, g_early, n);
     if (dropped) {
         char tail[80];
-        int k = snprintf(tail, sizeof(tail), "--- %u more boot line(s) did not fit ---\n",
+        int k = snprintf(tail, sizeof(tail), "--- %u more held line(s) did not fit ---\n",
                          dropped);
         if (k > 0) sceIoWrite(g_log_fd, tail, (size_t)k);
     }
