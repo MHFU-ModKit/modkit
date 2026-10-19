@@ -126,6 +126,12 @@ class BrainView:
     """The `(main, sub)` of each `enter` line, by row."""
     labels: dict[int, str] = field(default_factory=dict)
     """What an `enter` line plays, by row; empty until the workspace labels the view."""
+    at: dict[int, int] = field(default_factory=dict)
+    """The row of the line at each native address: an instruction, an opener or a marker."""
+    closes: dict[int, int] = field(default_factory=dict)
+    """The opener's row of the block whose closing marker lies at each native address."""
+    ends: dict[int, int] = field(default_factory=dict)
+    """The row of the `enter` that ends at each native address, where its run resumes."""
 
     def find(self, text: str) -> list[int]:
         """The rows whose text holds `text`, any case; a `0x...` query also gives the rows whose
@@ -250,15 +256,17 @@ def view(p: ir.Program, header: str) -> BrainView:
             routine_row[item.name] = len(lines)
         lines.extend(full[a:b])
     parent, children = _tree(lines)
-    enter = {
-        n.id: (int(n.args["main"]), int(n.args["sub"]))
-        for n in p.nodes()
-        if isinstance(n, ir.Insn)
-        and n.op.name == "enter"
-        and isinstance(n.args["main"], int)
-        and isinstance(n.args["sub"], int)
-    }
     row_of = {ln.node: i for i, ln in enumerate(lines) if ln.node is not None}
+    nodes = [n for n in p.nodes() if n.id in row_of]
+    pairs: dict[int, tuple[int, int]] = {}
+    ends: dict[int, int] = {}
+    for n in nodes:
+        if isinstance(n, ir.Insn) and n.op.name == "enter":
+            main, sub = n.args["main"], n.args["sub"]
+            if isinstance(main, int) and isinstance(sub, int):
+                pairs[row_of[n.id]] = (main, sub)
+                if n.pc is not None:
+                    ends[n.pc + n.length] = row_of[n.id]
     return BrainView(
         p.row,
         header,
@@ -268,7 +276,12 @@ def view(p: ir.Program, header: str) -> BrainView:
         tuple(i for i, up in enumerate(parent) if up < 0),
         row_of,
         tuple(_outline(h, p.tables(), routine_row)),
-        {row_of[n]: pair for n, pair in enter.items() if n in row_of},
+        pairs,
+        at={ln.pc: i for i, ln in enumerate(lines) if ln.node is not None and ln.pc is not None},
+        closes={
+            n.close: row_of[n.id] for n in nodes if isinstance(n, ir.Block) and n.close is not None
+        },
+        ends=ends,
     )
 
 
