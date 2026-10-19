@@ -6,6 +6,7 @@ import asyncio
 import struct
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from mhfu import addresses as a
@@ -266,6 +267,12 @@ def test_deploy_to_a_stick(em75, game, psp, capsys):
     assert brain.read_bytes() == stick_of(em75)
     assert sticks.brain_path(75) in mod.read_text()
     assert capsys.readouterr().out == f"wrote {brain}\nwrote {mod}\n"
+
+
+def test_deploy_to_a_lanes_stick(em75, game, psp, monkeypatch):
+    monkeypatch.setattr(brain, "Lane", lambda n: SimpleNamespace(stick=psp if n == 4 else None))
+    assert main(["brain", "deploy", "75", "--data", str(game.root), "--lane", "4"]) == 0
+    assert (psp / sticks.BRAIN_SUBDIR / sticks.brain_filename(75)).read_bytes() == stick_of(em75)
 
 
 def test_deploy_a_sibling_row(game, psp):
