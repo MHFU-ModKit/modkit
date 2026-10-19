@@ -191,6 +191,11 @@ injection it needs extra RAM, so a real PSP installs nothing. The mod is one of 
 reload tracks, and reloads, so installs again, when it changes. `docs/formats/ai_script.md` has the
 container.
 
+Checked in PPSSPP with an edited Tigrex script (`--lane`, a cold boot into a quest with a native
+Tigrex): `framework.log` gives `[brain] row 75: 17 word(s) to image ...` once per quest load, the
+monster's script words lie in the image and every instruction it dispatches runs there, and a
+second quest without a cold boot repoints the row again (`brain_status(75).patched` counts both).
+
 ## Calling the game from C
 
 C calls a game function through `mhfu_call(fn, a0, ...)` (`mhfu/call.h`, word arguments only).
