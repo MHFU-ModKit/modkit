@@ -52,6 +52,8 @@ _FIELDS = (
     _E.SCRIPT_SPARE,
     _E.SCRIPT_BASE,
     _E.SCRIPT_WAIT,
+    _E.MAIN_STATE,
+    _E.SUB_STATE,
 )
 
 
@@ -91,6 +93,14 @@ class ScriptState:
     """The base routine's index."""
     spare: int = 0
     """`ENTITY.SCRIPT_SPARE`."""
+    main_state: int = 0
+    sub_state: int = 0
+    """`ENTITY.MAIN_STATE` and `SUB_STATE`: the move the monster plays now."""
+
+    @property
+    def pair(self) -> tuple[int, int]:
+        """`(main, sub)` as an `enter` asks for it."""
+        return self.main_state, self.sub_state
 
     @property
     def pc(self) -> int | None:
@@ -124,6 +134,8 @@ def read(mem: Memory, entity: int) -> ScriptState:
         get(_E.SCRIPT_LOOP_RETURN)[0],
         get(_E.SCRIPT_BASE)[0],
         get(_E.SCRIPT_SPARE)[0],
+        get(_E.MAIN_STATE)[0],
+        get(_E.SUB_STATE)[0],
     )
 
 
