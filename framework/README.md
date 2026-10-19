@@ -51,6 +51,7 @@ PSP/PLUGINS/mhfu_framework/
     plugin.ini          PPSSPP only
     mods/*.lua          Lua mods, loaded at boot and reloaded when they change
     mods/lib/*.lua      Lua libraries, run by require and reloaded when they change
+    brain/*.mhai        AI script containers, installed by a mod (`mhfu brain deploy`)
     framework.log       written at run time
 ```
 
@@ -174,6 +175,17 @@ starts rage (`true` restores it). `mhfu.em_sever_gate(pct)` wraps the species' t
 HP; the species' own gate still runs on the cuts it allows. A port's moves module sets the last
 two with `natural_rage = false` and `sever_below = <pct>`; the quest's end drops both.
 
+## AI scripts from the stick
+
+`mhfu brain deploy EM [FILE]` writes a species' AI script as an `MHAI` stick container to
+`brain/` and a mod beside the others that calls `mhfu.brain_install(path)`. The framework stages
+the container in extra RAM and points the species row's header words at it now and after every
+quest load re-reads the overlay (`include/mhfu/brain.h`): a monster that starts its script later
+runs it, one already running keeps the game's. `mhfu.brain_status(row)` says which of the row's
+words are on it. Like model injection it needs extra RAM, so a real PSP installs nothing. The
+mod is one of the scripts hot reload tracks, which are few. `docs/formats/ai_script.md` has the
+container.
+
 ## Calling the game from C
 
 C calls a game function through `mhfu_call(fn, a0, ...)` (`mhfu/call.h`, word arguments only).
@@ -188,7 +200,7 @@ declared API; it needs a host `c++` (else those tests skip) and `lupa`, which `u
 
 ## Status
 
-Runs in PPSSPP and on a real PSP under PRO CFW, for MHFU EU only. The Lua API is version 5
+Runs in PPSSPP and on a real PSP under PRO CFW, for MHFU EU only. The Lua API is version 6
 (`mhfu.api_version`); `mhfu.clone_combat` is experimental and can crash the game.
 
 ## Licence

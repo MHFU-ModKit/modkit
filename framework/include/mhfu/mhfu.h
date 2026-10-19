@@ -25,6 +25,7 @@
 #include "move.h"
 #include "monster_events.h"
 #include "npc.h"
+#include "brain.h"
 #include "mips.h"
 #include "mod.h"
 

@@ -141,7 +141,7 @@ TIGREX_ATTACK_SPAWN = { eu = 0x09B661E8, type = "fn", doc = "em75-family attack 
 OVERLAY_LOAD_CALL = { eu = 0x0884E9F8, type = "code", doc = "jal into OVERLAY_SEGMENT_LOAD for every DATA.BIN chunk read; hooked to learn when the AI overlay or the lobby's NPC table has landed" }
 OVERLAY_SEGMENT_LOAD = { eu = 0x0884EA1C, type = "fn", doc = "in-place DATA.BIN chunk decrypt (a1 buffer, a2 bytes): a chunk of overlay code or data is readable once it returns" }
 BASE_SPECIES = { eu = 0x089AA1C8, type = "bytes", doc = "s8 per species id: its base species (subspecies collapse onto the parent), used by effect spawns" }
-SPECIES_TABLE = { eu = 0x09BB87C0, type = "bytes", doc = "per-species data rows (struct SPECIES) indexed by ENTITY.SPECIES" }
+SPECIES_TABLE = { eu = 0x09BB87C0, type = "SPECIES[90]", doc = "per-species data rows (struct SPECIES) indexed by ENTITY.SPECIES, 0 to 0x59: the ids above are no monsters; the parallel tables (SCRIPT_HEADERS) have as many rows" }
 ACTION_LIST_REMAP = { eu = 0x09BD38F0, type = "bytes", doc = "alternate action-descriptor list (type 0x3A) used while ENTITY.FLAGS bit 0 is set" }
 EM75_ENTER_ACTION = { eu = 0x09D3D608, type = "fn", doc = "em75 overlay's MONSTER_VTABLE.ENTER_ACTION implementation" }
 EM75_SPAWN_EFFECT = { eu = 0x09D36B58, type = "fn", doc = "em75 overlay's spawn_effect(entity, id, bone): bone position, EFFECT_OWNER and BASE_SPECIES, then EFFECT_SPAWN" }
@@ -314,7 +314,7 @@ INJECT_XRAM = { eu = 0x0B000000, type = "bytes", doc = "framework-owned model-in
 EXTRA_RAM_END = { eu = 0x0C000000, type = "bytes", doc = "first address past the extra-RAM window (PPSSPP memory=64)" }
 
 # --- AI script (script/disassembler) ---
-SCRIPT_HEADERS = { eu = 0x09BB8B14, type = "bytes", doc = "per species row, stride SPECIES.stride (SPECIES_TABLE + 0x354): 17 header pointers, one per map type, into the species' em overlay or game_task; SCRIPT_INIT copies one into the entity's script pointer" }
+SCRIPT_HEADERS = { eu = 0x09BB8B14, type = "u32[17]", doc = "per species row, stride SPECIES.stride (SPECIES_TABLE + 0x354): 17 header pointers, one per map type, into the species' em overlay or game_task; SCRIPT_INIT copies one into the entity's script pointer" }
 SCRIPT_INIT = { eu = 0x09ABAAC0, type = "fn", doc = "(entity) AI-script init, the only writer of the entity's script header pointer: picks the header by the quest's map-type byte and starts the base routine" }
 SCRIPT_SKIP = { eu = 0x09AB7758, type = "fn", doc = "(entity, pc) the instruction after pc: the game's one length table for the AI script, which every block scan steps with" }
 SCRIPT_PUSH = { eu = 0x0A700000, type = "bytes", doc = "free RAM up to CLI_BRIDGE_BLOCK (960 KB) where `mhfu brain push` puts an AI script container; needs memory=64" }

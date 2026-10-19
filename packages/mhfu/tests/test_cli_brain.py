@@ -9,6 +9,7 @@ import time
 
 import pytest
 from mhfu import addresses as a
+from mhfu import inject as sticks
 from mhfu.cli import brain, main
 from mhfu.em import script
 from mhfu.em.script import inject
@@ -72,7 +73,14 @@ class Emu:
 
 @pytest.fixture(autouse=True)
 def no_launcher_env(monkeypatch):
-    for name in ("MHFU_LAUNCHER", "MHFU_PPSSPP", "MHFU_ISO", "MHFU_CONTAINER", "MHFU_LANE"):
+    for name in (
+        "MHFU_LAUNCHER",
+        "MHFU_PPSSPP",
+        "MHFU_ISO",
+        "MHFU_CONTAINER",
+        "MHFU_LANE",
+        "MHFU_MEMSTICK",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -208,6 +216,82 @@ def test_a_failed_read_back_is_a_failed_command(emu, em75, game, monkeypatch, ca
     monkeypatch.setattr(inject, "push", lambda *_, **__: Pushed(Plan(()), 0.0, ["row 75 headers"]))
     assert main(["brain", "push", "75", "--data", str(game.root)]) == 1
     assert "read back DIFFERS at row 75 headers" in capsys.readouterr().out
+
+
+def stick_of(em75):
+    """em75's stick container, built from the lift directly."""
+    _, prog, _, _ = em75
+    return inject.container(prog, script.asm.assemble(prog), 0, origin=False)
+
+
+def test_build_a_stick_container(em75, game, tmp_path, capsys):
+    out = tmp_path / "row.mhai"
+    assert main(["brain", "build", "75", "--data", str(game.root), "-o", str(out)]) == 0
+    assert out.read_bytes() == stick_of(em75)
+    head = inject.Head.parse(out.read_bytes())
+    assert (
+        capsys.readouterr().out == f"{out}: row 75 id {head.id:08X}, {len(stick_of(em75))} bytes\n"
+    )
+    assert (head.row, head.load) == (75, 0)
+
+
+def test_build_an_edited_file(em75, game, tmp_path):
+    path, out = tmp_path / "em75.txt", tmp_path / "row.mhai"
+    path.write_text(edited_text(em75[1], "enter 0 1 0", "enter 3 0 0"))
+    assert main(["brain", "build", "75", str(path), "--data", str(game.root), "-o", str(out)]) == 0
+    built = inject.Container.read(out.read_bytes())
+    assert built.head.id != inject.Container.read(stick_of(em75)).head.id
+
+
+def test_an_edited_file_with_an_error_is_not_built(em75, game, tmp_path, capsys):
+    path, out = tmp_path / "em75.txt", tmp_path / "row.mhai"
+    path.write_text(edited_text(em75[1], "branch 8", "branch 9"))
+    assert main(["brain", "build", "75", str(path), "--data", str(game.root), "-o", str(out)]) == 1
+    assert "error RANDOM_WEIGHTS" in capsys.readouterr().out and not out.exists()
+
+
+@pytest.fixture
+def psp(tmp_path):
+    """A memory stick's PSP folder with the framework's mods directory."""
+    root = tmp_path / "PSP"
+    (root / sticks.MODS_SUBDIR).mkdir(parents=True)
+    return root
+
+
+def test_deploy_to_a_stick(em75, game, psp, capsys):
+    argv = ["brain", "deploy", "75", "--data", str(game.root), "--stick", str(psp)]
+    assert main(argv) == 0
+    brain = psp / sticks.BRAIN_SUBDIR / sticks.brain_filename(75)
+    mod = psp / sticks.MODS_SUBDIR / sticks.brain_module(75)
+    assert brain.read_bytes() == stick_of(em75)
+    assert sticks.brain_path(75) in mod.read_text()
+    assert capsys.readouterr().out == f"wrote {brain}\nwrote {mod}\n"
+
+
+def test_deploy_a_sibling_row(game, psp):
+    argv = ["brain", "deploy", "75", "--row", "76", "--data", str(game.root), "--stick", str(psp)]
+    assert main(argv) == 0
+    assert (
+        inject.Head.parse((psp / sticks.BRAIN_SUBDIR / sticks.brain_filename(76)).read_bytes()).row
+        == 76
+    )
+
+
+def test_deploy_without_the_framework(game, tmp_path, capsys):
+    root = tmp_path / "PSP"
+    root.mkdir()
+    argv = ["brain", "deploy", "75", "--data", str(game.root), "--stick", str(root)]
+    assert main(argv) == 1
+    assert "mhfu brain: no framework mods directory" in capsys.readouterr().err
+    assert list(root.iterdir()) == []
+
+
+def test_an_edited_file_with_an_error_is_not_deployed(em75, game, psp, tmp_path):
+    path = tmp_path / "em75.txt"
+    path.write_text(edited_text(em75[1], "branch 8", "branch 9"))
+    argv = ["brain", "deploy", "75", str(path), "--data", str(game.root), "--stick", str(psp)]
+    assert main(argv) == 1
+    assert not (psp / sticks.BRAIN_SUBDIR).exists()
 
 
 def test_no_game(monkeypatch, capsys):
