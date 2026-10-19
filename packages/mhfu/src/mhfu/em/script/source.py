@@ -68,7 +68,7 @@ def _entry(e: ir.Entry) -> str:
             return e
 
 
-def _ranges(values: Iterable[int]) -> str:
+def ranges(values: Iterable[int]) -> str:
     """Map types as `0-4,6,9-10`."""
     out: list[list[int]] = []
     for v in sorted(values):
@@ -184,7 +184,7 @@ class _Writer:
                 self.add(0, "blob", "structure", None, item.va)
                 self.rows(1, item.data, item.va, {})
             case ir.Header():
-                variants = f" variants {_ranges(item.variants)}" if item.variants else ""
+                variants = f" variants {ranges(item.variants)}" if item.variants else ""
                 self.add(0, f"header {item.name}{variants}", "structure", None, item.va)
                 for f, e in enumerate(item.fields):
                     self.add(1, f"{slot(f).name} {_entry(e)}", "structure")
