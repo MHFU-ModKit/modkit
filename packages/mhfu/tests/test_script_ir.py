@@ -304,8 +304,8 @@ def test_edit_that_outgrows():
     )
     assert asm.assemble(p).data == b"\xff\x00"
     p.items[0].body.append(ins("wait", frames=1))
-    with pytest.raises(AssembleError, match="outgrew"):
-        asm.assemble(p)
+    img = asm.assemble(p)  # it no longer fits its place, so it moves after the list
+    assert img.items["a"] == (8, 4) and img.data == bytes(8) + b"\xff\x00\x48\x01"
     p.items[0].body.pop()
     p.items.append(ir.Routine("fresh", [ins("end", kind=1)]))
     img = asm.assemble(p)

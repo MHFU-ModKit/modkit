@@ -96,18 +96,36 @@ def length(read: Reader, pc: int) -> int:
     return op.lengths.get(read(pc + 1), op.size) if op.lengths else op.size
 
 
-def markers(read: Reader, pc: int) -> list[int]:
-    """The markers of the block the instruction at `pc` opens or sits in, up to the one that
-    ends it, as the game's scan finds them: a block of the same opcode inside is skipped whole,
-    one of another opcode is stepped over."""
+@dataclass(frozen=True)
+class Scan:
+    """What a scan for the end of a block found."""
+
+    markers: list[int]
+    """Where the block's markers start, up to the one that ends it."""
+    steps: int
+    """The most steps taken between two markers."""
+    stop: str | None
+    """Why it ended early: `sentinel`, `stall` or `guard`; None when it reached the block's end."""
+
+
+def sweep(read: Reader, pc: int, step: Callable[[Reader, int], int], guard: int) -> Scan:
+    """The markers of the block the instruction at `pc` opens or sits in, found by stepping
+    with `step`: a block of the same marker inside is skipped whole, one of another opcode is
+    stepped over. It stops at SENTINEL, where `step` gives 0, and after `guard` steps between
+    two markers."""
     op = op_at(read, pc)
     end = CLOSE[op.shape]
     found: list[int] = []
-    depth = 0
-    at = pc + length(read, pc)
-    for _ in range(SCAN_LIMIT):
+    depth = since = longest = 0
+    at = pc
+    while True:
+        n = step(read, at)
+        if n == 0:
+            return Scan(found, max(longest, since), "stall")
+        at += n
+        since += 1
         if read(at) == SENTINEL:
-            break
+            return Scan(found, max(longest, since), "sentinel")
         if read(at) == op.marker:
             sub = read(at + 1)
             if sub == 0:
@@ -116,10 +134,20 @@ def markers(read: Reader, pc: int) -> list[int]:
                 depth -= 1
             elif not depth:
                 found.append(at)
+                longest, since = max(longest, since), 0
                 if sub == end:
-                    return found
-        at += length(read, at)
-    raise BadScript("structure", pc, f"no end for the block at 0x{pc:08X}")
+                    return Scan(found, longest, None)
+        if since >= guard:
+            return Scan(found, max(longest, since), "guard")
+
+
+def markers(read: Reader, pc: int) -> list[int]:
+    """The markers of the block the instruction at `pc` opens or sits in, up to the one that
+    ends it, as the game's scan finds them (`sweep` with the lengths of `length`)."""
+    scan = sweep(read, pc, length, SCAN_LIMIT)
+    if scan.stop is not None:
+        raise BadScript("structure", pc, f"no end for the block at 0x{pc:08X}")
+    return scan.markers
 
 
 @dataclass(frozen=True)

@@ -2,9 +2,9 @@
 
 A big monster's brain is bytecode: game_task's `AI_SCRIPT` interprets it, and each species ships
 its own as data in its em overlay (some species rows point into game_task). The script picks what
-the monster does next; the moves themselves (`(main, sub)` pairs) are code in the overlay. Read by
-`mhfu.em.script` (`mhfu script EM`); nothing writes it yet, so unlike the other pages this one is
-not round-trip checked.
+the monster does next; the moves themselves (`(main, sub)` pairs) are code in the overlay. Read and
+written by `mhfu.em.script` (`mhfu script EM`): every row lifts into a program that assembles back
+to the same bytes.
 
 ## Finding a script
 
@@ -67,3 +67,29 @@ that walk; `OPCODES` follows it, except for 0x94's header, which it steps one by
   mode 1 and saves the next address in `SCRIPT_PCS`, under the slot `SCRIPT_CONTEXT` picks. The
   next run resumes there.
 - A raised interrupt bit in `SCRIPT_PENDING` switches the next run to the header's routine for it.
+
+## Editing
+
+`mhfu.em.script.edit` changes a lifted program in place, `asm` lays it out, `check` vets it.
+
+- **Nodes.** Builders (`insn`, `if_`, `switch`, `random`, `repeat`) make nodes; `insert`, `put`,
+  `remove` and `replace` place them and give each an `n<k>` id. A node with no `pc` is new code,
+  and a native block with anything new inside is touched: only those are checked.
+- **Lists.** A list index is a byte, so a list holds 256 entries at most. New code names an entry
+  by label (`Sym`); `resolve` swaps each for its index in the list of every header that reaches
+  the routine, appends it where it is missing, and refuses a label two headers would index
+  differently. `fork_table` gives one header its own copy of a shared list, `add_deep` a header
+  a new `call_deep` list.
+- **Layout.** A native item that fits up to the next one stays; a routine that does not first
+  gives up the zero bytes at the end of its tail. The rest and the new items follow the native
+  region, 8-aligned, a header that grew last, and the vacated span is zero. `Image.origin` keeps
+  mapping native addresses to their new offsets. The float parameters behind a header are not
+  carried: whatever lands after a header is not its floats.
+- **The game's scan.** It steps by `SCRIPT_SKIP`, not by `OPCODES`' lengths: a `switch_enemy_var`
+  opener lands on its first case value, an opcode with no case does not move at all, and the scan
+  gives up at the 0x95 sentinel and after 1000 steps between two markers (natively 794 at most).
+  A `random_shifted` shares its markers with `random`, so inside one it confuses the outer scan
+  (em83 does natively); a `repeat` keeps one loop return, so repeats do not nest.
+- **Checks.** New code must keep random weights at 32, ordered cases ascending, repeat counts
+  at 1 or more, and every list index inside its list; the assembled bytes must scan as the tree
+  says and decode back to it.

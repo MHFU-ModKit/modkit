@@ -90,6 +90,27 @@ def _tree(row: int, insns: Sequence[disasm.Insn]) -> list[ir.Node]:
     return out
 
 
+def routine(read: disasm.Reader, entry: int, row: int = 0) -> tuple[list[ir.Node], int]:
+    """The tree of the routine at `entry` and where its last instruction ends; `row` prefixes
+    the node ids."""
+    dec = disasm.decode(read, entry)
+    if not dec.clean or not dec.insns:
+        why = dec.problems[0].text if dec.problems else "no instructions"
+        raise LiftError(f"the routine at 0x{entry:08X} does not decode: {why}")
+    stop = max(i.pc + i.length for i in dec.insns)
+    insns: list[disasm.Insn] = []
+    pc = entry
+    try:
+        while pc < stop:
+            insns.append(disasm.fetch(read, pc))
+            pc += insns[-1].length
+        if pc != stop:
+            raise LiftError(f"the routine at 0x{entry:08X} does not end where its flow does")
+        return _tree(row, insns), stop
+    except BadScript as e:
+        raise LiftError(f"the routine at 0x{entry:08X}: {e}") from e
+
+
 class _Lifter:
     def __init__(self, sc: Scripts) -> None:
         self.sc = sc
@@ -108,29 +129,6 @@ class _Lifter:
             out.update(p for p in h.fields if p in self.data)
             out.update(w for ws in h.pointers.values() for w in ws if w in self.data)
         return out
-
-    def _linear(self, entry: int, stop: int) -> list[disasm.Insn]:
-        insns: list[disasm.Insn] = []
-        pc = entry
-        while pc < stop:
-            ins = disasm.fetch(self.read, pc)
-            insns.append(ins)
-            pc += ins.length
-        if pc != stop:
-            raise LiftError(f"the routine at 0x{entry:08X} does not end where its flow does")
-        return insns
-
-    def _routine(self, row: int, entry: int) -> tuple[list[ir.Node], int]:
-        """The tree of the routine at `entry` and where its last instruction ends."""
-        dec = disasm.decode(self.read, entry)
-        if not dec.clean or not dec.insns:
-            why = dec.problems[0].text if dec.problems else "no instructions"
-            raise LiftError(f"the routine at 0x{entry:08X} does not decode: {why}")
-        stop = max(i.pc + i.length for i in dec.insns)
-        try:
-            return _tree(row, self._linear(entry, stop)), stop
-        except BadScript as e:
-            raise LiftError(f"the routine at 0x{entry:08X}: {e}") from e
 
     def _kinds(self, headers: dict[int, disasm.Header]) -> dict[int, str]:
         """Routine, data or idle (to be decoded), by the address a list word names. A walk list
@@ -236,7 +234,7 @@ class _Lifter:
         if kind == "data":
             return None
         try:
-            body, stop = self._routine(row, s)
+            body, stop = routine(self.read, s, row)
             if stop > e:
                 raise LiftError(f"the routine at 0x{s:08X} runs into the next item")
         except LiftError as err:

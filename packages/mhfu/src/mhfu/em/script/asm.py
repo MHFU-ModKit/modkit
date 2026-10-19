@@ -5,8 +5,9 @@
     image = assemble(prog)              # at the native base: the bytes the game has
     moved = image.at(0x00100000)        # the same bytes placed elsewhere, pointers rebased
 
-Every item with a native address is laid out where it was; items without one follow. An item
-that outgrew its place is an error, and an unresolved `Sym` is too: both belong to the edit pass.
+A native item that fits its place stays there (a routine that does not first gives up zero
+bytes of its tail); the ones that do not, and the new items, follow the native region, 8-aligned
+in program order, a header that grew last. An unresolved `Sym` is an error: `edit.resolve` first.
 """
 
 from __future__ import annotations
@@ -42,6 +43,8 @@ class Image:
     marker."""
     items: dict[str, tuple[int, int]] = field(default_factory=dict)
     """Offset and length of each named item."""
+    closes: dict[str, int] = field(default_factory=dict)
+    """The offset of each block's closing marker, by block id."""
 
     def at(self, base: int) -> bytes:
         """The bytes placed at `base`: header and list words rebased, External words kept."""
@@ -65,6 +68,7 @@ class _Piece:
     ends: list[tuple[int, int]] = field(default_factory=list)
     """The same for where one ends."""
     nodes: dict[str, tuple[int, int]] = field(default_factory=dict)
+    closes: dict[str, int] = field(default_factory=dict)
     labels: dict[str, int] = field(default_factory=dict)
 
 
@@ -86,7 +90,7 @@ def _bytes(
         v = derived[o.name] if o.name in derived else args[o.name]
         if isinstance(v, ir.Sym):
             raise AssembleError(
-                f"{what}: {o.name} is the label {v.label!r}, and labels are not resolved yet"
+                f"{what}: {o.name} is the label {v.label!r}; call edit.resolve first"
             )
         try:
             out += v.to_bytes(o.size, "big", signed=o.signed)
@@ -141,6 +145,8 @@ class _Routine:
                 bytes([op.marker, sub]) + _bytes(what, op.layout(sub), arm.args), arm.pc, arm.id
             )
             self.nodes(arm.body)
+        if b.id:
+            self.piece.closes[b.id] = len(self.piece.data)
         self.emit(bytes([op.marker, CLOSE[shape]]), b.close)
 
 
@@ -181,25 +187,40 @@ def _name(item: ir.Item) -> str | None:
     return None if isinstance(item, ir.Blob) else item.name
 
 
+def _fits(item: ir.Item, piece: _Piece, room: int | None) -> bool:
+    """Whether the piece fits `room` bytes (None: any), a routine giving up the zero bytes at the
+    end of its tail if that is what it takes."""
+    if room is None or len(piece.data) <= room:
+        return True
+    zeros = len(item.tail) - len(item.tail.rstrip(b"\0")) if isinstance(item, ir.Routine) else 0
+    if len(piece.data) - room <= zeros:
+        del piece.data[room:]
+        return True
+    return False
+
+
 def _layout(p: ir.Program, pieces: list[_Piece]) -> tuple[list[int], int]:
-    """The offset of each item and the size of the whole: native items where they were, the
-    others after them."""
+    """The offset of each item and the size of the whole: a native item stays where it was if
+    it fits up to the next native item; the others follow the native region."""
     native = sorted((it.va - p.base, k) for k, it in enumerate(p.items) if it.va is not None)
     limit = p.end - p.base if p.end else None
+    where: dict[int, int] = {}
+    moved: list[int] = []
     for n, (off, k) in enumerate(native):
-        nxt = native[n + 1][0] if n + 1 < len(native) else limit
-        size = len(pieces[k].data)
         if off < 0:
             raise AssembleError(f"{_name(p.items[k])} lies before the program's base")
-        if nxt is not None and off + size > nxt:
-            raise AssembleError(f"{_name(p.items[k])} is {size} bytes and outgrew its place")
-    where = {k: off for off, k in native}
-    end = max((where[k] + len(pieces[k].data) for k in where), default=0)
-    for k, it in enumerate(p.items):
-        if it.va is None:
-            end = -(-end // _ALIGN) * _ALIGN
-            where[k] = end
-            end += len(pieces[k].data)
+        nxt = native[n + 1][0] if n + 1 < len(native) else limit
+        if _fits(p.items[k], pieces[k], None if nxt is None else nxt - off):
+            where[k] = off
+        else:
+            moved.append(k)
+    end = limit or max((where[k] + len(pieces[k].data) for k in where), default=0)
+    grown = [k for k in moved if isinstance(p.items[k], ir.Header)]
+    new = [k for k, it in enumerate(p.items) if it.va is None]
+    for k in sorted({*moved, *new} - set(grown)) + grown:
+        end = -(-end // _ALIGN) * _ALIGN
+        where[k] = end
+        end += len(pieces[k].data)
     return [where[k] for k in range(len(p.items))], end
 
 
@@ -227,6 +248,7 @@ def assemble(p: ir.Program, base: int | None = None) -> Image:
             if (label, at) != (name, 0):  # a data run's first label may be its own name
                 claim(label, off + at)
         img.nodes |= {nid: (off + at, n) for nid, (at, n) in piece.nodes.items()}
+        img.closes |= {nid: off + at for nid, at in piece.closes.items()}
     starts: dict[int, int] = {}
     ends: dict[int, int] = {}
     for item, piece, off in zip(p.items, pieces, offsets, strict=True):
