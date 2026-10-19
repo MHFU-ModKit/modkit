@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from mhfu.em.script import inject
 from mhfu.em.script.inject import Container
 from mhfu.live import script
-from mhfu.live.script import CONTEXTS, ScriptState
+from mhfu.live.script import CONTEXTS, ScriptState, slot
 from ppsspp_debug import DebuggerError
 
 from mhfu_studio.monster import species
@@ -37,7 +37,6 @@ NO_GAME = "no game running"
 READING = "reading the game…"
 PUSHED = "runs pushed code this view does not show"
 NOT_SHOWN = "runs a script this view does not show"
-NO_PC = "its running context holds no resume address"
 BLOCK_END = "at the end of this block"
 DOT = "·"
 
@@ -106,7 +105,7 @@ def marks_of(view: BrainView, state: ScriptState, native: Native) -> tuple[int |
     resumes, PLAYING on the `enter` that saved that address (labelled when the monster plays
     another move), PARKED where each other context waits."""
     out: dict[int, list[Mark]] = {}
-    here = None if state.pc is None else native(state.pc)
+    here = native(state.pc)
     found = row_at(view, here)
     if here is not None and found is not None:
         out.setdefault(found[0], []).append(Mark(NEXT, found[1]))
@@ -114,8 +113,9 @@ def marks_of(view: BrainView, state: ScriptState, native: Native) -> tuple[int |
             label = "" if view.enters[played] == state.pair else instead(view, state.pair)
             out.setdefault(played, []).append(Mark(PLAYING, label))
     parked: dict[int, list[int]] = {}
-    for context, pc in zip(CONTEXTS, state.pcs, strict=True):
-        if context != state.context and (where := row_at(view, native(pc))) is not None:
+    running = slot(state.context)
+    for i, (context, pc) in enumerate(zip(CONTEXTS, state.pcs, strict=True)):
+        if i != running and (where := row_at(view, native(pc))) is not None:
             parked.setdefault(where[0], []).append(context)
     for row, contexts in parked.items():
         words = ", ".join(context_words(c) for c in contexts)
@@ -236,4 +236,4 @@ class Follow:
         if view.header == want:  # else the tab switches to it next
             self.next_row, self.marks = marks_of(view, state, native)
             if self.next_row is None:
-                self.status += f" {DOT} {NO_PC if state.pc is None else why}"
+                self.status += f" {DOT} {why}"

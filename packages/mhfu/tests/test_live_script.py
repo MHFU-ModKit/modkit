@@ -67,11 +67,11 @@ FIELDS: dict[str, Any] = dict(
     SCRIPT_INT_02=a.USER_RAM + 0x502,
     SCRIPT_INT_04=a.USER_RAM + 0x504,
     SCRIPT_CALL_RETURN=a.USER_RAM + 0x601,
-    SCRIPT_WALK_RETURN=a.USER_RAM + 0x602,
+    SCRIPT_RET_RETURN=a.USER_RAM + 0x602,
     SCRIPT_ROUTE=a.USER_RAM + 0x603,
     SCRIPT_DEEP_RETURN=a.USER_RAM + 0x604,
     SCRIPT_LOOP_RETURN=a.USER_RAM + 0x605,
-    SCRIPT_SPARE=a.USER_RAM + 0x606,
+    SCRIPT_SPOT_RETURN=a.USER_RAM + 0x606,
     SCRIPT_BASE=3,
     SCRIPT_WAIT=-5,
     MAIN_STATE=1,
@@ -107,11 +107,12 @@ def test_one_request_reads_every_field() -> None:
 
 
 @pytest.mark.parametrize(
-    ("context", "k"), [(0x00, 0), (0x20, 1), (0x10, 2), (0x01, 3), (0x08, None), (0x80, None)]
+    ("context", "k"),
+    [(0x00, 0), (0x20, 1), (0x10, 2), (0x01, 3), (0x08, 0), (0x80, 0), (0x30, 1), (0x19, 2)],
 )
-def test_pc_is_the_running_contexts(context: int, k: int | None) -> None:
+def test_pc_is_the_running_contexts(context: int, k: int) -> None:
     state = script.read(memory(entity(**{**FIELDS, "SCRIPT_CONTEXT": context})), at(0))
-    assert state.pc == (None if k is None else FIELDS["SCRIPT_PCS"][k])
+    assert state.pc == FIELDS["SCRIPT_PCS"][k]
 
 
 def test_contexts_follow_the_pc_words() -> None:

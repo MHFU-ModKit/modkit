@@ -58,11 +58,11 @@ _PLAIN = (
     _E.SCRIPT_HEADER,
     *live_script.INTERRUPT_STARTS.values(),
     _E.SCRIPT_CALL_RETURN,
-    _E.SCRIPT_WALK_RETURN,
+    _E.SCRIPT_RET_RETURN,
     _E.SCRIPT_ROUTE,
     _E.SCRIPT_DEEP_RETURN,
     _E.SCRIPT_LOOP_RETURN,
-    _E.SCRIPT_SPARE,
+    _E.SCRIPT_SPOT_RETURN,
 )
 _NAMES = {
     **{int(f): str(f.name) for f in _PLAIN},
@@ -372,11 +372,11 @@ def _words(s: ScriptState) -> dict[int, int]:
     out = {
         int(_E.SCRIPT_HEADER): s.header,
         int(_E.SCRIPT_CALL_RETURN): s.call_return,
-        int(_E.SCRIPT_WALK_RETURN): s.walk_return,
+        int(_E.SCRIPT_RET_RETURN): s.ret_return,
         int(_E.SCRIPT_ROUTE): s.route,
         int(_E.SCRIPT_DEEP_RETURN): s.deep_return,
         int(_E.SCRIPT_LOOP_RETURN): s.loop_return,
-        int(_E.SCRIPT_SPARE): s.spare,
+        int(_E.SCRIPT_SPOT_RETURN): s.spot_return,
     }
     out |= {int(f): s.interrupts[bit] for bit, f in live_script.INTERRUPT_STARTS.items()}
     out |= {int(_E.SCRIPT_PCS) + 4 * i: pc for i, pc in enumerate(s.pcs)}

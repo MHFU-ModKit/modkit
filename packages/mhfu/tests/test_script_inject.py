@@ -279,13 +279,13 @@ def entity_image(s):
     put(E.SCRIPT_INT_02, s.interrupts[0x02])
     put(E.SCRIPT_INT_04, s.interrupts[0x04])
     put(E.SCRIPT_CALL_RETURN, s.call_return)
-    put(E.SCRIPT_WALK_RETURN, s.walk_return)
+    put(E.SCRIPT_RET_RETURN, s.ret_return)
     put(E.SCRIPT_ROUTE, s.route)
     put(E.SCRIPT_DEEP_RETURN, s.deep_return)
     put(E.SCRIPT_LOOP_RETURN, s.loop_return)
     put(E.SCRIPT_BASE, s.base)
     put(E.SCRIPT_WAIT, s.wait)
-    put(E.SCRIPT_SPARE, s.spare)
+    put(E.SCRIPT_SPOT_RETURN, s.spot_return)
     return bytes(raw)
 
 
@@ -447,12 +447,12 @@ def test_plan_moves_the_header_words_it_knows():
     assert row_words(mem) == [LOAD + HEADER] * 16 + [0x1234]
 
 
-def test_plan_reads_the_spare_word():
-    mem = world([state(0, spare=N + 0x1C), state(1, spare=N + 0x0C)])
+def test_plan_maps_the_spot_return():
+    mem = world([state(0, spot_return=N + 0x1C), state(1, spot_return=N + 0x0C)])
     plan = make_plan(mem, *program())
-    assert plan.notes[0].endswith("rebased") and "restarted: SCRIPT_SPARE 0x" in plan.notes[1]
+    assert plan.notes[0].endswith("rebased") and "restarted: SCRIPT_SPOT_RETURN 0x" in plan.notes[1]
     apply(mem, plan)
-    assert mem.u32(ent(0) + int(E.SCRIPT_SPARE)) == LOAD + 0x1C
+    assert mem.u32(ent(0) + int(E.SCRIPT_SPOT_RETURN)) == LOAD + 0x1C
 
 
 def test_plan_repushes_over_the_old_container():
@@ -517,7 +517,7 @@ def test_guards_cover_the_row_the_entities_and_the_home():
 
     stale(lambda mem: mem.write_u32(row_at() + 8, 0x1234))
     stale(lambda mem: mem.write_u32(ent(0) + int(E.SCRIPT_PCS), 0x1234))
-    stale(lambda mem: mem.write_u32(ent(0) + int(E.SCRIPT_SPARE), 0x1234))
+    stale(lambda mem: mem.write_u32(ent(0) + int(E.SCRIPT_SPOT_RETURN), 0x1234))
     stale(lambda mem: mem.write_u8(ent(0) + int(E.SCRIPT_CONTEXT), 0x10))
     stale(lambda mem: mem.write_u16(ent(0) + int(E.SCRIPT_BASE), 7))
     stale(lambda mem: mem.write_u8(PUSH + 5, 1))

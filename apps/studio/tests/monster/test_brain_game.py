@@ -16,7 +16,7 @@ from mhfu import addresses as a
 from mhfu.em.script import asm, inject
 from mhfu.em.script.inject import Container, Head
 from mhfu.files import Extracted
-from mhfu.live.script import CONTEXTS, ScriptState
+from mhfu.live.script import CONTEXTS, ScriptState, slot
 from mhfu.memory import Image, Space
 from mhfu.views import layout
 from mhfu_studio.monster import brain
@@ -32,7 +32,7 @@ BASE, INT20, INT10 = CONTEXTS[0], CONTEXTS[1], CONTEXTS[2]
 
 
 def state(
-    pc: int | None = 0x1008,
+    pc: int = 0x1008,
     *,
     context: int = BASE,
     pair: tuple[int, int] = (3, 0),
@@ -42,8 +42,7 @@ def state(
 ) -> ScriptState:
     """A monster running `context`, which resumes at `pc`, with the `parked` contexts' pcs."""
     pcs = [0, 0, 0, 0]
-    if context in CONTEXTS:
-        pcs[CONTEXTS.index(context)] = pc or 0
+    pcs[slot(context)] = pc
     for ctx, at in (parked or {}).items():
         pcs[CONTEXTS.index(ctx)] = at
     return ScriptState(
@@ -149,9 +148,12 @@ def test_a_pc_no_line_has_is_said(view: BrainView, heads: list[Variant]) -> None
     assert f.status == f"following · slot 2 · {bg.NOT_SHOWN}"
 
 
-def test_a_context_with_no_pc_is_said(view: BrainView, heads: list[Variant]) -> None:
-    f = marked(view, heads, state(0x1008, context=0x08))
-    assert f.next_row is None and f.status.endswith(bg.NO_PC)
+def test_an_interrupt_without_a_slot_resumes_at_the_base_pc(
+    view: BrainView, heads: list[Variant]
+) -> None:
+    f = marked(view, heads, state(0x1008, context=0x08, parked={INT20: 0x1010}))
+    assert f.next_row == row(view, "call 0")
+    assert f.marks[row(view, "enter 1 4 0")] == (Mark(PARKED, "parked in interrupt 0x20"),)
 
 
 def test_a_monster_on_another_header_names_it(view: BrainView, heads: list[Variant]) -> None:
