@@ -52,7 +52,11 @@ SCAN_LIMIT = 100_000
 """Instructions a scan for the end of a block steps before it is taken for a runaway."""
 SENTINEL = 0x95
 """The byte a scan for the end of a block stops on; no script holds it."""
+ROWS = 0x5A
+"""Species rows 0 to 0x59 have a script header; the ids above are no monsters."""
 _MAX_FIELDS = 64
+_MIN_ROUTINES = 5
+"""Fewer routines than this is not a species' script."""
 
 
 @dataclass(frozen=True)
@@ -301,8 +305,10 @@ class Header:
     fields: tuple[int, ...]
     """The pointer fields, 0 for none; floats follow them in memory."""
     lists: Mapping[int, tuple[int, ...]]
-    """The words of each list field, up to the next list or the header. A list has no
-    terminator: a slot that is 0 is unused."""
+    """The words of each routine or walk list field, up to the next list or the header. A list
+    has no terminator: a slot that is 0 is unused."""
+    pointers: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
+    """The same for every field, the data lists (stages, pick) too."""
 
     @classmethod
     def read(
@@ -327,15 +333,16 @@ class Header:
         last = max(i for i in range(valid) if words[i] or i < FIRST_DEEP)
         fields = tuple(words[: last + 1])
         bounds = sorted({va, data.stop, *(w for w in fields if w)})
-        lists = {}
+        pointers = {}
         for f, p in enumerate(fields):
-            if p in data and slot(f).kind != "data":
+            if p in data:
                 stop = next((b for b in bounds if b > p), data.stop)
                 n = 0
                 while p + 4 * n < stop and _plausible(mem.u32(p + 4 * n), window):
                     n += 1
-                lists[f] = tuple(mem.u32(p + 4 * i) for i in range(n))
-        return cls(va, fields, lists)
+                pointers[f] = tuple(mem.u32(p + 4 * i) for i in range(n))
+        lists = {f: ws for f, ws in pointers.items() if slot(f).kind != "data"}
+        return cls(va, fields, lists, pointers)
 
     def entries(self) -> list[tuple[Source, int]]:
         """Every nonzero slot of the routine lists and the walk list, in header order."""
@@ -562,6 +569,7 @@ class Scripts:
         self.ovl = game.em(species)
         self.task = game.overlay(GAME_TASK)
         self.mem = Space([self.task, self.ovl])
+        self._listings: dict[int, Listing] = {}
 
     def header_at(self, variant: int, row: int | None = None) -> int:
         """The header a species row has for a map type. `row` is a species id, by default this
@@ -582,19 +590,49 @@ class Scripts:
             out.setdefault(self.header_at(v, row), []).append(v)
         return {va: tuple(vs) for va, vs in out.items()}
 
-    def header(self, variant: int = 0, row: int | None = None) -> Header:
-        va = self.header_at(variant, row)
+    def header_in(self, va: int) -> Header:
+        """The header at `va`, in this overlay or in game_task."""
         holder = next((o for o in (self.ovl, self.task) if va in o), None)
         if holder is None:
             raise ValueError(f"0x{va:08X} is in neither game_task nor em{self.species:02d}")
         return Header.read(holder, va)
 
+    def header(self, variant: int = 0, row: int | None = None) -> Header:
+        return self.header_in(self.header_at(variant, row))
+
+    def listing(self, va: int) -> Listing:
+        """Every routine the header at `va` reaches; each header is disassembled once."""
+        if va not in self._listings:
+            self._listings[va] = disassemble(self.mem.u8, self.header_in(va))
+        return self._listings[va]
+
     def disassemble(self, variant: int = 0, row: int | None = None) -> Listing:
-        return disassemble(self.mem.u8, self.header(variant, row))
+        return self.listing(self.header_at(variant, row))
 
     def listings(self, row: int | None = None) -> dict[int, Listing]:
         """One listing per distinct header of the row, by header address."""
-        return {va: self.disassemble(vs[0], row) for va, vs in self.variants(row).items()}
+        return {va: self.listing(va) for va in self.variants(row)}
 
     def stats(self, row: int | None = None) -> Stats:
         return merge(self.listings(row).values())
+
+    @cached_property
+    def rows(self) -> tuple[int, ...]:
+        """The species rows whose headers all sit in this overlay: its own and its siblings'. A
+        row of another overlay points at the same addresses and does not decode cleanly here."""
+        return tuple(r for r in range(ROWS) if self._serves(r))
+
+    def _serves(self, row: int) -> bool:
+        try:
+            for va in self.variants(row):
+                if va not in self.ovl.initialised:
+                    return False
+                first = self.header_in(va).lists[0][0]
+                if not decode(self.mem.u8, first).clean:
+                    return False
+                s = self.listing(va).stats()
+                if s.unknown or s.unterminated or s.routines < _MIN_ROUTINES:
+                    return False
+        except (BadScript, Unmapped, ValueError, KeyError, IndexError):
+            return False
+        return True

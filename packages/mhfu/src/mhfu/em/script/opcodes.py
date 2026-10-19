@@ -49,8 +49,9 @@ CLOSE = {
 
 NUMBERED = frozenset({Shape.RANDOM, Shape.BUCKET, Shape.ZONE})
 """Shapes whose markers count 1, 2, 3 by position: the encoder numbers them."""
+COUNTED = frozenset({Shape.SWITCH, Shape.RANDOM, Shape.BUCKET})
+"""Shapes whose header has an operand `n` that counts the markers."""
 COUNT = "n"
-"""The header operand of a switch, random or bucket that counts its markers."""
 
 
 def derived_count(shape: Shape, subs: Sequence[int]) -> int | None:
@@ -235,17 +236,21 @@ class Op:
         """Bytes of a plain instruction with these operands."""
         return 1 + _size(self.plain_layout(args))
 
-    def refs(self, args: Mapping[str, int], sub: int | None = None) -> tuple[Ref, ...]:
-        """The list entries an instruction names, from its operands' `@list` tags."""
+    def refs(self, args: Mapping[str, object], sub: int | None = None) -> tuple[Ref, ...]:
+        """The list entries an instruction names, from its operands' `@list` tags; an operand
+        that is not a number yet is left out."""
         if self.coded and sub != 0:
             return ()
         layout = self.args if self.coded else self.plain_layout(args)
         out = list(self.fixed)
         for o in operands(layout):
-            if o.ref is not None:
-                at = FIRST_DEEP + args["table"] if o.ref == "deep" else LISTS[o.ref]
-                kind = "stages" if o.name == "stages" else _REF_KINDS[o.ref]
-                out.append(Ref(kind, at, args[o.name]))
+            if o.ref is None:
+                continue
+            index, table = args.get(o.name), args.get("table", 0)
+            if not isinstance(index, int) or not isinstance(table, int):
+                continue
+            at = FIRST_DEEP + table if o.ref == "deep" else LISTS[o.ref]
+            out.append(Ref("stages" if o.name == "stages" else _REF_KINDS[o.ref], at, index))
         return tuple(out)
 
 

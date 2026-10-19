@@ -1,15 +1,17 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """A big monster's AI script: disassembled (`Scripts`, `decode`), lifted into a tree
-(`lift`, `ir`), encoded back (`asm`) and written as source text (`source`).
+(`lift`, `ir`) and encoded back (`asm`).
 
     from mhfu.em import script
     sc = script.Scripts(game, 75)         # an em overlay and the species table in game_task
+    prog = script.lift.lift(sc, 75)       # one species row as a Program
+    image = script.asm.assemble(prog)     # its bytes, identical to the game's
 
 The opcode table is `opcodes.OPCODES`, the one every part reads.
 """
 
-from . import opcodes
+from . import asm, ir, lift, opcodes
 from .disasm import (
     SCAN_LIMIT,
     SENTINEL,
@@ -70,10 +72,13 @@ __all__ = [
     "Slot",
     "Source",
     "Stats",
+    "asm",
     "decode",
     "disassemble",
     "fetch",
+    "ir",
     "length",
+    "lift",
     "markers",
     "merge",
     "op_at",
