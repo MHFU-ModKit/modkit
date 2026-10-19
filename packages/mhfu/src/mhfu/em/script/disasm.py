@@ -27,7 +27,7 @@ from dataclasses import dataclass, field, replace
 from functools import cached_property, partial
 
 from ... import addresses as a
-from ...files import GAME_TASK, Extracted
+from ...files import GAME_TASK, SPECIES_ROWS, Extracted
 from ...memory import Memory, Space, Unmapped
 from ...overlay import Overlay
 from .opcodes import (
@@ -52,8 +52,6 @@ SCAN_LIMIT = 100_000
 """Instructions a scan for the end of a block steps before it is taken for a runaway."""
 SENTINEL = 0x95
 """The byte a scan for the end of a block stops on; no script holds it."""
-ROWS = 0x5A
-"""Species rows 0 to 0x59 have a script header; the ids above are no monsters."""
 _MAX_FIELDS = 64
 _MIN_ROUTINES = 5
 """Fewer routines than this is not a species' script."""
@@ -654,7 +652,7 @@ class Scripts:
     def rows(self) -> tuple[int, ...]:
         """The species rows whose headers all sit in this overlay: its own and its siblings'. A
         row of another overlay points at the same addresses and does not decode cleanly here."""
-        return tuple(r for r in range(ROWS) if self._serves(r))
+        return tuple(r for r in range(SPECIES_ROWS) if self._serves(r))
 
     def _serves(self, row: int) -> bool:
         try:

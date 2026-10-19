@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 
 from mhfu import files
@@ -24,6 +25,7 @@ from mhfu_studio.shell import places
 
 #: names checked against the game; any other species shows its id alone
 NAMES = SPECIES_IDS
+_MODEL = re.compile(r"file_(\d+)")
 
 
 def label(species: int | None) -> str:
@@ -32,6 +34,12 @@ def label(species: int | None) -> str:
         return "no base monster"
     name = NAMES.get(species)
     return f"{name} (em{species:02d})" if name else f"em{species:02d}"
+
+
+def of_model_file(path: Path) -> int | None:
+    """The species whose model PAC the extracted file `file_0NNNN` is; None for any other name."""
+    m = _MODEL.fullmatch(Path(path).stem)
+    return files.pac_species(int(m[1])) if m else None
 
 
 def cache_root() -> Path:

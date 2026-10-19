@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 from mhfu import files
@@ -15,6 +16,19 @@ def test_root(tmp_path):
     assert sp.available(tmp_path) == [75]
     assert sp.find(75, tmp_path).host_species == 75 and sp.find(7, tmp_path) is None
     assert [h.species for h in sp.survey(tmp_path)] == [75]
+
+
+def test_of_model_file(tmp_path):
+    assert sp.of_model_file(tmp_path / f"file_{files.monster_pac(75):05d}.bin") == 75
+    assert sp.of_model_file(Path("file_06111.pac")) == 1
+    for name in (
+        "file_06110.bin",
+        "file_06200.bin",
+        "t.bin",
+        "file_x.bin",
+        "tigrex_file_06185.bin",
+    ):
+        assert sp.of_model_file(Path(name)) is None
 
 
 def test_cache(tmp_path, monkeypatch):

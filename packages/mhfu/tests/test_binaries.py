@@ -33,6 +33,14 @@ def test_file_ids():
     assert files.engine_id(files.GAME_TASK) == 71
 
 
+def test_pac_species():
+    assert files.pac_species(files.monster_pac(75)) == 75
+    ids = range(1, files.SPECIES_ROWS)
+    assert all(files.pac_species(files.monster_pac(s)) == s for s in ids)
+    last = files.monster_pac(files.SPECIES_ROWS - 1)
+    assert [files.pac_species(f) for f in (files.MONSTER_PAC, last + 1, 0, 5808)] == [None] * 4
+
+
 def test_extracted_game(game):
     task = game.overlay(files.GAME_TASK)
     assert task.name == "game_task.ovl"

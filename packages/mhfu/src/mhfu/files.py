@@ -29,6 +29,8 @@ EM_SPECIES = (1, 2, 7, 14, 15, 17, 20, 21, 33, 40, 54, 55, 58, 59, 75, 82, 83)
 EM_FIRST = 6094
 MONSTER_PAC = 6110
 """A species' model PAC is MONSTER_PAC + species (Tigrex 75: 6185)."""
+SPECIES_ROWS = 0x5A
+"""Species rows 0 to 0x59 have a script header; the ids above are no monsters."""
 
 STAGES = range(0, 267)
 """Stage numbers, which are area_index values; each has an overlay, all but stage 0 a PAC."""
@@ -55,6 +57,12 @@ def em_overlay(species: int) -> int:
 
 def monster_pac(species: int) -> int:
     return MONSTER_PAC + species
+
+
+def pac_species(file_id: int) -> int | None:
+    """The species whose model PAC is `file_id`; None for any other file."""
+    species = file_id - MONSTER_PAC
+    return species if 0 < species < SPECIES_ROWS else None
 
 
 def stage_pac(stage: int) -> int:
