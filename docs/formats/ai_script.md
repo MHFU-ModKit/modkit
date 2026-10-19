@@ -1,0 +1,67 @@
+# AI script
+
+A big monster's brain is bytecode: game_task's `AI_SCRIPT` interprets it, and each species ships
+its own as data in its em overlay (some species rows point into game_task). The script picks what
+the monster does next; the moves themselves (`(main, sub)` pairs) are code in the overlay. Read by
+`mhfu.em.script` (`mhfu script EM`); nothing writes it yet, so unlike the other pages this one is
+not round-trip checked.
+
+## Finding a script
+
+`SCRIPT_HEADERS` holds one row per species, `SPECIES.stride` apart: 17 `u32` header addresses, one
+per map type. `SCRIPT_INIT` copies the one for the quest's map type into the entity's
+`SCRIPT_HEADER` and starts routine 0 of the base list. Most species use one header for every map
+type; em01 and em20 have seven.
+
+A header is a run of `u32` fields, each the address of a list, followed by `f32` parameters. A list
+is `u32` routine addresses with no terminator; 0 is an unused slot. A species has 17 to 36 fields:
+
+| Field | Name | Holds |
+|---|---|---|
+| 0 | base | Routines; `goto` names them, routine 0 starts the script |
+| 1 | call | Routines for `call` (0x81) |
+| 2 | walk | Routines and stage arrays for `walk` (0x0F), mixed |
+| 3, 4 | int_0x10, int_0x20 | Interrupt routine for that `SCRIPT_PENDING` bit (only slot 0 is read) |
+| 5 | stages | Data: zero-terminated stage numbers |
+| 6 | loop | Loop bodies |
+| 7 | pick | Data: weighted-pick records |
+| 8 | int_0x02 | Interrupt routine |
+| 9 | ret | Routines for `call_ret` (0x16) |
+| 10, 11 | int_0x04, int_0x08 | Interrupt routines |
+| 12 | node | Route arrival routines |
+| 13, 14 | int_0x80, int_0x40 | Interrupt routines |
+| 15 + k | deep*k* | Routines for `call_deep` (0x82) table *k* |
+
+## Instructions
+
+An instruction is an opcode byte and its operands. 130 opcodes exist (0x01 to 0x99 with gaps, and
+0xFF); `mhfu.em.script.OPCODES` has each one's name, kind and layout. The names are modkit's. Operands are
+`u8` unless the layout says otherwise; a section number is a **big-endian** `u16`.
+
+Structure is inline. A block opcode is followed by a sub-code: 0 opens the block, the others are
+markers inside it, and one closes it. The markers repeat the opener's opcode:
+
+| Shape | Sub-codes |
+|---|---|
+| if | 1 else, 2 end |
+| switch | 1 case, 2 default, 3 end; the header is `n` and the first case follows as a marker |
+| repeat | 1 end |
+| random | 1..13 branch (a weight each), 0xFF end; 0x85's branches are 0x80 markers |
+| bucket, zone | numbered cases, 0xFF end |
+
+An if that fails, or a case that does not match, steps forward to the next marker of its block,
+skipping inner blocks of the same opcode whole. `SCRIPT_SKIP` is the game's own length table for
+that walk; `OPCODES` follows it, except for 0x94's header, which it steps one byte short.
+
+## Flow and running
+
+- `call` (0x81), `call_ret` (0x16) and `call_deep` (0x82) run a routine from their list and come
+  back; two call levels exist. `walk` (0x0F) runs routines along a route. `goto` (0x07) continues in
+  a base routine. `end` (0xFF) returns, restarts or ends an interrupt; its operand says which.
+- A routine is decoded from its entry along every path; each path ends at a `goto` or an `end`.
+  Data tables sit between routines, so a linear sweep misreads them.
+- `AI_SCRIPT` runs when `SCRIPT_WAKE` is set and `SCRIPT_WAIT` is 0, at most 1000 instructions a
+  run. Only `enter` (0x05, `main sub gate`) ends a run: it enters the pair through enter-action
+  mode 1 and saves the next address in `SCRIPT_PCS`, under the slot `SCRIPT_CONTEXT` picks. The
+  next run resumes there.
+- A raised interrupt bit in `SCRIPT_PENDING` switches the next run to the header's routine for it.

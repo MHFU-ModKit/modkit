@@ -313,6 +313,11 @@ CLONE_POOL = { eu = 0x0A800000, type = "bytes", doc = "framework-owned entity-cl
 INJECT_XRAM = { eu = 0x0B000000, type = "bytes", doc = "framework-owned model-inject scratch in the extra-RAM window (emulator only); a relocated PAC lands at its start" }
 EXTRA_RAM_END = { eu = 0x0C000000, type = "bytes", doc = "first address past the extra-RAM window (PPSSPP memory=64)" }
 
+# --- AI script (script/disassembler) ---
+SCRIPT_HEADERS = { eu = 0x09BB8B14, type = "bytes", doc = "per species row, stride SPECIES.stride (SPECIES_TABLE + 0x354): 17 header pointers, one per map type, into the species' em overlay or game_task; SCRIPT_INIT copies one into the entity's script pointer" }
+SCRIPT_INIT = { eu = 0x09ABAAC0, type = "fn", doc = "(entity) AI-script init, the only writer of the entity's script header pointer: picks the header by the quest's map-type byte and starts the base routine" }
+SCRIPT_SKIP = { eu = 0x09AB7758, type = "fn", doc = "(entity, pc) the instruction after pc: the game's one length table for the AI script, which every block scan steps with" }
+
 [set]
 FREE_ROAM_SCENES = { of = ["SCENE_ROAM", "SCENE_VILLAGE", "SCENE_VILLAGE_CONTRACT", "SCENE_QUEST", "SCENE_QUEST_ALT"], doc = "SCENE_OBJECT values of free roam with nothing on screen; a prompt zone's are pool values that move, so not here" }
 
@@ -396,6 +401,10 @@ STEER = { offset = 0x637, type = "u8", doc = "big monsters: set by a charge's tr
 RUN_BUDGET = { offset = 0x76C, type = "f32", doc = "big monsters: distance a run move may still travel; BUDGET_STEP subtracts the clip's root motion, the translator seeds it" }
 CLIP_BLOCKS = { offset = 0x080, type = "CLIP_BLOCK[3]", doc = "big monsters: one clip player per body part (Bone.stream); CLIP and CLIP_FLAGS are part 0's" }
 SCRIPT_WAKE = { offset = 0x4B5, type = "u8", doc = "big monsters: set as the brain hubs (0,1)/(0,2) run; SCRIPT_TICK runs the AI script and clears it. A pair entered from outside with it set is cut short by the script's next pair" }
+SCRIPT_HEADER = { offset = 0x4C8, type = "ptr", doc = "big monsters: the AI script's header (SCRIPT_HEADERS row, set by SCRIPT_INIT); mhfu.em.script reads it" }
+SCRIPT_PCS = { offset = 0x4CC, type = "u32[4]", doc = "big monsters: the AI script's resume addresses, base then contexts 0x20, 0x10, 0x01 (SCRIPT_CONTEXT picks one); only `enter` stores one" }
+SCRIPT_CONTEXT = { offset = 0x4C1, type = "u8", doc = "big monsters: the AI script's running context, a bit of SCRIPT_PENDING or 0 for the base routine" }
+SCRIPT_PENDING = { offset = 0x4BB, type = "u8", doc = "big monsters: AI-script interrupts raised and not yet taken, a bit each; the header's interrupt routine for the bit runs at the next wake" }
 SCRIPT_WAIT = { offset = 0x778, type = "s16", doc = "big monsters: AI frames SCRIPT_TICK waits before it may run the AI script; a reaction zeroes it (the tail cut, measured)" }
 HUNTER_INDEX = { offset = 0x1E6, type = "u16", doc = "hunters: 0 the player, 1 the Felyne; the bit a big monster's AWARE and COMBAT_SEEN keep for it" }
 MOST_DAMAGED_PART = { offset = 0x286, type = "u8", doc = "big monsters: the part with the most PENDING_DAMAGE in the last frame with a hit; picks the flinch pair" }
