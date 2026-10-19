@@ -146,3 +146,8 @@ The image starts at 0x40; relocs, patches, origin and items follow in that order
 A native address maps into the image by an origin entry or a patch exactly, else by its offset inside a
 table or data item; anything else, such as a routine's tail, has no place. The inverse takes the lowest
 native address of an offset.
+
+`mhfu brain push` writes the container at `SCRIPT_PUSH` (PPSSPP's 64 MB mode), points the row's
+`SCRIPT_HEADERS` words at it and moves each live monster's script words across the maps, restarting at
+base routine 0 the monster with a word that has no place. It lasts until the next quest load re-reads
+the overlay.

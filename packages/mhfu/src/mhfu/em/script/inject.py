@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The container ('MHAI') an assembled AI script travels in, and the maps across it.
+"""An assembled AI script in the running game, and the container ('MHAI') it travels in.
 
-    box = Container.read(container(prog, img, load))
-    box.rebase(native_address)       # where the native address is in the image
-    box.native(image_address)        # and back
+    img = asm.assemble(prog)
+    inject.push(session, prog, img)      # container to SCRIPT_PUSH, the row and live monsters on it
+    inject.status(session.mem)
+    inject.restore(session, prog.row)    # the game's own script back
 
-The layout is in docs/formats/ai_script.md; the framework loads the same bytes from the memory
-stick.
+The container's layout is in docs/formats/ai_script.md; the framework loads the same bytes from the
+memory stick. A push lasts until the next quest load re-reads the species' overlay.
 """
 
 from __future__ import annotations
@@ -15,23 +16,62 @@ from __future__ import annotations
 import hashlib
 import struct
 from bisect import bisect_right
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from enum import IntEnum
 from functools import cached_property
 
+from ppsspp_debug import Client, Disconnected
+
+from ... import addresses as a
+from ...files import SPECIES_ROWS
+from ...live import script as live_script
+from ...live.script import ScriptState
+from ...live.session import Session
+from ...memory import Memory, Unmapped
+from ...writes import Plan, Pushed, Refused, Write, apply
 from . import asm, ir
+from .disasm import VARIANTS
 
 MAGIC = b"MHAI"
 VERSION = 1
 HEAD = 0x40
 IMAGE_OFF = HEAD
 """Where the image starts in a container."""
+GUARD = 16
+"""Bytes at SCRIPT_PUSH a plan guards: a container's first fields, or zeros."""
+PUSH_SIZE = a.CLI_BRIDGE_BLOCK - a.SCRIPT_PUSH
+TIMEOUT = 5.0
+"""Seconds `push` waits for a monster of the species to tick before it pauses the CPU."""
+NEEDS_64 = (
+    "SCRIPT_PUSH is outside the emulator's memory: a push needs PPSSPP's 64 MB mode (memory=64)"
+)
 
 _ALIGN = 8
 _HEAD = struct.Struct("<4sHH12I8x")
 _ENTRY = (4, 8, 8, 16)
 """Bytes of a reloc, patch, origin and item entry."""
+
+_E = a.ENTITY
+_INT = {0x08: _E.SCRIPT_INT_08, 0x02: _E.SCRIPT_INT_02, 0x04: _E.SCRIPT_INT_04}
+_SPARE = int(_E.SCRIPT_LOOP_RETURN) + 4
+"""The pointer word after SCRIPT_LOOP_RETURN, unnamed: mapped like the others."""
+_PLAIN = (
+    _E.SCRIPT_HEADER,
+    *_INT.values(),
+    _E.SCRIPT_CALL_RETURN,
+    _E.SCRIPT_WALK_RETURN,
+    _E.SCRIPT_ROUTE,
+    _E.SCRIPT_DEEP_RETURN,
+    _E.SCRIPT_LOOP_RETURN,
+)
+_NAMES = {
+    **{int(f): str(f.name) for f in _PLAIN},
+    **{int(_E.SCRIPT_PCS) + 4 * i: f"SCRIPT_PCS[{i}]" for i in range(len(live_script.CONTEXTS))},
+    _SPARE: f"+0x{_SPARE:X}",
+}
+"""The entity's script words by offset."""
 
 
 class ContainerError(ValueError):
@@ -313,4 +353,399 @@ def container(p: ir.Program, img: asm.Image, load: int = 0, origin: bool = True)
         sorted(img.headers.items()),
         sorted(img.origin.items()) if origin else (),
         _items(p, img) if origin else (),
+    )
+
+
+# --- the plan
+
+
+@dataclass(frozen=True)
+class _Route:
+    """One move of script words: which are the script's, where each goes."""
+
+    headers: frozenset[int]
+    mine: Callable[[int], bool]
+    remap: Callable[[int], int | None]
+    entry: Callable[[int], int | None]
+    """The routine a restarted entity begins at, by its new header."""
+
+
+def _words(s: ScriptState, spare: int) -> dict[int, int]:
+    """The entity's script words by offset."""
+    out = {
+        int(_E.SCRIPT_HEADER): s.header,
+        int(_E.SCRIPT_CALL_RETURN): s.call_return,
+        int(_E.SCRIPT_WALK_RETURN): s.walk_return,
+        int(_E.SCRIPT_ROUTE): s.route,
+        int(_E.SCRIPT_DEEP_RETURN): s.deep_return,
+        int(_E.SCRIPT_LOOP_RETURN): s.loop_return,
+        _SPARE: spare,
+    }
+    out |= {int(f): s.interrupts[bit] for bit, f in _INT.items()}
+    out |= {int(_E.SCRIPT_PCS) + 4 * i: pc for i, pc in enumerate(s.pcs)}
+    return dict(sorted(out.items()))
+
+
+def _runs(
+    parts: Sequence[tuple[int, bytes, str]],
+) -> list[tuple[int, tuple[tuple[bytes, str], ...]]]:
+    """Adjacent parts as one run each, with the label of every part."""
+    out: list[tuple[int, list[tuple[bytes, str]]]] = []
+    for at, data, label in sorted(parts):
+        if out and out[-1][0] + sum(len(d) for d, _ in out[-1][1]) == at:
+            out[-1][1].append((data, label))
+        else:
+            out.append((at, [(data, label)]))
+    return [(at, tuple(pieces)) for at, pieces in out]
+
+
+def _bind(route: _Route, s: ScriptState, spare: int) -> tuple[list[Write], str]:
+    """The writes that move one entity's script onto `route`, and a note on how."""
+    old = _words(s, spare)
+    new = dict(old)
+    stuck = []
+    for off, w in old.items():
+        if w == 0 or not route.mine(w):
+            continue
+        if (moved := route.remap(w)) is None:
+            stuck.append(off)
+        else:
+            new[off] = moved
+    context, base = s.context, s.base
+    who = f"entity 0x{s.entity:08X}"
+    if not stuck:
+        note = f"{who} rebased"
+    else:
+        header = route.remap(s.header)
+        entry = None if header is None else route.entry(header)
+        if header is None or entry is None:
+            raise Refused(f"{who} needs a restart and its script has no base routine to start at")
+        new[int(_E.SCRIPT_HEADER)] = header
+        new |= {int(_E.SCRIPT_PCS) + 4 * i: entry for i in range(len(s.pcs))}
+        context = base = 0
+        bad = stuck[0]
+        more = f" and {len(stuck) - 1} more" if len(stuck) > 1 else ""
+        note = (
+            f"{who} restarted: {_NAMES[bad]} 0x{old[bad]:08X}{more} has no place in the new script"
+        )
+    at = s.entity
+    guards = [(at + off, w.to_bytes(4, "little"), _NAMES[off]) for off, w in old.items()] + [
+        (at + int(_E.SCRIPT_CONTEXT), bytes([s.context]), "SCRIPT_CONTEXT"),
+        (at + int(_E.SCRIPT_BASE), s.base.to_bytes(2, "little"), "SCRIPT_BASE"),
+    ]
+    changes = [
+        (at + off, w.to_bytes(4, "little"), f"{_NAMES[off]} 0x{old[off]:08X} -> 0x{w:08X}")
+        for off, w in new.items()
+        if w != old[off]
+    ]
+    if context != s.context:
+        label = f"SCRIPT_CONTEXT 0x{s.context:02X} -> 0x{context:02X}"
+        changes.append((at + int(_E.SCRIPT_CONTEXT), bytes([context]), label))
+    if base != s.base:
+        label = f"SCRIPT_BASE {s.base} -> {base}"
+        changes.append((at + int(_E.SCRIPT_BASE), base.to_bytes(2, "little"), label))
+    if not changes:
+        return [], f"{who} unchanged"
+    held = tuple((run_at, b"".join(d for d, _ in pieces)) for run_at, pieces in _runs(guards))
+    runs = _runs(changes)
+    guarded = Write(f"{who}: script words", *runs[0], held)
+    return [guarded, *(Write(f"{who}: script words", *run) for run in runs[1:])], note
+
+
+def _old(home: bytes, row: int) -> Container | None:
+    """The container `home` holds, None for zeros; a refusal for anything else, or for another
+    row's, whose words and monsters a second script would strand."""
+    if len(home) < GUARD:
+        raise ValueError(f"home is the bytes at SCRIPT_PUSH, at least {GUARD} of them")
+    if not any(home[:GUARD]):
+        return None
+    if home[:4] != MAGIC:
+        raise Refused("SCRIPT_PUSH holds something that is no script container; it is not free")
+    try:
+        old = Container.read(home)
+    except ContainerError as e:
+        raise Refused(f"the container at SCRIPT_PUSH does not read ({e})") from None
+    if old.row != row:
+        raise Refused(
+            f"SCRIPT_PUSH has row {old.row}'s script, not row {row}'s; restore row {old.row} first"
+        )
+    return old
+
+
+def _placed(p: ir.Program, source: asm.Image | Container) -> bytes:
+    """The container written for an image at SCRIPT_PUSH."""
+    load = int(a.SCRIPT_PUSH) + IMAGE_OFF
+    if isinstance(source, Container):
+        if source.row != p.row:
+            raise ValueError(f"the container is row {source.row}'s, the program row {p.row}'s")
+        return source.place(load)
+    return container(p, source, load)
+
+
+def _row_write(row: int, words: Sequence[int], moved: Sequence[int], what: str) -> Write:
+    at = int(a.SCRIPT_HEADERS) + row * a.SPECIES.stride
+    pieces = tuple(
+        (struct.pack("<I", new), f"map type {k}: 0x{old:08X} -> 0x{new:08X}")
+        for k, (old, new) in enumerate(zip(words, moved, strict=True))
+    )
+    return Write(what, at, pieces, ((at, struct.pack(f"<{len(words)}I", *words)),))
+
+
+def _check_row(row: int, words: Sequence[int]) -> None:
+    if len(words) != VARIANTS:
+        raise ValueError(f"a row has {VARIANTS} header words, not {len(words)}")
+
+
+def plan(
+    p: ir.Program,
+    source: asm.Image | Container,
+    live: Sequence[ScriptState],
+    row_words: Sequence[int],
+    home: bytes,
+    *,
+    spare: Mapping[int, int] | None = None,
+) -> Plan:
+    """The writes that put `source` at SCRIPT_PUSH, point the row at it and rebind the live
+    monsters running it. `row_words` are the row's header words and `home` the bytes at
+    SCRIPT_PUSH (the whole container if there is one) as the game holds them; `spare` is each
+    entity's unnamed word after SCRIPT_LOOP_RETURN, 0 where missing."""
+    _check_row(p.row, row_words)
+    old = _old(home, p.row)
+    data = _placed(p, source)
+    if len(data) > PUSH_SIZE:
+        raise Refused(f"the container is {len(data)} bytes; SCRIPT_PUSH holds {PUSH_SIZE}")
+    new = Container.read(data)
+    region = range(p.base, p.end or p.base + len(new.image))
+    gone = old.head.addresses if old else range(0)
+
+    def mine(w: int) -> bool:
+        return w in region or w in gone
+
+    def remap(w: int) -> int | None:
+        native = old.native(w) if old is not None and w in gone else w
+        return None if native is None else new.rebase(native)
+
+    headers = frozenset(new.headers) | (frozenset(old.headers.values()) if old else frozenset())
+    hits = [w in headers for w in row_words]
+    if not any(hits):
+        raise Refused(
+            f"none of row {p.row}'s header words is this script's (not in a quest, or another game)"
+        )
+    moved = [remap(w) if hit else w for w, hit in zip(row_words, hits, strict=True)]
+    if None in moved:
+        raise Refused(f"a header word of row {p.row} has no place in the new script")
+    route = _Route(headers, mine, remap, new.entry)
+    at = int(a.SCRIPT_PUSH)
+    label = f"container 'MHAI' row {p.row} id {new.head.id:08X}"
+    writes = [
+        Write("container", at, ((data, label),), ((at, bytes(home[:GUARD])),)),
+        _row_write(p.row, row_words, [m for m in moved if m is not None], f"row {p.row} headers"),
+    ]
+    notes = []
+    targets = [s for s in live if s.header in headers]
+    for s in targets:
+        more, note = _bind(route, s, (spare or {}).get(s.entity, 0))
+        writes += more
+        notes.append(note)
+    if not targets:
+        notes.append(f"no live monster runs row {p.row}'s script")
+    return Plan(tuple(writes), tuple(notes))
+
+
+def plan_restore(
+    row: int,
+    live: Sequence[ScriptState],
+    row_words: Sequence[int],
+    home: bytes,
+    entry: Callable[[int], int | None],
+    *,
+    spare: Mapping[int, int] | None = None,
+) -> Plan:
+    """The writes that put the game's own script back: the row's header words and the monsters
+    running the container at SCRIPT_PUSH, which is then cleared. `entry(header)` is the routine
+    in slot 0 of the base list of a native header, where a restarted monster begins."""
+    _check_row(row, row_words)
+    old = _old(home, row)
+    if old is None:
+        raise Refused("nothing is pushed: SCRIPT_PUSH holds no container")
+    headers = frozenset(old.headers.values())
+    route = _Route(headers, old.head.addresses.__contains__, old.native, entry)
+    hits = [w in headers for w in row_words]
+    moved = [old.native(w) if hit else w for w, hit in zip(row_words, hits, strict=True)]
+    if None in moved:
+        raise Refused(f"a header word of row {row} has no native header")
+    writes: list[Write] = []
+    notes = []
+    if any(hits):
+        writes.append(
+            _row_write(row, row_words, [m for m in moved if m is not None], f"row {row} headers")
+        )
+    else:
+        notes.append(f"no header word of row {row} pointed into the container")
+    for s in (s for s in live if s.header in headers):
+        more, note = _bind(route, s, (spare or {}).get(s.entity, 0))
+        writes += more
+        notes.append(note)
+    at = int(a.SCRIPT_PUSH)
+    writes.append(
+        Write("container", at, ((bytes(GUARD), "cleared"),), ((at, bytes(home[:GUARD])),))
+    )
+    return Plan(tuple(writes), tuple(notes))
+
+
+# --- the running game
+
+
+@dataclass(frozen=True)
+class _Snapshot:
+    live: list[ScriptState]
+    spare: dict[int, int]
+    row_words: tuple[int, ...]
+    home: bytes
+
+
+def _row_at(row: int) -> int:
+    return int(a.SCRIPT_HEADERS) + row * int(a.SPECIES.stride)
+
+
+def _home(mem: Memory) -> bytes:
+    """The container at SCRIPT_PUSH if there is one, else its first bytes."""
+    head = mem.read(a.SCRIPT_PUSH, HEAD)
+    if head[:4] != MAGIC:
+        return head
+    try:
+        size = Head.parse(head).extent
+    except ContainerError:
+        return head
+    return mem.read(a.SCRIPT_PUSH, size) if HEAD < size <= PUSH_SIZE else head
+
+
+def _species(mem: Memory, row: int) -> list[ScriptState]:
+    return [s for s in live_script.monsters(mem).values() if s.species == row]
+
+
+def _snapshot(mem: Memory, row: int) -> _Snapshot:
+    live = _species(mem, row)
+    spare = {s.entity: mem.u32(s.entity + _SPARE) for s in live}
+    words = struct.unpack(f"<{VARIANTS}I", mem.read(_row_at(row), 4 * VARIANTS))
+    return _Snapshot(live, spare, words, _home(mem))
+
+
+def _stop(client: Client, entities: Sequence[int], timeout: float) -> str:
+    """Stop the game where no entity is inside the script: at SCRIPT_TICK of one of `entities`,
+    else after `timeout` s wherever it is (a monster out of the hunter's section may not tick)."""
+    if entities:
+        condition = " || ".join(f"a0 == {e:#x}" for e in entities)
+        with client.breakpoint(a.SCRIPT_TICK, condition=condition) as hits:
+            try:
+                hits.next(timeout)
+                return "the game, stopped at SCRIPT_TICK"
+            except TimeoutError:
+                pass
+    client.pause()
+    return "the game, paused"
+
+
+def _act(s: Session, row: int, timeout: float, build: Callable[[_Snapshot], Plan]) -> Pushed:
+    """Stop the game, read what a plan needs, apply it and let the game run."""
+    mem, client = s.mem, s.client
+    try:
+        mem.read(a.SCRIPT_PUSH, GUARD)
+    except Unmapped:
+        raise Refused(NEEDS_64) from None
+    entities = [m.entity for m in _species(mem, row)]
+    try:
+        where = _stop(client, entities, timeout)
+        return apply(mem, build(_snapshot(mem, row)), where)
+    finally:
+        with suppress(Disconnected):
+            if client.status().stepping:
+                client.resume()
+
+
+def push(s: Session, p: ir.Program, img: asm.Image, *, timeout: float = TIMEOUT) -> Pushed:
+    """Put `img` into the running game: the container at SCRIPT_PUSH, the row's header words and
+    every monster of the species on it. Written in one stop at SCRIPT_TICK, which no entity is
+    inside; with no monster to wait for, or none ticking within `timeout`, with the CPU paused."""
+    return _act(
+        s,
+        p.row,
+        timeout,
+        lambda st: plan(p, img, st.live, st.row_words, st.home, spare=st.spare),
+    )
+
+
+def restore(s: Session, row: int, *, timeout: float = TIMEOUT) -> Pushed:
+    """Put the game's own script back: the row's header words and the monsters on the container,
+    which is cleared. A restarted monster begins at the first base routine of the game's header."""
+    mem = s.mem
+
+    def first(header: int) -> int | None:
+        try:
+            return mem.u32(mem.u32(header)) or None
+        except Unmapped:
+            return None
+
+    return _act(
+        s,
+        row,
+        timeout,
+        lambda st: plan_restore(row, st.live, st.row_words, st.home, first, spare=st.spare),
+    )
+
+
+@dataclass(frozen=True)
+class Monster:
+    slot: int
+    entity: int
+    species: int
+    pushed: bool
+    """Whether its header is in the container, not the game's own."""
+    context: int
+    pc: int | None
+    """Where the running context resumes."""
+
+
+@dataclass(frozen=True)
+class Status:
+    mapped: bool
+    """False when SCRIPT_PUSH is outside the emulator's memory."""
+    container: Head | None
+    foreign: bool
+    """SCRIPT_PUSH holds something that is no container."""
+    rows: dict[int, tuple[int, ...]]
+    """The rows whose header words point into the container, with their map types."""
+    monsters: tuple[Monster, ...]
+
+
+def status(mem: Memory) -> Status:
+    """What is pushed: the container, the rows and monsters that run it."""
+    found = live_script.monsters(mem)
+    try:
+        head = mem.read(a.SCRIPT_PUSH, HEAD)
+    except Unmapped:
+        return Status(False, None, False, {}, _seen(found, range(0)))
+    box: Head | None = None
+    if any(head[:GUARD]):
+        try:
+            box = Head.parse(head)
+        except ContainerError:
+            pass
+    inside = box.addresses if box else range(0)
+    rows: dict[int, tuple[int, ...]] = {}
+    if box:
+        stride = a.SPECIES.stride
+        raw = mem.read(a.SCRIPT_HEADERS, (SPECIES_ROWS - 1) * stride + 4 * VARIANTS)
+        for row in range(SPECIES_ROWS):
+            words = struct.unpack_from(f"<{VARIANTS}I", raw, row * stride)
+            if hit := tuple(k for k, w in enumerate(words) if w in inside):
+                rows[row] = hit
+    foreign = box is None and any(head[:GUARD])
+    return Status(True, box, foreign, rows, _seen(found, inside))
+
+
+def _seen(found: Mapping[int, ScriptState], inside: range) -> tuple[Monster, ...]:
+    return tuple(
+        Monster(slot, s.entity, s.species, s.header in inside, s.context, s.pc)
+        for slot, s in found.items()
     )
