@@ -580,7 +580,7 @@ def plan_restore(
         notes.append(note)
     at = int(a.SCRIPT_PUSH)
     writes.append(
-        Write("container", at, ((bytes(GUARD), "cleared"),), ((at, bytes(home[:GUARD])),))
+        Write("container", at, ((bytes(old.head.extent), "cleared"),), ((at, bytes(home[:GUARD])),))
     )
     return Plan(tuple(writes), tuple(notes))
 
