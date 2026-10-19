@@ -74,6 +74,8 @@ FIELDS: dict[str, Any] = dict(
     SCRIPT_SPARE=a.USER_RAM + 0x606,
     SCRIPT_BASE=3,
     SCRIPT_WAIT=-5,
+    MAIN_STATE=1,
+    SUB_STATE=4,
 )
 
 
@@ -98,7 +100,10 @@ def test_one_request_reads_every_field() -> None:
         a.USER_RAM + 0x605,
         3,
         a.USER_RAM + 0x606,
+        1,
+        4,
     )
+    assert state.pair == (1, 4)
 
 
 @pytest.mark.parametrize(

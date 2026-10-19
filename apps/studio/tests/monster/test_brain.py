@@ -194,6 +194,23 @@ def test_enters_by_row() -> None:
     assert v.labels == {}
 
 
+def test_lines_by_address_and_where_an_enter_resumes() -> None:
+    p = program()
+    block = next(n for n in p.nodes() if isinstance(n, ir.Block))
+    block.close = 0x1100
+    v = brain.view(p, "h0")
+    row = v.row_of
+    assert v.at[0x1000] == row["n0"] and v.at[0x1004] == row["n1"]
+    assert v.at[0x100C] == row["n3"]  # an arm's marker is a line too
+    assert 0x1100 not in v.at and v.closes == {0x1100: row["n0"]}
+    assert v.ends == {0x1008: row["n1"], 0x1014: row["n4"], 0x101C: row["n6"]}
+    assert all(v.lines[r].text.strip().startswith("enter") for r in v.ends.values())
+    assert all(v.lines[r].pc == pc for pc, r in v.at.items())
+    assert len(v.at) == len(v.row_of) and 0x2000 not in v.at  # no routine line has one
+    other = brain.view(p, "h1")
+    assert 0x1018 not in other.at and set(other.ends) == {0x1008, 0x1014, 0x102C}
+
+
 def test_the_headers_in_words() -> None:
     p = program()
     assert [(v.header, v.words) for v in brain.variants(p)] == [

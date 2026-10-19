@@ -4,7 +4,8 @@
 
 The script's lines are a tree beside an outline of its lists, with a find, a history and links
 from a call to the routine it leads to. The model walks the view as it is and one delegate draws
-the lines, so a script of ten thousand lines opens as fast as one of a thousand.
+the lines, so a script of ten thousand lines opens as fast as one of a thousand. Follow the game
+marks where the running monster's script stands (`monster/brain_game.py`) in the first column.
 """
 
 from __future__ import annotations
@@ -49,8 +50,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mhfu_studio.monster import species
+from mhfu_studio.monster import brain_game, species
 from mhfu_studio.monster.brain import BrainView, History, Outline
+from mhfu_studio.monster.brain_game import Mark, Marks
 from mhfu_studio.ui import kit, theme
 
 if TYPE_CHECKING:
@@ -61,20 +63,30 @@ if TYPE_CHECKING:
 POLL_MS = 150
 #: the model's columns: the address of a line, and the line, which the tree is drawn in
 PC, TEXT = 0, 1
-#: item roles: a line's kind, whether it leads to a routine, and what an `enter` line plays
+#: item roles: a line's kind, whether it leads to a routine, what an `enter` line plays, and
+#: Follow the game's marks on it
 KIND = Qt.ItemDataRole.UserRole
 LINK = Qt.ItemDataRole.UserRole + 1
 LABEL = Qt.ItemDataRole.UserRole + 2
+MARKS = Qt.ItemDataRole.UserRole + 3
 PAD = 4
 INDENT = 16
 #: a selected row is one band: the branches' own fill would be a second layer over the gutter
 ROW_QSS = "QTreeView { show-decoration-selected: 0; }"
 LISTS_W = 220
 ARROW = "  \u2192 "
+BACK = "  \u2190 "
 PICK = "Pick a monster"
 NO_GAME = "No game files"
 SETUP = "Choose your MHFU extraction under Setup on the start page."
 NO_INDEX = QModelIndex()
+
+
+def tag_width(word: str) -> int:
+    """The width a tag of `word` takes, with the space round it."""
+    font = theme.mono()
+    font.setBold(True)
+    return round(QFontMetricsF(font).horizontalAdvance(word)) + 3 * PAD
 
 
 def address(pc: int | None) -> str:
@@ -88,17 +100,26 @@ class BrainModel(QAbstractItemModel):
     def __init__(self) -> None:
         super().__init__()
         self.view: BrainView | None = None
+        self.marks: Marks = {}
         #: a row's place among its siblings
         self._at: list[int] = []
 
     def set_view(self, view: BrainView | None) -> None:
         self.beginResetModel()
         self.view = view
+        self.marks = {}
         self._at = [0] * (0 if view is None else len(view.lines))
         for siblings in () if view is None else (view.top, *view.children):
             for k, row in enumerate(siblings):
                 self._at[row] = k
         self.endResetModel()
+
+    def set_marks(self, marks: Marks) -> None:
+        """Shows `marks` on the lines, repainting the ones whose marks changed."""
+        old, self.marks = self.marks, marks
+        for row in sorted({*old, *marks}):
+            if old.get(row) != marks.get(row) and row < len(self._at):
+                self.dataChanged.emit(self.index_of(row, PC), self.index_of(row, TEXT))
 
     def index_of(self, row: int, column: int = PC) -> QModelIndex:
         """The index of line `row`. Expanding and folding go by the first column."""
@@ -148,12 +169,20 @@ class BrainModel(QAbstractItemModel):
             return v.target_row(row) is not None
         if role == LABEL:
             return v.labels.get(row, "")
+        if role == MARKS:
+            return self.marks.get(row, ())
         return None
 
 
 class _Lines(QStyledItemDelegate):
     """A line: its text in the colour of its kind, underlined when it leads to a routine, and
-    after it, quiet, what an `enter` plays. The tree indents, so the text's own indent goes."""
+    after it, quiet, what an `enter` plays and what Follow the game says of it. The tree indents,
+    so the text's own indent goes. The first column holds the address when `addresses` is set, and
+    the tag of the line's first mark."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.addresses = False
 
     def paint(
         self,
@@ -172,25 +201,44 @@ class _Lines(QStyledItemDelegate):
         room = QRectF(opt.rect).adjusted(PAD, 0, -PAD, 0)
         side = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
         font = theme.mono()
+        marks: Sequence[Mark] = index.data(MARKS) or ()
         painter.save()
         painter.setClipRect(room)
-        if index.column() == PC:
-            painter.setFont(font)
-            painter.setPen(theme.text(muted=True))
-            painter.drawText(room, side, text)
+        if index.column() == PC and marks:
+            self._tag(painter, room, marks[0])
+        elif index.column() == PC:
+            if self.addresses:
+                painter.setFont(font)
+                painter.setPen(theme.text(muted=True))
+                painter.drawText(room, side, text)
         else:
             body = text.lstrip()
-            font.setUnderline(bool(index.data(LINK)))
-            painter.setFont(font)
-            painter.setPen(theme.code(index.data(KIND)))
-            painter.drawText(room, side, body)
+            parts = [(body, theme.code(index.data(KIND)), bool(index.data(LINK)))]
             if label := index.data(LABEL):
-                room.setLeft(room.left() + QFontMetricsF(font).horizontalAdvance(body))
-                font.setUnderline(False)
+                parts.append((ARROW + label, theme.code("label"), False))
+            parts += [(BACK + m.label, theme.mark(m.kind), False) for m in marks if m.label]
+            for words, colour, underline in parts:
+                font.setUnderline(underline)
                 painter.setFont(font)
-                painter.setPen(theme.code("label"))
-                painter.drawText(room, side, ARROW + label)
+                painter.setPen(colour)
+                painter.drawText(room, side, words)
+                room.setLeft(room.left() + QFontMetricsF(font).horizontalAdvance(words))
         painter.restore()
+
+    @staticmethod
+    def _tag(painter: QPainter, room: QRectF, mark: Mark) -> None:
+        """A mark's tag, filled in its colour."""
+        font = theme.mono()
+        font.setBold(True)
+        painter.setFont(font)
+        word = mark.kind.upper()
+        pill = QRectF(room.left(), room.top() + 2, tag_width(word) - PAD, room.height() - 4)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(theme.mark(mark.kind))
+        painter.drawRoundedRect(pill, 3, 3)
+        painter.setPen(theme.mark("ink"))
+        painter.drawText(pill, Qt.AlignmentFlag.AlignCenter, word)
 
     def sizeHint(  # noqa: N802
         self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
@@ -282,6 +330,8 @@ class BrainPanel(kit.Panel):
         self._matches: list[int] = []
         self._fresh = True
         self._opening = False
+        #: the row Follow the game last took the view to
+        self._seen: int | None = None
 
         self.species = kit.choice(
             [],
@@ -317,6 +367,16 @@ class BrainPanel(kit.Panel):
             on=self._copy,
             icon="ph.copy",
         )
+        self.following = kit.check(
+            "Follow the game",
+            tip="Marks where the running monster's script stands: NEXT is the line it resumes at,"
+            " PLAYING the move it was last asked for, PARKED where its other contexts wait. Read"
+            " once a second while this tab is open; going anywhere yourself ends it",
+            on=lambda on: studio.act("follow the game", lambda: self._following(on))(),
+            checked=ws.follow.on,
+        )
+        self.live = kit.Elided("", None, role="muted")
+        self.live.setVisible(False)
         bar = kit.row(
             self.species,
             self.variant,
@@ -325,6 +385,7 @@ class BrainPanel(kit.Panel):
             self.back,
             self.forward,
             self.copy,
+            self.following,
             grow=self.query,
         )
 
@@ -336,7 +397,8 @@ class BrainPanel(kit.Panel):
         )
         self.tree.setStyleSheet(ROW_QSS)
         self.tree.setModel(self.model)
-        self.tree.setItemDelegate(_Lines(self.tree))
+        self.delegate = _Lines(self.tree)
+        self.tree.setItemDelegate(self.delegate)
         self.tree.setUniformRowHeights(True)
         self.tree.setHeaderHidden(True)
         self.tree.setTreePosition(TEXT)
@@ -349,10 +411,6 @@ class BrainPanel(kit.Panel):
         head.setStretchLastSection(True)
         head.setSectionResizeMode(PC, QHeaderView.ResizeMode.Fixed)
         head.setSectionResizeMode(TEXT, QHeaderView.ResizeMode.Stretch)
-        head.resizeSection(
-            PC, round(QFontMetricsF(theme.mono()).horizontalAdvance(address(0))) + 6 * PAD
-        )
-        self.tree.setColumnHidden(PC, True)
         self.tree.expanded.connect(self._opened)
         self.tree.activated.connect(lambda i: self._follow(i.internalId()))
         self.tree.entered.connect(self._hover)
@@ -377,12 +435,14 @@ class BrainPanel(kit.Panel):
         )
         self.more = kit.More(tip="Controls you will rarely need")
         self.more.body.addWidget(self.addresses)
+        self._gutter()
 
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
         lay.addWidget(bar)
+        lay.addWidget(self.live)
         lay.addWidget(self.main, 1)
         lay.addWidget(self.more)
         self.gate = kit.Empty(NO_GAME, "")
@@ -406,6 +466,9 @@ class BrainPanel(kit.Panel):
         self.poll = QTimer(self)
         self.poll.setInterval(POLL_MS)
         self.poll.timeout.connect(studio.guard("brain panel", self._pull))
+        self.ticker = QTimer(self)
+        self.ticker.setInterval(round(brain_game.PERIOD * 1000))
+        self.ticker.timeout.connect(studio.guard("follow the game", self._tick))
         self._ready(False)
 
     # ---- what is shown ----------------------------------------------------------------- #
@@ -420,18 +483,23 @@ class BrainPanel(kit.Panel):
         super().showEvent(event)
         self.sync()
         self._pull()  # the game may have been set up since, and a decode may be waiting
+        self._arm()
+        self._tick()
 
     def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802
         super().hideEvent(event)
         self.poll.stop()
+        self._arm()
 
     def _load(self, sp: int | None) -> None:
         self._loaded, self._species, self._header = True, sp, None
+        self.ws.follow.reset()
         self._clear()
         self._pull()
 
     def _clear(self) -> None:
         self._view = None
+        self._seen = None
         self.model.set_view(None)
         self.history.clear()
         self.lists.show_lists(())
@@ -483,10 +551,13 @@ class BrainPanel(kit.Panel):
         heads = self.ws.brain_headers(view.row)
         kit.refill(self.variant, [(h.header, h.words) for h in heads], view.header)
         self.variant.setVisible(len(heads) > 1)
-        self.tree.setColumnHidden(PC, not self.addresses.isChecked())
+        self._gutter()
         self.main.show_page(True)
         self._ready(True)
         self._rematch()
+        self._seen = None
+        self.ws.place_follow(view)
+        self._marks()
 
     def _ready(self, on: bool) -> None:
         """The controls that work on a script, enabled once there is one."""
@@ -506,12 +577,18 @@ class BrainPanel(kit.Panel):
 
     def _pick_species(self, cid: str) -> None:
         if cid:
+            self._leave()
             self.ws.browse_brain(int(cid))
             self.sync()
 
     def _pick_variant(self, cid: str) -> None:
-        if self._view is not None and cid != self._view.header:
-            self._header = cid
+        self._leave()
+        self._switch(cid)
+
+    def _switch(self, header: str) -> None:
+        """Shows the script as `header` runs it."""
+        if self._view is not None and header != self._view.header:
+            self._header = header
             self._pull()
 
     # ---- getting around ---------------------------------------------------------------- #
@@ -522,6 +599,7 @@ class BrainPanel(kit.Panel):
 
     def goto(self, row: int) -> None:
         """Selects line `row`, folding the other routines; Back leads to where the cursor was."""
+        self._leave()
         self._mark()
         self.history.go(row)
         self._reveal(row)
@@ -538,8 +616,9 @@ class BrainPanel(kit.Panel):
         if v is None:
             return
         top, m, t = v.top_of(row), self.model, self.tree
+        kept = {top, *(v.top_of(r) for r in m.marks)}  # a mark stays in sight
         for r in v.top:
-            if r != top and t.isExpanded(m.index_of(r)):
+            if r not in kept and t.isExpanded(m.index_of(r)):
                 t.collapse(m.index_of(r))
         for r in (*v.ancestors(row), top):
             t.expand(m.index_of(r))
@@ -552,6 +631,7 @@ class BrainPanel(kit.Panel):
             self._mark()
         row = self.history.back() if back else self.history.forward()
         if row is not None:
+            self._leave()
             self._reveal(row)
         self._arrows()
 
@@ -660,4 +740,63 @@ class BrainPanel(kit.Panel):
         self._put(self._picked())
 
     def _addresses(self, on: bool) -> None:
-        self.tree.setColumnHidden(PC, not on)
+        self._gutter()
+
+    # ---- follow the game --------------------------------------------------------------- #
+
+    def _gutter(self) -> None:
+        """The first column: the addresses when asked for, and the tags while Follow is on."""
+        addresses = self.addresses.isChecked()
+        head = self.tree.header()
+        self.delegate.addresses = addresses
+        self.tree.setColumnHidden(PC, not (addresses or self.ws.follow.on))
+        self.tree.viewport().update()
+        if addresses:
+            width = QFontMetricsF(theme.mono()).horizontalAdvance(address(0)) + 6 * PAD
+        else:
+            width = tag_width(max(brain_game.KINDS, key=len).upper()) + PAD
+        head.resizeSection(PC, round(width))
+
+    def _following(self, on: bool) -> None:
+        self.ws.follow.set(on)
+        self._seen = None
+        self._gutter()
+        self._arm()
+        self._tick()
+        self._marks()
+
+    def _leave(self) -> None:
+        """The user went somewhere: the view stays where they put it."""
+        if self.ws.follow.on:
+            self.following.setChecked(False)  # its slot ends Follow
+
+    def _arm(self) -> None:
+        """Polls once a second while Follow is on and this tab is shown, else not at all."""
+        if self.ws.follow.on and self.isVisible():
+            if not self.ticker.isActive():
+                self.ticker.start()
+        else:
+            self.ticker.stop()
+
+    def _tick(self) -> None:
+        if self.ws.poll_follow(self._view):
+            self._marks()
+
+    def _marks(self) -> None:
+        """Shows what Follow says: its status and marks, and goes where the monster is."""
+        f, v = self.ws.follow, self._view
+        self.model.set_marks(f.marks if f.on and v is not None else {})
+        if v is not None:
+            for row in self.model.marks:  # a routine holding a mark is open
+                self.tree.expand(self.model.index_of(v.top_of(row)))
+        self.live.setVisible(f.on)
+        self.live.setText(f.status)
+        self.live.setToolTip(f.status)
+        self.live.set_level(None if f.next_row is not None else "warning")
+        if not f.on or v is None:
+            return
+        if f.header is not None and f.header != v.header:
+            self._switch(f.header)
+        elif f.next_row is not None and f.next_row != self._seen:
+            self._seen = f.next_row
+            self._reveal(f.next_row)

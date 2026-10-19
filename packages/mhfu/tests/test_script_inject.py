@@ -405,6 +405,34 @@ def test_plan_leaves_other_headers_alone():
     assert live_script.read(mem, ent(1)) == other
 
 
+def test_pushed_reads_the_container_at_script_push():
+    mem = pushed_world(state(0))
+    box = inject.pushed(mem)
+    assert box is not None and box.row == ROW and box.head.addresses.start == LOAD
+    assert box.native(box.headers[N + 0x38]) == N + 0x38
+
+
+def test_pushed_keeps_a_known_container_with_the_same_header():
+    mem = pushed_world(state(0))
+    box = inject.pushed(mem)
+    assert inject.pushed(mem, box) is box
+    other, other_img = edited()
+    mem.write(PUSH, container(other, other_img, LOAD))
+    again = inject.pushed(mem, box)
+    assert again is not None and again is not box and again.head.id != box.head.id
+
+
+@pytest.mark.parametrize("junk", [bytes(inject.HEAD), b"MHAI" + bytes(60), bytes(range(64))])
+def test_pushed_is_none_without_a_container(junk):
+    mem = world()
+    mem.write(PUSH, junk)
+    assert inject.pushed(mem) is None
+
+
+def test_pushed_is_none_outside_the_emulators_memory():
+    assert inject.pushed(Space([Image(bytes(64), BASE)])) is None
+
+
 def test_plan_without_a_monster_notes_it():
     mem = world([state(0, header=N + 0x44)])
     plan = make_plan(mem, *program())

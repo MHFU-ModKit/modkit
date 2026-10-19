@@ -30,6 +30,7 @@ from mhfu.em.intel import (
     SpeciesIntel,
 )
 from mhfu.em.script import ir
+from mhfu.em.script.inject import Container
 from mhfu.files import Extracted
 from mhfu_port import continuity, layout, sequence, slots
 from mhfu_port.behaviour import Trigger
@@ -47,6 +48,7 @@ from mhfu_studio.monster import (
     authoring,
     behaviour,
     brain,
+    brain_game,
     clip_browser,
     clip_game,
     clips,
@@ -201,6 +203,12 @@ class MonsterWorkspace(Workspace):
             [Callable[[], AbstractContextManager[Session]], int | None], rule_game.Read
         ] = rule_game.fetch
         self.watch = rule_game.Watch()
+        #: reads the species row's live monsters, on a worker (Follow the game)
+        self.read_follow: Callable[
+            [Callable[[], AbstractContextManager[Session]], int, Container | None],
+            brain_game.Read,
+        ] = brain_game.fetch
+        self.follow = brain_game.Follow()
         #: a species row's program and the rows each overlay serves, read from the extracted game
         self.decode_brain: Callable[[Extracted, int], ir.Program] = brain.decode
         self.scan_brain: Callable[[Extracted], dict[int, int]] = brain.rows
@@ -1096,6 +1104,20 @@ class MonsterWorkspace(Workspace):
             return
         for at, (main, sub) in view.enters.items():
             view.labels[at] = self.plays(main, sub, species=sp).text()
+
+    def poll_follow(self, view: BrainView | None) -> bool:
+        """One step of Follow the game, at most one read a second; True when its marks changed."""
+        heads = [] if view is None else self.brain_headers(view.row)
+        return self.follow.poll(view, heads, self.game_running(), self._ask_follow)
+
+    def place_follow(self, view: BrainView | None) -> bool:
+        """Marks `view`, a new one, from the last read of the game; True when they changed."""
+        heads = [] if view is None else self.brain_headers(view.row)
+        return self.follow.place(view, heads)
+
+    def _ask_follow(self, row: int, known: Container | None) -> Future[brain_game.Read]:
+        self._pool = self._pool or ThreadPoolExecutor(1)
+        return self._pool.submit(self.read_follow, self.game_session, row, known)
 
     # sessions
 

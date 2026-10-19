@@ -611,6 +611,20 @@ def _home(mem: Memory) -> bytes:
     return mem.read(a.SCRIPT_PUSH, size) if HEAD < size <= PUSH_SIZE else head
 
 
+def pushed(mem: Memory, known: Container | None = None) -> Container | None:
+    """The container at SCRIPT_PUSH, `known` while its header reads the same; None when there is
+    none, it does not read, or the address is outside the emulator's memory."""
+    try:
+        head = mem.read(a.SCRIPT_PUSH, HEAD)
+        if head[:4] != MAGIC:
+            return None
+        if known is not None and Head.parse(head) == known.head:
+            return known
+        return Container.read(_home(mem))
+    except (Unmapped, ContainerError):
+        return None
+
+
 def _species(mem: Memory, row: int) -> list[ScriptState]:
     return [s for s in live_script.monsters(mem).values() if s.species == row]
 
