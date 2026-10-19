@@ -14,6 +14,7 @@ line of its source. Read about once a second: a request stops the emulator for m
 from __future__ import annotations
 
 import struct
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,11 +27,15 @@ from ..views import layout
 CONTEXTS = (0x00, 0x20, 0x10, 0x01)
 """`ENTITY.SCRIPT_CONTEXT` values in the order of `ENTITY.SCRIPT_PCS`: the base routine, then the
 interrupts that own a resume address."""
-INTERRUPTS = (0x08, 0x02, 0x04)
-"""The pending bits whose routine's start the entity keeps, in the order of their words."""
-
 _E = a.ENTITY
-_INTERRUPT_STARTS = (_E.SCRIPT_INT_08, _E.SCRIPT_INT_02, _E.SCRIPT_INT_04)
+INTERRUPT_STARTS: Mapping[int, Field] = {
+    0x08: _E.SCRIPT_INT_08,
+    0x02: _E.SCRIPT_INT_02,
+    0x04: _E.SCRIPT_INT_04,
+}
+"""The word holding the start of each pending bit's routine, for the bits whose start the entity
+keeps."""
+INTERRUPTS = tuple(INTERRUPT_STARTS)
 _FIELDS = (
     _E.SPECIES,
     _E.SCRIPT_WAKE,
@@ -38,12 +43,13 @@ _FIELDS = (
     _E.SCRIPT_CONTEXT,
     _E.SCRIPT_HEADER,
     _E.SCRIPT_PCS,
-    *_INTERRUPT_STARTS,
+    *INTERRUPT_STARTS.values(),
     _E.SCRIPT_CALL_RETURN,
     _E.SCRIPT_WALK_RETURN,
     _E.SCRIPT_ROUTE,
     _E.SCRIPT_DEEP_RETURN,
     _E.SCRIPT_LOOP_RETURN,
+    _E.SCRIPT_SPARE,
     _E.SCRIPT_BASE,
     _E.SCRIPT_WAIT,
 )
@@ -83,6 +89,8 @@ class ScriptState:
     loop_return: int
     base: int
     """The base routine's index."""
+    spare: int = 0
+    """`ENTITY.SCRIPT_SPARE`."""
 
     @property
     def pc(self) -> int | None:
@@ -98,7 +106,7 @@ def read(mem: Memory, entity: int) -> ScriptState:
         return _pack(field).unpack_from(raw, field - _FIRST)
 
     pcs = get(_E.SCRIPT_PCS)
-    starts = (get(f)[0] for f in _INTERRUPT_STARTS)
+    starts = (get(f)[0] for f in INTERRUPT_STARTS.values())
     return ScriptState(
         entity,
         get(_E.SPECIES)[0],
@@ -115,6 +123,7 @@ def read(mem: Memory, entity: int) -> ScriptState:
         get(_E.SCRIPT_DEEP_RETURN)[0],
         get(_E.SCRIPT_LOOP_RETURN)[0],
         get(_E.SCRIPT_BASE)[0],
+        get(_E.SCRIPT_SPARE)[0],
     )
 
 

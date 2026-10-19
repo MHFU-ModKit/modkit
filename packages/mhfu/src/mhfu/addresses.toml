@@ -317,6 +317,7 @@ EXTRA_RAM_END = { eu = 0x0C000000, type = "bytes", doc = "first address past the
 SCRIPT_HEADERS = { eu = 0x09BB8B14, type = "bytes", doc = "per species row, stride SPECIES.stride (SPECIES_TABLE + 0x354): 17 header pointers, one per map type, into the species' em overlay or game_task; SCRIPT_INIT copies one into the entity's script pointer" }
 SCRIPT_INIT = { eu = 0x09ABAAC0, type = "fn", doc = "(entity) AI-script init, the only writer of the entity's script header pointer: picks the header by the quest's map-type byte and starts the base routine" }
 SCRIPT_SKIP = { eu = 0x09AB7758, type = "fn", doc = "(entity, pc) the instruction after pc: the game's one length table for the AI script, which every block scan steps with" }
+SCRIPT_PUSH = { eu = 0x0A700000, type = "bytes", doc = "free RAM up to CLI_BRIDGE_BLOCK (960 KB) where `mhfu brain push` puts an AI script container; needs memory=64" }
 
 [set]
 FREE_ROAM_SCENES = { of = ["SCENE_ROAM", "SCENE_VILLAGE", "SCENE_VILLAGE_CONTRACT", "SCENE_QUEST", "SCENE_QUEST_ALT"], doc = "SCENE_OBJECT values of free roam with nothing on screen; a prompt zone's are pool values that move, so not here" }
@@ -414,6 +415,7 @@ SCRIPT_WALK_RETURN = { offset = 0x4EC, type = "ptr", doc = "big monsters: the AI
 SCRIPT_ROUTE = { offset = 0x4F0, type = "ptr", doc = "big monsters: the route the AI script follows" }
 SCRIPT_DEEP_RETURN = { offset = 0x4F4, type = "ptr", doc = "big monsters: the AI script's return address for a call_deep" }
 SCRIPT_LOOP_RETURN = { offset = 0x4F8, type = "ptr", doc = "big monsters: the AI script's return address for a loop" }
+SCRIPT_SPARE = { offset = 0x4FC, type = "ptr", doc = "big monsters: a pointer word among the AI script's; what it holds is not known, a push maps it like the others" }
 SCRIPT_BASE = { offset = 0x500, type = "u16", doc = "big monsters: the index of the base routine the AI script runs; SCRIPT_INIT zeroes it" }
 HUNTER_INDEX = { offset = 0x1E6, type = "u16", doc = "hunters: 0 the player, 1 the Felyne; the bit a big monster's AWARE and COMBAT_SEEN keep for it" }
 MOST_DAMAGED_PART = { offset = 0x286, type = "u8", doc = "big monsters: the part with the most PENDING_DAMAGE in the last frame with a hit; picks the flinch pair" }
