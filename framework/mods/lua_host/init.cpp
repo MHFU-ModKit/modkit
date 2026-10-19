@@ -98,7 +98,7 @@ static void call_tick(void)
 }
 
 /* Injection at 10 Hz, to catch the raw model buffer before the overlay
- * transform reads it; mhfu_tick and hot reload every fifth pass (2 Hz). */
+ * transform reads it; held log lines, mhfu_tick and hot reload every fifth pass (2 Hz). */
 static int worker(SceSize args, void *argp)
 {
     (void)args; (void)argp;
@@ -111,6 +111,7 @@ static int worker(SceSize args, void *argp)
         mhfu_inject_tick();
         if (++sub >= 5) {
             sub = 0;
+            if (mhfu_world_ms0_io_safe()) mhfu_log_flush_held();   /* lines held through a load */
             call_tick();
             mhfu_lua_hot_reload_scan();
         }

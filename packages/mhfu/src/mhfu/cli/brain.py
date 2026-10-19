@@ -15,7 +15,7 @@ A push needs the game in a quest (the row's header words are set when it loads) 
 64 MB mode, and lasts until the next quest load. Like the other live commands, it takes the
 emulator the options pick: a lane's, the container's, or the one running. A deploy needs no game:
 the framework installs the container at its next mod load, and every quest after runs it. The
-stick is `--stick`, a lane's, `$MHFU_MEMSTICK` or the one found.
+stick is `--stick`, `--lane`'s, `$MHFU_LANE`'s, `$MHFU_MEMSTICK` or the one found.
 """
 
 from __future__ import annotations
@@ -26,6 +26,8 @@ from collections.abc import Callable, Sequence
 from itertools import groupby
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from ppsspp_debug import Lane
 
 from ..em import script
 from ..em.script import inject, stick
@@ -64,7 +66,9 @@ def register(sub: Subparsers) -> None:
 
     c = modes.add_parser("deploy", help="a species' script and its mod onto the memory stick")
     source(c)
-    c.add_argument("--stick", type=Path, help="the memory stick's PSP folder (default: found)")
+    where = c.add_mutually_exclusive_group()
+    where.add_argument("--stick", type=Path, help="the memory stick's PSP folder (default: found)")
+    where.add_argument("--lane", type=int, help="the memory stick of a hidden PPSSPP, numbered")
     c.set_defaults(run=deploy)
 
 
@@ -154,7 +158,8 @@ def deploy(args: argparse.Namespace) -> int:
     if prog is None:
         return 1
     try:
-        written = stick.deploy(prog, script.asm.assemble(prog), args.stick)
+        root = args.stick if args.lane is None else Lane(args.lane).stick
+        written = stick.deploy(prog, script.asm.assemble(prog), root)
     except FileNotFoundError as e:
         print(f"mhfu brain: {e}", file=sys.stderr)
         return 1

@@ -11,7 +11,8 @@ extern "C" {
 
 void mhfu_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void mhfu_log_close(void);
-/* Writes the held lines now: only where ms0 is being read anyway (lua_host's boot load). */
+/* Writes the held lines now; the caller makes sure ms0 is free (lua_host's boot load, and its
+ * worker in gameplay, so a line logged during a quest load shows within half a second). */
 void mhfu_log_flush_held(void);
 
 #ifdef __cplusplus
