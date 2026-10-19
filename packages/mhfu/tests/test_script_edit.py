@@ -4,7 +4,8 @@ import struct
 
 import pytest
 from mhfu.em import script
-from mhfu.em.script import asm, disasm, ir, lift, walk
+from mhfu.em.script import asm, disasm, edit, ir, lift, walk
+from mhfu.em.script.edit import EditError
 from mhfu.em.script.opcodes import BY_NAME, Ref
 from mhfu.files import EM_SPECIES
 
@@ -304,6 +305,439 @@ def test_reach_follows_labels():
     p.items[0].body.insert(1, arm_)  # a route's lists are roots of their own
     reach = p.reach()
     assert reach["spin"] == ("h0",) and reach["lone"] == ()
+
+
+# ---- builders
+
+
+def encoded(*nodes):
+    return asm.assemble(ir.Program(1, BASE, [ir.Routine("r", list(nodes))])).data
+
+
+def ent(main, sub):
+    return edit.insn("enter", main, sub, 0)
+
+
+def test_insn():
+    n = edit.insn("enter", 3, 0, 0)
+    assert (n.op.name, n.args, n.id, n.pc, n.origin) == (
+        "enter",
+        {"main": 3, "sub": 0, "gate": 0},
+        "",
+        None,
+        None,
+    )
+    assert edit.insn("walk_next").args == {} and edit.insn("call", ir.Sym("x")).args[
+        "routine"
+    ] == ir.Sym("x")
+    assert encoded(edit.insn("set_target", 3, 1, 0xBBCC)) == hexed("0603", "01", "bbcc")
+    assert encoded(edit.insn("set_target", 2, 1, 2)) == hexed("0602", "0102")
+    assert edit.insn("set_target", 2, 1, 2).args == {"kind": 2, "a": 1, "b": 2}
+    assert encoded(edit.insn("end", 0xFB)) == hexed("fffb")
+
+
+@pytest.mark.parametrize(
+    ("args", "match"),
+    [
+        (("if_latch",), "opens a block"),
+        (("nope",), "no opcode"),
+        (("enter", 1), r"takes \['main', 'sub', 'gate'\]"),
+        (("enter", 256, 0, 0), "does not fit 1 byte"),
+        (("set_target", 3, 1), r"takes \['kind', 'a', 'section'\]"),
+        (("enter", 1.5, 0, 0), "is no number"),
+    ],
+)
+def test_insn_errors(args, match):
+    with pytest.raises(EditError, match=match):
+        edit.insn(*args)
+
+
+def test_if_builder():
+    a = edit.if_("if_latch", then=[ent(0, 1)])
+    assert a.arms == [] and a.id == "" and a.args == {} and len(a.head) == 1
+    b = edit.if_("if_in_section", 0x74, then=[], else_=[ent(0, 2)])
+    assert b.args == {"section": 0x74} and [(x.sub, x.id) for x in b.arms] == [(1, "")]
+    assert encoded(edit.if_("if_latch", then=[ent(0, 1)], else_=[ent(0, 2)])) == hexed(
+        "3900", "05000100", "3901", "05000200", "3902"
+    )
+    for bad in ("enter", "switch_hp", "repeat"):
+        with pytest.raises(EditError, match="is not a if block"):
+            edit.if_(bad, then=[])
+    with pytest.raises(EditError, match="takes"):
+        edit.if_("if_latch", 1, then=[])
+
+
+def test_switch_builder():
+    sw = edit.switch("switch_hp", cases=[(5, [ent(0, 1)]), (9, [ent(0, 2)])], default=[ent(0, 3)])
+    assert [(a.sub, a.args) for a in sw.arms] == [(1, {"case": 5}), (1, {"case": 9}), (2, {})]
+    assert encoded(sw) == hexed(
+        "1c0002", "1c0105", "05000100", "1c0109", "05000200", "1c02", "05000300", "1c03"
+    )
+    sec = edit.switch("switch_section", cases=[(0x74, [])])
+    assert encoded(sec) == hexed("150001", "15010074", "1503")
+    extra = edit.switch("switch_query", 7, cases=[(1, [])])
+    assert extra.args == {"arg": 7} and encoded(extra) == hexed("79000107", "790101", "7903")
+    bucket = edit.switch("switch_range", cases=[([ent(0, 1)],), ([ent(0, 2)],)])
+    assert [a.args for a in bucket.arms] == [{}, {}] and encoded(bucket)[:3] == hexed("830001")
+    zone = edit.switch("switch_zone_relation", cases=[([],), ([],)])
+    assert encoded(zone) == hexed("6200", "6201", "6202", "62ff")
+    with pytest.raises(EditError, match="no default"):
+        edit.switch("switch_range", cases=[([],)], default=[])
+    with pytest.raises(EditError, match="case takes"):
+        edit.switch("switch_hp", cases=[([],)])
+    with pytest.raises(EditError, match="is not a switch/bucket/zone"):
+        edit.switch("if_latch", cases=[])
+
+
+def test_random_builder():
+    r = edit.random([(16, [ent(1, 0)])])
+    assert [a.args["weight"] for a in r.arms] == [16, 16] and r.arms[1].body == []
+    assert encoded(r) == hexed("800002", "800110", "05010000", "800210", "80ff")
+    assert [a.args["weight"] for a in edit.random([(16, []), (16, [])]).arms] == [16, 16]
+    assert [a.args["weight"] for a in edit.random([]).arms] == [32]
+    shifted = edit.random([(20, [])], shift=5)
+    assert shifted.op.name == "random_shifted" and shifted.args == {"shift": 5}
+    assert encoded(shifted) == hexed("85000205", "800114", "80020c", "80ff")
+    full = edit.random([(2, [])] * 12 + [(8, [])])
+    assert len(full.arms) == 13 and encoded(full)[2] == 13
+    with pytest.raises(EditError, match="add up to 33"):
+        edit.random([(20, []), (13, [])])
+    with pytest.raises(EditError, match="at most 13"):
+        edit.random([(1, [])] * 13)
+    with pytest.raises(EditError, match="does not fit"):
+        edit.random([], shift=300)
+
+
+def test_repeat_builder():
+    r = edit.repeat(3, [ent(0, 1)])
+    assert (
+        r.args == {"count": 3}
+        and r.arms == []
+        and encoded(r) == hexed("240003", "05000100", "2401")
+    )
+    with pytest.raises(EditError, match="does not fit"):
+        edit.repeat(256, [])
+
+
+# ---- node edits
+
+
+def shape(nodes):
+    """The tree as nested names: a block is `(name, head, [arm bodies])`."""
+    return [
+        n.op.name
+        if isinstance(n, ir.Insn)
+        else (n.op.name, shape(n.head), [shape(a.body) for a in n.arms])
+        for n in nodes
+    ]
+
+
+def test_insert_before_after():
+    p = world()
+    body = p.items[0].body
+    call = body[1]
+    edit.insert(p, call.id, [edit.insn("wait", 5)])
+    edit.insert(p, call.id, [edit.insn("wait", 6), edit.insn("wait", 7)], after=True)
+    assert shape(body) == [shape(body[:1])[0], "wait", "call", "wait", "wait", "end"]
+    assert [n.id for n in body[1:]] == ["n11", "n4", "n12", "n13", "n5"]
+    assert [n.pc for n in body] == [body[0].pc, None, call.pc, None, None, body[5].pc]
+    first = body[0].head[0]
+    edit.insert(p, first.id, [edit.insn("wait", 1)])  # into the block's head
+    assert shape(body[0].head) == ["wait", "enter"]
+
+
+def test_insert_into_arm():
+    p = world()
+    top = p.items[0].body[0]
+    other = top.arms[0]
+    edit.insert(p, other.id, [edit.insn("wait", 1)])
+    edit.insert(p, other.id, [edit.insn("wait", 2)], after=True)
+    assert [n.args.get("frames") for n in other.body] == [1, None, 2]
+
+
+def test_ids_reach_arms():
+    p = world()
+    block = edit.if_("if_latch", then=[edit.insn("wait", 1)], else_=[edit.insn("wait", 2)])
+    edit.put(p, "call_0", [block])
+    ids = [n.id for n in ir.walk([block])]
+    assert ids == ["n11", "n12", "n13", "n14"] and len({n.id for n in p.nodes()}) == 15
+    assert p.fresh() == "n15"
+    kept = edit.insn("wait", 3)
+    kept.id = "n40"
+    edit.put(p, "call_0", [kept, edit.insn("wait", 4)])
+    assert [n.id for n in p.items[1].body[:2]] == ["n40", "n41"]
+
+
+def test_ids_in_use_refused():
+    p = world()
+    node = edit.insn("wait", 1)
+    node.id = "n3"
+    with pytest.raises(EditError, match="n3 is in the program already"):
+        edit.put(p, "call_0", [node])
+    twice = [edit.insn("wait", 1), edit.insn("wait", 1)]
+    twice[0].id = twice[1].id = "x"
+    with pytest.raises(EditError, match="x is in the program already"):
+        edit.put(p, "call_0", twice)
+    assert shape(p.items[1].body) == shape(world().items[1].body)
+
+
+def test_put():
+    p = world()
+    edit.add(p, ir.Routine("empty", []))
+    edit.put(p, "empty", [edit.insn("end", 1)])
+    edit.put(p, "empty", [edit.insn("wait", 1)])
+    edit.put(p, "empty", [edit.insn("wait", 2)], at=2)
+    assert [n.args for n in p.item("empty").body] == [{"frames": 1}, {"kind": 1}, {"frames": 2}]
+    for bad, match in ((3 + 1, "out of range"), (-1, "out of range")):
+        with pytest.raises(EditError, match=match):
+            edit.put(p, "empty", [], at=bad)
+    with pytest.raises(EditError, match="no routine named base_l"):
+        edit.put(p, "base_l", [])
+    with pytest.raises(EditError, match="no routine named zz"):
+        edit.put(p, "zz", [])
+
+
+def test_remove_and_replace():
+    p = world()
+    edit.insert(p, p.items[0].body[1].id, [edit.insn("wait", 1), edit.insn("wait", 1)])
+    body = p.items[0].body
+    second = body[2]
+    edit.remove(p, second.id)  # the first of two equal nodes stays
+    assert [n.id for n in body] == ["n0", "n11", "n4", "n5"]
+    edit.replace(p, "n11", edit.insn("wait", 9))
+    assert body[1].args == {"frames": 9} and body[1].id == "n12"  # one past the highest in use
+    nested = body[0].head[0]
+    edit.replace(p, nested.id, edit.if_("if_latch", then=[]))
+    assert shape(body[0].head) == [("if_latch", [], [])] and body[0].head[0].id == "n13"
+    edit.remove(p, "n0")
+    assert shape(body) == ["wait", "call", "end"]
+
+
+def test_node_edit_errors():
+    p = world()
+    arm_ = p.items[0].body[0].arms[0]
+    for call in (
+        lambda: edit.insert(p, "zz", []),
+        lambda: edit.remove(p, "zz"),
+        lambda: edit.replace(p, "zz", edit.insn("walk_next")),
+    ):
+        with pytest.raises(EditError, match="no node zz"):
+            call()
+    with pytest.raises(EditError, match="is an arm"):
+        edit.remove(p, arm_.id)
+    with pytest.raises(EditError, match="is an arm"):
+        edit.replace(p, arm_.id, edit.insn("walk_next"))
+    assert shape(p.items[0].body) == shape(world().items[0].body)
+
+
+def test_clone():
+    p = world()
+    top = p.items[0].body[0]
+    (copy,) = edit.clone([top])
+    assert isinstance(copy, ir.Block) and copy is not top
+    assert (copy.id, copy.pc, copy.close, copy.origin) == ("", None, None, top.id)
+    assert (copy.arms[0].id, copy.arms[0].pc, copy.arms[0].origin) == ("", None, top.arms[0].id)
+    assert copy.head[0].origin == top.head[0].id and copy.arms[0].body[0].pc is None
+    copy.head[0].args["sub"] = 7
+    assert top.head[0].args["sub"] == 1 and copy.args is not top.args
+    edit.put(p, "call_0", [copy])
+    assert [n.id for n in ir.walk([copy])] == ["n11", "n12", "n13", "n14"]
+    assert top.id == "n0" and copy.origin == "n0"
+    assert edit.clone([edit.insn("walk_next")])[0].origin is None  # no source id yet
+
+
+# ---- items
+
+
+def test_add():
+    p = world()
+    r = ir.Routine("spin", [edit.insn("end", 1)])
+    edit.add(p, r)
+    assert p.items[-1] is r and r.va is None and r.body[0].id == "n11"
+    edit.add(p, ir.Table("t2", []))
+    edit.add(p, ir.Blob(b"12"))
+    edit.add(p, ir.Data("d", b"1234", {"d": 0, "e": 2}))
+    for dup in (ir.Table("spin", []), ir.Data("x", b"", {"e": 0}), ir.Header("h0", [])):
+        with pytest.raises(EditError, match="names something already"):
+            edit.add(p, dup)
+    with pytest.raises(EditError, match="no address"):
+        edit.add(p, ir.Table("t3", [], va=BASE))
+    assert len(p.items) == 9
+
+
+def test_set_slot():
+    p = world()
+    edit.set_slot(p, "call_l", 1, "base_0")
+    edit.set_slot(p, "call_l", 2, ir.External(5))
+    edit.set_slot(p, "call_l", 0, None)
+    assert p.item("call_l").slots == [None, "base_0", ir.External(5)]
+    with pytest.raises(EditError, match="leave a gap"):
+        edit.set_slot(p, "call_l", 4, None)
+    with pytest.raises(EditError, match="leave a gap"):
+        edit.set_slot(p, "call_l", -1, None)
+    with pytest.raises(EditError, match="no table named h0"):
+        edit.set_slot(p, "h0", 0, None)
+
+
+def test_set_slot_limit():
+    p = world()
+    for i in range(2, 256):
+        edit.set_slot(p, "call_l", i, "call_0")
+    assert len(p.item("call_l").slots) == 256
+    with pytest.raises(EditError, match="more than 256"):
+        edit.set_slot(p, "call_l", 256, "call_0")
+    edit.set_slot(p, "call_l", 255, None)  # a slot that is there is no growth
+
+
+def test_fork_table():
+    p = world()
+    twin = ir.Header("h1", ["base_l", "call_l", *[None] * 13], (1,))
+    edit.add(p, twin)
+    name = edit.fork_table(p, "h0", 1)
+    assert name == "h0_call_l" and p.item(name).va is None
+    assert p.item(name).slots == ["call_0", None] and p.item(name) is not p.item("call_l")
+    assert p.items[4].fields[1] == name and twin.fields[1] == "call_l"
+    edit.set_slot(p, name, 2, "call_0")
+    assert p.item("call_l").slots == ["call_0", None]
+    assert edit.fork_table(p, "h0", 1) == "h0_call_l2"
+    for field in (2, 99):
+        with pytest.raises(EditError, match="no list in field"):
+            edit.fork_table(p, "h0", field)
+
+
+def test_add_deep():
+    p = world()
+    edit.add(p, ir.Table("deep", ["call_0"]))
+    assert edit.add_deep(p, "h0", "deep") == 0
+    assert p.items[4].fields[15] == "deep" and len(p.items[4].fields) == 16
+    edit.add(p, ir.Table("deep2", []))
+    assert edit.add_deep(p, "h0", "deep2") == 1
+    with pytest.raises(EditError, match="no table named zz"):
+        edit.add_deep(p, "h0", "zz")
+    p.items[4].fields = ["base_l"]
+    with pytest.raises(EditError, match="fewer than the fixed 15"):
+        edit.add_deep(p, "h0", "deep")
+
+
+# ---- labels
+
+
+def pair(call0, call1, label="x"):
+    """Two headers over one base routine that calls `@label`; their call lists as given."""
+    fields = [None] * 13
+    return ir.Program(
+        1,
+        BASE,
+        [
+            ir.Routine("base_0", [ins("call", routine=ir.Sym(label)), ins("end", kind=0)]),
+            ir.Routine("a", [ins("end", kind=1)]),
+            ir.Routine("b", [ins("end", kind=1)]),
+            ir.Routine("x", [ins("end", kind=1)]),
+            ir.Table("base_l", ["base_0"]),
+            ir.Table("c0", call0),
+            ir.Table("c1", call1),
+            ir.Header("h0", ["base_l", "c0", *fields]),
+            ir.Header("h1", ["base_l", "c1", *fields]),
+        ],
+    )
+
+
+def test_resolve_appends():
+    p = world()
+    edit.add(p, ir.Routine("spin", [edit.insn("end", 1)]))
+    edit.put(p, "base_0", [edit.insn("call", ir.Sym("spin")), edit.insn("call", ir.Sym("spin"))])
+    q = edit.resolve(p)
+    assert [n.args["routine"] for n in q.items[0].body[:2]] == [2, 2]
+    assert q.item("call_l").slots == ["call_0", None, "spin"]
+    assert p.item("call_l").slots == ["call_0", None]  # the program as it was
+    assert p.items[0].body[0].args["routine"] == ir.Sym("spin")
+    assert q.items[0].body[0].id == p.items[0].body[0].id and q.items[0].body[2].pc is not None
+    assert [n.id for n in q.nodes()] == [n.id for n in p.nodes()]
+    assert q.items[0].body is not p.items[0].body and q.items[2] is not p.items[2]
+
+
+def test_resolve_finds_label_in_list():
+    p = world()
+    edit.put(p, "base_0", [edit.insn("call", ir.Sym("call_0"))])
+    q = edit.resolve(p)
+    assert q.items[0].body[0].args["routine"] == 0 and q.item("call_l").slots == ["call_0", None]
+
+
+def test_resolve_every_operand():
+    p = world()
+    edit.add(p, ir.Routine("spin", [edit.insn("end", 1)]))
+    edit.add(p, ir.Table("deep", ["call_0"]))
+    k = edit.add_deep(p, "h0", "deep")
+    edit.put(
+        p,
+        "base_0",
+        [
+            edit.insn("call_deep", k, ir.Sym("spin")),
+            edit.insn("goto", ir.Sym("base_0")),
+        ],
+    )
+    q = edit.resolve(p)
+    assert q.item("deep").slots == ["call_0", "spin"]
+    assert [n.args for n in q.items[0].body[:2]] == [{"table": 0, "routine": 1}, {"routine": 0}]
+    assert q.item("base_l").slots == ["base_0"]
+
+
+def test_resolve_shared_table():
+    shared = pair(["a"], ["a"])
+    shared.item("h1").fields[1] = "c0"
+    q = edit.resolve(shared)
+    assert q.items[0].body[0].args["routine"] == 1 and q.item("c0").slots == ["a", "x"]
+    assert q.item("c1").slots == ["a"]  # nothing reaches it any more
+
+
+def test_resolve_agreeing_tables():
+    q = edit.resolve(pair(["a", "x"], ["b", "x"]))
+    assert q.items[0].body[0].args["routine"] == 1
+    assert (q.item("c0").slots, q.item("c1").slots) == (["a", "x"], ["b", "x"])
+    q = edit.resolve(pair(["a"], ["b"]))  # each appends, at the same place
+    assert q.item("c0").slots == ["a", "x"] and q.item("c1").slots == ["b", "x"]
+
+
+def test_resolve_conflict():
+    with pytest.raises(EditError, match=r"'x' is slot 1 under h0 and 2 under h1"):
+        edit.resolve(pair(["a"], ["a", "b"]))
+    with pytest.raises(EditError, match=r"'x' is slot 0 under h0 and 2 under h1"):
+        edit.resolve(pair(["x"], ["a", "b"]))
+
+
+def test_resolve_errors():
+    lone = pair(["a"], ["a"])
+    lone.items[0].body.insert(0, ins("call", routine=0))
+    lone.items.insert(1, ir.Routine("lost", [ins("call", routine=ir.Sym("a")), ins("end", kind=0)]))
+    with pytest.raises(EditError, match="lost: the label 'a' is in a routine no header reaches"):
+        edit.resolve(lone)
+    untagged = pair(["a"], ["a"])
+    untagged.items[0].body.insert(0, ins("enter", main=0, sub=ir.Sym("x"), gate=0))
+    with pytest.raises(EditError, match="base_0: sub is the label 'x' and names no list"):
+        edit.resolve(untagged)
+    in_arm = pair(["a"], ["a"])
+    in_arm.items[0].body.insert(0, blk("switch_hp", arms=[arm(1, case=ir.Sym("x"))]))
+    with pytest.raises(EditError, match="case is the label"):
+        edit.resolve(in_arm)
+    with pytest.raises(EditError, match="nothing is named nope"):
+        edit.resolve(pair(["a"], ["a"], "nope"))
+    bare = pair(["a"], ["a"])
+    bare.item("h1").fields[1] = None
+    with pytest.raises(EditError, match="h1 has no call list for 'x'"):
+        edit.resolve(bare)
+    short = pair(["a"], ["a"])
+    short.item("h1").fields = ["base_l"]
+    with pytest.raises(EditError, match="h1 has no call list"):
+        edit.resolve(short)
+
+
+def test_resolve_list_limit():
+    full = pair(["a"] * 256, ["a"] * 256)
+    with pytest.raises(EditError, match="c0 cannot hold more than 256"):
+        edit.resolve(full)
+    full.item("c0").slots[255] = "x"
+    full.item("c1").slots[255] = "x"
+    assert edit.resolve(full).items[0].body[0].args["routine"] == 255
 
 
 # ---- the game
