@@ -1,20 +1,25 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""The Brain tab: the AI script a species runs (`monster/brain.py`) as code, read only.
+"""The Brain tab: the AI script a species runs (`monster/brain.py`) as code and as a graph.
 
-The script's lines are a tree beside an outline of its lists, with a find, a history and links
-from a call to the routine it leads to. The model walks the view as it is and one delegate draws
-the lines, so a script of ten thousand lines opens as fast as one of a thousand. Follow the game
-marks where the running monster's script stands (`monster/brain_game.py`) in the first column.
+With a species' brain file open (`ws.brain_editable`) it is the editor: an outline of the script's
+routines by meaning, a Graph | Code pair linked by node, the gestures of `brain_edit` in the code's
+context menu (`brain_code.py`), and Count, Send and Push in a bar. The graph pane and the operand
+bar are other widgets, put in `graph_slot` and `bar_slot` with `plug`. With a port open it only
+reads: the script's lines beside an outline of its lists, with a find, a history and links from a
+call to the routine it leads to. Follow the game marks where the running monster's script stands
+(`monster/brain_game.py`) in the first column.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Literal
 
+from mhfu.em.script import catalogue as cat
+from mhfu.em.script.graph import edited_ids
 from PySide6.QtCore import (
-    QAbstractItemModel,
     QModelIndex,
     QPersistentModelIndex,
     QRectF,
@@ -24,6 +29,7 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import (
+    QCursor,
     QFontMetricsF,
     QGuiApplication,
     QHideEvent,
@@ -34,227 +40,101 @@ from PySide6.QtGui import (
     QShowEvent,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QApplication,
     QComboBox,
     QHeaderView,
     QLineEdit,
+    QMenu,
     QSplitter,
+    QStackedWidget,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
-    QTreeView,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from mhfu_studio.monster import brain_game, species
-from mhfu_studio.monster.brain import BrainView, History, Outline
-from mhfu_studio.monster.brain_game import Mark, Marks
+from mhfu_studio.monster import brain, brain_game, brain_graph, species
+from mhfu_studio.monster.panels.brain_code import (
+    LINK,
+    PAD,
+    PC,
+    BrainModel,
+    Code,
+    address,
+    key_of,
+    row_of,
+    tag_width,
+)
+from mhfu_studio.monster.workspace import budget_text
+from mhfu_studio.shell.findings import LEVELS, Level
 from mhfu_studio.ui import kit, theme
 
 if TYPE_CHECKING:
+    from mhfu.em.script.budget import Budget
+
     from mhfu_studio.monster.workspace import MonsterWorkspace
     from mhfu_studio.shell.studio import Studio
 
 #: how often a panel still waiting for the brain worker asks it
 POLL_MS = 150
-#: the model's columns: the address of a line, and the line, which the tree is drawn in
-PC, TEXT = 0, 1
-#: item roles: a line's kind, whether it leads to a routine, what an `enter` line plays, and
-#: Follow the game's marks on it
-KIND = Qt.ItemDataRole.UserRole
-LINK = Qt.ItemDataRole.UserRole + 1
-LABEL = Qt.ItemDataRole.UserRole + 2
-MARKS = Qt.ItemDataRole.UserRole + 3
-PAD = 4
-INDENT = 16
-#: a selected row is one band: the branches' own fill would be a second layer over the gutter
-ROW_QSS = "QTreeView { show-decoration-selected: 0; }"
+#: how many polls wait for a build's budget before it is given up on
+BUDGET_TRIES = 40
 LISTS_W = 220
-ARROW = "  \u2192 "
-BACK = "  \u2190 "
 PICK = "Pick a monster"
 NO_GAME = "No game files"
 SETUP = "Choose your MHFU extraction under Setup on the start page."
-NO_INDEX = QModelIndex()
+BUILDING = "building\u2026"
+YOURS = "runs your edits"
+COUNT_TIP = (
+    "Counts how often each line of the followed monster's script runs, for 30 emulated seconds:"
+    " the count shows after each line and on the graph. Follow waits meanwhile"
+)
+SEND_TIP = "Puts the script on the memory stick as a mod: the next quest runs it. No save needed"
+PUSH_TIP = (
+    "Writes the script into the running game, read back: its monsters run it until the next quest"
+    " load"
+)
+#: an outline row: the routine's `OutlineRow`, its group's name
+ROW = Qt.ItemDataRole.UserRole
+GROUP = Qt.ItemDataRole.UserRole + 1
+DOT = 6.0
+FROM = "\u2190 "
 
 
-def tag_width(word: str) -> int:
-    """The width a tag of `word` takes, with the space round it."""
-    font = theme.mono()
-    font.setBold(True)
-    return round(QFontMetricsF(font).horizontalAdvance(word)) + 3 * PAD
-
-
-def address(pc: int | None) -> str:
-    """A line's address as the column writes it; empty for a line that has none."""
-    return "" if pc is None else f"0x{pc:08X}"
-
-
-class BrainModel(QAbstractItemModel):
-    """A `BrainView` as a tree of its lines: an index's id is its line's row in the view."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.view: BrainView | None = None
-        self.marks: Marks = {}
-        #: a row's place among its siblings
-        self._at: list[int] = []
-
-    def set_view(self, view: BrainView | None) -> None:
-        self.beginResetModel()
-        self.view = view
-        self.marks = {}
-        self._at = [0] * (0 if view is None else len(view.lines))
-        for siblings in () if view is None else (view.top, *view.children):
-            for k, row in enumerate(siblings):
-                self._at[row] = k
-        self.endResetModel()
-
-    def set_marks(self, marks: Marks) -> None:
-        """Shows `marks` on the lines, repainting the ones whose marks changed."""
-        old, self.marks = self.marks, marks
-        for row in sorted({*old, *marks}):
-            if old.get(row) != marks.get(row) and row < len(self._at):
-                self.dataChanged.emit(self.index_of(row, PC), self.index_of(row, TEXT))
-
-    def index_of(self, row: int, column: int = PC) -> QModelIndex:
-        """The index of line `row`. Expanding and folding go by the first column."""
-        return self.createIndex(self._at[row], column, row)
-
-    def _below(self, parent: QModelIndex | QPersistentModelIndex) -> Sequence[int]:
-        v = self.view
-        if v is None:
-            return ()
-        if not parent.isValid():
-            return v.top
-        return v.children[parent.internalId()] if parent.column() == 0 else ()
-
-    def rowCount(self, parent: QModelIndex | QPersistentModelIndex = NO_INDEX) -> int:  # noqa: N802
-        return len(self._below(parent))
-
-    def columnCount(self, parent: QModelIndex | QPersistentModelIndex = NO_INDEX) -> int:  # noqa: N802
-        return 2
-
-    def index(
-        self, row: int, column: int, parent: QModelIndex | QPersistentModelIndex = NO_INDEX
-    ) -> QModelIndex:
-        below = self._below(parent)
-        if 0 <= row < len(below) and 0 <= column < 2:
-            return self.createIndex(row, column, below[row])
-        return QModelIndex()
-
-    def parent(self, child: QModelIndex | QPersistentModelIndex | None = None) -> Any:
-        if child is None:
-            return super().parent()
-        if self.view is None or not child.isValid():
-            return QModelIndex()
-        up = self.view.parent[child.internalId()]
-        return QModelIndex() if up < 0 else self.createIndex(self._at[up], 0, up)
-
-    def data(self, index: QModelIndex | QPersistentModelIndex, role: int = 0) -> Any:
-        v = self.view
-        if v is None or not index.isValid():
-            return None
-        row = index.internalId()
-        if role == Qt.ItemDataRole.DisplayRole:
-            ln = v.lines[row]
-            return address(ln.pc) if index.column() == PC else ln.text
-        if role == KIND:
-            return v.lines[row].kind
-        if role == LINK:
-            return v.target_row(row) is not None
-        if role == LABEL:
-            return v.labels.get(row, "")
-        if role == MARKS:
-            return self.marks.get(row, ())
-        return None
-
-
-class _Lines(QStyledItemDelegate):
-    """A line: its text in the colour of its kind, underlined when it leads to a routine, and
-    after it, quiet, what an `enter` plays and what Follow the game says of it. The tree indents,
-    so the text's own indent goes. The first column holds the address when `addresses` is set, and
-    the tag of the line's first mark."""
-
-    def __init__(self, parent: QWidget) -> None:
-        super().__init__(parent)
-        self.addresses = False
-
-    def paint(
-        self,
-        painter: QPainter,
-        option: QStyleOptionViewItem,
-        index: QModelIndex | QPersistentModelIndex,
-    ) -> None:
-        opt = QStyleOptionViewItem(option)
-        self.initStyleOption(opt, index)
-        text, opt.text = opt.text, ""
-        opt.state &= ~QStyle.StateFlag.State_HasFocus  # the selected band marks the current row
-        widget = option.widget
-        (widget.style() if widget else QApplication.style()).drawControl(
-            QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget
+def details(r: brain_graph.OutlineRow) -> list[tuple[str, Literal["muted"] | Level]]:
+    """The second line of an outline row, as (words, what colours them): `muted`, or a finding's
+    level."""
+    out: list[tuple[str, Literal["muted"] | Level]] = []
+    if r.entry:
+        weak = r.confidence is not None and r.confidence < cat.Confidence.HIGH
+        out.append(
+            (f"{r.entry} ({r.confidence.label})" if weak and r.confidence else r.entry, "muted")
         )
-        room = QRectF(opt.rect).adjusted(PAD, 0, -PAD, 0)
-        side = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
-        font = theme.mono()
-        marks: Sequence[Mark] = index.data(MARKS) or ()
-        painter.save()
-        painter.setClipRect(room)
-        if index.column() == PC and marks:
-            self._tag(painter, room, marks[0])
-        elif index.column() == PC:
-            if self.addresses:
-                painter.setFont(font)
-                painter.setPen(theme.text(muted=True))
-                painter.drawText(room, side, text)
-        else:
-            body = text.lstrip()
-            parts = [(body, theme.code(index.data(KIND)), bool(index.data(LINK)))]
-            if label := index.data(LABEL):
-                parts.append((ARROW + label, theme.code("label"), False))
-            parts += [(BACK + m.label, theme.mark(m.kind), False) for m in marks if m.label]
-            for words, colour, underline in parts:
-                font.setUnderline(underline)
-                painter.setFont(font)
-                painter.setPen(colour)
-                painter.drawText(room, side, words)
-                room.setLeft(room.left() + QFontMetricsF(font).horizontalAdvance(words))
-        painter.restore()
-
-    @staticmethod
-    def _tag(painter: QPainter, room: QRectF, mark: Mark) -> None:
-        """A mark's tag, filled in its colour."""
-        font = theme.mono()
-        font.setBold(True)
-        painter.setFont(font)
-        word = mark.kind.upper()
-        pill = QRectF(room.left(), room.top() + 2, tag_width(word) - PAD, room.height() - 4)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(theme.mark(mark.kind))
-        painter.drawRoundedRect(pill, 3, 3)
-        painter.setPen(theme.mark("ink"))
-        painter.drawText(pill, Qt.AlignmentFlag.AlignCenter, word)
-
-    def sizeHint(  # noqa: N802
-        self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
-    ) -> QSize:
-        return QSize(0, round(QFontMetricsF(theme.mono()).height()) + 6)
+    if r.shared:
+        out.append(("shared", "muted"))
+    out.append((f"{r.nodes} node{'' if r.nodes == 1 else 's'}", "muted"))
+    if r.findings:
+        level: Level = next((lv for lv in LEVELS if lv == r.level), "info")
+        out.append((f"{r.findings} finding{'' if r.findings == 1 else 's'}", level))
+    return out
 
 
-class _Code(QTreeView):
-    """The script's tree. Return activates the current line on every platform, not only where the
-    style does: on macOS Qt's own Return renames."""
-
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.currentIndex().isValid():
-            self.activated.emit(self.currentIndex())
-            return
-        super().keyPressEvent(event)
+def tip_of(r: brain_graph.OutlineRow) -> str:
+    """What the outline says of a routine when the pointer rests on it."""
+    lines = [r.text]
+    if r.entry:
+        sure = r.confidence.label if r.confidence else "unknown"
+        lines.append(f"The game starts it as: {r.entry} (confidence {sure})")
+    if r.where:
+        lines.append(f"Named by the list slots: {', '.join(r.where)}")
+    if r.shared:
+        lines.append("Several map types run it: an edit here changes all of them")
+    if r.new:
+        lines.append("A routine of your own")
+    return "\n".join(lines)
 
 
 class _Find(QLineEdit):
@@ -292,7 +172,7 @@ class Lists(QTreeWidget):
         self.itemClicked.connect(self._picked)
         self.itemActivated.connect(self._picked)
 
-    def show_lists(self, outline: Sequence[Outline]) -> None:
+    def show_lists(self, outline: Sequence[brain.Outline]) -> None:
         self.clear()
         for o in outline:
             top = QTreeWidgetItem([f"{o.name} ({len(o.items)})"])
@@ -313,25 +193,237 @@ class Lists(QTreeWidget):
             self.jumped.emit(row)
 
 
+class _Rows(QStyledItemDelegate):
+    """An outline row: a dot when the routine is edited, its name, and under it quiet words about
+    it (`details`) and the NEXT tag when Follow the game is in it."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.next: str | None = None
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ) -> None:
+        row = index.data(ROW)
+        if not isinstance(row, brain_graph.OutlineRow) or index.column() != 0:
+            super().paint(painter, option, index)
+            return
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""
+        opt.state &= ~QStyle.StateFlag.State_HasFocus
+        widget = option.widget
+        style = widget.style() if widget else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+        chosen = bool(opt.state & QStyle.StateFlag.State_Selected)
+        room = QRectF(opt.rect).adjusted(PAD, 2, -PAD, -2)
+        mono, quiet = theme.mono(), option.font
+        quiet.setPointSizeF(max(quiet.pointSizeF() - 1, 6.0))
+        high = option.palette.highlightedText().color()
+        painter.save()
+        painter.setClipRect(room)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        side = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+        top = QRectF(room.left(), room.top(), room.width(), QFontMetricsF(mono).height())
+        if row.edited or row.new:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(theme.edit("new" if row.new else "edited"))
+            painter.drawEllipse(QRectF(top.left(), top.center().y() - DOT / 2, DOT, DOT))
+            top.setLeft(top.left() + DOT + PAD)
+        painter.setFont(mono)
+        painter.setPen(high if chosen else theme.text())
+        painter.drawText(top, int(side), row.text)
+        line = QRectF(room.left(), top.bottom() + 1, room.width(), room.bottom() - top.bottom())
+        painter.setFont(quiet)
+        for k, (words, how) in enumerate(details(row)):
+            words = words if k == 0 else f" \u00b7 {words}"
+            ink = theme.text(muted=True) if how == "muted" else theme.level(how)
+            painter.setPen(high if chosen else ink)
+            painter.drawText(line, int(side), words)
+            line.setLeft(line.left() + QFontMetricsF(quiet).horizontalAdvance(words))
+        if row.routine == self.next:
+            self._tag(painter, line, quiet)
+        painter.restore()
+
+    @staticmethod
+    def _tag(painter: QPainter, line: QRectF, font: object) -> None:
+        """The NEXT tag, filled in the mark's colour."""
+        word = brain_game.NEXT.upper()
+        pill = QRectF(line.left() + PAD, line.top(), tag_width(word) - PAD, line.height())
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(theme.mark(brain_game.NEXT))
+        painter.drawRoundedRect(pill, 3, 3)
+        painter.setPen(theme.mark("ink"))
+        painter.drawText(pill, Qt.AlignmentFlag.AlignCenter, word)
+
+    def sizeHint(  # noqa: N802
+        self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
+    ) -> QSize:
+        if not isinstance(index.data(ROW), brain_graph.OutlineRow):
+            return super().sizeHint(option, index)
+        mono = round(QFontMetricsF(theme.mono()).height())
+        return QSize(0, mono + round(QFontMetricsF(option.font).height()) + 8)
+
+
+class Routines(QTreeWidget):
+    """The script's routines grouped by meaning (`brain_graph.Outline`): each row says what it is
+    (`details`), and its "reached from" column lists the routines that lead to it. `picked` carries
+    the routine of a row clicked, `reached` a caller picked in that list as (caller, routine)."""
+
+    picked = Signal(str)
+    reached = Signal(str, str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setToolTip(
+            "The routines this script runs, grouped by what starts them: pick one to show it."
+            " A dot marks one you changed; the arrow column lists the routines that lead to it."
+        )
+        self.names: dict[str, str] = {}
+        self.items: dict[str, QTreeWidgetItem] = {}
+        self.setColumnCount(2)
+        self.setHeaderHidden(True)
+        self.setIndentation(12)
+        self.rows = _Rows(self)
+        self.setItemDelegate(self.rows)
+        head = self.header()
+        head.setStretchLastSection(False)
+        head.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        head.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.itemClicked.connect(self._clicked)
+        self.itemActivated.connect(self._activated)
+
+    def routine(self) -> str | None:
+        """The routine of the row picked."""
+        item = self.currentItem()
+        row = None if item is None else item.data(0, ROW)
+        return row.routine if isinstance(row, brain_graph.OutlineRow) else None
+
+    def show_outline(self, o: brain_graph.Outline | None, names: Mapping[str, str]) -> None:
+        """Shows `o`, keeping the groups shut, the row picked and the scroll of the one before."""
+        here, scroll = self.routine(), self.verticalScrollBar().value()
+        shut: set[str] = set()
+        for i in range(self.topLevelItemCount()):
+            if (group := self.topLevelItem(i)) is not None and not group.isExpanded():
+                shut.add(group.data(0, GROUP))
+        self.names = dict(names)
+        self.items.clear()
+        self.blockSignals(True)
+        self.clear()
+        for g in () if o is None else o.groups:
+            top = QTreeWidgetItem([f"{g.name} ({len(g.rows)})", ""])
+            top.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            top.setData(0, GROUP, g.name)
+            top.setFirstColumnSpanned(True)
+            font = top.font(0)
+            font.setBold(True)
+            top.setFont(0, font)
+            top.setToolTip(0, "\n".join(f"{x.title}: {x.meaning}" for x in g.lists))
+            self.addTopLevelItem(top)
+            for r in g.rows:
+                item = QTreeWidgetItem(
+                    [r.text, f"{FROM}{r.reached_from}" if r.reached_from else ""]
+                )
+                item.setData(0, ROW, r)
+                item.setToolTip(0, tip_of(r))
+                if r.reached_from:
+                    item.setToolTip(
+                        1, f"Reached from {r.reached_from} routines: click to list them"
+                    )
+                item.setTextAlignment(
+                    1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                )
+                top.addChild(item)
+                self.items.setdefault(r.routine, item)
+            top.setExpanded(g.name not in shut)
+        self.blockSignals(False)
+        self.select(here)
+        self.verticalScrollBar().setValue(scroll)
+
+    def select(self, routine: str | None) -> None:
+        """Makes the row of `routine` the one picked, quietly."""
+        item = None if routine is None else self.items.get(routine)
+        self.blockSignals(True)
+        try:
+            if item is None:
+                self.setCurrentIndex(QModelIndex())
+            else:
+                self.setCurrentItem(item)
+                self.scrollToItem(item)
+        finally:
+            self.blockSignals(False)
+
+    def mark(self, routine: str | None) -> None:
+        """Puts the NEXT tag of Follow the game on a routine's row."""
+        if routine != self.rows.next:
+            self.rows.next = routine
+            self.viewport().update()
+
+    def reach_menu(self, row: brain_graph.OutlineRow) -> QMenu:
+        """What leads to `row`'s routine, one entry a caller."""
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        for c in row.callers:
+            sites = f"{c.sites} call{'' if c.sites == 1 else 's'}"
+            act = menu.addAction(f"{brain_graph.named(c.routine, self.names)} ({sites})")
+            act.setToolTip(f"Shows the first of the {sites} in {c.routine}")
+            act.triggered.connect(
+                lambda _=False, who=c.routine: self.reached.emit(who, row.routine)
+            )
+        return menu
+
+    def _clicked(self, item: QTreeWidgetItem, column: int) -> None:
+        row = item.data(0, ROW)
+        if not isinstance(row, brain_graph.OutlineRow):
+            return
+        if column == 1 and row.callers:
+            self.reach_menu(row).popup(QCursor.pos())
+        else:
+            self.picked.emit(row.routine)
+
+    def _activated(self, item: QTreeWidgetItem, _column: int = 0) -> None:
+        row = item.data(0, ROW)
+        if isinstance(row, brain_graph.OutlineRow):
+            self.picked.emit(row.routine)
+
+
 class BrainPanel(kit.Panel):
-    """The tab: a bar (species, variant, find, history, copy), the lists and the script."""
+    """The tab: a bar (species, variant, find, history, copy), the script's outline, its code and,
+    for a species file, the graph, the operand bar and what to do with the script."""
 
     def __init__(self, ws: MonsterWorkspace, studio: Studio) -> None:
         super().__init__(scroll=False)
         self.ws, self.studio = ws, studio
-        #: whether `sync` has read the species yet, and the species shown
+        #: whether `sync` has read the species yet, the species and the document shown
         self._loaded = False
         self._species: int | None = None
+        self._doc: object | None = None
         #: the header the variant choice picked; None: the one most map types use
         self._header: str | None = None
-        self._view: BrainView | None = None
-        self.history = History()
+        self._view: brain.BrainView | None = None
+        #: whether the view shown is of a script that takes edits
+        self._editing = False
+        self.history = brain.History()
         #: the rows the find text matches, and whether no Return has stepped through them yet
         self._matches: list[int] = []
         self._fresh = True
         self._opening = False
         #: the row Follow the game last took the view to
         self._seen: int | None = None
+        #: while above zero, the cursor moves are not the user's: no one is told
+        self._quiet = 0
+        #: the build, the outline and the focus the panel has taken, and the document version
+        self._built: object | None = None
+        self._outline: brain_graph.Outline | None = None
+        self._focused = 0
+        self._want: tuple[str | None, str | None] | None = None
+        self._version = -1
+        self._tries = 0
+        #: the widgets plugged into the slots, which `sync` keeps in step
+        self._parts: list[QWidget] = []
 
         self.species = kit.choice(
             [],
@@ -389,40 +481,58 @@ class BrainPanel(kit.Panel):
             grow=self.query,
         )
 
+        self.counting = kit.button(
+            f"Count {brain_game.SECONDS:g} s", tip=COUNT_TIP, on=self._start_count
+        )
+        self.send = kit.button("Send brain", tip=SEND_TIP, on=self._send)
+        self.push = kit.button("Push brain", tip=PUSH_TIP, on=self._push)
+        self.status = kit.Elided("", None, role="muted")
+        self.tools = kit.row(self.counting, self.send, self.push, self.status, grow=self.status)
+
         self.model = BrainModel()
-        self.tree = _Code()
+        self.tree = Code(ws, studio, self.model)
         self.tree.setToolTip(
             "The AI script as code. Double-click or Return on an underlined call, goto or walk"
-            " to follow it. Routines start folded."
+            " to follow it. Routines start folded. With a brain file open, the context menu"
+            " changes the script: insert, delete, replace, move, wrap, note, back to the game's."
         )
-        self.tree.setStyleSheet(ROW_QSS)
-        self.tree.setModel(self.model)
-        self.delegate = _Lines(self.tree)
+        self.delegate = self.tree.delegate
         self.tree.setItemDelegate(self.delegate)
-        self.tree.setUniformRowHeights(True)
-        self.tree.setHeaderHidden(True)
-        self.tree.setTreePosition(TEXT)
-        self.tree.setIndentation(INDENT)
-        self.tree.setMouseTracking(True)
-        self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        head = self.tree.header()
-        head.setStretchLastSection(True)
-        head.setSectionResizeMode(PC, QHeaderView.ResizeMode.Fixed)
-        head.setSectionResizeMode(TEXT, QHeaderView.ResizeMode.Stretch)
         self.tree.expanded.connect(self._opened)
         self.tree.activated.connect(lambda i: self._follow(i.internalId()))
         self.tree.entered.connect(self._hover)
         self.tree.viewportEntered.connect(lambda: self.tree.viewport().unsetCursor())
         selection = self.tree.selectionModel()
         selection.currentChanged.connect(lambda *_: self._moved())
+
         self.lists = Lists()
         self.lists.jumped.connect(self.goto)
+        self.outline = Routines()
+        self.outline.picked.connect(lambda r: self._show_node(None, r, own=False))
+        self.outline.reached.connect(self._reached)
+        self.left = QStackedWidget()
+        self.left.addWidget(self.lists)
+        self.left.addWidget(self.outline)
+
+        self.graph_slot = QWidget()
+        self.bar_slot = QWidget()
+        self.views = QSplitter(Qt.Orientation.Horizontal)
+        self.views.setChildrenCollapsible(False)
+        self.views.addWidget(self.graph_slot)
+        self.views.addWidget(self.tree)
+        self.views.setSizes([600, 500])
+        self.views.setStretchFactor(0, 1)
+        self.views.setStretchFactor(1, 1)
+        centre = QWidget()
+        self.lay = QVBoxLayout(centre)
+        self.lay.setContentsMargins(0, 0, 0, 0)
+        self.lay.setSpacing(6)
+        self.lay.addWidget(self.views, 1)
+        self.lay.addWidget(self.bar_slot)
         self.split = QSplitter(Qt.Orientation.Horizontal)
         self.split.setChildrenCollapsible(False)
-        self.split.addWidget(self.lists)
-        self.split.addWidget(self.tree)
+        self.split.addWidget(self.left)
+        self.split.addWidget(centre)
         self.split.setSizes([LISTS_W, 1000])
         self.split.setStretchFactor(1, 1)
         self.note = kit.Empty("", "")
@@ -442,6 +552,7 @@ class BrainPanel(kit.Panel):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
         lay.addWidget(bar)
+        lay.addWidget(self.tools)
         lay.addWidget(self.live)
         lay.addWidget(self.main, 1)
         lay.addWidget(self.more)
@@ -469,15 +580,37 @@ class BrainPanel(kit.Panel):
         self.ticker = QTimer(self)
         self.ticker.setInterval(round(brain_game.PERIOD * 1000))
         self.ticker.timeout.connect(studio.guard("follow the game", self._tick))
+        self._modes(False)
         self._ready(False)
 
     # ---- what is shown ----------------------------------------------------------------- #
 
+    def plug(self, graph: QWidget, bar: QWidget) -> None:
+        """Puts the graph pane and the operand bar in their slots. `sync` keeps them in step, and
+        they show only while the script takes edits."""
+        if graph is not self.graph_slot:
+            old = self.graph_slot
+            self.views.replaceWidget(0, graph)
+            old.deleteLater()
+        if bar is not self.bar_slot:
+            old = self.bar_slot
+            self.lay.replaceWidget(old, bar)
+            old.deleteLater()
+        self.graph_slot, self.bar_slot = graph, bar
+        self._parts = [graph, bar]
+        self._modes(self._editing)
+
     def sync(self) -> None:
-        """Only notices another species; everything slower waits for `_pull`'s timer."""
-        sp = self.ws.brain_species
-        if not self._loaded or sp != self._species:
+        """Only notices another species or document, a change of the file and a request to show a
+        place; everything slower waits for `_pull`'s timer."""
+        ws, sp = self.ws, self.ws.brain_species
+        if not self._loaded or sp != self._species or ws.species_doc is not self._doc:
             self._load(sp)
+        elif self._editing:
+            self._noticed()
+        for part in self._parts:
+            if callable(step := getattr(part, "sync", None)):
+                step()
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
         super().showEvent(event)
@@ -493,6 +626,9 @@ class BrainPanel(kit.Panel):
 
     def _load(self, sp: int | None) -> None:
         self._loaded, self._species, self._header = True, sp, None
+        self._doc = self.ws.species_doc
+        self._built = self._outline = self._want = None
+        self._focused, self._version = 0, -1
         self.ws.follow.reset()
         self._clear()
         self._pull()
@@ -500,18 +636,25 @@ class BrainPanel(kit.Panel):
     def _clear(self) -> None:
         self._view = None
         self._seen = None
+        self._editing = False
+        self.tree.editing = False
         self.model.set_view(None)
+        self.model.notes, self.model.counts, self.model.changed = {}, {}, frozenset()
         self.history.clear()
         self.lists.show_lists(())
+        self.outline.show_outline(None, {})
         self._matches = []
+        self._modes(False)
         self._ready(False)
 
     def _pull(self) -> None:
         """Asks the workspace for what the panel waits for, and shows it; the timer runs until
-        it is all there (a decode takes seconds, the scan of the species a few more)."""
+        it is all there (a decode takes seconds, the scan of the species a few more, a build
+        longer on a big overlay)."""
         ws, sp = self.ws, self._species
-        view = None if sp is None else ws.brain(sp, self._header)
+        view = None if sp is None else ws.brain_view(sp, self._header)
         rows = ws.brain_rows()  # after the decode: the worker takes them in order
+        editing = sp is not None and ws.brain_editable(sp)
         waiting = rows is None and not ws.brain_note
         self._fill_species(rows)
         if ws.brain_note:
@@ -524,8 +667,8 @@ class BrainPanel(kit.Panel):
             if sp is None:
                 self._say("No monster to read", "Pick a monster in the list above.")
             elif view is not None:
-                if view is not self._view:
-                    self._show(view)
+                if view is not self._view or editing != self._editing:
+                    self._show(view, editing)
             elif err := ws.brain_error(sp):
                 if self._view is not None:
                     self._clear()
@@ -533,7 +676,9 @@ class BrainPanel(kit.Panel):
             else:
                 waiting = True
                 if self._view is None:  # a header on its way keeps the one shown
-                    self._say(f"Reading {species.label(sp)}'s AI script…", "")
+                    self._say(f"Reading {species.label(sp)}'s AI script\u2026", "")
+        if sp is not None and self._editing and not ws.brain_note:
+            waiting = self._editor() or waiting
         if waiting and self.isVisible():
             self.poll.start()
         else:
@@ -543,21 +688,66 @@ class BrainPanel(kit.Panel):
         self.note.say(title, hint)
         self.main.show_page(False)
 
-    def _show(self, view: BrainView) -> None:
-        self._view = view
-        self.model.set_view(view)
-        self.history.clear()
-        self.lists.show_lists(view.outline)
+    def _show(self, view: brain.BrainView, editing: bool) -> None:
+        """Shows `view`. Another build of the script being edited keeps the cursor, the routines
+        open, the scroll and the history, which follow their lines by node."""
+        old = self._view
+        swap = editing and self._editing and old is not None and old.header == view.header
+        swap = swap and old is not None and old.row == view.row
+        kept = self.tree.keep() if swap else None
+        trail = self._trail(old, view) if swap and old is not None else None
+        self._view, self._editing = view, editing
+        self.model.notes = self.ws.brain_notes(view.row) if editing else {}
+        self.model.changed = self._changed(view.row) if editing else frozenset()
+        with self._silent():
+            self.model.set_view(view)
+            self.tree.editing = editing
+            if kept is not None:
+                self.tree.restore(kept)
+        if trail is None:
+            self.history.clear()
+        else:
+            self.history.rows[:], self.history.at = trail
+        self.lists.show_lists(() if editing else view.outline)
         heads = self.ws.brain_headers(view.row)
         kit.refill(self.variant, [(h.header, h.words) for h in heads], view.header)
         self.variant.setVisible(len(heads) > 1)
+        self._modes(editing)
         self._gutter()
         self.main.show_page(True)
         self._ready(True)
         self._rematch()
-        self._seen = None
         self.ws.place_follow(view)
+        self._seen = self.ws.follow.next_row if swap else None
         self._marks()
+        self._counted()
+        self._focus_check()
+        self._seek()
+
+    def _changed(self, row: int) -> frozenset[str]:
+        """The ids of the game's nodes the edits of the build change."""
+        built = self.ws.brain_built(row)
+        return frozenset() if built is None else edited_ids(built.edits)
+
+    def _trail(self, old: brain.BrainView, view: brain.BrainView) -> tuple[list[int], int]:
+        """The history as the rows of `view`: each stop follows its line, a gone one drops."""
+        h = self.history
+        rows: list[int] = []
+        at = -1
+        for i, row in enumerate(h.rows):
+            now = row_of(view, key_of(old, row))
+            if now is not None and (not rows or rows[-1] != now):
+                rows.append(now)
+            if i <= h.at:
+                at = len(rows) - 1
+        return rows, at
+
+    def _modes(self, editing: bool) -> None:
+        """What only a script that takes edits has: the outline of its routines, the graph, the
+        operand bar and the bar of what to do with the script."""
+        self.left.setCurrentWidget(self.outline if editing else self.lists)
+        for w in (self.graph_slot, self.bar_slot, self.tools):
+            w.setVisible(editing)
 
     def _ready(self, on: bool) -> None:
         """The controls that work on a script, enabled once there is one."""
@@ -589,20 +779,234 @@ class BrainPanel(kit.Panel):
         """Shows the script as `header` runs it."""
         if self._view is not None and header != self._view.header:
             self._header = header
+            if self._editing:
+                self.ws.brain_header = header
             self._pull()
+
+    @contextmanager
+    def _silent(self) -> Iterator[None]:
+        """The cursor moves inside are the panel's own: they tell no one."""
+        self._quiet += 1
+        try:
+            yield
+        finally:
+            self._quiet -= 1
+
+    # ---- the editor -------------------------------------------------------------------- #
+
+    def _editor(self) -> bool:
+        """What a script that takes edits has beyond a view: the findings, the outline, Count's
+        answer, the status and the buttons. True while something is still on its way."""
+        ws, sp, v = self.ws, self._species, self._view
+        if sp is None or v is None:
+            return False
+        ws.poll_count()
+        built = ws.brain_built(sp)
+        if built is not self._built:
+            self._built, self._tries = built, 0
+            self.studio.findings.stale()
+        names = ws.brain_names(sp)
+        outline = ws.brain_outline(sp, v.header)
+        if outline is not self._outline:
+            self._outline = outline
+            self.outline.show_outline(outline, names)
+            self.outline.select(self._routine())
+        pending, err = ws.brain_pending(sp), ws.brain_error(sp)
+        budget = None if pending or err else ws.brain_budget(sp)
+        self._tries += budget is None and not pending and not err
+        self._counted()
+        self._status(pending, err, budget)
+        self._buttons()
+        asking = budget is None and not pending and not err and self._tries < BUDGET_TRIES
+        return pending or asking or ws.count.busy
+
+    def _routine(self) -> str | None:
+        v, row = self._view, self.tree.row()
+        return None if v is None or row is None else v.routine_at(row)
+
+    def _status(self, pending: bool, err: str, budget: Budget | None) -> None:
+        parts: list[str] = []
+        if err:
+            parts.append(err)
+        elif pending:
+            parts.append(BUILDING)
+        elif budget is not None:
+            parts.append(f"longest run {budget_text(budget)} instructions")
+        if said := self.ws.count.status:
+            parts.append(said)
+        text = f" {brain_game.DOT} ".join(parts)
+        self.status.setText(text)
+        self.status.setToolTip(text or "The script's longest run, and what building and Count say")
+        self.status.set_level("error" if err else None)
+
+    def _buttons(self) -> None:
+        """Count when a followed monster can be counted, Send and Push when the script can go."""
+        ws, f = self.ws, self.ws.follow
+        why = ""
+        if ws.count.busy:
+            why = "counting\u2026"
+        elif not f.on or f.target is None:
+            why = brain_game.NOT_FOLLOWING
+        self.counting.setEnabled(not why)
+        self.counting.setToolTip(COUNT_TIP if not why else f"{COUNT_TIP}. Not now: {why}")
+        for button, blocker, tip in (
+            (self.send, ws.brain_send_blocker, SEND_TIP),
+            (self.push, ws.brain_push_blocker, PUSH_TIP),
+        ):
+            blocked = blocker()
+            button.setEnabled(blocked is None)
+            button.setToolTip(tip if blocked is None else blocked)
+
+    def _start_count(self) -> None:
+        self.studio.act("count the script", self.ws.count_brain)()
+        self._arm_poll()
+
+    def _send(self) -> None:
+        self.studio.act("send the brain", self.ws.send_brain)()
+
+    def _push(self) -> None:
+        self.studio.act("push the brain", self.ws.push_brain)()
+
+    def _counted(self) -> None:
+        """Count's answer on the lines, while it is of the build shown."""
+        ws = self.ws
+        got = ws.count.result
+        nodes = {} if got is None or ws.count.stale or not self._editing else got.nodes
+        if nodes != self.model.counts:
+            self.model.counts = nodes
+            self.tree.viewport().update()
+
+    def _noticed(self) -> None:
+        """After a change: a place to show, a new version of the file to wait for a build of, the
+        buttons."""
+        doc = self.ws.species_doc
+        self._focus_check()
+        if doc is not None and doc.version != self._version:
+            self._version = doc.version
+            self._pull()
+        self._buttons()
+        self._arm_poll()
+
+    def _arm_poll(self) -> None:
+        """Polls while a build or a count is on its way."""
+        sp = self._species
+        if (
+            self.isVisible()
+            and sp is not None
+            and (self.ws.count.busy or self.ws.brain_pending(sp))
+        ):
+            self.poll.start()
+
+    # ---- where the other views send the cursor ---------------------------------------- #
+
+    def _focus_check(self) -> None:
+        """A place was asked for (`ws.show_brain_node`) by another view: go there."""
+        ws, v = self.ws, self._view
+        if not self._editing or v is None or ws.brain_focused == self._focused:
+            return
+        self._focused = ws.brain_focused
+        self._leave()
+        self._want = (ws.brain_focus, ws.brain_routine)
+        head = ws.brain_header
+        if head not in (None, v.header) and any(h.header == head for h in ws.brain_headers(v.row)):
+            self._header = head
+            self._pull()  # that header's view, which seeks there
+            return
+        self._seek()
+
+    def _seek(self) -> None:
+        """Goes to the place asked for, once the view has it."""
+        v, want = self._view, self._want
+        if v is None or want is None:
+            return
+        node, routine = want
+        row = None
+        if node:
+            row = v.row_for(node, routine)
+        elif routine is not None:
+            row = v.routine_row.get(routine)
+        if row is None:
+            return
+        self._want = None
+        with self._silent():
+            self._mark()
+            self.history.go(row)
+            self.tree.reveal(row)
+        self._arrows()
+        self.outline.select(v.routine_at(row))
+
+    def _show_node(self, node: str | None, routine: str | None, *, own: bool) -> None:
+        """Tells the workspace the place picked, so that every view goes there: `own` when it is
+        this panel's cursor, which is there already."""
+        ws, v = self.ws, self._view
+
+        def go() -> None:
+            if v is not None:
+                ws.brain_header = v.header
+            if ws.show_brain_node(node, routine) and own:
+                self._focused = ws.brain_focused
+
+        self.studio.act("show a place in the script", go)()
+
+    def on_node(self, node: str | None) -> None:
+        """The graph pane picked a node (or the id of a routine): the code, the outline and the
+        workspace follow."""
+        v = self._view
+        if node is None or v is None or not self._editing:
+            return
+        if v.row_for(node) is None and node in v.routine_row:
+            self._show_node(None, node, own=False)
+        else:
+            self._show_node(node, None, own=False)
+
+    def on_scope(self, routine: str, scope: str) -> None:
+        """The graph pane opened a scope of a routine: the code goes to the arm or block it is,
+        the outline to the routine, and the workspace keeps it for the next place."""
+        ws, v = self.ws, self._view
+        if v is None or not self._editing:
+            return
+        rg = ws.brain_routine_graph(v.row, routine, v.header)
+        owner = None if rg is None or scope not in rg.scopes else rg.scopes[scope].owner
+
+        def go() -> None:
+            ws.brain_routine, ws.brain_scope, ws.brain_header = routine, scope, v.header
+            row = v.routine_row.get(routine)
+            if owner is not None:
+                row = v.row_for(scope if scope in v.row_of else owner)
+            if row is not None:
+                with self._silent():
+                    self._mark()
+                    self.history.go(row)
+                    self.tree.reveal(row)
+                self._arrows()
+            self.outline.select(routine)
+
+        self.studio.act("show a scope of the script", go)()
+
+    def _reached(self, caller: str, routine: str) -> None:
+        """A caller picked in a routine's "reached from" list: its first call of the routine."""
+        v = self._view
+        site = None
+        if v is not None and caller in v.routine_row and routine in v.routine_row:
+            kids = v.children[v.routine_row[routine]]
+            first = v.lines[kids[0]].node if kids else None
+            hits = [
+                r for r in v.span(v.routine_row[caller]) if first and v.lines[r].target == first
+            ]
+            site = v.lines[hits[0]].node if hits else None
+        self._show_node(site, caller, own=False)
 
     # ---- getting around ---------------------------------------------------------------- #
 
     def _cursor(self) -> int | None:
-        ix = self.tree.currentIndex()
-        return int(ix.internalId()) if ix.isValid() else None
+        return self.tree.row()
 
     def goto(self, row: int) -> None:
         """Selects line `row`, folding the other routines; Back leads to where the cursor was."""
         self._leave()
         self._mark()
         self.history.go(row)
-        self._reveal(row)
+        self.tree.reveal(row)
         self._arrows()
 
     def _mark(self) -> None:
@@ -611,28 +1015,13 @@ class BrainPanel(kit.Panel):
         if here is not None and here != self.history.current:
             self.history.go(here)
 
-    def _reveal(self, row: int) -> None:
-        v = self._view
-        if v is None:
-            return
-        top, m, t = v.top_of(row), self.model, self.tree
-        kept = {top, *(v.top_of(r) for r in m.marks)}  # a mark stays in sight
-        for r in v.top:
-            if r not in kept and t.isExpanded(m.index_of(r)):
-                t.collapse(m.index_of(r))
-        for r in (*v.ancestors(row), top):
-            t.expand(m.index_of(r))
-        ix = m.index_of(row, TEXT)
-        t.setCurrentIndex(ix)
-        t.scrollTo(ix, QAbstractItemView.ScrollHint.PositionAtCenter)
-
     def _step(self, back: bool) -> None:
         if back:
             self._mark()
         row = self.history.back() if back else self.history.forward()
         if row is not None:
             self._leave()
-            self._reveal(row)
+            self.tree.reveal(row)
         self._arrows()
 
     def _arrows(self) -> None:
@@ -670,9 +1059,19 @@ class BrainPanel(kit.Panel):
         self._count()
 
     def _moved(self) -> None:
-        """The cursor went somewhere: find goes on from there."""
+        """The cursor went somewhere: find goes on from there, and a script that takes edits tells
+        the workspace, which tells the other views."""
         self._fresh = False
         self._count()
+        if not self._quiet:
+            self._announce()
+
+    def _announce(self) -> None:
+        v, row = self._view, self._cursor()
+        if not self._editing or v is None or row is None or (routine := v.routine_at(row)) is None:
+            return
+        self.outline.select(routine)
+        self._show_node(v.node_at(row), routine, own=True)
 
     def _count(self) -> None:
         n, here = len(self._matches), self._cursor()
@@ -707,18 +1106,6 @@ class BrainPanel(kit.Panel):
 
     # ---- copying and addresses --------------------------------------------------------- #
 
-    def _picked(self) -> list[int]:
-        """The rows selected, a folded one with everything under it."""
-        v = self._view
-        if v is None:
-            return []
-        rows: set[int] = set()
-        for ix in self.tree.selectionModel().selectedRows(TEXT):
-            r = int(ix.internalId())
-            folded = v.children[r] and not self.tree.isExpanded(self.model.index_of(r))
-            rows.update(v.span(r) if folded else (r,))
-        return sorted(rows)
-
     def _put(self, rows: Sequence[int]) -> None:
         v = self._view
         if v is None or not rows:
@@ -729,7 +1116,7 @@ class BrainPanel(kit.Panel):
 
     def _copy(self) -> None:
         """The lines selected; with one selected, or none, the routine the cursor is in."""
-        v, rows, here = self._view, self._picked(), self._cursor()
+        v, rows, here = self._view, self.tree.picked(), self._cursor()
         if v is not None and len(rows) < 2:
             row = rows[0] if rows else here
             rows = [] if row is None else list(v.span(v.top_of(row)))
@@ -737,7 +1124,7 @@ class BrainPanel(kit.Panel):
 
     def _copy_lines(self) -> None:
         """The standard Copy key: the lines selected, as in any text view."""
-        self._put(self._picked())
+        self._put(self.tree.picked())
 
     def _addresses(self, on: bool) -> None:
         self._gutter()
@@ -759,6 +1146,8 @@ class BrainPanel(kit.Panel):
 
     def _following(self, on: bool) -> None:
         self.ws.follow.set(on)
+        if not on:
+            self.ws.count.reset()
         self._seen = None
         self._gutter()
         self._arm()
@@ -781,6 +1170,8 @@ class BrainPanel(kit.Panel):
     def _tick(self) -> None:
         if self.ws.poll_follow(self._view):
             self._marks()
+        if self._editing:
+            self._editor()
 
     def _marks(self) -> None:
         """Shows what Follow says: its status and marks, and goes where the monster is."""
@@ -789,9 +1180,14 @@ class BrainPanel(kit.Panel):
         if v is not None:
             for row in self.model.marks:  # a routine holding a mark is open
                 self.tree.expand(self.model.index_of(v.top_of(row)))
+        next_in = None if not f.on or v is None or f.next_row is None else v.routine_at(f.next_row)
+        self.outline.mark(next_in)
+        text = f.status
+        if f.on and f.target is not None and f.target.runs == brain_game.BUILD:
+            text += f" {brain_game.DOT} {YOURS}"
         self.live.setVisible(f.on)
-        self.live.setText(f.status)
-        self.live.setToolTip(f.status)
+        self.live.setText(text)
+        self.live.setToolTip(text)
         self.live.set_level(None if f.next_row is not None else "warning")
         if not f.on or v is None:
             return
@@ -799,4 +1195,5 @@ class BrainPanel(kit.Panel):
             self._switch(f.header)
         elif f.next_row is not None and f.next_row != self._seen:
             self._seen = f.next_row
-            self._reveal(f.next_row)
+            with self._silent():
+                self.tree.reveal(f.next_row)

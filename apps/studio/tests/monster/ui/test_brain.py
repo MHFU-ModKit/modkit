@@ -9,17 +9,26 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
 import pytest
+from mhfu import files, inject
+from mhfu.em.intel import SpeciesIntel
 from mhfu.em.script import ir, source
 from mhfu.files import Extracted
+from mhfu.live.script import Step, Trace
+from mhfu.writes import Plan, Pushed
 from mhfu_port.data import Data
 from mhfu_studio.monster import brain, species
+from mhfu_studio.monster import brain_edit as be
 from mhfu_studio.monster import brain_game as bg
+from mhfu_studio.monster import workspace as mw
 from mhfu_studio.monster.brain import BrainView
-from mhfu_studio.monster.panels.brain import (
+from mhfu_studio.monster.panels.brain import PUSH_TIP, ROW, SEND_TIP, BrainPanel, details
+from mhfu_studio.monster.panels.brain_code import (
+    COUNT,
     KIND,
     LABEL,
     LINK,
@@ -27,7 +36,6 @@ from mhfu_studio.monster.panels.brain import (
     PAD,
     PC,
     TEXT,
-    BrainPanel,
     address,
 )
 from mhfu_studio.monster.workspace import MonsterWorkspace
@@ -39,8 +47,10 @@ from mhfu_studio.ui.testing import FakeWorkspace
 from PySide6.QtCore import QItemSelectionModel, QPoint, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QWidget
 
 from ..conftest import program
+from ..test_brain_edit import world
 from ..test_brain_game import H0, H1, state
 
 LEFT, NONE = Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
@@ -128,6 +138,17 @@ def click(w: Any, pos: QPoint, count: int = 1) -> None:
 
 def at(p: BrainPanel, row: int) -> QPoint:
     return p.tree.visualRect(p.model.index_of(row, TEXT)).center()
+
+
+def node_of(p: BrainPanel, text: str) -> str:
+    """The id of the node whose line says `text`."""
+    node = view(p).lines[row_of(p, text)].node
+    assert node is not None
+    return node
+
+
+def shown_all(p: BrainPanel) -> list[str]:
+    return [ln.text.strip() for ln in view(p).lines]
 
 
 # ---- the tree is the script -------------------------------------------------------------------- #
@@ -437,9 +458,9 @@ def test_copy_folded(panel: BrainPanel) -> None:
     v = view(panel)
     a = row_of(panel, "routine r_a")
     select(panel, a)
-    assert not opened(panel, a) and panel._picked() == list(v.span(a))
+    assert not opened(panel, a) and panel.tree.picked() == list(v.span(a))
     panel.tree.expand(panel.model.index_of(a))
-    assert panel._picked() == [a]
+    assert panel.tree.picked() == [a]
 
 
 def test_addresses(qtbot: Any, panel: BrainPanel) -> None:
@@ -893,6 +914,467 @@ def test_window(make_window: Callable[..., Any], qtbot: Any, ws: MonsterWorkspac
     w.show_tab("3D view")
     assert not panel.isVisible() and not panel.poll.isActive()
     assert w.studio.errors == []
+
+
+# ---- the editor over a brain file ------------------------------------------------------------- #
+
+
+class Clock:
+    """The debounce's clock: a test moves it."""
+
+    def __init__(self) -> None:
+        self.t = 0.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def new_pak(tmp_path: Path, synthetic_pac: bytes, monkeypatch: pytest.MonkeyPatch) -> Extracted:
+    """An extraction with Tigrex's and its sibling's model PAC; no stick, a cache of its own."""
+    (tmp_path / "data_files").mkdir()
+    for sp in (75, 76):
+        pac = tmp_path / "data_files" / f"file_{files.monster_pac(sp):05d}.bin"
+        pac.write_bytes(synthetic_pac)
+    monkeypatch.setattr(inject, "MEMSTICK_ROOTS", (str(tmp_path / "no-stick"),))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    return Extracted(tmp_path)
+
+
+def new_editor_ws(pak: Extracted, intel75: SpeciesIntel, clock: Clock) -> MonsterWorkspace:
+    """The Tigrex open on an empty brain file, over a fake decode of `world`."""
+    w = MonsterWorkspace(Data(pak, pak))
+    w.intel_cache[75] = intel75
+    w.decode_brain = lambda g, row: world(row)
+    w.scan_brain = lambda g: {75: 75, 76: 75}
+    w.clock = clock
+    w.open(pak.path(files.monster_pac(75)))
+    return w
+
+
+@pytest.fixture
+def clock() -> Clock:
+    return Clock()
+
+
+@pytest.fixture
+def pak(tmp_path: Path, synthetic_pac: bytes, monkeypatch: pytest.MonkeyPatch) -> Extracted:
+    return new_pak(tmp_path, synthetic_pac, monkeypatch)
+
+
+@pytest.fixture
+def edit_ws(pak: Extracted, intel75: SpeciesIntel, clock: Clock) -> Iterator[MonsterWorkspace]:
+    w = new_editor_ws(pak, intel75, clock)
+    yield w
+    w.close()
+
+
+def settle(p: BrainPanel, clock: Clock) -> None:
+    """The panel's timer, by hand: the clock passes the debounce each turn, until the build is in
+    and shown with its budget."""
+    stop = time.monotonic() + 20
+    while True:
+        clock.t += mw.DEBOUNCE
+        p._pull()
+        if not p.ws.brain_pending(75) and p.ws.brain_built(75) is p._built and p.status.text():
+            return
+        assert time.monotonic() < stop, "the build did not finish"
+        time.sleep(0.002)
+
+
+@pytest.fixture
+def editor(qtbot: Any, edit_ws: MonsterWorkspace, clock: Clock) -> BrainPanel:
+    """The panel on `edit_ws`, with the first build shown."""
+    p = make(qtbot, edit_ws)
+    settle(p, clock)
+    return p
+
+
+def test_a_species_file_makes_the_tab_the_editor(editor: BrainPanel) -> None:
+    p = editor
+    v = view(p)
+    assert p._editing and p.tree.editing and p.left.currentWidget() is p.outline
+    assert p.tools.isVisible() and p.graph_slot.isVisible() and p.bar_slot.isVisible()
+    assert v.header == "h1" and shown(p) == [v.lines[r].text for r in v.top]
+    budget = p.ws.brain_budget(75)
+    assert (
+        budget is not None
+        and p.status.text() == f"longest run {mw.budget_text(budget)} instructions"
+    )
+    assert kit.missing_tips(p) == [] and p.studio.errors == []
+
+
+def test_a_port_view_stays_read_only(panel: BrainPanel) -> None:
+    p = panel
+    assert not p._editing and not p.tree.editing and p.left.currentWidget() is p.lists
+    assert not p.tools.isVisible() and not p.graph_slot.isVisible() and not p.bar_slot.isVisible()
+    p.tree.setCurrentIndex(p.model.index_of(row_of(p, "enter 3 0 0"), TEXT))
+    assert p.tree.menu() is None and p.ws.brain_focus is None and p.ws.brain_focused == 0
+    assert p.model.edit_kind(0) == "" and not p.model.is_dead(1) and p.studio.errors == []
+
+
+def test_a_row_the_file_does_not_serve_reads_only(qtbot: Any, editor: BrainPanel) -> None:
+    p = editor
+    p.ws.browse_brain(88)
+    p.sync()
+    qtbot.waitUntil(lambda: p.model.view is not None and p.model.view.row == 88)
+    assert not p._editing and p.left.currentWidget() is p.lists and not p.tools.isVisible()
+    p.ws.browse_brain(76)  # served by the same overlay: editable again
+    p.sync()
+    qtbot.waitUntil(lambda: p._editing and view(p).row == 76)
+    assert p.left.currentWidget() is p.outline and p.tools.isVisible()
+
+
+def test_the_outline_groups_the_routines(editor: BrainPanel) -> None:
+    o = editor.outline
+    groups = [o.topLevelItem(i).text(0) for i in range(o.topLevelItemCount())]
+    assert groups == ["Decisions (2)", "Calls (2)"]
+    rows = {r: o.items[r].data(0, ROW) for r in o.items}
+    assert list(rows) == ["base_0", "base_1", "call_0", "call_1"]
+    assert o.items["base_0"].text(0) == "base_0" and o.items["base_0"].text(1) == "\u2190 1"
+    assert o.items["base_1"].text(1) == "" and o.items["call_0"].text(1) == "\u2190 1"
+    assert details(rows["base_0"]) == [("Top", "muted"), ("shared", "muted"), ("11 nodes", "muted")]
+    assert details(rows["call_1"]) == [("shared", "muted"), ("7 nodes", "muted")]
+    assert "Top" in o.items["base_0"].toolTip(0) and "base 0" in o.items["base_0"].toolTip(0)
+    assert o.items["base_0"].toolTip(1) and not o.items["base_1"].toolTip(1)
+
+
+def test_an_edit_shows_on_its_row(editor: BrainPanel, clock: Clock) -> None:
+    p = editor
+    assert p.ws.edit_brain(be.set_pair(node_of(p, "enter 5 0 0"), 5, 3))
+    assert p.ws.edit_brain(be.insert_entry(be.Place.end("call_1"), be.PALETTE["Moves"][0]))
+    settle(p, clock)
+    rows = {r: p.outline.items[r].data(0, ROW) for r in p.outline.items}
+    assert rows["base_1"].edited and rows["call_1"].edited and not rows["base_0"].edited
+    assert details(rows["call_1"])[-1] == ("8 nodes", "muted")
+
+
+def test_the_outline_keeps_its_place(editor: BrainPanel) -> None:
+    o = editor.outline
+    calls = next(
+        o.topLevelItem(i) for i in range(2) if o.topLevelItem(i).text(0).startswith("Calls")
+    )
+    calls.setExpanded(False)
+    o.select("base_1")
+    o.verticalScrollBar().setValue(0)
+    o.show_outline(editor.ws.brain_outline(75, "h1"), editor.ws.brain_names(75))
+    assert not o.topLevelItem(1).isExpanded() and o.topLevelItem(0).isExpanded()
+    assert o.routine() == "base_1" and set(o.items) == {"base_0", "base_1", "call_0", "call_1"}
+    o.show_outline(None, {})
+    assert o.topLevelItemCount() == 0 and o.items == {} and o.routine() is None
+
+
+def test_a_click_on_a_routine_shows_it(editor: BrainPanel) -> None:
+    p, o = editor, editor.outline
+    item = o.items["call_1"]
+    o.itemClicked.emit(item, 0)
+    assert p.ws.brain_routine == "call_1" and p.ws.brain_focus is None
+    assert cursor(p) == row_of(p, "routine call_1") and opened(p, cursor(p))
+    assert o.routine() == "call_1" and p.studio.errors == []
+    o.itemActivated.emit(o.items["base_1"], 0)  # Return does the same
+    assert cursor(p) == row_of(p, "routine base_1")
+
+
+def test_reached_from_lists_the_callers(editor: BrainPanel) -> None:
+    p, o = editor, editor.outline
+    row = o.items["base_0"].data(0, ROW)
+    menu = o.reach_menu(row)
+    assert [a.text() for a in menu.actions()] == ["base_1 (1 call)"]
+    menu.actions()[0].trigger()  # the first call: base_1's goto
+    assert p.ws.brain_focus == node_of(p, "goto 0") and p.ws.brain_routine == "base_1"
+    assert cursor(p) == row_of(p, "goto 0")
+    o.itemClicked.emit(o.items["base_1"], 1)  # a row with no caller: the click shows it
+    assert cursor(p) == row_of(p, "routine base_1")
+
+
+def test_the_cursor_tells_the_workspace(editor: BrainPanel) -> None:
+    p = editor
+    line = row_of(p, "enter 6 1 0")
+    p.tree.setCurrentIndex(p.model.index_of(line, TEXT))
+    assert p.ws.brain_focus == node_of(p, "enter 6 1 0") and p.ws.brain_routine == "call_1"
+    assert p.ws.brain_header == "h1" and p.outline.routine() == "call_1"
+    p.tree.setCurrentIndex(p.model.index_of(row_of(p, "routine call_0"), TEXT))
+    assert p.ws.brain_focus is None and p.ws.brain_routine == "call_0"
+    focused = p.ws.brain_focused
+    p.tree.setCurrentIndex(p.model.index_of(row_of(p, "table call_l: call_0 call_1 -"), TEXT))
+    assert p.ws.brain_focused == focused  # a list is no place of the script
+    assert p.studio.errors == []
+
+
+def test_a_place_asked_for_selects_its_line(editor: BrainPanel) -> None:
+    p = editor
+    p.ws.follow.on = True
+    p.following.setChecked(True)
+    assert p.ws.show_brain_node(node_of(p, "enter 4 1 0"))
+    p.sync()
+    assert cursor(p) == row_of(p, "enter 4 1 0") and opened(p, row_of(p, "routine call_0"))
+    assert not p.ws.follow.on and p.history.rows[-1] == cursor(p)  # a jump ends Follow
+    p.ws.show_brain_node(None, "base_1")
+    p.sync()
+    assert cursor(p) == row_of(p, "routine base_1") and p.outline.routine() == "base_1"
+    p.ws.reveal(("node", node_of(p, "wait 3")))  # the shell's way, from a finding
+    p.sync()
+    assert cursor(p) == row_of(p, "wait 3")
+    assert p.history.back() == row_of(p, "routine base_1")
+
+
+def test_the_graph_hooks(editor: BrainPanel) -> None:
+    p = editor
+    p.on_node(node_of(p, "enter 1 1 0"))
+    assert p.ws.brain_focus == node_of(p, "enter 1 1 0") and cursor(p) == row_of(p, "enter 1 1 0")
+    p.on_node("call_1")  # a routine's name is a place too
+    assert cursor(p) == row_of(p, "routine call_1")
+    p.on_node(None)
+    p.on_node("no such node")
+    assert cursor(p) == row_of(p, "routine call_1")
+    arm = node_of(p, "branch 16")
+    p.on_scope("base_0", arm)
+    assert p.ws.brain_routine == "base_0" and p.ws.brain_scope == arm
+    assert cursor(p) == row_of(p, "branch 16") and p.outline.routine() == "base_0"
+    p.on_scope("base_1", "")
+    assert p.ws.brain_scope == "" and cursor(p) == row_of(p, "routine base_1")
+    assert p.studio.errors == []
+
+
+def test_a_rebuild_keeps_the_place(editor: BrainPanel, clock: Clock) -> None:
+    p = editor
+    p.goto(row_of(p, "enter 6 1 0"))
+    p.goto(row_of(p, "goto 0"))
+    p.tree.expand(p.model.index_of(row_of(p, "routine call_0")))
+    first = view(p)
+    assert p.ws.edit_brain(be.set_pair(node_of(p, "enter 6 1 0"), 6, 5))
+    settle(p, clock)
+    v = view(p)
+    assert v is not first and v.row == 75 and v.header == first.header
+    assert cursor(p) == row_of(p, "goto 0") and opened(p, row_of(p, "routine base_1"))
+    assert opened(p, row_of(p, "routine call_0")) and not opened(p, row_of(p, "routine call_1"))
+    assert [v.lines[r].text.strip() for r in p.history.rows] == ["enter 6 5 0", "goto 0"]
+    assert p.history.at == 1 and p.history.can_back and not p.history.can_forward
+    assert p.studio.errors == []
+
+
+def test_a_node_that_is_gone_leaves_its_routine(editor: BrainPanel, clock: Clock) -> None:
+    p = editor
+    p.goto(row_of(p, "enter 5 1 0"))
+    assert p.ws.edit_brain(be.delete(node_of(p, "enter 5 1 0")))
+    settle(p, clock)
+    assert cursor(p) == row_of(p, "routine base_1")
+    assert "enter 5 1 0" not in shown_all(p)
+
+
+def test_a_new_build_stales_the_findings(editor: BrainPanel, clock: Clock) -> None:
+    p = editor
+    p.studio.findings.get(p.ws.document)
+    assert not p.studio.findings._stale
+    assert p.ws.edit_brain(be.set_pair(node_of(p, "enter 6 1 0"), 6, 5))
+    settle(p, clock)
+    assert p.studio.findings._stale
+    p.studio.findings.get(p.ws.document)
+    p._pull()
+    assert not p.studio.findings._stale  # the same build is no news
+
+
+def test_building_is_said_while_it_builds(editor: BrainPanel, clock: Clock) -> None:
+    p = editor
+    assert p.ws.edit_brain(be.set_pair(node_of(p, "enter 6 1 0"), 6, 5))
+    p.sync()
+    assert p.status.text() == "building\u2026" and p.poll.isActive()
+    assert not p.send.isEnabled() and "still building" in p.send.toolTip()
+    settle(p, clock)
+    assert p.status.text().startswith("longest run") and not p.poll.isActive()
+
+
+def test_a_build_with_errors_is_said(editor: BrainPanel, clock: Clock) -> None:
+    p = editor
+    assert p.ws.edit_brain(be.set_pair(node_of(p, "enter 6 1 0"), 9, 0))  # main past 0..7
+    settle(p, clock)
+    row = p.outline.items["call_1"].data(0, ROW)
+    assert row.findings == 2 and details(row)[-1] == ("2 findings", "error")
+    assert row.level == "error" and not p.outline.items["base_0"].data(0, ROW).findings
+    assert p.ws.brain_built(75) is not None and not p.ws.brain_built(75).ok
+    assert "main 9" in p.send.toolTip() and not p.send.isEnabled() and not p.push.isEnabled()
+    assert p.status.text().startswith(
+        "longest run"
+    )  # the build has a budget; the errors are Findings'
+
+
+# ---- Send, Push and Count --------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def stick(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    root = tmp_path / "PSP"
+    (root / inject.MODS_SUBDIR).mkdir(parents=True)
+    monkeypatch.setattr(inject, "MEMSTICK_ROOTS", (str(root),))
+    return root
+
+
+def test_send_waits_for_a_stick(
+    editor: BrainPanel, stick: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = editor
+    monkeypatch.setattr(inject, "MEMSTICK_ROOTS", (str(stick.parent / "none"),))
+    p.sync()
+    assert not p.send.isEnabled() and "memory stick" in p.send.toolTip()
+    assert p.push.isEnabled() and p.push.toolTip() == PUSH_TIP  # Push goes to the game, not a stick
+    monkeypatch.setattr(inject, "MEMSTICK_ROOTS", (str(stick),))
+    p.sync()
+    assert p.send.isEnabled() and p.send.toolTip() == SEND_TIP
+
+
+def test_send_puts_the_build_on_the_stick(editor: BrainPanel, stick: Path, clock: Clock) -> None:
+    p = editor
+    assert p.ws.edit_brain(be.set_pair(node_of(p, "enter 6 1 0"), 6, 5))
+    settle(p, clock)
+    p.sync()
+    assert p.send.isEnabled()
+    p.send.click()
+    built = p.ws.brain_built(75)
+    box = stick / inject.BRAIN_SUBDIR / inject.brain_filename(75)
+    assert p.ws.message == mw.SENT and box.read_bytes() == built.container
+    assert p.studio.message == mw.SENT and p.studio.errors == []
+
+
+def test_push_writes_the_build_into_the_game(editor: BrainPanel, clock: Clock) -> None:
+    p = editor
+    assert p.ws.edit_brain(be.set_pair(node_of(p, "enter 6 1 0"), 6, 5))
+    settle(p, clock)
+    calls: list[Any] = []
+    p.ws.game_session = lambda: nullcontext("session")
+
+    def push(s: Any, prog: ir.Program, img: Any) -> Pushed:
+        calls.append((s, prog, img))
+        return Pushed(Plan((), ()), 0.01, where="the game")
+
+    p.ws.push_script = push
+    p.sync()
+    assert p.push.isEnabled()
+    p.push.click()
+    built = p.ws.brain_built(75)
+    assert calls == [("session", built.program, built.image)] and p.ws.message == mw.PUSHED
+
+
+def test_count_waits_for_a_followed_monster(editor: BrainPanel) -> None:
+    p = editor
+    assert not p.counting.isEnabled() and bg.NOT_FOLLOWING in p.counting.toolTip()
+    p.ws.follow.on = True
+    p.sync()
+    assert not p.counting.isEnabled()  # on, and nothing read yet
+    p.ws.follow.target = bg.Target(0x1234, bg.NATIVE, None, None)
+    p.sync()
+    assert p.counting.isEnabled() and p.counting.text() == "Count 30 s"
+
+
+def test_count_shows_on_the_lines(qtbot: Any, editor: BrainPanel) -> None:
+    p, w = editor, editor.ws
+    hub = node_of(p, "if_latch")
+    pc = next(n.pc for n in w.brain_lift(75).nodes() if n.id == hub)
+    w.follow.on = True
+    w.follow.target = bg.Target(0x1234, bg.NATIVE, None, None)
+    w.game_session = lambda: nullcontext("session")
+    w.trace_script = lambda s, e, sec: Trace(
+        e, sec, tuple(Step(10 * k, pc, 0x30) for k in range(3)), 0
+    )
+    p.sync()
+    p.counting.click()
+    assert w.count.busy and not p.counting.isEnabled() and p.poll.isActive()
+    qtbot.waitUntil(lambda: w.count.result is not None, timeout=10000)
+    assert p.model.counts == {hub: 3} and not w.count.busy
+    assert p.status.text().endswith("counted 3 instructions in 30 s")
+    assert p.counting.isEnabled() and not p.poll.isActive()
+    row = row_of(p, "if_latch")
+    assert p.model.data(p.model.index_of(row, TEXT), COUNT) == 3
+    assert p.model.data(p.model.index_of(row_of(p, "goto 0"), TEXT), COUNT) is None
+    p.following.setChecked(True)
+    p.following.setChecked(False)  # Follow off drops the count
+    p._pull()
+    assert w.count.result is None and p.model.counts == {}
+
+
+def test_count_says_why_it_did_not_start(editor: BrainPanel, clock: Clock) -> None:
+    p, w = editor, editor.ws
+    assert w.edit_brain(be.set_pair(node_of(p, "enter 6 1 0"), 6, 5))
+    settle(p, clock)
+    built = w.brain_built(75)
+    assert built is not None
+    w.follow.on = True
+    w.follow.target = bg.Target(0x1234, bg.BUILD, (built.id or 0) + 1, 0x4000)  # another build
+    p.sync()
+    p.counting.click()
+    assert "older build" in p.studio.message and p.studio.errors == []
+    assert not w.count.busy and not p.poll.isActive()
+
+
+def test_next_tags_its_routine_in_the_outline(editor: BrainPanel) -> None:
+    p = editor
+    g = Running(p.ws)
+    va = {h.header: h.va for h in p.ws.brain_headers(75)}["h1"]
+    line = view(p).lines[row_of(p, "goto 0")]
+    g.monsters = {2: state(line.pc, header=va)}
+    p.following.setChecked(True)
+    g.tick(p)
+    assert p.ws.follow.next_row == row_of(p, "goto 0") and p.outline.rows.next == "base_1"
+    assert cursor(p) == row_of(p, "goto 0") and p.ws.brain_focus is None  # Follow moves no one else
+    p.following.setChecked(False)
+    assert p.outline.rows.next is None
+
+
+def test_a_new_document_reloads_the_tab(qtbot: Any, editor: BrainPanel, pak: Extracted) -> None:
+    p, first = editor, editor.ws.species_doc
+    p.ws.open(pak.path(files.monster_pac(76)))
+    assert p.ws.species_doc is not first and p.ws.brain_species == 76
+    p.sync()
+    qtbot.waitUntil(lambda: p.model.view is not None and p.model.view.row == 76 and p._editing)
+    assert p._doc is p.ws.species_doc and p.outline.items
+
+
+def test_follow_says_it_runs_your_edits(editor: BrainPanel, clock: Clock) -> None:
+    p, f = editor, editor.ws.follow
+    f.on, f.status = True, "following \u00b7 slot 2"
+    f.target = bg.Target(0x1234, bg.BUILD, 7, 0x4000)
+    p._marks()
+    assert p.live.text() == "following \u00b7 slot 2 \u00b7 runs your edits"
+    f.target = bg.Target(0x1234, bg.NATIVE, None, None)
+    p._marks()
+    assert p.live.text() == "following \u00b7 slot 2"
+
+
+def test_plugged_widgets_are_synced(editor: BrainPanel) -> None:
+    class Part(QWidget):
+        def __init__(self) -> None:
+            super().__init__()
+            self.synced = 0
+
+        def sync(self) -> None:
+            self.synced += 1
+
+    p, graph, bar = editor, Part(), Part()
+    first = (p.graph_slot, p.bar_slot)
+    p.plug(graph, bar)
+    assert p.graph_slot is graph and p.bar_slot is bar and p.views.widget(0) is graph
+    assert p.views.indexOf(first[0]) == -1
+    p.sync()
+    assert (graph.synced, bar.synced) == (1, 1) and graph.isVisible() and bar.isVisible()
+    p.ws.browse_brain(88)
+    p.sync()
+    assert not graph.isVisible() and not bar.isVisible()
+
+
+def test_window_editor(
+    make_window: Callable[..., Any], qtbot: Any, edit_ws: MonsterWorkspace
+) -> None:
+    w = make_window(Hosted(edit_ws))
+    panel = w.findChild(BrainPanel)
+    assert panel is not None
+    [opener] = [a for a in w.panels_menu.actions() if a.text() == "Brain"]
+    opener.trigger()
+    w.sync()
+    qtbot.waitUntil(lambda: panel._editing and panel.model.view is not None)
+    assert panel.isVisible() and kit.missing_tips(panel) == []
+    qtbot.waitUntil(lambda: bool(panel.status.text()) and not panel.poll.isActive())
+    panel.tree.setCurrentIndex(panel.model.index_of(row_of(panel, "routine base_1"), TEXT))
+    assert edit_ws.brain_routine == "base_1" and panel.outline.routine() == "base_1"
+    w.show_tab("3D view")
+    assert not panel.isVisible() and not panel.poll.isActive() and w.studio.errors == []
 
 
 # ---- colours ----------------------------------------------------------------------------------- #
