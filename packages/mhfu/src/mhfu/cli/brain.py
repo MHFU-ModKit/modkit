@@ -17,10 +17,11 @@ push, build and deploy take the script as lifted, an edited source text F, or a 
 one line each, and refuses while one is an error.
 
 A push needs the game in a quest (the row's header words are set when it loads) and in PPSSPP's
-64 MB mode, and lasts until the next quest load. Like the other live commands, it takes the
-emulator the options pick: a lane's, the container's, or the one running. A deploy needs no game:
-the framework installs the container at its next mod load, and every quest after runs it. The
-stick is `--stick`, `--lane`'s, `$MHFU_LANE`'s, `$MHFU_MEMSTICK` or the one found.
+64 MB mode, and lasts until the next quest load; over a stick build its monsters restart. Like
+the other live commands, it takes the emulator the options pick: a lane's, the container's, or
+the one running. A deploy needs no game: the framework installs the container at its next mod
+load, and every quest after runs it. The stick is `--stick`, `--lane`'s, `$MHFU_LANE`'s,
+`$MHFU_MEMSTICK` or the one found.
 """
 
 from __future__ import annotations

@@ -221,8 +221,10 @@ native address of an offset.
 row's `SCRIPT_HEADERS` words at it and moves each live monster's script words across the maps,
 restarting at base routine 0 the monster with a word that has no place. All of it is written in one
 stop where no monster is inside its script: at `SCRIPT_TICK` of a live monster of the species, else
-with the CPU paused. It lasts until the next quest load re-reads the overlay. `mhfu brain restore`
-moves the words and monsters back across the same maps and clears the container.
+with the CPU paused. It lasts until the next quest load re-reads the overlay. Over a stick build
+(below) the push finds the staged container from the words (`inject.around`); a stick container has
+no maps, so its monsters restart. `mhfu brain restore` moves the words and monsters back across the
+same maps, to the game's own script, and clears the container.
 
 The framework loads a stick container: `mhfu brain deploy` writes `brain_row_NN.mhai` to
 `PLUGINS/mhfu_framework/brain` and a mod, `mods/brain_row_NN.lua`, that calls
