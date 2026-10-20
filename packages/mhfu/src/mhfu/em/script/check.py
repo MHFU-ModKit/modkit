@@ -9,18 +9,25 @@ Only new code is held to the rules, and the native blocks it sits in: a node wit
 new, and a block is touched when anything inside it is. An unedited program has no findings,
 the odd native stretches (a random_shifted inside a random, the 0x94 openers) included.
 Image checks assemble the program, or take the image it was assembled to, and read the bytes
-the way the game does (`walk`) and the way the decoder does.
+the way the game does (`walk`) and the way the decoder does. Run checks follow the program's
+paths the way `budget` does and speak only of a path through new code: OPS_PER_RUN, RESTART_LOOP
+and CORRELATED_DRAW. Anything that makes a routine run off its end, and a restart that never
+yields, is an error; dead code, a random that follows another draw and a branch that never runs
+are warnings. Every native routine ends each path with an end or a goto, so one with new code
+in it that can run off its end is the edit's doing; a deleted `end` in a routine with nothing new
+is left to the decoder (DECODE).
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import cached_property
 
-from . import asm, ir, walk
+from . import asm, budget, ir, walk
 from .disasm import SENTINEL, Reader
 from .lift import LiftError, routine
-from .opcodes import OPCODES, Shape, slot
+from .opcodes import END_KINDS, OPCODES, Flow, Shape, slot
 
 __all__ = ["Finding", "check", "decoded"]
 
@@ -28,6 +35,8 @@ _TOTAL = 32
 """What a random's weights add up to."""
 _RANDOM = 0x80
 """The marker a random and a random_shifted share."""
+_MAINS = range(8)
+"""The `main` of a pair the game has an action table for."""
 Token = tuple[object, ...]
 
 
@@ -99,6 +108,7 @@ class _Checks:
             if isinstance(n, ir.Insn):
                 if n.pc is None:
                     self.refs(r, n)
+                    self.insn(r, n)
                 continue
             for a in n.arms:
                 self.labels(r, a)
@@ -137,6 +147,11 @@ class _Checks:
             if len(weights) == len(b.arms) and sum(weights) != _TOTAL:
                 text = f"{op.name} weights add up to {sum(weights)}, not {_TOTAL}"
                 self.add("error", "RANDOM_WEIGHTS", text, b.id, r.name)
+            for a in b.arms:
+                if a.pc is None and a.args.get("weight") == 0:
+                    self.add(
+                        "warning", "WEIGHT_ZERO", f"{op.name}: this branch never runs", a.id, r.name
+                    )
         if op.code == walk.SHORT and b.pc is None:
             text = f"{op.name}: the game steps its opener onto the first case value"
             self.add("error", "SKIP_SHORT", text, b.id, r.name)
@@ -157,6 +172,32 @@ class _Checks:
                     text = f"{b.op.name}: case {hi} follows case {lo}; cases must ascend"
                     self.add("error", "ORDERED", text, a.id, r.name)
 
+    @cached_property
+    def contexts(self) -> dict[str, frozenset[str]]:
+        return budget.contexts(self.p)
+
+    def insn(self, r: ir.Routine, n: ir.Insn) -> None:
+        """What a new or edited instruction must not say: an `enter` gate (the game stores it in
+        FREEZE_GATE's low byte), a pair with no action table, an `end` that does not belong."""
+        if n.op.name == "enter":
+            gate, main = n.args.get("gate"), n.args.get("main")
+            if isinstance(gate, int) and gate != 0:
+                text = f"enter: gate {gate} lands in the freeze gate; natively it is 0"
+                self.add("error", "GATE_NONZERO", text, n.id, r.name)
+            if isinstance(main, int) and main not in _MAINS:
+                text = f"enter: main {main} is outside 0..{_MAINS[-1]}"
+                self.add("error", "PAIR_RANGE", text, n.id, r.name)
+        elif n.op.name == "end" and isinstance(kind := n.args.get("kind"), int):
+            need = budget.needs(kind)
+            have = self.contexts[r.name]
+            if need is None:
+                text = f"end {kind}: the game acts on no such kind"
+                self.add("error", "END_KIND_CONTEXT", text, n.id, r.name)
+            elif have and need not in have:
+                at = ", ".join(sorted(have))
+                text = f"end {END_KINDS[kind]} belongs to {need}; {r.name} runs as {at}"
+                self.add("error", "END_KIND_CONTEXT", text, n.id, r.name)
+
     def refs(self, r: ir.Routine, n: ir.Insn) -> None:
         """The list entries a new instruction names, as each header that runs it has them."""
         for hn in self.reach[r.name]:
@@ -176,6 +217,52 @@ class _Checks:
                     self.add("error", "INDEX_PAST_LIST", text, n.id, r.name)
                 elif slots[ref.index] is None:
                     self.add("warning", "EMPTY_SLOT", f"{at}: the slot is empty", n.id, r.name)
+
+
+def _terminal(n: ir.Node, fresh: bool = True) -> bool:
+    """Whether control never goes on past the node: an end or goto, or a block every way
+    through which ends. `fresh` False does not count the ends and gotos that are new."""
+    if isinstance(n, ir.Insn):
+        return n.op.flow in (Flow.END, Flow.GOTO) and (fresh or n.pc is not None)
+    bodies = [a.body for a in n.arms]
+    match n.op.shape:
+        case Shape.IF:
+            return bool(n.arms) and _ends(n.head, fresh) and _ends(bodies[0], fresh)
+        case Shape.SWITCH:
+            return any(a.sub == 2 for a in n.arms) and all(_ends(b, fresh) for b in bodies)
+        case Shape.REPEAT:
+            return _ends(n.head, fresh)
+    return bool(bodies) and all(_ends(b, fresh) for b in bodies)
+
+
+def _ends(nodes: Sequence[ir.Node], fresh: bool = True) -> bool:
+    return any(_terminal(n, fresh) for n in nodes)
+
+
+def _leaks(nodes: Sequence[ir.Node], owner: ir.Located | None) -> list[ir.Located | None]:
+    """Where a list can run off its end, each as the node it runs off: the last instruction, the
+    block whose condition or count lets it through, the arm with nothing in it. None for a
+    routine with no body."""
+    if _ends(nodes):
+        return []
+    if not nodes:
+        return [owner]
+    last = nodes[-1]
+    if isinstance(last, ir.Insn):
+        return [last]
+    out: list[ir.Located | None] = []
+    shape, arms = last.op.shape, last.arms
+    if shape is Shape.IF:
+        out += _leaks(last.head, last)
+        out += _leaks(arms[0].body, arms[0]) if arms else [last]
+    elif shape is Shape.REPEAT:
+        out.append(last)
+    else:
+        for a in arms:
+            out += _leaks(a.body, a)
+        if not arms or (shape is Shape.SWITCH and not any(a.sub == 2 for a in arms)):
+            out.append(last)
+    return out
 
 
 def _tokens(nodes: Sequence[ir.Node], out: list[Token], ids: list[str]) -> None:
@@ -252,11 +339,71 @@ def _decode(c: _Checks, img: asm.Image, r: ir.Routine) -> None:
         c.add("error", "DECODE", text, ids[min(k, len(ids) - 1)] if ids else None, r.name)
 
 
+def _dead(c: _Checks, r: ir.Routine, nodes: Sequence[ir.Node]) -> None:
+    """DEAD_CODE: what follows an end or goto, or a block that every way through ends, when new
+    code makes it end or is what follows. Native routines have their own (a defensive `end base`
+    after gotos), which stay."""
+    for n in nodes:
+        if isinstance(n, ir.Block):
+            _dead(c, r, n.head)
+            for a in n.arms:
+                _dead(c, r, a.body)
+    for k, n in enumerate(nodes[:-1]):
+        if _terminal(n) and (not _terminal(n, False) or _touched(nodes[k + 1 :], set())):
+            text = f"{nodes[k + 1].op.name} follows an end or goto and never runs"
+            c.add("warning", "DEAD_CODE", text, nodes[k + 1].id, r.name)
+            return
+
+
+def _structure(c: _Checks) -> None:
+    for r in c.p.routines():
+        _dead(c, r, r.body)
+        if r.va is not None and not _touched(r.body, set()):
+            continue
+        for at in _leaks(r.body, None):
+            text = f"{r.name} can run off its end: finish it with end or goto"
+            c.add("error", "FALLS_OFF", text, at.id if at else None, r.name)
+
+
+def _runs(c: _Checks) -> None:
+    """OPS_PER_RUN, RESTART_LOOP and CORRELATED_DRAW, from `budget`. Nothing new, nothing to say."""
+    if all(n.pc is not None for n in c.p.nodes()):
+        return
+    b = budget.Budget(c.p)
+    fresh = {n.id for n in c.p.nodes() if n.pc is None}
+    index = ir.Index(c.p)
+    seen: set[str | None] = set()
+    for run in sorted(b.new.values(), key=lambda r: -r.count):
+        if run.count <= budget.WARN:
+            break
+        first = next((i for i in run.path if i in fresh), None)
+        if first in seen:
+            continue
+        seen.add(first)
+        level = "error" if run.count > budget.LIMIT else "warning"
+        what = "go round without yielding" if run.unbounded else f"dispatch {run.count}"
+        text = f"a run from {run.entry} can {what}; the game stops a run at {budget.LIMIT}"
+        item = index.routine(first).name if first else None
+        c.add(level, "OPS_PER_RUN", text, first, item)
+    for rs in b.restarts:
+        text = "base[0] restarts with no yield" + (
+            ": nothing on the path decides, so it spins to the run limit every time"
+            if rs.forced
+            else " when the conditions on the path hold"
+        )
+        c.add("error" if rs.forced else "warning", "RESTART_LOOP", text, rs.node, None)
+    for d in b.draws:
+        text = "this random follows another draw in the run, and a draw steps by 1: its odds follow"
+        c.add("warning", "CORRELATED_DRAW", text, d.node, index.routine(d.node).name)
+
+
 def check(p: ir.Program, img: asm.Image | None = None) -> list[Finding]:
     """What is wrong with the new code of a resolved program. `img` is the program assembled,
     by default at its own base; asm refuses what it cannot encode."""
     c = _Checks(p)
     out = c.run()
+    _structure(c)
     if not any(f.code == "UNRESOLVED" for f in out):
         _image(c, asm.assemble(p) if img is None else img)
+        _runs(c)
     return out

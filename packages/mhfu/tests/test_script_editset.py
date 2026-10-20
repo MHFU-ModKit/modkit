@@ -415,9 +415,9 @@ def test_insert_arms():
     es = EditSet.of(p)
     set_args(es, p, pick.arms[2].id, weight=4)  # the empty last branch gives up 4
     es.inserts["u1"] = Insert(
-        Anchor("after", pick.arms[1].id), arm=ir.Arm(1, {"weight": 4}, [enter(8, 0)])
+        Anchor("after", pick.arms[1].id), arm=ir.Arm(1, {"weight": 4}, [enter(1, 0)])
     )
-    es.inserts["u2"] = Insert(Anchor("into", sw.id, 1), arm=ir.Arm(1, {"case": 5}, [enter(8, 1)]))
+    es.inserts["u2"] = Insert(Anchor("into", sw.id, 1), arm=ir.Arm(1, {"case": 5}, [enter(1, 1)]))
     got = run(p, es)
     roundtrip(got)
     out = got.program
@@ -431,7 +431,7 @@ def test_new_routine():
     p = world()
     a = p.item("base_0").body[0].id
     es = EditSet.of(p)
-    es.routines["spin"] = [enter(9, 0), edit.insn("end", 1)]
+    es.routines["spin"] = [enter(2, 0), edit.insn("end", 1)]
     es.inserts["u1"] = Insert(Anchor("before", a), [edit.insn("call", ir.Sym("spin"))])
     got = run(p, es)
     roundtrip(got)
@@ -755,9 +755,9 @@ def full(p):
     block = edit.if_("if_enraged", then=[enter(7, 0)])
     es.inserts["u1"] = Insert(Anchor("before", top.id), [block])
     es.inserts["u12"] = Insert(Anchor("into", "spin"), [edit.insn("call", ir.Sym("spin"))])
-    arm = ir.Arm(1, {"weight": 4}, [enter(8, 0)])
+    arm = ir.Arm(1, {"weight": 4}, [enter(1, 0)])
     es.inserts["u3"] = Insert(Anchor("after", pick.arms[1].id), arm=arm)
-    es.routines["spin"] = [enter(9, 0), edit.insn("end", 1)]
+    es.routines["spin"] = [enter(2, 0), edit.insn("end", 1)]
     es.lists["h0.call"] = ListEdit({0: "spin", 5: None}, ["call_1", ir.External(0x1234)])
     es.lists["h1.deep2"] = ListEdit(fork=True)
     es.names["call_0"], es.notes[top.id] = "Pick", "the hub"
@@ -956,7 +956,7 @@ def test_game_modify_every_row(rows):
                 n for n in p.nodes() if isinstance(n, ir.Insn) and n.op.name == "enter" and n.id
             )
             es = EditSet.of(p)
-            set_args(es, p, n.id, gate=n.args["gate"] ^ 1)
+            set_args(es, p, n.id, sub=n.args["sub"] ^ 1)
             got = apply(p, es)
             roundtrip(got)
             assert len(got.touched) == 1, (em, p.row)

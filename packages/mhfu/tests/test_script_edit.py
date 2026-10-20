@@ -1168,7 +1168,8 @@ def test_random_nested():
     edit.put(
         ok, "base_0", [edit.random([(16, [edit.random([(8, [])])])]), edit.random([], shift=3)]
     )
-    assert codes(ok) == []  # a random in a random is skipped whole
+    # a random in a random is skipped whole; each of the three draws follows another
+    assert codes(ok) == [("warning", "CORRELATED_DRAW")] * 2
 
 
 def test_skip_short():
@@ -1193,8 +1194,8 @@ def test_skip_guard():
         edit.put(p, "base_0", [edit.if_("if_latch", then=[edit.insn("nop")] * n)])
         return found(p)
 
-    assert nops(1000) == {"SKIP_GUARD"}
-    assert nops(999) == set()  # the marker is the 1000th step
+    assert nops(1000) == {"SKIP_GUARD", "OPS_PER_RUN"}  # and a run of 1002 dispatches
+    assert nops(999) == {"OPS_PER_RUN"}  # the marker is the 1000th step; the run is 1001
 
 
 def test_repeat():
@@ -1266,12 +1267,16 @@ def test_decode():
     p = world()
     edit.add(p, ir.Routine("loose", [edit.insn("wait", 1)]))  # falls off its end
     edit.set_slot(p, "call_l", 2, "loose")
-    (f,) = check.check(p)
+    got = {f.code: f for f in check.check(p)}
+    assert got["FALLS_OFF"].item == "loose"
+    f = got["DECODE"]
     assert (f.code, f.item) == ("DECODE", "loose") and "does not decode" in f.text
     q = world()
     edit.add(q, ir.Routine("dead", [edit.insn("end", 1), edit.insn("wait", 1)]))
     edit.set_slot(q, "call_l", 2, "dead")
-    (f,) = check.check(q)
+    got = {f.code: f for f in check.check(q)}
+    assert got["DEAD_CODE"].node == "n12"
+    f = got["DECODE"]
     assert (f.code, f.item, f.node) == ("DECODE", "dead", "n12")
     assert f.text == "dead decodes to nothing, not wait 1"
     ok = world()
