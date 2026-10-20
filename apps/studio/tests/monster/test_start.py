@@ -31,12 +31,13 @@ def ws(
 
 def test_ports(ports: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
-    (shelf,) = MonsterWorkspace().start()
+    shelf = MonsterWorkspace().start()[0]
+    assert shelf.title == "Ports"
     names = {c.path.name: (c.label, c.detail) for c in shelf.choices if c.path is not None}
     assert names["zinogre.toml"] == ("Zinogre", "on Tigrex (em75)")
     assert names["brute_tigrex.toml"][0] == "Brute Tigrex" and shelf.note == ""
     monkeypatch.setattr(mw, "__file__", str(tmp_path / "a" / "b" / "c" / "d" / "e" / "f.py"))
-    (shelf,) = MonsterWorkspace().start()
+    shelf = MonsterWorkspace().start()[0]
     assert shelf.choices == () and "No ports" in shelf.note and shelf.browse is not None
 
 
