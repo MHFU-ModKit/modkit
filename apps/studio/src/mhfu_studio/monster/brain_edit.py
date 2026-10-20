@@ -9,13 +9,13 @@
 
 A gesture names nodes by the ids of the program as the edits make it (`apply`): the game's,
 `u<k>.<i>` in an insert, `NAME.<i>` in a new routine. EditError refuses and leaves the file as it
-was. It reads the program once and checks the result with one `apply`: it never builds, and takes
-milliseconds.
+was. It applies the edit set once, to check the result (that program is the next gesture's view),
+and never builds.
 
-Where a node goes follows what the user sees: a scope's list is arranged as a whole (`_arrange`),
-so a game node keeps its place or gets one move, and new code is one insert per run between game
-nodes. A move cannot name new code, so a game node that goes into it is copied there and deleted at
-its place, `COPY_LIMIT` nodes at most: a file holds what differs, not the game's code.
+Where a node goes follows what the user sees: a scope's list is arranged as a whole (`_arrange`).
+In a game scope a game node keeps its place or gets one move, and new code is one insert per run
+between game nodes; in new code each game node is moved after what stands before it. A file
+names game nodes by id and holds no game code.
 """
 
 from __future__ import annotations
@@ -27,16 +27,15 @@ from mhfu.em.script import catalogue as cat
 from mhfu.em.script import edit, editset, ir, parse, walk
 from mhfu.em.script.brainfile import BrainFile
 from mhfu.em.script.catalogue import Pairs
-from mhfu.em.script.check import Finding
+from mhfu.em.script.check import Finding, is_terminal
 from mhfu.em.script.edit import EditError
-from mhfu.em.script.editset import Anchor, EditSet, Insert, NodeEdit
+from mhfu.em.script.editset import Anchor, Applied, EditSet, Insert, NodeEdit
 from mhfu.em.script.opcodes import BY_NAME, FIRST_DEEP, LISTS, Op, Operand, Shape, operands, slot
 
 from mhfu_studio.monster import brain
 
 __all__ = [
     "BACK",
-    "COPY_LIMIT",
     "PALETTE",
     "Bar",
     "Choice",
@@ -72,8 +71,6 @@ __all__ = [
 ]
 
 BACK = "Back to the game's"
-COPY_LIMIT = 40
-"""Nodes of the game's own code one gesture may copy into the file."""
 _PAIR_DEFAULT = (0, 1)
 _BLOCK_HEADS = (Shape.IF, Shape.REPEAT)
 _WHERE = ("before", "after", "start", "end")
@@ -135,6 +132,7 @@ class Gesture:
         names = cx.tagged()
         self.change(cx)
         _renumber(cx, names)
+        _anchor_later(cx)
         _tidy(es)
         _verify(lift, cx.findings, es)
         _store(bf, old, es)
@@ -175,10 +173,26 @@ def _verify(lift: ir.Program, was: Sequence[Finding], es: EditSet) -> None:
     """Refuse a change `apply` finds fault with: a bad operand, a lost anchor, arms that break
     their block's rules. Faults the edits had already (`was`) are not the gesture's."""
     known = {_key(f) for f in was if f.level == "error"}
-    for f in editset.apply(lift, es).findings:
+    got = _applied(lift, es)
+    for f in got.findings:
         if f.level == "error" and _key(f) not in known:
             text = f.text.removeprefix(f"{f.node}: ") if f.node else f.text
             raise EditError(text)
+
+
+_VIEW: list[tuple[ir.Program, EditSet, Applied]] = []
+"""The last edit set applied, as it was, with its lift: the check of a gesture's result is the
+program the next gesture starts from."""
+
+
+def _applied(lift: ir.Program, es: EditSet) -> Applied:
+    if es.is_empty():
+        return Applied(lift)
+    if _VIEW and _VIEW[0][0] is lift and _VIEW[0][1] == es:
+        return _VIEW[0][2]
+    got = editset.apply(lift, es)
+    _VIEW[:] = [(lift, es.copy(), got)]
+    return got
 
 
 # ---- the edit set as the user sees it
@@ -217,6 +231,8 @@ class _Scope:
     ref: str
     own: list[ir.Node] | None
     """The list of a scope of new code; None for a game's."""
+    owner: ir.Located | None = None
+    """The block or arm of new code whose list it is; none for a new routine."""
 
 
 _LAST: list[tuple[ir.Program, ir.Index]] = []
@@ -237,8 +253,11 @@ class _Cx:
         self.lift, self.es = lift, es
         self.native = _native(lift)
         self.routines = {r.name for r in lift.routines()}
-        got = editset.apply(lift, es)
+        got = _applied(lift, es)
         self.findings = got.findings
+        self.later: list[tuple[str, str | ir.Located | None, _Scope]] = []
+        """Game nodes to move after what stands before them in a scope of new code, once the ids
+        of new code are known."""
         self.program = got.program
         self.index = ir.Index(self.program)
         self.scopes: dict[int, str] = {}
@@ -326,7 +345,9 @@ class _Cx:
     def scope(self, ref: str) -> _Scope:
         """The scope `ref` names: a routine, or a block's then-branch or body, or an arm."""
         _list_of(self.program, self.index, ref)
-        return _Scope(ref, None if self.native_scope(ref) else self.slot_list(ref))
+        if self.native_scope(ref):
+            return _Scope(ref, None)
+        return _Scope(ref, self.slot_list(ref), None if ref in self.es.routines else self.code(ref))
 
     def slot_list(self, ref: str) -> list[ir.Node]:
         """The list of new code a scope holds, which is a new routine's body, a new block's
@@ -382,11 +403,28 @@ def _arrange(
     if scope.own is None:
         _arrange_native(cx, scope.ref, old, new, prefer)
         return
-    if any(it.obj is None for it in (*old, *new)):
-        raise EditError(f"{scope.ref} holds game code the editor cannot rearrange inside new code")
-    if [id(x) for x in scope.own] != [id(it.obj) for it in old]:
+    if [id(x) for x in scope.own] != [id(it.obj) for it in old if it.obj is not None]:
         raise EditError(f"{scope.ref}: other inserts are anchored inside this new code, by hand")
     scope.own[:] = [it.obj for it in new if it.obj is not None]
+    prev: str | ir.Located | None = None
+    for it in new:
+        if it.obj is None:
+            cx.later.append((it.id, prev, scope))
+        prev = it.id if it.obj is None else it.obj
+
+
+def _anchor_later(cx: _Cx) -> None:
+    """Move each game node that is in new code after what stands before it, or into the start of
+    its scope: anchors the ids of new code, which are settled now."""
+    if not cx.later:
+        return
+    ids = {id(x): ident for ident, x in cx.table().items()}
+    for nid, prev, scope in cx.later:
+        if prev is None:
+            ref = scope.ref if scope.owner is None else ids[id(scope.owner)]
+            cx.es.node(nid).move = Anchor("into", ref, 0)
+        else:
+            cx.es.node(nid).move = Anchor("after", prev if isinstance(prev, str) else ids[id(prev)])
 
 
 def _arrange_native(
@@ -520,38 +558,29 @@ def _clear(cx: _Cx, roots: Sequence[str]) -> None:
 
 
 def _fresh(nodes: Sequence[ir.Node]) -> list[ir.Node]:
-    """Copies to put in new code. They name no origin: a file keeps new code as text, which has
-    none, and a copy must equal what is read back."""
+    """Copies of nodes the caller made, for new code: none has an address or an origin, which a
+    file keeps no text of."""
     out = edit.clone(nodes)
     for x in edit.everything(out):
         x.origin = None
     return out
 
 
-def _copy_of(cx: _Cx, refs: Sequence[str]) -> list[ir.Node]:
-    """Copies of nodes as the program has them, for new code to hold; refused past the limit."""
-    nodes = [cx.node(r) for r in refs]
-    n = sum(1 for x in edit.everything(nodes) if x.id in cx.native)
-    if n > COPY_LIMIT:
-        raise EditError(
-            f"that copies {n} of the game's own nodes into the file; "
-            f"{COPY_LIMIT} is the most, so take fewer"
-        )
-    return _fresh(nodes)
-
-
 # ---- insert, delete, replace, move
 
 
 def _slot(cx: _Cx, place: Place) -> tuple[_Scope, int]:
-    """The scope and the position in its list that a place is."""
+    """The scope and the position in its list that a place is. The end of a scope is before its
+    first end or goto (or block that always ends): what follows one never runs."""
     if place.where in ("before", "after"):
         cx.node(place.ref)
         scope = cx.scope(cx.scope_of(place.ref))
         ids = [it.id for it in cx.items(scope.ref)]
         return scope, ids.index(place.ref) + (place.where == "after")
-    items = cx.items(place.ref)
-    return cx.scope(place.ref), 0 if place.where == "start" else len(items)
+    body = _list_of(cx.program, cx.index, place.ref)
+    if place.where == "start":
+        return cx.scope(place.ref), 0
+    return cx.scope(place.ref), next((i for i, n in enumerate(body) if is_terminal(n)), len(body))
 
 
 @dataclass(frozen=True)
@@ -643,30 +672,61 @@ class _Replace(Gesture):
         n, op = cx.node(self.ref), _op(self.op)
         if op is n.op:
             raise EditError(f"it is {cat.entry(op).title} already")
-        game = self.ref in cx.native
-        scope = cx.home(self.ref)
-        old = cx.items(scope.ref)
-        new = self._remake(cx, n, op, game)
-        if game:
-            _clear(cx, [self.ref])
-        item = _It("", new)
-        _arrange(cx, scope, old, [item if it.id == self.ref else it for it in old])
-
-    def _remake(self, cx: _Cx, n: ir.Node, op: Op, game: bool) -> ir.Node:
-        args = _defaults(op, n.args, None)
-        if isinstance(n, ir.Insn):
-            if op.shape is not Shape.PLAIN:
-                raise EditError(f"{n.op.name} cannot become the block {op.name}")
-            return edit.build(op.name, args)
-        if op.shape is not n.op.shape:
+        if isinstance(n, ir.Insn) and op.coded:
+            raise EditError(f"{n.op.name} cannot become the block {op.name}")
+        if isinstance(n, ir.Block) and op.shape is not n.op.shape:
             raise EditError(f"{n.op.name} cannot become {op.name}: they are not alike")
-        kept = _copy_of(cx, [self.ref])[0] if game else cx.code(self.ref)
-        if not isinstance(kept, ir.Block):
-            raise EditError(f"{self.ref} is no block")
-        arms = [_arm(op, a.sub, a.args) for a in kept.arms]
-        for a, got in zip(arms, kept.arms, strict=True):
-            a.body = got.body
-        return edit.build(op.name, args, head=kept.head, arms=arms)
+        args = _defaults(op, n.args, None)
+        arms = (
+            [(a, _arm(op, a.sub, a.args).args) for a in n.arms] if isinstance(n, ir.Block) else []
+        )
+        edit.build(
+            op.name,
+            args,
+            head=n.head if isinstance(n, ir.Block) else (),
+            arms=[ir.Arm(a.sub, c, []) for a, c in arms],
+        )
+        if self.ref in cx.native:
+            self._swap(cx, op, args, arms)
+        else:
+            self._remake(cx, op, args, arms)
+
+    def _swap(
+        self,
+        cx: _Cx,
+        op: Op,
+        args: dict[str, ir.Value],
+        arms: list[tuple[ir.Arm, dict[str, ir.Value]]],
+    ) -> None:
+        """A game node becomes another opcode in place: the edit is its `op` and the operands
+        the game's node does not have by name."""
+        game = cx.native.node(self.ref)
+        assert not isinstance(game, ir.Arm)
+        ne = cx.es.node(self.ref)
+        ne.op = None if op is game.op else op.name
+        ne.args = {k: v for k, v in args.items() if game.args.get(k) != v}
+        for a, c in arms:
+            if a.id in cx.native:
+                kept = cx.native.node(a.id)
+                cx.es.node(a.id).args = {k: v for k, v in c.items() if kept.args.get(k) != v}
+            else:
+                cx.code(a.id).args = dict(c)
+
+    def _remake(
+        self,
+        cx: _Cx,
+        op: Op,
+        args: dict[str, ir.Value],
+        arms: list[tuple[ir.Arm, dict[str, ir.Value]]],
+    ) -> None:
+        """New code becomes another opcode where it is, so what hangs on it still does."""
+        obj = cx.code(self.ref)
+        if isinstance(obj, ir.Arm) or (isinstance(obj, ir.Block) and len(obj.arms) != len(arms)):
+            raise EditError(f"{self.ref}: other inserts add arms to this new block, by hand")
+        obj.op, obj.args = op, args
+        if isinstance(obj, ir.Block):
+            for mine, (_, c) in zip(obj.arms, arms, strict=True):
+                mine.args = dict(c)
 
 
 @dataclass(frozen=True)
@@ -706,9 +766,6 @@ class _MoveTo(Gesture):
             _arrange(cx, src, old, [*rest[:k], item, *rest[k:]], {self.ref})
             return
         there = cx.items(dst.ref)
-        if item.obj is None and dst.own is not None:
-            item = _It("", _copy_of(cx, [self.ref])[0])
-            _clear(cx, [self.ref])
         _arrange(cx, src, old, [*old[:i], *old[i + 1 :]])
         _arrange(cx, dst, there, [*there[:k], item, *there[k:]], {self.ref})
 
@@ -730,26 +787,21 @@ class _Wrap(Gesture):
         at = sorted(ids.index(r) for r in self.refs)
         if at != list(range(at[0], at[0] + len(at))) or len(set(self.refs)) != len(at):
             raise EditError("the nodes to wrap must follow each other")
-        picked = old[at[0] : at[-1] + 1]
-        game = [it.id for it in picked if it.obj is None]
-        copies = iter(_copy_of(cx, game)) if game else iter(())
-        body = [it.obj if it.obj is not None else next(copies) for it in picked]
-        shell = self._shell(cx, body)
-        _clear(cx, game)
-        new = [*old[: at[0]], _It("", shell), *old[at[-1] + 1 :]]
-        _arrange(cx, scope, old, new)
+        shell, inner = self._shell()
+        _arrange(cx, inner, [], old[at[0] : at[-1] + 1])
+        _arrange(cx, scope, old, [*old[: at[0]], _It("", shell), *old[at[-1] + 1 :]])
 
-    def _shell(self, cx: _Cx, body: list[ir.Node]) -> ir.Node:
+    def _shell(self) -> tuple[ir.Block, _Scope]:
+        """The new block, empty, and the scope the wrapped nodes go in."""
         if self.weights:
             if sum(self.weights) != cat.DRAW:
                 raise EditError(f"weights add up to {sum(self.weights)}, not {cat.DRAW}")
-            branches = [(w, body if i == 0 else []) for i, w in enumerate(self.weights)]
-            return edit.random(branches)
+            pick = edit.random([(w, []) for w in self.weights])
+            return pick, _Scope("", pick.arms[0].body, pick.arms[0])
         node = default_node(self.op)
         if not isinstance(node, ir.Block) or node.op.shape is not Shape.IF:
             raise EditError(f"{self.op} is no condition")
-        node.head = body
-        return node
+        return node, _Scope("", node.head, node)
 
 
 # ---- arms
@@ -890,8 +942,8 @@ class _RemoveArm(Gesture):
         key = self.arm.partition(".")[0]
         if self.arm in cx.native:
             pass
-        elif key in cx.es.inserts and cx.es.inserts[key].arm is not None:
-            del cx.es.inserts[key]
+        elif self.arm == f"{key}.0" and cx.es.inserts.get(key) and cx.es.inserts[key].arm:
+            del cx.es.inserts[key]  # the arm an insert adds
         else:
             own = _own_arms(cx, b.id, b)
             gone = cx.code(self.arm)
@@ -900,7 +952,7 @@ class _RemoveArm(Gesture):
             own.arms[:] = arms
         rest = [i for i in ids if i != self.arm]
         for k, i in enumerate(rest):
-            ins = cx.es.inserts.get(i.partition(".")[0]) if i not in cx.native else None
+            ins = cx.es.inserts.get(i.partition(".")[0]) if i.endswith(".0") else None
             if ins and ins.arm is not None and ins.anchor.ref == self.arm:
                 ins.anchor = Anchor("after", rest[k - 1]) if k else Anchor("into", b.id, 0)
 
@@ -1078,6 +1130,33 @@ class _Back(Gesture):
             editset.revert_routine(es, cx.lift, self.ref)
         else:
             raise EditError(f"{self.ref} is new code: delete it, or take its insert out")
+        _unhang(cx)
+
+
+def _unhang(cx: _Cx) -> None:
+    """Drop what hangs on a node a revert took away or put somewhere else: a game node moved in
+    goes back to where it was, which may be a deleted place or inside what it was moved into, and
+    new code or moves anchored at it have nothing to stand on."""
+    es = cx.es
+    known = {_key(f) for f in cx.findings}
+    while True:
+        lost = {
+            f.node
+            for f in _applied(cx.lift, es).findings
+            if f.node
+            and _key(f) not in known
+            and (f.code == "DOC_ANCHOR" or "inside" in f.text or "circle" in f.text)
+        }
+        gone = False
+        for key in lost:
+            if key in es.inserts:
+                editset.revert_insert(es, key)
+                gone = True
+            elif key in es.nodes and es.nodes[key].move:
+                es.nodes[key].move = None
+                gone = True
+        if not gone:
+            return
 
 
 @dataclass(frozen=True)

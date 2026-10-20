@@ -16,8 +16,9 @@ import pytest
 from mhfu.em import script
 from mhfu.em.script import asm, brainfile, build, edit, editset, ir, parse, source
 from mhfu.em.script import catalogue as cat
+from mhfu.em.script.check import is_terminal
 from mhfu.em.script.edit import EditError
-from mhfu.em.script.editset import EditSet, ListEdit
+from mhfu.em.script.editset import Anchor, EditSet, ListEdit
 from mhfu.em.script.opcodes import Shape, operands
 from mhfu.files import Extracted
 from mhfu_studio.monster import brain_edit as be
@@ -163,6 +164,9 @@ class Rig:
         again = brainfile.loads(brainfile.dumps(self.bf)).edits(self.row)
         assert again is not None and editset.equal(again, es)
         asm.assemble(got.program)
+        new = [x for i in es.inserts.values() for x in edit.everything(i.nodes or [i.arm])]
+        new += [x for body in es.routines.values() for x in edit.everything(body)]
+        assert [x for x in new if x.pc is not None or x.origin is not None or x.id] == []
         if builds:
             built = build.Built.of(self.lift, es)
             assert [f for f in built.findings if f.level == "error"] == []
@@ -215,6 +219,37 @@ def get_scope(p: ir.Program, scope: str) -> list[ir.Node]:
 
 def get_block(p: ir.Program, ref: str) -> ir.Block:
     return next(b for b in blocks(p) if b.id == ref)
+
+
+def live_end(body: list[ir.Node]) -> int:
+    """Where the end of a scope is: before its first end, goto or block that always ends."""
+    return next((i for i, n in enumerate(body) if is_terminal(n)), len(body))
+
+
+def live_end_found(body: list[ir.Node]) -> bool:
+    return live_end(body) < len(body)
+
+
+def model_insert(want: ir.Program, where: Place, nodes: list[ir.Node]) -> None:
+    """The same insert with `edit`'s functions."""
+    if where.where in ("before", "after"):
+        edit.insert(want, where.ref, nodes, after=where.where == "after")
+        return
+    body = get_scope(want, where.ref)
+    edit.put_in(want, where.ref, nodes, 0 if where.where == "start" else live_end(body))
+
+
+def model_move(want: ir.Program, ref: str, where: Place) -> None:
+    if where.where in ("before", "after", "start"):
+        edit.move(want, ref, where.ref, where.where)
+        return
+    body = get_scope(want, where.ref)
+    k = live_end(body)
+    if k < len(body):
+        if body[k].id != ref:
+            edit.move(want, ref, body[k].id, "before")
+    elif not (body and body[-1].id == ref):
+        edit.move(want, ref, where.ref, "end")
 
 
 def size(n: ir.Node) -> int:
@@ -402,16 +437,15 @@ def test_insert_beside_a_node(site: Site) -> None:
     ):
         where = pick()
         want = site.rig.model()
-        edit.insert(want, where.ref, [enter(7, 18)], after=where.where == "after")
+        model_insert(want, where, [enter(7, 18)])
         site.rig.run(be.insert(where, [enter(7, 18)]), want)
 
 
 def test_insert_at_the_ends_of_a_scope(site: Site) -> None:
     for where in (Place.start(site.scope), Place.end(site.scope)):
         want = site.rig.model()
-        edit.put_in(want, where.ref, [enter(7, 18)], 0 if where.where == "start" else None)
-        # the end of a scope is after its end or goto, which the checks call dead code
-        site.rig.run(be.insert(where, [enter(7, 18)]), want, builds=where.where == "start")
+        model_insert(want, where, [enter(7, 18)])
+        site.rig.run(be.insert(where, [enter(7, 18)]), want)
 
 
 def arm0(site: Site) -> str:
@@ -427,7 +461,7 @@ def test_insert_into_a_block_and_an_arm(site: Site) -> None:
     ):
         where = pick()
         want = site.rig.model()
-        edit.put_in(want, where.ref, [enter(7, 18)], 0 if where.where == "start" else None)
+        model_insert(want, where, [enter(7, 18)])
         site.rig.run(be.insert(where, [enter(7, 18)]), want)
 
 
@@ -548,14 +582,6 @@ def test_replace_a_pick_by_a_shifted_one_keeps_its_weights(site: Site) -> None:
     site.rig.run(be.replace(n.id, "random_shifted"), want, builds=False)  # nested picks
 
 
-def test_replace_copies_at_most_the_limit(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
-    if site.kind != "native":
-        pytest.skip("only game code is limited")
-    monkeypatch.setattr(be, "COPY_LIMIT", 1)
-    site.rig.refuse(be.replace(site.cond, "if_provoked"), "copies")
-    site.rig.run(be.replace(site.ids[0], "wait"))
-
-
 def test_earlier_and_later(site: Site) -> None:
     rig = site.rig
     a, b, c = site.order()
@@ -611,7 +637,7 @@ def test_move_to_another_place(site: Site, name: str) -> None:
     a = site.ids[0]
     where = PLACES[name](site)
     want = site.rig.model()
-    edit.move(want, a, where.ref, where.where)
+    model_move(want, a, where)
     site.rig.run(be.move_to(a, where), want)
 
 
@@ -824,9 +850,7 @@ def test_wrap_a_block(site: Site) -> None:
     site.rig.run(be.wrap_if([site.pick], "if_aware"), wrapped(site.rig, [site.pick], block))
 
 
-def test_wrap_is_refused_for_what_it_cannot_wrap(
-    site: Site, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_wrap_is_refused_for_what_it_cannot_wrap(site: Site) -> None:
     rig = site.rig
     a, _, c = site.order()
     rig.refuse(be.wrap_if([a, c], "if_enraged"), "follow each other")
@@ -836,9 +860,6 @@ def test_wrap_is_refused_for_what_it_cannot_wrap(
     rig.refuse(be.wrap_if([a], "enter"), "no condition")
     rig.refuse(be.wrap_pick([a], (10, 10)), "add up")
     rig.refuse(be.wrap_if([a, a], "if_enraged"), "follow each other")
-    if site.kind == "native":
-        monkeypatch.setattr(be, "COPY_LIMIT", 1)
-        rig.refuse(be.wrap_if(site.order()[:2], "if_enraged"), "copies")
 
 
 # ---- operands
@@ -1120,23 +1141,29 @@ def test_a_gesture_can_be_run_twice(rig: Rig) -> None:
 
 def test_a_node_moves_between_the_game_and_new_code(rig: Rig) -> None:
     first = rig.lift.routines()[0].name
-    rig.run(
-        be.insert_code(Place.start(first), "if_enraged\n  enter 3 0 0\nenter 7 0 0\n"), builds=False
-    )
+    rig.run(be.insert_code(Place.start(first), "if_enraged\n  enter 3 0 0\nenter 7 10 0\n"))
     block = next(b for b in blocks(rig.program, "if_enraged") if b.id.startswith("u"))
-    game = next(x.id for x in rig.lift.routines()[1].body if isinstance(x, ir.Insn))
+    second, game = next(
+        (r.name, x.id)
+        for r in rig.lift.routines()[1:]
+        for x in ir.walk(r.body)
+        if isinstance(x, ir.Insn) and x.op.name == "enter"
+    )
     want = rig.model()
     edit.move(want, game, block.id, "start")
-    rig.run(be.move_to(game, Place.start(block.id)), want, builds=False)
+    rig.run(be.move_to(game, Place.start(block.id)), want)
     es = rig.es
-    assert es is not None and es.nodes[game].delete and not es.nodes[game].move
+    assert es is not None and not es.nodes[game].delete
+    assert es.nodes[game].move == Anchor("into", block.id, 0)
     new = next(
-        x.id for x in rig.program.nodes() if isinstance(x, ir.Insn) and x.args.get("main") == 7
+        x.id
+        for x in rig.program.nodes()
+        if isinstance(x, ir.Insn) and x.args == {"main": 7, "sub": 10, "gate": 0}
     )
     want = rig.model()
-    edit.move(want, new, rig.lift.routines()[1].name, "end")
-    rig.run(be.move_to(new, Place.end(rig.lift.routines()[1].name)), want, builds=False)
-    rig.run(be.back_to_game(game), builds=False)
+    model_move(want, new, Place.end(second))
+    rig.run(be.move_to(new, Place.end(second)), want)
+    rig.run(be.back_to_game(game))
 
 
 def test_a_game_node_moves_beside_new_code(rig: Rig) -> None:
@@ -1170,11 +1197,10 @@ def test_new_code_moves_between_two_game_scopes(rig: Rig) -> None:
         if isinstance(x, ir.Insn) and x.args.get("main") == 7 and x.args.get("sub", 0) >= 10
     )
     want = rig.model()
-    edit.move(want, first, r1.name, "end")
-    rig.run(be.move_to(first, Place.end(r1.name)), want, builds=False)
+    model_move(want, first, Place.end(r1.name))
+    rig.run(be.move_to(first, Place.end(r1.name)), want)
     es = rig.es
-    assert es is not None and sorted(i.anchor.ref for i in es.inserts.values()).count(r1.name) == 0
-    assert len(es.inserts) == 2
+    assert es is not None and len(es.inserts) == 2
 
 
 def test_twin_rows_share_their_edits() -> None:
@@ -1374,6 +1400,132 @@ def test_check_operands_is_edit_modify(lift: ir.Program) -> None:
         be.check_operands(block, {"zzz": 1})
 
 
+# ---- the file names game nodes by id
+
+
+def test_wrapping_game_nodes_moves_them_and_copies_nothing(site: Site) -> None:
+    if site.kind != "native":
+        pytest.skip("only game nodes")
+    rig = site.rig
+    a, b = site.order()[:2]
+    rig.run(be.wrap_if([a, b], "if_enraged"))
+    es = rig.es
+    assert es is not None and len(es.inserts) == 1
+    assert not any(ne.delete for ne in es.nodes.values())
+    assert [es.nodes[x].move for x in (a, b)] == [Anchor("into", "u1.0", 0), Anchor("after", a)]
+    (shell,) = es.inserts["u1"].nodes
+    assert isinstance(shell, ir.Block) and shell.head == []
+
+
+def test_wrapping_in_a_pick_moves_them_into_its_first_branch(site: Site) -> None:
+    if site.kind != "native":
+        pytest.skip("only game nodes")
+    a, b = site.order()[:2]
+    site.rig.run(be.wrap_pick([a, b], (20, 12)))
+    es = site.rig.es
+    assert es is not None and es.nodes[a].move == Anchor("into", "u1.1", 0)
+    assert es.nodes[b].move == Anchor("after", a)
+
+
+def test_replacing_a_game_node_is_an_opcode_not_new_code(site: Site) -> None:
+    if site.kind != "native":
+        pytest.skip("only game nodes")
+    rig = site.rig
+    rig.run(be.replace(site.ids[0], "wait"))
+    rig.run(be.replace(site.cond, "if_provoked"))
+    es = rig.es
+    assert es is not None and not es.inserts
+    assert (es.nodes[site.ids[0]].op, es.nodes[site.cond].op) == ("wait", "if_provoked")
+    assert es.nodes[site.ids[0]].args == {"frames": 0}
+    rig.run(be.replace(site.cond, get_block(site.rig.lift, site.cond).op.name))
+    assert site.cond not in rig.es.nodes
+
+
+def test_a_block_that_becomes_another_keeps_its_arms_by_edit(site: Site) -> None:
+    if site.kind != "native":
+        pytest.skip("only game nodes")
+    rig = site.rig
+    pick = get_block(site.p, site.pick)
+    rig.run(be.replace(site.pick, "random_shifted"), builds=False)  # a pick inside a pick
+    es = rig.es
+    assert es is not None and es.nodes[site.pick].op == "random_shifted"
+    assert es.nodes[site.pick].args == {"shift": 0} and not es.inserts
+    arms = get_block(site.p, site.pick).arms
+    assert [a.args for a in arms] == [a.args for a in pick.arms]
+
+
+def test_a_game_node_moves_into_a_new_block_by_its_id(site: Site) -> None:
+    if site.kind != "native":
+        pytest.skip("only game nodes")
+    rig = site.rig
+    rig.run(be.insert_code(Place.before(site.ids[0]), "if_enraged\n  enter 7 10 0\n"))
+    rig.run(be.move_to(site.ids[0], Place.end("u1.0")))
+    es = rig.es
+    assert es is not None and es.nodes[site.ids[0]].move == Anchor("after", "u1.1")
+    assert not any(ne.delete for ne in es.nodes.values())
+
+
+def test_the_end_of_a_scope_is_before_its_end_or_goto(site: Site) -> None:
+    rig = site.rig
+    body = get_scope(site.p, site.scope)
+    k = live_end(body)
+    rig.run(be.insert(Place.end(site.scope), [enter(7, 18)]))
+    got = get_scope(site.p, site.scope)
+    new = got[k]
+    assert isinstance(new, ir.Insn) and new.args["sub"] == 18
+    assert [n.id for n in got[k + 1 :]] == [n.id for n in body[k:]] or site.kind != "native"
+    assert len(got) == len(body) + 1
+
+
+def test_the_end_of_a_scope_without_a_terminal_is_its_last_node(rig: Rig) -> None:
+    scope, body = next((s, b) for s, b in scopes(rig.lift) if b and not live_end_found(b))
+    rig.run(be.insert(Place.end(scope), [enter(7, 18)]))
+    got = get_scope(rig.program, scope)
+    assert [n.id for n in got[:-1]] == [n.id for n in body] and got[-1].id.startswith("u")
+    ending = next(r for r in rig.lift.routines() if live_end_found(r.body))
+    k = live_end(ending.body)
+    rig.run(be.insert(Place.end(ending.name), [enter(7, 19)]))
+    got = get_scope(rig.program, ending.name)
+    assert got[k].id.startswith("u") and [n.id for n in got[k + 1 :]] == [
+        n.id for n in ending.body[k:]
+    ]
+
+
+def test_a_gesture_applies_the_edit_set_once(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    real = editset.apply
+
+    def counting(lift: ir.Program, es: EditSet) -> editset.Applied:
+        calls.append(es)
+        return real(lift, es)
+
+    monkeypatch.setattr(editset, "apply", counting)
+    scope, ids = run_of(rig.lift, 2, lambda x: x.args["main"] < 8)
+    for g in (
+        be.insert(Place.after(ids[0]), [enter(7, 11)]),
+        be.set_pair(ids[1], 3, 4),
+        be.set_note(ids[0], "n"),
+        be.insert(Place.before(ids[0]), [enter(7, 12)]),
+        be.delete(ids[0]),
+        be.wrap_if([ids[1]], "if_enraged"),
+    ):
+        calls.clear()
+        g.edit(rig.bf, rig.row, rig.lift)
+        assert len(calls) == 1, g.label
+
+
+def test_a_gesture_starts_from_the_edit_set_the_file_has(rig: Rig) -> None:
+    """The check of one gesture is the next one's view, unless the file changed in between."""
+    _, ids = run_of(rig.lift, 3)
+    rig.run(be.insert(Place.after(ids[0]), [enter(7, 11)]))
+    es = rig.es
+    assert es is not None
+    es.node(ids[1]).delete = True  # something else wrote to the file
+    rig.refuse(be.set_pair(ids[1], 3, 4), "no node")
+    rig.run(be.set_pair(ids[2], 3, 4))
+    assert ids[1] in rig.es.nodes and rig.es.nodes[ids[1]].delete  # type: ignore[union-attr]
+
+
 # ---- builds
 
 
@@ -1406,8 +1558,8 @@ def test_the_usual_edits_build_clean(lift: ir.Program) -> None:
 # ---- chains of gestures against a model
 
 
-LIMITS = ("copies", "called")
-"""What a gesture may refuse though its model cannot: the copy limit, a name in use."""
+LIMITS = ("called",)
+"""What a gesture may refuse though its model cannot: a name in use."""
 
 
 class Fuzz:
@@ -1459,12 +1611,7 @@ class Fuzz:
         place, node = self.place(), self.entry().node()
 
         def model(p: ir.Program) -> None:
-            if place.where in ("before", "after"):
-                edit.insert(p, place.ref, [edit.copy([node])[0]], after=place.where == "after")
-            else:
-                edit.put_in(
-                    p, place.ref, [edit.copy([node])[0]], 0 if place.where == "start" else None
-                )
+            model_insert(p, place, [edit.copy([node])[0]])
 
         return be.insert(place, [node]), model
 
@@ -1487,7 +1634,7 @@ class Fuzz:
 
     def make_move(self) -> tuple[Gesture, Callable[[ir.Program], None]]:
         n, place = self.rng.choice(self.nodes()), self.place()
-        return be.move_to(n.id, place), lambda p: edit.move(p, n.id, place.ref, place.where)
+        return be.move_to(n.id, place), lambda p: model_move(p, n.id, place)
 
     def make_replace(self) -> tuple[Gesture, Callable[[ir.Program], None]]:
         n = self.rng.choice(self.nodes())
