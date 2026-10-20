@@ -85,7 +85,7 @@ def run(args: argparse.Namespace) -> int:
     if args.routine is not None:
         only = [args.routine]
         if args.routine not in lst.routines:
-            lst = replace(lst, routines={args.routine: script.decode(sc.mem.u8, args.routine)})
+            lst = replace(lst, routines={args.routine: script.decode(sc.read, args.routine)})
     if args.stats:
         stats = lst.stats(only)
         emit(json.dumps(stats.as_dict(), indent=1) if args.json else stats_text(stats), args.out)

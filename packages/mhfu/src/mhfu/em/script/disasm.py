@@ -21,6 +21,7 @@ game's own skipper (SCRIPT_SKIP) steps by.
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
@@ -233,10 +234,13 @@ class Routine:
         return sum(p.kind == "opcode" for p in self.problems)
 
 
-def _flow(read: Reader, ins: Insn, loops: dict[int, int]) -> tuple[list[int], list[int]]:
+def _flow(
+    read: Reader, ins: Insn, loops: dict[int, int], ends: dict[int, int]
+) -> tuple[list[int], list[int]]:
     """Where control goes after `ins`, the first successor being the fall-through, and the
     markers of the block it opens, which belong to the routine whether or not a path runs
-    through them."""
+    through them. `ends` holds the end marker of each marker an opener's scan found, so an arm
+    is not scanned again."""
     op, pc, nxt = ins.op, ins.pc, ins.pc + ins.length
     role = ins.role
     if op.flow in (Flow.GOTO, Flow.END):
@@ -244,12 +248,13 @@ def _flow(read: Reader, ins: Insn, loops: dict[int, int]) -> tuple[list[int], li
     if role is None:
         return [nxt], []
     if role == "mid":
-        end = markers(read, pc)[-1]
+        end = ends[pc] if pc in ends else markers(read, pc)[-1]
         return [end + length(read, end)], []
     if role == "close":
         return [nxt, *([loops[pc]] if pc in loops else [])], []
     found = markers(read, pc)
     end = found[-1]
+    ends.update(dict.fromkeys(found, end))
     bodies = [m + length(read, m) for m in found[:-1]]
     match op.shape:
         case Shape.IF:
@@ -270,9 +275,11 @@ def decode(read: Reader, entry: int) -> Routine:
     every block it opens. A path ends at a goto or an `end`; bytes that are no instruction, and
     a block with no end, are problems and not guesses. What was decoded before them is kept."""
     insns: dict[int, Insn] = {}
+    succs: dict[int, tuple[int, ...]] = {}
     problems: list[Problem] = []
     blocks: list[tuple[int, int]] = []
     loops: dict[int, int] = {}
+    ends: dict[int, int] = {}
     todo = [entry]
     while todo:
         pc = todo.pop()
@@ -283,18 +290,22 @@ def decode(read: Reader, entry: int) -> Routine:
                 problems.append(_problem(e, pc))
                 break
             try:
-                succ, found = _flow(read, ins, loops)
+                succ, found = _flow(read, ins, loops, ends)
             except (BadScript, Unmapped) as e:
                 problems.append(_problem(e, pc))
                 succ, found = [pc + ins.length], []
             if found:
                 blocks.append((pc, found[-1]))
-            insns[pc] = replace(ins, succ=tuple(succ))
+            insns[pc], succs[pc] = ins, tuple(succ)
             todo += found + succ[1:]
             if not succ:
                 break
             pc = succ[0]
-    placed = tuple(replace(i, depth=_depth(i, blocks)) for _, i in sorted(insns.items()))
+    starts, stops = sorted(s for s, _ in blocks), sorted(e for _, e in blocks)
+    placed = tuple(
+        replace(i, succ=succs[pc], depth=_depth(i, starts, stops))
+        for pc, i in sorted(insns.items())
+    )
     return Routine(entry, placed, tuple(dict.fromkeys(problems)))
 
 
@@ -302,8 +313,10 @@ def _problem(e: BadScript | Unmapped, pc: int) -> Problem:
     return e.problem if isinstance(e, BadScript) else Problem("unmapped", pc, str(e))
 
 
-def _depth(ins: Insn, blocks: list[tuple[int, int]]) -> int:
-    inside = sum(start < ins.pc < stop for start, stop in blocks)
+def _depth(ins: Insn, starts: list[int], stops: list[int]) -> int:
+    """The blocks `ins` lies strictly inside, by their sorted starts and stops (a stop is past its
+    start, so a block stopped by `ins.pc` started before it)."""
+    inside = bisect_left(starts, ins.pc) - bisect_right(stops, ins.pc)
     return inside - (ins.role == "mid")
 
 
@@ -532,8 +545,10 @@ class Listing:
         }
 
 
-def disassemble(read: Reader, header: Header) -> Listing:
-    """Every routine the header's lists name, and the walk routines those routines name."""
+def disassemble(read: Reader, header: Header, decoded: dict[int, Routine] | None = None) -> Listing:
+    """Every routine the header's lists name, and the walk routines those routines name.
+    `decoded` keeps routines by entry across calls on the same bytes."""
+    cache = {} if decoded is None else decoded
     sources: dict[int, list[Source]] = {}
     for src, w in header.entries():
         if slot(src.field).kind == "routines":
@@ -547,7 +562,9 @@ def disassemble(read: Reader, header: Header) -> Listing:
         entry = todo.pop()
         if entry in routines:
             continue
-        routines[entry] = decode(read, entry)
+        if entry not in cache:
+            cache[entry] = decode(read, entry)
+        routines[entry] = cache[entry]
         for ins in routines[entry].insns:
             for ref in ins.refs:
                 t = header.target(ref)
@@ -598,10 +615,15 @@ class Scripts:
 
     def __init__(self, game: Extracted, species: int) -> None:
         self.species = species
-        self.ovl = game.em(species)
-        self.task = game.overlay(GAME_TASK)
-        self.mem = Space([self.task, self.ovl])
+        self._open(game.overlay(GAME_TASK), game.em(species))
+
+    def _open(self, task: Overlay, ovl: Overlay) -> None:
+        """Reads from `task` and `ovl` (one image may be both), with nothing decoded yet."""
+        self.task, self.ovl = task, ovl
+        self.mem = Space([task] if task is ovl else [task, ovl])
+        self.read: Reader = self.mem.reader()
         self._listings: dict[int, Listing] = {}
+        self._decoded: dict[int, Routine] = {}
 
     def header_at(self, variant: int, row: int | None = None) -> int:
         """The header a species row has for a map type. `row` is a species id, by default this
@@ -635,8 +657,14 @@ class Scripts:
     def listing(self, va: int) -> Listing:
         """Every routine the header at `va` reaches; each header is disassembled once."""
         if va not in self._listings:
-            self._listings[va] = disassemble(self.mem.u8, self.header_in(va))
+            self._listings[va] = disassemble(self.read, self.header_in(va), self._decoded)
         return self._listings[va]
+
+    def decode(self, entry: int) -> Routine:
+        """The routine at `entry`, decoded once for every header and the lift."""
+        if entry not in self._decoded:
+            self._decoded[entry] = decode(self.read, entry)
+        return self._decoded[entry]
 
     def disassemble(self, variant: int = 0, row: int | None = None) -> Listing:
         return self.listing(self.header_at(variant, row))
@@ -660,7 +688,7 @@ class Scripts:
                 if va not in self.ovl.initialised:
                     return False
                 first = self.header_in(va).lists[0][0]
-                if not decode(self.mem.u8, first).clean:
+                if not self.decode(first).clean:
                     return False
                 s = self.listing(va).stats()
                 if s.unknown or s.unterminated or s.routines < _MIN_ROUTINES:

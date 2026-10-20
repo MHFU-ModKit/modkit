@@ -39,3 +39,14 @@ def test_space():
         space.u8(0x1800)
     with pytest.raises(ValueError):
         Space([Image(bytes(8), 0x1000), Image(bytes(8), 0x1004)])
+
+
+def test_space_reader_is_u8():
+    space = Space([Image(b"\1\2", 0x2000), Image(b"\3", 0x1000)])
+    read = space.reader()
+    assert [read(a) for a in (0x1000, 0x2000, 0x2001)] == [
+        space.u8(a) for a in (0x1000, 0x2000, 0x2001)
+    ]
+    for outside in (0x1001, 0x2002):
+        with pytest.raises(Unmapped):
+            read(outside)

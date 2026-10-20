@@ -365,9 +365,7 @@ class Fake(script.Scripts):
 
     def __init__(self, ovl, rows):
         self.species = next(iter(rows))
-        self.ovl = self.task = ovl
-        self.mem = Space([ovl])
-        self._listings = {}
+        self._open(ovl, ovl)
         self.table = {
             r: v if isinstance(v, dict) else dict.fromkeys(range(17), v) for r, v in rows.items()
         }
