@@ -11,6 +11,9 @@ refused edit therefore needs no code.
 A node is compact: its title and a line or two of summary, no editors; what a node holds is
 edited in the property bar (`properties.py`). NodeGraphQt's own model, commands and undo are
 bypassed: its nodes are only items in a scene.
+
+A `tree` canvas (the Brain tab's graph) flows down the page instead: ports at a node's top and
+bottom, captions over the outputs, flags and chips from the owner's tags, no wires by hand.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from NodeGraphQt import BackdropNode, BaseNode, NodeGraph, Port
+from NodeGraphQt.constants import LayoutDirectionEnum, PipeLayoutEnum
 from NodeGraphQt.qgraphics.node_base import NodeItem
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
@@ -69,13 +73,33 @@ GLOW_WIDTH, GLOW_Z, GLOW_MUTED = 3.0, -1.5, 110
 a muted frame's title."""
 DIM, STAND_IN, FADED = 0.35, 0.8, 0.2
 """The opacity of a dimmed node, of a stand-in node, and of a wire faded back."""
+PROXY_PX = 70.0
+"""NodeGraphQt's on-screen node width under which a node hides its title and widgets."""
+FIT_LEAST = 1.1 * PROXY_PX / NODE_W
+"""The least scale a tree canvas fits to: its nodes stay above `PROXY_PX` wide."""
+FLAG_W, CHIP_GAP, CHIP_PAD = 3.0, 4.0, 5.0
+"""The width of a flagged node's outline, the gap between title-bar chips, and the room a chip
+leaves round its text."""
+FIT_SLACK = 1.02
+"""What a fit to `FIT_LEAST` is scaled up by, for `fitInView`'s margin."""
+TITLE_PAD, PORT_STEP, CAPTION_GAP = 16.0, 34.0, 10.0
+"""A tree node's room round its title, the least spacing of its outputs, and the gap between two
+captions."""
+LINE_H, CAPTION_H, PORT_ROOM = 16.0, 14.0, 14.0
+"""A tree node's link line, caption row, and the bottom edge's room for a port (its caption row
+sits above it)."""
 
 
 @dataclass(frozen=True)
 class NodeSpec:
     """One node as the owner wants it drawn: a title, a `summary` of a line or two under it, a
     `badge` in its title bar, the `tip` it carries; `dim` draws it faded; `ref` draws a stand-in
-    for a node shown elsewhere: dashed and a little faded."""
+    for a node shown elsewhere: dashed and a little faded.
+
+    For a tree canvas: `captions` name each output (in `outputs` order) under the node, `link`
+    is an underlined line of link text under the summary, `flag` outlines the node in the colour
+    of that tag (`GraphView.set_tags`), and `marks` are chips in the title bar, each in its
+    tag's colour."""
 
     id: str
     title: str
@@ -88,12 +112,17 @@ class NodeSpec:
     dim: bool = False
     tip: str = ""
     ref: bool = False
+    captions: tuple[str, ...] = ()
+    link: str = ""
+    flag: str = ""
+    marks: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class FrameSpec:
     """A titled frame round the nodes `nodes` (ids), tinted by `role`. A `mark` follows the
-    title, never cut; `muted` quiets the title, `lit` outlines the frame."""
+    title, never cut; `muted` quiets the title, `lit` outlines the frame in the accent, a `flag`
+    in the colour of that tag."""
 
     id: str
     title: str
@@ -102,6 +131,7 @@ class FrameSpec:
     mark: str = ""
     muted: bool = False
     lit: bool = False
+    flag: str = ""
 
 
 @dataclass(frozen=True)
@@ -218,7 +248,11 @@ def wrap(text: str, metrics: QFontMetricsF, width: float, lines: int = SUMMARY_L
 class _Item(NodeItem):  # type: ignore[misc]
     """A node's drawing: a summary under the title, a badge in the title bar, a dashed edge for a
     reference, and no renaming. It overrides `calc_size` (room for the summary, at least
-    `NODE_W` wide), `paint` (draws those) and `mouseDoubleClickEvent`."""
+    `NODE_W` wide), `paint` (draws those), `align_label` and `align_ports` (a tree's) and
+    `mouseDoubleClickEvent`.
+
+    A `tree` node has one input at the top middle and its outputs along the bottom edge, each
+    with a caption above it; it is as wide as its title bar, chips and captions need."""
 
     badge = ""
     summary = ""
@@ -226,11 +260,25 @@ class _Item(NodeItem):  # type: ignore[misc]
     #: the node's body and edge colours, for a reference's dashed edge
     body: QColor | None = None
     edge: QColor | None = None
+    tree = False
+    captions: tuple[str, ...] = ()
+    link = ""
+    #: the outline of a flagged node, and the chips in the title bar
+    flag: QColor | None = None
+    chips: tuple[tuple[str, QColor], ...] = ()
 
     @staticmethod
     def _font() -> QFont:
         font = QFont(QApplication.font())
         font.setPointSizeF(9.0)
+        return font
+
+    @staticmethod
+    def _small(*, bold: bool = False, underline: bool = False) -> QFont:
+        font = QFont(QApplication.font())
+        font.setPointSizeF(8.0)
+        font.setBold(bold)
+        font.setUnderline(underline)
         return font
 
     def _lines(self, width: float) -> list[str]:
@@ -239,7 +287,33 @@ class _Item(NodeItem):  # type: ignore[misc]
     def _top(self) -> float:
         return float(self.text_item.boundingRect().height()) + 6.0
 
+    def _chip_widths(self) -> list[float]:
+        metrics = QFontMetricsF(self._small(bold=True))
+        return [metrics.horizontalAdvance(t) + 2 * CHIP_PAD for t, _ in self.chips]
+
+    def _right(self) -> float:
+        """The room the chips and the badge take at the right of the title bar."""
+        parts = self._chip_widths()
+        if self.badge:
+            parts.append(QFontMetricsF(self._small(bold=True)).horizontalAdvance(self.badge))
+        return sum(parts) + CHIP_GAP * len(parts)
+
+    def _tree_size(self) -> tuple[float, float]:
+        metrics = QFontMetricsF(self._small())
+        caps = max((metrics.horizontalAdvance(c) for c in self.captions), default=0.0)
+        step = max(caps + CAPTION_GAP, PORT_STEP)
+        width = max(
+            NODE_W,
+            float(self.text_item.boundingRect().width()) + self._right() + 2 * TITLE_PAD,
+            (len(self.outputs) + 1) * step,
+        )
+        height = self._top() + len(self._lines(width)) * QFontMetricsF(self._font()).height()
+        height += LINE_H * bool(self.link) + CAPTION_H * any(self.captions)
+        return width, height + PORT_ROOM
+
     def calc_size(self, add_w: float = 0.0, add_h: float = 0.0) -> tuple[float, float]:
+        if self.tree:
+            return self._tree_size()
         width, height = super().calc_size(add_w, add_h)
         width = max(float(width), NODE_W)
         if not self.summary:
@@ -247,37 +321,102 @@ class _Item(NodeItem):  # type: ignore[misc]
         body = len(self._lines(width)) * QFontMetricsF(self._font()).height()
         return width, max(float(height), self._top() + body + 8.0)
 
+    def align_label(self, h_offset: float = 0.0, v_offset: float = 0.0) -> None:
+        if not self.tree:
+            super().align_label(h_offset, v_offset)
+            return
+        self.text_item.setPos(TITLE_PAD / 2 + h_offset, self.boundingRect().y() + v_offset)
+
+    def align_ports(self, v_offset: float = 0.0) -> None:
+        """A tree: the input at the top middle, the outputs spread along the bottom edge."""
+        if not self.tree:
+            super().align_ports(v_offset)
+            return
+        for ports, y in ((self.inputs, 0.0), (self.outputs, float(self.height))):
+            for k, port in enumerate(ports):
+                box = port.boundingRect()
+                x = self.width * (k + 1) / (len(ports) + 1)
+                port.setPos(x - box.width() / 2, y - box.height() / 2)
+
     def paint(
         self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None
     ) -> None:
         super().paint(painter, option, widget)
+        area = QRectF(self.boundingRect()).adjusted(1.0, 1.0, -1.0, -1.0)
         if self.ref and self.body is not None and self.edge is not None:
-            area = QRectF(self.boundingRect()).adjusted(1.0, 1.0, -1.0, -1.0)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(self.body, 3.0))  # over the solid edge, then dashed
             painter.drawRoundedRect(area, 3.0, 3.0)
             painter.setPen(QPen(self.edge, 1.6, Qt.PenStyle.DashLine))
             painter.drawRoundedRect(area, 3.0, 3.0)
-        if self.summary:
-            painter.setFont(self._font())
-            painter.setPen(theme.color(Ink.TEXT))
-            metrics = painter.fontMetrics()
-            for k, text in enumerate(self._lines(self.width)):
-                y = self._top() + (k + 1) * metrics.height() - metrics.descent()
-                painter.drawText(QPointF(SUMMARY_X, y), text)
+        if self.flag is not None:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(self.flag, FLAG_W))
+            painter.drawRoundedRect(area.adjusted(1.0, 1.0, -1.0, -1.0), 3.0, 3.0)
+        self._paint_text(painter)
+        self._paint_title_bar(painter)
+        if self.tree:
+            self._paint_below(painter)
+
+    def _paint_text(self, painter: QPainter) -> None:
+        if not self.summary:
+            return
+        painter.setFont(self._font())
+        painter.setPen(theme.color(Ink.TEXT))
+        metrics = painter.fontMetrics()
+        for k, text in enumerate(self._lines(self.width)):
+            y = self._top() + (k + 1) * metrics.height() - metrics.descent()
+            painter.drawText(QPointF(SUMMARY_X, y), text)
+
+    def _paint_title_bar(self, painter: QPainter) -> None:
+        """The badge at the right end of the title bar and the chips before it."""
+        font = self._small(bold=True)
+        painter.setFont(font)
+        painter.setPen(theme.color(Ink.TEXT))
+        right = self.width - 8.0
         if self.badge:
-            font = QFont(painter.font())
-            font.setBold(True)
-            font.setPointSizeF(8.0)
-            painter.setFont(font)
-            painter.setPen(theme.color(Ink.TEXT))
             area = QRectF(self.boundingRect()).adjusted(0.0, 3.0, -8.0, 0.0)
             painter.drawText(
                 area, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop, self.badge
             )
+            right -= painter.fontMetrics().horizontalAdvance(self.badge) + CHIP_GAP
+        high = painter.fontMetrics().height() + 2.0
+        for (text, color), wide in reversed(
+            list(zip(self.chips, self._chip_widths(), strict=True))
+        ):
+            chip = QRectF(right - wide, 3.0, wide, high)
+            painter.setBrush(color)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(chip, 3.0, 3.0)
+            painter.setPen(theme.mark("ink"))  # the text a mark's fill is made for
+            painter.drawText(chip, Qt.AlignmentFlag.AlignCenter, text)
+            right -= wide + CHIP_GAP
+
+    def _paint_below(self, painter: QPainter) -> None:
+        """A tree's link line under the summary, and a caption over each output."""
+        height = QFontMetricsF(self._font()).height()
+        if self.link:
+            painter.setFont(self._small(underline=True))
+            painter.setPen(theme.accent())
+            y = self._top() + len(self._lines(self.width)) * height + LINE_H - 3.0
+            painter.drawText(QPointF(SUMMARY_X, y), self.link)
+        if not any(self.captions):
+            return
+        painter.setFont(self._small())
+        painter.setPen(theme.text(muted=True))
+        metrics = painter.fontMetrics()
+        room = self.width / (len(self.outputs) + 1) - 2.0
+        for port, text in zip(self.outputs, self.captions, strict=False):
+            shown = metrics.elidedText(text, Qt.TextElideMode.ElideRight, round(room))
+            centre = port.x() + port.boundingRect().width() / 2
+            y = self.height - PORT_ROOM - 3.0
+            painter.drawText(QPointF(centre - metrics.horizontalAdvance(shown) / 2, y), shown)
 
     def mouseDoubleClickEvent(self, event: Any) -> None:  # noqa: N802
         event.accept()  # NodeGraphQt would edit the title here; a title is the owner's
+        viewer = self.viewer()
+        if viewer is not None and event.button() == Qt.MouseButton.LeftButton:
+            viewer.node_double_clicked.emit(self.id)
 
 
 class _Node(BaseNode):  # type: ignore[misc]
@@ -307,6 +446,8 @@ class _Shown:
     base: tuple[Any, Any]
     tint: tuple[Any, Any] | None = None
     title: str | None = None
+    #: what changes a node's size: a change of it redraws the node
+    look: tuple[object, ...] = ()
 
     @property
     def view(self) -> Any:
@@ -337,9 +478,16 @@ class GraphView(QWidget):
     #: after the intents of one gesture, all of them: the owner applies what it collected and
     #: shows, still before the view would put the canvas back
     settled = Signal()
+    #: a node was double-clicked, or Return pressed with one node selected: its id
+    activated = Signal(str)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, tree: bool = False) -> None:
+        """A `tree` canvas flows down the page: a node's input is at its top, its outputs along
+        its bottom, wires run at right angles, and the ports are locked, so the user cannot
+        draw a wire."""
         super().__init__(parent)
+        self._tree = tree
+        self._least = FIT_LEAST if tree else 0.0
         self._graph = NodeGraph(undo_stack=_NoUndo())
         self._shown: dict[str, _Shown] = {}
         self._nodes: Sequence[NodeSpec] = ()
@@ -349,6 +497,7 @@ class GraphView(QWidget):
         self._glows: list[QGraphicsRectItem] = []
         self._kept: set[str] = set()
         self._roles: Mapping[str, Color] = {}
+        self._tags: Mapping[str, Color] = {}
         self._menus: list[QMenu] = []
         self._pending: list[tuple[Callable[[], None], bool]] = []
         self._wires: list[tuple[str, LinkSpec]] = []
@@ -360,6 +509,12 @@ class GraphView(QWidget):
         self._framed = False  # the first non-empty `show` frames its nodes
 
         viewer = self._graph.viewer()
+        if tree:
+            self._graph.set_pipe_style(PipeLayoutEnum.ANGLE.value)
+            # the viewer's direction only draws the wires; `_Item` lays its own ports out
+            viewer.set_layout_direction(LayoutDirectionEnum.VERTICAL.value)
+            # a repeat's loop wire is a cycle, and NodeGraphQt's check of one never ends
+            self._graph.set_acyclic(False)
         self._navigation = _Navigation(viewer)
         viewer.setMinimumSize(240, 160)
         for act in (viewer.qaction_for_undo(), viewer.qaction_for_redo()):
@@ -375,6 +530,7 @@ class GraphView(QWidget):
         # a command makes NodeGraphQt show a node's menu; `_prompt` empties it for the owner
         self._graph.context_nodes_menu().add_command("-", node_type=NODE_TYPE)
         self._graph.context_menu_prompt.connect(self._prompt)
+        self._graph.node_double_clicked.connect(self._double)
         self.set_canvas(theme.current().view)
 
     @property
@@ -402,6 +558,12 @@ class GraphView(QWidget):
     def set_roles(self, colors: Mapping[str, Color]) -> None:
         """A node's colour by `NodeSpec.role`; a role not named keeps NodeGraphQt's grey."""
         self._roles = colors
+        self._apply(self._nodes, self._links, self._frames, self._faded)
+
+    def set_tags(self, colors: Mapping[str, Color]) -> None:
+        """The colour of each tag a `NodeSpec.flag`, a `NodeSpec.marks` entry or a
+        `FrameSpec.flag` names; a tag not named is not drawn."""
+        self._tags = colors
         self._apply(self._nodes, self._links, self._frames, self._faded)
 
     def set_canvas(self, background: Color) -> None:
@@ -447,6 +609,11 @@ class GraphView(QWidget):
         picked = {n.id for n in self.viewer.selected_nodes()}
         return [n.id for n in self._nodes if n.id in picked]
 
+    def node_rect(self, node: str) -> QRectF | None:
+        """Where a node is now, in scene units; None for an id not drawn."""
+        shown = self._shown.get(node)
+        return None if shown is None else QRectF(shown.view.sceneBoundingRect())
+
     def frame_rects(self) -> dict[str, QRectF]:
         """Where each frame is now, in scene units."""
         return {i: bd.view.sceneBoundingRect() for i, bd in self._backdrops.items()}
@@ -462,11 +629,19 @@ class GraphView(QWidget):
         if nodes:
             self._graph.center_on(nodes)
 
-    def fit(self) -> None:
-        """Frames every node and frame."""
+    def fit(self, least: float | None = None) -> None:
+        """Frames every node and frame. A tree keeps its nodes legible (the scale stays at
+        `least`, by default `FIT_LEAST`) and shows the top left of a scope too big for that."""
         views = [s.view for s in self._shown.values()] + [b.view for b in self._backdrops.values()]
-        if views:
-            self.viewer.zoom_to_nodes(views)
+        if not views:
+            return
+        self.viewer.zoom_to_nodes(views)
+        floor = self._least if least is None else least
+        if self.viewer.transform().m11() < floor:
+            x, y, _, _ = self.viewer.scene_rect()
+            vp = self.viewer.viewport().size()
+            keep = floor * FIT_SLACK  # `fitInView` leaves a margin, which would take it under
+            self.viewer.set_scene_rect([x - 8.0, y - 8.0, vp.width() / keep, vp.height() / keep])
 
     def sizes(self) -> dict[str, tuple[float, float]]:
         """Each shown node's drawn width and height, in scene units."""
@@ -499,6 +674,7 @@ class GraphView(QWidget):
         self._nodes, self._links, self._frames, self._faded = nodes, links, frames, faded
         self._renders += 1
         self._busy += 1
+        self._lock(False)
         try:
             keep = set(self.selected())
             want = {n.id for n in nodes}
@@ -518,9 +694,19 @@ class GraphView(QWidget):
                 if not self._shown[i].view.isSelected():
                     self._shown[i].view.setSelected(True)
         finally:
+            self._lock(True)
             self._busy -= 1
         self._pick = self._picked()
         self._chosen = self.selected()
+
+    def _lock(self, on: bool) -> None:
+        """A tree's ports are locked, which stops the user's wires; `_apply` unlocks them while
+        it cuts and makes its own."""
+        if not self._tree:
+            return
+        for s in self._shown.values():
+            for port in (*s.node.input_ports(), *s.node.output_ports()):
+                port.set_locked(on, connected_ports=False, push_undo=False)
 
     @staticmethod
     def _check(
@@ -546,8 +732,12 @@ class GraphView(QWidget):
         node = _Node()
         node.NODE_NAME = spec.id  # unique: the graph then never renames a node
         node.model.id = node.view.id = spec.id
-        # a side with one port needs no name on it
-        named_in, named_out = len(spec.inputs) > 1, len(spec.outputs) > 1
+        node.view.tree = self._tree
+        if self._tree:
+            node.view.text_item.set_locked(True)  # a title is not edited in place
+        # a side with one port needs no name on it; a tree's ports are named by its captions
+        named_in = len(spec.inputs) > 1 and not self._tree
+        named_out = len(spec.outputs) > 1 and not self._tree
         ins = {
             p: node.add_input(p, multi_input=True, display_name=named_in).view for p in spec.inputs
         }
@@ -571,9 +761,11 @@ class GraphView(QWidget):
         self._graph.remove_node(shown.node, push_undo=False)
 
     def _sync(self, s: _Shown, spec: NodeSpec) -> None:
-        """Brings one node to `spec`, redrawing it when its title or summary changed."""
+        """Brings one node to `spec`, redrawing it when what sizes it changed."""
         view = s.view
-        resized = s.title != spec.title or view.summary != spec.summary
+        look = (spec.captions, spec.link, spec.marks, spec.badge if self._tree else "")
+        resized = s.title != spec.title or view.summary != spec.summary or s.look != look
+        s.look = look
         if s.title != spec.title:
             s.title = view.name = spec.title
         ink = self._tint(spec.role)
@@ -586,6 +778,9 @@ class GraphView(QWidget):
             view.badge = spec.badge
             view.update()
         view.ref = spec.ref
+        view.captions, view.link = spec.captions, spec.link
+        view.flag = self._tag(spec.flag)
+        view.chips = tuple((m.upper(), c) for m in spec.marks if (c := self._tag(m)) is not None)
         view.setOpacity(DIM if spec.dim else STAND_IN if spec.ref else 1.0)
         x, y = view.xy_pos
         if abs(x - spec.at[0]) > 1e-3 or abs(y - spec.at[1]) > 1e-3:
@@ -593,8 +788,13 @@ class GraphView(QWidget):
         view.summary = spec.summary
         if resized:
             view.draw_node()
+        view.update()
         view.setToolTip(spec.tip)  # after `draw_node`, which sets NodeGraphQt's own
         view.text_item.setToolTip("")  # NodeGraphQt's rename hint hides the node's tip
+
+    def _tag(self, key: str) -> QColor | None:
+        ink = self._tags.get(key) if key else None
+        return None if ink is None else theme.color(ink)
 
     def _tint(self, role: str) -> tuple[QColor, QColor] | None:
         """A role's body and edge colours."""
@@ -668,17 +868,17 @@ class GraphView(QWidget):
             if fr.muted:
                 quiet = theme.text(muted=True)
                 node.view.text_color = (quiet.red(), quiet.green(), quiet.blue(), GLOW_MUTED)
-            if fr.lit:
-                self._glows.append(self._glow(node.view.sceneBoundingRect()))
+            if fr.lit or fr.flag:
+                self._glows.append(self._glow(node.view.sceneBoundingRect(), self._tag(fr.flag)))
             if fr.id in chosen:
                 node.view.setSelected(True)
             self._backdrops[fr.id] = node
 
-    def _glow(self, rect: QRectF) -> QGraphicsRectItem:
-        """An outline in the theme's accent round a frame, drawn above it and under the
-        nodes; it takes no clicks."""
+    def _glow(self, rect: QRectF, color: QColor | None = None) -> QGraphicsRectItem:
+        """An outline in `color` (the theme's accent) round a frame, drawn above it and under
+        the nodes; it takes no clicks."""
         item = QGraphicsRectItem(rect)
-        item.setPen(QPen(theme.accent(), GLOW_WIDTH))
+        item.setPen(QPen(color or theme.accent(), GLOW_WIDTH))
         item.setZValue(GLOW_Z)
         item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self.viewer.scene().addItem(item)
@@ -744,6 +944,10 @@ class GraphView(QWidget):
         x, y = self._graph.cursor_pos()
         self._raise(lambda: self.create_requested.emit(kind, x, y), revert=False)
 
+    def _double(self, node: Any) -> None:
+        if node.id in self._shown:
+            self._raise(lambda: self.activated.emit(node.id), revert=False)
+
     def _picked(self) -> str | None:
         frames, ids = self.selected_frames(), self.selected()
         if len(frames) == 1:
@@ -768,6 +972,12 @@ class GraphView(QWidget):
             self._delete_selected()
             event.accept()
             return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not event.modifiers():
+            ids = self.selected()
+            if len(ids) == 1:
+                self._raise(lambda: self.activated.emit(ids[0]), revert=False)
+                event.accept()
+                return
         super().keyPressEvent(event)
 
     def _delete_selected(self) -> None:
