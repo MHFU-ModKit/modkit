@@ -52,7 +52,7 @@ No other key is allowed. A row is in one section only: its own, or the `also` of
 |---|---|
 | `build` | The SHA-1 of the row's lifted region the edits are for. Another build refuses them (`DOC_BUILD`) |
 | `also` | Other rows the edits apply to as they are. Only rows that lift the same code at the same places (`brainfile.twins`): rows that merely share a SHA-1 do not (em01's rows 1, 37 and 42 and its rows 11, 41 and 49 read as one region and lift as two) |
-| `node."ID"` | What is done to a native node, block opener or arm: `args`, `delete`, `bypass`, `move`, `arms` |
+| `node."ID"` | What is done to a native node, block opener or arm: `op`, `args`, `delete`, `bypass`, `move`, `arms` |
 | `insert.uK` | New code and where it goes |
 | `routine.NAME` | The code of a new routine, which code reaches by label (`@NAME`) |
 | `list."HEADER.LIST"` | Changes to a header's list (`h0.call`, `h1.int_0x20`, `h0.deep2`): `fork`, `set.N`, `append` |
@@ -63,11 +63,14 @@ the instruction at (a block's arm has the address of its marker). New code is na
 source order: `uK.0`, `uK.1`, ... for insert `uK`, `NAME.0`, ... in a new routine. An insert can
 anchor in another insert's code: `after = "u1.2"`.
 
+- `op`: another opcode for the node, in place: a block stays the same shape and keeps its arms and
+  bodies, operands carry over by name (a missing one goes in `args`).
 - `args`: the operands that differ from the game's, by name. `"@name"` is a list entry by label.
 - `delete`: the node, with all that is in it, is gone.
 - `bypass`: a block is replaced by its `then`, its `else`, the arm with this id or `none`.
 - `move`: `before`, `after` or `into` another node or a list (`into` goes to the end, with `at = 0`
-  to the start).
+  to the start); the anchor may be new code (`after = "u1.0"`), so a native node goes into an
+  inserted block by reference and the file never holds the game's code.
 - `arms`: a block's native arms in the order wanted, by id.
 - `insert`: `before` or `after` a node (an arm: the start or end of its body), or `into` a list (a
   routine, a block's head or an arm) at `at`, by default the end. With `arm = { sub, args }` the
@@ -76,8 +79,10 @@ anchor in another insert's code: `after = "u1.2"`.
   (`"-"` is empty, `"extern 0x..."` a word outside the program, else an item name); `append`
   adds entries.
 
-`apply` runs the edits in a fixed order and a bad anchor is a finding, not a failure
-(`DOC_ANCHOR`, `DOC_CONFLICT`); see `docs/formats/ai_script.md`, "Editing".
+`apply` runs the edits in a fixed order: build check, new routines, `op`, `args`, `arms`, then
+moves and inserts in one pass in which each waits for the code it anchors in, `bypass`, `delete`,
+lists, labels. A bad anchor or a cycle is a finding, not a failure (`DOC_ANCHOR`,
+`DOC_CONFLICT`); see `docs/formats/ai_script.md`, "Editing".
 
 ## Code
 
