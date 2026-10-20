@@ -310,6 +310,11 @@ def test_a_refused_weight_leaves_the_spins_as_they_were(
     assert bench.bar.total is not None and bench.bar.total.text() == "32 of 32"
 
 
+def test_before_any_node_the_note_reads_the_workspace(bench: Bench) -> None:
+    bench.bar.sync()  # the panel shows a scope (Follow's) before any node is picked
+    assert bench.bar.note.text() == NO_NODE
+
+
 def test_there_is_nothing_to_edit_without_a_node_or_a_file(
     bench: Bench, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -145,6 +145,7 @@ class OperandBar(QWidget):
         """After any change: the bar again from the workspace. A bar that is as it was is left
         alone, so a control being edited keeps its focus."""
         if self._at is None:
+            self._show(None, None)  # nothing picked yet: whether the script takes edits
             return
         bar, pick = self._fetch(*self._at)
         if force or (bar, pick) != (self._bar, self._pick):
@@ -168,7 +169,8 @@ class OperandBar(QWidget):
         self._clear()
         if bar is None:
             self.title.setText("")
-            editable = self._at is not None and self.ws.brain_editable(self._at[0])
+            row = self.ws.brain_species if self._at is None else self._at[0]
+            editable = row is not None and self.ws.brain_editable(row)
             self.note.setText(NO_NODE if editable else NO_FILE)
             self.note.setToolTip("")
             self.note.set_level(None)
