@@ -981,11 +981,13 @@ mhfu.NPC_MAX = 4 -- MHFU_NPC_MAX
 -- AI scripts from the memory stick (bind_brain.cpp) -------------------------------------------
 
 ---Installs the AI script container at `path` (an `MHAI` stick container, as `mhfu brain build`
----writes it; a path as `inject_register` takes it) for the species row it names: staged in extra
----RAM, relocated, and the row's header words pointed at it now and after every overlay read, so a
----monster that starts its script later runs it. A monster already running keeps the script it
----has. Installing a row again replaces it. Reads the Memory Stick: call it while mods load. It
----fails on a real PSP, which has no extra RAM to keep.
+---writes it; a path as `inject_register` takes it) for the species row it names, relocated, and
+---the row's header words pointed at it now and after every overlay read, so a monster that starts
+---its script later runs it. A monster already running keeps the script it has. Installing a row
+---again replaces it, unless the container is the row's live one: then nothing is staged. The
+---container is staged in PPSSPP's 64 MB raw window, else (a real PSP, PPSSPP's 32 MB mode) in a
+---user-partition block; the installs keep at most 256 KB of blocks for the session. Reads the
+---Memory Stick: call it while mods load.
 ---@param path string
 ---@return integer? row
 ---@return string? err

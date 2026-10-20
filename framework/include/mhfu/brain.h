@@ -1,14 +1,13 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* AI scripts from the memory stick (brain.cpp): an 'MHAI' stick container for one species row
- * (docs/formats/ai_script.md, built by `mhfu brain build`), staged in extra RAM and relocated
- * there.
+ * (docs/formats/ai_script.md, built by `mhfu brain build`), staged and relocated there.
  *
  * The row's header words live in the AI overlay, which every quest load re-reads, so C points
  * them at the image after each read: a monster that starts its script later runs the container's.
- * Data writes only; a monster already running keeps the script it has. On a real PSP extra RAM
- * is the volatile partition, lent for a quest only, so nothing is staged there and an install
- * fails. */
+ * Data writes only; a monster already running keeps the script it has. The container sits in
+ * PPSSPP's raw extra RAM when the emulator has it, else in a block of user-partition memory
+ * (a real PSP, PPSSPP's 32 MB mode), not in volatile memory, which a quest exit unlocks. */
 #ifndef MHFU_BRAIN_H
 #define MHFU_BRAIN_H
 
@@ -23,7 +22,7 @@ extern "C" {
 /* mhfu_brain_install's failures; mhfu_brain_error words them. */
 enum {
     MHFU_BRAIN_E_ARG     = -1,   /* no path */
-    MHFU_BRAIN_E_STAGE   = -2,   /* unreadable, no extra RAM left, or a real PSP */
+    MHFU_BRAIN_E_STAGE   = -2,   /* unreadable, or no room left to keep it */
     MHFU_BRAIN_E_SHORT   = -3,   /* shorter than a container's header */
     MHFU_BRAIN_E_MAGIC   = -4,   /* not an 'MHAI' container */
     MHFU_BRAIN_E_VERSION = -5,   /* a version this does not read */
@@ -47,7 +46,8 @@ typedef struct {
 
 /* Installs the container at path, a path as mhfu_inject_register takes it, for the row it names,
  * and points that row's words at it now and after every overlay read. Installing a row again
- * replaces it; the old image stays in extra RAM, which is never freed. The row (>= 0), or a
+ * replaces it; the old image stays where it is, never freed. The row's live container again
+ * stages nothing (the same id, size and counts in its head). The row (>= 0), or a
  * MHFU_BRAIN_E_* failure, logged. Reads the Memory Stick: call it while mods load. */
 int mhfu_brain_install(const char *path);
 

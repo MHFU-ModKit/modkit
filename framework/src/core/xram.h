@@ -77,9 +77,20 @@ uint32_t mhfu_xram_alloc(uint32_t n);
  * the file's size, 0 on failure. */
 uint32_t mhfu_xram_read(const char *path, uint32_t *buf, uint32_t *cap);
 
-/* path read into a block of its own for good: its address and *size, 0 when unreadable, out of
- * room or on a real PSP, whose volatile partition is only lent for a quest. */
+/* path read into a block of its own for good, in the RAW window only: its address and *size, 0
+ * when unreadable, out of room or in any other mode, whose volatile partition is only lent for a
+ * quest. */
 uint32_t mhfu_xram_stage_file(const char *path, uint32_t *size);
+
+/* path read into a block of its own in user-partition memory (partition 2, low), for good: its
+ * address and *size, *taken the block's bytes (the file plus 64 for the alignment, to 256). 0 when
+ * unreadable, or when the block would pass `budget` bytes; the caller keeps the running total.
+ * Works in every mode and never touches volatile or the raw window. */
+uint32_t mhfu_xram_stage_part(const char *path, uint32_t budget, uint32_t *size, uint32_t *taken);
+
+/* The first min(n, size) bytes of path into dst: how many, 0 when unreadable or under 0x40 bytes.
+ * Stages nothing. */
+uint32_t mhfu_xram_peek(const char *path, void *dst, uint32_t n);
 
 /* Appends a line to ms0:/PSP/mhfu_brute_debug.txt; skipped while ms0 I/O is unsafe. */
 void mhfu_xram_log(const char *fmt, ...);

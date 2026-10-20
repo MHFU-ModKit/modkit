@@ -167,8 +167,14 @@ moves the words and monsters back across the same maps and clears the container.
 
 The framework loads a stick container: `mhfu brain deploy` writes `brain_row_NN.mhai` to
 `PLUGINS/mhfu_framework/brain` and a mod, `mods/brain_row_NN.lua`, that calls
-`mhfu.brain_install(path)`. It stages the file in extra RAM, adds the image's address to every reloc
+`mhfu.brain_install(path)`. It stages the file, adds the image's address to every reloc
 word, and points each word of the row's `SCRIPT_HEADERS` that holds a patch's native address at the
 image: at install, and after every chunk of the overlay that `SCRIPT_HEADERS` lies in, since each
 quest load re-reads it. A monster that starts its script later runs the container's; one already
-running keeps the game's. Extra RAM is PPSSPP's, so a real PSP installs nothing.
+running keeps the game's.
+
+- Staging route: PPSSPP's 64 MB raw window when there is one, else a block of user-partition
+  memory (a real PSP, PPSSPP's 32 MB mode), kept for the session.
+- Budget: the partition blocks of all installs total at most 256 KB; an install past it fails.
+- Installing the row's live container again (same id, size and counts, read from the head alone)
+  stages nothing.
