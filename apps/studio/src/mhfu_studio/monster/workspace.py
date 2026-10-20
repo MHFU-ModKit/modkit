@@ -6,19 +6,25 @@ and the docks around it. The panels show; this holds what they share and does wh
 Every edit goes through the `PortDocument`, one undo step each; whatever depends on the
 manifest (clip names, volumes, the alignment) is re-read once per frame when the document's
 manifest is a different object, so an edit, an undo and a save-as all land the same way.
+
+A big monster of the game's own opens with its overlay's brain file (`species_doc`, a
+`SpeciesDocument`): the Brain tab edits its AI script through `edit_brain`, the builds come off the
+brain worker (`brain_built`, `brain_view`, `brain_outline`, ...), and Send and Push put the
+build shown on the memory stick and into the game. With a port open there is no such file.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import time
 import tomllib
 from collections.abc import Callable, Hashable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from mhfu import files, hitzone
 from mhfu.em.intel import (
@@ -29,9 +35,18 @@ from mhfu.em.intel import (
     PartIntel,
     SpeciesIntel,
 )
-from mhfu.em.script import ir
+from mhfu.em.script import brainfile, ir, stick
+from mhfu.em.script import graph as script_graph
+from mhfu.em.script import inject as script_inject
+from mhfu.em.script.brainfile import BrainFileError
+from mhfu.em.script.budget import LIMIT, Budget
+from mhfu.em.script.build import Built
+from mhfu.em.script.check import Finding as ScriptFinding
+from mhfu.em.script.edit import EditError
 from mhfu.em.script.inject import Container
 from mhfu.files import Extracted
+from mhfu.live import script as live_script
+from mhfu.live.script import Trace
 from mhfu_port import continuity, layout, sequence, slots
 from mhfu_port.behaviour import Trigger
 from mhfu_port.data import Data
@@ -48,7 +63,9 @@ from mhfu_studio.monster import (
     authoring,
     behaviour,
     brain,
+    brain_edit,
     brain_game,
+    brain_graph,
     clip_browser,
     clip_game,
     clips,
@@ -65,10 +82,12 @@ from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.panels.graph import MoveGraph
 from mhfu_studio.monster.parts import PartSession
+from mhfu_studio.monster.species_doc import Builds, SpeciesDocument
 from mhfu_studio.monster.tools import HIT, HURT, NOUN, VolumeTools, describe
 from mhfu_studio.monster.tools import KEYS as VOLUME_KEYS
 from mhfu_studio.monster.turn import TURN_KEY, TurnGizmo
 from mhfu_studio.shell import places
+from mhfu_studio.shell.findings import LEVELS, Finding, Level
 from mhfu_studio.shell.input import Key, Mod, Pointer
 from mhfu_studio.shell.overlay import Overlay
 from mhfu_studio.shell.text import keys
@@ -87,7 +106,9 @@ from mhfu_studio.shell.workspace import (
 
 if TYPE_CHECKING:
     import moderngl
+    from mhfu.em.script import asm
     from mhfu.live.session import Session
+    from mhfu.writes import Pushed
     from mhfu_port.model import Clip as SceneClip
 
     from mhfu_studio.monster.render.hitboxes import HitboxOverlay
@@ -107,7 +128,35 @@ STEP = Shortcut(("Left", "Right"), "One game frame back, or on")
 REWIND = Shortcut(("Home",), "Back to the clip's first frame")
 #: `intel_gap`'s subjects in words
 WORDS = {"part": "hurtbox", "attack": "attack", "action": "action"}
-OPEN_TIP = "Choose a port manifest (.toml) or a monster PAC; the monster workspace opens it"
+OPEN_TIP = (
+    "Choose a port manifest (.toml), a brain file (emNN.toml) or a monster PAC; the monster"
+    " workspace opens it"
+)
+SEND_HITBOXES, SEND_BRAIN = "Send hitboxes to game", "Send brain to game"
+SENT = "The monster in the quest keeps the script it started with; yours runs from the next quest."
+PUSHED = "The running monster runs it now, until the next quest load. Send keeps it."
+DEBOUNCE = 0.15
+"""Seconds after the last change before the script builds again."""
+BRAIN_HINT = (
+    "Edit the script in the Brain tab: pick a node, then change it in the bar or the palette"
+)
+FIXES = {
+    "OPS_PER_RUN": "Put an enter on the long path: only a move ends a run.",
+    "RESTART_LOOP": "Put an enter on the path, or a condition that stops it.",
+    "FALLS_OFF": "End every path with an end or a goto.",
+    "DEAD_CODE": "Nothing reaches it: delete it, or move the end that cuts it off.",
+    "END_KIND_CONTEXT": "Pick an end that belongs to this routine's list.",
+    "GATE_NONZERO": "Set the gate to 0, as the game's own moves have it.",
+    "WEIGHT_ZERO": "Give the branch a weight, or take it out.",
+    "RANDOM_WEIGHTS": "The weights must add up to 32: Even sets them.",
+    "CORRELATED_DRAW": "Fold the two chances into one pick.",
+    "PAIR_UNKNOWN": "Pick a pair from the list the bar offers.",
+    "PAIR_RANGE": "main is 0 to 7.",
+    "DOC_ANCHOR": "Its anchor is gone: remove this edit, or Back to the game's.",
+    "DOC_CONFLICT": "These edits cannot go together: undo one.",
+    "DOC_BUILD": "The file's edits are for another build of the game.",
+}
+"""What to do about a build's finding, by code."""
 
 
 def port_files() -> list[Path]:
@@ -136,6 +185,61 @@ def port_choice(path: Path) -> Choice:
     )
 
 
+def toml_kind(path: Path) -> Literal["port", "brain"] | None:
+    """What a TOML file is: a port manifest (a `[port]` table) or a brain file (`schema` and
+    `overlay`); a malformed brain file is still one, `open` says what is wrong with it."""
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # TOMLDecodeError and a bad encoding are ValueErrors
+        return None
+    if "port" in data:
+        return "port"
+    return "brain" if "schema" in data and "overlay" in data else None
+
+
+def budget_text(b: Budget) -> str:
+    """The longest run between two yields as the Brain tab says it: `44 of 999`."""
+    return f"{0 if b.worst is None else b.worst.count} of {LIMIT}"
+
+
+def species_choice(sp: int, game: Extracted) -> Choice:
+    """A big monster as the start page lists it: its model, with its brain file attached."""
+    name = species.NAMES.get(sp, f"em{sp:02d}")
+    return Choice(
+        name,
+        f"Opens {name}'s model and its brain: the AI script as a graph you can edit",
+        path=game.path(files.monster_pac(sp)),
+        detail=f"em{sp:02d}",
+    )
+
+
+class _Unchanged(Exception):
+    """A gesture that changes nothing: `edit_brain` commits no undo step for it."""
+
+
+def _finding(f: ScriptFinding, names: Mapping[str, str]) -> Finding:
+    """A build's finding for the shell: it jumps to the node, else to the routine."""
+    level: Level = next((lv for lv in LEVELS if lv == f.level), "warning")
+    target = ("node", f.node) if f.node else (("routine", f.item) if f.item else None)
+    where = "" if f.item is None else brain_graph.named(f.item, names)
+    return Finding(level, f.code, f.text, where, target, "", FIXES.get(f.code, ""))
+
+
+class BrainDocument(SpeciesDocument):
+    """A species document whose findings include those of the build the Brain tab shows: the
+    shell asks the document, and the workspace holds the builds (`extra` reads its cache)."""
+
+    extra: Callable[[], list[Finding]] | None = None
+
+    @classmethod
+    def of(cls, doc: SpeciesDocument) -> BrainDocument:
+        """`doc`, opened and not yet edited, as one that carries the build's findings too."""
+        return cls(doc.brainfile, doc.path)
+
+    def findings(self) -> list[Finding]:
+        return [*super().findings(), *(self.extra() if self.extra is not None else [])]
+
+
 @dataclass(frozen=True)
 class _Warm:
     """What `warmup` read for `open`."""
@@ -145,6 +249,44 @@ class _Warm:
     scene: Scene
     species: int | None
     intel: SpeciesIntel | None
+
+
+@dataclass(frozen=True)
+class _WarmBrain:
+    """What `warmup` read for `open` of a monster that has a brain file."""
+
+    path: Path
+    scene: Scene
+    doc: BrainDocument | None
+    serves: dict[int, int] | None
+    """The script rows each overlay serves, read to find the file."""
+    note: str
+    """Why there is no document, when the file was there and did not read."""
+
+
+@dataclass
+class _Shown:
+    """A build the Brain tab shows, with what is made from it. One per row and build; the view,
+    outline and bar are made on the GUI thread when asked and kept here."""
+
+    built: Built
+    proj: script_graph.Projection
+    pairs: dict[Pair, str]
+    """What the projection was made with."""
+    edited: frozenset[str]
+    views: dict[str, BrainView] = field(default_factory=dict)
+    outlines: dict[tuple[str, tuple[tuple[str, str], ...]], brain_graph.Outline] = field(
+        default_factory=dict
+    )
+    index: ir.Index | None = None
+    blocks: dict[str, ir.Block] | None = None
+    """The block of each arm, by the arm's id."""
+    routines: dict[str, str] | None = None
+    """The routine of each node, by id."""
+    budget: Future[Budget] | None = None
+
+    def has(self, view: BrainView | None) -> bool:
+        return view is not None and any(v is view for v in self.views.values())
 
 
 @dataclass(frozen=True)
@@ -160,8 +302,8 @@ class _Brain:
 
 class MonsterWorkspace(Workspace):
     name = "monster"
-    filters = ("Port manifest", "*.toml", "Monster PAC", "*.bin *.pac")
-    send_label = "Send hitboxes to game"
+    filters = ("Port manifest or brain file", "*.toml", "Monster PAC", "*.bin *.pac")
+    send_label = SEND_HITBOXES
 
     def __init__(self, data: Data | None = None, intel_root: Path | None = None) -> None:
         self._data = data
@@ -169,7 +311,7 @@ class MonsterWorkspace(Workspace):
         self._handed = data is not None
         self._found = _roots()
         #: what the last `warmup` read, for `open` to take
-        self._warm: _Warm | None = None
+        self._warm: _Warm | _WarmBrain | None = None
         #: the manifest as the last Send hitboxes to game sent it
         self._sent: Manifest | None = None
         #: species intel from this directory instead of the cache built from the game
@@ -178,6 +320,9 @@ class MonsterWorkspace(Workspace):
         #: why a species' intel is None in the cache
         self.intel_errors: dict[int, str] = {}
         self.doc: PortDocument | None = None
+        #: the brain file open for editing: a monster's own PAC attaches its overlay's, and with
+        #: a port open there is none
+        self.species_doc: BrainDocument | None = None
         self.scene: Scene | None = None
         self.vp: MonsterViewport | None = None
         self.message = ""
@@ -203,12 +348,25 @@ class MonsterWorkspace(Workspace):
             [Callable[[], AbstractContextManager[Session]], int | None], rule_game.Read
         ] = rule_game.fetch
         self.watch = rule_game.Watch()
-        #: reads the species row's live monsters, on a worker (Follow the game)
+        #: reads the species row's live monsters, on a worker (Follow the game); `seen` is
+        #: Follow's, which finds a container on the stick
         self.read_follow: Callable[
-            [Callable[[], AbstractContextManager[Session]], int, Container | None],
+            [
+                Callable[[], AbstractContextManager[Session]],
+                int,
+                Container | None,
+                brain_game.Seen,
+            ],
             brain_game.Read,
         ] = brain_game.fetch
         self.follow = brain_game.Follow()
+        #: a timed per-node count of the followed monster, on the same worker as Follow's reads
+        self.count = brain_game.Count(self.follow)
+        #: runs the dispatch trace in the game (Count), and puts a build into it (Push)
+        self.trace_script: Callable[[Session, int, float], Trace] = live_script.trace
+        self.push_script: Callable[[Session, ir.Program, asm.Image], Pushed] = script_inject.push
+        #: the debounce's clock
+        self.clock: Callable[[], float] = time.monotonic
         #: a species row's program and the rows each overlay serves, read from the extracted game
         self.decode_brain: Callable[[Extracted, int], ir.Program] = brain.decode
         self.scan_brain: Callable[[Extracted], dict[int, int]] = brain.rows
@@ -248,6 +406,7 @@ class MonsterWorkspace(Workspace):
         self.browse: int | None = None
         #: the species row `browse_brain` picked for the Brain tab
         self.brain_pick: int | None = None
+        self._reset_brain()
         self.show_host = False
         self.host_scenes: dict[int, Scene | None] = {}
         self.host_clip: int | None = None
@@ -305,45 +464,122 @@ class MonsterWorkspace(Workspace):
         self._built_for: Scene | None = None
         self._built: dict[int, int] = {}
 
+    def _reset_brain(self) -> None:
+        """The brain editor's state, for the document just loaded."""
+        doc = self.species_doc
+        self._builds = None if doc is None else Builds(doc)
+        #: by species row: the build the tab shows, the one before it, the build under way (and
+        #: the document version it was asked at), the version a build failed at and why
+        self._shown: dict[int, _Shown] = {}
+        self._past: dict[int, _Shown] = {}
+        self._making: dict[int, tuple[int, Future[_Shown]]] = {}
+        self._failed: dict[int, int] = {}
+        self._build_errors: dict[int, str] = {}
+        #: one per row and header, so a view draws only the routines an edit changed
+        self._renderers: dict[tuple[int, str], brain.Renderer] = {}
+        #: the document version the debounce last saw, and when the next build may start
+        self._version = -1
+        self._due = 0.0
+        self._pairs: tuple[tuple[object, ...], dict[Pair, str]] | None = None
+        #: the build Send last wrote to the stick
+        self._sent_brain: int | None = None
+        #: a node a finding or the outline named, where it is, and how often that happened
+        self.brain_focus: str | None = None
+        self.brain_routine: str | None = None
+        self.brain_header: str | None = None
+        self.brain_scope = script_graph.ROOT
+        self.brain_focused = 0
+        self.count.reset()
+
     # the shell's side
 
     @property
-    def document(self) -> PortDocument | None:
-        return self.doc
+    def document(self) -> PortDocument | BrainDocument | None:
+        """The port's manifest, else the brain file."""
+        return self.doc if self.doc is not None else self.species_doc
 
     @property
     def viewport(self) -> MonsterViewport | None:
         return self.vp
 
     def can_open(self, path: Path) -> bool:
-        """A port manifest (a TOML with a `[port]` table) or a monster PAC (one with a skeleton)."""
+        """A port manifest (a TOML with a `[port]` table), a brain file (`emNN.toml`) or a monster
+        PAC (one with a skeleton)."""
         try:
             if path.suffix == ".toml":
-                return "port" in tomllib.loads(path.read_text(encoding="utf-8"))
+                return toml_kind(path) is not None
             if path.suffix not in (".bin", ".pac"):
                 return False
             return any(Skeleton.sniff(e) for e in Pac.from_bytes(path.read_bytes()).entries)
-        except (OSError, ValueError, tomllib.TOMLDecodeError):
+        except (OSError, ValueError):
             return False
 
     def open(self, path: Path) -> None:
-        """A manifest is built in memory from the extracted games, or comes from `warmup`; a PAC
-        is read as it is."""
+        """A manifest is built in memory from the extracted games, or comes from `warmup`; a
+        brain file opens on its overlay's own monster; a PAC is read as it is, and a big
+        monster's takes its overlay's brain file."""
         warm, self._warm = self._warm, None
+        note = ""
         if warm is not None and warm.path == path:
-            self.load(warm.scene, warm.doc)
+            if isinstance(warm, _WarmBrain):
+                note = self._take(warm)
+                self.load(warm.scene, brain=warm.doc)
+            else:
+                self.load(warm.scene, warm.doc)
+        elif path.suffix == ".toml" and toml_kind(path) == "brain":
+            doc = BrainDocument.of(SpeciesDocument.open(path))
+            scene = Scene.from_path(self.fu().path(files.monster_pac(doc.overlay)))
+            self.load(scene, brain=doc)
         elif path.suffix == ".toml":
-            doc = PortDocument.open(path)
-            self.load(Scene.from_manifest(doc.manifest, None, "port", self.games()), doc)
+            port = PortDocument.open(path)
+            self.load(Scene.from_manifest(port.manifest, None, "port", self.games()), port)
         else:
-            self.load(Scene.from_path(path))
-        self.message = f"opened {path.name}"
+            got = self._attach(path)
+            note = self._take(got)
+            self.load(got.scene, brain=got.doc)
+        if self.species_doc is not None:
+            self.focus("Brain")
+        self.message = f"opened {path.name}" + (f"; {note}" if note else "")
 
-    def load(self, scene: Scene, doc: PortDocument | None = None) -> None:
-        """Shows `scene`; `doc` is the manifest it was built from."""
+    def _attach(self, path: Path) -> _WarmBrain:
+        """The monster PAC at `path` and, for a big monster, the brain file of the overlay that
+        serves its row. Seconds the first time (the scan of the overlays): `warmup` does it off
+        the GUI thread."""
+        scene = Scene.from_path(path)
+        row = species.of_model_file(path)
+        if row is None:
+            return _WarmBrain(path, scene, None, None, "")
+        try:
+            game = self.fu()
+            serves = self.scan_brain(game)
+            doc = BrainDocument.of(SpeciesDocument.for_species(row, serves))
+        except (brain.NoScript, places.Missing):
+            return _WarmBrain(path, scene, None, None, "")
+        except (OSError, ValueError, LookupError) as e:  # BrainFileError is a ValueError
+            return _WarmBrain(path, scene, None, None, f"its brain file was not read: {e}")
+        return _WarmBrain(path, scene, doc, serves, "")
+
+    def _take(self, got: _WarmBrain) -> str:
+        """What a `_WarmBrain` read becomes known to the workspace; why it has no brain file."""
+        if got.doc is not None and got.serves is not None:
+            self._brain_rows.setdefault(self.fu().root, got.serves)
+        return got.note
+
+    def load(
+        self,
+        scene: Scene,
+        doc: PortDocument | None = None,
+        brain: BrainDocument | None = None,
+    ) -> None:
+        """Shows `scene`; `doc` is the manifest it was built from, `brain` the brain file open
+        beside a monster of the game's own."""
         from mhfu_studio.monster.render.skeleton import undriven_geometry
 
         self.scene, self.doc = scene, doc
+        self.species_doc = brain
+        if brain is not None:
+            brain.extra = self._brain_findings
+        self.send_label = SEND_BRAIN if doc is None and brain is not None else SEND_HITBOXES
         self._reset()
         self._sent = None
         self.undriven = undriven_geometry(scene)
@@ -365,18 +601,44 @@ class MonsterWorkspace(Workspace):
 
     def shown(self) -> Hashable | None:
         sc = self.scene
-        return None if sc is None else (None if self.doc is None else self.doc.path, sc.name)
+        doc = self.document
+        return None if sc is None else (None if doc is None else doc.path, sc.name)
 
     def start(self) -> Sequence[Shelf]:
         ports = tuple(port_choice(p) for p in port_files())
         note = "" if ports else "No ports next to the studio (modkit's ports folder)."
         needs = (places.MHFU, places.MHP3RD)
-        return (Shelf("Ports", ports, note, ("Open\u2026", OPEN_TIP), needs),)
+        return (
+            Shelf("Ports", ports, note, ("Open\u2026", OPEN_TIP), needs),
+            self._monsters(),
+        )
+
+    def _monsters(self) -> Shelf:
+        """The big monsters, each opened on its model with its brain file."""
+        found = places.find(places.MHFU).path
+        if found is None:
+            note = "The monsters come from the game: choose the MHFU extraction under Setup."
+            return Shelf("Monsters", note=note, needs=(places.MHFU,))
+        game = Extracted(found)
+        choices = sorted(
+            (species_choice(sp, game) for sp in files.EM_SPECIES), key=lambda c: c.label
+        )
+        note = "A monster's brain is its AI script: edit it as a graph, send it to the game."
+        return Shelf("Monsters", tuple(choices), note, needs=(places.MHFU,))
 
     def warmup(self, path: Path) -> Warmup | None:
-        """A port's manifest, its build and its base monster's data, read off the GUI thread."""
+        """A port's manifest, its build and its base monster's data, or a monster and its brain
+        file, read off the GUI thread."""
+        if path.suffix == ".toml" and toml_kind(path) == "brain":
+            return None  # the model is one file: `open` reads it
         if path.suffix != ".toml":
-            return None
+            if species.of_model_file(path) is None:
+                return None
+            return Warmup(
+                f"Opening {path.name}: reading its brain file (seconds the first time)",
+                lambda: self._attach(path),
+                self._warmed,
+            )
         try:
             games = self.games()
         except places.Missing:
@@ -404,7 +666,13 @@ class MonsterWorkspace(Workspace):
             done,
         )
 
+    def _warmed(self, got: object) -> None:
+        if isinstance(got, _WarmBrain):
+            self._warm = got
+
     def next_steps(self) -> Sequence[Step]:
+        if self.doc is None and self.species_doc is not None:
+            return self._brain_steps(self.species_doc)
         m = self.manifest
         if self.scene is None or m is None:
             return ()
@@ -482,8 +750,9 @@ class MonsterWorkspace(Workspace):
             ),
             Dock(
                 "Brain", "centre", build("brain", "BrainPanel"),
-                "The AI script that picks the base monster's next move, as code: read it, follow"
-                " its calls, find the line that plays an action.",
+                "The AI script that picks the monster's next move: edit it as a graph and as code"
+                " when a brain file is open, read it with a port; follow its calls, find the"
+                " line that plays an action.",
                 shown=False,
             ),
             Dock(
@@ -500,6 +769,8 @@ class MonsterWorkspace(Workspace):
         sc, sp = self.scene, self.host_species
         if sc is None:
             return ""
+        if self.doc is None and self.species_doc is not None:
+            return f"{species.label(self.species_doc.overlay)} brain"
         return sc.name if sp is None else f"{sc.name} on {species.label(sp)}"
 
     def frame(self, dt: float) -> None:
@@ -568,6 +839,8 @@ class MonsterWorkspace(Workspace):
         sc, vp = self.scene, self.vp
         if sc is None:
             return "Pick a port on the start page, or open one with File > Open"
+        if self.doc is None and self.species_doc is not None:
+            return BRAIN_HINT
         bits = []
         clip = None if vp is None else vp.clip
         if vp is None or clip is None:
@@ -599,12 +872,17 @@ class MonsterWorkspace(Workspace):
         self.tools.paint(o)
 
     def reveal(self, target: Hashable, focus: str = "") -> None:
-        """A finding's `(section, key)`: select it, bring its panel forward and land on `focus`."""
-        if not isinstance(target, tuple) or len(target) != 2 or self.manifest is None:
+        """A finding's `(section, key)`: select it, bring its panel forward and land on `focus`.
+        With a brain file open, `("node", id)` or `("routine", name)` of the script."""
+        if not isinstance(target, tuple) or len(target) != 2:
             return
         self.landing = focus
         section, key = target
         m = self.manifest
+        if m is None:
+            if self.species_doc is not None:
+                self._reveal_brain(section, key)
+            return
         if section == "clips" and isinstance(key, str) and key in m.clips:
             at = clips.at(m.clips[key], self.sources())
             if at is None:
@@ -720,19 +998,24 @@ class MonsterWorkspace(Workspace):
         return self.edit(msg, lambda: sess.edit_volume(index, **fields))
 
     def save(self) -> None:
-        if self.doc is None:
+        doc = self.document
+        if doc is None:
             self.message = "this scene has no manifest file"
             return
         try:
-            self.message = f"saved {self.doc.save()}"
-        except (OSError, ManifestError) as e:
+            self.message = f"saved {doc.save()}"
+        except (OSError, ManifestError, BrainFileError) as e:
             self.message = f"{type(e).__name__}: {e}"
 
     def revert(self) -> None:
         if self.doc is not None:
             self.doc.revert()
-            self.sync()
-            self.message = "back to the file on disk"
+        elif self.species_doc is not None:
+            self.species_doc.revert()
+        else:
+            return
+        self.sync()
+        self.message = "back to the file on disk"
 
     # the runtime module: the manifest as it is now, saved or not (its header says which)
 
@@ -785,6 +1068,8 @@ class MonsterWorkspace(Workspace):
         from mhfu_studio.monster import runtime
 
         m = self.manifest
+        if m is None and self.species_doc is not None:
+            return self.brain_send_blocker()
         if m is None:
             if self.scene is None:
                 return "no port open: open a port manifest (ports/<name>.toml)"
@@ -807,7 +1092,11 @@ class MonsterWorkspace(Workspace):
         return None
 
     def send(self) -> None:
-        """The hit tables onto the memory stick (`deploy_hit`), no save needed."""
+        """The hit tables onto the memory stick (`deploy_hit`), no save needed; with a brain
+        file open, the script (`send_brain`)."""
+        if self.doc is None and self.species_doc is not None:
+            self.send_brain()
+            return
         try:
             self.deploy_hit()
         except (OSError, ValueError) as e:  # ManifestError is a ValueError
@@ -866,6 +1155,8 @@ class MonsterWorkspace(Workspace):
         if self._handed or found == self._found:
             return
         self._found, self._data = found, None
+        for held in (self._shown, self._past, self._making, self._failed, self._build_errors):
+            held.clear()
         self.intel_cache.clear()
         self.intel_errors.clear()
         self.host_scenes.clear()
@@ -987,6 +1278,7 @@ class MonsterWorkspace(Workspace):
 
     def browse_brain(self, row: int) -> None:
         self.brain_pick = int(row)
+        self.count.reset()
 
     def _brain_game(self) -> Extracted | None:
         """The game the scripts are read from; None, `brain_note` saying why, without one."""
@@ -1036,7 +1328,7 @@ class MonsterWorkspace(Workspace):
         game = self._brain_game()
         if game is None:
             return self.brain_note
-        return self._brain_errors.get((game.root, row), "")
+        return self._brain_errors.get((game.root, row)) or self._build_errors.get(row, "")
 
     def brain(self, row: int, header: str | None = None) -> BrainView | None:
         """Species row `row`'s script as `header` runs it: by default the header most map types
@@ -1106,18 +1398,480 @@ class MonsterWorkspace(Workspace):
             view.labels[at] = self.plays(main, sub, species=sp).text()
 
     def poll_follow(self, view: BrainView | None) -> bool:
-        """One step of Follow the game, at most one read a second; True when its marks changed."""
+        """One step of Follow the game, at most one read a second; True when its marks changed.
+        A view of an edited build is marked from that build's image."""
         heads = [] if view is None else self.brain_headers(view.row)
-        return self.follow.poll(view, heads, self.game_running(), self._ask_follow)
+        return self.follow.poll(
+            view, heads, self.game_running(), self._ask_follow, self._followed(view)
+        )
 
     def place_follow(self, view: BrainView | None) -> bool:
         """Marks `view`, a new one, from the last read of the game; True when they changed."""
         heads = [] if view is None else self.brain_headers(view.row)
-        return self.follow.place(view, heads)
+        return self.follow.place(view, heads, self._followed(view))
 
     def _ask_follow(self, row: int, known: Container | None) -> Future[brain_game.Read]:
         self._pool = self._pool or ThreadPoolExecutor(1)
-        return self._pool.submit(self.read_follow, self.game_session, row, known)
+        return self._pool.submit(self.read_follow, self.game_session, row, known, self.follow.seen)
+
+    def _followed(self, view: BrainView | None) -> Built | None:
+        """The build `view` shows when that is an edited one: Follow and Count read the monster
+        against its image. An unedited build is the game's own script, which a view of the lift
+        already is."""
+        if view is None:
+            return None
+        for held in (self._shown.get(view.row), self._past.get(view.row)):
+            if held is not None and held.has(view):
+                return None if held.built.edits.is_empty() else held.built
+        return None
+
+    def count_brain(self, seconds: float = brain_game.SECONDS) -> bool:
+        """Counts the followed monster's script by node for `seconds` emulated seconds, on the
+        worker Follow reads on (`count` holds the answer); False, `count.status` in `message`,
+        when it cannot start."""
+        row = self.brain_species
+        lift = None if row is None else self.brain_lift(row)
+        started = self.count.start(self._shown_edit(row), self._run_trace, seconds, lift)
+        if not started:
+            self.message = self.count.status
+        return started
+
+    def poll_count(self) -> bool:
+        """Takes a finished count; True when what the tab shows changed."""
+        return self.count.poll(self._shown_edit(self.brain_species))
+
+    def _shown_edit(self, row: int | None) -> Built | None:
+        """The build shown for `row` when it differs from the game's own script."""
+        held = None if row is None else self._shown.get(row)
+        return None if held is None or held.built.edits.is_empty() else held.built
+
+    def _run_trace(self, entity: int, seconds: float) -> Future[Trace]:
+        self._pool = self._pool or ThreadPoolExecutor(1)
+        return self._pool.submit(self._trace, entity, seconds)
+
+    def _trace(self, entity: int, seconds: float) -> Trace:
+        with self.game_session() as s:
+            return self.trace_script(s, entity, seconds)
+
+    # the brain editor: a brain file's builds, and what the Brain tab draws from them
+
+    def brain_editable(self, row: int) -> bool:
+        """The open brain file takes edits for species row `row`: its overlay serves it."""
+        doc = self.species_doc
+        if doc is None:
+            return False
+        if row == doc.overlay:
+            return True
+        game = self._brain_game()
+        serves = None if game is None else self._brain_rows.get(game.root)
+        return serves is not None and serves.get(row) == doc.overlay
+
+    def brain_lift(self, row: int) -> ir.Program | None:
+        """The game's own program of `row`, as the worker decoded it; None until then. The
+        gestures edit against it."""
+        game = self._brain_game()
+        return None if game is None else self._programs.get((game.root, row))
+
+    def brain_names(self, row: int) -> dict[str, str]:
+        """The display names the file gives routines of `row`, by routine name."""
+        es = None if self.species_doc is None else self.species_doc.brainfile.edits(row)
+        return {} if es is None else dict(es.names)
+
+    def brain_notes(self, row: int) -> dict[str, str]:
+        """The notes the file gives nodes, inserts and routines of `row`, by id."""
+        es = None if self.species_doc is None else self.species_doc.brainfile.edits(row)
+        return {} if es is None else dict(es.notes)
+
+    def brain_pairs(self) -> dict[Pair, str]:
+        """What names a move pair of the open file's overlay: the file's own names, else what
+        the species' intel says plays (`plays`). Labels the graph and the bar's pair list."""
+        doc = self.species_doc
+        if doc is None:
+            return {}
+        si = self.intel_cache.get(doc.overlay)
+        key = (id(si), *sorted(doc.brainfile.pairs.items()))
+        if self._pairs is None or self._pairs[0] != key:
+            labels: dict[Pair, str] = {}
+            if si is not None:
+                for p in si:
+                    what = self.plays(p.main, p.sub, species=doc.overlay)
+                    if what.slot is not None:
+                        labels[p.main, p.sub] = what.text()
+            self._pairs = (key, labels | doc.brainfile.pairs)
+        return self._pairs[1]
+
+    def brain_built(self, row: int) -> Built | None:
+        """The newest build of `row` that is done: while the next computes this one stays, and
+        `brain_pending` says there is one. None until the first, and for a row the file does not
+        edit. Call it from the panel's sync, and from its timer while `brain_pending`."""
+        held = self._advance(row)
+        return None if held is None else held.built
+
+    def brain_pending(self, row: int) -> bool:
+        """What `brain_built` shows is not the build of the file as it is now: a change is
+        waiting out the debounce, or its build is computing. False once it failed."""
+        doc = self.species_doc
+        if doc is None or self._builds is None or not self.brain_editable(row):
+            return False
+        if self._failed.get(row) == doc.version or self.brain_error(row):
+            return False
+        held = self._shown.get(row)
+        return held is None or self._builds.current(row) is not held.built
+
+    def brain_projection(self, row: int) -> script_graph.Projection | None:
+        """The graphs of the build shown, one projection per build (the overview is made on the
+        worker)."""
+        held = self._shown.get(row)
+        if held is None:
+            return None
+        pairs = self.brain_pairs()
+        if pairs != held.pairs:
+            held.proj = script_graph.Projection(held.built.applied, held.edited, pairs)
+            held.pairs = pairs
+            held.outlines.clear()
+        return held.proj
+
+    def brain_view(self, row: int, header: str | None = None) -> BrainView | None:
+        """The script of `row` as `header` runs it, for the Brain tab: with a brain file that
+        edits the row, the build shown (rows flagged `edited`, one view per build and header);
+        else the game's own (`brain`). None until it is made; ask again from the next sync."""
+        if not self.brain_editable(row):
+            return self.brain(row, header)
+        held = self._advance(row)
+        if held is None:
+            return None
+        h = brain.pick_header(held.built.program, header)
+        if h not in held.views:
+            renderer = self._renderers.setdefault((row, h), brain.Renderer())
+            view = brain.view(held.built.program, h, held.edited, renderer)
+            self._label_brain(view, None if self.species_doc is None else self.species_doc.overlay)
+            held.views[h] = view
+        return held.views[h]
+
+    def brain_outline(self, row: int, header: str | None = None) -> brain_graph.Outline | None:
+        """The outline of the build shown, with the file's names and the build's findings."""
+        proj = self.brain_projection(row)
+        held = self._shown.get(row)
+        if proj is None or held is None:
+            return None
+        h = brain.pick_header(held.built.program, header)
+        names = self.brain_names(row)
+        key = (h, tuple(sorted(names.items())))
+        if key not in held.outlines:
+            held.outlines[key] = brain_graph.outline(proj.overview(), h, names, held.built.findings)
+        return held.outlines[key]
+
+    def brain_routine_graph(
+        self, row: int, routine: str, header: str | None = None
+    ) -> script_graph.RoutineGraph | None:
+        """The graph of one routine of the build shown, its links through `header`."""
+        proj, held = self.brain_projection(row), self._shown.get(row)
+        if proj is None or held is None or routine not in proj.routines:
+            return None
+        return proj.routine(routine, brain.pick_header(held.built.program, header))
+
+    def brain_plan(
+        self, row: int, routine: str, scope: str = script_graph.ROOT, header: str | None = None
+    ) -> brain_graph.Plan | None:
+        """The nodes of one scope of a routine, before they are placed: the file's names and the
+        build's findings counted on them."""
+        rg, held = self.brain_routine_graph(row, routine, header), self._shown.get(row)
+        if rg is None or held is None or scope not in rg.scopes:
+            return None
+        return brain_graph.plan(
+            rg, scope, findings=held.built.findings, labels=self.brain_names(row)
+        )
+
+    def brain_bar(self, row: int, ref: str, header: str | None = None) -> brain_edit.Bar | None:
+        """The operand bar of a node or arm of the build shown (`ref` is its id). The
+        gestures' ids are this program's."""
+        held = self._shown.get(row)
+        if held is None or self.species_doc is None:
+            return None
+        program = held.built.program
+        if held.index is None:
+            held.index = ir.Index(program)
+            held.blocks = {
+                a.id: n
+                for r in program.routines()
+                for n in ir.walk(r.body)
+                if isinstance(n, ir.Block)
+                for a in n.arms
+            }
+        try:
+            node = held.index.node(ref)
+        except KeyError:
+            return None
+        block = (held.blocks or {}).get(ref) if isinstance(node, ir.Arm) else None
+        try:
+            return brain_edit.bar(
+                node,
+                program,
+                block=block,
+                header=header,
+                pairs=self.brain_pairs(),
+                names=self.brain_names(row),
+                fresh=sorted(held.built.edits.routines),
+            )
+        except EditError as e:
+            self.message = str(e)
+            return None
+
+    def brain_budget(self, row: int) -> Budget | None:
+        """The build's run budget (`budget_text`), worked out on the brain worker the first time
+        it is asked, as it is the slow part of a check; None until then."""
+        held = self._shown.get(row)
+        if held is None:
+            return None
+        if held.budget is None:
+            built = held.built
+            held.budget = self._brain_worker().submit(lambda: built.budget)
+        if not held.budget.done():
+            return None
+        try:
+            return held.budget.result()
+        except (LookupError, ValueError):
+            return None
+
+    def _advance(self, row: int) -> _Shown | None:
+        """Takes a finished build of `row` and starts the next when the file has changed and the
+        debounce has run out (the first build starts at once); the build shown, if any."""
+        doc, builds = self.species_doc, self._builds
+        if doc is None or builds is None or not self.brain_editable(row):
+            return None
+        if self.brain(row) is None:  # the decode and the intel, on the worker
+            return None
+        lift = self.brain_lift(row)
+        if lift is None:
+            return None
+        now = self.clock()
+        if doc.version != self._version:
+            self._version, self._due = doc.version, now + DEBOUNCE
+        making = self._making.get(row)
+        if making is not None and making[1].done():
+            del self._making[row]
+            self._took(row, *making)
+            making = None
+        held = self._shown.get(row)
+        stale = held is None or builds.current(row) is not held.built
+        if making is None and stale and self._failed.get(row) != doc.version:
+            if held is None or now >= self._due:
+                job = self._brain_worker().submit(
+                    self._make_build,
+                    builds,
+                    row,
+                    lift,
+                    self.intel_cache.get(doc.overlay),
+                    self.brain_pairs(),
+                )
+                self._making[row] = (doc.version, job)
+        return held
+
+    def _took(self, row: int, version: int, job: Future[_Shown]) -> None:
+        try:
+            got = job.result()
+        except (LookupError, ValueError, OSError) as e:
+            self._build_errors[row] = f"building the script failed ({e})"
+            self._failed[row] = version
+            return
+        self._build_errors.pop(row, None)
+        self._failed.pop(row, None)
+        if row in self._shown:
+            self._past[row] = self._shown[row]
+        self._shown[row] = got
+
+    @staticmethod
+    def _make_build(
+        builds: Builds,
+        row: int,
+        lift: ir.Program,
+        intel: SpeciesIntel | None,
+        pairs: dict[Pair, str],
+    ) -> _Shown:
+        """On the brain worker: the row built, and its projection warmed so the outline costs
+        the GUI thread nothing."""
+        built = builds.get(row, lift, intel)
+        edited = script_graph.edited_ids(built.applied)
+        proj = script_graph.Projection(built.applied, edited, pairs)
+        proj.overview()
+        return _Shown(built, proj, pairs, edited)
+
+    # gestures
+
+    def edit_brain(self, g: brain_edit.Gesture, row: int | None = None) -> bool:
+        """One gesture on the open brain file, one undo step. False, the reason in `message`, and
+        nothing committed when it is refused or changes nothing, or when the view lags the file
+        over new code (its ids follow its place, which a change renumbers; the game's ids hold,
+        so those gestures go through while a build is pending). The panel runs it in
+        `studio.act(g.label, ...)`."""
+        doc = self.species_doc
+        row = self.brain_species if row is None else row
+        lift = None if row is None else self.brain_lift(row)
+        if doc is None or row is None or not self.brain_editable(row):
+            self.message = f"{g.label}: no brain file takes edits for this monster"
+            return False
+        if lift is None or self._lagging(row):
+            self.message = f"{g.label}: the script is still building; try again in a moment"
+            return False
+
+        def change(bf: brainfile.BrainFile) -> None:
+            before = brainfile.dumps(bf)
+            g.edit(bf, row, lift)
+            if brainfile.dumps(bf) == before:
+                raise _Unchanged
+
+        try:
+            doc.edit(change)
+        except _Unchanged:
+            self.message = f"{g.label}: nothing changes"
+            return False
+        except (EditError, BrainFileError) as e:
+            self.message = f"{g.label}: {e}"
+            return False
+        self._version, self._due = doc.version, self.clock() + DEBOUNCE
+        self.message = g.label
+        return True
+
+    def _lagging(self, row: int) -> bool:
+        """The build shown is behind the file, or there is none, and one of them has new code."""
+        if not self.brain_pending(row):
+            return False
+        held = self._shown.get(row)
+        if held is None or self.species_doc is None:
+            return True
+        now = self.species_doc.brainfile.edits(row)
+        return any(es is not None and (es.inserts or es.routines) for es in (now, held.built.edits))
+
+    # findings and where they are
+
+    def _brain_findings(self) -> list[Finding]:
+        """The findings of the build shown, for the shell: read from what the worker made, never
+        computed here."""
+        row = self.brain_species
+        if row is None:
+            return []
+        held, names = self._shown.get(row), self.brain_names(row)
+        found = [] if held is None else [_finding(f, names) for f in held.built.findings]
+        if row in self._build_errors:
+            found.append(Finding("error", "BUILD", self._build_errors[row]))
+        return found
+
+    def _reveal_brain(self, section: object, key: object) -> None:
+        if section == "node" and isinstance(key, str):
+            self.show_brain_node(key)
+        elif section == "routine" and isinstance(key, str):
+            self.show_brain_node(None, key)
+
+    def show_brain_node(self, node: str | None, routine: str | None = None) -> bool:
+        """Points the Brain tab at a node of the build shown (or a routine's start): sets
+        `brain_focus` (the node's id), `brain_routine`, `brain_header` and `brain_scope`, the scope
+        that draws it (`brain_graph.scope_for`), counts `brain_focused` and brings the tab
+        forward. False, `message` saying why, when this script has no such place."""
+        row = self.brain_species
+        held = None if row is None else self._shown.get(row)
+        if row is None or held is None:
+            self.message = "the script is not built yet"
+            return False
+        if held.routines is None:
+            held.routines = {
+                x.id: r.name for r in held.built.program.routines() for x in ir.walk(r.body) if x.id
+            }
+        name = routine if node is None else held.routines.get(node)
+        proj = self.brain_projection(row)
+        if name is None or proj is None or name not in proj.routines:
+            self.message = f"{node or routine} is not in this script"
+            return False
+        runs = proj.reach.get(name, ())
+        header = self.brain_header if self.brain_header in runs else next(iter(runs), None)
+        header = brain.pick_header(held.built.program, header)
+        rg = proj.routine(name, header)
+        here = self.brain_scope if self.brain_routine == name else script_graph.ROOT
+        scope = script_graph.ROOT if node is None else brain_graph.scope_for(rg, node, here)
+        if scope is None:
+            self.message = f"{node} is not in this script"
+            return False
+        self.brain_focus, self.brain_routine = node, name
+        self.brain_header, self.brain_scope = header, scope
+        self.brain_focused += 1
+        self.focus("Brain")
+        return True
+
+    # Send and Push
+
+    def _brain_blocker(self) -> str | None:
+        """Why the build shown cannot go anywhere: none, still building, or with errors."""
+        row = self.brain_species
+        held = None if row is None else self._shown.get(row)
+        if row is None or not self.brain_editable(row):
+            return "no brain file takes edits for this monster: open its brain file"
+        if held is None or self.brain_pending(row):
+            return "the script is still building; try again in a moment"
+        if not held.built.ok:
+            first = next(f for f in held.built.findings if f.level == "error")
+            return f"the script has errors, which Findings lists: {first.text}"
+        return None
+
+    def brain_send_blocker(self) -> str | None:
+        """Why Send brain to game cannot run now."""
+        why = self._brain_blocker()
+        if why is not None:
+            return why
+        try:
+            self.mods_dir()
+        except places.Missing as e:
+            return f"no memory stick to send to: {e.words}"
+        except FileNotFoundError as e:
+            return f"the framework is not on the memory stick ({e}): install it there first"
+        return None
+
+    def send_brain(self) -> None:
+        """The build shown onto the memory stick: its container, then the mod that installs it
+        (`stick.ship`). The next quest runs it; no save is needed."""
+        why = self.brain_send_blocker()
+        row = self.brain_species
+        held = None if row is None else self._shown.get(row)
+        if why is not None or held is None:
+            self.message = f"not sent: {why}"
+            return
+        try:
+            stick.ship(held.built, places.path(places.MEMSTICK))
+        except (OSError, ValueError) as e:
+            self.message = f"send failed: {e}"
+            return
+        self._sent_brain = held.built.id
+        self.message = SENT
+
+    def brain_push_blocker(self) -> str | None:
+        """Why Push brain to game cannot run now; a game that is not attached is found by the
+        push."""
+        return self._brain_blocker()
+
+    def push_brain(self) -> None:
+        """The build shown into the running game, read back (`inject.push`): its monsters run
+        it until the next quest load."""
+        why = self.brain_push_blocker()
+        row = self.brain_species
+        held = None if row is None else self._shown.get(row)
+        if why is not None or held is None or held.built.image is None:
+            self.message = f"not pushed: {why}"
+            return
+        try:
+            with self.game_session() as s:
+                done = self.push_script(s, held.built.program, held.built.image)
+        except (LookupError, OSError, ValueError, DebuggerError) as e:  # Refused is a ValueError
+            self.message = f"push failed: {e}"
+            return
+        self.message = done.describe() if done.mismatched else PUSHED
+
+    def _brain_steps(self, doc: BrainDocument) -> Sequence[Step]:
+        row = self.brain_species
+        held = None if row is None else self._shown.get(row)
+        sent = held is not None and held.built.id is not None and held.built.id == self._sent_brain
+        return (
+            Step("Pick a node in the Brain tab", self.brain_focus is not None),
+            Step("Change it", doc.dirty or doc.can_undo()),
+            Step(self.send_label, sent, SEND_KEY),
+        )
 
     # sessions
 
