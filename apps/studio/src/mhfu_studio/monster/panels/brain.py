@@ -1170,8 +1170,8 @@ class BrainPanel(kit.Panel):
 
     def _following(self, on: bool) -> None:
         self.ws.follow.set(on)
-        if not on:
-            self.ws.count.reset()
+        if not on and self.ws.count.busy:
+            self.ws.count.reset()  # a count in flight ends with Follow; a finished one stays
         self._seen = None
         self._gutter()
         self._arm()
