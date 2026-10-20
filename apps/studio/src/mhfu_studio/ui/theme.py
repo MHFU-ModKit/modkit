@@ -36,6 +36,9 @@ CODE_KINDS = ("condition", "action", "random", "flow", "state", "structure", "da
 #: the marks Follow the game puts on a line (`monster.brain_game.KINDS`); `marks` fills each, and
 #: "ink" is the text on one
 MARK_KINDS = ("next", "playing", "parked")
+#: what an edit did to a node or line of a brain file's script; `edits` colours each, as a tint
+#: or an outline the panel chooses
+EDIT_KINDS = ("edited", "new", "dead")
 #: the monospace families, for code and for the `mono` label role
 MONO = ("Menlo", "DejaVu Sans Mono")
 Mode = Literal["system", "dark", "light"]
@@ -65,6 +68,13 @@ def _marks(dark: bool) -> dict[str, str]:
     if dark:
         return {"next": "#f5b73b", "playing": "#4ade80", "parked": "#a78bfa", "ink": "#10131a"}
     return {"next": "#b45309", "playing": "#15803d", "parked": "#6d28d9", "ink": "#ffffff"}
+
+
+def _edits(dark: bool) -> dict[str, str]:
+    """Edit colours, the same in both families: a game node changed, new code, dead code."""
+    if dark:
+        return {"edited": "#38bdf8", "new": "#f472b6", "dead": "#6b7280"}
+    return {"edited": "#0369a1", "new": "#be185d", "dead": "#9ca3af"}
 
 
 def _inks(dark: bool, accent: str) -> dict[Ink, RGBA]:
@@ -118,6 +128,8 @@ class Theme:
     code: dict[str, str] = field(compare=False)
     #: a mark on a line of code by its kind, and the text on it
     marks: dict[str, str] = field(compare=False)
+    #: an edited, new or dead node or line of a brain file's script
+    edits: dict[str, str] = field(compare=False)
 
     @property
     def name(self) -> str:
@@ -131,14 +143,14 @@ def _ember(dark: bool) -> Theme:
             "rgba(255,236,224,0.05)", "rgba(255,236,224,0.10)", "rgba(10,5,3,0.45)",
             "#f4ebe4", "#b9a194", "#ff9f43", "#ffb76b", "#1f1006", "rgba(255,159,67,0.18)",
             "#f25f5c", "#f87171", "#fbbf24", "#241411", _rgba("#1a1311"),
-            _inks(True, "#ff9f43"), _code(True), _marks(True),
+            _inks(True, "#ff9f43"), _code(True), _marks(True), _edits(True),
         )  # fmt: skip
     return Theme(
         "Ember", False, ("#fdf8f3", "#f7ebe0", "#efd9c6"),
         "rgba(255,255,255,0.72)", "rgba(90,40,10,0.13)", "#fffdfb",
         "#2b1a10", "#86695a", "#e8590c", "#f06f24", "#ffffff", "rgba(232,89,12,0.12)",
         "#c2410c", "#dc2626", "#b45309", "#fffaf5", _rgba("#9b877c"),
-        _inks(False, "#e8590c"), _code(False), _marks(False),
+        _inks(False, "#e8590c"), _code(False), _marks(False), _edits(False),
     )  # fmt: skip
 
 
@@ -149,14 +161,14 @@ def _moss(dark: bool) -> Theme:
             "rgba(230,255,245,0.05)", "rgba(230,255,245,0.10)", "rgba(2,10,8,0.45)",
             "#e2efe9", "#8fb1a4", "#4ade80", "#7ae9a0", "#06210f", "rgba(74,222,128,0.16)",
             "#fbbf24", "#f87171", "#fbbf24", "#10241e", _rgba("#0f1a17"),
-            _inks(True, "#4ade80"), _code(True), _marks(True),
+            _inks(True, "#4ade80"), _code(True), _marks(True), _edits(True),
         )  # fmt: skip
     return Theme(
         "Moss", False, ("#f5faf7", "#e5f1ea", "#d2e6db"),
         "rgba(255,255,255,0.72)", "rgba(16,60,40,0.13)", "#fcfefd",
         "#11261e", "#5a786c", "#16a34a", "#22b858", "#ffffff", "rgba(22,163,74,0.12)",
         "#d97706", "#dc2626", "#b45309", "#f8fcfa", _rgba("#80948a"),
-        _inks(False, "#16a34a"), _code(False), _marks(False),
+        _inks(False, "#16a34a"), _code(False), _marks(False), _edits(False),
     )  # fmt: skip
 
 
@@ -290,6 +302,11 @@ def mark(kind: str) -> QColor:
     """The fill of a mark of `kind` (`MARK_KINDS`), or the text on it for "ink"; the accent for
     any other."""
     return QColor(_current.marks.get(kind, _current.accent))
+
+
+def edit(kind: str) -> QColor:
+    """The colour of an edit of `kind` (`EDIT_KINDS`); the second accent for any other."""
+    return QColor(_current.edits.get(kind, _current.second))
 
 
 def mono() -> QFont:
