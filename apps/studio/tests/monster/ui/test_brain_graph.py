@@ -25,6 +25,7 @@ from mhfu_studio.monster import brain_game as bg
 from mhfu_studio.monster.brain_graph import Box, Scene
 from mhfu_studio.monster.node_size import NODE_W
 from mhfu_studio.monster.panels import brain_graph as pane_mod
+from mhfu_studio.monster.panels import brain_names
 from mhfu_studio.monster.panels.brain_graph import GraphPane
 from mhfu_studio.monster.panels.node_graph import (
     PROXY_PX,
@@ -506,6 +507,26 @@ def test_a_note_is_a_gesture_and_shows_in_the_tip(
     assert asked == [""] and "Note: hub move" in rig.spec(hub_id(p)).tip
     undone(rig)
     assert "Note:" not in rig.spec(hub_id(p)).tip
+
+
+def test_the_menu_names_the_routine_and_where_a_call_leads(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = rig.program
+    asked: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        brain_names, "ask_name", lambda parent, what, cur: asked.append((what, cur)) or "Roar"
+    )
+    rig.show()
+    menu = QMenu()
+    rig.pane._menu(call_id(p), menu)
+    action(menu, "Rename call_0…").trigger()
+    assert asked == [("routine call_0", "")] and rig.ws.brain_names(ROW) == {"call_0": "Roar"}
+    rig.pane.sync()
+    assert rig.box(call_id(p)).badge == "\u2192 Roar"
+    menu = QMenu()
+    rig.pane._menu(ENTRY, menu)
+    assert "Rename routine…" in [a.text() for a in menu.actions()]
 
 
 def test_the_end_of_the_scope_takes_a_new_node(rig: Rig) -> None:

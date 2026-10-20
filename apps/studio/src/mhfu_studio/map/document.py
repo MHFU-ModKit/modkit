@@ -34,13 +34,12 @@ import tomli_w
 from mhfu import points as P
 from mhfu.files import Extracted
 from mhfu.points import Point
+from mhfu.stage import stage_title
 
 from mhfu_studio.shell.findings import Finding
 from mhfu_studio.stage import collision, mesh, textures
 from mhfu_studio.stage import ops as O
 from mhfu_studio.stage.file import StageFile
-
-from .core.atlas import stage_title
 
 if TYPE_CHECKING:
     from .core.edit import EditSession

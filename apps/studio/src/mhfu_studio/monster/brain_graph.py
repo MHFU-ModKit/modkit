@@ -3,7 +3,7 @@
 """What the Brain tab's graph pane and outline show of the native AI script, laid out. No toolkit:
 the pane draws these specs and the outline lists these rows.
 
-    proj = Projection(built.applied, edited=..., pairs=...)   # `mhfu.em.script.graph`
+    proj = Projection(built.applied, edited, words)           # `mhfu.em.script.graph`
     scene(proj.routine("base_0"), ROOT)                       # one scope: a routine or an arm
     plan(rg, key).place(sizes)                                # the second pass, with drawn sizes
     outline(proj.overview(), "h0", names=bf_names)            # the outline, by meaning
@@ -319,9 +319,9 @@ def _brief(title: str, summary: str) -> str:
     return summary.removeprefix(f"{title}: ")
 
 
-def _badge(links: Sequence[LinkBadge]) -> str:
-    """A node's links on its title bar: `→ call_3, call_4 +2`."""
-    to = [k.target or "?" for k in links]
+def _badge(links: Sequence[LinkBadge], labels: Mapping[str, str]) -> str:
+    """A node's links on its title bar: `→ call_3, Charge combo +2`."""
+    to = [(labels.get(k.target) or k.target) if k.target else "?" for k in links]
     return "→ " + ", ".join(to[:2]) + (f" +{len(to) - 2}" if len(to) > 2 else "") if to else ""
 
 
@@ -447,7 +447,7 @@ class _Boxes:
             estimate(summary),
             ports=ports,
             exit=exits,
-            badge=_badge(links),
+            badge=_badge(links, self.labels),
             links=links,
             compact=compact,
             opens=tuple(Open(p.scope, p.name, p.size) for p in s.ports if p.scope and compact),
@@ -744,6 +744,8 @@ class OutlineRow:
     """The list slots that name it: `base 0`."""
     callers: tuple[Caller, ...]
     """The routines that lead to it under this header, by sites; each is a link."""
+    hint: str = ""
+    """What it does at a glance (`catalogue.hint`)."""
 
     @property
     def reached_from(self) -> int:
@@ -870,6 +872,7 @@ def outline(
             info.variants,
             _where(lists, name),
             tuple(Caller(src, n) for src, n in sites[name].items()),
+            info.hint,
         )
 
     groups = []

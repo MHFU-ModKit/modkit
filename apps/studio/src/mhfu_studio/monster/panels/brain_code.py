@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
+from mhfu.em.script import catalogue as cat
+from mhfu.em.script import ir
 from mhfu.em.script.edit import EditError
 from mhfu.em.script.graph import ROOT, RoutineGraph, Stmt, head_key
 from mhfu.em.script.opcodes import Shape
@@ -49,8 +51,9 @@ from PySide6.QtWidgets import (
 )
 
 from mhfu_studio.monster import brain_edit as be
-from mhfu_studio.monster.brain import BrainView
+from mhfu_studio.monster.brain import BrainView, var_of
 from mhfu_studio.monster.brain_game import Mark, Marks
+from mhfu_studio.monster.panels import brain_names
 from mhfu_studio.ui import theme
 
 if TYPE_CHECKING:
@@ -139,6 +142,9 @@ class BrainModel(QAbstractItemModel):
         #: the user's notes by node id or routine name, and Count's counts by node id
         self.notes: dict[str, str] = {}
         self.counts: dict[str, int] = {}
+        #: what the numbers are called, and what each line says beyond them, asked once a row
+        self.words = cat.NO_WORDS
+        self._glosses: dict[int, str] = {}
         #: the ids of a routine's lines that never run; asked once per routine and view
         self.dead: Callable[[str], Collection[str]] = lambda routine: ()
         #: a row's place among its siblings
@@ -150,11 +156,30 @@ class BrainModel(QAbstractItemModel):
         self.view = view
         self.marks = {}
         self._never = {}
+        self._glosses = {}
         self._at = [0] * (0 if view is None else len(view.lines))
         for siblings in () if view is None else (view.top, *view.children):
             for k, row in enumerate(siblings):
                 self._at[row] = k
         self.endResetModel()
+
+    def set_words(self, words: cat.Words) -> bool:
+        """Names the lines with `words`; True when they changed, so the lines need painting."""
+        if words == self.words:
+            return False
+        self.words, self._glosses = words, {}
+        return True
+
+    def gloss(self, row: int) -> str:
+        """What a line says quietly after it: what an `enter` plays, else `BrainView.gloss`."""
+        v = self.view
+        if v is None:
+            return ""
+        if row in v.labels:
+            return v.labels[row]
+        if row not in self._glosses:
+            self._glosses[row] = v.gloss(row, self.words)
+        return self._glosses[row]
 
     def set_marks(self, marks: Marks) -> None:
         """Shows `marks` on the lines, repainting the ones whose marks changed."""
@@ -240,7 +265,7 @@ class BrainModel(QAbstractItemModel):
         if role == LINK:
             return v.target_row(row) is not None
         if role == LABEL:
-            return v.labels.get(row, "")
+            return self.gloss(row)
         if role == MARKS:
             return self.marks.get(row, ())
         if role == EDIT:
@@ -766,6 +791,26 @@ class Code(QTreeView):
         self._item(
             menu, "Note\u2026", "A note on this line, shown after it", lambda: self._note(spot)
         )
+        if spot.what == "routine":
+            self._item(
+                menu,
+                "Rename\u2026",
+                "A name for the routine, shown wherever the script names it",
+                lambda: self._rename(brain_names.ROUTINE, ref),
+            )
+        n = v.nodes.get(ref)
+        var = None if n is None or isinstance(n, ir.Arm) else var_of(n.op, n.args)
+        if var is not None:
+            self._item(
+                menu,
+                f"Name variable {var}\u2026",
+                "A name for the variable, shown wherever the script uses it",
+                lambda: self._rename(brain_names.VARS, var),
+            )
+
+    def _rename(self, table: str, key: str | int) -> None:
+        if (v := self.brain.view) is not None:
+            brain_names.rename(self, self.ws, self.studio, v.row, table, key)
 
     def _note(self, spot: Spot) -> None:
         """Asks for the note; blank takes it away, Cancel leaves it as it was."""

@@ -347,3 +347,16 @@ def test_fix_up_matches_the_loader():
     size = mem.u32(PAC_AT + 0x60 + 4)
     loaded = mem.read(PAC_AT + 0x60, size)
     assert S.fix_up(on_disk(mem)[0x60 : 0x60 + size], PAC_AT + 0x60) == loaded
+
+
+def test_names_are_not_guessed():
+    assert S.row_name(0) == "Pokke village & town" and S.row_name(7) == "Map 7"
+    assert S.stage_name(98) == "Snowy base camp" and S.stage_name(200) == "Area st200"
+
+
+def test_an_unnamed_stage_says_its_id_once():
+    assert S.stage_title(139) == "Pokke village (st139)" and S.stage_title(140) == "Area st140"
+
+
+def test_maps_of():
+    assert S.maps_of([(1, 2), (), (2, 3, 2)]) == {1: (0,), 2: (0, 2), 3: (2,)}

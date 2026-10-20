@@ -171,17 +171,17 @@ def test_a_case_value_is_a_number_or_a_name(bench: Bench) -> None:
     bench.show(arm)
     assert bench.bar.title.text().endswith("arm")
     box = bench.combo("section")
-    assert box.currentText() == "0" and box.findText("any") >= 0
+    assert box.currentText() == "0  st000" and box.findText("any area") >= 0
     box.lineEdit().setText("7")  # type: ignore[union-attr]
     box.lineEdit().editingFinished.emit()  # type: ignore[union-attr]
     bench.settle()
-    assert bench.combo("section").currentText() == "7"
+    assert bench.combo("section").currentText() == "7  st007"
     bar = bench.ws.brain_bar(ROW, arm)
     assert bar is not None and bar.control("section").value == 7
     bench.undone()
-    bench.pick("section", bench.combo("section").findText("any"))
+    bench.pick("section", bench.combo("section").findText("any area"))
     bench.settle()
-    assert bench.combo("section").currentText() == "any"
+    assert bench.combo("section").currentText() == "any area"
     bench.undone()
 
 
@@ -192,7 +192,7 @@ def test_a_value_that_is_neither_is_refused_in_words(bench: Bench) -> None:
         box.lineEdit().setText(text)  # type: ignore[union-attr]
         box.lineEdit().editingFinished.emit()  # type: ignore[union-attr]
         assert "is not a name or a number from 0 to 65535" in bench.bar.note.text()
-        assert bench.combo("section").currentText() == "0"  # put back
+        assert bench.combo("section").currentText() == "0  st000"  # put back
         box = bench.combo("section")
     doc = bench.ws.species_doc
     assert doc is not None and not doc.dirty

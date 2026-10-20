@@ -477,9 +477,26 @@ def test_marks():
 def test_pairs():
     a = enter(0, 1)
     prog = build({"base_0": [a, end()]})
-    named = Projection(prog, pairs={(0, 1): "Idle"}).routine("base_0")
+    named = Projection(prog, words=cat.Words({(0, 1): "Idle"})).routine("base_0")
     assert named.nodes[a.id].summary == "Move (0, 1) Idle"
     assert Projection(prog).routine("base_0").nodes[a.id].summary == "Move (0, 1)"
+
+
+def test_a_call_says_where_it_leads():
+    c = edit.insn("call", 0)
+    prog = build(
+        {"base_0": [c, end()], "call_0": [end(1)]}, {"h0": {"base": ["base_0"], "call": ["call_0"]}}
+    )
+    assert Projection(prog).routine("base_0").nodes[c.id].summary == "Call call_0"
+    w = cat.Words(routines={"call_0": "Pick an attack"})
+    assert Projection(prog, words=w).routine("base_0").nodes[c.id].summary == "Call Pick an attack"
+
+
+def test_hints():
+    prog = build({"base_0": [enter(3, 0), enter(1, 2), end()], "call_0": [end(1)]})
+    ov = Projection(prog).overview()
+    assert ov.routines["base_0"].hint == "plays (3, 0), (1, 2)"
+    assert ov.routines["call_0"].hint == "does nothing"
 
 
 # ---- overview

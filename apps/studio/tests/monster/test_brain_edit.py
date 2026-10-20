@@ -1294,7 +1294,7 @@ def named(p: ir.Program, op: str) -> Any:
 def test_the_bar_of_a_move_offers_its_pairs(lift: ir.Program) -> None:
     node = named(lift, "enter")
     pairs = {(3, 27): "stomp", (0, 4): "roar", (node.args["main"], node.args["sub"]): "own"}
-    got = be.bar(node, lift, pairs=pairs)
+    got = be.bar(node, lift, words=cat.Words(pairs))
     assert got.ref == node.id and got.title == "Move"
     assert [c.name for c in got.controls] == ["main", "sub", "gate"]
     assert got.pairs[0].value == (node.args["main"], node.args["sub"])
@@ -1337,7 +1337,7 @@ def test_swaps_keep_every_operand(lift: ir.Program) -> None:
 def test_the_bar_of_a_call_lists_the_entries(lift: ir.Program) -> None:
     node = named(lift, "call")
     names = {lift.routines()[0].name: "Opening"}
-    got = be.bar(node, lift, names=names, fresh=["spin"])
+    got = be.bar(node, lift, words=cat.Words(routines=names), fresh=["spin"])
     target = got.control("routine")
     values = [c.value for c in target.choices]
     table = next(
@@ -1347,7 +1347,7 @@ def test_the_bar_of_a_call_lists_the_entries(lift: ir.Program) -> None:
     assert values[-1] == ir.Sym("spin") and "new routine" in target.choices[-1].text
     assert any("empty" in c.text for c in target.choices) == (None in table.slots)
     goto = named(lift, "goto")
-    base = be.bar(goto, lift, names=names).control("routine")
+    base = be.bar(goto, lift, words=cat.Words(routines=names)).control("routine")
     assert base.choices[0].text.endswith("Opening") or "base_0" in base.choices[0].text
 
 
@@ -1372,8 +1372,15 @@ def test_the_bar_of_an_arm(site: Site) -> None:
 def test_the_bar_words_its_choices(lift: ir.Program) -> None:
     end = be.bar(named(lift, "end"), lift).control("kind")
     assert {c.value for c in end.choices} == set(cat.END_KIND_INFO)
-    sec = be.bar(be.default_node("if_in_section"), lift).control("section")
-    assert sec.choices == (be.Choice(0xFFFF, "any"),) and sec.hi == 0xFFFF
+    node = be.default_node("if_in_section")
+    sec = be.bar(node, lift).control("section")
+    assert sec.choices[0] == be.Choice(0xFFFF, "any area") and sec.hi == 0xFFFF
+    near = cat.Words(maps={141: (3,), 142: (3,), 99: (11,)})
+    node.args["section"] = 142
+    got = be.bar(node, lift, words=near).control("section")
+    assert [c.text for c in got.choices] == ["any area", "141  st141", "142  st142"]
+    var = be.bar(be.default_node("set_var"), lift, words=cat.Words(vars={4: "hunt"}))
+    assert var.control("var").choices[4] == be.Choice(4, "4  hunt")
     apply_ = be.bar(be.default_node("self_heal"), lift).control("apply")
     assert [c.text for c in apply_.choices] == ["apply", "no-op"]
     deg = be.bar(be.default_node("if_off_facing"), lift).control("deg")

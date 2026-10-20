@@ -17,6 +17,7 @@ import numpy as np
 import numpy.typing as npt
 from mhfu import stage as S
 from mhfu.files import Extracted
+from mhfu.stage import stage_name, stage_title
 from mhp_formats.fu.stage import Hits, Tri
 from mhp_formats.pmo import Block, Budget, Material, Pmo
 from mhp_formats.psp.ge import Op, triangles
@@ -25,8 +26,6 @@ from mhp_formats.tmh import Tmh
 from mhfu_studio.stage.collision import Plan
 from mhfu_studio.stage.file import MESHES, TEXTURES, StageFile
 from mhfu_studio.stage.textures import UNTEXTURED
-
-from .atlas import stage_name, stage_title
 
 Array = npt.NDArray[Any]
 Point = Sequence[float] | Array

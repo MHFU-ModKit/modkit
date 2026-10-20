@@ -4,7 +4,8 @@ from typing import Any
 
 import pytest
 from mhfu.files import Extracted
-from mhfu_studio.map.core.atlas import Atlas, Section, stage_name
+from mhfu.stage import stage_name
+from mhfu_studio.map.core.atlas import Atlas, Section
 from mhfu_studio.map.panels.browser import BrowserPanel, section_text
 from mhfu_studio.map.workspace import MapWorkspace
 from mhfu_studio.shell.studio import Studio

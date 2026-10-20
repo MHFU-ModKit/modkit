@@ -99,6 +99,13 @@ class Species(View):
     sight_radius = f32(a.SPECIES.SIGHT_RADIUS)
     hurtbox_set = ptr(a.SPECIES.HURTBOX_SET)
     hitzone_states = ptr(a.SPECIES.HITZONE_STATES)
+    range_sets = f32s(a.SPECIES.RANGE_SETS)
+
+    @property
+    def limits(self) -> tuple[tuple[float, ...], tuple[float, ...]]:
+        """The distance limits of range sets 0 and 1."""
+        s = self.range_sets
+        return s[0:4], s[8:12]
 
     @classmethod
     def at(cls, mem: Memory, species: int) -> Species:

@@ -22,6 +22,7 @@ from mhfu.em.script.graph import ROOT, edited_ids
 from PySide6.QtCore import (
     QModelIndex,
     QPersistentModelIndex,
+    QPoint,
     QRectF,
     QSize,
     Qt,
@@ -57,6 +58,7 @@ from PySide6.QtWidgets import (
 )
 
 from mhfu_studio.monster import brain, brain_game, brain_graph, species
+from mhfu_studio.monster.panels import brain_names
 from mhfu_studio.monster.panels.brain_code import (
     LINK,
     PAD,
@@ -76,6 +78,7 @@ from mhfu_studio.ui import kit, theme
 
 if TYPE_CHECKING:
     from mhfu.em.script.budget import Budget
+    from mhfu.em.script.build import Built
 
     from mhfu_studio.monster.workspace import MonsterWorkspace
     from mhfu_studio.shell.studio import Studio
@@ -115,6 +118,8 @@ def details(r: brain_graph.OutlineRow) -> list[tuple[str, Literal["muted"] | Lev
         out.append(
             (f"{r.entry} ({r.confidence.label})" if weak and r.confidence else r.entry, "muted")
         )
+    if r.hint:
+        out.append((r.hint, "muted"))
     if r.shared:
         out.append(("shared", "muted"))
     out.append((f"{r.nodes} node{'' if r.nodes == 1 else 's'}", "muted"))
@@ -127,6 +132,8 @@ def details(r: brain_graph.OutlineRow) -> list[tuple[str, Literal["muted"] | Lev
 def tip_of(r: brain_graph.OutlineRow) -> str:
     """What the outline says of a routine when the pointer rests on it."""
     lines = [r.text]
+    if r.hint:
+        lines.append(f"What it does: {r.hint}")
     if r.entry:
         sure = r.confidence.label if r.confidence else "unknown"
         lines.append(f"The game starts it as: {r.entry} (confidence {sure})")
@@ -136,6 +143,7 @@ def tip_of(r: brain_graph.OutlineRow) -> str:
         lines.append("Several map types run it: an edit here changes all of them")
     if r.new:
         lines.append("A routine of your own")
+    lines.append("F2 or the context menu names it")
     return "\n".join(lines)
 
 
@@ -277,13 +285,18 @@ class Routines(QTreeWidget):
 
     picked = Signal(str)
     reached = Signal(str, str)
+    renamed = Signal(str)
+    """The user asked to name a routine."""
 
     def __init__(self) -> None:
         super().__init__()
         self.setToolTip(
             "The routines this script runs, grouped by what starts them: pick one to show it."
             " A dot marks one you changed; the arrow column lists the routines that lead to it."
+            " F2 or the context menu names one."
         )
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._menu)
         self.names: dict[str, str] = {}
         self.items: dict[str, QTreeWidgetItem] = {}
         self.setColumnCount(2)
@@ -377,6 +390,24 @@ class Routines(QTreeWidget):
             )
         return menu
 
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        if event.key() == Qt.Key.Key_F2 and (routine := self.routine()) is not None:
+            self.renamed.emit(routine)
+            return
+        super().keyPressEvent(event)
+
+    def _menu(self, at: QPoint) -> None:
+        item = self.itemAt(at)
+        row = None if item is None else item.data(0, ROW)
+        if not isinstance(row, brain_graph.OutlineRow):
+            return
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        act = menu.addAction("Rename\u2026")
+        act.setToolTip("A name for the routine, shown wherever the script names it")
+        act.triggered.connect(lambda _=False: self.renamed.emit(row.routine))
+        menu.popup(self.viewport().mapToGlobal(at))
+
     def _clicked(self, item: QTreeWidgetItem, column: int) -> None:
         row = item.data(0, ROW)
         if not isinstance(row, brain_graph.OutlineRow):
@@ -421,6 +452,7 @@ class BrainPanel(kit.Panel):
         self._quiet = 0
         #: the build, the outline and the focus the panel has taken, and the document version
         self._built: object | None = None
+        self._uses: tuple[Built, brain.Uses] | None = None
         self._outline: brain_graph.Outline | None = None
         self._focused = 0
         self._want: tuple[str | None, str | None] | None = None
@@ -516,9 +548,18 @@ class BrainPanel(kit.Panel):
         self.outline = Routines()
         self.outline.picked.connect(lambda r: self._show_node(None, r, own=False))
         self.outline.reached.connect(self._reached)
+        self.outline.renamed.connect(lambda r: self._rename(brain_names.ROUTINE, r))
         self.left = QStackedWidget()
         self.left.addWidget(self.lists)
         self.left.addWidget(self.outline)
+        self.names = brain_names.Names()
+        self.names.named.connect(self._rename)
+        self.side = QSplitter(Qt.Orientation.Vertical)
+        self.side.setChildrenCollapsible(False)
+        self.side.addWidget(self.left)
+        self.side.addWidget(self.names)
+        self.side.setSizes([700, 300])
+        self.side.setStretchFactor(0, 1)
 
         self.graph_slot = QWidget()
         self.bar_slot = QWidget()
@@ -537,7 +578,7 @@ class BrainPanel(kit.Panel):
         self.lay.addWidget(self.bar_slot)
         self.split = QSplitter(Qt.Orientation.Horizontal)
         self.split.setChildrenCollapsible(False)
-        self.split.addWidget(self.left)
+        self.split.addWidget(self.side)
         self.split.addWidget(centre)
         self.split.setSizes([LISTS_W, 1000])
         self.split.setStretchFactor(1, 1)
@@ -712,6 +753,7 @@ class BrainPanel(kit.Panel):
         self._view, self._editing = view, editing
         self.model.notes = self.ws.brain_notes(view.row) if editing else {}
         self.model.changed = self._changed(view.row) if editing else frozenset()
+        self.model.set_words(self.ws.brain_words(view.row))
         with self._silent():
             self.model.set_view(view)
             self.tree.editing = editing
@@ -759,7 +801,7 @@ class BrainPanel(kit.Panel):
         """What only a script that takes edits has: the outline of its routines, the graph, the
         operand bar and the bar of what to do with the script."""
         self.left.setCurrentWidget(self.outline if editing else self.lists)
-        for w in (self.graph_slot, self.bar_slot, self.tools):
+        for w in (self.graph_slot, self.bar_slot, self.tools, self.names):
             w.setVisible(editing)
 
     def _ready(self, on: bool) -> None:
@@ -830,6 +872,7 @@ class BrainPanel(kit.Panel):
             self._outline = outline
             self.outline.show_outline(outline, names)
             self.outline.select(self._routine())
+        self._names(sp, built)
         pending, err = ws.brain_pending(sp), ws.brain_error(sp)
         budget = None if pending or err else ws.brain_budget(sp)
         self._tries += budget is None and not pending and not err
@@ -838,6 +881,23 @@ class BrainPanel(kit.Panel):
         self._buttons()
         asking = budget is None and not pending and not err and self._tries < BUDGET_TRIES
         return pending or asking or ws.count.busy
+
+    def _names(self, sp: int, built: Built | None) -> None:
+        """The file's names and notes on the lines and in the Names list, after they change:
+        neither makes a new build."""
+        words, notes = self.ws.brain_words(sp), self.ws.brain_notes(sp)
+        changed = self.model.set_words(words) or notes != self.model.notes
+        self.model.notes = notes
+        if changed:
+            self.tree.viewport().update()
+        if built is not None:
+            if self._uses is None or self._uses[0] is not built:
+                self._uses = (built, brain.uses(built.program))
+            self.names.show_names(words, self._uses[1])
+
+    def _rename(self, table: str, key: str | int) -> None:
+        if self._species is not None and self._editing:
+            brain_names.rename(self, self.ws, self.studio, self._species, table, key)
 
     def _routine(self) -> str | None:
         v, row = self._view, self.tree.row()

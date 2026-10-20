@@ -16,13 +16,13 @@ from dataclasses import dataclass
 import moderngl
 import numpy as np
 from mhfu import stage as S
+from mhfu.stage import stage_title
 
 from mhfu_studio.shell.camera import Bounds, Lens, Limit, Mat, OrbitCamera
 from mhfu_studio.shell.lines import Lines, axes_geometry, bounds_geometry, concat
 from mhfu_studio.shell.target import CLEAR, RGBA, SAMPLES
 from mhfu_studio.shell.viewport import Viewport, depth_write_off
 
-from ..core.atlas import stage_title
 from ..core.scene import TURN, Array, MapScene
 from .overlays import (
     ARRIVAL_COLOR,

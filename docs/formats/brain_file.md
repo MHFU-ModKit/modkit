@@ -14,6 +14,12 @@ label = "Tigrex"
 [pairs]
 "0,2" = "alert hub"
 
+[vars]
+4 = "in_hunt_area"
+
+[ranges]
+1 = "melee"
+
 [row.75]
 build = "f2fe5a46f04a772d1de08424052b88bf71b73ee6"
 
@@ -42,6 +48,8 @@ if_enraged
 | `overlay` | The em overlay: one of `files.EM_SPECIES` |
 | `label` | A name to show, optional |
 | `pairs` | Display names of move pairs, `"main,sub" = "name"`: for graphs and findings, no bytes depend on them |
+| `vars` | Display names of script variables 1 to 9 (1 to 4 are the monster's own bytes, 5 to 9 call the species overlay) |
+| `ranges` | Display names of distance ranges: 1 to 4 within that limit of the species' range set, 5 past them or with no target |
 | `row.N` | The edits to species row N, one edit set (below) |
 
 No other key is allowed. A row is in one section only: its own, or the `also` of one.

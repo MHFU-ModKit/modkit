@@ -11,13 +11,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from mhfu.stage import stage_title
 from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import QFileDialog, QVBoxLayout, QWidget
 
 from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit
 
-from ..core.atlas import stage_title
 from ..core.edit import count
 from ..document import MapDocument
 from .common import DATA_HINT, NO_DATA, fit

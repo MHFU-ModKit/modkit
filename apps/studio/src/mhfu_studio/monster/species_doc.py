@@ -171,7 +171,17 @@ class _Entry:
 
 
 def _same(a: EditSet | None, b: EditSet | None) -> bool:
-    return a is b or (a is not None and b is not None and equal(a, b))
+    """Whether two edit sets build the same: names and notes change no bytes, and an edit set
+    of nothing else builds what none does."""
+    if a is b or ((a is None or a.is_empty()) and (b is None or b.is_empty())):
+        return True
+    return a is not None and b is not None and equal(_built(a), _built(b))
+
+
+def _built(es: EditSet) -> EditSet:
+    out = es.copy()
+    out.names, out.notes = {}, {}
+    return out
 
 
 class Builds:

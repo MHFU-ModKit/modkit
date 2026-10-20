@@ -31,6 +31,7 @@ from mhfu.em.script.check import Finding, is_terminal
 from mhfu.em.script.edit import EditError
 from mhfu.em.script.editset import Anchor, Applied, EditSet, Insert, NodeEdit
 from mhfu.em.script.opcodes import BY_NAME, FIRST_DEEP, LISTS, Op, Operand, Shape, operands, slot
+from mhfu.stage import row_name
 
 from mhfu_studio.monster import brain
 
@@ -57,6 +58,8 @@ __all__ = [
     "insert_entry",
     "later",
     "move_to",
+    "name_range",
+    "name_var",
     "remove_arm",
     "remove_else",
     "rename_routine",
@@ -1085,6 +1088,25 @@ class _Rename(Gesture):
         es.names[old] = new
 
 
+@dataclass(frozen=True)
+class _Name(Gesture):
+    """A name of the whole file's: a variable's or a distance range's. No row's edits change."""
+
+    table: str
+    key: int
+    name: str
+
+    def edit(self, bf: BrainFile, row: int, lift: ir.Program) -> None:
+        new = self.name.strip()
+        if "\n" in new or len(new) > _NAME_LIMIT:
+            raise EditError(f"a name is one line of at most {_NAME_LIMIT} letters")
+        names: dict[int, str] = getattr(bf, self.table)
+        if new:
+            names[self.key] = new
+        else:
+            names.pop(self.key, None)
+
+
 def _rename_new(cx: _Cx, old: str, new: str) -> None:
     """Rename a new routine, which is its name in code: labels, lists and ids follow."""
     es = cx.es
@@ -1268,6 +1290,16 @@ def set_note(ref: str, text: str) -> Gesture:
     return _Note("Note", ref, text)
 
 
+def name_var(var: int, name: str) -> Gesture:
+    """Names script variable `var` (1 to 9) in the whole file; blank takes the name away."""
+    return _Name("Name variable", "vars", var, name)
+
+
+def name_range(key: int, name: str) -> Gesture:
+    """Names a distance range (1 to 4, `catalogue.BEYOND` past them) in the whole file."""
+    return _Name("Name distance range", "ranges", key, name)
+
+
 def rename_routine(routine: str, name: str) -> Gesture:
     """A routine's display name, blank for the game's own. A new routine's name is its name in
     code, which labels, lists and ids follow."""
@@ -1434,16 +1466,27 @@ def _control(
     info: cat.OperandInfo,
     program: ir.Program,
     header: str,
-    names: Mapping[str, str],
+    words: cat.Words,
     fresh: Collection[str],
 ) -> Control:
     choices: tuple[Choice, ...] = ()
     if o.ref is not None:
-        choices = _targets(o, node.args, program, header, names, fresh)
+        choices = _targets(o, node.args, program, header, words.routines, fresh)
     elif info.words:
         choices = tuple(Choice(v, f"{v}  {w}") for v, w in info.words.items())
+    elif info.fmt is cat.Fmt.VAR:
+        choices = tuple(Choice(v, f"{v}  {words.var(v)}") for v in range(cat.VARS + 1))
     elif info.fmt is cat.Fmt.SECTION:
-        choices = (Choice(0xFFFF, "any"),)
+        near = set(words.maps.get(f.value, ())) if isinstance(f.value, int) else set()
+        areas = sorted(s for s, rows in words.maps.items() if near & set(rows))
+        listed = [*areas, *([f.value] if isinstance(f.value, int) and not areas else [])]
+        choices = (
+            Choice(cat.ANY, words.area(cat.ANY)),
+            *(Choice(s, f"{s}  {words.area(s)}") for s in listed if s != cat.ANY),
+        )
+    elif info.fmt is cat.Fmt.MAP:
+        rows = sorted({r for rs in words.maps.values() for r in rs})
+        choices = tuple(Choice(r, f"{r}  {row_name(r)}") for r in rows)
     elif info.fmt is cat.Fmt.APPLY:
         choices = (Choice(0, "apply"), Choice(1, "no-op"))
     elif info.fmt is cat.Fmt.END:
@@ -1458,32 +1501,31 @@ def bar(
     *,
     block: ir.Block | None = None,
     header: str | None = None,
-    pairs: Pairs | None = None,
-    names: Mapping[str, str] | None = None,
+    words: cat.Words = cat.NO_WORDS,
     fresh: Collection[str] = (),
 ) -> Bar:
     """The bar of a node or arm of `program` (the program the edits make, so its ids are the
     gestures'). `block` is an arm's block; `header` the one whose lists name the routines, by
-    default the one most map types run; `pairs` the labels of move pairs; `names` the display
-    names of routines; `fresh` the names of new routines, offered as call targets."""
+    default the one most map types run; `words` the names of pairs, routines, variables and
+    areas; `fresh` the names of new routines, offered as call targets."""
     shown = brain.pick_header(program, header)
-    labels = names or {}
     if isinstance(node, ir.Arm):
         if block is None:
             raise EditError("an arm's bar needs its block")
-        fields, layout = cat.arm_operands(block, node), operands(block.op.layout(node.sub))
+        fields, layout = cat.arm_operands(block, node, words), operands(block.op.layout(node.sub))
         entry, title = cat.entry(block.op), f"{cat.title(block)} arm"
     else:
-        fields, layout = cat.operands(node), _operand_list(node, None)
+        fields, layout = cat.operands(node, words), _operand_list(node, None)
         entry, title = cat.entry(node.op), cat.title(node)
     controls = tuple(
-        _control(node, f, o, entry.info(f.name), program, shown, labels, fresh)
+        _control(node, f, o, entry.info(f.name), program, shown, words, fresh)
         for f, o in zip(fields, layout, strict=True)
     )
     named: tuple[Choice, ...] = ()
     main, sub = node.args.get("main"), node.args.get("sub")
+    pairs = words.pairs
     if isinstance(main, int) and isinstance(sub, int):
-        listed = [p for p in sorted(pairs or {}) if p != (main, sub)]
+        listed = [p for p in sorted(pairs) if p != (main, sub)]
         named = tuple(Choice(p, cat.pair_text(*p, pairs)) for p in [(main, sub), *listed])
     swaps: tuple[cat.Entry, ...] = ()
     if not isinstance(node, ir.Arm):

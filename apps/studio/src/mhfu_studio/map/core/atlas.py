@@ -2,10 +2,9 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The map table as rows of sections, entry area first; the village is row 0.
 
-On screen a row is a "map" and a section an "area" (`row_name`, `stage_title`). Names come
-only from the game: three maps and the snowy areas are named, everything else is `Map N` /
-`Area stNNN`. Day/night twins share their collision bytes, paired by hash, not by an offset
-that holds for one map only.
+On screen a row is a "map" and a section an "area" (`mhfu.stage.row_name`, `stage_title`).
+Day/night twins share their collision bytes, paired by hash, not by an offset that holds for one
+map only.
 """
 
 from __future__ import annotations
@@ -17,65 +16,15 @@ from dataclasses import dataclass, field
 from mhfu import files
 from mhfu import stage as S
 from mhfu.files import Extracted
+from mhfu.stage import row_name, stage_name, stage_title
 
 from mhfu_studio.stage.file import COLLISION, StageFile
 
 PLACEHOLDER = 2048
 """A stub stage is this many bytes or fewer."""
 
-ROW_NAMES: dict[int, str] = {
-    0: "Pokke village & town",
-    11: "Snowy Mountains (day)",
-    21: "Snowy Mountains (night)",
-}
-
-STAGE_NAMES: dict[int, str] = {
-    139: "Pokke village",
-    66: "Pokke village twin",
-    98: "Snowy base camp",
-    99: "Snowy area 1",
-    95: "Snowy area 2",
-    94: "Snowy area 3",
-    92: "Snowy area 4",
-    93: "Snowy area 5",
-    100: "Snowy area 6",
-    96: "Snowy area 7",
-    97: "Snowy area 8",
-    6: "Snowy secret area",
-    107: "Snowy base camp at night",
-    108: "Snowy area 1 at night",
-    104: "Snowy area 2 at night",
-    103: "Snowy area 3 at night",
-    101: "Snowy area 4 at night",
-    102: "Snowy area 5 at night",
-    109: "Snowy area 6 at night",
-    105: "Snowy area 7 at night",
-    106: "Snowy area 8 at night",
-    15: "Snowy secret area at night",
-}
-
 ORPHAN_STAGES = (126, 198, 199, 200)
 """Complete maps no row references: a cut section and three unconnected arenas."""
-
-
-def stage_id(stage: int) -> str:
-    return f"st{stage:03d}"
-
-
-def stage_name(stage: int) -> str:
-    """`Pokke village`, or `Area st140` for a stage the game gives no name."""
-    return STAGE_NAMES.get(stage, f"Area {stage_id(stage)}")
-
-
-def stage_title(stage: int) -> str:
-    """`Pokke village (st139)`; `Area st140`, its id once, for a stage with no name."""
-    name = STAGE_NAMES.get(stage)
-    return f"{name} ({stage_id(stage)})" if name else stage_name(stage)
-
-
-def row_name(row: int) -> str:
-    """A row as the map it is: `Snowy Mountains (day)`, or `Map 7`."""
-    return ROW_NAMES.get(row, f"Map {row}")
 
 
 @dataclass

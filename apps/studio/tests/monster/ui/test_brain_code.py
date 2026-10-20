@@ -269,6 +269,7 @@ def test_an_arm_and_a_routine(editor: BrainPanel) -> None:
         "Insert at start of routine",
         "Insert at end of routine",
         "Note…",
+        "Rename…",
     ]
 
 
