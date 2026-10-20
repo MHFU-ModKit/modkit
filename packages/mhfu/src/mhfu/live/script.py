@@ -6,6 +6,7 @@ resumes, which interrupts are raised.
     state = script.read(session.mem, entity)
     state.pc                      # where the running context resumes
     script.monsters(session.mem)  # registry slot -> state, for each monster with a script
+    script.trace(session, entity, 30).counts   # executions by instruction address
 
 `mhfu.em.script` turns the addresses into routines: `header` picks the program's header, `pc` a
 line of its source. Read about once a second: a request stops the emulator for ms.
@@ -14,15 +15,21 @@ line of its source. Read about once a second: a request stops the emulator for m
 from __future__ import annotations
 
 import struct
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Any
+
+from ppsspp_debug import Hit
 
 from .. import addresses as a
 from ..addresses import Field
 from ..memory import Memory
 from ..structs import Game
 from ..views import layout
+from .observe import DRAIN, WRAP
+from .session import Session
 
 CONTEXTS = (0x00, 0x20, 0x10, 0x01)
 """`ENTITY.SCRIPT_CONTEXT` bits in the order of `ENTITY.SCRIPT_PCS`: the base routine, then the
@@ -148,3 +155,80 @@ def monsters(mem: Memory) -> dict[int, ScriptState]:
     """Registry slot to state, for the monsters whose script header is set."""
     found = ((slot, read(mem, e.base)) for slot, e in Game(mem).monsters().items())
     return {slot: s for slot, s in found if s.header in a.RAM}
+
+
+DISPATCH_FORMAT = "{usec} {s1} {v0}"
+"""What the dispatch breakpoint logs: the clock, the instruction's address, its opcode."""
+PATIENCE = 4
+"""Wall seconds `trace` allows per emulated second, plus `PATIENCE_BASE`, for a game that runs."""
+PATIENCE_BASE = 10.0
+
+
+@dataclass(frozen=True)
+class Step:
+    """One script instruction run, `t` emulated microseconds into the trace."""
+
+    t: int
+    pc: int
+    opcode: int
+
+
+@dataclass(frozen=True)
+class Trace:
+    entity: int
+    seconds: float
+    """The emulated window."""
+    steps: tuple[Step, ...]
+    dropped: int
+    """Log lines lost, which leaves the counts low: the stream's overflow and unreadable lines."""
+
+    @cached_property
+    def counts(self) -> dict[int, int]:
+        """Executions by instruction address."""
+        return dict(Counter(step.pc for step in self.steps))
+
+
+def _step(hit: Hit, start: int) -> Step | None:
+    try:
+        usec, pc, opcode = (int(f, 16) for f in (hit.message or "").split())
+    except ValueError:
+        return None
+    return Step((usec - start) % WRAP, pc, opcode)
+
+
+def trace(s: Session, entity: int, seconds: float) -> Trace:
+    """The script instructions `entity` runs in `seconds` emulated seconds, from one log-only
+    breakpoint at AI_SCRIPT_DISPATCH, so the game keeps running; removed on return and on error.
+
+    PPSSPP logs to its newest debugger connection only: pause other readers meanwhile.
+    TimeoutError when the emulated clock does not get there (a paused game).
+    """
+    client = s.client
+    window = int(seconds * 1e6)
+    steps: list[Step] = []
+    unread = 0
+    start = client.evaluate("usec")
+    limit = PATIENCE * seconds + PATIENCE_BASE
+    give_up = s.now() + limit
+    condition = f"s3 == {entity:#x}"
+    with client.trace(
+        [a.AI_SCRIPT_DISPATCH], condition=condition, log_format=DISPATCH_FORMAT
+    ) as hits:
+        while True:
+            if s.now() > give_up:
+                raise TimeoutError(f"the game did not run {seconds:g} emulated s in {limit:g} s")
+            try:
+                hit = hits.next(DRAIN)
+            except TimeoutError:  # a quiet monster: the clock says when the window is over
+                if (client.evaluate("usec") - start) % WRAP >= window:
+                    break
+                continue
+            step = _step(hit, start)
+            if step is None:
+                unread += 1
+            elif step.t > window:
+                break
+            else:
+                steps.append(step)
+        lost = hits.dropped + unread
+    return Trace(entity, seconds, tuple(steps), lost)
