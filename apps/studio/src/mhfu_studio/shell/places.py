@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""Where the studio finds the two extracted games and PPSSPP's memory stick.
+"""Where the studio finds the two extracted games, PPSSPP's memory stick and the brain files.
 
 Every lookup goes through `find`: the lane's own (`MHFU_LANE`, for the memory stick), else the
 place's environment variable, else its saved setting (`shell.settings`), else a guess. A job the
 window runs gets the answers as environment variables (`environ`), so its command line finds
-what the window found.
+what the window found. The brains folder is no checklist item (`BRAINS` is not in `PLACES`): a
+guess always answers, and the first save makes it.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Literal
 
 from mhfu import inject
+from mhfu.em.script import brainfile
 from mhfu.files import Extracted
 from mhfu_port.data import Data
 from mhp_formats.databin import Game
@@ -28,6 +30,8 @@ from mhfu_studio.shell import settings
 GUESS_FROM: Path | None = None
 #: how many folders up a guess looks
 GUESS_UP = 4
+#: the modkit checkout this studio runs from; with no `apps/studio` and `brains` in it, an install
+CHECKOUT: Path = Path(__file__).resolve().parents[5]
 
 
 def _game(game: Game) -> Callable[[Path], Path]:
@@ -57,6 +61,22 @@ def _guess(rel: str) -> Callable[[], Path | None]:
         return None
 
     return guess
+
+
+def _folder(path: Path) -> Path:
+    """The folder at `path`, which need not exist yet."""
+    if path.exists() and not path.is_dir():
+        raise NotADirectoryError(f"{path} is not a folder")
+    return path
+
+
+def _brains() -> Path:
+    """The checkout's `brains/` when the studio runs from source, else the per-user
+    `$XDG_DATA_HOME/mhfu-studio/brains` (`~/.local/share` without the variable)."""
+    if (CHECKOUT / "apps" / "studio").is_dir() and (CHECKOUT / "brains").is_dir():
+        return CHECKOUT / "brains"
+    base = os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share"
+    return Path(base) / "mhfu-studio" / "brains"
 
 
 @dataclass(frozen=True)
@@ -105,6 +125,15 @@ MEMSTICK = Place(
     inject.memstick,
     inject.detect,
     lambda lane: lane.stick,
+)
+BRAINS = Place(
+    "brains",
+    "brains folder",
+    "MHFU_BRAINS",
+    "Editing a monster's brain keeps its file in the brains folder",
+    "The folder of brain files, `emNN.toml`; the first save makes it",
+    _folder,
+    _brains,
 )
 PLACES = (MHFU, MHP3RD, MEMSTICK)
 
@@ -210,6 +239,16 @@ def extracted(place: Place = MHFU, given: str | Path | None = None) -> Extracted
 def games(fu: str | Path | None = None, p3rd: str | Path | None = None) -> Data:
     """Both extractions a port reads, `fu` and `p3rd` over the places."""
     return Data(extracted(MHFU, fu), extracted(MHP3RD, p3rd))
+
+
+def brains_dir(given: str | Path | None = None) -> Path:
+    """`given` (a command's --brains), else the brains folder."""
+    return Path(given).expanduser() if given is not None else path(BRAINS)
+
+
+def brain_file(overlay: int, given: str | Path | None = None) -> Path:
+    """Where an em overlay's brain file is, or will be made: `emNN.toml` in the brains folder."""
+    return brains_dir(given) / brainfile.filename(overlay)
 
 
 def mods_dir() -> Path:

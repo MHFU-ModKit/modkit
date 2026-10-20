@@ -6,7 +6,7 @@ import ppsspp_debug
 import pytest
 from mhfu import inject
 from mhfu_studio.shell import places, settings
-from mhfu_studio.shell.places import MEMSTICK, MHFU, MHP3RD, Missing
+from mhfu_studio.shell.places import BRAINS, MEMSTICK, MHFU, MHP3RD, Missing
 from ppsspp_debug import Lane
 
 
@@ -17,7 +17,7 @@ def extraction(at: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def _none(monkeypatch: pytest.MonkeyPatch) -> None:
-    for p in places.PLACES:
+    for p in (*places.PLACES, BRAINS):
         monkeypatch.delenv(p.env, raising=False)
     monkeypatch.delenv(inject.LANE_ENV, raising=False)
     monkeypatch.setattr(inject, "MEMSTICK_ROOTS", ())
@@ -91,3 +91,34 @@ def test_the_wrong_game(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="ULJM-05800, not MHFU"):
         places.remember(MHFU, p3rd)
     assert places.remember(MHP3RD, p3rd).path == p3rd
+
+
+def test_brains_env_beats_checkout_beats_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout, xdg = tmp_path / "checkout", tmp_path / "xdg"
+    monkeypatch.setattr(places, "CHECKOUT", checkout)
+    monkeypatch.setenv("XDG_DATA_HOME", str(xdg))
+    user = xdg / "mhfu-studio" / "brains"
+    got = places.find(BRAINS)  # an install: no folder yet, and none is needed
+    assert (got.path, got.source) == (user, "found") and places.brains_dir() == user
+    (checkout / "brains").mkdir(parents=True)  # a checkout needs apps/studio beside brains
+    assert places.find(BRAINS).path == user
+    (checkout / "apps" / "studio").mkdir(parents=True)
+    assert places.find(BRAINS).path == checkout / "brains"
+    monkeypatch.setenv("MHFU_BRAINS", str(tmp_path / "mine"))
+    got = places.find(BRAINS)
+    assert (got.path, got.source) == (tmp_path / "mine", "env") and "from MHFU_BRAINS" in got.says()
+    assert places.brain_file(75) == tmp_path / "mine" / "em75.toml"
+    assert places.brain_file(1, tmp_path / "given") == tmp_path / "given" / "em01.toml"
+    assert BRAINS not in places.PLACES and "MHFU_BRAINS" not in places.environ()
+
+
+def test_a_brains_variable_that_is_a_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "f").write_text("")
+    monkeypatch.setenv("MHFU_BRAINS", str(tmp_path / "f"))
+    got = places.find(BRAINS)
+    assert got.path is None and "is not a folder" in got.says()
+    with pytest.raises(Missing, match="set MHFU_BRAINS"):
+        places.brain_file(75)
+    assert places.brain_file(75, tmp_path) == tmp_path / "em75.toml"  # a given folder wins
