@@ -126,12 +126,14 @@ and the resume point behind each `enter`) is an upper bound. `check` turns it in
   gives up at the 0x95 sentinel and after 1000 steps between two markers (natively 794 at most).
   A `random_shifted` shares its markers with `random`, so inside one it confuses the outer scan
   (em83 does natively); a `repeat` keeps one loop return, so repeats do not nest.
-- **Edit sets.** `editset.EditSet` is one row's edits against its lift: operands, deleted, bypassed
-  and moved nodes, arm order, inserted code, new routines, list slots and forks, names and notes.
-  Native nodes are named by the lift's ids, new code `u<k>.<i>`. `apply` makes the edits in a fixed
-  order (build check, new routines, operands, arm order, moves, inserts, bypasses, deletes, lists,
-  labels) on copies, so the lift is never written; a bad anchor or edits that cannot go together
-  are findings and the rest still applies. `build.compile` is the one path from a brain file to a
+- **Edit sets.** `editset.EditSet` is one row's edits against its lift: opcodes swapped in place,
+  operands, deleted, bypassed and moved nodes, arm order, inserted code, new routines, list slots
+  and forks, names and notes. Native nodes are named by the lift's ids, new code `u<k>.<i>`; a
+  native node goes into new code by a move anchored there, so an edit set never copies the game's
+  code. `apply` makes the edits in a fixed order (build check, new routines, opcodes, operands, arm
+  order, then moves and inserts in one pass where each waits for the code it anchors in, bypasses,
+  deletes, lists, labels) on copies, so the lift is never written; a bad anchor, a cycle or edits
+  that cannot go together are findings and the rest still applies. `build.compile` is the one path from a brain file to a
   container: apply, assemble, check, pack.
 - **Checks.** Only new code is held to the rules (`check.check`; `build.compile` adds `PAIR_UNKNOWN`
   and apply's own). Each finding has a level, a code and the node or routine it is about:

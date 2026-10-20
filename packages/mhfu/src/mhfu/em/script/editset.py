@@ -17,8 +17,11 @@ name a node of another insert. Applying never changes the edit set or the lift: 
 shares every routine, list and header the edits leave alone with the lift, so treat it as
 read-only.
 
-`apply` runs in a fixed order: build check, new routines, operands, arm order, moves, inserts
-(each after the insert it is anchored in), bypasses, deletes, lists and forks, labels. A bad or
+`apply` runs in a fixed order: build check, new routines, opcode swaps, operands, arm order, then
+moves and inserts together, bypasses, deletes, lists and forks, labels. Moves and inserts go
+each after the one it is anchored in, so a game node can be moved before, after or into new code
+(`u<k>.<i>`, a new routine's node), and an insert can sit beside a game node that has moved;
+otherwise the moves go first, in the order of their ids, then the inserts by key. A bad or
 removed anchor, or edits that cannot go together, is a Finding (`DOC_ANCHOR`, `DOC_CONFLICT`)
 and leaves the rest applied; a build that is not the lift's refuses everything (`DOC_BUILD`).
 Names and notes are for display and change no bytes.
@@ -35,7 +38,7 @@ from typing import Any
 from . import edit, ir
 from .check import Finding
 from .edit import EditError
-from .opcodes import FIRST_DEEP, LISTS, operands
+from .opcodes import BY_NAME, FIRST_DEEP, LISTS, Op, Operand, operands
 
 __all__ = [
     "NOTHING",
@@ -107,6 +110,10 @@ class NodeEdit:
     move: Anchor | None = None
     arms: list[str] | None = None
     """A block's native arms, in the order wanted."""
+    op: str | None = None
+    """The mnemonic the node becomes, in place: a block keeps its arms and what is in them, an
+    instruction the operands whose names the new opcode has. `args` give what it lacks; so do the
+    edits of its arms, for a block whose arms take other operands."""
 
     def is_empty(self) -> bool:
         return not (
@@ -115,11 +122,12 @@ class NodeEdit:
             or self.bypass is not None
             or self.move
             or self.arms is not None
+            or self.op is not None
         )
 
     def copy(self) -> NodeEdit:
         arms = None if self.arms is None else list(self.arms)
-        return NodeEdit(dict(self.args), self.delete, self.bypass, self.move, arms)
+        return NodeEdit(dict(self.args), self.delete, self.bypass, self.move, arms, self.op)
 
 
 @dataclass
@@ -244,6 +252,7 @@ class EditSet:
                 None if v.bypass is None else rid(v.bypass),
                 None if v.move is None else anchor(v.move),
                 None if v.arms is None else [rid(a) for a in v.arms],
+                v.op,
             )
             for k, v in out.nodes.items()
         }
@@ -275,7 +284,8 @@ def _native(lift: ir.Program, nid: str) -> tuple[ir.Index, ir.Located]:
 
 def set_args(es: EditSet, lift: ir.Program, nid: str, /, **args: ir.Value) -> None:
     """Set operands of a native node: a value the game has is not kept, and a node with nothing
-    left to change drops out."""
+    left to change drops out. For a node that becomes another opcode, the operands are that
+    opcode's."""
     _, n = _native(lift, nid)
     ne = es.node(nid)
     for k, v in args.items():
@@ -284,7 +294,8 @@ def set_args(es: EditSet, lift: ir.Program, nid: str, /, **args: ir.Value) -> No
         else:
             ne.args[k] = v
     if isinstance(n, ir.Insn) and ne.args:  # a new kind of set_target has other operands
-        names = {o.name for o in operands(n.op.plain_layout({**n.args, **ne.args}))}
+        op = BY_NAME.get(ne.op or "", n.op)
+        names = {o.name for o in operands(op.plain_layout({**n.args, **ne.args}))}
         ne.args = {k: v for k, v in ne.args.items() if k in names}
     if ne.is_empty():
         del es.nodes[nid]
@@ -545,6 +556,8 @@ def _to_data(es: EditSet, code: Code | None) -> Plain:
     nodes: Plain = {}
     for nid, ne in sorted(es.nodes.items()):
         d: Plain = {}
+        if ne.op is not None:
+            d["op"] = ne.op
         if ne.args:
             d["args"] = _args_data(ne.args)
         if ne.delete:
@@ -599,7 +612,7 @@ def _from_data(row: int, data: Any, parse: Parse | None) -> EditSet:
     es = EditSet(row, _str("build", d.get("build", "")))
     es.also = [_int("also", v) for v in _list("also", d.get("also", []))]
     for nid, v in _only("node", d.get("node", {})).items():
-        v = _only(f"node {nid}", v, ("args", "delete", "bypass", "move", "arms"))
+        v = _only(f"node {nid}", v, ("op", "args", "delete", "bypass", "move", "arms"))
         delete = v.get("delete", False)
         if not isinstance(delete, bool):
             raise DocError(f"node {nid} delete is no yes or no")
@@ -613,6 +626,7 @@ def _from_data(row: int, data: Any, parse: Parse | None) -> EditSet:
             [_str(f"node {nid} arms", x) for x in _list(f"node {nid} arms", v["arms"])]
             if "arms" in v
             else None,
+            _str(f"node {nid} op", v["op"]) if "op" in v else None,
         )
     for key, v in _only("insert", d.get("insert", {})).items():
         if not _KEY.fullmatch(key):
@@ -676,6 +690,38 @@ def _stamp(prefix: str, items: Sequence[ir.Located]) -> None:
         x.id, x.pc = f"{prefix}.{i}", None
         if isinstance(x, ir.Block):
             x.close = None
+
+
+def _carry(
+    op: Op, have: Mapping[str, ir.Value], given: Mapping[str, ir.Value], sub: int | None = None
+) -> dict[str, ir.Value]:
+    """The operands of a node that becomes `op` (or of an arm of kind `sub` of a block that does):
+    those the edits give, else those it has by name. A name neither has is an error."""
+    missing: list[str] = []
+
+    def pick(o: Operand) -> ir.Value:
+        if o.name in given:
+            return given[o.name]
+        if o.name in have:
+            return have[o.name]
+        if o.name not in missing:
+            missing.append(o.name)
+        return 0
+
+    out: dict[str, ir.Value] = {}
+    if sub is not None:
+        out = {o.name: pick(o) for o in operands(op.layout(sub))}
+    elif op.coded:
+        out = {o.name: pick(o) for o in op.opener}
+    else:
+        if op.args:
+            first = operands(op.args)[0]
+            out[first.name] = pick(first)
+        for o in operands(op.plain_layout(out)):
+            out[o.name] = pick(o)
+    if missing:
+        raise EditError(f"{op.name} needs {missing} too")
+    return out
 
 
 class _Apply:
@@ -763,13 +809,17 @@ class _Apply:
         self.sweep()
 
     def conflict(self, ne: NodeEdit, n: ir.Located) -> str | None:
-        rest = bool(ne.args or ne.bypass is not None or ne.move or ne.arms is not None)
+        rest = bool(
+            ne.args or ne.bypass is not None or ne.move or ne.arms is not None or ne.op is not None
+        )
         if ne.delete and rest:
             return "deleted, so nothing else can be done to it"
-        if ne.bypass is not None and (ne.args or ne.arms is not None):
-            return "bypassed, so its operands and arms are no matter"
+        if ne.bypass is not None and (ne.args or ne.arms is not None or ne.op is not None):
+            return "bypassed, so its operands, opcode and arms are no matter"
         if (ne.bypass is not None or ne.arms is not None) and not isinstance(n, ir.Block):
             return "bypass and arm order are for blocks"
+        if ne.op is not None and isinstance(n, ir.Arm):
+            return "an arm has no opcode"
         if ne.move and isinstance(n, ir.Arm):
             return "an arm moves by the order of its block's arms"
         if ne.bypass in self.es.nodes and self.es.nodes[ne.bypass].delete:
@@ -848,6 +898,52 @@ class _Apply:
                 self.names.add(name)
                 self.fresh.append(r)
 
+    def ops(self) -> None:
+        for nid, ne in sorted(self.es.nodes.items()):
+            if ne.op is not None and nid not in self.skip:
+                self.attempt(nid, partial(self.retype, nid, ne.op), nid)
+
+    def retype(self, nid: str, name: str) -> None:
+        """Make the node `nid` another opcode, in place."""
+        try:
+            op = BY_NAME[name]
+        except KeyError:
+            raise EditError(f"{name} is no opcode") from None
+        index = ir.Index(self.scope)
+        n = index.node(nid)
+        if isinstance(n, ir.Arm) or op is n.op:
+            return
+        given = self.es.nodes[nid].args
+        if isinstance(n, ir.Insn):
+            if op.coded:
+                raise EditError(f"{n.op.name} cannot become the block {name}")
+            args = _carry(op, n.args, given)
+            edit.build(name, args)
+            n.op, n.args = op, args
+        else:
+            if op.shape is not n.op.shape:
+                raise EditError(f"{n.op.name} cannot become {name}: the blocks are not alike")
+            args = _carry(op, n.args, given)
+            carried = [_carry(op, a.args, self.arm_edits(a.id), a.sub) for a in n.arms]
+            edit.build(
+                name,
+                args,
+                head=n.head,
+                arms=[ir.Arm(a.sub, c, []) for a, c in zip(n.arms, carried, strict=True)],
+            )
+            n.op, n.args = op, args
+            for a, c in zip(n.arms, carried, strict=True):
+                if c != a.args:
+                    a.args = c
+                    if a.pc is not None:
+                        a.origin, a.pc = a.id or None, None
+        if n.pc is not None:
+            n.origin, n.pc = n.id or None, None
+
+    def arm_edits(self, nid: str) -> dict[str, ir.Value]:
+        ne = self.es.nodes.get(nid)
+        return {} if ne is None or nid in self.skip else ne.args
+
     def args(self) -> None:
         for nid, ne in sorted(self.es.nodes.items()):
             if ne.args and nid not in self.skip:
@@ -863,15 +959,16 @@ class _Apply:
         keys: Iterable[str],
         dep: Callable[[str], str | None],
         run: Callable[[str], bool],
+        order: Callable[[str], Any] = _natural,
     ) -> None:
-        """`run` each key once the key it depends on has run; one whose dependency failed is
-        a finding, and so is a cycle."""
-        pending = dict.fromkeys(sorted(keys, key=_natural))
+        """`run` the first of the keys, by `order`, whose dependency has run, and again, so what
+        waited for another goes where its place in the order is; one whose dependency failed is a
+        finding, and so is a cycle."""
+        pending = sorted(keys, key=order)
         done: set[str] = set()
         lost: set[str] = set()
         while pending:
-            progress = False
-            for k in list(pending):
+            for k in pending:
                 d = dep(k)
                 if d is None or d in done:
                     (done if run(k) else lost).add(k)
@@ -880,25 +977,32 @@ class _Apply:
                     self.add("DOC_ANCHOR", f"{k}: anchored in {d}, which was not placed", k)
                 else:
                     continue
-                del pending[k]
-                progress = True
-            if not progress:
+                pending.remove(k)
+                break
+            else:
                 for k in pending:
                     self.add("DOC_CONFLICT", f"{k}: its anchors go round in a circle", k)
                 return
 
-    def moves(self) -> None:
+    def place(self) -> None:
+        """The moves and the inserts, each after what it is anchored in: an insert, or a game node
+        that has a move of its own. Left to themselves the moves go first, so an insert beside a
+        game node that something moved beside lands next to it, the move after it."""
         moves = {
             nid: ne.move for nid, ne in self.es.nodes.items() if ne.move and nid not in self.skip
         }
+        ins = self.es.inserts
 
-        def dep(nid: str) -> str | None:
-            ref = moves[nid].ref
-            return ref if ref in moves and ref != nid else None
+        def dep(key: str) -> str | None:
+            ref = (moves[key] if key in moves else ins[key].anchor).ref
+            owner = _owner(ref)
+            if owner in ins and owner != key:
+                return owner
+            return ref if ref in moves and ref != key else None
 
-        def run(nid: str) -> bool:
+        def move(nid: str) -> bool:
             a = moves[nid]
-            if a.ref in self.dead or _KEY.fullmatch(_owner(a.ref)):
+            if a.ref in self.dead:
                 self.add("DOC_ANCHOR", f"{nid}: anchored at {a.ref}, which is not there", nid)
                 return False
             if a.kind == "into" and a.at not in (None, 0):
@@ -907,16 +1011,7 @@ class _Apply:
             where = a.kind if a.kind != "into" else "end" if a.at is None else "start"
             return self.attempt(nid, partial(edit.move, self.scope, nid, a.ref, where), a.ref)
 
-        self.drain(moves, dep, run)
-
-    def inserts(self) -> None:
-        ins = self.es.inserts
-
-        def dep(key: str) -> str | None:
-            owner = _owner(ins[key].anchor.ref)
-            return owner if owner in ins and owner != key else None
-
-        def run(key: str) -> bool:
+        def insert(key: str) -> bool:
             i, a = ins[key], ins[key].anchor
             if a.ref in self.dead:
                 self.add("DOC_ANCHOR", f"{key}: anchored at {a.ref}, which is not there", key)
@@ -942,7 +1037,12 @@ class _Apply:
                     fn = partial(edit.add_arm, self.scope, a.ref, arm, a.at)
             return self.attempt(key, fn, a.ref)
 
-        self.drain(ins, dep, run)
+        self.drain(
+            [*moves, *ins],
+            dep,
+            lambda key: move(key) if key in moves else insert(key),
+            lambda key: (key not in moves, _natural(key)),
+        )
 
     def bypass(self) -> None:
         for nid, ne in sorted(self.es.nodes.items()):
@@ -1055,10 +1155,10 @@ class _Apply:
         self.prepare()
         self.collect()
         self.routines()
+        self.ops()
         self.args()
         self.arm_order()
-        self.moves()
-        self.inserts()
+        self.place()
         self.bypass()
         self.delete()
         self.assemble()
