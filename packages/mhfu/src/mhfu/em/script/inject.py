@@ -6,6 +6,7 @@
     inject.push(session, prog, img)      # container to SCRIPT_PUSH, the row and live monsters on it
     inject.status(session.mem)
     inject.restore(session, prog.row)    # the game's own script back
+    inject.around(session.mem, header)   # the container a monster's header is in: pushed or stick
 
 The container's layout is in docs/formats/ai_script.md; the framework loads the same bytes from the
 memory stick. A push lasts until the next quest load re-reads the species' overlay.
@@ -48,7 +49,12 @@ NEEDS_64 = (
     "SCRIPT_PUSH is outside the emulator's memory: a push needs PPSSPP's 64 MB mode (memory=64)"
 )
 
+SCAN = 0x10000
+"""Bytes below a header that `around` looks for its container in."""
+
 _ALIGN = 8
+_WORD = 4
+_CHUNK = 0x1000
 _HEAD = struct.Struct("<4sHH12I8x")
 _ENTRY = (4, 8, 8, 16)
 """Bytes of a reloc, patch, origin and item entry."""
@@ -625,6 +631,58 @@ def pushed(mem: Memory, known: Container | None = None) -> Container | None:
         return None
 
 
+def _at(mem: Memory, base: int, header: int, known: Container | None) -> Container | None:
+    """The container at `base` whose image holds `header`; `known` while its head reads the same."""
+    if base not in a.RAM:
+        return None
+    try:
+        raw = mem.read(base, HEAD)
+        if raw[:4] != MAGIC:
+            return None
+        head = Head.parse(raw)
+        if not head.load <= header < head.load + head.image[1]:
+            return None
+        if known is not None and head == known.head:
+            return known
+        if head.extent > PUSH_SIZE:  # a head that is no container's: do not read what it claims
+            return None
+        return Container.read(mem.read(base, head.extent))
+    except (Unmapped, ContainerError):
+        return None
+
+
+def around(mem: Memory, header: int, known: Container | None = None) -> Container | None:
+    """The container whose image holds the monster script header `header`, pushed or staged from
+    the stick; None for the game's own script.
+
+    Callers keep the result per header value and pass it back as `known`: it is tried first, its
+    header offsets placing the container, and returned itself while its head reads the same.
+    Otherwise the `SCAN` bytes below `header` are searched for a word-aligned magic: a few
+    requests, and as many as the span has pages for a header that is the game's.
+    """
+    if known is not None:
+        for off in sorted({off for _, off in known.patches}):
+            box = _at(mem, header - off - known.head.image[0], header, known)
+            if box is not None:
+                return box
+    low = -(-max(header - SCAN, a.RAM.start) // _WORD) * _WORD
+    end = header - header % _WORD + _WORD  # the bases are words, up to the header
+    while end > low:
+        start = max((end - 1) // _CHUNK * _CHUNK, low)  # a chunk never spans a page
+        try:
+            data = mem.read(start, end - start)
+        except Unmapped:
+            return None
+        i = len(data)
+        while (i := data.rfind(MAGIC, 0, i)) >= 0:
+            if (start + i) % _WORD == 0:
+                box = _at(mem, start + i, header, known)
+                if box is not None:
+                    return box
+        end = start
+    return None
+
+
 def _species(mem: Memory, row: int) -> list[ScriptState]:
     return [s for s in live_script.monsters(mem).values() if s.species == row]
 
@@ -708,6 +766,9 @@ class Monster:
     context: int
     pc: int | None
     """Where the running context resumes."""
+    container: Head | None = None
+    """The container its header is in: the pushed one, or a stick one when `status` was given a
+    `find`."""
 
 
 @dataclass(frozen=True)
@@ -722,34 +783,42 @@ class Status:
     monsters: tuple[Monster, ...]
 
 
-def status(mem: Memory) -> Status:
-    """What is pushed: the container, the rows and monsters that run it."""
+def status(mem: Memory, find: Callable[[int], Container | None] | None = None) -> Status:
+    """What is pushed: the container, the rows and monsters that run it. With `find`, such as
+    `around` with the caller's cache, each other monster's `container` is `find(its header)`."""
     found = live_script.monsters(mem)
     try:
         head = mem.read(a.SCRIPT_PUSH, HEAD)
     except Unmapped:
-        return Status(False, None, False, {}, _seen(found, range(0)))
+        return Status(False, None, False, {}, _seen(found, None, find))
     box: Head | None = None
     if any(head[:GUARD]):
         try:
             box = Head.parse(head)
         except ContainerError:
             pass
-    inside = box.addresses if box else range(0)
     rows: dict[int, tuple[int, ...]] = {}
     if box:
         stride = a.SPECIES.stride
         raw = mem.read(a.SCRIPT_HEADERS, (SPECIES_ROWS - 1) * stride + 4 * VARIANTS)
         for row in range(SPECIES_ROWS):
             words = struct.unpack_from(f"<{VARIANTS}I", raw, row * stride)
-            if hit := tuple(k for k, w in enumerate(words) if w in inside):
+            if hit := tuple(k for k, w in enumerate(words) if w in box.addresses):
                 rows[row] = hit
     foreign = box is None and any(head[:GUARD])
-    return Status(True, box, foreign, rows, _seen(found, inside))
+    return Status(True, box, foreign, rows, _seen(found, box, find))
 
 
-def _seen(found: Mapping[int, ScriptState], inside: range) -> tuple[Monster, ...]:
-    return tuple(
-        Monster(slot, s.entity, s.species, s.header in inside, s.context, s.pc)
-        for slot, s in found.items()
-    )
+def _seen(
+    found: Mapping[int, ScriptState],
+    box: Head | None,
+    find: Callable[[int], Container | None] | None,
+) -> tuple[Monster, ...]:
+    out = []
+    for slot, s in found.items():
+        held = box if box is not None and s.header in box.addresses else None
+        pushed = held is not None
+        if not pushed and find is not None and (other := find(s.header)) is not None:
+            held = other.head
+        out.append(Monster(slot, s.entity, s.species, pushed, s.context, s.pc, held))
+    return tuple(out)

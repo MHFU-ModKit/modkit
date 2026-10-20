@@ -433,6 +433,150 @@ def test_pushed_is_none_outside_the_emulators_memory():
     assert inject.pushed(Space([Image(bytes(64), BASE)])) is None
 
 
+# ---- around
+
+
+AT = BASE + 0x80000  # where a stick container is staged
+SPAN = 0x10000
+
+
+class Reads(Space):
+    """A space that records its reads."""
+
+    def __init__(self, *images):
+        super().__init__(images)
+        self.reads = []
+
+    def read(self, address, size):
+        self.reads.append((address, size))
+        return super().read(address, size)
+
+
+def staged(at=AT, raw=STICK, span=SPAN):
+    """Zeros around `raw` placed at `at`, its image relocated as the framework stages it."""
+    mem = Image(bytes(span), at - span // 2)
+    mem.write(at, Container.read(raw).place(at + inject.IMAGE_OFF))
+    return mem
+
+
+def header_in(at=AT, offset=HEADER):
+    return at + inject.IMAGE_OFF + offset
+
+
+def test_around_finds_a_stick_container():
+    box = inject.around(staged(), header_in())
+    assert box is not None and (box.row, box.load) == (ROW, AT + inject.IMAGE_OFF)
+    assert box.headers == {N + 0x38: header_in()} and box.origin == ()
+    assert box.image == Container.read(STICK).place(box.load)[inject.IMAGE_OFF :][: len(box.image)]
+
+
+@pytest.mark.parametrize("skew", [4, 8, 0x30, 0xFFC])
+def test_around_takes_any_word_aligned_base(skew):
+    box = inject.around(staged(AT + skew), header_in(AT + skew))
+    assert box is not None and box.load == AT + skew + inject.IMAGE_OFF
+
+
+def test_around_finds_the_pushed_container():
+    mem = pushed_world(state(0))
+    box = inject.around(mem, LOAD + HEADER)
+    assert box is not None and box == inject.pushed(mem)
+    assert box.head.addresses.start == LOAD and box.origin
+
+
+def test_around_is_none_for_the_games_own_header():
+    mem = world([state(0)])
+    assert inject.around(mem, N + 0x38) is None
+    assert inject.around(mem, 0x1234) is None
+
+
+def test_around_is_none_past_the_image():
+    mem = staged()
+    box = inject.around(mem, header_in())
+    assert box is not None
+    assert inject.around(mem, box.head.addresses.stop) is None
+    assert inject.around(mem, box.load - 4) is None
+
+
+def test_around_stops_at_the_scan_limit():
+    size = 0x12000
+    image = bytes(size)
+    load = AT + inject.IMAGE_OFF
+    raw = inject._pack(ROW, inject._id(image), load, image, (), (), (), ())
+    mem = Image(bytes(0x30000), AT - 0x8000)
+    mem.write(AT, raw)
+    assert inject.around(mem, load + 0xF000) is not None
+    assert inject.around(mem, load + 0x11000) is None
+
+
+def test_around_skips_a_magic_that_is_no_container():
+    fake = bytearray(0x400)
+    fake[0x100:0x104] = b"MHAI"  # no version
+    fake[0x200 : 0x200 + inject.HEAD] = STICK[: inject.HEAD]  # a head that does not hold the header
+    load = AT + inject.IMAGE_OFF
+    raw = inject._pack(ROW, inject._id(bytes(fake)), load, bytes(fake), (), (), (), ())
+    mem = Image(bytes(SPAN), AT - SPAN // 2)
+    mem.write(AT, raw)
+    box = inject.around(mem, load + 0x300)
+    assert box is not None and box.load == load
+
+
+def test_around_keeps_the_known_container_with_one_read():
+    box = inject.around(staged(), header_in())
+    mem = Reads(staged())
+    assert inject.around(mem, header_in(), box) is box
+    assert mem.reads == [(AT, inject.HEAD)]
+
+
+def test_around_places_the_known_layout_elsewhere():
+    box = inject.around(staged(), header_in())
+    mem = Reads(staged(AT + 0x2000))
+    moved = inject.around(mem, header_in(AT + 0x2000), box)
+    assert moved is not None and moved is not box and moved.load == AT + 0x2000 + inject.IMAGE_OFF
+    assert moved.head.id == box.head.id
+    assert mem.reads == [(AT + 0x2000, inject.HEAD), (AT + 0x2000, len(STICK))]
+
+
+def test_around_scans_for_another_layout():
+    box = inject.around(staged(), header_in())
+    image = bytes(0x100)
+    raw = inject._pack(ROW, inject._id(image), 0, image, (), [(N + 0x38, 0x80)], (), ())
+    mem = Reads(staged(raw=raw))
+    found = inject.around(mem, header_in(offset=0x80), box)
+    assert found is not None and found.head.id == inject._id(image) != box.head.id
+    assert len(mem.reads) > 2
+
+
+def test_around_reads_few_requests():
+    mem = Reads(staged())
+    inject.around(mem, header_in())
+    assert len(mem.reads) <= 3
+    far = Reads(Image(bytes(SPAN * 2), AT - SPAN))
+    assert inject.around(far, AT) is None
+    assert len(far.reads) <= SPAN // 0x1000 + 1
+
+
+def stick_world(*states):
+    images = [Image(data, at) for at, data in parts(states)]
+    return Space([*images, Image(bytes(inject.PUSH_SIZE), PUSH), staged()])
+
+
+def test_status_names_a_stick_container():
+    mem = stick_world(state(0), state(1, header=header_in()))
+    asked = []
+
+    def find(header):
+        asked.append(header)
+        return inject.around(mem, header)
+
+    now = inject.status(mem, find)
+    box = inject.around(mem, header_in())
+    assert [(m.pushed, m.container) for m in now.monsters] == [(False, None), (False, box.head)]
+    assert asked == [N + 0x38, header_in()]
+    assert (
+        now.container is None and [m.container for m in inject.status(mem).monsters] == [None] * 2
+    )
+
+
 def test_plan_without_a_monster_notes_it():
     mem = world([state(0, header=N + 0x44)])
     plan = make_plan(mem, *program())
@@ -755,6 +899,15 @@ def test_push_pauses_when_no_monster_ticks(emu):
     assert emu.get(ent(0) + int(E.SCRIPT_HEADER), 4) == u32s(LOAD + HEADER)
 
 
+def test_status_does_not_look_around_a_pushed_container(emu):
+    p, img = program()
+    with play(emu, [state(0)]) as s:
+        inject.push(s, p, img, timeout=0.2)
+        now = inject.status(s.mem, lambda header: pytest.fail("asked"))
+    assert now.container is not None
+    assert [(m.pushed, m.container) for m in now.monsters] == [(True, now.container)]
+
+
 def test_push_without_a_monster_stops_nowhere(emu):
     p, img = program()
     with play(emu) as s:
@@ -865,6 +1018,17 @@ def test_game_container_maps(lifted):
             assert c.native(LOAD + it.offset + last) == it.native + last
     stick = Container.read(container(prog, img, 0, origin=False))
     assert stick.image == img.at(0) and stick.place(LOAD) == container(prog, img, LOAD, False)
+
+
+def test_game_around_finds_every_header(lifted):
+    _, prog, img = lifted
+    raw = container(prog, img, 0, origin=False)
+    mem = Reads(staged(raw=raw, span=0x20000))
+    boxes = [inject.around(mem, header_in(offset=off)) for off in img.headers.values()]
+    assert all(b is not None and b.head.id == Container.read(raw).head.id for b in boxes)
+    offsets = img.headers.values()
+    assert all(inject.around(mem, header_in(offset=o), boxes[0]) is boxes[0] for o in offsets)
+    assert len(img.data) < inject.SCAN
 
 
 def test_game_every_planned_word_is_an_instruction_start(lifted):
