@@ -44,6 +44,8 @@ from mhfu.em.script.graph import (
     head_key,
 )
 
+from mhfu_studio.monster.node_size import FRAME_BOTTOM, FRAME_PAD, FRAME_TOP, NODE_W, SUMMARY_LINES
+
 Point = tuple[float, float]
 Size = tuple[float, float]
 
@@ -57,11 +59,10 @@ UNLISTED = "Linked only"
 """The outline's section for routines no list names, which are reached by links alone."""
 DEEP = "deep"
 
-# the pane's own sizes (panels/node_graph.py); the estimate stands in until it has drawn them
-NODE_W, TITLE_H, LINE_H = 168.0, 38.0, 14.0
-SUMMARY_COLS, SUMMARY_LINES = 24, 2
+# the estimate of a node's size stands in until the pane has drawn it
+TITLE_H, LINE_H = 38.0, 14.0
+SUMMARY_COLS = 24
 JOIN_H = 30.0
-FRAME_PAD, FRAME_TOP, FRAME_BOTTOM = 18.0, 38.0, 14.0
 NODE_GAP, COLUMN_GAP, ARM_DROP = 26.0, 46.0, 24.0
 """The room between a column's nodes, between two columns, and from a block down to its arms'
 frames (the arms' wires run in the middle of it)."""

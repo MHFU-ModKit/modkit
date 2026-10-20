@@ -14,6 +14,7 @@ from mhfu_port.manifest import Move
 from mhfu_studio.monster import behaviour as B
 from mhfu_studio.monster.behaviour import ALL, CANVAS, ORDER
 from mhfu_studio.monster.document import PortDocument
+from mhfu_studio.monster.node_size import FRAME_BOTTOM, FRAME_TOP
 from mhfu_studio.monster.panels import rows, triggers
 from mhfu_studio.monster.panels.behaviour import (
     ORDER_HINT,
@@ -23,7 +24,7 @@ from mhfu_studio.monster.panels.behaviour import (
     WARN,
     BehaviourPanel,
 )
-from mhfu_studio.monster.panels.node_graph import FRAME_BOTTOM, FRAME_TOP, NodeSpec
+from mhfu_studio.monster.panels.node_graph import NodeSpec
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell.studio import Studio
 from PySide6.QtCore import QPoint, QPointF, Qt, QTimer

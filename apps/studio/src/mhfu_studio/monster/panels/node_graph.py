@@ -45,16 +45,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mhfu_studio.monster.node_size import (
+    FRAME_BOTTOM,
+    FRAME_PAD,
+    FRAME_TOP,
+    NODE_W,
+    SUMMARY_LINES,
+    SUMMARY_X,
+)
 from mhfu_studio.shell.overlay import Color, Ink
 from mhfu_studio.ui import theme
 
 Point = tuple[float, float]
 #: a palette group: its title, and its kinds as (kind, title, tip)
 PaletteGroup = tuple[str, Sequence[tuple[str, str, str]]]
-#: a node's least width, the lines of summary it shows, and the room left of them
-NODE_W, SUMMARY_LINES, SUMMARY_X = 168.0, 2, 14.0
-#: a frame's room round its nodes: the sides, the title bar with the gap under it, the bottom
-FRAME_PAD, FRAME_TOP, FRAME_BOTTOM = 18.0, 38.0, 14.0
 #: a scroll without pixels moves this many pixels per angle unit (a notch of 120 is ~3 lines)
 _ANGLE_PX = 0.5
 #: the zoom per angle unit of a wheel, as NodeGraphQt has it, and the scale the canvas keeps to
