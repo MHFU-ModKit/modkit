@@ -431,7 +431,9 @@ class BrainPanel(kit.Panel):
 
         self.species = kit.choice(
             [],
-            tip="Whose AI script to read: any monster the game's overlays serve a script for",
+            tip="Whose AI script to read: any monster the game's overlays serve a script for."
+            " With a monster's brain file open, one whose script another overlay holds opens"
+            " that monster and its brain file",
             on=self._pick_species,
         )
         self.species.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
@@ -777,10 +779,16 @@ class BrainPanel(kit.Panel):
         kit.refill(self.species, items, "" if sp is None else str(sp))
 
     def _pick_species(self, cid: str) -> None:
-        if cid:
-            self._leave()
-            self.ws.browse_brain(int(cid))
-            self.sync()
+        if not cid:
+            return
+        self._leave()
+        model = self.ws.brain_model(int(cid))
+        if model is not None:  # another overlay's script: open that monster, as File > Open would
+            self.studio.open_later(model)
+            self._fill_species(self.ws.brain_rows())  # the list shows the script shown until then
+            return
+        self.ws.browse_brain(int(cid))
+        self.sync()
 
     def _pick_variant(self, cid: str) -> None:
         self._leave()

@@ -1280,6 +1280,17 @@ class MonsterWorkspace(Workspace):
         self.brain_pick = int(row)
         self.count.reset()
 
+    def brain_model(self, row: int) -> Path | None:
+        """The model to open, with its overlay's brain file, when the Brain tab picks species row
+        `row`: a monster of the game's own is open and its brain file does not take edits for
+        `row`. None to read `row` in place: a port is open, the open file serves it, or there is
+        no such model."""
+        if self.doc is not None or self.species_doc is None or self.brain_editable(row):
+            return None
+        game = self._brain_game()
+        path = None if game is None else game.path(files.monster_pac(row))
+        return path if path is not None and path.is_file() else None
+
     def _brain_game(self) -> Extracted | None:
         """The game the scripts are read from; None, `brain_note` saying why, without one."""
         try:

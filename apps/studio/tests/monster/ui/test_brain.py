@@ -1003,6 +1003,43 @@ def test_a_species_file_makes_the_tab_the_editor(editor: BrainPanel) -> None:
     assert kit.missing_tips(p) == [] and p.studio.errors == []
 
 
+def test_another_overlays_species_opens_that_monster(
+    editor: BrainPanel, pak: Extracted, synthetic_pac: bytes
+) -> None:
+    p, w = editor, editor.ws
+    rathian = pak.path(files.monster_pac(1))
+    rathian.write_bytes(synthetic_pac)
+    w.scan_brain = lambda g: {75: 75, 76: 75, 1: 1}
+    p._pull()
+    asked: list[Path] = []
+    p.studio.open_later = lambda path: bool(asked.append(Path(path)))  # type: ignore[method-assign]
+    assert w.brain_model(76) is None and w.brain_model(2) is None  # served here; no model
+    p._pick_species("1")
+    assert asked == [rathian] and w.brain_species == 75  # its model opens, as File > Open does
+    assert p.species.currentData() == "75"  # until then the list names the script shown
+    p._pick_species("76")
+    assert asked == [rathian] and w.brain_species == 76  # the open file serves it: read in place
+
+
+def test_the_monster_opens_after_its_unsaved_edits_are_answered(
+    editor: BrainPanel, pak: Extracted, synthetic_pac: bytes, clock: Clock
+) -> None:
+    p, w = editor, editor.ws
+    pak.path(files.monster_pac(1)).write_bytes(synthetic_pac)
+    w.scan_brain = lambda g: {75: 75, 76: 75, 1: 1}
+    assert w.edit_brain(be.set_pair(node_of(p, "enter 6 1 0"), 6, 5))
+    answers = iter(["cancel", "discard"])
+    p.studio.ask_discard = lambda names: next(answers)
+    p._pick_species("1")
+    p.studio.wait()
+    assert w.species_doc is not None and w.species_doc.overlay == 75 and w.species_doc.dirty
+    p.sync()
+    assert p.species.currentData() == "75"
+    p._pick_species("1")
+    p.studio.wait()
+    assert w.species_doc is not None and w.species_doc.overlay == 1 and w.brain_species == 1
+
+
 def test_a_port_view_stays_read_only(panel: BrainPanel) -> None:
     p = panel
     assert not p._editing and not p.tree.editing and p.left.currentWidget() is p.lists
