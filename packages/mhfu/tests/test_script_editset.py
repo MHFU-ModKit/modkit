@@ -457,6 +457,276 @@ def test_move_into_a_new_routine():
     assert names(got.program.item("base_1").body) == ["call", "goto"]
 
 
+# ---- moves into new code
+
+
+def guard(p):
+    """A new `if_aware` before base_0's first node: u1.0 the block, u1.1 its enter, u1.2..."""
+    top = p.item("base_0").body[0]
+    es = EditSet.of(p)
+    block = edit.if_("if_aware", then=[enter(7, 0)], else_=[enter(7, 1)])
+    es.inserts["u1"] = Insert(Anchor("before", top.id), [block])
+    return es
+
+
+def test_move_beside_and_into_inserted_code():
+    p = world()
+    e = p.item("base_1").body[0]
+    for anchor, want in (
+        (Anchor("after", "u1.1"), ["enter", "enter"]),  # then: u1.1 e
+        (Anchor("before", "u1.1"), ["enter", "enter"]),
+        (Anchor("into", "u1.0", 0), ["enter", "enter"]),  # the head, first
+        (Anchor("into", "u1.0"), ["enter", "enter"]),
+    ):
+        es = guard(p)
+        es.node(e.id).move = anchor
+        got = run(p, es)
+        roundtrip(got)
+        block = got.program.item("base_0").body[0]
+        assert names(block.head) == want and e.id in [n.id for n in block.head]
+        assert names(got.program.item("base_1").body) == ["goto"]
+        assert sorted(got.touched) == ["base_0", "base_1"]
+    es = guard(p)
+    es.node(e.id).move = Anchor("after", "u1.1")
+    assert [n.id for n in run(p, es).program.item("base_0").body[0].head] == ["u1.1", e.id]
+    es.node(e.id).move = Anchor("into", "u1.2")  # the else arm, at its end
+    block = run(p, es).program.item("base_0").body[0]
+    assert [n.id for n in block.arms[0].body] == ["u1.3", e.id]
+    es.node(e.id).move = Anchor("into", "u1.0", 0)
+    assert [n.id for n in run(p, es).program.item("base_0").body[0].head] == [e.id, "u1.1"]
+
+
+def test_move_a_block_into_inserted_code():
+    p = world()
+    pick = p.item("call_0").body[0]
+    es = guard(p)
+    es.node(pick.id).move = Anchor("into", "u1.2")
+    got = run(p, es)
+    roundtrip(got)
+    inner = got.program.item("base_0").body[0].arms[0].body
+    assert [n.id for n in inner] == ["u1.3", pick.id]
+    assert shape(inner[1:]) == shape([pick])
+
+
+def test_inserts_sit_beside_a_node_that_moved():
+    p = world()
+    e, g = p.item("base_1").body
+    es = guard(p)
+    es.node(e.id).move = Anchor("after", "u1.1")
+    es.inserts["u2"] = Insert(Anchor("after", e.id), [enter(7, 2)])
+    es.inserts["u3"] = Insert(Anchor("before", e.id), [enter(7, 3)])
+    got = run(p, es)
+    roundtrip(got)
+    head = got.program.item("base_0").body[0].head
+    assert [n.id for n in head] == ["u1.1", "u3.0", e.id, "u2.0"]
+    assert ids(got.program, "base_1") == [g.id]
+
+
+def test_moves_go_before_inserts_that_share_an_anchor():
+    p = world()
+    a, b, c = (n.id for n in p.item("base_0").body)
+    es = EditSet.of(p)
+    es.node(c).move = Anchor("after", a)
+    es.inserts["u1"] = Insert(Anchor("after", a), [enter(7, 0)])
+    got = run(p, es)
+    assert ids(got.program, "base_0") == [a, "u1.0", c, b]
+
+
+def test_a_move_that_waits_still_goes_before_the_inserts():
+    p = world()
+    a, b, c, d = (n.id for n in p.item("call_1").body)
+    es = EditSet.of(p)
+    es.node(a).move = Anchor("after", b)  # waits for b's move
+    es.node(b).move = Anchor("after", c)
+    es.inserts["u1"] = Insert(Anchor("after", b), [enter(7, 0)])  # waits for it too
+    got = run(p, es)
+    assert ids(got.program, "call_1") == [c, b, "u1.0", a, d]
+
+
+def test_a_move_into_inserted_code_waits_for_a_move_it_hangs_on():
+    p = world()
+    top, call, end = p.item("base_0").body
+    es = EditSet.of(p)
+    es.inserts["u1"] = Insert(Anchor("after", call.id), [enter(7, 0)])
+    es.node(call.id).move = Anchor("after", end.id)  # u1 goes with call
+    es.node(top.id).move = Anchor("after", "u1.0")
+    got = run(p, es)
+    assert ids(got.program, "base_0") == [end.id, call.id, "u1.0", top.id]
+
+
+def test_a_move_and_an_insert_that_hang_on_each_other_are_findings():
+    p = world()
+    e = p.item("base_1").body[0]
+    es = guard(p)
+    es.inserts["u1"].anchor = Anchor("after", e.id)
+    es.node(e.id).move = Anchor("after", "u1.0")
+    got = apply(p, es)
+    assert sorted((f.code, f.node) for f in got.findings) == [
+        ("DOC_CONFLICT", e.id),
+        ("DOC_CONFLICT", "u1"),
+    ]
+    assert names(got.program.item("base_1").body) == ["enter", "goto"]
+
+
+def test_a_move_into_inserted_code_that_was_lost():
+    p = world()
+    e = p.item("base_1").body[0]
+    es = guard(p)
+    es.inserts["u1"].anchor = Anchor("after", "1:DEADBEEF")
+    es.node(e.id).move = Anchor("after", "u1.1")
+    got = apply(p, es)
+    assert sorted((f.code, f.node) for f in got.findings) == [
+        ("DOC_ANCHOR", e.id),
+        ("DOC_ANCHOR", "u1"),
+    ]
+    es = guard(p)
+    es.node(e.id).move = Anchor("after", "u1.9")
+    assert [(f.code, f.node) for f in apply(p, es).findings] == [("DOC_ANCHOR", e.id)]
+
+
+# ---- a node of another opcode
+
+
+def test_op_a_block_keeps_its_arms():
+    p = world()
+    top = p.item("base_0").body[0]
+    es = EditSet.of(p)
+    es.node(top.id).op = "if_aware"
+    got = run(p, es)
+    roundtrip(got)
+    n = got.program.item("base_0").body[0]
+    assert (n.op.name, n.id, n.pc, n.origin) == ("if_aware", top.id, None, top.id)
+    assert shape(n.head) == shape(top.head) and shape(n.arms[0].body) == shape(top.arms[0].body)
+    assert n.head[0] is not top.head[0] and got.touched == ("base_0",)
+    assert top.op.name == "if_latch"  # the lift is as it was
+
+
+def test_op_an_instruction_keeps_the_operands_it_names_alike():
+    p = world()
+    call = p.item("base_0").body[1]
+    es = EditSet.of(p)
+    es.node(call.id).op = "call_ret"  # the same operand, in another list
+    got = run(p, es)
+    n = got.program.item("base_0").body[1]
+    assert (n.op.name, n.args, n.id, n.pc) == ("call_ret", {"routine": 0}, call.id, None)
+    es.node(call.id).args = {"routine": 2}
+    assert run(p, es).program.item("base_0").body[1].args == {"routine": 2}
+
+
+def test_op_an_instruction_lacking_an_operand():
+    p = world()
+    e = p.item("base_1").body[0]
+    es = EditSet.of(p)
+    es.node(e.id).op = "call"
+    got = apply(p, es)
+    assert [(f.code, f.node) for f in got.findings] == [("DOC_CONFLICT", e.id)]
+    assert "needs ['routine']" in got.findings[0].text and got.touched == ()
+    es.node(e.id).args = {"routine": 1}
+    got = run(p, es)
+    roundtrip(got)
+    assert got.program.item("base_1").body[0].args == {"routine": 1}
+    es.node(e.id).args = {"routine": 300}
+    assert "does not fit" in apply(p, es).findings[0].text
+
+
+def test_op_a_block_whose_arms_take_other_operands():
+    p = world()
+    pick, sw = p.item("call_0").body[0], p.item("call_1").body[0]
+    es = EditSet.of(p)
+    es.node(pick.id).op = "random_shifted"
+    assert "needs ['shift']" in apply(p, es).findings[0].text
+    es.node(pick.id).args = {"shift": 1}
+    got = run(p, es)
+    roundtrip(got)
+    n = got.program.item("call_0").body[0]
+    assert (n.op.name, n.args) == ("random_shifted", {"shift": 1})
+    assert [a.args["weight"] for a in n.arms] == [16, 8, 8]
+    es = EditSet.of(p)
+    es.node(sw.id).op = "switch_section"
+    assert "needs ['section']" in apply(p, es).findings[0].text
+    for k, a in enumerate(sw.arms[:2]):
+        es.node(a.id).args = {"section": 10 + k}
+    got = run(p, es)
+    roundtrip(got)
+    n = got.program.item("call_1").body[0]
+    assert [a.args for a in n.arms] == [{"section": 10}, {"section": 11}, {}]
+    assert [a.sub for a in n.arms] == [1, 1, 2]
+    assert n.arms[0].origin == sw.arms[0].id
+
+
+def test_op_is_refused_where_the_layout_does_not_allow_it():
+    p = world()
+    top, call = p.item("base_0").body[:2]
+    sw = p.item("call_1").body[0]
+    for nid, op, why in (
+        (top.id, "switch_hp", "not alike"),
+        (top.id, "enter", "not alike"),
+        (call.id, "if_aware", "cannot become the block"),
+        (call.id, "nope", "no opcode"),
+    ):
+        es = EditSet.of(p)
+        es.node(nid).op = op
+        got = apply(p, es)
+        assert [f.code for f in got.findings] == ["DOC_CONFLICT"] and why in got.findings[0].text
+        assert got.touched == ()
+    es = EditSet.of(p)
+    es.node(call.id).delete = True
+    es.node(call.id).op = "call_ret"
+    es.node(sw.arms[0].id).op = "case"
+    es.node(top.id).bypass = "then"
+    es.node(top.id).op = "if_aware"
+    got = apply(p, es)
+    assert sorted(f.node for f in got.findings) == sorted([call.id, sw.arms[0].id, top.id])
+    assert {f.code for f in got.findings} == {"DOC_CONFLICT"}
+
+
+def test_op_the_same_opcode_changes_nothing():
+    p = world()
+    top = p.item("base_0").body[0]
+    es = EditSet.of(p)
+    es.node(top.id).op = top.op.name
+    got = run(p, es)
+    assert got.touched == () and got.program.item("base_0") is p.item("base_0")
+
+
+def test_op_goes_through_the_other_edits():
+    p = world()
+    top = p.item("base_0").body[0]
+    es = EditSet.of(p)
+    es.node(top.id).op = "if_aware"
+    es.node(top.head[0].id).move = Anchor("into", "base_1", 0)
+    es.inserts["u1"] = Insert(Anchor("into", top.id, 0), [enter(7, 0)])
+    got = run(p, es)
+    roundtrip(got)
+    n = got.program.item("base_0").body[0]
+    assert (n.op.name, [x.id for x in n.head]) == ("if_aware", ["u1.0"])
+
+
+def test_op_in_data():
+    p = world()
+    top = p.item("base_0").body[0]
+    es = EditSet.of(p)
+    es.node(top.id).op = "if_aware"
+    set_args(es, p, top.head[0].id, main=3)
+    data = es.to_data()
+    assert data["node"][top.id] == {"op": "if_aware"}
+    back = EditSet.from_data(1, data)
+    assert back == es and back.node(top.id).copy().op == "if_aware"
+    assert back.retarget(2).nodes[top.id.replace("1:", "2:")].op == "if_aware"
+    assert not es.node(top.id).is_empty()
+    with pytest.raises(DocError, match="op is no text"):
+        EditSet.from_data(1, {"node": {"a": {"op": 3}}})
+
+
+def test_set_args_follows_the_new_opcode():
+    p = world()
+    e = p.item("base_1").body[0]
+    es = EditSet.of(p)
+    es.node(e.id).op = "call"
+    set_args(es, p, e.id, routine=1, sub=4)
+    assert es.nodes[e.id].args == {"routine": 1}
+
+
 # ---- bypass and delete
 
 
