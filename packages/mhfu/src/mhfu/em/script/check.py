@@ -219,7 +219,7 @@ class _Checks:
                     self.add("warning", "EMPTY_SLOT", f"{at}: the slot is empty", n.id, r.name)
 
 
-def _terminal(n: ir.Node, fresh: bool = True) -> bool:
+def is_terminal(n: ir.Node, fresh: bool = True) -> bool:
     """Whether control never goes on past the node: an end or goto, or a block every way
     through which ends. `fresh` False does not count the ends and gotos that are new."""
     if isinstance(n, ir.Insn):
@@ -236,7 +236,7 @@ def _terminal(n: ir.Node, fresh: bool = True) -> bool:
 
 
 def _ends(nodes: Sequence[ir.Node], fresh: bool = True) -> bool:
-    return any(_terminal(n, fresh) for n in nodes)
+    return any(is_terminal(n, fresh) for n in nodes)
 
 
 def _leaks(nodes: Sequence[ir.Node], owner: ir.Located | None) -> list[ir.Located | None]:
@@ -349,7 +349,7 @@ def _dead(c: _Checks, r: ir.Routine, nodes: Sequence[ir.Node]) -> None:
             for a in n.arms:
                 _dead(c, r, a.body)
     for k, n in enumerate(nodes[:-1]):
-        if _terminal(n) and (not _terminal(n, False) or _touched(nodes[k + 1 :], set())):
+        if is_terminal(n) and (not is_terminal(n, False) or _touched(nodes[k + 1 :], set())):
             text = f"{nodes[k + 1].op.name} follows an end or goto and never runs"
             c.add("warning", "DEAD_CODE", text, nodes[k + 1].id, r.name)
             return
