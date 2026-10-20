@@ -1285,8 +1285,29 @@ def test_count_shows_on_the_lines(qtbot: Any, editor: BrainPanel) -> None:
     assert p.model.data(p.model.index_of(row, TEXT), COUNT) == 3
     assert p.model.data(p.model.index_of(row_of(p, "goto 0"), TEXT), COUNT) is None
     p.following.setChecked(True)
-    p.following.setChecked(False)  # Follow off drops the count
+    p.following.setChecked(False)  # Follow off, as any navigation does: the count stays to read
     p._pull()
+    assert w.count.result is not None and p.model.counts == {hub: 3}
+
+
+def test_follow_off_drops_a_count_in_flight(qtbot: Any, editor: BrainPanel) -> None:
+    p, w = editor, editor.ws
+    go = threading.Event()
+
+    def trace(s: object, e: int, sec: float) -> Trace:
+        go.wait(10)
+        return Trace(e, sec, (), 0)
+
+    w.game_session = lambda: nullcontext("session")
+    w.trace_script = trace
+    p.following.setChecked(True)
+    w.follow.target = bg.Target(0x1234, bg.NATIVE, None, None)
+    p.sync()
+    p.counting.click()
+    assert w.count.busy
+    p.following.setChecked(False)
+    go.set()
+    qtbot.waitUntil(lambda: not w.count.busy, timeout=10000)
     assert w.count.result is None and p.model.counts == {}
 
 
