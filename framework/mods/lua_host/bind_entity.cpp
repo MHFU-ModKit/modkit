@@ -30,7 +30,6 @@ int lb_entity_ai_state(lua_State *L){ lua_pushinteger(L, mhfu_entity_ai_state((u
 int lb_entity_set_ai_state(lua_State *L){ mhfu_entity_set_ai_state((uint32_t)luaL_checkinteger(L,1), (uint8_t)luaL_checkinteger(L,2)); return 0; }
 int lb_entity_engaged(lua_State *L){ lua_pushboolean(L, mhfu_entity_engaged((uint32_t)luaL_checkinteger(L,1))); return 1; }
 int lb_entity_set_engaged(lua_State *L){ mhfu_entity_set_engaged((uint32_t)luaL_checkinteger(L,1), lua_toboolean(L,2)); return 0; }
-int lb_entity_calm(lua_State *L){ mhfu_entity_calm((uint32_t)luaL_checkinteger(L,1)); return 0; }
 int lb_entity_section(lua_State *L){ lua_pushinteger(L, mhfu_entity_section((uint32_t)luaL_checkinteger(L,1))); return 1; }
 int lb_entity_set_section(lua_State *L){ mhfu_entity_set_section((uint32_t)luaL_checkinteger(L,1), (uint16_t)luaL_checkinteger(L,2)); return 0; }
 

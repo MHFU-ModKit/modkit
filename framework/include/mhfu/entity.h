@@ -47,9 +47,6 @@ void mhfu_entity_make_visible(uint32_t ent, uint16_t section);
  * TARGET_ACQUIRED. For where the engine's own target resolver finds nothing. */
 void mhfu_entity_force_aggro(uint32_t ent, mhfu_vec3_t target);
 
-/* Zero ENGAGE and both DETECT_RANGES triples; the engine never rewrites the ranges. */
-void mhfu_entity_calm(uint32_t ent);
-
 /* Same-species clone into scratch RAM: a deep copy with its self-pointers rebased, spliced
  * onto the update chain and into a free registry slot, calm. It shares the source's model
  * and overlay, so that species must be resident. Returns the clone, or 0. */

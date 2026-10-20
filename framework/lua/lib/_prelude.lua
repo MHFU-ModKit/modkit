@@ -73,7 +73,6 @@ function Entity:set_engaged(b) M.entity_set_engaged(self.ptr, b); return self en
 function Entity:section()    return M.entity_section(self.ptr) end
 ---@param v integer
 function Entity:set_section(v) M.entity_set_section(self.ptr, v); return self end
-function Entity:calm()       M.entity_calm(self.ptr); return self end
 
 ---A same-species clone as a new handle, or nil (mhfu.entity_clone).
 ---@return mhfu.Entity?

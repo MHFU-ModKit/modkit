@@ -11,7 +11,7 @@ mhfu = {}
 
 ---The API's version, raised whenever a declaration here changes; a mod that needs something added
 ---in version N checks `mhfu.api_version >= N`.
-mhfu.api_version = 6
+mhfu.api_version = 7
 
 -- log, memory and world state (bind_memory.cpp) ----------------------------------------------
 
@@ -170,10 +170,6 @@ function mhfu.entity_engaged(ent) end
 ---@param ent integer
 ---@param engaged boolean
 function mhfu.entity_set_engaged(ent, engaged) end
-
----Zeroes ENGAGE and both detection ranges; the engine never restores the ranges, so ent stays calm.
----@param ent integer
-function mhfu.entity_calm(ent) end
 
 ---The section the engine places ent in (get_area_index's encoding); lags a transition.
 ---@param ent integer

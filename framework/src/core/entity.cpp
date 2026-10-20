@@ -145,19 +145,6 @@ void mhfu_entity_force_aggro(uint32_t ent, mhfu_vec3_t target)
     *(volatile uint8_t *)(ent + MHFU_ENTITY_TARGET_ACQUIRED) = 1;
 }
 
-void mhfu_entity_calm(uint32_t ent)
-{
-    if (!in_ram(ent)) return;
-    /* detection ranges: the engine reads them on evaluate and never writes them */
-    static const uint32_t det_offs[6] = {
-        MHFU_ENTITY_DETECT_RANGES + 0,   MHFU_ENTITY_DETECT_RANGES + 4,
-        MHFU_ENTITY_DETECT_RANGES + 8,   MHFU_ENTITY_DETECT_RANGES_B + 0,
-        MHFU_ENTITY_DETECT_RANGES_B + 4, MHFU_ENTITY_DETECT_RANGES_B + 8,
-    };
-    for (int k = 0; k < 6; k++) mhfu_mem_write_f32(ent + det_offs[k], 0.0f);
-    mhfu_mem_write_f32(ent + MHFU_ENTITY_ENGAGE, 0.0f);
-}
-
 /* ---------------------------------------------------------------- cloning */
 
 /* Per-species entity size, the block a clone copies; the entity pool mixes sizes. */
