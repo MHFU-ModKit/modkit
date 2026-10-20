@@ -5,7 +5,8 @@ the monster does next; the moves themselves (`(main, sub)` pairs) are code in th
 90 species rows, 42 have their script in one of the 17 big-monster em overlays (em75 also serves
 rows 76, 81 and 88), 43 in game_task and 5 have none. Read and written by `mhfu.em.script`
 (`mhfu script EM`): each of the 42 rows lifts into a program that assembles back to the same bytes.
-`mhfu script EM --row N` also disassembles one of the 43, which are not lifted or edited.
+`mhfu script EM --row N` also disassembles one of the 43, which are not lifted or edited. Edits to
+a row are kept as data in a [brain file](brain_file.md), `brains/emNN.toml`.
 
 ## Finding a script
 
@@ -69,18 +70,46 @@ value.
 - A routine is decoded from its entry along every path; each path ends at a `goto` or an `end`.
   Data tables sit between routines, so a linear sweep misreads them.
 - `AI_SCRIPT` runs when `SCRIPT_WAKE` is set and `SCRIPT_WAIT` is 0, at most 999 instructions a
-  run (the 1000th ends it with no new resume address). Only `enter` (0x05, `main sub gate`) ends a
-  run: it enters the pair through enter-action mode 1 and saves the next address in `SCRIPT_PCS`,
-  under the slot `SCRIPT_CONTEXT` picks. The next run resumes there.
+  run (see "Run budget"). Only `enter` (0x05, `main sub gate`) ends a run: it enters the pair
+  through enter-action mode 1 and saves the next address in `SCRIPT_PCS`, under the slot
+  `SCRIPT_CONTEXT` picks. The next run resumes there.
 - A raised interrupt bit in `SCRIPT_PENDING` switches the next run to the header's routine for it.
+
+## Run budget
+
+`AI_SCRIPT` counts every dispatch: a counter is bumped before each one, and at 1000 the run ends
+with no resume address saved, so the next wake starts from the old one again. The counting, read
+from the code and run on synthetic scripts (`budget.Budget`):
+
+- A block opener counts 1. A failed condition steps over its marker for free: a false `if` with no
+  `else` costs its opener alone, and a chosen random branch or case starts in its body.
+- A body that falls through lands on the next marker, which counts 1; an arm marker (`else`,
+  `case`, `default`, `branch`) jumps past the block's end marker. So a block costs its opener, what
+  it runs, and 1.
+- A `repeat` counts its opener, then its body and end marker on every pass.
+- `end` counts 1, and so does the byte past a routine's end (no opcode: the run ends).
+- `end base`, `goto_base`, `goto 0` and every interrupt's own `end` restart `base[0]` in the same
+  run, with no yield. Only `enter` yields (`wait` does not), so a path that restarts and decides
+  nothing spends all 999 on itself.
+
+`Budget(prog)` follows every branch, so its worst run per entry (each base and interrupt routine,
+and the resume point behind each `enter`) is an upper bound. `check` turns it into `OPS_PER_RUN`.
 
 ## Editing
 
 `mhfu.em.script.edit` changes a lifted program in place, `asm` lays it out, `check` vets it.
+`editset` and `brainfile` keep the same edits as data.
 
-- **Nodes.** Builders (`insn`, `if_`, `switch`, `random`, `repeat`) make nodes; `insert`, `put`,
-  `remove` and `replace` place them and give each an `n<k>` id. A node with no `pc` is new code,
-  and a native block with anything new inside is touched: only those are checked.
+- **Nodes.** Builders (`insn`, `if_`, `switch`, `random`, `repeat`, `build`) make nodes; `insert`,
+  `put`, `put_in`, `remove` and `replace` place them and give each an `n<k>` id. A node with no `pc`
+  is new code, and a native block with anything new inside is touched: only those are checked.
+- **Changing what is there.** `modify` changes operands of a node, block opener or arm and keeps
+  its id; `move` takes a node with all that is in it to before or after another node, or to the
+  start or end of a routine, a block's head or an arm; `unwrap` replaces a block by one branch
+  (`then`, `else`, an arm's id) or by nothing. Each makes the node new code, its `origin` the id
+  it had.
+- **Arms.** `add_arm`, `insert_arm`, `delete_arm` and `reorder_arms` change a block's branches; the
+  block becomes new code, and `check` holds its weights and cases to the rules.
 - **Lists.** A list index is a byte, so a list holds 256 entries at most. New code names an entry
   by label (`Sym`); `resolve` swaps each for its index in the list of every header that reaches
   the routine, appends it where it is missing, and refuses a label two headers would index
@@ -89,19 +118,46 @@ value.
 - **Layout.** A native item that fits up to the next one stays; a routine that does not first
   gives up the zero bytes at the end of its tail. The rest and the new items follow the native
   region, 8-aligned, a header that grew last, and the vacated span is zero. `Image.origin` keeps
-  mapping native addresses to their new offsets. The region ends with the last header: the float
-  parameters behind it are not carried. Bytes no item owns inside it, such as the floats behind an
-  inner header, are `blob`s that stay where they were.
+  mapping native addresses to their new offsets, `ids_by_offset` node ids to offsets. The region
+  ends with the last header: the float parameters behind it are not carried. Bytes no item owns
+  inside it, such as the floats behind an inner header, are `blob`s that stay where they were.
 - **The game's scan.** It steps by `SCRIPT_SKIP`, not by `OPCODES`' lengths: a `switch_enemy_var`
   opener lands on its first case value, an opcode with no case does not move at all, and the scan
   gives up at the 0x95 sentinel and after 1000 steps between two markers (natively 794 at most).
   A `random_shifted` shares its markers with `random`, so inside one it confuses the outer scan
   (em83 does natively); a `repeat` keeps one loop return, so repeats do not nest.
-- **Checks.** New code must keep random weights at 32, ordered cases ascending, repeat counts
-  at 1 or more, and every list index inside its list; a new 0x94 block, a `random_shifted` inside
-  a `random` and a repeat inside a repeat are refused; the assembled bytes must scan as the tree
-  says and decode back to it. Each finding is an error, except an index at an empty slot, which
-  is a warning.
+- **Edit sets.** `editset.EditSet` is one row's edits against its lift: operands, deleted, bypassed
+  and moved nodes, arm order, inserted code, new routines, list slots and forks, names and notes.
+  Native nodes are named by the lift's ids, new code `u<k>.<i>`. `apply` makes the edits in a fixed
+  order (build check, new routines, operands, arm order, moves, inserts, bypasses, deletes, lists,
+  labels) on copies, so the lift is never written; a bad anchor or edits that cannot go together
+  are findings and the rest still applies. `build.compile` is the one path from a brain file to a
+  container: apply, assemble, check, pack.
+- **Checks.** Only new code is held to the rules (`check.check`; `build.compile` adds `PAIR_UNKNOWN`
+  and apply's own). Each finding has a level, a code and the node or routine it is about:
+
+| Code | Level | Finding |
+|---|---|---|
+| `RANDOM_WEIGHTS` | error | A random's weights do not add up to 32 |
+| `ORDERED`, `REPEAT_COUNT` | error | Cases that do not ascend; a repeat count under 1 |
+| `INDEX_PAST_LIST`, `LIST_TOO_LONG` | error | A list index past its list; a list of more than 256 |
+| `EMPTY_SLOT` | warning | A list index at an empty slot |
+| `SKIP_SHORT`, `RANDOM_NESTED`, `REPEAT_NESTED` | error | A new 0x94 block; a `random_shifted` inside a `random`; a repeat inside a repeat |
+| `SKIP_*`, `DECODE` | error | Assembled bytes that the game's scan, or the decoder, reads differently from the tree |
+| `UNRESOLVED` | error | A label that `resolve` has not turned into an index |
+| `FALLS_OFF` | error | A routine with new code that can run off its end: finish it with `end` or `goto` |
+| `GATE_NONZERO` | error | An `enter` gate other than 0, which lands in the freeze gate |
+| `PAIR_RANGE` | error | An `enter` main outside 0..7, which has no action table |
+| `END_KIND_CONTEXT` | error | An `end` kind the game acts on in no entry, or one for a list the routine does not run from (an `end return` in a routine only base lists run) |
+| `OPS_PER_RUN` | warning, error | A path through new code can dispatch more than 900 in a run; more than 999 |
+| `RESTART_LOOP` | error, warning | `base[0]` can restart with no yield: nothing on the path decides; or only when its conditions hold |
+| `CORRELATED_DRAW` | warning | A `random` that follows another draw in the run: a draw steps by 1, so its odds follow the first |
+| `DEAD_CODE` | warning | Code after an `end` or `goto` that never runs |
+| `WEIGHT_ZERO` | warning | A random branch that never runs |
+| `PAIR_UNKNOWN` | warning | An `enter` of a pair the species' intel has no record of, or measured never entered; unmeasured says nothing |
+| `DOC_BUILD`, `DOC_ANCHOR`, `DOC_CONFLICT` | error | `apply`: edits for another build or row; a node, routine or entry they name is not there; edits that cannot go together |
+| `SHARED_LIST` | info | `apply`: the list edited is also another header's |
+| `ASSEMBLE` | error | `build.compile`: the program cannot be encoded |
 
 ## Source text
 
@@ -128,7 +184,8 @@ edited one back (`mhfu.em.script.parse`). Lines and indentation, one item per to
   against the row's own. What the text adds or changes is new code, which `check` holds to the
   rules; code moved elsewhere is new too.
 - A syntax error names its line. `--build` refuses while a finding is an error; `mhfu brain
-  push|build|deploy EM FILE` check the same way first.
+  push|build|deploy EM FILE` check the same way first. Edits that are to stay are better kept as a
+  [brain file](brain_file.md), which `--doc FILE` takes in place of FILE.
 - `--source` is a game listing: keep it out of repositories.
 
 ## Container
@@ -167,14 +224,18 @@ moves the words and monsters back across the same maps and clears the container.
 
 The framework loads a stick container: `mhfu brain deploy` writes `brain_row_NN.mhai` to
 `PLUGINS/mhfu_framework/brain` and a mod, `mods/brain_row_NN.lua`, that calls
-`mhfu.brain_install(path)`. It stages the file, adds the image's address to every reloc
-word, and points each word of the row's `SCRIPT_HEADERS` that holds a patch's native address at the
-image: at install, and after every chunk of the overlay that `SCRIPT_HEADERS` lies in, since each
-quest load re-reads it. A monster that starts its script later runs the container's; one already
-running keeps the game's.
+`mhfu.brain_install(path)` and carries the container's id, so a changed build is a changed mod
+and the Lua host runs it again (`mhfu.brain_status(row).id` is checked against it). The framework
+stages the file, adds the image's address to every reloc word, and points each word of the row's
+`SCRIPT_HEADERS` that holds a patch's native address at the image: at install, and after every
+chunk of the overlay that `SCRIPT_HEADERS` lies in, since each quest load re-reads it. A monster
+that starts its script later runs the container's; one already running keeps the game's.
 
-- Staging route: PPSSPP's 64 MB raw window when there is one, else a block of user-partition
-  memory (a real PSP, PPSSPP's 32 MB mode), kept for the session.
+- Staging route (the partition stage): PPSSPP's 64 MB raw window when there is one, else a block
+  of user-partition memory (a real PSP, PPSSPP's 32 MB mode), kept for the session.
+  `framework.log` says `staged raw` or `staged partition`.
 - Budget: the partition blocks of all installs total at most 256 KB; an install past it fails.
 - Installing the row's live container again (same id, size and counts, read from the head alone)
   stages nothing.
+- `mhfu brain status` names, for each monster running a staged container, its id, found in RAM
+  below the monster's header (`inject.around`); a monster on the game's own script reads `native`.

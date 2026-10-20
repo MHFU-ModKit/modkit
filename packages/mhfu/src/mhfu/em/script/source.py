@@ -4,6 +4,7 @@
 
     lines = render(prog)                  # or render(prog, "h3"): links as that header sees them
     text = "\\n".join(l.text for l in lines)
+    code = render_nodes(nodes)            # new code alone: a snippet, no items around it
 
 A name, then its operands by position. A block's arms sit level with its opener and a dedent
 closes it; its count and the numbering of its markers are the tree's. u16 operands are hex, a
@@ -13,7 +14,7 @@ a Sym is `@label`. Data and blobs are rows of bytes, a label before the colon.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from . import ir
@@ -200,4 +201,11 @@ def render(p: ir.Program, header: str | None = None) -> list[Line]:
     w.add(0, region, "structure")
     for item in p.items:
         w.item(item)
+    return w.out
+
+
+def render_nodes(nodes: Sequence[ir.Node]) -> list[Line]:
+    """The source of nodes alone, as `parse.nodes` reads them; links are not resolved."""
+    w = _Writer(ir.Program(0, 0, []), None)
+    w.body("", list(nodes), 0)
     return w.out

@@ -431,6 +431,7 @@ dependencies = [
     { name = "psutil" },
     { name = "pyelftools" },
     { name = "rabbitizer" },
+    { name = "tomli-w" },
 ]
 
 [package.metadata]
@@ -441,6 +442,7 @@ requires-dist = [
     { name = "psutil", specifier = ">=6" },
     { name = "pyelftools", specifier = ">=0.31" },
     { name = "rabbitizer", specifier = ">=1.16" },
+    { name = "tomli-w", specifier = ">=1.2" },
 ]
 
 [[package]]
