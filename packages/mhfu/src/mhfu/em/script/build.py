@@ -16,8 +16,7 @@ it the run budget). Nothing here writes: `stick.ship` and `inject.push` take a `
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
-from functools import cached_property
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ...files import Extracted
@@ -62,10 +61,15 @@ class Built:
     def ok(self) -> bool:
         return not any(f.level == "error" for f in self.findings)
 
-    @cached_property
+    runs: Budget | None = field(default=None, repr=False)
+
+    @property
     def budget(self) -> Budget:
-        """The run budget of the program, built when asked for: it is the slow part of a check."""
-        return Budget(self.program)
+        """The run budget of the program, the one the checks used, else built when asked for: it
+        is the slow part of a check."""
+        if self.runs is None:
+            self.runs = Budget(self.program)
+        return self.runs
 
     @classmethod
     def of(cls, lift: ir.Program, es: EditSet, intel: SpeciesIntel | None = None) -> Built:
@@ -79,11 +83,13 @@ class Built:
         except asm.AssembleError as e:
             findings.append(Finding("error", "ASSEMBLE", str(e)))
             return cls(lift.row, lift, es, applied, findings)
+        runs = None
         if program is not lift:  # nothing edited, nothing for the checks to hold to the rules
-            findings += check.check(program, image)
+            runs = Budget(program)
+            findings += check.check(program, image, runs)
             if intel is not None:
                 findings += _pairs(program, applied.touched, intel)
-        built = cls(lift.row, lift, es, applied, findings, image)
+        built = cls(lift.row, lift, es, applied, findings, image, runs=runs)
         if built.ok:
             built.container = stick.build(program, image)
             built.id = inject.Head.parse(built.container).id

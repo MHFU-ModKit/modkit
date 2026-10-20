@@ -24,6 +24,7 @@ monster-editor, hud, blender-addon, formats), which are archived.
 | [`apps/hud`](apps/hud) | A live HUD next to PPSSPP |
 | [`apps/blender`](apps/blender) | The Blender extension for monster models |
 | [`ports`](ports) | Manifests of the monsters ported from MHP3rd: the Brute Tigrex and the Zinogre |
+| [`brains`](brains) | Edits to native monsters' brains, one file per species, built against the game's own script |
 | [`ppsspp`](ppsspp) | PPSSPP patched for automation, its build, and a headless container to run it in |
 | [`docs/formats`](docs/formats/README.md) | The file-format references |
 
