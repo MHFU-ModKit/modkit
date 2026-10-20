@@ -192,6 +192,11 @@ class GraphPane(QWidget):
         self._at = here
         self._draw(refit=moved)
 
+    @property
+    def routine(self) -> str | None:
+        """The routine drawn."""
+        return None if self._at is None else self._at[1]
+
     def select(self, node: str | None) -> None:
         """Selects `node` where it is drawn (clears the selection when it is not), without
         `node_picked`, and brings it into view."""

@@ -513,6 +513,8 @@ class GraphView(QWidget):
             self._graph.set_pipe_style(PipeLayoutEnum.ANGLE.value)
             # the viewer's direction only draws the wires; `_Item` lays its own ports out
             viewer.set_layout_direction(LayoutDirectionEnum.VERTICAL.value)
+            # a repeat's loop wire is a cycle, and NodeGraphQt's check of one never ends
+            self._graph.set_acyclic(False)
         self._navigation = _Navigation(viewer)
         viewer.setMinimumSize(240, 160)
         for act in (viewer.qaction_for_undo(), viewer.qaction_for_redo()):

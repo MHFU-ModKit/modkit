@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Literal
 
 from mhfu.em.script import catalogue as cat
-from mhfu.em.script.graph import edited_ids
+from mhfu.em.script.graph import ROOT, edited_ids
 from PySide6.QtCore import (
     QModelIndex,
     QPersistentModelIndex,
@@ -68,6 +68,8 @@ from mhfu_studio.monster.panels.brain_code import (
     row_of,
     tag_width,
 )
+from mhfu_studio.monster.panels.brain_graph import GraphPane
+from mhfu_studio.monster.panels.operand_bar import OperandBar
 from mhfu_studio.monster.workspace import budget_text
 from mhfu_studio.shell.findings import LEVELS, Level
 from mhfu_studio.ui import kit, theme
@@ -406,6 +408,8 @@ class BrainPanel(kit.Panel):
         self._view: brain.BrainView | None = None
         #: whether the view shown is of a script that takes edits
         self._editing = False
+        #: the place (row, routine, scope, node) the graph pane and the bar were last put at
+        self._placed: tuple[int, str, str, str | None] | None = None
         self.history = brain.History()
         #: the rows the find text matches, and whether no Return has stepped through them yet
         self._matches: list[int] = []
@@ -582,6 +586,12 @@ class BrainPanel(kit.Panel):
         self.ticker.timeout.connect(studio.guard("follow the game", self._tick))
         self._modes(False)
         self._ready(False)
+        self.graph = GraphPane(ws, studio)
+        self.operands = OperandBar(ws, studio)
+        self.graph.node_picked.connect(self.on_node)
+        self.graph.link_followed.connect(self.on_node)
+        self.graph.scope_opened.connect(self.on_scope)
+        self.plug(self.graph, self.operands)
 
     # ---- what is shown ----------------------------------------------------------------- #
 
@@ -608,6 +618,7 @@ class BrainPanel(kit.Panel):
             self._load(sp)
         elif self._editing:
             self._noticed()
+        self._place()
         for part in self._parts:
             if callable(step := getattr(part, "sync", None)):
                 step()
@@ -983,6 +994,19 @@ class BrainPanel(kit.Panel):
 
         self.studio.act("show a scope of the script", go)()
 
+    def _place(self) -> None:
+        """The graph pane and the operand bar at the workspace's place, once it moved."""
+        ws, v = self.ws, self._view
+        if not self._editing or v is None or ws.brain_routine is None:
+            return
+        at = (v.row, ws.brain_routine, ws.brain_scope, ws.brain_focus)
+        if at == self._placed:
+            return
+        self._placed = at
+        self.graph.show_scope(v.row, ws.brain_routine, ws.brain_scope)
+        self.graph.select(ws.brain_focus)
+        self.operands.show_node(v.row, ws.brain_focus)
+
     def _reached(self, caller: str, routine: str) -> None:
         """A caller picked in a routine's "reached from" list: its first call of the routine."""
         v = self._view
@@ -1195,5 +1219,7 @@ class BrainPanel(kit.Panel):
             self._switch(f.header)
         elif f.next_row is not None and f.next_row != self._seen:
             self._seen = f.next_row
+            if self._editing and next_in is not None and next_in != self.graph.routine:
+                self.graph.show_scope(v.row, next_in, ROOT)  # the pane then follows inside it
             with self._silent():
                 self.tree.reveal(f.next_row)
