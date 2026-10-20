@@ -548,6 +548,372 @@ def test_clone():
     assert edit.clone([edit.insn("walk_next")])[0].origin is None  # no source id yet
 
 
+# ---- modify, move, unwrap, arms
+
+
+def under(p, name, nid):
+    """The node `nid` of routine `name`, wherever it sits."""
+    return next(n for n in ir.walk(p.item(name).body) if n.id == nid)
+
+
+def test_modify():
+    p = world()
+    first = under(p, "base_0", "n1")  # enter 0 1 0
+    edit.modify(p, "n1", sub=2)
+    assert (first.id, first.args, first.pc, first.origin) == (
+        "n1",
+        dict(main=0, sub=2, gate=0),
+        None,
+        "n1",
+    )
+    edit.modify(p, "n1", main=4, sub=3)
+    assert first.args == dict(main=4, sub=3, gate=0) and first.origin == "n1"
+    pick = under(p, "call_0", "n6")
+    edit.modify(p, "n7", weight=20)  # an arm
+    assert (
+        pick.arms[0].args == {"weight": 20}
+        and pick.arms[0].pc is None
+        and pick.arms[1].pc is not None
+    )
+    edit.put(p, "call_0", [edit.repeat(2, [])])
+    edit.modify(p, "n11", count=5)  # a block's opener
+    assert under(p, "call_0", "n11").args == {"count": 5}
+    assert pick.pc is not None  # nothing changed in the random itself
+
+
+def test_modify_layout():
+    p = ir.Program(1, 0, [ir.Routine("r", [edit.insn("set_target", 1, 2, 3)])])
+    p.item("r").body[0].id = "x"
+    edit.modify(p, "x", a=9)
+    assert p.item("r").body[0].args == dict(kind=1, a=9, b=3)
+    with pytest.raises(EditError, match=r"needs \['section'\] too"):
+        edit.modify(p, "x", kind=3)
+    edit.modify(p, "x", kind=3, section=0x101)  # b is gone with the layout that had it
+    assert p.item("r").body[0].args == dict(kind=3, a=9, section=0x101)
+
+
+@pytest.mark.parametrize(
+    ("nid", "args", "match"),
+    [
+        ("zz", {"sub": 1}, "no node zz"),
+        ("n1", {}, "nothing to change"),
+        ("n1", {"volume": 1}, r"takes \['main', 'sub', 'gate'\], not \['volume'\]"),
+        ("n1", {"sub": 256}, "does not fit"),
+        ("n1", {"sub": "x"}, "no number"),
+        ("n0", {"sub": 1}, r"takes \[\], not \['sub'\]"),  # an if has no operands
+        ("n2", {"weight": 1}, "takes"),  # an else has none
+        ("n7", {"sub": 1}, r"takes \['weight'\]"),
+    ],
+)
+def test_modify_errors(nid, args, match):
+    p = world()
+    with pytest.raises(EditError, match=match):
+        edit.modify(p, nid, **args)
+    assert [shape(r.body) for r in p.routines()] == [shape(r.body) for r in world().routines()]
+    assert all(n.pc is not None for n in p.nodes())
+
+
+def test_move_beside():
+    p = world()
+    body = p.item("base_0").body  # n0 (if), n4 (call), n5 (end)
+    edit.move(p, "n4", "n0")
+    assert (
+        [n.id for n in body] == ["n4", "n0", "n5"] and body[0].pc is None and body[0].origin == "n4"
+    )
+    assert body[1].pc is not None and body[1].head[0].pc is not None  # what is inside is as it was
+    edit.move(p, "n0", "n5", "after")
+    assert [n.id for n in body] == ["n4", "n5", "n0"]
+    edit.move(p, "n4", "n1", "after")  # beside a node in a block's head
+    assert [n.id for n in under(p, "base_0", "n0").head] == ["n1", "n4"]
+    edit.move(p, "n4", "n2", "before")  # beside an arm: the start of its body
+    assert [n.id for n in under(p, "base_0", "n2").body] == ["n4", "n3"]
+    edit.move(p, "n4", "n2", "after")  # or the end
+    assert [n.id for n in under(p, "base_0", "n2").body] == ["n3", "n4"]
+
+
+def test_move_into():
+    p = world()
+    edit.move(p, "n8", "base_0", "start")
+    edit.move(p, "n3", "base_0", "end")
+    edit.move(p, "n5", "n0", "start")  # a block's head
+    edit.move(p, "n4", "n9", "end")  # an arm
+    ids = {n.id: [x.id for x in under(p, "base_0", n.id).head] for n in [p.item("base_0").body[1]]}
+    assert [n.id for n in p.item("base_0").body] == ["n8", "n0", "n3"] and ids == {
+        "n0": ["n5", "n1"]
+    }
+    assert [n.id for n in under(p, "call_0", "n9").body] == ["n4"]
+    assert [n.id for n in p.item("call_0").body] == ["n6", "n10"]
+    assert all(under(p, r, i).pc is None for r, i in (("base_0", "n8"), ("base_0", "n3")))
+
+
+def test_move_a_block_whole():
+    p = world()
+    edit.move(p, "n0", "call_0", "end")
+    out = p.item("call_0").body
+    assert [n.id for n in out] == ["n6", "n10", "n0"]
+    assert out[2].pc is None and out[2].head[0].pc is not None and out[2].close is not None
+    assert [n.id for n in p.item("base_0").body] == ["n4", "n5"]
+
+
+@pytest.mark.parametrize(
+    ("nid", "to", "where", "match"),
+    [
+        ("n0", "n1", "before", "is n0 or inside it"),
+        ("n0", "n0", "after", "is n0 or inside it"),
+        ("n0", "n2", "end", "is inside n0"),
+        ("n0", "n0", "start", "is inside n0"),
+        ("n2", "base_0", "end", "is an arm"),
+        ("zz", "base_0", "end", "no node zz"),
+        ("n4", "zz", "before", "no node zz"),
+        ("n4", "zz", "end", "no routine or node zz"),
+        ("n4", "base_0", "before", "no node base_0"),
+        ("n4", "n5", "end", "instruction, with no place"),
+        ("n4", "n6", "start", "has no head"),
+        ("n4", "n0", "sideways", "no place"),
+    ],
+)
+def test_move_errors(nid, to, where, match):
+    p = world()
+    with pytest.raises(EditError, match=match):
+        edit.move(p, nid, to, where)
+    assert [shape(r.body) for r in p.routines()] == [shape(r.body) for r in world().routines()]
+    assert all(n.pc is not None for n in p.nodes())
+
+
+@pytest.mark.parametrize(
+    ("keep", "want"),
+    [
+        ("then", ["n1", "n4", "n5"]),
+        ("else", ["n3", "n4", "n5"]),
+        ("n2", ["n3", "n4", "n5"]),
+        (None, ["n4", "n5"]),
+    ],
+)
+def test_unwrap(keep, want):
+    p = world()
+    edit.unwrap(p, "n0", keep)
+    body = p.item("base_0").body
+    assert [n.id for n in body] == want
+    assert [n.pc is None for n in body] == [True] * (len(want) - 2) + [False, False]
+    assert body[0].origin == want[0] if keep else True
+
+
+def test_unwrap_arms_and_repeats():
+    p = world()
+    edit.put(p, "call_0", [edit.repeat(2, [edit.insn("wait", 1)])], at=0)
+    edit.unwrap(p, "n11", "then")
+    edit.unwrap(p, "n6", "n7")
+    assert [n.id for n in p.item("call_0").body] == ["n12", "n8", "n10"]
+
+
+@pytest.mark.parametrize(
+    ("nid", "keep", "match"),
+    [
+        ("n1", "then", "is no block"),
+        ("n2", None, "is an arm"),
+        ("zz", None, "no node zz"),
+        ("n6", "then", "has no then-branch"),
+        ("n6", "else", "has no else"),
+        ("n6", "n2", "is no arm of n6"),
+        ("n0", "n7", "is no arm of n0"),
+    ],
+)
+def test_unwrap_errors(nid, keep, match):
+    p = world()
+    with pytest.raises(EditError, match=match):
+        edit.unwrap(p, nid, keep)
+    assert [shape(r.body) for r in p.routines()] == [shape(r.body) for r in world().routines()]
+
+
+def switch_world():
+    p = world()
+    edit.put(p, "call_0", [edit.switch("switch_hp", cases=[(1, []), (2, [])], default=[])], at=0)
+    return p  # n11 is the switch, n12 and n13 its cases, n14 its default
+
+
+def test_add_arm():
+    p = world()
+    pick = under(p, "call_0", "n6")
+    edit.modify(p, "n9", weight=8)
+    edit.add_arm(p, "n6", ir.Arm(1, {"weight": 8}, [edit.insn("wait", 1)]), at=1)
+    assert [a.args["weight"] for a in pick.arms] == [16, 8, 8]
+    assert (pick.arms[1].id, pick.arms[1].body[0].id, pick.pc) == ("n11", "n12", None)
+    assert pick.origin == "n6" and pick.arms[0].pc is not None
+    edit.insert_arm(p, "n9", ir.Arm(1, {"weight": 1}, []), after=True)
+    assert [a.id for a in pick.arms] == ["n7", "n11", "n9", "n13"]
+    sw = switch_world()
+    edit.add_arm(sw, "n11", ir.Arm(1, {"case": 3}, []), at=2)
+    edit.insert_arm(sw, "n12", ir.Arm(1, {"case": 0}, []))
+    assert [(a.sub, a.args.get("case")) for a in under(sw, "call_0", "n11").arms] == [
+        (1, 0),
+        (1, 1),
+        (1, 2),
+        (1, 3),
+        (2, None),
+    ]
+    top = world()
+    edit.delete_arm(top, "n2")  # an if loses its else, and may get one back
+    edit.add_arm(top, "n0", ir.Arm(1, {}, [edit.insn("wait", 3)]))
+    assert under(top, "base_0", "n0").arms[0].body[0].args == {"frames": 3}
+
+
+@pytest.mark.parametrize(
+    ("block", "arm", "at", "match"),
+    [
+        ("n0", ir.Arm(1, {}, []), None, "at most one arm"),
+        ("n0", ir.Arm(2, {}, []), 0, "at most one arm"),
+        ("n11", ir.Arm(1, {"case": 1}, []), 3, "cases and one default, last"),
+        ("n11", ir.Arm(2, {}, []), 0, "cases and one default, last"),
+        ("n11", ir.Arm(3, {}, []), 0, "cases and one default, last"),
+        ("n11", ir.Arm(1, {}, []), 0, "takes \\['case'\\]"),
+        ("n11", ir.Arm(1, {"case": 300}, []), 0, "does not fit"),
+        ("n11", ir.Arm(1, {"case": 1}, []), 9, "out of range"),
+        ("n6", ir.Arm(1, {"case": 1}, []), 0, "takes \\['weight'\\]"),
+        ("n6", ir.Arm(2, {"weight": 1}, []), 0, "arms, each of kind 1"),
+        ("n1", ir.Arm(1, {}, []), 0, "is no block"),
+        ("zz", ir.Arm(1, {}, []), 0, "no node zz"),
+    ],
+)
+def test_add_arm_errors(block, arm, at, match):
+    p = switch_world()
+    before = [shape(r.body) for r in p.routines()]
+    with pytest.raises(EditError, match=match):
+        edit.add_arm(p, block, arm, at)
+    assert [shape(r.body) for r in p.routines()] == before
+
+
+def test_add_arm_too_many():
+    p = world()
+    for _ in range(11):
+        edit.add_arm(p, "n6", ir.Arm(1, {"weight": 0}, []))
+    assert len(under(p, "call_0", "n6").arms) == 13
+    with pytest.raises(EditError, match="has no marker 14"):
+        edit.add_arm(p, "n6", ir.Arm(1, {"weight": 0}, []))
+    top = p.item("base_0")
+    with pytest.raises(EditError, match="is no arm"):
+        edit.insert_arm(p, "n0", ir.Arm(1, {}, []))
+    assert top is p.item("base_0")
+
+
+def test_delete_arm():
+    p = switch_world()
+    sw = under(p, "call_0", "n11")
+    edit.delete_arm(p, "n14")
+    assert [a.id for a in sw.arms] == ["n12", "n13"] and sw.pc is None and sw.origin is None
+    pick = under(p, "call_0", "n6")
+    edit.delete_arm(p, "n7")
+    assert [a.id for a in pick.arms] == ["n9"] and pick.pc is None and pick.origin == "n6"
+    with pytest.raises(EditError, match="needs arms"):
+        edit.delete_arm(p, "n9")
+    for nid, match in (("n6", "is no arm"), ("zz", "no node zz")):
+        with pytest.raises(EditError, match=match):
+            edit.delete_arm(p, nid)
+    assert [a.id for a in pick.arms] == ["n9"]
+
+
+def test_reorder_arms():
+    p = switch_world()
+    sw = under(p, "call_0", "n11")
+    edit.reorder_arms(p, "n11", ["n13", "n12", "n14"])
+    assert [a.id for a in sw.arms] == ["n13", "n12", "n14"] and sw.pc is None
+    pick = under(p, "call_0", "n6")
+    edit.reorder_arms(p, "n6", ["n9", "n7"])
+    assert [a.id for a in pick.arms] == ["n9", "n7"] and pick.origin == "n6"
+    for nid, order, match in (
+        ("n11", ["n13", "n12"], "has the arms"),
+        ("n11", ["n13", "n12", "n12"], "has the arms"),
+        ("n11", ["n13", "n14", "n12"], "cases and one default, last"),
+        ("n6", ["n9"], "has the arms"),
+        ("n1", [], "is no block"),
+        ("zz", [], "no node zz"),
+    ):
+        with pytest.raises(EditError, match=match):
+            edit.reorder_arms(p, nid, order)
+    assert [a.id for a in sw.arms] == ["n13", "n12", "n14"]
+
+
+def test_put_in():
+    p = world()
+    edit.put_in(p, "call_0", [edit.insn("wait", 1)])
+    edit.put_in(p, "n0", [edit.insn("wait", 2)], 0)  # a block's head
+    edit.put_in(p, "n9", [edit.insn("wait", 3)])  # an arm
+    assert [n.args.get("frames") for n in p.item("call_0").body] == [None, None, 1]
+    assert [n.args.get("frames") for n in under(p, "base_0", "n0").head] == [2, None]
+    assert [n.id for n in under(p, "call_0", "n9").body] == ["n13"]
+    for target, at, match in (
+        ("zz", None, "no routine or node zz"),
+        ("n6", 0, "has no head"),
+        ("n1", 0, "no place inside"),
+        ("call_0", 9, "out of range"),
+        ("call_0", -1, "out of range"),
+    ):
+        with pytest.raises(EditError, match=match):
+            edit.put_in(p, target, [edit.insn("wait", 9)], at)
+    assert len(p.item("call_0").body) == 3
+
+
+def test_build():
+    assert edit.build("enter", dict(main=1, sub=2, gate=3)) == edit.insn("enter", 1, 2, 3)
+    assert edit.build("set_target", dict(kind=3, a=1, section=2)) == edit.insn(
+        "set_target", 3, 1, 2
+    )
+    block = edit.build(
+        "if_latch", {}, head=[edit.insn("wait", 1)], arms=[ir.Arm(1, {}, [edit.insn("wait", 2)])]
+    )
+    assert block == edit.if_("if_latch", then=[edit.insn("wait", 1)], else_=[edit.insn("wait", 2)])
+    pick = edit.build("random", {}, arms=[ir.Arm(1, {"weight": 32}, [])])
+    assert pick == edit.random([(32, [])])
+    for name, args, kw, match in (
+        ("nope", {}, {}, "no opcode"),
+        ("enter", {"main": 1}, {}, "takes"),
+        ("enter", dict(main=1, sub=2, gate=300), {}, "does not fit"),
+        ("enter", dict(main=1, sub=2, gate=3), {"head": [edit.insn("wait", 1)]}, "is no block"),
+        ("random", {}, {"head": [edit.insn("wait", 1)]}, "has no head"),
+        ("random", {}, {}, "needs arms"),
+        ("if_latch", {}, {"arms": [ir.Arm(1, {}, []), ir.Arm(1, {}, [])]}, "at most one arm"),
+        ("switch_hp", {}, {"arms": [ir.Arm(1, {}, [])]}, "takes"),
+    ):
+        with pytest.raises(EditError, match=match):
+            edit.build(name, args, **kw)
+
+
+def test_copy():
+    p = world()
+    top = p.item("base_0").body[0]
+    (twin,) = edit.copy([top])
+    assert twin == top and twin is not top and twin.arms[0] is not top.arms[0]
+    twin.head[0].args["sub"] = 7
+    assert top.head[0].args["sub"] == 1 and twin.close == top.close
+    spare = edit.copy_arm(top.arms[0])
+    assert spare == top.arms[0] and spare.body[0] is not top.arms[0].body[0]
+
+
+def test_ids_by_offset():
+    img = asm.assemble(world())
+    by = edit.ids_by_offset(img)
+    assert len(by) == len(img.nodes) == 11 and by[0] == "n0"
+    assert {nid: (off, 0) for off, nid in by.items()}.keys() == img.nodes.keys()
+    assert all(img.nodes[nid][0] == off for off, nid in by.items())
+
+
+def test_resolve_share():
+    p = pair(["a"], ["b"])
+    edit.add(p, ir.Routine("plain", [edit.insn("end", 1)]))
+    q = edit.resolve(p, share=True)
+    assert q.item("plain") is p.item("plain") and q.item("h0") is p.item("h0")
+    assert q.item("base_l") is p.item("base_l") and q.item("a") is p.item("a")
+    assert q.item("base_0") is not p.item("base_0")  # it has a label
+    assert q.item("c0") is not p.item("c0") and p.item("c0").slots == ["a"]  # and grew these
+    other = edit.resolve(p)
+    assert other.item("plain") is not p.item("plain") and other.item("h0") is not p.item("h0")
+    assert asm.assemble(other).data == asm.assemble(q).data
+
+
+def test_taken():
+    p = world()
+    assert edit.taken(p) == {"base_0", "call_0", "base_l", "call_l", "h0"}
+
+
 # ---- items
 
 
