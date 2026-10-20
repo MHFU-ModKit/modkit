@@ -6,17 +6,27 @@ rows in a tree, with an outline of the header's lists, a search and a history. N
     p = decode(game, 75)                 # one species row as a Program (a second or more)
     v = view(p, default_header(p))       # what that header runs, as lines
     v.find("enter 3 0")                  # rows
+
+A program an edit made (a `Built`'s) views the same: `edited` marks its rows, and a `Renderer`
+kept across the views of a header draws only the routines the edit replaced again.
+
+    cache = Renderer()
+    v = view(built.program, header, graph.edited_ids(built.applied), cache)
+    v.node_at(row), v.row_for(node)      # the Graph and the Code pane select each other by node
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
-from functools import cache
+from functools import cache, cached_property
 
 from mhfu import files
 from mhfu.em import script
 from mhfu.em.script import ir, source
+from mhfu.em.script.graph import ENTRY, join_id
+from mhfu.em.script.opcodes import BY_NAME
 from mhfu.em.script.source import Line
 from mhfu.files import Extracted
 
@@ -132,6 +142,11 @@ class BrainView:
     """The opener's row of the block whose closing marker lies at each native address."""
     ends: dict[int, int] = field(default_factory=dict)
     """The row of the `enter` that ends at each native address, where its run resumes."""
+    edited: frozenset[int] = frozenset()
+    """The rows of edited code: a node with no native address or among the edited ids, and the
+    routine line over one."""
+    routine_row: dict[str, int] = field(default_factory=dict)
+    """The row of each routine's line, by name."""
 
     def find(self, text: str) -> list[int]:
         """The rows whose text holds `text`, any case; a `0x...` query also gives the rows whose
@@ -170,6 +185,25 @@ class BrainView:
         """The row of the routine a call, goto or walk line leads to."""
         node = self.lines[row].target
         return None if node is None else self.row_of.get(node)
+
+    @cached_property
+    def _routine_at(self) -> dict[int, str]:
+        return {r: name for name, r in self.routine_row.items()}
+
+    def node_at(self, row: int) -> str | None:
+        """The id of the node a line is; None for a routine, a list or a header line."""
+        return self.lines[row].node
+
+    def row_for(self, node: str, routine: str | None = None) -> int | None:
+        """The row of a graph node: its line, a join the line of its block, a routine's entry
+        (`routine` named) the routine's line; None for a node this view has not."""
+        if node == ENTRY:
+            return None if routine is None else self.routine_row.get(routine)
+        return self.row_of.get(node.removesuffix(join_id("")))
+
+    def routine_at(self, row: int) -> str | None:
+        """The routine a row is in or is the line of; None under a list or the header."""
+        return self._routine_at.get(self.top_of(row))
 
 
 def _groups(lines: list[Line]) -> list[tuple[int, int]]:
@@ -236,37 +270,128 @@ def _outline(
     return out
 
 
-def view(p: ir.Program, header: str) -> BrainView:
+_STUB = BY_NAME["nop"]
+
+
+class Renderer:
+    """The lines of a header's routines, kept from one view to the next. An edit shares every
+    routine it leaves alone with the program before (copy on write), so a routine object seen
+    before keeps its lines. What its links lead to is another matter: it reads the header's lists
+    and the first node of every routine, so those changing draws every routine again. Keep one
+    per header: another header's links are other lines."""
+
+    def __init__(self) -> None:
+        self._lines: dict[str, tuple[ir.Routine, _Reads, tuple[Line, ...]]] = {}
+
+    def render(self, p: ir.Program, h: ir.Header, keep: Sequence[bool]) -> list[tuple[Line, ...]]:
+        """`source.render` cut by item as `[region, *p.items]`, each item's lines or none where
+        `keep` drops it."""
+        links = _Reads(
+            h.name,
+            tuple(i for i in p.items if isinstance(i, ir.Table | ir.Header)),
+            tuple((r.name, r.body[0].id) for r in p.routines() if r.body),
+        )
+        items: list[ir.Item] = []
+        home: list[ir.Item | None] = []
+        for item, kept in zip(p.items, keep[1:], strict=True):
+            if isinstance(item, ir.Routine):
+                held = self._lines.get(item.name)
+                if kept and (held is None or held[0] is not item or not held[1].same(links)):
+                    items.append(item)
+                    home.append(item)
+                else:  # its first node is all the others' links read
+                    items.append(_stub(item))
+                    home.append(None)
+            elif kept:
+                items.append(item)
+                home.append(item)
+        mini = ir.Program(p.row, p.base, items, p.end, p.sha1)
+        lines = source.render(mini, h.name)
+        spans = _groups(lines)
+        if len(spans) != len(items) + 1:
+            raise ValueError(f"row {p.row}: {len(spans)} groups of lines for {len(items)} items")
+        drawn = {id(it): lines[a:b] for it, (a, b) in zip(home, spans[1:], strict=True) if it}
+        out: list[tuple[Line, ...]] = [tuple(lines[spans[0][0] : spans[0][1]])]
+        now: dict[str, tuple[ir.Routine, _Reads, tuple[Line, ...]]] = {}
+        for item, kept in zip(p.items, keep[1:], strict=True):
+            if not kept:
+                out.append(())
+            elif isinstance(item, ir.Routine):
+                fresh = drawn.get(id(item))
+                now[item.name] = (item, links, tuple(fresh)) if fresh else self._lines[item.name]
+                out.append(now[item.name][2])
+            else:
+                out.append(tuple(drawn[id(item)]))
+        self._lines = now
+        return out
+
+
+@dataclass(frozen=True)
+class _Reads:
+    """What the lines' links depend on besides their routine."""
+
+    header: str
+    lists: tuple[ir.Item, ...]
+    first: tuple[tuple[str, str], ...]
+    """Each routine's first node, by name."""
+
+    def same(self, other: _Reads) -> bool:
+        return (
+            self.header == other.header
+            and len(self.lists) == len(other.lists)
+            and all(a is b for a, b in zip(self.lists, other.lists, strict=True))
+            and self.first == other.first
+        )
+
+
+def _stub(r: ir.Routine) -> ir.Routine:
+    """A routine that is only where its first node is, which is all a link to it reads."""
+    return ir.Routine(r.name, [ir.Insn(_STUB, {}, r.body[0].id)] if r.body else [])
+
+
+def view(
+    p: ir.Program,
+    header: str,
+    edited: Collection[str] = (),
+    renderer: Renderer | None = None,
+) -> BrainView:
     """What `header` runs: the program's source with the links resolved through it, kept to its
-    routines, lists and data. `KeyError` for a header the program has not."""
+    routines, lists and data. `edited` is the ids an edit set changes (`graph.edited_ids`); a node
+    with no native address is edited too. `renderer` is the one kept for this header, where a
+    view follows another of an edited program. `KeyError` for a header the program has not."""
     h = next((x for x in p.headers() if x.name == header), None)
     if h is None:
         raise KeyError(header)
-    full = source.render(p, header)
-    groups = _groups(full)
-    if len(groups) != len(p.items) + 1:
-        raise ValueError(f"row {p.row}: {len(groups)} groups of lines for {len(p.items)} items")
     keep = [True, *_kept(p, h)]
+    groups = (renderer or Renderer()).render(p, h, keep)
     lines: list[Line] = []
     routine_row: dict[str, int] = {}
-    for item, (a, b), kept in zip([None, *p.items], groups, keep, strict=True):
-        if not kept:
-            continue
-        if isinstance(item, ir.Routine):
+    for item, group in zip([None, *p.items], groups, strict=True):
+        if isinstance(item, ir.Routine) and group:
             routine_row[item.name] = len(lines)
-        lines.extend(full[a:b])
+        lines.extend(group)
     parent, children = _tree(lines)
     row_of = {ln.node: i for i, ln in enumerate(lines) if ln.node is not None}
-    nodes = [n for n in p.nodes() if n.id in row_of]
     pairs: dict[int, tuple[int, int]] = {}
     ends: dict[int, int] = {}
-    for n in nodes:
+    closes: dict[int, int] = {}
+    flagged: set[int] = set()
+    for n in p.nodes():
+        if n.id not in row_of:
+            continue
+        row = row_of[n.id]
+        if n.pc is None or n.id in edited:
+            flagged.add(row)
+        if isinstance(n, ir.Block) and n.close is not None:
+            closes[n.close] = row
         if isinstance(n, ir.Insn) and n.op.name == "enter":
             main, sub = n.args["main"], n.args["sub"]
             if isinstance(main, int) and isinstance(sub, int):
-                pairs[row_of[n.id]] = (main, sub)
+                pairs[row] = (main, sub)
                 if n.pc is not None:
-                    ends[n.pc + n.length] = row_of[n.id]
+                    ends[n.pc + n.length] = row
+    flagged |= {_top(parent, row) for row in flagged}
+    flagged |= {routine_row[r.name] for r in p.routines() if r.va is None and r.name in routine_row}
     return BrainView(
         p.row,
         header,
@@ -278,11 +403,17 @@ def view(p: ir.Program, header: str) -> BrainView:
         tuple(_outline(h, p.tables(), routine_row)),
         pairs,
         at={ln.pc: i for i, ln in enumerate(lines) if ln.node is not None and ln.pc is not None},
-        closes={
-            n.close: row_of[n.id] for n in nodes if isinstance(n, ir.Block) and n.close is not None
-        },
+        closes=closes,
         ends=ends,
+        edited=frozenset(flagged),
+        routine_row=routine_row,
     )
+
+
+def _top(parent: Sequence[int], row: int) -> int:
+    while parent[row] >= 0:
+        row = parent[row]
+    return row
 
 
 class History:

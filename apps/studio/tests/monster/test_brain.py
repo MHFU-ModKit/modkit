@@ -14,16 +14,19 @@ from typing import Any
 import pytest
 from mhfu import files
 from mhfu.em.intel import SpeciesIntel
-from mhfu.em.script import ir, source
+from mhfu.em.script import build, edit, ir, source
+from mhfu.em.script.editset import Anchor, EditSet, Insert, apply, set_args
+from mhfu.em.script.graph import ENTRY, Projection, Stmt, edited_ids, join_id
 from mhfu.files import Extracted
 from mhfu_port.data import Data
 from mhfu_studio.monster import brain, species
+from mhfu_studio.monster import brain_graph as bg
 from mhfu_studio.monster.brain import BrainView, History
 from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell import places
 
-from .conftest import program
+from .conftest import end, enter, program
 
 
 def heads(v: BrainView) -> list[str]:
@@ -255,6 +258,162 @@ def test_the_history_is_bounded() -> None:
     assert h.back() is None and h.current == 30
 
 
+# ---- the Code pane and the Graph pane agree
+
+
+def test_a_node_is_a_row_and_a_row_a_node() -> None:
+    p = program()
+    v = brain.view(p, "h0")
+    for nid, row in v.row_of.items():
+        assert v.node_at(row) == nid and v.row_for(nid) == row
+    assert v.node_at(0) is None and v.node_at(v.routine_row["r_a"]) is None
+    b = next(n for n in p.nodes() if isinstance(n, ir.Block))
+    assert v.row_for(join_id(b.id)) == v.row_of[b.id]  # a join is its block's
+    assert v.row_for(ENTRY, "r_b") == v.routine_row["r_b"] and v.row_for(ENTRY) is None
+    assert v.row_for("nope") is None and v.row_for("n13") is None  # r_x is not in the view
+    assert v.routine_at(v.row_of[b.id]) == "r_a" and v.routine_at(v.routine_row["r_c"]) == "r_c"
+    assert v.routine_at(v.find("table h0")[0]) is None and v.routine_at(0) is None
+    assert v.lines[v.row_for(b.arms[0].id) or 0].text.strip() == "else"
+    assert v.routine_row["r_a"] == v.find("routine r_a")[0]
+
+
+def test_every_node_of_a_scene_is_a_row_in_its_routine() -> None:
+    p = program()
+    v = brain.view(p, "h0")
+    g = Projection(p).routine("r_a")
+    for key in g.scopes:
+        for b in bg.scene(g, key).nodes:
+            row = v.row_for(b.id, "r_a")
+            assert row is not None and v.routine_at(row) == "r_a"
+            assert (v.node_at(row) == b.id) is (b.kind not in ("entry", "join"))
+
+
+# ---- the Code pane's rows of an edited program
+
+
+def edited_toy() -> tuple[ir.Program, set[str]]:
+    """r_a with its first enter changed and another after it."""
+    p = program()
+    edit.modify(p, "n1", sub=5)
+    new = enter(7, 7)
+    edit.insert(p, "n1", [new], after=True)
+    return p, {"n1", new.id}
+
+
+def test_edited_rows_are_new_code_and_the_edit_sets() -> None:
+    p, ids = edited_toy()
+    v = brain.view(p, "h0", ids)
+    assert {v.lines[r].text.strip() for r in v.edited} == {
+        "routine r_a",
+        "enter 3 5 0",
+        "enter 7 7 0",
+    }
+    assert v.routine_row["r_a"] in v.edited and v.row_of["n1"] in v.edited
+    # a lift with the ids an edit set changes: the node has its address still
+    got = brain.view(program(), "h0", {"n3"})
+    assert got.edited == {got.row_of["n3"], got.routine_row["r_a"]}
+    assert brain.view(program(), "h0").edited == frozenset()
+
+
+def test_rows_and_graph_agree_on_edited() -> None:
+    p, ids = edited_toy()
+    v = brain.view(p, "h0", ids)
+    proj = Projection(p, edited=ids)
+    for r in p.routines():
+        if r.name not in v.routine_row:
+            continue
+        g = proj.routine(r.name)
+        for n in g.nodes.values():
+            if isinstance(n, Stmt):
+                assert (v.row_of[n.id] in v.edited) == n.edited, n.id
+        assert (v.routine_row[r.name] in v.edited) == g.edited
+    out = bg.outline(proj.overview(), "h0")
+    assert {r.routine for g in out.groups for r in g.rows if r.edited} == {"r_a"}
+
+
+def test_a_new_routine_is_edited() -> None:
+    p = program()
+    edit.add(p, ir.Routine("spin", [enter(4, 4), end(1)]))
+    edit.put(p, "r_b", [edit.insn("call", ir.Sym("spin"))])
+    v = brain.view(p, "h0")
+    assert v.routine_row["spin"] in v.edited and v.routine_row["r_b"] in v.edited
+    assert v.routine_row["r_c"] not in v.edited
+
+
+# ---- the renderer's cache must agree with a fresh render
+
+
+def same(a: brain.BrainView, b: brain.BrainView) -> bool:
+    return (a.lines, a.parent, a.row_of, a.at, a.closes, a.ends, a.edited, a.enters) == (
+        b.lines,
+        b.parent,
+        b.row_of,
+        b.at,
+        b.closes,
+        b.ends,
+        b.edited,
+        b.enters,
+    )
+
+
+def swap(p: ir.Program, item: ir.Item, new: ir.Item) -> ir.Program:
+    """What an edit makes: a program that shares every item it leaves alone."""
+    return ir.Program(p.row, p.base, [new if i is item else i for i in p.items], p.end, p.sha1)
+
+
+def test_a_cached_view_is_the_fresh_one() -> None:
+    cache, p = brain.Renderer(), program()
+    first_view = brain.view(p, "h0", renderer=cache)
+    assert same(first_view, brain.view(p, "h0"))
+    assert same(brain.view(p, "h0", renderer=cache), first_view)
+    p2, ids = edited_toy()
+    assert same(brain.view(p2, "h0", ids, cache), brain.view(p2, "h0", ids))
+    assert same(brain.view(p, "h0", renderer=cache), first_view)  # and back, as an undo does
+
+
+def test_a_routine_an_edit_left_alone_is_not_drawn_again() -> None:
+    cache, p = brain.Renderer(), program()
+    before = brain.view(p, "h0", renderer=cache)
+    r_a = p.item("r_a")
+    assert isinstance(r_a, ir.Routine)
+    mid = enter(6, 6)
+    mid.id = "n90"
+    q = swap(p, r_a, ir.Routine("r_a", [r_a.body[0], mid, *r_a.body[1:]], va=r_a.va))
+    after = brain.view(q, "h0", renderer=cache)
+    for name in ("r_b", "r_c"):
+        a, b = before.routine_row[name], after.routine_row[name]
+        assert all(
+            x is y for x, y in zip(before.lines[a : a + 2], after.lines[b : b + 2], strict=True)
+        )
+    assert before.lines[1] is not after.lines[1] and same(after, brain.view(q, "h0"))
+
+
+def test_links_are_drawn_again_when_what_they_lead_to_changed() -> None:
+    cache, p = brain.Renderer(), program()
+    brain.view(p, "h0", renderer=cache)
+    # a new first node in r_c: the call that leads there leads to it now
+    r_c = p.item("r_c")
+    assert isinstance(r_c, ir.Routine)
+    head = ir.Insn(r_c.body[0].op, dict(r_c.body[0].args), "n90")
+    q = swap(p, r_c, ir.Routine("r_c", [head, *r_c.body[1:]], va=r_c.va))
+    got = brain.view(q, "h0", renderer=cache)
+    assert same(got, brain.view(q, "h0")) and got.lines[got.find("call 0")[0]].target == "n90"
+    # a list slot changed: the goto leads elsewhere, though its routine is the same object
+    t = q.item("h0_base_l")
+    assert isinstance(t, ir.Table)
+    z = swap(q, t, ir.Table(t.name, ["r_a", "r_c"], t.va))
+    moved = brain.view(z, "h0", renderer=cache)
+    assert same(moved, brain.view(z, "h0"))
+    assert moved.lines[moved.find("goto")[0]].target == got.lines[got.find("call 0")[0]].target
+
+
+def test_another_header_is_other_lines() -> None:
+    cache, p = brain.Renderer(), program()
+    h0 = brain.view(p, "h0", renderer=cache)
+    h1 = brain.view(p, "h1", renderer=cache)
+    assert same(h1, brain.view(p, "h1")) and same(brain.view(p, "h0", renderer=cache), h0)
+
+
 # ---- the workspace: decoding on the brain worker, caching, labels
 
 
@@ -479,3 +638,67 @@ def test_a_workspace_labels_the_real_em75(
         assert any(text.startswith("anim ") for text in v.labels.values())
     finally:
         w.close()
+
+
+@pytest.fixture(scope="module")
+def lift75(game: Extracted) -> ir.Program:
+    return brain.decode(game, 75)
+
+
+@pytest.fixture(scope="module")
+def lift01(game: Extracted) -> ir.Program:
+    return brain.decode(game, 1)
+
+
+def test_the_view_of_an_applied_edit(lift75: ir.Program) -> None:
+    base = lift75.item("base_0")
+    assert isinstance(base, ir.Routine)
+    hub = next(n for n in ir.walk(base.body) if isinstance(n, ir.Insn) and n.op.name == "enter")
+    es = EditSet.of(lift75)
+    set_args(es, lift75, hub.id, main=3, sub=0)
+    es.inserts["u1"] = Insert(Anchor("after", hub.id), [edit.if_("if_enraged", then=[enter(3, 0)])])
+    built = build.Built.of(lift75, es)
+    assert built.ok
+    ids = edited_ids(built.applied)
+    cache = brain.Renderer()
+    v = brain.view(built.program, "h0", ids, cache)
+    assert same(v, brain.view(built.program, "h0", ids))
+    new = {n.id for n in built.program.nodes() if n.id.startswith("u1.")}
+    assert len(new) == 2 and ids == new | {hub.id}
+    assert {v.node_at(r) for r in v.edited} == {None, hub.id, *new}  # None: the routine's line
+    assert v.routine_row["base_0"] in v.edited and len(v.edited) == 4
+    assert not brain.view(lift75, "h0").edited
+    assert same(brain.view(lift75, "h0", renderer=cache), brain.view(lift75, "h0"))  # undone
+
+
+@pytest.mark.parametrize("fixture", ["lift75", "lift01"])
+def test_a_view_after_one_edit_is_cheap(fixture: str, request: pytest.FixtureRequest) -> None:
+    lift: ir.Program = request.getfixturevalue(fixture)
+    h = brain.default_header(lift)
+    hub = next(
+        n
+        for r in lift.routines()
+        for n in ir.walk(r.body)
+        if isinstance(n, ir.Insn) and n.op.name == "enter"
+    )
+    es = EditSet.of(lift)
+    set_args(es, lift, hub.id, sub=0)
+    got = apply(lift, es)
+    ids = edited_ids(got)
+    cache = brain.Renderer()
+    brain.view(lift, h, renderer=cache)
+
+    def best(fn: Callable[[], object]) -> float:
+        times = []
+        for _ in range(3):
+            t = time.perf_counter()
+            fn()
+            times.append(time.perf_counter() - t)
+        return min(times) * 1000
+
+    cold = best(lambda: brain.view(got.program, h, ids))
+    warm = best(lambda: brain.view(got.program, h, ids, cache))
+    lines = len(brain.view(got.program, h, ids, cache).lines)
+    print(f"\n{fixture}: view of {lines} lines {cold:.0f} ms, after one edit {warm:.0f} ms")
+    assert same(brain.view(got.program, h, ids, cache), brain.view(got.program, h, ids))
+    assert warm < cold and warm < 150

@@ -21,14 +21,8 @@ from dataclasses import dataclass
 from mhfu_port.behaviour import Path, Trigger
 
 from mhfu_studio.monster import behaviour as graph
-from mhfu_studio.monster.panels.node_graph import (
-    FRAME_BOTTOM,
-    FRAME_PAD,
-    FRAME_TOP,
-    FrameSpec,
-    LinkSpec,
-    NodeSpec,
-)
+from mhfu_studio.monster.node_size import FRAME_BOTTOM, FRAME_PAD, FRAME_TOP
+from mhfu_studio.monster.panels.node_graph import FrameSpec, LinkSpec, NodeSpec
 
 #: a displayed node's id: the reference after block `b` to move `m` is `ref:b:m`, the placeholder
 #: after it `open:b`, the reference a while-playing rule starts from `start:b:m`; a second drawing

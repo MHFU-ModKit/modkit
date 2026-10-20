@@ -5,9 +5,9 @@ from dataclasses import replace
 from typing import Any
 
 import pytest
+from mhfu_studio.monster.node_size import NODE_W
 from mhfu_studio.monster.panels.node_graph import (
     FADED,
-    NODE_W,
     GraphView,
     LinkSpec,
     NodeSpec,
