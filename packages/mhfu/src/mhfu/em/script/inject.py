@@ -505,10 +505,12 @@ def plan(
     live: Sequence[ScriptState],
     row_words: Sequence[int],
     home: bytes,
+    staged: Sequence[Container] = (),
 ) -> Plan:
     """The writes that put `source` at SCRIPT_PUSH, point the row at it and rebind the live
     monsters running it. `row_words` are the row's header words and `home` the bytes at
-    SCRIPT_PUSH (the whole container if there is one) as the game holds them."""
+    SCRIPT_PUSH (the whole container if there is one) as the game holds them; `staged` the stick
+    containers they point into (`around`), whose monsters restart on `source` (no maps)."""
     _check_row(p.row, row_words)
     old = _old(home, p.row)
     data = _placed(p, source)
@@ -516,16 +518,20 @@ def plan(
         raise Refused(f"the container is {len(data)} bytes; SCRIPT_PUSH holds {PUSH_SIZE}")
     new = Container.read(data)
     region = range(p.base, p.end or p.base + len(new.image))
-    gone = old.head.addresses if old else range(0)
+    boxes = [b for b in (old, *staged) if b is not None and b.row == p.row]
+
+    def owner(w: int) -> Container | None:
+        return next((b for b in boxes if w in b.head.addresses), None)
 
     def mine(w: int) -> bool:
-        return w in region or w in gone
+        return w in region or owner(w) is not None
 
     def remap(w: int) -> int | None:
-        native = old.native(w) if old is not None and w in gone else w
+        box = owner(w)
+        native = w if box is None else box.native(w)
         return None if native is None else new.rebase(native)
 
-    headers = frozenset(new.headers) | (frozenset(old.headers.values()) if old else frozenset())
+    headers = frozenset(new.headers) | {h for b in boxes for h in b.headers.values()}
     hits = [w in headers for w in row_words]
     if not any(hits):
         raise Refused(
@@ -733,8 +739,22 @@ def push(s: Session, p: ir.Program, img: asm.Image, *, timeout: float = TIMEOUT)
         s,
         p.row,
         timeout,
-        lambda st: plan(p, img, st.live, st.row_words, st.home),
+        lambda st: plan(p, img, st.live, st.row_words, st.home, _staged(s.mem, p, st)),
     )
+
+
+def _staged(mem: Memory, p: ir.Program, st: _Snapshot) -> list[Container]:
+    """The stick containers of `p`'s row that its header words and monsters point into."""
+    known = range(p.base, p.end or p.base)
+    home = range(int(a.SCRIPT_PUSH), int(a.SCRIPT_PUSH) + PUSH_SIZE)
+    found: list[Container] = []
+    for w in dict.fromkeys((*st.row_words, *(m.header for m in st.live))):
+        if not w or w in known or w in home or any(w in b.head.addresses for b in found):
+            continue
+        box = around(mem, w)
+        if box is not None and box.row == p.row:
+            found.append(box)
+    return found
 
 
 def restore(s: Session, row: int, *, timeout: float = TIMEOUT) -> Pushed:

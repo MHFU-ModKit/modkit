@@ -641,6 +641,33 @@ def test_plan_takes_a_stick_container():
     assert row_words(mem) == [LOAD + HEADER] * 17
 
 
+def test_plan_takes_over_a_staged_container():
+    on = AT + inject.IMAGE_OFF  # the stick image, every word of the monster in it
+    s = state(
+        0,
+        header=header_in(),
+        pcs=(on + 4, on + 8, on + 0x16, on + 0x1C),
+        interrupts={0x08: on + 0x10, 0x02: 0, 0x04: 0},
+        call_return=on + 0x16,
+        route=on + 0x24,
+        loop_return=on + 0x12,
+    )
+    images = [Image(data, at) for at, data in parts([s], words=[header_in()] * 17)]
+    mem = Space([*images, Image(bytes(inject.PUSH_SIZE), PUSH), staged()])
+    p, img = edited()
+    snap = inject._snapshot(mem, ROW)
+    found = inject._staged(mem, p, snap)
+    assert [(b.row, b.load) for b in found] == [(ROW, on)]
+    with pytest.raises(Refused, match="none of row"):  # what a push did before it looked around
+        inject.plan(p, img, snap.live, snap.row_words, snap.home)
+    plan = inject.plan(p, img, snap.live, snap.row_words, snap.home, found)
+    assert plan.notes[0].startswith(f"entity 0x{ent(0):08X} restarted: SCRIPT_PCS[0]")
+    apply(mem, plan)  # a stick container has no maps: its monsters restart at the base routine
+    got = live_script.read(mem, ent(0))
+    assert got.header == LOAD + HEADER and got.pcs == (LOAD,) * 4
+    assert row_words(mem) == [LOAD + HEADER] * 17
+
+
 # ---- the guards and refusals
 
 
