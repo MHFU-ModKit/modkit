@@ -88,10 +88,12 @@ def _tree(row: int, insns: Sequence[disasm.Insn]) -> list[ir.Node]:
     return out
 
 
-def routine(read: disasm.Reader, entry: int, row: int = 0) -> tuple[list[ir.Node], int]:
+def routine(
+    read: disasm.Reader, entry: int, row: int = 0, dec: disasm.Routine | None = None
+) -> tuple[list[ir.Node], int]:
     """The tree of the routine at `entry` and where its last instruction ends; `row` prefixes
-    the node ids."""
-    dec = disasm.decode(read, entry)
+    the node ids, `dec` is the routine decoded already."""
+    dec = disasm.decode(read, entry) if dec is None else dec
     if not dec.clean or not dec.insns:
         why = dec.problems[0].text if dec.problems else "no instructions"
         raise LiftError(f"the routine at 0x{entry:08X} does not decode: {why}")
@@ -113,7 +115,7 @@ class _Lifter:
     def __init__(self, sc: Scripts) -> None:
         self.sc = sc
         self.ovl = sc.ovl
-        self.read = sc.mem.u8
+        self.read = sc.read
         self.data = range(self.ovl.text.stop, self.ovl.initialised.stop)
         self.fence = sorted(set().union(*(self._starts(r) for r in sc.rows)))
 
@@ -232,7 +234,7 @@ class _Lifter:
         if kind == "data":
             return None
         try:
-            body, stop = routine(self.read, s, row)
+            body, stop = routine(self.read, s, row, self.sc.decode(s))
             if stop > e:
                 raise LiftError(f"the routine at 0x{s:08X} runs into the next item")
         except LiftError as err:

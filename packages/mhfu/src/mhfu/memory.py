@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import struct
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -147,6 +147,18 @@ class Space(Memory):
 
     def unpack(self, fmt: struct.Struct, address: int) -> tuple[Any, ...]:
         return self.image(address).unpack(fmt, address)
+
+    def reader(self) -> Callable[[int], int]:
+        """`u8` for a hot loop: the byte at an address, looked up in the images' bytes directly."""
+        spans = [(i.base, i.end, i.data) for i in self.images]
+
+        def read(address: int) -> int:
+            for base, end, data in spans:
+                if base <= address < end:
+                    return data[address - base]
+            raise Unmapped(f"0x{address:08X} is in none of {self.images}")
+
+        return read
 
 
 class Live(Memory):
