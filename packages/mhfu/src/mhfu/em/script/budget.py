@@ -57,7 +57,7 @@ _ROUTE_RETURNS = frozenset({"route", "route2", "loop_next", "walk_step", "walk_l
 _INTERRUPT_ENDS = frozenset({"forget", "notice"} | {n for n in END_KINDS.values() if "int_" in n})
 _CALL_SLOT = {"call": 0, "call_deep": 1, "call_ret": 2, "walk": 3, "route_run": 3, "call_spot": 3}
 _CALL_LABEL = {"call": "call", "call_ret": "ret", "call_deep": "deep", "walk": "walk"}
-_ROUTE_LISTS = {"route_run": "loop", "call_spot": "node"}
+ROUTE_LISTS = {"route_run": "loop", "call_spot": "node"}
 _SITE = {"enter": "enter", "goto": "goto", "goto_base": "restart", "end": "end"}
 _CHANNELS = range(4)
 
@@ -232,8 +232,8 @@ class _Walk:
                     yield name, self.root(name)
 
     def _targets(self, n: ir.Insn) -> list[int]:
-        if n.op.name in _ROUTE_LISTS:
-            names = self.names(LISTS[_ROUTE_LISTS[n.op.name]])
+        if n.op.name in ROUTE_LISTS:
+            names = self.names(LISTS[ROUTE_LISTS[n.op.name]])
         else:
             want = "walk" if n.op.name == "walk" else "call"
             names = [self.g.p.entry(self.h, r, self.tables) for r in ir.refs(n) if r.kind == want]
@@ -648,12 +648,12 @@ def _calls(
     it, None for a goto."""
     name = n.op.name
     out: list[tuple[str, str | None]] = []
-    if name in _ROUTE_LISTS:
-        f = LISTS[_ROUTE_LISTS[name]]
+    if name in ROUTE_LISTS:
+        f = LISTS[ROUTE_LISTS[name]]
         t = h.fields[f] if f < len(h.fields) else None
         for e in tables[t].slots if isinstance(t, str) and t in tables else []:
             if isinstance(e, str):
-                out.append((e, _ROUTE_LISTS[name]))
+                out.append((e, ROUTE_LISTS[name]))
     elif n.op.flow in (Flow.GOTO, Flow.CALL):
         for r in ir.refs(n):
             found = p.entry(h, r, tables)

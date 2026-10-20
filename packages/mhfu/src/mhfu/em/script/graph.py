@@ -37,8 +37,8 @@ from . import catalogue as cat
 from . import ir
 
 # the rules check and budget already hold, so the graph cannot drift from them
-from .budget import _ROUTE_LISTS
-from .check import _terminal
+from .budget import ROUTE_LISTS
+from .check import is_terminal
 from .editset import Applied, EditSet
 from .opcodes import LISTS, Flow, Op, Ref, Shape, operands, slot
 
@@ -332,8 +332,8 @@ def _tagged(n: ir.Node) -> list[str]:
 def _sites(n: ir.Node) -> tuple[_Site, ...]:
     """The routines an instruction leads to, by list and slot; data (a stage array) is no link."""
     op = n.op
-    if op.name in _ROUTE_LISTS:
-        return (_Site(_link_kind(op), "", LISTS[_ROUTE_LISTS[op.name]], None),)
+    if op.name in ROUTE_LISTS:
+        return (_Site(_link_kind(op), "", LISTS[ROUTE_LISTS[op.name]], None),)
     refs = ir.refs(n)
     if not refs:
         return ()
@@ -438,7 +438,7 @@ class _Build:
         if not n.id:
             raise ValueError(f"{self.r.name}: a node has no id")
         self.order.append(n.id)
-        terminal = _terminal(n)
+        terminal = is_terminal(n)
         ports: tuple[Port, ...] = ()
         join: str | None = None
         size, inner = 1, False

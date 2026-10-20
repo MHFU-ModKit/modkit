@@ -7,7 +7,7 @@ import pytest
 from mhfu.em import script
 from mhfu.em.script import asm, edit, ir, lift
 from mhfu.em.script import catalogue as cat
-from mhfu.em.script.check import _terminal
+from mhfu.em.script.check import is_terminal
 from mhfu.em.script.editset import Anchor, EditSet, Insert, apply, set_args
 from mhfu.em.script.graph import (
     ENTRY,
@@ -638,9 +638,9 @@ def expected(nodes, live, stmts, joins):
             for a in n.arms:
                 expected(a.body, not ended, stmts, joins)
             ports = n.head or n.arms or n.op.shape is Shape.IF
-            if not ended and not _terminal(n) and n.op.shape is not Shape.REPEAT and ports:
+            if not ended and not is_terminal(n) and n.op.shape is not Shape.REPEAT and ports:
                 joins.add(join_id(n.id))
-        ended = ended or _terminal(n)
+        ended = ended or is_terminal(n)
 
 
 def reached(g: RoutineGraph) -> set[str]:

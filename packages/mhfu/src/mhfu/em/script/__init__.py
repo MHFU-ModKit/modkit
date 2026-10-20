@@ -3,8 +3,9 @@
 """A big monster's AI script: disassembled (`Scripts`, `decode`), lifted into a tree
 (`lift`, `ir`), edited (`edit`, `editset`, vetted by `check`, `walk` and `budget`), encoded back
 (`asm`), written as source text (`source`), read back from it (`parse`), worded for an editor
-(`catalogue`), kept as a species' edit file (`brainfile`) and built from it (`build`), pushed into
-the running game (`inject`) and put on the memory stick for the framework to load (`stick`).
+(`catalogue`) and drawn as a graph (`graph`), kept as a species' edit file (`brainfile`) and
+built from it (`build`), pushed into the running game (`inject`) and put on the memory stick for
+the framework to load (`stick`).
 
     from mhfu.em import script
     sc = script.Scripts(game, 75)         # an em overlay and the species table in game_task
@@ -26,6 +27,7 @@ from . import (
     check,
     edit,
     editset,
+    graph,
     inject,
     ir,
     lift,
@@ -111,6 +113,7 @@ __all__ = [
     "edit",
     "editset",
     "fetch",
+    "graph",
     "inject",
     "ir",
     "length",
