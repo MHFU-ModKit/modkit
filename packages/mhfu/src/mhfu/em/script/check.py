@@ -365,11 +365,11 @@ def _structure(c: _Checks) -> None:
             c.add("error", "FALLS_OFF", text, at.id if at else None, r.name)
 
 
-def _runs(c: _Checks) -> None:
+def _runs(c: _Checks, b: budget.Budget | None) -> None:
     """OPS_PER_RUN, RESTART_LOOP and CORRELATED_DRAW, from `budget`. Nothing new, nothing to say."""
     if all(n.pc is not None for n in c.p.nodes()):
         return
-    b = budget.Budget(c.p)
+    b = budget.Budget(c.p) if b is None else b
     fresh = {n.id for n in c.p.nodes() if n.pc is None}
     index = ir.Index(c.p)
     seen: set[str | None] = set()
@@ -397,13 +397,16 @@ def _runs(c: _Checks) -> None:
         c.add("warning", "CORRELATED_DRAW", text, d.node, index.routine(d.node).name)
 
 
-def check(p: ir.Program, img: asm.Image | None = None) -> list[Finding]:
+def check(
+    p: ir.Program, img: asm.Image | None = None, runs: budget.Budget | None = None
+) -> list[Finding]:
     """What is wrong with the new code of a resolved program. `img` is the program assembled,
-    by default at its own base; asm refuses what it cannot encode."""
+    by default at its own base; asm refuses what it cannot encode. `runs` is `p`'s budget, when
+    the caller keeps one."""
     c = _Checks(p)
     out = c.run()
     _structure(c)
     if not any(f.code == "UNRESOLVED" for f in out):
         _image(c, asm.assemble(p) if img is None else img)
-        _runs(c)
+        _runs(c, runs)
     return out

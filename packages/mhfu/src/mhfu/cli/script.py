@@ -11,6 +11,8 @@
     mhfu script 75 --source -o F    # the species row as source text, to a file
     mhfu script 75 --check F        # F edited: parse, resolve and vet it, a line per finding
     mhfu script 75 --build F -o OUT # the same, then the image to OUT: --base ADDR, --map MAP
+    mhfu script 75 --doc F          # a brain file's edits to the row: findings, id, worst run
+    mhfu script 75 --doc F --source # the program they build, as source text
     mhfu script --all               # one coverage line per big-monster overlay
 
 The coverage line counts routines, instructions, opcodes the game has no case for and routines
@@ -22,11 +24,14 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..em import script
+from ..em.script import brainfile, build
+from ..em.script.check import Finding
 from ..em.script.parse import ParseError
 from ..files import EM_SPECIES, Extracted
 from .binary import _address
@@ -51,6 +56,7 @@ def register(sub: Subparsers) -> None:
     )
     p.add_argument("--check", type=Path, metavar="FILE", help="vet the edited source FILE")
     p.add_argument("--build", type=Path, metavar="FILE", help="assemble the edited source to -o")
+    p.add_argument("--doc", type=Path, metavar="FILE", help="vet the edits of the brain file FILE")
     p.add_argument("--base", type=_address, metavar="ADDR", help="--build: place it at ADDR")
     p.add_argument("--map", type=Path, metavar="MAP", help="--build: write where things landed")
     p.add_argument("-o", "--out", type=Path, metavar="FILE", help="write the output to FILE")
@@ -63,6 +69,8 @@ def run(args: argparse.Namespace) -> int:
     game = Extracted.find(args.data)
     if args.all:
         return coverage(game, args.json)
+    if args.doc:
+        return from_doc(game, args)
     if args.species is None:
         raise ValueError("name an em overlay (75, em75), or pass --all")
     sc = script.Scripts(game, args.species)
@@ -107,6 +115,15 @@ def edited(sc: script.Scripts, args: argparse.Namespace) -> int:
     return 0
 
 
+def report(findings: Iterable[Finding]) -> bool:
+    """A line printed per finding; whether none is an error."""
+    ok = True
+    for f in findings:
+        print(f"{f.level} {f.code} {f.node or f.item or '-'}: {f.text}")
+        ok &= f.level != "error"
+    return ok
+
+
 def vet(path: Path, like: script.ir.Program) -> script.ir.Program | None:
     """The edited source at `path` parsed against `like` and resolved, a line printed per
     finding; None when a finding is an error."""
@@ -114,10 +131,25 @@ def vet(path: Path, like: script.ir.Program) -> script.ir.Program | None:
         prog = script.edit.resolve(script.parse.parse(path.read_text(), like=like))
     except ParseError as e:
         raise ValueError(f"{path}: {e}") from e
-    findings = script.check.check(prog)
-    for f in findings:
-        print(f"{f.level} {f.code} {f.node or f.item or '-'}: {f.text}")
-    return None if any(f.level == "error" for f in findings) else prog
+    return prog if report(script.check.check(prog)) else None
+
+
+def from_doc(game: Extracted, args: argparse.Namespace) -> int:
+    """Build the row a brain file edits: the findings, then the container id and the worst run,
+    or with `--source` the program as text."""
+    bf = brainfile.load(args.doc)
+    if args.species not in (None, bf.overlay):
+        raise ValueError(f"{args.doc} is em{bf.overlay}'s, not em{args.species}'s")
+    built = build.compile(bf, game, bf.overlay if args.row is None else args.row)
+    if not report(built.findings):
+        return 1
+    if args.source:
+        emit("\n".join(ln.text for ln in script.source.render(built.program)), args.out)
+    else:
+        worst = built.budget.worst
+        run_text = "" if worst is None else f", worst run {worst.count} of {script.budget.LIMIT}"
+        print(f"row {built.row} id {built.id:08X}{run_text}")
+    return 0
 
 
 def image_map(img: script.asm.Image) -> dict[str, object]:

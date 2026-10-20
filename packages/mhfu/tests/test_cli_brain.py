@@ -13,7 +13,8 @@ from mhfu import addresses as a
 from mhfu import inject as sticks
 from mhfu.cli import brain, main
 from mhfu.em import script
-from mhfu.em.script import inject
+from mhfu.em.script import brainfile, build, inject
+from mhfu.em.script.editset import EditSet, set_args
 from mhfu.live import Launcher, Session
 from mhfu.views import layout
 from mhfu.writes import Plan, Pushed
@@ -322,6 +323,198 @@ def test_status_without_the_64_mb_mode(monkeypatch, capsys):
         short.close()
 
 
+def edit_75(em75, tmp_path, *, weights=None):
+    """A brain file of em75 with its first enter changed, and the weights of its first random
+    changed to `weights` (default: left alone); its path."""
+    _, prog, _, _ = em75
+    body = prog.routines()[0].body
+    es = EditSet.of(prog)
+    first = next(
+        n for n in script.ir.walk(body) if isinstance(n, script.ir.Insn) and n.op.name == "enter"
+    )
+    set_args(es, prog, first.id, sub=2)
+    if weights:
+        pick = next(
+            n
+            for n in script.ir.walk(body)
+            if isinstance(n, script.ir.Block) and n.op.name == "random"
+        )
+        for arm, w in zip(pick.arms, weights, strict=False):
+            set_args(es, prog, arm.id, weight=w)
+    bf = brainfile.new(75, "Tigrex")
+    bf.put(es)
+    return brainfile.save(bf, tmp_path / "em75.toml")
+
+
+def doc_id(em75, path, game):
+    """The id the library gives the brain file's row 75."""
+    return build.compile(brainfile.load(path), game, 75, lift=em75[1]).id
+
+
+def test_build_from_a_doc(em75, game, tmp_path, capsys):
+    doc, out = edit_75(em75, tmp_path), tmp_path / "row.mhai"
+    assert (
+        main(["brain", "build", "--doc", str(doc), "--data", str(game.root), "-o", str(out)]) == 0
+    )
+    built = inject.Container.read(out.read_bytes())
+    assert built.head.id == doc_id(em75, doc, game) != inject.Container.read(stick_of(em75)).head.id
+    assert (built.head.row, built.head.load) == (75, 0)
+    assert (
+        capsys.readouterr().out
+        == f"{out}: row 75 id {built.head.id:08X}, {out.stat().st_size} bytes\n"
+    )
+
+
+def test_an_empty_doc_builds_the_games_container(em75, game, tmp_path):
+    doc, out = tmp_path / "em75.toml", tmp_path / "row.mhai"
+    brainfile.save(brainfile.new(75), doc)
+    argv = ["brain", "build", "--doc", str(doc), "--data", str(game.root), "-o", str(out)]
+    assert main(argv) == 0
+    assert out.read_bytes() == stick_of(em75)
+
+
+def test_a_doc_row_is_picked_by_row(em75, game, tmp_path):
+    doc, out = tmp_path / "em75.toml", tmp_path / "row.mhai"
+    brainfile.save(brainfile.new(75), doc)
+    argv = ["brain", "build", "75", "--doc", str(doc), "--row", "76", "--data", str(game.root)]
+    assert main([*argv, "-o", str(out)]) == 0
+    assert inject.Head.parse(out.read_bytes()).row == 76
+
+
+def test_a_doc_with_an_error_is_refused(em75, game, tmp_path, capsys):
+    arms = [9, 6, 2, 10, 2, 4]  # 33
+    doc, out = edit_75(em75, tmp_path, weights=arms), tmp_path / "row.mhai"
+    assert (
+        main(["brain", "build", "--doc", str(doc), "--data", str(game.root), "-o", str(out)]) == 1
+    )
+    assert "error RANDOM_WEIGHTS" in capsys.readouterr().out and not out.exists()
+
+
+def test_a_doc_with_a_warning_is_built(em75, game, tmp_path, capsys):
+    doc, out = edit_75(em75, tmp_path, weights=[0, 14]), tmp_path / "row.mhai"
+    assert (
+        main(["brain", "build", "--doc", str(doc), "--data", str(game.root), "-o", str(out)]) == 0
+    )
+    assert "warning WEIGHT_ZERO" in capsys.readouterr().out and out.exists()
+
+
+def test_a_doc_names_the_overlay(em75, game, tmp_path, capsys):
+    doc = edit_75(em75, tmp_path)
+    argv = ["brain", "build", "1", "--doc", str(doc), "--data", str(game.root), "-o", "x"]
+    assert main(argv) == 1
+    assert f"{doc} is em75's, not em1's" in capsys.readouterr().err
+
+
+def test_a_doc_that_is_no_brain_file(game, tmp_path, capsys):
+    doc = tmp_path / "em75.toml"
+    doc.write_text("schema = 9\n")
+    assert main(["brain", "build", "--doc", str(doc), "--data", str(game.root), "-o", "x"]) == 1
+    assert f"{doc}: schema is 9" in capsys.readouterr().err
+
+
+def test_a_doc_and_a_source_text_are_exclusive(tmp_path, capsys):
+    argv = ["brain", "build", "75", "F.txt", "--doc", "em75.toml", "-o", str(tmp_path / "x")]
+    with pytest.raises(SystemExit) as e:
+        main(argv)
+    assert e.value.code == 2 and "not allowed with" in capsys.readouterr().err
+
+
+def test_an_overlay_or_a_doc_is_needed(game, tmp_path, capsys):
+    assert main(["brain", "build", "--data", str(game.root), "-o", str(tmp_path / "x")]) == 1
+    assert "name an em overlay" in capsys.readouterr().err
+
+
+def test_deploy_a_doc(em75, game, psp, tmp_path, capsys):
+    doc = edit_75(em75, tmp_path)
+    argv = ["brain", "deploy", "--doc", str(doc), "--data", str(game.root), "--stick", str(psp)]
+    assert main(argv) == 0
+    brain = psp / sticks.BRAIN_SUBDIR / sticks.brain_filename(75)
+    mod = psp / sticks.MODS_SUBDIR / sticks.brain_module(75)
+    want = doc_id(em75, doc, game)
+    assert inject.Head.parse(brain.read_bytes()).id == want
+    assert f"container {want:08X}" in mod.read_text()
+    assert capsys.readouterr().out == f"wrote {brain}\nwrote {mod}\n"
+
+
+def test_deploying_a_changed_doc_changes_the_mod(em75, game, psp, tmp_path):
+    argv = ["brain", "deploy", "--doc", "", "--data", str(game.root), "--stick", str(psp)]
+    mod = psp / sticks.MODS_SUBDIR / sticks.brain_module(75)
+    texts = []
+    for weights in ([8, 6], [6, 8]):
+        argv[3] = str(edit_75(em75, tmp_path, weights=weights))
+        assert main(argv) == 0
+        texts.append(mod.read_text())
+    assert texts[0] != texts[1]
+
+
+def test_a_doc_with_an_error_is_not_deployed(em75, game, psp, tmp_path):
+    doc = edit_75(em75, tmp_path, weights=[9, 6, 2, 10, 2, 4])
+    argv = ["brain", "deploy", "--doc", str(doc), "--data", str(game.root), "--stick", str(psp)]
+    assert main(argv) == 1
+    assert not (psp / sticks.BRAIN_SUBDIR).exists()
+
+
+def test_push_a_doc(emu, em75, game, tmp_path, capsys):
+    play(emu, em75)
+    doc = edit_75(em75, tmp_path)
+    ticking = emu.tick()
+    argv = ["brain", "push", "--doc", str(doc), "--data", str(game.root), "--lane", "1"]
+    assert main(argv) == 0
+    ticking.join()
+    assert "read back matches" in capsys.readouterr().out
+    assert inject.Head.parse(emu.get(PUSH, 0x40)).id == doc_id(em75, doc, game)
+
+
+def test_a_doc_with_an_error_is_not_pushed(emu, em75, game, tmp_path, capsys):
+    play(emu, em75)
+    doc = edit_75(em75, tmp_path, weights=[9, 6, 2, 10, 2, 4])
+    argv = ["brain", "push", "--doc", str(doc), "--data", str(game.root), "--lane", "1"]
+    assert main(argv) == 1
+    assert "error RANDOM_WEIGHTS" in capsys.readouterr().out
+    assert emu.get(PUSH, 16) == bytes(16) and not emu.launched
+
+
+def test_status_shows_the_stick_container(emu, em75, capsys):
+    play(emu, em75)
+    _, _, va, _ = em75
+    box = inject.Container.read(stick_of(em75))
+    at = BASE + 0x50000
+    placed = box.place(at + inject.HEAD)
+    emu.put(at, placed)
+    moved = inject.Container.read(placed).headers[va]
+    emu.put(ENT + int(a.ENTITY.SCRIPT_HEADER), u32s(moved))
+    assert main(["brain", "status", "--lane", "1"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "SCRIPT_PUSH: nothing pushed"
+    assert f"  stick {box.head.id:08X}  " in out[1] and "  native  " not in out[1]
+
+
+def test_script_vets_a_doc(em75, game, tmp_path, capsys):
+    doc = edit_75(em75, tmp_path)
+    assert main(["script", "75", "--doc", str(doc), "--data", str(game.root)]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith(f"row 75 id {doc_id(em75, doc, game):08X}, worst run ")
+    assert out.endswith(f" of {script.budget.LIMIT}\n")
+
+
+def test_script_shows_the_program_a_doc_builds(em75, game, tmp_path, capsys):
+    doc, text = edit_75(em75, tmp_path), tmp_path / "em75.txt"
+    argv = ["script", "--doc", str(doc), "--source", "-o", str(text), "--data", str(game.root)]
+    assert main(argv) == 0
+    native = [ln.text for ln in script.source.render(em75[1])]
+    edited = text.read_text().splitlines()
+    assert edited != native and sorted(edited) != sorted(native)
+    assert sum(ln.strip() == "enter 0 2 0" for ln in edited) == 1 + sum(
+        ln.strip() == "enter 0 2 0" for ln in native
+    )
+
+
+def test_script_refuses_a_doc_with_an_error(em75, game, tmp_path, capsys):
+    doc = edit_75(em75, tmp_path, weights=[9, 6, 2, 10, 2, 4])
+    assert main(["script", "75", "--doc", str(doc), "--data", str(game.root)]) == 1
+    assert "error RANDOM_WEIGHTS" in capsys.readouterr().out
+
+
 def test_spans():
     assert brain.spans([0, 1, 2, 5, 7, 8, 16]) == "0-2, 5, 7-8, 16"
     assert brain.spans([3]) == "3" and brain.spans([]) == ""
@@ -338,6 +531,12 @@ def test_lines():
         f"row {ROW} runs it on map types 0-2, 9",
         f"slot  2  species  {ROW}  0x{ENT:08X}  pushed  context 0x20 pc -",
     ]
+    staged = inject.Monster(3, ENT, ROW, False, 0x00, None, box)
+    now = inject.Status(True, None, False, {}, (staged,))
+    assert (
+        brain.lines(now)[-1]
+        == f"slot  3  species  {ROW}  0x{ENT:08X}  stick A1B2C3D4  context 0x00 pc -"
+    )
     assert brain.lines(inject.Status(True, None, True, {}, ())) == [
         "SCRIPT_PUSH: holds something that is no script container"
     ]

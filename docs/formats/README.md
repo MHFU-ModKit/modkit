@@ -13,6 +13,7 @@ does it.
 | Skeleton, animation | [animation.md](animation.md) | `mhp_formats.skeleton`, `mhp_formats.anim`, `mhp_formats.fu.anim`, `mhp_formats.p3rd.anim`; `mhfu_port.fk` | Bone trees, bind poses, clip packs, and how the engine plays them |
 | Stage | [stage.md](stage.md) | `mhp_formats.fu.stage.Stage`; `mhfu.stage`; `mhfu_studio.stage` | `st<NNN>.pac`: terrain, textures, collision, and the rules for editing a map |
 | AI script | [ai_script.md](ai_script.md) | `mhfu.em.script` | A big monster's brain: the bytecode that picks its next move |
+| Brain file | [brain_file.md](brain_file.md) | `mhfu.em.script.brainfile`, `build` | A species' edits to its brain, against the game's own script (`brains/emNN.toml`) |
 
 ## Conventions
 

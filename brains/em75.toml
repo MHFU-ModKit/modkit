@@ -1,0 +1,10 @@
+schema = 1
+overlay = 75
+label = "Tigrex"
+
+[pairs]
+"0,2" = "alert hub"
+"0,4" = "roar"
+"0,6" = "stuck in a wall"
+"1,4" = "charge"
+"4,4" = "tail cut"

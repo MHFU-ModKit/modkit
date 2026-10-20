@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """A big monster's AI script: disassembled (`Scripts`, `decode`), lifted into a tree
-(`lift`, `ir`), edited (`edit`, vetted by `check`, `walk` and `budget`), encoded back (`asm`),
-written as source text (`source`), read back from it (`parse`), pushed into the running game
-(`inject`) and put on the memory stick for the framework to load (`stick`).
+(`lift`, `ir`), edited (`edit`, `editset`, vetted by `check`, `walk` and `budget`), encoded back
+(`asm`), written as source text (`source`), read back from it (`parse`), worded for an editor
+(`catalogue`), kept as a species' edit file (`brainfile`) and built from it (`build`), pushed into
+the running game (`inject`) and put on the memory stick for the framework to load (`stick`).
 
     from mhfu.em import script
     sc = script.Scripts(game, 75)         # an em overlay and the species table in game_task
@@ -16,7 +17,24 @@ written as source text (`source`), read back from it (`parse`), pushed into the 
 The opcode table is `opcodes.OPCODES`, the one every part reads.
 """
 
-from . import asm, budget, check, edit, inject, ir, lift, opcodes, parse, source, stick, walk
+from . import (
+    asm,
+    brainfile,
+    budget,
+    build,
+    catalogue,
+    check,
+    edit,
+    editset,
+    inject,
+    ir,
+    lift,
+    opcodes,
+    parse,
+    source,
+    stick,
+    walk,
+)
 from .budget import Budget
 from .disasm import (
     SCAN_LIMIT,
@@ -83,11 +101,15 @@ __all__ = [
     "Source",
     "Stats",
     "asm",
+    "brainfile",
     "budget",
+    "build",
+    "catalogue",
     "check",
     "decode",
     "disassemble",
     "edit",
+    "editset",
     "fetch",
     "inject",
     "ir",

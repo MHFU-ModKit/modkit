@@ -4,6 +4,7 @@
 
     prog = parse(text)                  # every item and node is new
     prog = parse(text, like=lifted)     # the program the text was rendered from
+    code = nodes("if_enraged\n  enter 3 0 0\n")   # a snippet: nodes only, as `render_nodes` writes
 
 With `like`, an item takes the address of the one it is named after, and a routine keeps the
 identity (id, `pc`) of each node still the same code, found by aligning the two trees; what the
@@ -17,7 +18,7 @@ word and where it sits, resolved through the opcode table.
 from __future__ import annotations
 
 import re
-from collections.abc import Hashable, Iterator, Sequence
+from collections.abc import Hashable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from functools import cache
@@ -40,7 +41,7 @@ from .opcodes import (
     slot,
 )
 
-__all__ = ["ParseError", "parse"]
+__all__ = ["ParseError", "nodes", "parse"]
 
 _GRAMMAR = r"""
 start: _NL? line*
@@ -498,13 +499,16 @@ class _Native:
                         self.align(a.body, b.body)
 
 
+def _name(nodes: Iterable[ir.Located], k: int) -> None:
+    """Give the nodes with no id (arms too) `n<k>`, `n<k+1>`, ..."""
+    for n in nodes:
+        if not n.id:
+            n.id, k = f"n{k}", k + 1
+
+
 def _number_new(p: ir.Program, like: ir.Program | None) -> None:
     """Give the nodes with no id (arms too) an `n<k>` past every id of the program and `like`."""
-    k = int(p.fresh(like.nodes() if like else ())[1:])
-    for r in p.routines():
-        for n in ir.walk(r.body):
-            if not n.id:
-                n.id, k = f"n{k}", k + 1
+    _name(p.nodes(), int(p.fresh(like.nodes() if like else ())[1:]))
 
 
 def parse(text: str, like: ir.Program | None = None) -> ir.Program:
@@ -531,3 +535,14 @@ def parse(text: str, like: ir.Program | None = None) -> ir.Program:
         _Native(like).items(items)
     _number_new(prog, like)
     return prog
+
+
+def nodes(text: str, like: ir.Program | None = None) -> list[ir.Node]:
+    """The code `text` says, instructions and blocks with no items around them: what
+    `source.render_nodes` writes. The nodes have no id, as the `edit` builders leave them, so
+    equal code is equal nodes; `like` numbers them `n<k>` past the ids of that program. A label
+    (`@name`) is not looked up: an edit set's `apply` resolves it."""
+    out = _Reader().nodes(_lines(text))
+    if like is not None:
+        _name(ir.walk(out), int(like.fresh()[1:]))
+    return out
