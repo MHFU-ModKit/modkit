@@ -2,7 +2,9 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The memory-stick AI scripts' pure parts (src/core/brain_logic.h) on the host, against the
 Python producer: stick containers come from `mhfu.em.script.inject.container`, from a tiny
-synthetic program and, with MHFU_DATA, from em75's and em01's lifted ones."""
+synthetic program and, with MHFU_DATA, from em75's and em01's lifted ones. Also where a container
+stages: the raw window or a user-partition block, relocation to a block's address, and the head
+read alone that lets a reinstall of the live script stage nothing."""
 
 import ctypes
 import re
@@ -28,6 +30,10 @@ ERRORS = {
 }
 LOAD = int(a.INJECT_XRAM) + 0x1040
 OTHER = LOAD + 0x20000
+USER = int(a.MAIN_RAM) + 0x800000  # the user partition's first byte
+HEAD = USER + 0x123400  # a partition block's head
+PART_LOADS = [USER + 0x40, HEAD + 0x40, int(a.USER_RAM_END) - 0x200000 + 0x40]
+RAW, PART = 1, 2
 WORDS = int(a.SCRIPT_HEADERS.count or 0)
 JUNK = 0x12345678
 
@@ -49,12 +55,17 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     )
     view, chars = ctypes.POINTER(View), ctypes.c_char_p
     lib.brain_host_check.argtypes = [chars, u32, u32, view]
+    lib.brain_host_head.argtypes = [chars, u32, u32, view]
+    lib.brain_host_same.argtypes = [view, view]
     lib.brain_host_relocate.argtypes = [chars, view, u32]
     lib.brain_host_patch.argtypes = [chars, view, u32, u8p, u32, u32, u32, u32p]
     lib.brain_host_unpatch.argtypes = [chars, view, u32, u8p]
     lib.brain_host_in_image.restype = u32
     lib.brain_host_in_image.argtypes = [u8p, u32, u32]
     lib.brain_host_error.restype = chars
+    lib.brain_host_stage.argtypes = [ctypes.c_int, u32, u32p]
+    lib.brain_host_stage_max.restype = u32
+    lib.brain_host_stage_name.restype = chars
     return lib
 
 
@@ -133,6 +144,12 @@ def check(lib: ctypes.CDLL, raw: bytes, rows: int = files.SPECIES_ROWS) -> tuple
     return lib.brain_host_check(raw, len(raw), rows, ctypes.byref(v)), v
 
 
+def head_of(lib: ctypes.CDLL, raw: bytes, rows: int = files.SPECIES_ROWS) -> tuple[int, View]:
+    """C's read of the first 0x40 bytes alone, as the install peeks them."""
+    v = View()
+    return lib.brain_host_head(raw[:0x40], min(len(raw), 0x40), rows, ctypes.byref(v)), v
+
+
 def relocated(lib: ctypes.CDLL, b: Built, load: int) -> tuple[bytes, View]:
     buf = ctypes.create_string_buffer(b.stick, len(b.stick))
     rc, v = check(lib, b.stick)
@@ -189,7 +206,7 @@ def test_the_counts_are_the_addresses(lib: ctypes.CDLL) -> None:
     assert lib.brain_host_words() == script.VARIANTS == WORDS
 
 
-@pytest.mark.parametrize("load", [0, LOAD, OTHER])
+@pytest.mark.parametrize("load", [0, LOAD, OTHER, *PART_LOADS])
 def test_relocation_is_pythons(lib: ctypes.CDLL, built: Built, load: int) -> None:
     raw, _ = relocated(lib, built, load)
     assert raw == built.box.place(load)
@@ -323,3 +340,130 @@ def test_every_error_has_words(lib: ctypes.CDLL) -> None:
     texts = {lib.brain_host_error(rc) for rc in ERRORS.values()}
     assert len(texts) == len(ERRORS) and b"unknown error" not in texts
     assert lib.brain_host_error(1) == b"unknown error"
+
+
+# ---- staging
+
+
+def stage(lib: ctypes.CDLL, raw: int, taken: int) -> tuple[int, int]:
+    """C's route and partition budget when `raw` (xram's RAW mode) and the installs keep `taken`."""
+    budget = ctypes.c_uint32(0xDEAD)
+    return lib.brain_host_stage(raw, taken, ctypes.byref(budget)), budget.value
+
+
+def block(size: int) -> int:
+    """What a partition block takes: the file and 64 for the alignment, to 256 (xram.cpp)."""
+    return (size + 64 + 0xFF) & ~0xFF
+
+
+def test_the_stage_constants(lib: ctypes.CDLL) -> None:
+    assert (lib.brain_host_stage_raw(), lib.brain_host_stage_part()) == (RAW, PART)
+    assert lib.brain_host_stage_name(RAW) == b"raw"
+    assert lib.brain_host_stage_name(PART) == b"partition"
+
+
+def test_raw_mode_stages_in_the_window_whatever_the_partition_holds(lib: ctypes.CDLL) -> None:
+    top = lib.brain_host_stage_max()
+    for taken in (0, top // 2, top, top + 0x100):
+        assert stage(lib, 1, taken) == (RAW, 0)
+
+
+def test_every_other_mode_stages_in_the_partition(lib: ctypes.CDLL) -> None:
+    top = lib.brain_host_stage_max()
+    assert stage(lib, 0, 0) == (PART, top)
+    assert stage(lib, 0, 0x1000) == (PART, top - 0x1000)
+    assert stage(lib, 0, top) == (PART, 0)
+    assert stage(lib, 0, top + 0x100) == (PART, 0)  # past the cap stays 0, no wrap
+
+
+def test_a_container_and_its_reinstall_fit_the_budget(lib: ctypes.CDLL, built: Built) -> None:
+    need = block(len(built.stick))
+    assert need <= stage(lib, 0, 0)[1]
+    assert need <= stage(lib, 0, need)[1]  # a reinstall takes a block of its own
+
+
+@pytest.mark.parametrize("head", [HEAD, HEAD + 0x30])
+def test_a_partition_stage_installs_and_is_replaced(
+    lib: ctypes.CDLL, built: Built, head: int
+) -> None:
+    """Two installs of one row in two blocks, as xram.cpp aligns them: the second's words
+    replace the first's and nothing is left pointing at the first image."""
+    off, size = built.box.head.image
+
+    def load_of(block_head: int) -> int:
+        return ((block_head + 63) & ~63) + off
+
+    first, second = load_of(head), load_of(head + block(len(built.stick)))
+    assert first % 8 == second % 8 == 0
+    assert all((first + at) % 4 == 0 for at in built.box.relocs)  # pointer words stay aligned
+    words = built.native()
+    words[3] = JUNK
+    row = row_of(words)
+    n, mask = patch(lib, built, first, row)
+    assert words_of(row) == expected(built, words, first) and n > 0
+    raw, v = relocated(lib, built, first)
+    assert lib.brain_host_unpatch(raw, ctypes.byref(v), first, row) == n
+    assert words_of(row) == words
+    patch(lib, built, second, row)
+    assert words_of(row) == expected(built, words, second)
+    assert lib.brain_host_in_image(row, first, size) == 0
+    assert lib.brain_host_in_image(row, second, size) == mask
+
+
+# ---- the head alone, and a reinstall of the same script
+
+
+def fields(v: View) -> list[int]:
+    return [getattr(v, name) for name, _ in View._fields_]
+
+
+def test_the_head_alone_is_the_checks_view(lib: ctypes.CDLL, built: Built) -> None:
+    whole_rc, whole = check(lib, built.stick)
+    head_rc, part = head_of(lib, built.stick)
+    assert whole_rc == head_rc == 0
+    assert fields(part) == fields(whole)
+
+
+@pytest.mark.parametrize(
+    ("name", "mend"),
+    [
+        ("MAGIC", lambda s: b"XHAI" + s[4:]),
+        ("VERSION", lambda s: poke(s, 4, 2, 2)),
+        ("SHORT", lambda s: s[:0x3F]),
+        ("LOAD", lambda s: poke(s, 0x0C, 0x1000)),
+        ("ROW", lambda s: poke(s, 6, files.SPECIES_ROWS, 2)),
+    ],
+)
+def test_the_head_refuses_what_the_check_refuses_first(
+    lib: ctypes.CDLL, built: Built, name: str, mend: Callable[[bytes], bytes]
+) -> None:
+    assert head_of(lib, mend(built.stick))[0] == ERRORS[name] == check(lib, mend(built.stick))[0]
+
+
+def test_the_head_leaves_the_sections_to_the_check(lib: ctypes.CDLL, built: Built) -> None:
+    long = poke(built.stick, 0x14, 0xFFFFFFF0)  # an image larger than the file
+    assert head_of(lib, long)[0] == 0
+    assert check(lib, long)[0] == ERRORS["SECTION"]
+
+
+def same(lib: ctypes.CDLL, a: bytes, b: bytes) -> int:
+    first, second = head_of(lib, a), head_of(lib, b)
+    assert first[0] == second[0] == 0
+    return int(lib.brain_host_same(ctypes.byref(first[1]), ctypes.byref(second[1])))
+
+
+def test_one_script_is_the_same(lib: ctypes.CDLL, built: Built) -> None:
+    assert same(lib, built.stick, built.stick) == 1
+    assert same(lib, built.stick, bytes(built.stick)) == 1
+
+
+def test_another_script_is_not(lib: ctypes.CDLL, built: Built) -> None:
+    v = head_of(lib, built.stick)[1]
+    for at, value, size in [
+        (0x06, v.row ^ 1, 2),  # another row
+        (0x08, v.id ^ 1, 4),  # another image hash
+        (0x14, v.size + 4, 4),  # another image size
+        (0x1C, v.nrelocs + 1, 4),  # another number of relocs
+        (0x24, v.npatches + 1, 4),  # another number of patches
+    ]:
+        assert same(lib, built.stick, poke(built.stick, at, value, size)) == 0, hex(at)

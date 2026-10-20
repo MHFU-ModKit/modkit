@@ -2,8 +2,8 @@
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* AI scripts from the memory stick (mhfu/brain.h).
  *
- *   install   stages the container in extra RAM, checks and relocates it, and points its row's
- *             header words at the image if the overlay holds them now
+ *   install   stages the container (raw extra RAM, else a partition block), checks and relocates
+ *             it, and points its row's header words at the image if the overlay holds them now
  *   chunk     every DATA.BIN chunk decrypt: the words of the row it holds go to the image
  *
  * The listener runs on the game thread and install on the Lua thread, so a reinstall fills the
@@ -26,8 +26,17 @@ typedef struct {
 static brain_rec_t g_rec[MHFU_BRAIN_MAX][2];   /* by slot; g_cur says which is live */
 static volatile uint32_t g_cur[MHFU_BRAIN_MAX];
 static volatile uint32_t g_count;              /* slots in use, filled in order */
+static uint32_t g_taken;                       /* partition bytes the installs keep, never freed */
 
 static brain_rec_t *live(uint32_t slot) { return &g_rec[slot][g_cur[slot]]; }
+
+/* row's slot; g_count when it has none yet, which is MHFU_BRAIN_MAX once every slot is taken. */
+static uint32_t slot_of(uint32_t row)
+{
+    uint32_t slot = 0;
+    while (slot < g_count && live(slot)->view.row != row) slot++;
+    return slot;
+}
 
 static uint32_t row_addr(uint32_t row) { return MHFU_SCRIPT_HEADERS + row * MHFU_SPECIES_STRIDE; }
 
@@ -51,6 +60,21 @@ static void on_chunk(uint32_t buf, uint32_t bytes)
     for (uint32_t i = 0; i < n; i++) apply(live(i), buf, bytes);
 }
 
+/* The container into its route's memory, at install, not at the first quest-load patch: the read
+ * needs ms0, which a load closes, and a few KB beside the resident Lua slab is no new footprint.
+ * Its address and *size, 0 when not staged; *route says where. */
+static uint32_t stage(const char *path, uint32_t *size, int *route)
+{
+    if (!mhfu_xram_mode) mhfu_xram_init();
+    const brain_stage_t plan = brain_stage_plan(mhfu_xram_mode == XRAM_RAW, g_taken);
+    *route = plan.route;
+    if (plan.route == BRAIN_STAGE_RAW) return mhfu_xram_stage_file(path, size);
+    uint32_t taken = 0;
+    const uint32_t at = mhfu_xram_stage_part(path, plan.budget, size, &taken);
+    g_taken += at ? taken : 0;
+    return at;
+}
+
 static int fail(const char *path, int rc)
 {
     mhfu_log("[brain] %s: %s", path, brain_error_text(rc));
@@ -61,15 +85,28 @@ extern "C" int mhfu_brain_install(const char *path)
 {
     static int s_listening;
     if (!path || !*path) return MHFU_BRAIN_E_ARG;
-    uint32_t size = 0;
-    const uint32_t file = mhfu_xram_stage_file(path, &size);   /* a failed install keeps it */
-    if (!file) return fail(path, MHFU_BRAIN_E_STAGE);
+    /* the head first: the live script again stages nothing, and a full table takes no block */
+    uint8_t head[BRAIN_HEAD];
+    if (mhfu_xram_peek(path, head, sizeof(head)) != sizeof(head))
+        return fail(path, MHFU_BRAIN_E_STAGE);
     brain_view_t v;
-    int rc = brain_check((const uint8_t *)(uintptr_t)file, size, BRAIN_ROWS, &v);
+    int rc = brain_head(head, sizeof(head), BRAIN_ROWS, &v);
+    if (rc) return fail(path, rc);
+    uint32_t slot = slot_of(v.row);
+    if (slot < g_count && brain_same(&live(slot)->view, &v)) {
+        mhfu_log("[brain] row %u id %08X unchanged", (unsigned)v.row, (unsigned)v.id);
+        return (int)v.row;
+    }
+    if (slot == MHFU_BRAIN_MAX) return fail(path, MHFU_BRAIN_E_FULL);
+
+    uint32_t size = 0;
+    int route = 0;
+    const uint32_t file = stage(path, &size, &route);   /* a failed install keeps it */
+    if (!file) return fail(path, MHFU_BRAIN_E_STAGE);
+    rc = brain_check((const uint8_t *)(uintptr_t)file, size, BRAIN_ROWS, &v);
     if (rc) return fail(path, rc);
 
-    uint32_t slot = 0;
-    while (slot < g_count && live(slot)->view.row != v.row) slot++;
+    slot = slot_of(v.row);   /* the file may have changed since the head was read */
     if (slot == MHFU_BRAIN_MAX) return fail(path, MHFU_BRAIN_E_FULL);
     const uint32_t load = file + v.image;
     rc = brain_relocate((uint8_t *)(uintptr_t)file, &v, load);
@@ -97,8 +134,9 @@ extern "C" int mhfu_brain_install(const char *path)
     if (!fresh)
         brain_unpatch_row((const uint8_t *)(uintptr_t)old.file, &old.view, old.load,
                           (uint8_t *)(uintptr_t)row_addr(v.row));
-    mhfu_log("[brain] row %u id %08X image 0x%08X %u bytes", (unsigned)v.row, (unsigned)v.id,
-             (unsigned)load, (unsigned)v.size);
+    mhfu_log("[brain] row %u id %08X image 0x%08X %u bytes, staged %s, partition kept %u of %u",
+             (unsigned)v.row, (unsigned)v.id, (unsigned)load, (unsigned)v.size,
+             brain_stage_name(route), (unsigned)g_taken, (unsigned)BRAIN_STAGE_PART_MAX);
     apply(r, row_addr(v.row), 4 * BRAIN_WORDS);
     return (int)v.row;
 }

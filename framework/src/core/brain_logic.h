@@ -18,6 +18,33 @@
 #define BRAIN_ROWS    MHFU_SPECIES_TABLE_COUNT   /* species rows */
 #define BRAIN_WORDS   MHFU_SCRIPT_HEADERS_COUNT  /* header words in a row, one per map type */
 
+/* Where a container is staged: the raw window in PPSSPP's 64 MB mode, else a user-partition block
+ * (a real PSP, PPSSPP's 32 MB mode), which a quest exit leaves alone as it does volatile memory.
+ * The installs keep at most BRAIN_STAGE_PART_MAX bytes of blocks, 256 KB: four times the largest
+ * container (em1's, 63 KB), a ninth of what a real PSP has free in-game. */
+enum { BRAIN_STAGE_RAW = 1, BRAIN_STAGE_PART };
+#define BRAIN_STAGE_PART_MAX 0x40000u
+
+typedef struct {
+    int      route;    /* BRAIN_STAGE_* */
+    uint32_t budget;   /* partition bytes a block may take now; 0 for the raw route */
+} brain_stage_t;
+
+/* The route for `raw` (xram's RAW mode) when the installs keep `taken` bytes of blocks already. */
+static inline brain_stage_t brain_stage_plan(int raw, uint32_t taken)
+{
+    brain_stage_t p = {BRAIN_STAGE_RAW, 0};
+    if (raw) return p;
+    p.route = BRAIN_STAGE_PART;
+    p.budget = taken < BRAIN_STAGE_PART_MAX ? BRAIN_STAGE_PART_MAX - taken : 0;
+    return p;
+}
+
+static inline const char *brain_stage_name(int route)
+{
+    return route == BRAIN_STAGE_RAW ? "raw" : "partition";
+}
+
 /* The container's header fields. */
 enum {
     BRAIN_AT_VERSION = 0x04,
@@ -59,10 +86,10 @@ static inline int brain_inside(uint32_t file_size, uint32_t off, uint32_t n, uin
     return (uint64_t)off + (uint64_t)n * each <= file_size;
 }
 
-/* 0 when f, n bytes read from a file, is a stick container for a row below `rows`, else a
- * MHFU_BRAIN_E_*. Everything the other functions read from f lies inside it, and inside the image
- * for a reloc word and a header: a 4-aligned word, a header with an address. */
-static inline int brain_check(const uint8_t *f, uint32_t n, uint32_t rows, brain_view_t *v)
+/* 0 when f starts with a stick container's head for a row below `rows` (n bytes read, at least
+ * BRAIN_HEAD of them), else a MHFU_BRAIN_E_*; v takes the head's fields. Where its sections lie
+ * is for brain_check, which needs the whole file. */
+static inline int brain_head(const uint8_t *f, uint32_t n, uint32_t rows, brain_view_t *v)
 {
     if (n < BRAIN_HEAD) return MHFU_BRAIN_E_SHORT;
     if (brain_u32(f) != BRAIN_MAGIC) return MHFU_BRAIN_E_MAGIC;
@@ -77,6 +104,24 @@ static inline int brain_check(const uint8_t *f, uint32_t n, uint32_t rows, brain
     v->nrelocs = brain_u32(f + BRAIN_AT_RELOCS + 4);
     v->patches = brain_u32(f + BRAIN_AT_PATCHES);
     v->npatches = brain_u32(f + BRAIN_AT_PATCHES + 4);
+    return 0;
+}
+
+/* Two heads of one script: the same row, image hash and size, and counts of relocs and patches.
+ * A reinstall of it changes nothing, so it stages nothing. */
+static inline int brain_same(const brain_view_t *a, const brain_view_t *b)
+{
+    return a->row == b->row && a->id == b->id && a->size == b->size && a->nrelocs == b->nrelocs
+           && a->npatches == b->npatches;
+}
+
+/* 0 when f, n bytes read from a file, is a stick container for a row below `rows`, else a
+ * MHFU_BRAIN_E_*. Everything the other functions read from f lies inside it, and inside the image
+ * for a reloc word and a header: a 4-aligned word, a header with an address. */
+static inline int brain_check(const uint8_t *f, uint32_t n, uint32_t rows, brain_view_t *v)
+{
+    const int rc = brain_head(f, n, rows, v);
+    if (rc) return rc;
     if (v->image < BRAIN_HEAD || v->image % 4 || !brain_inside(n, v->image, v->size, 1)
         || !brain_inside(n, v->relocs, v->nrelocs, 4)
         || !brain_inside(n, v->patches, v->npatches, BRAIN_PATCH_BYTES))
@@ -167,7 +212,7 @@ static inline const char *brain_error_text(int rc)
 {
     switch (rc) {
     case MHFU_BRAIN_E_ARG:     return "no path";
-    case MHFU_BRAIN_E_STAGE:   return "not staged (unreadable, no extra RAM, or a real PSP)";
+    case MHFU_BRAIN_E_STAGE:   return "not staged (unreadable, or no room left to keep it)";
     case MHFU_BRAIN_E_SHORT:   return "shorter than a container's header";
     case MHFU_BRAIN_E_MAGIC:   return "not an MHAI container";
     case MHFU_BRAIN_E_VERSION: return "a container version this does not read";

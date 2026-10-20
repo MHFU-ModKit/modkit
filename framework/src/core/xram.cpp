@@ -2,7 +2,8 @@
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
  * Extra RAM for injected files: PPSSPP's raw memory=64 window, or on a real PSP the
- * 4 MB volatile partition. Also the real-PSP diagnostics log both inject files use.
+ * 4 MB volatile partition; small files that must outlive a quest take partition blocks. Also
+ * the real-PSP diagnostics log both inject files use.
  */
 #include "xram.h"
 #include "mhfu/log.h"
@@ -125,20 +126,41 @@ extern "C" uint32_t mhfu_xram_alloc(uint32_t n)
     return a;
 }
 
-extern "C" uint32_t mhfu_xram_read(const char *path, uint32_t *buf, uint32_t *cap)
+/* path opened for a file of at least 0x40 bytes: the fd and its *size; < 0 when not, logged. */
+static SceUID open_sized(const char *path, uint32_t *size)
 {
     SceUID fd = sceIoOpen(path, PSP_O_RDONLY, 0);
     if (fd < 0) {
         mhfu_log("[xram] open FAILED %s rc=0x%08X", path, (unsigned)fd);
-        return 0;
+        return fd;
     }
-    uint32_t fsz = (uint32_t)sceIoLseek(fd, 0, PSP_SEEK_END);
+    *size = (uint32_t)sceIoLseek(fd, 0, PSP_SEEK_END);
     sceIoLseek(fd, 0, PSP_SEEK_SET);
-    if (fsz < 0x40) {
+    if (*size < 0x40) {
         sceIoClose(fd);
-        mhfu_log("[xram] %s too small (%uB)", path, (unsigned)fsz);
+        mhfu_log("[xram] %s too small (%uB)", path, (unsigned)*size);
+        return -1;
+    }
+    return fd;
+}
+
+/* The file's n bytes into dst, fd closed; n, 0 on a short read. */
+static uint32_t read_close(SceUID fd, const char *path, void *dst, uint32_t n)
+{
+    int rd = sceIoRead(fd, dst, (int)n);
+    sceIoClose(fd);
+    if (rd != (int)n) {
+        mhfu_log("[xram] read short %s rc=0x%08X", path, (unsigned)rd);
         return 0;
     }
+    return n;
+}
+
+extern "C" uint32_t mhfu_xram_read(const char *path, uint32_t *buf, uint32_t *cap)
+{
+    uint32_t fsz;
+    SceUID fd = open_sized(path, &fsz);
+    if (fd < 0) return 0;
     if (!*buf || fsz > *cap) {
         uint32_t c = (fsz + 0xFFFu) & ~0xFFFu;
         uint32_t b = mhfu_xram_alloc(c);
@@ -150,13 +172,15 @@ extern "C" uint32_t mhfu_xram_read(const char *path, uint32_t *buf, uint32_t *ca
         *buf = b;
         *cap = c;
     }
-    int rd = sceIoRead(fd, (void *)*buf, (int)fsz);
-    sceIoClose(fd);
-    if (rd != (int)fsz) {
-        mhfu_log("[xram] read short %s rc=0x%08X", path, (unsigned)rd);
-        return 0;
-    }
-    return fsz;
+    return read_close(fd, path, (void *)*buf, fsz);
+}
+
+extern "C" uint32_t mhfu_xram_peek(const char *path, void *dst, uint32_t n)
+{
+    uint32_t fsz;
+    SceUID fd = open_sized(path, &fsz);
+    if (fd < 0) return 0;
+    return read_close(fd, path, dst, n < fsz ? n : fsz);
 }
 
 /* Volatile is released at every quest exit, which would drop the block under its user. */
@@ -164,12 +188,51 @@ extern "C" uint32_t mhfu_xram_stage_file(const char *path, uint32_t *size)
 {
     if (!mhfu_xram_mode) mhfu_xram_init();
     if (mhfu_xram_mode != XRAM_RAW) {
-        mhfu_log("[xram] %s not staged: a real PSP has no extra RAM to keep", path);
+        mhfu_log("[xram] %s not staged: only the raw window keeps a file", path);
         return 0;
     }
     uint32_t buf = 0, cap = 0;
     *size = mhfu_xram_read(path, &buf, &cap);
     return *size ? buf : 0;
+}
+
+/* Partition 2 low, as the framework's other blocks: high lands in the extra-RAM window. */
+extern "C" uint32_t mhfu_xram_stage_part(const char *path, uint32_t budget, uint32_t *size,
+                                         uint32_t *taken)
+{
+    uint32_t fsz;
+    SceUID fd = open_sized(path, &fsz);
+    if (fd < 0) return 0;
+    const uint32_t bytes = (fsz + 64u + 0xFFu) & ~0xFFu;
+    if (fsz > budget || bytes > budget) {
+        sceIoClose(fd);
+        mhfu_log("[xram] %s not staged: %uB past the %uB of partition left", path, (unsigned)fsz,
+                 (unsigned)budget);
+        return 0;
+    }
+    SceUID blk = sceKernelAllocPartitionMemory(2, "mhfu_stage", PSP_SMEM_Low, bytes, 0);
+    if (blk < 0) {
+        sceIoClose(fd);
+        mhfu_log("[xram] %s not staged: partition alloc of %uB failed rc=0x%08X", path,
+                 (unsigned)bytes, (unsigned)blk);
+        return 0;
+    }
+    const uint32_t head = (uint32_t)(uintptr_t)sceKernelGetBlockHeadAddr(blk);
+    const uint32_t at = (head + 63u) & ~63u;
+    if (head >= MHFU_USER_RAM_END) {
+        sceIoClose(fd);
+        sceKernelFreePartitionMemory(blk);
+        mhfu_log("[xram] %s not staged: block 0x%08X is in the extra-RAM window", path,
+                 (unsigned)head);
+        return 0;
+    }
+    if (!read_close(fd, path, (void *)(uintptr_t)at, fsz)) {
+        sceKernelFreePartitionMemory(blk);
+        return 0;
+    }
+    *size = fsz;
+    *taken = bytes;
+    return at;
 }
 
 /* Quest exit: unlock our volatile so the reward save does not freeze. The entries
