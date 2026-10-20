@@ -181,6 +181,59 @@ def _records(kind: type[R], mem: Image, base: int, count: int) -> list[R]:
 
 # --- the map table ---
 
+# Names come only from the game: three maps and the snowy areas are named, everything else is
+# `Map N` / `Area stNNN`. On screen a row is a "map" and a stage an "area".
+ROW_NAMES: dict[int, str] = {
+    0: "Pokke village & town",
+    11: "Snowy Mountains (day)",
+    21: "Snowy Mountains (night)",
+}
+
+STAGE_NAMES: dict[int, str] = {
+    139: "Pokke village",
+    66: "Pokke village twin",
+    98: "Snowy base camp",
+    99: "Snowy area 1",
+    95: "Snowy area 2",
+    94: "Snowy area 3",
+    92: "Snowy area 4",
+    93: "Snowy area 5",
+    100: "Snowy area 6",
+    96: "Snowy area 7",
+    97: "Snowy area 8",
+    6: "Snowy secret area",
+    107: "Snowy base camp at night",
+    108: "Snowy area 1 at night",
+    104: "Snowy area 2 at night",
+    103: "Snowy area 3 at night",
+    101: "Snowy area 4 at night",
+    102: "Snowy area 5 at night",
+    109: "Snowy area 6 at night",
+    105: "Snowy area 7 at night",
+    106: "Snowy area 8 at night",
+    15: "Snowy secret area at night",
+}
+
+
+def stage_id(stage: int) -> str:
+    return f"st{stage:03d}"
+
+
+def stage_name(stage: int) -> str:
+    """`Pokke village`, or `Area st140` for a stage the game gives no name."""
+    return STAGE_NAMES.get(stage, f"Area {stage_id(stage)}")
+
+
+def stage_title(stage: int) -> str:
+    """`Pokke village (st139)`; `Area st140`, its id once, for a stage with no name."""
+    name = STAGE_NAMES.get(stage)
+    return f"{name} ({stage_id(stage)})" if name else stage_name(stage)
+
+
+def row_name(row: int) -> str:
+    """A row as the map it is: `Snowy Mountains (day)`, or `Map 7`."""
+    return ROW_NAMES.get(row, f"Map {row}")
+
 
 class MapRow(View):
     struct = a.MAP_ROW
@@ -203,6 +256,16 @@ def map_table(mem: Memory) -> list[tuple[int, ...]]:
 
 def read_map_table(game: Extracted) -> list[tuple[int, ...]]:
     return map_table(game.overlay(files.GAME_SUB))
+
+
+def maps_of(table: list[tuple[int, ...]]) -> dict[int, tuple[int, ...]]:
+    """The map rows each stage is in; a few stages serve several maps."""
+    out: dict[int, list[int]] = {}
+    for row, stages in enumerate(table):
+        for n in stages:
+            if row not in out.setdefault(n, []):
+                out[n].append(row)
+    return {n: tuple(rows) for n, rows in out.items()}
 
 
 def exit_fault(stage: int, target: int, table: list[tuple[int, ...]]) -> str:

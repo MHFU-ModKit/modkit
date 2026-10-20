@@ -61,6 +61,12 @@ header together with its first marker, which `OPCODES` lists as a marker of its 
 0x94's header (`switch_enemy_var`) 5 bytes, one short of header and marker, onto the first case
 value.
 
+A bucket (`switch_range`) takes the first case whose distance limit the target is within, the last
+past them all or with no target. The limits are the entity's own four floats, which
+`SPECIES.RANGE_SETS` fills: set 0 at spawn, set 1 when the species' code switches to it (em75:
+450, 1000, 2700 and 5000 in both). A section operand is a stage number, the area: `switch_section`
+and `if_in_section` match a night area by its day twin, `switch_area` a night map by its day one.
+
 ## Flow and running
 
 - `call` (0x81), `call_ret` (0x16) and `call_deep` (0x82) run a routine from their list and come

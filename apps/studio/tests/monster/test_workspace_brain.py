@@ -17,6 +17,7 @@ import pytest
 from mhfu import files, inject
 from mhfu.em.intel import SpeciesIntel
 from mhfu.em.script import brainfile, build, ir
+from mhfu.em.script import catalogue as cat
 from mhfu.em.script.edit import EditError
 from mhfu.files import Extracted
 from mhfu.live.script import Step, Trace
@@ -352,7 +353,22 @@ def test_a_change_of_another_row_or_the_pairs_builds_nothing(
     assert ws.brain_built(75) is built and not ws.brain_pending(75)
     assert ws.brain_pairs()[3, 0] == "roar" and ws.brain_pairs()[1, 4] == "anim 1"
     proj = ws.brain_projection(75)
-    assert proj is not None and proj.pairs == ws.brain_pairs()
+    assert proj is not None and proj.words == ws.brain_words(75)
+    assert proj.words.pairs == ws.brain_pairs()
+
+
+def test_names_rename_without_a_build(ws: MonsterWorkspace, clock: Clock) -> None:
+    built = settle(ws, clock)
+    assert ws.edit_brain(be.name_var(4, "in_hunt_area"), 75)
+    assert ws.edit_brain(be.name_range(cat.BEYOND, "out of reach"), 75)
+    clock.t += 1
+    assert ws.brain_built(75) is built and not ws.brain_pending(75)
+    words = ws.brain_words(75)
+    assert (words.vars, words.ranges) == ({4: "in_hunt_area"}, {cat.BEYOND: "out of reach"})
+    proj = ws.brain_projection(75)
+    assert proj is not None and proj.words == words
+    assert not ws.edit_brain(be.name_var(10, "x"), 75) and "vars: 10" in ws.message
+    assert not ws.edit_brain(be.name_var(4, "x" * 41), 75) and "one line" in ws.message
 
 
 def test_an_undone_edit_is_the_build_before(ws: MonsterWorkspace, clock: Clock) -> None:

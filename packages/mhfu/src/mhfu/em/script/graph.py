@@ -3,7 +3,7 @@
 """The AI script as a graph the studio draws: each routine projected without loss into nodes,
 ports and edges, and the program into an overview. No layout, no toolkit.
 
-    proj = Projection(prog)                    # or Projection(applied, edited=edited_ids(es))
+    proj = Projection(prog)                    # or Projection(applied, edited_ids(es), words)
     g = proj.routine("call_3")                 # one routine alone; `header=` links as it sees them
     g.nodes[nid], g.out(nid), g.scopes[arm_id], g.crumbs(arm_id)
     ov = proj.overview()                       # entry points, groups, calls, who reaches whom
@@ -451,7 +451,7 @@ class _Build:
             kind=cat.kind_of(n),
             op=n.op,
             title=cat.title(n),
-            summary=cat.summary(n, self.proj.pairs),
+            summary=cat.summary(n, self.proj.words, self.refs(n)),
             confidence=cat.confidence(n),
             args=dict(n.args),
             pc=n.pc,
@@ -484,7 +484,7 @@ class _Build:
         """The ports of a block, each with its body a scope, and the join they meet at."""
         shape = b.op.shape
         loop = shape is Shape.REPEAT
-        spec = cat.ports(b)
+        spec = cat.ports(b, self.proj.words)
         wanted: list[tuple[str, list[ir.Node] | None, int | None]] = []
         if spec.head is not None:
             wanted.append((spec.head, b.head, None))
@@ -544,6 +544,15 @@ class _Build:
             dirty = dirty or sub.dirty
         return tuple(ports), join, size, dirty
 
+    def refs(self, n: ir.Node) -> dict[str, str]:
+        """The routine each list operand leads to, where every header seen agrees."""
+        out = {}
+        for s in _sites(n):
+            found = {t for h in self.seen for t in self.proj._targets(h, s)}
+            if s.index is not None and len(found) == 1 and (t := next(iter(found))) is not None:
+                out[s.role or "routine"] = t
+        return out
+
     def links(self, n: ir.Node) -> None:
         for s in _sites(n):
             by: dict[str | None, list[str]] = {}
@@ -591,6 +600,8 @@ class RoutineInfo:
     """The entry points the game starts it as: Top, On notice."""
     edited: bool
     new: bool
+    hint: str = ""
+    """What it does at a glance (`catalogue.hint`)."""
 
     @property
     def reached_from(self) -> int:
@@ -688,12 +699,12 @@ class Projection:
         self,
         source: ir.Program | Applied,
         edited: Collection[str] = (),
-        pairs: cat.Pairs | None = None,
+        words: cat.Words = cat.NO_WORDS,
     ) -> None:
         self.p = source.program if isinstance(source, Applied) else source
         self.touched = frozenset(source.touched) if isinstance(source, Applied) else frozenset()
         self.edited = frozenset(edited)
-        self.pairs = pairs
+        self.words = words
         self.routines = {r.name: r for r in self.p.routines()}
         self.headers = {h.name: h for h in self.p.headers()}
         self.tables = self.p.tables()
@@ -802,6 +813,7 @@ class Projection:
                 tuple(entries[r.name]),
                 edited,
                 r.va is None,
+                cat.hint(r, self.words),
             )
         return Overview(p.row, tuple(views), infos)
 

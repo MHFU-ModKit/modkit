@@ -9,13 +9,13 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy as np
+from mhfu.stage import stage_name, stage_title
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit
 
 from ..core import shapes
-from ..core.atlas import stage_name, stage_title
 from ..core.edit import OBJECT, EditError, Selection, count
 from .common import Gate, thumbnail
 

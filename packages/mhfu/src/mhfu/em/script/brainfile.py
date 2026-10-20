@@ -7,8 +7,9 @@
     bf.put(es)                                  # a row's edits, kept by `es.row`
     brainfile.save(bf, "brains/em75.toml")
 
-One file per em overlay, `brains/emNN.toml`: `schema`, `overlay`, `label`, a `[pairs]` table of
-display names keyed `"main,sub"`, and a `[row.N]` section per species row, each one `EditSet`
+One file per em overlay, `brains/emNN.toml`: `schema`, `overlay`, `label`, display names in
+`[pairs]` (keyed `"main,sub"`), `[vars]` (variables 1 to 9) and `[ranges]` (distance ranges 1 to
+4, 5 past them), and a `[row.N]` section per species row, each one `EditSet`
 (`editset.to_data`). Code a section inserts is source text (`source.render_nodes`, read back by
 `parse.nodes`); it carries no ids, because `apply` names new code `u<k>.<i>` in source order, so
 they are the same after every load. A file never holds the game's code, only what differs.
@@ -32,6 +33,7 @@ import tomli_w
 from ... import inject as sticks
 from ...files import EM_SPECIES, SPECIES_ROWS
 from . import ir, parse, source
+from .catalogue import BEYOND, VARS
 from .editset import DocError, EditSet
 
 __all__ = [
@@ -52,7 +54,9 @@ SCHEMA = 1
 Pair = tuple[int, int]
 Plain = dict[str, Any]
 _PAIR = re.compile(r"(\d+),(\d+)")
-_TOP = ("schema", "overlay", "label", "pairs", "row")
+_TOP = ("schema", "overlay", "label", "pairs", "vars", "ranges", "row")
+_NUMBERED = {"vars": range(1, VARS + 1), "ranges": range(1, BEYOND + 1)}
+"""The numbered name tables and the numbers each names."""
 
 
 class BrainFileError(ValueError):
@@ -70,6 +74,10 @@ class BrainFile:
     label: str = ""
     pairs: dict[Pair, str] = field(default_factory=dict)
     """Display names of move pairs, for the graph and its findings; no bytes depend on them."""
+    vars: dict[int, str] = field(default_factory=dict)
+    """Display names of script variables 1 to 9."""
+    ranges: dict[int, str] = field(default_factory=dict)
+    """Display names of distance ranges: 1 to 4 within that limit, 5 past them."""
     rows: dict[int, EditSet] = field(default_factory=dict)
     """The edits by species row, each under its own `es.row`."""
 
@@ -89,6 +97,8 @@ class BrainFile:
             self.overlay,
             self.label,
             dict(self.pairs),
+            dict(self.vars),
+            dict(self.ranges),
             {r: es.copy() for r, es in self.rows.items()},
         )
 
@@ -100,6 +110,9 @@ class BrainFile:
             out["label"] = self.label
         if names := {f"{m},{s}": n for (m, s), n in sorted(self.pairs.items()) if n}:
             out["pairs"] = names
+        for key, table in (("vars", self.vars), ("ranges", self.ranges)):
+            if names := {str(k): n for k, n in sorted(table.items()) if n}:
+                out[key] = names
         rows: Plain = {}
         for n, es in sorted(self.rows.items()):
             kept = es.copy().prune()
@@ -117,6 +130,10 @@ class BrainFile:
         sections."""
         if self.overlay not in EM_SPECIES:
             raise BrainFileError(f"{self.overlay} is not one of the em overlays {EM_SPECIES}")
+        for key, table in (("vars", self.vars), ("ranges", self.ranges)):
+            ok = _NUMBERED[key]
+            if bad := sorted(k for k in table if k not in ok):
+                raise BrainFileError(f"{key}: {bad[0]} is not {ok.start} to {ok.stop - 1}")
         seen: dict[int, int] = {}
         for n, es in sorted(self.rows.items()):
             if es.row != n:
@@ -176,6 +193,17 @@ def _pairs(v: Any) -> dict[Pair, str]:
     return out
 
 
+def _numbered(key: str, v: Any) -> dict[int, str]:
+    out: dict[int, str] = {}
+    for k, name in _table(key, v).items():
+        if not k.isdecimal():
+            raise BrainFileError(f"{key}: {k!r} is no number")
+        if not isinstance(name, str):
+            raise BrainFileError(f"{key}: the name of {k} is no text")
+        out[int(k)] = name
+    return out
+
+
 def _codes(data: Mapping[str, Any]) -> Iterator[tuple[str, Any]]:
     """The code texts of a row's data, each with where it is: `insert u2`, `routine spin`."""
     inserts, routines = data.get("insert"), data.get("routine")
@@ -226,7 +254,13 @@ def loads(text: str) -> BrainFile:
         raise BrainFileError("overlay is no number")
     if not isinstance(label, str):
         raise BrainFileError("label is no text")
-    bf = BrainFile(overlay, label, _pairs(d.get("pairs", {})))
+    bf = BrainFile(
+        overlay,
+        label,
+        _pairs(d.get("pairs", {})),
+        _numbered("vars", d.get("vars", {})),
+        _numbered("ranges", d.get("ranges", {})),
+    )
     for key, data in _table("row", d.get("row", {})).items():
         es = _row(key, data)
         bf.rows[es.row] = es

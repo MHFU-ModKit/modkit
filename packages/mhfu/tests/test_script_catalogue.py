@@ -170,10 +170,11 @@ def test_values():
 
     assert text(edit.if_("if_dist_flat", 5, then=[]), "dist") == "500 units"
     assert text(insn("face", 64), "yaw") == "90 deg (64/256)"
-    assert text(insn("call_spot", 0xFFFF, 10), "section") == "any"
+    assert text(insn("call_spot", 0xFFFF, 10), "section") == "any area"
     assert text(insn("call_spot", 40, 10), "radius") == "100 units"
-    assert text(insn("set_target", 3, 0, 112), "section") == "112"
-    assert text(insn("set_target", 3, 0, 112), "kind") == "3 (section)"
+    assert text(insn("set_target", 3, 0, 112), "section") == "st112"
+    assert text(insn("set_target", 3, 0, 99), "section") == "Snowy area 1"
+    assert text(insn("set_target", 3, 0, 112), "kind") == "3 (area)"
     assert text(insn("set_target", 6, 0, 1), "kind") == "6"
     assert text(insn("set_combat", 0), "on") == "0 (leave)"
     assert text(insn("refill_gauge_a", 0), "apply") == "apply"
@@ -191,16 +192,16 @@ def test_values():
 
 
 def test_summary():
-    pairs = {(3, 27): "Roar"}
+    pairs = cat.Words({(3, 27): "Roar"})
     assert cat.summary(insn("enter", 3, 27, 0)) == "Move (3, 27)"
     assert cat.summary(insn("enter", 3, 27, 0), pairs) == "Move (3, 27) Roar"
     assert cat.summary(insn("enter", 2, 1, 0), pairs) == "Move (2, 1)"
     assert cat.summary(insn("enter", ir.Sym("a"), ir.Sym("b"), 0)) == "Move (@a, @b)"
-    assert cat.summary(insn("set_var", 4, 1)) == "Variable 4 = 1"
+    assert cat.summary(insn("set_var", 4, 1)) == "var 4 = 1"
     assert cat.summary(insn("call_deep", 3, 7)) == "Call deep3[7]"
     assert cat.summary(insn("end", 0)) == "End: Restart"
     assert cat.summary(insn("set_target", 3, 0, 112)) == (
-        "Set target: Kind 3 (section), A 0, Section 112"
+        "Set target: Kind 3 (area), A 0, Area st112"
     )
     assert cat.summary(insn("clear_counters")) == "Clear counters"
     block = edit.if_("if_in_pair", 0, 18, then=[])
@@ -223,7 +224,7 @@ def test_switch_ports():
     hp = edit.switch("switch_hp", cases=[(50, []), (75, [])], default=[])
     assert cat.ports(hp) == cat.Ports(None, ("HP below 50 %", "HP below 75 %", "otherwise"))
     sec = edit.switch("switch_section", cases=[(98, []), (0xFFFF, [])])
-    assert cat.ports(sec).arms == ("section 98", "section any")
+    assert cat.ports(sec).arms == ("Snowy base camp", "any area")
     dist = edit.switch("switch_dist", cases=[(10, [])])
     assert cat.ports(dist).arms == ("within 1000 units",)
     yaw = edit.switch("switch_yaw", cases=[(64, [])])
@@ -234,6 +235,10 @@ def test_switch_ports():
 def test_bucket_and_zone_ports():
     bucket = edit.switch("switch_range", cases=[([],), ([],), ([],)])
     assert cat.ports(bucket).arms == ("range 1", "range 2", "beyond")
+    w = cat.Words(ranges={1: "melee", 5: "out"}, limits=((450.0, -1.0, 2700.0, 5000.0),) * 2)
+    assert cat.ports(bucket, w).arms == ("melee \u2264 450", "skipped", "out beyond -1")[:2] + (
+        "out beyond",
+    )
     zone = edit.switch("switch_zone_relation", cases=[([],), ([],), ([],)])
     assert cat.ports(zone).arms == ("relation 1", "relation 2", "relation 3")
 
@@ -411,3 +416,56 @@ def test_game_ops(progs):
         for h in p.headers():
             for f in range(len(h.fields)):
                 assert cat.list_info(f).group
+
+
+# ---- words
+
+
+def test_words():
+    w = cat.Words(vars={4: "in_hunt_area"}, maps={141: (3,), 149: (3,), 99: (11, 12)})
+    assert [w.var(v) for v in (4, 3, 0, 10)] == [
+        "in_hunt_area",
+        "var 3",
+        "every variable",
+        "the destination",
+    ]
+    assert w.area(141) == "st141" and w.area(99) == "Snowy area 1" and w.area(0xFFFF) == "any area"
+    assert w.where([141, 149]) == "Map 3" and w.where([141, 99]) == "" and w.where([7]) == ""
+    assert cat.summary(insn("set_var", 4, 1), w) == "in_hunt_area = 1"
+    assert cat.summary(edit.if_("if_var", 4, 1, then=[]), w) == "in_hunt_area is 1"
+    sec = edit.switch("switch_section", cases=[(141, []), (149, [])])
+    assert cat.summary(sec, w) == "Own area: Map 3"
+    maps = edit.switch("switch_area", cases=[(11, []), (3, [])])
+    assert cat.ports(maps).arms == ("Snowy Mountains (day)", "Map 3")
+
+
+def test_gloss():
+    w = cat.Words(vars={4: "in_hunt_area"}, maps={141: (3,)}, limits=((450.0,) * 4,) * 2)
+    assert cat.gloss(insn("set_var", 4, 1), w) == "in_hunt_area = 1"
+    assert cat.gloss(insn("set_var", 3, 1), w) == ""  # the line says it all
+    assert cat.gloss(insn("wait", 30), w) == ""
+    assert cat.gloss(insn("enter", 3, 0, 0), w) == ""  # what it plays is the caller's
+    assert cat.gloss(insn("end", 2), w) == "Return from deep call"
+    assert cat.gloss(insn("end", 1), w) == ""  # `end return` says it
+    sec = edit.switch("switch_section", cases=[(141, [])], default=[])
+    assert cat.gloss(sec, w) == "Map 3"
+    assert [cat.gloss(a, w, sec) for a in sec.arms] == ["st141", ""]
+    bucket = edit.switch("switch_range", cases=[([],), ([],)])
+    assert [cat.gloss(a, w, bucket) for a in bucket.arms] == ["≤ 450", "beyond 450"]
+    pick = ir.Block(BY_NAME["random"], {}, [], [ir.Arm(1, {"weight": w}, []) for w in (8, 255)])
+    assert [cat.gloss(a, w, pick) for a in pick.arms] == ["", "24/32"]  # 255 takes the rest
+
+
+def test_hint():
+    def routine(*body):
+        return ir.Routine("r", list(body))
+
+    w = cat.Words(maps={141: (3,)})
+    assert cat.hint(routine(insn("end", 1))) == "does nothing"
+    assert cat.hint(routine(insn("enter", 3, 0, 0), insn("end", 1))) == "plays (3, 0)"
+    sec = edit.switch("switch_section", cases=[(141, [insn("enter", 0, 1, 0)])])
+    assert cat.hint(routine(sec, insn("end", 1)), w) == "by own area in Map 3 · plays (0, 1)"
+    pick = edit.random([(16, [insn("enter", 0, 1, 0)]), (16, [insn("enter", 0, 2, 0)])])
+    assert cat.hint(routine(pick)) == "picks 1 of 2 · plays (0, 1), (0, 2)"
+    walk = insn("walk", 1, 3, 5, 0, 1)
+    assert cat.hint(routine(walk, insn("end", 2))) == "walks a route"

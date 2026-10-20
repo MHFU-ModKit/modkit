@@ -272,12 +272,13 @@ def test_an_edit_of_another_row_is_a_hit(doc: SpeciesDocument, spy: Spy) -> None
     assert builds.get(88, p88) is b88 and builds.get(75, p75).row == 75 and spy.calls == 3
 
 
-def test_a_name_is_a_new_build(doc: SpeciesDocument, spy: Spy) -> None:
+def test_a_name_or_a_note_is_the_same_build(doc: SpeciesDocument, spy: Spy) -> None:
     p, builds = lift(), Builds(doc)
     first = builds.get(75, p)
     doc.edit(lambda bf: bf.put(EditSet(75, p.sha1, names={"r_a": "start"})))
-    second = builds.get(75, p)  # the build keeps its edit set, so a name is a new build
-    assert second is not first and second.id == first.id and spy.calls == 2
+    assert builds.get(75, p) is first and builds.current(75) is first and spy.calls == 1
+    doc.edit(lambda bf: bf.put(EditSet(75, p.sha1, names={"r_a": "go"}, notes={"r_a": "x"})))
+    assert builds.get(75, p) is first and spy.calls == 1
 
 
 def test_another_lift_or_intel_builds_again(

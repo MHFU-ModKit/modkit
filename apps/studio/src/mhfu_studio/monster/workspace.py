@@ -36,6 +36,7 @@ from mhfu.em.intel import (
     SpeciesIntel,
 )
 from mhfu.em.script import brainfile, ir, stick
+from mhfu.em.script import catalogue as cat
 from mhfu.em.script import graph as script_graph
 from mhfu.em.script import inject as script_inject
 from mhfu.em.script.brainfile import BrainFileError
@@ -271,7 +272,7 @@ class _Shown:
 
     built: Built
     proj: script_graph.Projection
-    pairs: dict[Pair, str]
+    words: cat.Words
     """What the projection was made with."""
     edited: frozenset[str]
     views: dict[str, BrainView] = field(default_factory=dict)
@@ -481,6 +482,7 @@ class MonsterWorkspace(Workspace):
         self._version = -1
         self._due = 0.0
         self._pairs: tuple[tuple[object, ...], dict[Pair, str]] | None = None
+        self._words: tuple[tuple[object, ...], cat.Words] | None = None
         #: the build Send last wrote to the stick
         self._sent_brain: int | None = None
         #: a node a finding or the outline named, where it is, and how often that happened
@@ -1511,6 +1513,18 @@ class MonsterWorkspace(Workspace):
             self._pairs = (key, labels | doc.brainfile.pairs)
         return self._pairs[1]
 
+    def brain_words(self, row: int) -> cat.Words:
+        """What the numbers of `row`'s script are called (`brain.words`): one object while what
+        it is made of stays."""
+        doc, game = self.species_doc, self._brain_game()
+        si = None if doc is None else self.intel_cache.get(doc.overlay)
+        key = (row, game, id(doc), None if doc is None else doc.version, id(si))
+        if self._words is None or self._words[0] != key:
+            bf = None if doc is None else doc.brainfile
+            names = self.brain_names(row)
+            self._words = (key, brain.words(game, row, self.brain_pairs(), names, bf))
+        return self._words[1]
+
     def brain_built(self, row: int) -> Built | None:
         """The newest build of `row` that is done: while the next computes this one stays, and
         `brain_pending` says there is one. None until the first, and for a row the file does not
@@ -1535,10 +1549,10 @@ class MonsterWorkspace(Workspace):
         held = self._shown.get(row)
         if held is None:
             return None
-        pairs = self.brain_pairs()
-        if pairs != held.pairs:
-            held.proj = script_graph.Projection(held.built.applied, held.edited, pairs)
-            held.pairs = pairs
+        words = self.brain_words(row)
+        if words != held.words:
+            held.proj = script_graph.Projection(held.built.applied, held.edited, words)
+            held.words = words
             held.outlines.clear()
         return held.proj
 
@@ -1620,8 +1634,7 @@ class MonsterWorkspace(Workspace):
                 program,
                 block=block,
                 header=header,
-                pairs=self.brain_pairs(),
-                names=self.brain_names(row),
+                words=self.brain_words(row),
                 fresh=sorted(held.built.edits.routines),
             )
         except EditError as e:
@@ -1673,7 +1686,7 @@ class MonsterWorkspace(Workspace):
                     row,
                     lift,
                     self.intel_cache.get(doc.overlay),
-                    self.brain_pairs(),
+                    self.brain_words(row),
                 )
                 self._making[row] = (doc.version, job)
         return held
@@ -1697,15 +1710,15 @@ class MonsterWorkspace(Workspace):
         row: int,
         lift: ir.Program,
         intel: SpeciesIntel | None,
-        pairs: dict[Pair, str],
+        words: cat.Words,
     ) -> _Shown:
         """On the brain worker: the row built, and its projection warmed so the outline costs
         the GUI thread nothing."""
         built = builds.get(row, lift, intel)
         edited = script_graph.edited_ids(built.applied)
-        proj = script_graph.Projection(built.applied, edited, pairs)
+        proj = script_graph.Projection(built.applied, edited, words)
         proj.overview()
-        return _Shown(built, proj, pairs, edited)
+        return _Shown(built, proj, words, edited)
 
     # gestures
 

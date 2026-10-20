@@ -69,6 +69,17 @@ def test_a_new_file_is_a_header():
     assert brainfile.dumps(brainfile.new(7)) == "schema = 1\noverlay = 7\n"
 
 
+def test_names_of_variables_and_ranges():
+    bf = brainfile.new(75)
+    bf.vars.update({4: "in_hunt_area", 2: ""})
+    bf.ranges[5] = "out of reach"
+    text = brainfile.dumps(bf)
+    assert text.endswith('[vars]\n4 = "in_hunt_area"\n\n[ranges]\n5 = "out of reach"\n')
+    back = brainfile.loads(text)
+    assert (back.vars, back.ranges) == ({4: "in_hunt_area"}, {5: "out of reach"})
+    assert brainfile.dumps(back.copy()) == text
+
+
 def test_round_trip_in_normal_form():
     bf = filled()
     text = brainfile.dumps(bf)
@@ -218,6 +229,10 @@ def test_a_file_that_is_wrong():
     assert 'no pair: "main,sub"' in loads_error('schema = 1\noverlay = 75\n[pairs]\n"1" = "x"\n')
     assert "no text" in loads_error('schema = 1\noverlay = 75\n[pairs]\n"1,2" = 3\n')
     assert "row is no table" in loads_error("schema = 1\noverlay = 75\nrow = 1\n")
+    assert "vars: 'x' is no number" in loads_error('schema = 1\noverlay = 75\n[vars]\nx = "a"\n')
+    assert "vars: 10 is not 1 to 9" in loads_error('schema = 1\noverlay = 75\n[vars]\n10 = "a"\n')
+    assert "ranges: 0 is not 1 to 5" in loads_error('schema = 1\noverlay = 75\n[ranges]\n0 = "a"\n')
+    assert "no text" in loads_error("schema = 1\noverlay = 75\n[ranges]\n1 = 2\n")
 
 
 def test_rows_that_cannot_be_read():

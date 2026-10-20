@@ -334,7 +334,7 @@ def test_links_are_badges_with_names() -> None:
     by = {b.id: b for b in sc.nodes}
     (to,) = by[call.id].links
     assert (to.kind, to.list, to.index, to.target) == ("call", "call", 0, "call_0")
-    assert to.text == "call to Roar (call_0)" and by[call.id].badge == "→ call_0"
+    assert to.text == "call to Roar (call_0)" and by[call.id].badge == "→ Roar"
     assert by[jump.id].links[0].text == "goto to Chase (base_1)"
     empty = next(b for b in sc.nodes if b.links and b.links[0].target is None)
     assert empty.links[0].text == "call to call[1]: nothing" and empty.badge == "→ ?"

@@ -9,30 +9,38 @@ stays the one place a length, a layout or a mnemonic lives.
     for f in cat.operands(node): f.label, f.text, f.meaning
     cat.ports(block).arms                         # one name per arm, in order
     cat.end_kind(0xFC), cat.interrupt(0x20), cat.list_info(4), cat.ENTRY_POINTS
+    w = cat.Words(pairs, routines, vars=...)      # names for the numbers, passed to all of them
+    cat.gloss(node, w), cat.hint(routine, w)      # a code line's words; what a routine does
 
 A native node's wording is the opcode's; only a few things depend on the operands: a pick of
 two arms with one empty is a `Chance` (no native pick is one, `edit.random` builds them), a
-switch's case names carry the case value.
+switch's case names carry the case value. A stage is an "area" and a map row a "map", as the
+player and the map workspace say.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum, IntEnum
 from typing import NamedTuple
 
-from .ir import Arm, Block, Insn, Node, Sym, Value
+from ...stage import STAGE_NAMES, row_name, stage_id
+from .ir import Arm, Block, Insn, Node, Routine, Sym, Value, walk
 from .opcodes import BY_NAME, END_KINDS, OPCODES, SLOTS, Flow, Op, Operand, Shape, slot
 from .opcodes import operands as layout_operands
 
 __all__ = [
+    "ANY",
+    "BEYOND",
     "DRAW",
     "END_KIND_INFO",
     "ENTRIES",
     "ENTRY_POINTS",
     "GROUPS",
     "INTERRUPTS",
+    "NO_WORDS",
+    "VARS",
     "Chance",
     "Confidence",
     "EndKind",
@@ -46,6 +54,7 @@ __all__ = [
     "OperandInfo",
     "Pairs",
     "Ports",
+    "Words",
     "arm_operands",
     "chance",
     "confidence",
@@ -54,6 +63,8 @@ __all__ = [
     "entries",
     "entry",
     "entry_point",
+    "gloss",
+    "hint",
     "interrupt",
     "kind_of",
     "list_info",
@@ -68,6 +79,12 @@ __all__ = [
 
 DRAW = 32
 """Steps of a pick's draw; a branch's weight is a share of it."""
+ANY = 0xFFFF
+"""An area operand that is every area, or the monster's own."""
+BEYOND = 5
+"""The distance range past the last limit, or with no target, among `Words.ranges`."""
+VARS = 9
+"""Script variables 1 to 9; 0 names them all."""
 Pairs = Mapping[tuple[int, int], str]
 """Move names by `(main, sub)`, from the studio's intel."""
 
@@ -111,7 +128,11 @@ class Fmt(Enum):
     NUM = "num"
     HEX = "hex"
     SECTION = "section"
-    """0xFFFF is every section."""
+    """An area by its stage number; `ANY` is every area."""
+    MAP = "map"
+    """A map row."""
+    VAR = "var"
+    """A script variable."""
     DIST = "dist"
     """Units of 100."""
     DIST10 = "dist10"
@@ -164,6 +185,9 @@ class Entry:
     def info(self, name: str) -> OperandInfo:
         return next(i for i in self.operands if i.name == name)
 
+    def has(self, name: str) -> bool:
+        return any(i.name == name for i in self.operands)
+
 
 @dataclass(frozen=True)
 class Field:
@@ -174,6 +198,65 @@ class Field:
     meaning: str
     value: Value
     text: str
+    says: bool = False
+    """The text says more than the number: a name, a unit or a word."""
+
+
+@dataclass(frozen=True)
+class Words:
+    """What the numbers of one row's script are called, by the game and by the user. No byte
+    depends on them."""
+
+    pairs: Pairs = field(default_factory=dict)
+    routines: Mapping[str, str] = field(default_factory=dict)
+    """The user's names of routines."""
+    vars: Mapping[int, str] = field(default_factory=dict)
+    """The user's names of variables 1 to 9."""
+    ranges: Mapping[int, str] = field(default_factory=dict)
+    """The user's names of distance ranges: 1 to 4 within that limit, `BEYOND` past them."""
+    limits: Sequence[Sequence[float]] = ()
+    """The row's distance limits, set 0 then set 1 (`SPECIES.RANGE_SETS`)."""
+    maps: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
+    """The map rows each area is in (`stage.maps_of`)."""
+
+    def routine(self, name: str) -> str:
+        return self.routines.get(name) or name
+
+    def var(self, v: int) -> str:
+        """`var 4`, its name, `every variable` for 0; `reset_var` 10 clears the destination."""
+        if v in self.vars:
+            return self.vars[v]
+        return {0: "every variable", 10: "the destination"}.get(v, f"var {v}")
+
+    def area(self, stage: int) -> str:
+        """`Snowy area 1`, or `st141` for an area the game gives no name."""
+        return "any area" if stage == ANY else STAGE_NAMES.get(stage, stage_id(stage))
+
+    def where(self, stages: Sequence[int]) -> str:
+        """The map all `stages` are in, `Map 3`; empty when they share none or none is known."""
+        shared: set[int] | None = None
+        for s in stages:
+            if s != ANY:
+                rows = set(self.maps.get(s, ()))
+                shared = rows if shared is None else shared & rows
+        return row_name(min(shared)) if shared else ""
+
+    def limit(self, i: int) -> float | None:
+        """Distance limit `i` of set 0; None when unknown. One below 0 is skipped."""
+        return self.limits[0][i] if self.limits and 0 <= i < len(self.limits[0]) else None
+
+    def bucket(self, i: int, last: bool) -> str:
+        """Arm `i` of a distance range: `≤ 450`, `beyond 5000`, with the user's name before."""
+        v = self.limit(i - 1 if last else i)
+        if last:
+            text = "beyond" if v is None or v < 0 else f"beyond {v:g}"
+        else:
+            text = f"range {i + 1}" if v is None else "skipped" if v < 0 else f"\u2264 {v:g}"
+        name = self.ranges.get(BEYOND if last else i + 1)
+        return f"{name} {text}" if name else text
+
+
+NO_WORDS = Words()
 
 
 class Ports(NamedTuple):
@@ -194,9 +277,17 @@ class Chance(NamedTuple):
 
 _MAIN = OperandInfo("main", "Main", "Main state of the move pair")
 _SUB = OperandInfo("sub", "Sub", "Sub state of the move pair")
-_SECTION = OperandInfo("section", "Section", "Section id; any is every section", Fmt.SECTION)
+_SECTION = OperandInfo(
+    "section", "Area", "An area by its stage number (st141); any is every area", Fmt.SECTION
+)
 _APPLY = OperandInfo("apply", "Apply", "0 does it, any other value does nothing", Fmt.APPLY)
-_VAR = OperandInfo("var", "Variable", "Variable 1 to 9, 0 for all; 5 to 9 call species hooks")
+_VAR = OperandInfo(
+    "var",
+    "Variable",
+    "Variable 1 to 9, 0 for all: 1 to 4 are the monster's own bytes, 5 to 9 call species hooks;"
+    " resetting 10 clears the destination",
+    Fmt.VAR,
+)
 _VALUE = OperandInfo("value", "Value", "Value to compare with")
 _ZONE = OperandInfo("zone", "Zone", "Zone id to match")
 _MASK = OperandInfo("mask", "Mask", "Bits a hunter's role must share", Fmt.HEX)
@@ -217,7 +308,7 @@ def _deg(name: str, what: str) -> OperandInfo:
 _TARGET_KINDS = {
     1: "hunter",
     2: "walk stop",
-    3: "section",
+    3: "area",
     7: "saved spot",
     9: "spot",
     11: "remembered hunter",
@@ -277,7 +368,7 @@ _ENTRIES = (
         "Hunter",
         _e("if_provoked", "Provoked", _M, "a hunter hit or provoked it"),
         _e("if_aware", "Aware of a hunter", _H, "knows of at least one hunter"),
-        _e("if_hunter_here", "Hunter in section", _H, "a drawn hunter is in its section"),
+        _e("if_hunter_here", "Hunter in area", _H, "a drawn hunter is in its area"),
         _e("if_hunter_special", "Hunter special", _L, "any hunter has its special field set"),
         _e("hunter_special", "Hunter special (act)", _L, "the action twin of if_hunter_special"),
         _e("if_sole_hunter", "Only one hunter", _L, "exactly one eligible hunter is there"),
@@ -317,43 +408,40 @@ _ENTRIES = (
         ),
     ),
     *_in(
-        "Section",
-        _e("if_goal_elsewhere", "Goal elsewhere", _M, "its goal section is another, reachable"),
+        "Area",
+        _e("if_goal_elsewhere", "Goal elsewhere", _M, "its goal area is another, reachable"),
         _e(
             "if_in_section",
-            "In section",
+            "In area",
             _M,
-            "its own section is the given one",
+            "it stands in the area; a night area counts as its day twin",
             _SECTION,
-            text="In section {section}",
+            text="In {section}",
         ),
         _e(
             "switch_section",
-            "Own section",
+            "Own area",
             _H,
-            "branch on its section; a case of any matches every section",
-            _o(
-                "section", "Section", "Section this case matches; any is every section", Fmt.SECTION
-            ),
-            case="section {}",
+            "branch on the area it stands in, by stage number; a night area counts as its day"
+            " twin, a case of any matches every area",
+            _o("section", "Area", "Area this case matches; any is every area", Fmt.SECTION),
+            case="{}",
         ),
         _e(
             "if_dest_section",
             "Destination is",
             _L,
-            "its pending destination is the section",
+            "its pending destination is the area",
             _SECTION,
-            text="Destination is section {section}",
+            text="Destination is {section}",
         ),
         _e(
             "switch_dest_section",
-            "Destination section",
+            "Destination area",
             _M,
-            "branch on its pending destination section",
-            _o(
-                "section", "Section", "Section this case matches; any is every section", Fmt.SECTION
-            ),
-            case="to section {}",
+            "branch on the area it is headed for",
+            _o("section", "Area", "Area this case matches; any is every area", Fmt.SECTION),
+            case="to {}",
         ),
     ),
     *_in(
@@ -412,10 +500,10 @@ _ENTRIES = (
             "call_spot",
             "Call spot",
             _M,
-            "pick a spot in the section, aim at it and run its routine",
+            "pick a spot in the area, aim at it and run its routine",
             _SECTION,
-            _o("radius", "Radius", "How far from the section's centre a spot may be", Fmt.DIST10),
-            text="Call a spot in section {section} within {radius}",
+            _o("radius", "Radius", "How far from the area's centre a spot may be", Fmt.DIST10),
+            text="Call a spot in {section} within {radius}",
         ),
         _e(
             "wait",
@@ -506,14 +594,14 @@ _ENTRIES = (
             "aim at the last aware hunter and remember it; also leaves a walk or sensed event",
         ),
         _e("target_remembered", "Target remembered hunter", _H, "aim at the remembered hunter"),
-        _e("target_saved_section", "Target saved section", _H, "aim at the saved section"),
+        _e("target_saved_section", "Target saved area", _H, "aim at the saved area"),
         _e(
             "target_hop",
             "Target next hop",
             _M,
-            "aim one section hop towards the section",
+            "aim one area hop towards the area",
             _SECTION,
-            text="Target next hop to section {section}",
+            text="Target next hop to {section}",
         ),
         _e("target_saved_spot", "Target saved spot", _M, "aim at the saved spot"),
         _e("target_kind8", "Target kind 8", _M, "set the target kind to 8 and touch nothing else"),
@@ -534,7 +622,7 @@ _ENTRIES = (
         ),
         _e("pick_target", "Pick target", _M, "choose the aware hunter that noticed most"),
         _e("pick_target_drawn", "Pick drawn target", _M, "like pick_target, among drawn hunters"),
-        _e("if_target_drawn", "Target drawn", _M, "the chosen target is in its section and drawn"),
+        _e("if_target_drawn", "Target drawn", _M, "the chosen target is in its area and drawn"),
         _e(
             "if_target_noticed",
             "Target noticed",
@@ -773,7 +861,7 @@ _ENTRIES = (
             "set a script variable",
             _VAR,
             _o("value", "Value", "Value to store"),
-            text="Variable {var} = {value}",
+            text="{var} = {value}",
         ),
         _e(
             "reset_var",
@@ -781,7 +869,7 @@ _ENTRIES = (
             _H,
             "set a script variable back to 0",
             _VAR,
-            text="Reset variable {var}",
+            text="Reset {var}",
         ),
         _e(
             "if_counter",
@@ -815,7 +903,7 @@ _ENTRIES = (
             "a script variable equals the value",
             _VAR,
             _VALUE,
-            text="Variable {var} is {value}",
+            text="{var} is {value}",
         ),
         _e("if_aux", "Aux is", _H, "the aux byte equals the value", _VALUE, text="Aux is {value}"),
         _e("switch_aux", "Aux", _H, "branch on the aux byte", _CASE, case="aux {}"),
@@ -924,16 +1012,16 @@ _ENTRIES = (
             _M,
             "branch on how its zone relates to the target's; no target is relation 3",
         ),
-        _e("if_area_unmapped", "Area unmapped", _L, "the area has no entry in the area table"),
+        _e("if_area_unmapped", "Map unmapped", _L, "the map has no entry in the map table"),
         _e(
             "switch_area",
-            "Area",
+            "Map",
             _M,
-            "branch on the mapped area id; cases ascend",
-            _o("case", "Area", "Area id this case matches"),
-            case="area {}",
+            "branch on the map it is on; a night map counts as its day twin; cases ascend",
+            _o("case", "Map", "Map this case matches", Fmt.MAP),
+            case="{}",
         ),
-        _e("if_area_listed", "Area listed", _L, "the mapped area is 9, 10 or 22"),
+        _e("if_area_listed", "Map 9, 10 or 22", _L, "the map is 9, 10 or 22, after the map table"),
         _e(
             "switch_enemy_var",
             "Enemy manager value",
@@ -946,8 +1034,8 @@ _ENTRIES = (
     *_in(
         "Partner",
         _e("if_partner", "Has a partner", _M, "it has a partner monster"),
-        _e("if_partner_fighting", "Partner fighting here", _M, "its partner fights in its section"),
-        _e("if_partner_here", "Partner here", _M, "its partner is in its section"),
+        _e("if_partner_fighting", "Partner fighting here", _M, "its partner fights in its area"),
+        _e("if_partner_here", "Partner here", _M, "its partner is in its area"),
     ),
     *_in(
         "Random",
@@ -1012,32 +1100,40 @@ def confidence(node: Node) -> Confidence:
 # ---- values
 
 
-def _num(fmt: Fmt, v: int, words: Mapping[int, str] | None) -> str:
+def _num(
+    fmt: Fmt, v: int, words: Mapping[int, str] | None, w: Words = NO_WORDS
+) -> tuple[str, bool]:
+    """A value's text, and whether it says more than the number."""
     match fmt:
         case Fmt.HEX:
-            return f"0x{v:X}"
+            return f"0x{v:X}", False
         case Fmt.SECTION:
-            return "any" if v == 0xFFFF else str(v)
+            return w.area(v), True
+        case Fmt.MAP:
+            return row_name(v), True
+        case Fmt.VAR:
+            return w.var(v), v in w.vars or v in (0, 10)
         case Fmt.DIST:
-            return f"{v * 100} units"
+            return f"{v * 100} units", True
         case Fmt.DIST10:
-            return f"{v * 10} units"
+            return f"{v * 10} units", True
         case Fmt.PERCENT:
-            return f"{v} %"
+            return f"{v} %", True
         case Fmt.TURNS:
-            return f"{v * 360 / 256:g} deg ({v}/256)"
+            return f"{v * 360 / 256:g} deg ({v}/256)", True
         case Fmt.DEG:
-            return f"{v} deg"
+            return f"{v} deg", True
         case Fmt.WEIGHT:
-            return "never" if v == 0 else "always" if v == 0xFF else f"{v}/{DRAW}"
+            return ("never" if v == 0 else "always" if v == 0xFF else f"{v}/{DRAW}"), True
         case Fmt.APPLY:
-            return "apply" if v == 0 else "no-op"
+            return ("apply" if v == 0 else "no-op"), True
         case Fmt.WORD:
-            return f"{v} ({words[v]})" if words and v in words else str(v)
+            return (f"{v} ({words[v]})", True) if words and v in words else (str(v), False)
         case Fmt.END:
-            return end_kind(v).title
+            k = end_kind(v)
+            return k.title, k.title.lower() != k.name.lower()
         case Fmt.NUM:
-            return str(v)
+            return str(v), False
 
 
 def _ref(ref: str, v: int, args: Mapping[str, Value]) -> str:
@@ -1046,30 +1142,42 @@ def _ref(ref: str, v: int, args: Mapping[str, Value]) -> str:
     return f"deep{table}[{v}]" if ref == "deep" else f"{ref}[{v}]"
 
 
-def _fields(op: Op, names: Sequence[Operand], args: Mapping[str, Value]) -> tuple[Field, ...]:
+def _fields(
+    op: Op,
+    names: Sequence[Operand],
+    args: Mapping[str, Value],
+    w: Words,
+    refs: Mapping[str, str] | None = None,
+) -> tuple[Field, ...]:
     e, out = entry(op), []
     for o in names:
         info, v = e.info(o.name), args[o.name]
         if isinstance(v, Sym):
-            text = f"@{v.label}"
+            text, says = f"@{v.label}", False
         elif o.ref:
-            text = _ref(o.ref, v, args)
+            routine = (refs or {}).get(o.name)
+            text = _ref(o.ref, v, args) if routine is None else w.routine(routine)
+            says = routine is not None
         else:
-            text = _num(info.fmt, v, info.words)
-        out.append(Field(o.name, info.label, info.meaning, v, text))
+            text, says = _num(info.fmt, v, info.words, w)
+        out.append(Field(o.name, info.label, info.meaning, v, text, says))
     return tuple(out)
 
 
-def operands(node: Node) -> tuple[Field, ...]:
-    """The operands of an instruction, or of a block's opener, with their values."""
+def operands(
+    node: Node, words: Words = NO_WORDS, refs: Mapping[str, str] | None = None
+) -> tuple[Field, ...]:
+    """The operands of an instruction, or of a block's opener, with their values. `refs` are
+    the routines the list operands lead to, by operand, where one header's lists are known."""
     if isinstance(node, Insn):
-        return _fields(node.op, layout_operands(node.op.plain_layout(node.args)), node.args)
-    return _fields(node.op, node.op.opener, node.args)
+        layout = layout_operands(node.op.plain_layout(node.args))
+        return _fields(node.op, layout, node.args, words, refs)
+    return _fields(node.op, node.op.opener, node.args, words, refs)
 
 
-def arm_operands(block: Block, arm: Arm) -> tuple[Field, ...]:
+def arm_operands(block: Block, arm: Arm, words: Words = NO_WORDS) -> tuple[Field, ...]:
     """The operands of an arm's marker: a case's value, a branch's weight."""
-    return _fields(block.op, layout_operands(block.op.layout(arm.sub)), arm.args)
+    return _fields(block.op, layout_operands(block.op.layout(arm.sub)), arm.args, words)
 
 
 def pair_text(main: int | str, sub: int | str, pairs: Pairs | None = None) -> str:
@@ -1080,22 +1188,59 @@ def pair_text(main: int | str, sub: int | str, pairs: Pairs | None = None) -> st
     return f"({main}, {sub})" + (f" {name}" if name else "")
 
 
-def summary(node: Node, pairs: Pairs | None = None) -> str:
+def _where(node: Node, w: Words) -> str:
+    """The map an area switch's cases are all in, `Map 3`; empty for any other node."""
+    if not isinstance(node, Block) or not entry(node.op).has("section"):
+        return ""
+    return w.where([v for a in node.arms if isinstance(v := a.args.get("section"), int)])
+
+
+def summary(node: Node, words: Words = NO_WORDS, refs: Mapping[str, str] | None = None) -> str:
     """One line for the node with its values: `Within 500 units (flat)`, `Move (3, 27)`."""
-    e, fs = entry(node.op), operands(node)
+    e, fs = entry(node.op), operands(node, words, refs)
     if not e.text:
+        if where := _where(node, words):
+            return f"{title(node)}: {where}"
         if not fs:
             return title(node)
         return f"{title(node)}: " + ", ".join(f"{f.label} {f.text}" for f in fs)
     texts = {f.name: f.text for f in fs}
     by = {f.name: f.value for f in fs}
     if "main" in by and "sub" in by:
-        texts["pair"] = pair_text(_pair(by["main"]), _pair(by["sub"]), pairs)
+        texts["pair"] = pair_text(_pair(by["main"]), _pair(by["sub"]), words.pairs)
     return e.text.format_map(texts)
 
 
 def _pair(v: Value) -> int | str:
     return f"@{v.label}" if isinstance(v, Sym) else v
+
+
+def gloss(node: Node | Arm, words: Words = NO_WORDS, block: Block | None = None) -> str:
+    """What a code line says beyond its numbers, quietly after it: `in_hunt_area = 1`,
+    `Snowy area 1`, `≤ 450`; empty when it says nothing more. An arm needs its `block`. A move's
+    and a link's words are the caller's (what it plays, where it leads)."""
+    if isinstance(node, Arm):
+        if block is None:
+            return ""
+        i = next((k for k, a in enumerate(block.arms) if a is node), None)
+        if i is None:
+            return ""
+        name = ports(block, words).arms[i]
+        if block.op.shape is Shape.BUCKET:
+            return name
+        if block.op.shape is Shape.RANDOM:  # only a share the weight does not say
+            w = node.args.get("weight")
+            return "" if name in ("otherwise", f"{w}/{DRAW}") else name
+        fs = arm_operands(block, node, words)
+        return name if any(f.says for f in fs) else ""
+    if node.op.name == "enter":
+        return ""
+    if where := _where(node, words):
+        return where
+    fs = operands(node, words)
+    if node.op.flow is Flow.END:
+        return " ".join(f.text for f in fs if f.says)
+    return summary(node, words) if any(f.says for f in fs) else ""
 
 
 # ---- picks
@@ -1145,12 +1290,68 @@ def title(node: Node) -> str:
     return entry(node.op).title
 
 
+# ---- routines
+
+
+def hint(r: Routine, words: Words = NO_WORDS) -> str:
+    """What a routine does at a glance, for the outline: `by own area in Map 3 · plays (0, 1)`,
+    `plays (1, 2), (3, 0)`, `walks a route`, `does nothing`."""
+    body = [n for n in r.body if not _idle(n)]
+    if not body:
+        return "does nothing"
+    parts = []
+    if (first := next((n for n in body if isinstance(n, Block)), None)) is not None:
+        parts.append(_decides(first, words))
+    moves = list(
+        dict.fromkeys(
+            (m, s)
+            for n in walk(r.body)
+            if isinstance(n, Insn)
+            and n.op.name == "enter"
+            and isinstance(m := n.args.get("main"), int)
+            and isinstance(s := n.args.get("sub"), int)
+        )
+    )
+    if len(moves) == 1:
+        parts.append(f"plays {pair_text(*moves[0], words.pairs)}")
+    elif len(moves) == 2:
+        parts.append("plays " + ", ".join(pair_text(*m) for m in moves))
+    elif moves:
+        parts.append(f"plays {len(moves)} moves")
+    elif any(isinstance(n, Insn) and n.op.name == "walk" for n in walk(r.body)):
+        parts.append("walks a route")
+    return " \u00b7 ".join(parts) or summary(body[0], words)
+
+
+def _idle(n: Node) -> bool:
+    return isinstance(n, Insn) and (n.op.flow is Flow.END or n.op.name in ("nop", "nop2"))
+
+
+def _decides(b: Block, words: Words) -> str:
+    """What a block decides by, as a hint says it: `if Mode 2`, `picks 1 of 3`, `by map`."""
+    match b.op.shape:
+        case Shape.IF:
+            return f"if {summary(b, words)}"
+        case Shape.RANDOM:
+            return _lower(title(b)) if chance(b) else f"picks 1 of {len(b.arms)}"
+        case Shape.REPEAT:
+            return _lower(summary(b, words))
+        case _:
+            where = _where(b, words)
+            return f"by {_lower(title(b))}" + (f" in {where}" if where else "")
+
+
+def _lower(text: str) -> str:
+    """`Own area` as `own area`; `HP percent` stays."""
+    return text if text[:2].isupper() else text[:1].lower() + text[1:]
+
+
 # ---- ports
 
 _MARKS = {Shape.IF: "then", Shape.REPEAT: "body"}
 
 
-def ports(b: Block) -> Ports:
+def ports(b: Block, words: Words = NO_WORDS) -> Ports:
     """The names of a block's ports: its head, where it has one, and each arm."""
     op, e = b.op, entry(b.op)
     ws = _weights(b)
@@ -1160,15 +1361,15 @@ def ports(b: Block) -> Ports:
     for i, a in enumerate(b.arms):
         match op.shape:
             case Shape.SWITCH:
-                texts = (f.text for f in arm_operands(b, a))
+                texts = (f.text for f in arm_operands(b, a, words))
                 name = "otherwise" if a.sub == 2 else e.case.format(*texts)
             case Shape.RANDOM:
                 if c and i != c.arm:
                     name = "otherwise"
                 else:
-                    name = "branch" if got is None else _num(Fmt.WEIGHT, got[i], None)
+                    name = "branch" if got is None else _num(Fmt.WEIGHT, got[i], None)[0]
             case Shape.BUCKET:
-                name = "beyond" if i == len(b.arms) - 1 else f"range {i + 1}"
+                name = words.bucket(i, i == len(b.arms) - 1)
             case Shape.ZONE:
                 name = f"relation {i + 1}"
             case Shape.IF:

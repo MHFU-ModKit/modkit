@@ -8,13 +8,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from mhfu.stage import stage_title
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit
 
-from ..core.atlas import stage_title
 from ..tools import POINT, TOOL
 from .common import Gate
 

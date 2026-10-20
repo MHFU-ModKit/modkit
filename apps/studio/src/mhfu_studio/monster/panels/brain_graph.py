@@ -31,7 +31,9 @@ from PySide6.QtWidgets import (
 
 from mhfu_studio.monster import brain_edit, brain_game
 from mhfu_studio.monster import brain_graph as model
+from mhfu_studio.monster.brain import var_of
 from mhfu_studio.monster.brain_edit import Gesture, PaletteEntry, Place
+from mhfu_studio.monster.panels import brain_names
 from mhfu_studio.monster.panels.node_graph import FrameSpec, GraphView, LinkSpec, NodeSpec
 from mhfu_studio.shell.overlay import RGBA
 from mhfu_studio.ui import kit, theme
@@ -556,6 +558,31 @@ class GraphPane(QWidget):
         a = menu.addAction("Note…")
         a.setToolTip("Writes a note on this node, which shows in its tip and the file")
         a.triggered.connect(lambda _=False: self._note(ref))
+        self._names_menu(menu, node, found)
+
+    def _names_menu(self, menu: QMenu, node: str, found: object) -> None:
+        """Naming what a node names: the routine at the entry, a variable, where a link leads."""
+        scene, at = self._scene, self._at
+        if scene is None or at is None:
+            return
+        rg = scene.plan.rg
+        asks: list[tuple[str, str, str | int]] = []
+        if node == ENTRY:
+            asks.append(("Rename routine…", brain_names.ROUTINE, rg.name))
+        if isinstance(found, Stmt) and (var := var_of(found.op, found.args)) is not None:
+            asks.append((f"Name variable {var}…", brain_names.VARS, var))
+        box = self._box(node)
+        for link in () if box is None else box.links:
+            if link.target is not None and link.target != rg.name:
+                asks.append((f"Rename {link.target}…", brain_names.ROUTINE, link.target))
+        for title, table, key in dict.fromkeys(asks):
+            a = menu.addAction(title)
+            a.setToolTip("A name shown wherever the script names it; the brain file keeps it")
+            a.triggered.connect(
+                lambda _=False, t=table, k=key: brain_names.rename(
+                    self, self.ws, self.studio, at[0], t, k
+                )
+            )
 
     def _links_menu(self, menu: QMenu, box: model.Box) -> None:
         for link in box.links:

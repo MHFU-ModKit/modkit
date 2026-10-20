@@ -22,6 +22,7 @@ import numpy as np
 from mhfu import points as P
 from mhfu.files import Extracted
 from mhfu.points import Point
+from mhfu.stage import STAGE_NAMES, row_name, stage_id, stage_name, stage_title
 
 from mhfu_studio.shell import places
 from mhfu_studio.shell.camera import Bounds
@@ -46,7 +47,7 @@ from mhfu_studio.stage import ops as O
 from mhfu_studio.stage.live import CLIMB, QUEST_CATCH
 
 from .adding import AddForm
-from .core.atlas import STAGE_NAMES, Atlas, row_name, stage_id, stage_name, stage_title
+from .core.atlas import Atlas
 from .core.edit import (
     COLLISION,
     FACE,

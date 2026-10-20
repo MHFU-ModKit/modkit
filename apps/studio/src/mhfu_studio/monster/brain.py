@@ -13,22 +13,29 @@ kept across the views of a header draws only the routines the edit replaced agai
     cache = Renderer()
     v = view(built.program, header, graph.edited_ids(built.applied), cache)
     v.node_at(row), v.row_for(node)      # the Graph and the Code pane select each other by node
+
+    w = words(game, 75, pairs, names, bf)   # what the numbers are called, for every view of it
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Sequence
+from collections import Counter
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import cache, cached_property
 
-from mhfu import files
+from mhfu import files, stage
 from mhfu.em import script
+from mhfu.em.script import catalogue as cat
 from mhfu.em.script import ir, source
+from mhfu.em.script.brainfile import BrainFile
 from mhfu.em.script.graph import ENTRY, join_id
-from mhfu.em.script.opcodes import BY_NAME
+from mhfu.em.script.opcodes import BY_NAME, Op
 from mhfu.em.script.source import Line
 from mhfu.files import Extracted
+from mhfu.memory import Space
+from mhfu.structs import Species
 
 
 class NoScript(LookupError):
@@ -57,6 +64,76 @@ def decode(game: Extracted, row: int) -> ir.Program:
             raise NoScript(f"no overlay serves script row {row}")
         sc = script.Scripts(game, sp)
     return script.lift.lift(sc, row)
+
+
+@cache
+def maps(game: Extracted) -> dict[int, tuple[int, ...]]:
+    """The maps each area is in, from the game's map table."""
+    return stage.maps_of(stage.read_map_table(game))
+
+
+@cache
+def _task(game: Extracted) -> Space:
+    return Space([game.overlay(files.GAME_TASK)])
+
+
+def limits(game: Extracted, row: int) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """The distance limits of the row's two range sets (`SPECIES.RANGE_SETS`)."""
+    return Species.at(_task(game), row).limits
+
+
+def words(
+    game: Extracted | None,
+    row: int,
+    pairs: cat.Pairs | None = None,
+    names: Mapping[str, str] | None = None,
+    bf: BrainFile | None = None,
+) -> cat.Words:
+    """What the numbers of `row`'s script are called: the file's names of moves, routines,
+    variables and ranges, the game's areas and maps and the row's distance limits (none from a
+    game that lacks them)."""
+    near: tuple[tuple[float, ...], ...] = ()
+    where: dict[int, tuple[int, ...]] = {}
+    if game is not None:
+        try:
+            near, where = limits(game, row), maps(game)
+        except (OSError, LookupError, ValueError):
+            pass
+    return cat.Words(
+        dict(pairs or {}),
+        dict(names or {}),
+        {} if bf is None else dict(bf.vars),
+        {} if bf is None else dict(bf.ranges),
+        near,
+        where,
+    )
+
+
+def var_of(op: Op, args: Mapping[str, ir.Value]) -> int | None:
+    """The script variable 1 to 9 a node of `op` with `args` sets or tests; None for none."""
+    if op.name == "if_var3_zero":
+        return 3
+    v = next((args.get(i.name) for i in cat.entry(op).operands if i.fmt is cat.Fmt.VAR), None)
+    return v if isinstance(v, int) and 1 <= v <= cat.VARS else None
+
+
+@dataclass(frozen=True)
+class Uses:
+    """How often a script names each variable, and how many distance ranges it branches on."""
+
+    vars: Counter[int]
+    ranges: int
+
+
+def uses(p: ir.Program) -> Uses:
+    out: Counter[int] = Counter()
+    ranges = 0
+    for n in p.nodes():
+        if isinstance(n, ir.Insn | ir.Block):
+            if (v := var_of(n.op, n.args)) is not None:
+                out[v] += 1
+            ranges += n.op.name == "switch_range"
+    return Uses(out, ranges)
 
 
 @dataclass(frozen=True)
@@ -147,6 +224,10 @@ class BrainView:
     routine line over one."""
     routine_row: dict[str, int] = field(default_factory=dict)
     """The row of each routine's line, by name."""
+    nodes: dict[str, ir.Located] = field(default_factory=dict)
+    """The node or arm each line is, by id."""
+    blocks: dict[str, ir.Block] = field(default_factory=dict)
+    """The block of each arm, by the arm's id."""
 
     def find(self, text: str) -> list[int]:
         """The rows whose text holds `text`, any case; a `0x...` query also gives the rows whose
@@ -204,6 +285,17 @@ class BrainView:
     def routine_at(self, row: int) -> str | None:
         """The routine a row is in or is the line of; None under a list or the header."""
         return self._routine_at.get(self.top_of(row))
+
+    def gloss(self, row: int, words: cat.Words) -> str:
+        """What a line says beyond its numbers (`catalogue.gloss`); for a call, goto or walk the
+        user's name of the routine it leads to."""
+        node = self.lines[row].node
+        if node is None:
+            return ""
+        if (to := self.target_row(row)) is not None:
+            return words.routines.get(self.routine_at(to) or "", "")
+        n = self.nodes.get(node)
+        return "" if n is None else cat.gloss(n, words, self.blocks.get(node))
 
 
 def _groups(lines: list[Line]) -> list[tuple[int, int]]:
@@ -376,9 +468,14 @@ def view(
     ends: dict[int, int] = {}
     closes: dict[int, int] = {}
     flagged: set[int] = set()
+    nodes: dict[str, ir.Located] = {}
+    blocks: dict[str, ir.Block] = {}
     for n in p.nodes():
         if n.id not in row_of:
             continue
+        nodes[n.id] = n
+        if isinstance(n, ir.Block):
+            blocks |= {a.id: n for a in n.arms}
         row = row_of[n.id]
         if n.pc is None or n.id in edited:
             flagged.add(row)
@@ -407,6 +504,8 @@ def view(
         ends=ends,
         edited=frozenset(flagged),
         routine_row=routine_row,
+        nodes=nodes,
+        blocks=blocks,
     )
 
 

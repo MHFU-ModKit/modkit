@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from mhfu.stage import STAGE_NAMES, stage_id, stage_title
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (
 from mhfu_studio.shell.text import plain
 from mhfu_studio.ui import kit, theme
 
-from ..core.atlas import STAGE_NAMES, MapRow, Section, stage_id, stage_title
+from ..core.atlas import MapRow, Section
 from .common import Gate, fit
 
 if TYPE_CHECKING:

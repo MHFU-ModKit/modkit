@@ -26,6 +26,7 @@ from mhfu_studio.monster import brain_edit as be
 from mhfu_studio.monster import brain_game as bg
 from mhfu_studio.monster import workspace as mw
 from mhfu_studio.monster.brain import BrainView
+from mhfu_studio.monster.panels import brain_names
 from mhfu_studio.monster.panels.brain import PUSH_TIP, ROW, SEND_TIP, BrainPanel, details
 from mhfu_studio.monster.panels.brain_code import (
     COUNT,
@@ -1069,8 +1070,10 @@ def test_the_outline_groups_the_routines(editor: BrainPanel) -> None:
     assert list(rows) == ["base_0", "base_1", "call_0", "call_1"]
     assert o.items["base_0"].text(0) == "base_0" and o.items["base_0"].text(1) == "\u2190 1"
     assert o.items["base_1"].text(1) == "" and o.items["call_0"].text(1) == "\u2190 1"
-    assert details(rows["base_0"]) == [("Top", "muted"), ("shared", "muted"), ("11 nodes", "muted")]
-    assert details(rows["call_1"]) == [("shared", "muted"), ("7 nodes", "muted")]
+    assert details(rows["base_0"])[0] == ("Top", "muted")
+    assert details(rows["base_0"])[2:] == [("shared", "muted"), ("11 nodes", "muted")]
+    assert details(rows["base_0"])[1] == (rows["base_0"].hint, "muted") and rows["base_0"].hint
+    assert [d for d, _ in details(rows["call_1"])][1:] == ["shared", "7 nodes"]
     assert "Top" in o.items["base_0"].toolTip(0) and "base 0" in o.items["base_0"].toolTip(0)
     assert o.items["base_0"].toolTip(1) and not o.items["base_1"].toolTip(1)
 
@@ -1539,3 +1542,72 @@ def test_real_speed(
         )
     assert expand < 2 and walk < 2 and first < 0.5 and step < 0.2 and typing < 0.5 and follow < 0.5
     assert opened(p, v.top_of(cursor(p)))
+
+
+# ---- names ---------------------------------------------------------------------------------- #
+
+
+def answer(monkeypatch: pytest.MonkeyPatch, got: str | None) -> list[tuple[str, str]]:
+    """The name prompt, answered with `got`; what it was asked, as (what, current)."""
+    asked: list[tuple[str, str]] = []
+
+    def ask(parent: QWidget, what: str, current: str) -> str | None:
+        asked.append((what, current))
+        return got
+
+    monkeypatch.setattr(brain_names, "ask_name", ask)
+    return asked
+
+
+def test_f2_names_a_routine(
+    editor: BrainPanel, clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p, o = editor, editor.outline
+    asked = answer(monkeypatch, "Opening")
+    o.setCurrentItem(o.items["base_0"])
+    QTest.keyClick(o, Qt.Key.Key_F2)
+    assert asked == [("routine base_0", "")] and p.ws.brain_names(75) == {"base_0": "Opening"}
+    assert p.ws.brain_built(75) is p._built and not p.ws.brain_pending(75)  # no bytes change
+    p._pull()
+    assert p.outline.items["base_0"].text(0) == "Opening (base_0)"
+    answer(monkeypatch, None)  # Cancel
+    o.renamed.emit("base_0")
+    assert p.ws.brain_names(75) == {"base_0": "Opening"}
+
+
+def test_the_names_list(editor: BrainPanel, monkeypatch: pytest.MonkeyPatch) -> None:
+    p, n = editor, editor.names
+    assert n.isVisible()
+    groups = [n.topLevelItem(i) for i in range(n.topLevelItemCount())]
+    assert [g.text(0) for g in groups] == ["Variables", "Distance ranges (1 switches)"]
+    assert [groups[0].child(i).text(0) for i in range(9)][:2] == ["var 1", "var 2"]
+    ranges = groups[1]
+    assert [ranges.child(i).text(0) for i in range(5)] == [
+        "range 1",
+        "range 2",
+        "range 3",
+        "range 4",
+        "beyond",
+    ]
+    asked = answer(monkeypatch, "melee")
+    n.itemActivated.emit(ranges.child(0), 0)
+    assert asked == [("distance range 1", "")]
+    doc = p.ws.species_doc
+    assert doc is not None and doc.brainfile.ranges == {1: "melee"}
+    p._pull()
+    assert n.topLevelItem(1).child(0).text(1) == "melee"
+    bucket = next(i for i, ln in enumerate(view(p).lines) if ln.text.strip() == "bucket")
+    assert p.model.data(p.model.index_of(bucket, TEXT), LABEL) == "melee range 1"
+    answer(monkeypatch, "hunt")
+    n.itemActivated.emit(n.topLevelItem(0).child(3), 0)
+    assert doc.brainfile.vars == {4: "hunt"}
+
+
+def test_a_line_says_more_than_its_numbers(editor: BrainPanel) -> None:
+    p = editor
+    assert p.model.data(p.model.index_of(row_of(p, "end base"), TEXT), LABEL) == "Restart"
+    ret = next(i for i, ln in enumerate(view(p).lines) if ln.text.strip() == "end return")
+    assert p.model.data(p.model.index_of(ret, TEXT), LABEL) == ""
+    assert p.model.data(p.model.index_of(row_of(p, "wait 3"), TEXT), LABEL) == ""
+    hp = next(i for i, ln in enumerate(view(p).lines) if ln.text.strip() == "case 1")
+    assert p.model.data(p.model.index_of(hp, TEXT), LABEL) == "HP below 1 %"
