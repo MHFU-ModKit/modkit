@@ -9,22 +9,40 @@ turn the labels of new code into list indexes.
     edit.put(p, "base_0", [edit.insn("call", ir.Sym("spin"))])
     q = edit.resolve(p)                 # a copy: `call` has its list index now
 
-Builders return nodes with no id; inserting gives each (arms too) an `n<k>`. An edit that
-cannot be done raises EditError and leaves the program as it was.
+    edit.modify(p, hub.id, sub=2)       # same id, new operands
+    edit.move(p, hub.id, other.id, where="after")
+    edit.unwrap(p, block.id, "then")    # the block is gone, its then-branch stays
+    edit.reorder_arms(p, pick.id, [b.id, a.id])
+
+Builders return nodes with no id; inserting gives each (arms too) an `n<k>`. A node whose place
+or operands an edit changes is new code from then on (no `pc`), its `origin` the id it had. An
+edit that cannot be done raises EditError and leaves the program as it was.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
-from . import ir
-from .opcodes import BY_NAME, FIRST_DEEP, Op, Operand, Ref, Shape, operands, slot
+from . import asm, ir
+from .opcodes import (
+    BY_NAME,
+    FIRST_DEEP,
+    NUMBERED,
+    Op,
+    Operand,
+    Ref,
+    Shape,
+    marker_sub,
+    operands,
+    slot,
+)
 
 _RANDOM_TOTAL = 32
 _RANDOM_BRANCHES = 13
 _T = TypeVar("_T", bound=ir.Item)
+_N = TypeVar("_N")
 
 
 class EditError(ValueError):
@@ -125,6 +143,53 @@ def repeat(count: int, body: Sequence[ir.Node]) -> ir.Block:
     return ir.Block(op, _bind("repeat", op.opener, [count]), list(body), [])
 
 
+def _named(what: str, ops: Sequence[Operand], args: Mapping[str, ir.Value]) -> dict[str, ir.Value]:
+    """The operands `ops` from `args` by name, each checked against its width."""
+    names = [o.name for o in ops]
+    if set(args) != set(names):
+        raise EditError(f"{what} takes {names}, not {sorted(args)}")
+    return _bind(what, ops, [args[n] for n in names])
+
+
+def _check_arms(op: Op, arms: Sequence[ir.Arm]) -> None:
+    """Whether `arms` is what a block of `op` can hold, in this order."""
+    shape = op.shape
+    subs = [a.sub for a in arms]
+    if shape is Shape.IF and (len(arms) > 1 or any(s != 1 for s in subs)):
+        raise EditError(f"{op.name} has at most one arm, its else")
+    if shape is Shape.SWITCH:
+        if any(s not in (1, 2) for s in subs) or subs.count(2) > 1 or 2 in subs[:-1]:
+            raise EditError(f"{op.name} takes cases and one default, last")
+    if shape in NUMBERED and (not arms or any(s != 1 for s in subs)):
+        raise EditError(f"{op.name} needs arms, each of kind 1")
+    for k, a in enumerate(arms):
+        sub = marker_sub(shape, a.sub, k)
+        if op.role(sub) != "mid":
+            raise EditError(f"{op.name} has no marker {sub} for its arm {k}")
+        _named(f"{op.name} arm", operands(op.layout(sub)), a.args)
+
+
+def build(
+    name: str,
+    args: Mapping[str, ir.Value],
+    *,
+    head: Sequence[ir.Node] = (),
+    arms: Sequence[ir.Arm] = (),
+) -> ir.Node:
+    """The node `name` with operands by name: the dict form of `insn` and the block builders.
+    `head` is an if's then-branch or a repeat's body."""
+    op = _op(name)
+    if not op.coded:
+        if head or arms:
+            raise EditError(f"{name} is no block")
+        return ir.Insn(op, _named(name, operands(op.plain_layout(args)), args))
+    if head and op.shape not in (Shape.IF, Shape.REPEAT):
+        raise EditError(f"{name} has no head; its nodes go in its arms")
+    block = ir.Block(op, _named(name, op.opener, args), list(head), list(arms))
+    _check_arms(op, block.arms)
+    return block
+
+
 # ---- copies
 
 
@@ -155,21 +220,38 @@ def clone(nodes: Sequence[ir.Node]) -> list[ir.Node]:
     return _copy(nodes, True)
 
 
-def _program(p: ir.Program) -> ir.Program:
-    """A copy that shares nothing mutable with `p`."""
+def copy(nodes: Sequence[ir.Node]) -> list[ir.Node]:
+    """Copies that share nothing mutable with `nodes`, ids and addresses as they are."""
+    return _copy(nodes, False)
+
+
+def copy_arm(arm: ir.Arm) -> ir.Arm:
+    return ir.Arm(arm.sub, dict(arm.args), copy(arm.body), **_ident(arm, False))
+
+
+def _labelled(nodes: Sequence[ir.Node]) -> bool:
+    return any(isinstance(v, ir.Sym) for n in ir.walk(nodes) for v in n.args.values())
+
+
+def _program(p: ir.Program, share: bool = False) -> ir.Program:
+    """A copy that shares nothing mutable with `p`; with `share`, one that keeps the items an
+    edit of labels leaves alone: the routines with none, data, blobs and headers."""
     items: list[ir.Item] = []
     for it in p.items:
         match it:
             case ir.Routine():
-                items.append(ir.Routine(it.name, _copy(it.body, False), it.tail, it.va))
+                keep = share and not _labelled(it.body)
+                items.append(it if keep else ir.Routine(it.name, copy(it.body), it.tail, it.va))
             case ir.Table():
-                items.append(ir.Table(it.name, list(it.slots), it.va))
+                items.append(it if share else ir.Table(it.name, list(it.slots), it.va))
             case ir.Data():
-                items.append(ir.Data(it.name, it.data, dict(it.labels), it.va))
+                items.append(it if share else ir.Data(it.name, it.data, dict(it.labels), it.va))
             case ir.Blob():
-                items.append(ir.Blob(it.data, it.va))
+                items.append(it if share else ir.Blob(it.data, it.va))
             case ir.Header():
-                items.append(ir.Header(it.name, list(it.fields), it.variants, it.va))
+                items.append(
+                    it if share else ir.Header(it.name, list(it.fields), it.variants, it.va)
+                )
     return ir.Program(p.row, p.base, items, p.end, p.sha1)
 
 
@@ -183,9 +265,19 @@ def _anchor(index: ir.Index, nid: str) -> ir.Located:
         raise EditError(f"no node {nid}") from None
 
 
-def _ids(p: ir.Program, index: ir.Index, nodes: Sequence[ir.Node]) -> None:
+def everything(items: Sequence[ir.Located]) -> Iterator[ir.Located]:
+    """The items and everything under them, arms included, in source order."""
+    for x in items:
+        if isinstance(x, ir.Arm):
+            yield x
+            yield from ir.walk(x.body)
+        else:
+            yield from ir.walk([x])
+
+
+def _ids(p: ir.Program, index: ir.Index, nodes: Sequence[ir.Located]) -> None:
     """Give the nodes (arms too) with no id a fresh one; an id in use is an error."""
-    mine = list(ir.walk(nodes))
+    mine = list(everything(nodes))
     seen: set[str] = set()
     for n in mine:
         if n.id and (n.id in seen or n.id in index):
@@ -197,7 +289,7 @@ def _ids(p: ir.Program, index: ir.Index, nodes: Sequence[ir.Node]) -> None:
             n.id, k = f"n{k}", k + 1
 
 
-def _position(home: list[ir.Node], n: ir.Node) -> int:
+def _position(home: Sequence[_N], n: _N) -> int:
     """Where `n` itself sits in `home`; a list's `index` would find an equal node."""
     return next(i for i, x in enumerate(home) if x is n)
 
@@ -247,6 +339,219 @@ def replace(p: ir.Program, nid: str, node: ir.Node) -> None:
     home[_position(home, n)] = node
 
 
+def _owner(p: ir.Program, arm: ir.Arm) -> ir.Block:
+    """The block an arm belongs to."""
+    for n in p.nodes():
+        if isinstance(n, ir.Block) and any(a is arm for a in n.arms):
+            return n
+    raise EditError(f"{arm.id} is in no block")
+
+
+def _bodies(n: ir.Node) -> Iterator[list[ir.Node]]:
+    """Every list of nodes in the subtree of `n`."""
+    for x in ir.walk([n]):
+        if isinstance(x, ir.Block):
+            yield x.head
+        elif isinstance(x, ir.Arm):
+            yield x.body
+
+
+def _renew(n: ir.Located) -> None:
+    """Make `n` new code, as an edit that changes it or its place does: its `pc` goes, its id
+    stays, and `origin` says it was native."""
+    if n.pc is not None:
+        n.origin = n.id or None
+        n.pc = None
+
+
+def _scope(p: ir.Program, index: ir.Index, target: str) -> list[ir.Node]:
+    """The list `target` names: a routine's body, a block's head (an if's then-branch, a repeat's
+    body) or an arm's body."""
+    for it in p.items:
+        if isinstance(it, ir.Routine) and it.name == target:
+            return it.body
+    try:
+        at = index.node(target)
+    except KeyError:
+        raise EditError(f"no routine or node {target}") from None
+    if isinstance(at, ir.Arm):
+        return at.body
+    if isinstance(at, ir.Block):
+        if at.op.shape not in (Shape.IF, Shape.REPEAT):
+            raise EditError(f"{at.op.name} has no head; name one of its arms")
+        return at.head
+    raise EditError(f"{target} is an instruction, with no place inside")
+
+
+def put_in(p: ir.Program, target: str, nodes: Sequence[ir.Node], at: int | None = None) -> None:
+    """Put `nodes` into the list `target` names (a routine, a block's head or an arm) at
+    position `at`, by default the end."""
+    index = ir.Index(p)
+    dest = _scope(p, index, target)
+    k = len(dest) if at is None else at
+    if not 0 <= k <= len(dest):
+        raise EditError(f"{target} has {len(dest)} nodes; {k} is out of range")
+    new = list(nodes)
+    _ids(p, index, new)
+    dest[k:k] = new
+
+
+def modify(p: ir.Program, nid: str, /, **args: ir.Value) -> None:
+    """Change operands of a node, block opener or arm, by name. It keeps its id and becomes new
+    code. An opcode whose layout depends on its first operand (`set_target`) takes the operands
+    of the new layout, keeping those it has."""
+    index = ir.Index(p)
+    n = _anchor(index, nid)
+    if not args:
+        raise EditError(f"nothing to change on {nid}")
+    match n:
+        case ir.Insn():
+            what, ops = n.op.name, operands(n.op.plain_layout({**n.args, **args}))
+        case ir.Block():
+            what, ops = n.op.name, n.op.opener
+        case ir.Arm():
+            block = _owner(p, n)
+            sub = marker_sub(block.op.shape, n.sub, _position(block.arms, n))
+            what, ops = f"{block.op.name} arm", operands(block.op.layout(sub))
+    names = [o.name for o in ops]
+    if extra := sorted(set(args) - set(names)):
+        raise EditError(f"{what} takes {names}, not {extra}")
+    merged = {**n.args, **args}
+    if missing := [k for k in names if k not in merged]:
+        raise EditError(f"{what} needs {missing} too")
+    n.args = _bind(what, ops, [merged[k] for k in names])
+    _renew(n)
+
+
+def move(p: ir.Program, nid: str, to: str, where: str = "before") -> None:
+    """Move a node, with all that is in it, before or after the node `to` (an arm: at the start
+    or the end of its body), or `where` is `start` or `end` of the list `to` names (a routine, a
+    block's head or an arm). It becomes new code."""
+    if where not in ("before", "after", "start", "end"):
+        raise EditError(f"{where!r} is no place: before, after, start or end")
+    index = ir.Index(p)
+    n, home = _owned(index, nid)
+    beside = where in ("before", "after")
+    if beside:
+        at = _anchor(index, to)
+        if any(x is at for x in ir.walk([n])):
+            raise EditError(f"{to} is {nid} or inside it")
+        dest = at.body if isinstance(at, ir.Arm) else index.home(to)
+    else:
+        at = None
+        dest = _scope(p, index, to)
+        if any(dest is b for b in _bodies(n)):
+            raise EditError(f"{to} is inside {nid}")
+    del home[_position(home, n)]
+    if at is None or isinstance(at, ir.Arm):
+        k = len(dest) if where in ("after", "end") else 0
+    else:
+        k = _position(dest, at) + (where == "after")
+    dest[k:k] = [n]
+    _renew(n)
+
+
+def _kept(b: ir.Block, keep: str | None) -> list[ir.Node]:
+    """The nodes of the branch of `b` that `keep` names: `then` (an if's or a repeat's head),
+    `else`, an arm's id; None for nothing."""
+    if keep is None:
+        return []
+    if keep == "then":
+        if b.op.shape not in (Shape.IF, Shape.REPEAT):
+            raise EditError(f"{b.op.name} has no then-branch")
+        return b.head
+    if keep == "else":
+        if b.op.shape is not Shape.IF or not b.arms:
+            raise EditError(f"{b.op.name} {b.id} has no else")
+        return b.arms[0].body
+    for a in b.arms:
+        if a.id == keep:
+            return a.body
+    raise EditError(f"{keep} is no arm of {b.id}")
+
+
+def unwrap(p: ir.Program, nid: str, keep: str | None) -> None:
+    """Replace the block `nid` by the body of one branch (`then`, `else` or an arm's id) or by
+    nothing. What stays at the top of the branch becomes new code: it runs unguarded now."""
+    index = ir.Index(p)
+    n, home = _owned(index, nid)
+    if not isinstance(n, ir.Block):
+        raise EditError(f"{nid} is no block")
+    body = list(_kept(n, keep))
+    for x in body:
+        _renew(x)
+    k = _position(home, n)
+    home[k : k + 1] = body
+
+
+# ---- arms
+
+
+def add_arm(p: ir.Program, nid: str, arm: ir.Arm, at: int | None = None) -> None:
+    """Put `arm` into the block `nid` at position `at` among its arms, by default last. The
+    block becomes new code."""
+    index = ir.Index(p)
+    b = _anchor(index, nid)
+    if not isinstance(b, ir.Block):
+        raise EditError(f"{nid} is no block")
+    k = len(b.arms) if at is None else at
+    if not 0 <= k <= len(b.arms):
+        raise EditError(f"{nid} has {len(b.arms)} arms; {k} is out of range")
+    arms = [*b.arms[:k], arm, *b.arms[k:]]
+    _check_arms(b.op, arms)
+    _ids(p, index, [arm])
+    b.arms[:] = arms
+    _renew(b)
+
+
+def insert_arm(p: ir.Program, nid: str, arm: ir.Arm, *, after: bool = False) -> None:
+    """Put `arm` before the arm `nid`, or after it."""
+    index = ir.Index(p)
+    at = _anchor(index, nid)
+    if not isinstance(at, ir.Arm):
+        raise EditError(f"{nid} is no arm")
+    b = _owner(p, at)
+    k = _position(b.arms, at) + after
+    arms = [*b.arms[:k], arm, *b.arms[k:]]
+    _check_arms(b.op, arms)
+    _ids(p, index, [arm])
+    b.arms[:] = arms
+    _renew(b)
+
+
+def delete_arm(p: ir.Program, nid: str) -> None:
+    """Remove an arm and all that is in it; its block becomes new code."""
+    at = _anchor(ir.Index(p), nid)
+    if not isinstance(at, ir.Arm):
+        raise EditError(f"{nid} is no arm")
+    b = _owner(p, at)
+    arms = [a for a in b.arms if a is not at]
+    _check_arms(b.op, arms)
+    b.arms[:] = arms
+    _renew(b)
+
+
+def reorder_arms(p: ir.Program, nid: str, order: Sequence[str]) -> None:
+    """Put the arms of the block `nid` in the order of these ids, which name each arm once. The
+    block becomes new code."""
+    b = _anchor(ir.Index(p), nid)
+    if not isinstance(b, ir.Block):
+        raise EditError(f"{nid} is no block")
+    by_id = {a.id: a for a in b.arms}
+    if sorted(order) != sorted(by_id) or len(by_id) != len(b.arms):
+        raise EditError(f"{nid} has the arms {list(by_id)}, not {list(order)}")
+    arms = [by_id[i] for i in order]
+    _check_arms(b.op, arms)
+    b.arms[:] = arms
+    _renew(b)
+
+
+def ids_by_offset(img: asm.Image) -> dict[int, str]:
+    """The id of the node whose bytes start at each offset of the image: `Image.nodes` the other
+    way round."""
+    return {off: nid for nid, (off, _) in img.nodes.items()}
+
+
 # ---- items
 
 
@@ -268,7 +573,8 @@ def _names(item: ir.Item) -> set[str]:
             return {item.name}
 
 
-def _taken(p: ir.Program) -> set[str]:
+def taken(p: ir.Program) -> set[str]:
+    """Every name in the program: its items' and the labels of its data runs."""
     return {name for i in p.items for name in _names(i)}
 
 
@@ -276,7 +582,7 @@ def add(p: ir.Program, item: ir.Item) -> None:
     """Append a new item: no address, and a name nothing has."""
     if item.va is not None:
         raise EditError("a new item has no address")
-    if clash := sorted(_names(item) & _taken(p)):
+    if clash := sorted(_names(item) & taken(p)):
         raise EditError(f"{clash[0]} names something already")
     if isinstance(item, ir.Routine):
         _ids(p, ir.Index(p), item.body)
@@ -300,10 +606,10 @@ def fork_table(p: ir.Program, header: str, field: int) -> str:
     name = h.fields[field] if field < len(h.fields) else None
     if not isinstance(name, str):
         raise EditError(f"{header} has no list in field {field}")
-    taken = _taken(p)
+    used = taken(p)
     stem = f"{header}_{slot(field).name}_l"
     new, k = stem, 1
-    while new in taken:
+    while new in used:
         k += 1
         new = f"{stem}{k}"
     p.items.append(ir.Table(new, list(_item(p, name, ir.Table).slots)))
@@ -354,17 +660,19 @@ def _labels(p: ir.Program) -> list[_Label]:
     return out
 
 
-def resolve(p: ir.Program) -> ir.Program:
+def resolve(p: ir.Program, *, share: bool = False) -> ir.Program:
     """A copy with every label replaced by its list index: its slot in the list of each header
-    that reaches the routine, a new last slot where it has none. Every header must agree."""
-    out = _program(p)
-    taken = _taken(out)
+    that reaches the routine, a new last slot where it has none. Every header must agree. With
+    `share` the copy keeps the items it does not change, so it must not be edited."""
+    out = _program(p, share)
+    names = taken(out)
     tables = out.tables()
+    grown: set[str] = set()
     headers = {h.name: h for h in out.headers()}
     reach = out.reach()
     labels = _labels(out)
     for lab in labels:
-        if lab.label not in taken:
+        if lab.label not in names:
             raise EditError(f"nothing is named {lab.label}")
         if not reach[lab.routine]:
             raise EditError(
@@ -375,12 +683,16 @@ def resolve(p: ir.Program) -> ir.Program:
             table = fields[lab.ref.field] if lab.ref.field < len(fields) else None
             if not isinstance(table, str) or table not in tables:
                 raise EditError(f"{hn} has no {slot(lab.ref.field).name} list for {lab.label!r}")
-            slots = tables[table].slots
-            if lab.label not in slots:
-                if len(slots) >= ir.MAX_LIST:
+            if lab.label not in tables[table].slots:
+                if len(tables[table].slots) >= ir.MAX_LIST:
                     raise EditError(f"{table} cannot hold more than {ir.MAX_LIST} entries")
-                slots.append(lab.label)
-            lab.under[hn] = slots.index(lab.label)
+                if share and table not in grown:  # the list is the program's own until now
+                    old = tables[table]
+                    tables[table] = ir.Table(table, list(old.slots), old.va)
+                    out.items[out.items.index(old)] = tables[table]
+                    grown.add(table)
+                tables[table].slots.append(lab.label)
+            lab.under[hn] = tables[table].slots.index(lab.label)
         if len(set(lab.under.values())) > 1:
             seen = " and ".join(f"{i} under {hn}" for hn, i in lab.under.items())
             raise EditError(f"{lab.routine}: the label {lab.label!r} is slot {seen}")
