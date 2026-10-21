@@ -83,6 +83,10 @@ static_assert(offsetof(mhfu_move_state_t, reactions) == MHFU_MOVE_STATE_REACTION
 static_assert(offsetof(mhfu_move_state_t, react_pair) == MHFU_MOVE_STATE_REACT_PAIR, "MOVE_STATE layout");
 static_assert(offsetof(mhfu_move_state_t, waited) == MHFU_MOVE_STATE_WAITED, "MOVE_STATE layout");
 static_assert(offsetof(mhfu_move_state_t, events) == MHFU_MOVE_STATE_EVENTS, "MOVE_STATE layout");
+static_assert(sizeof(mhfu_steer_t) == MHFU_STEER_PARAMS_SIZE, "STEER_PARAMS layout");
+static_assert(offsetof(mhfu_steer_t, dir) == MHFU_STEER_PARAMS_DIR, "STEER_PARAMS layout");
+static_assert(offsetof(mhfu_steer_t, win_from) == MHFU_STEER_PARAMS_WIN_FROM, "STEER_PARAMS layout");
+static_assert(offsetof(mhfu_steer_t, win_to) == MHFU_STEER_PARAMS_WIN_TO, "STEER_PARAMS layout");
 static_assert(sizeof(mhfu_steer_spec_t) == MHFU_STEER_SPEC_SIZE, "STEER_SPEC layout");
 static_assert(offsetof(mhfu_steer_spec_t, key_count) == MHFU_STEER_SPEC_KEY_COUNT, "STEER_SPEC layout");
 static_assert(offsetof(mhfu_steer_spec_t, stuck_main) == MHFU_STEER_SPEC_STUCK_MAIN, "STEER_SPEC layout");
@@ -91,6 +95,9 @@ static_assert(sizeof(mhfu_steer_state_t) == MHFU_STEER_STATE_SIZE, "STEER_STATE 
 static_assert(offsetof(mhfu_steer_state_t, now) == MHFU_STEER_STATE_NOW, "STEER_STATE layout");
 static_assert(offsetof(mhfu_steer_state_t, base) == MHFU_STEER_STATE_BASE, "STEER_STATE layout");
 static_assert(offsetof(mhfu_steer_state_t, yaw0) == MHFU_STEER_STATE_YAW0, "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, wall) == MHFU_STEER_STATE_WALL, "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, cursor) == MHFU_STEER_STATE_CURSOR, "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, yaw) == MHFU_STEER_STATE_YAW, "STEER_STATE layout");
 
 /* --- the engine ------------------------------------------------------------------------- */
 

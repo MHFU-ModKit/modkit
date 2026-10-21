@@ -237,6 +237,8 @@ static volatile mhfu_em_moves_t *R;   /* the own-move registry */
 static_assert(sizeof(mhfu_em_own_t) == MHFU_EM_OWN_SIZE, "EM_OWN layout");
 static_assert(offsetof(mhfu_em_own_t, steer) == MHFU_EM_OWN_STEER, "EM_OWN layout");
 static_assert(offsetof(mhfu_em_own_t, key_at) == MHFU_EM_OWN_KEY_AT, "EM_OWN layout");
+static_assert(offsetof(mhfu_em_own_t, key_count) == MHFU_EM_OWN_KEY_COUNT, "EM_OWN layout");
+static_assert(offsetof(mhfu_em_own_t, stuck_main) == MHFU_EM_OWN_STUCK_MAIN, "EM_OWN layout");
 static_assert(offsetof(mhfu_em_own_t, after) == MHFU_EM_OWN_AFTER, "EM_OWN layout");
 static_assert(offsetof(mhfu_em_own_t, valid) == MHFU_EM_OWN_VALID, "EM_OWN layout");
 static_assert(sizeof(mhfu_em_moves_t) == MHFU_EM_MOVES_SIZE, "EM_MOVES layout");

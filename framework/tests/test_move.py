@@ -314,6 +314,8 @@ class Spec(ctypes.Structure):
         ("total", ctypes.c_int32),
         ("frames", ctypes.c_uint16),
         ("dir", ctypes.c_uint16),
+        ("win_from", ctypes.c_uint16),
+        ("win_to", ctypes.c_uint16),
         ("key_count", ctypes.c_uint16),
         ("stuck_main", ctypes.c_uint8),
         ("stuck_sub", ctypes.c_uint8),
@@ -341,6 +343,8 @@ def yaw(g: Game) -> int:
 def test_steer_spec_layout() -> None:
     assert ctypes.sizeof(Spec) == a.STEER_SPEC.size
     assert Spec.keys.offset == a.STEER_SPEC.KEYS and Spec.key_count.offset == a.STEER_SPEC.KEY_COUNT
+    assert Spec.win_from.offset == a.STEER_SPEC.STEER + a.STEER_PARAMS.WIN_FROM
+    assert Spec.stuck_main.offset == a.STEER_SPEC.STUCK_MAIN
 
 
 def test_yaw_follows_the_clip_turn(g: Game) -> None:
