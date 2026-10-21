@@ -70,6 +70,8 @@ def describe(m: manifest.Manifest, name: str, slot: int | None) -> str:
         window = "" if s.window is None else f" in frames {s.window[0]}-{s.window[1]}"
         head += f"  turns to the hunter at {s.rate or 'the host charge'}{window}"
     lines = [head]
+    spare = {a.id for a in m.attacks}
     for a in mv.attacks:
-        lines.append(f"      {a.label} -> host record {a.id}, frames {a.frame}-{a.end}")
+        kind = " (spare)" if a.id in spare else ""
+        lines.append(f"      {a.label} -> host record {a.id}{kind}, frames {a.frame}-{a.end}")
     return "\n".join(lines)

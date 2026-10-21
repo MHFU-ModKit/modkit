@@ -143,18 +143,52 @@ clip that hands to the next by `after`:
 - **Attacks.** A record's START and LEN against the cursor at the spawn give the frames; a node
   that outlives a clip change is split per clip. The record's volume set is matched to the host
   record whose volumes overlap it most on the port's rig (the same kind first, then power); below
-  0.25 there is no match and the attack is left out. `[brain.attacks] "26" = 40` names the host
-  record for donor record 26; the port may define it with `[[attack]]` and `[[hitbox]]`.
+  0.25 there is no match and the record takes a spare host record (below). `[brain.attacks]
+  "26" = 40` names the host record for donor record 26; the port may define it with `[[attack]]`
+  and `[[hitbox]]`.
 - **Turn.** A `hunter` steer with the donor's rate and the cursor window it turned in
   (`steer.window`). What the donor does by code, not by its clips (a slide, a curve), is not carried.
 
 | Finding | Level | What |
 |---|---|---|
 | `P3_OWN_NOCLIPS`, `P3_OWN_CARRIER`, `P3_OWN_SLOTS` | error | no clip for the pair; no carrier for the host; more own moves than the framework holds |
-| `P3_OWN_ATTACK` | warning | a donor record with no host record, or more attacks on a clip than the move player holds: left out |
+| `P3_OWN_ATTACK` | warning | a donor record with no host record and no spare, or more attacks on a clip than the move player holds: left out |
+| `P3_OWN_SPARE` | info | a donor record with no host record took a spare one: its id, set, volumes, power, kind, active frames |
 | `P3_OWN_PARTIAL` | warning | the walk gave up, or a clip it could not resolve |
 | `P3_OWN_BRANCH`, `P3_OWN_MOTION`, `P3_OWN_START`, `P3_OWN_NEXT` | info | a branch taken one way; code movement; a clip the donor starts past its first frame; a pair the handler hands over to |
 | `P3_OWN_SPLIT`, `P3_OWN_GROUP`, `P3_OWN_ACTIVE` | info | a node split per clip; records that land one hit between them in the donor; a window longer than the host record's life |
+
+### Spare attack records
+
+A donor record that no host record matches gets a spare one in `own.expand`
+(`mhfu_port.brain.spare`), so its attack is played instead of dropped. em75's record table holds
+two more species' records (`hitbox.ID_OFFSETS`: 34-69 and 71-106, on sets 18-55), which a species-75
+port never spawns. The build points one of them at one of those sets and adds both to the
+*expanded* manifest as `[[attack]]` and `[[hitbox]]`; the saved manifest never has them, and the
+own move's attack plays the spare's id.
+
+- **Record.** Of the free ids, the one whose own kind is the donor's family (hit 2, weak 1, a node
+  that hurts nobody 29: donor kind 0x34 or power 0), then the plainest (`+0x0C` and the angle
+  zero, the family byte the host's records of that kind carry), then the lowest. Not an id the node
+  code treats by id (5, 6, 21, 22, 24, 28, 31, 39, 40, 99 and 100, read from the overlay), not 70
+  (blank), not one the manifest defines (`[[attack]]`, `[brain.attacks]`). The levers set are
+  `power`, `kind`, `active` and `volume`; the other bytes (family, angle, tag, element) stay the
+  game's own record's.
+- **Power** is the donor's times the median of host power over donor power across this port's
+  matched records (0.78, em75 against em058, where none matched); 0 for a node that hurts nobody.
+- **Active frames** are the donor's LEN, grown to the longest window a move holds the node
+  (a node the donor refreshes lives to the clip's end), at most 255.
+- **Set.** The free set (not one of the species' own, not in `[[hitbox]]`) with the fewest records
+  that holds the donor's volumes; records on one donor set share one host set. A set holds as many
+  volumes as the host's does: a donor set that no free set holds gets no spare.
+- **Volumes** are the donor's on the port's joints (`binding.joint_of`, the match's rig); a capsule
+  across two bones becomes a capsule on the first with its far end in bind pose. Markers, bones off
+  the rig and empty volumes are left out.
+
+The tables reach the game through the studio's write plan, not the moves module: a port with a
+`[brain]` gets them from `studio port hit` (`--deploy` for `<name>_hit.lua`, `port push`, Send and
+Push to game), which expand the manifest first (`mhfu_studio.monster.runtime.expanded`). A move
+that plays a spare record without its tables plays the species-76 or 88 record of that id.
 
 ### Fatigue
 

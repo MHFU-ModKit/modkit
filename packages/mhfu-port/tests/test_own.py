@@ -5,8 +5,10 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from mhfu import hitbox
+from mhfu.files import em_overlay
 from mhfu_port import manifest, moves, p3hits, sequence
-from mhfu_port.brain import own
+from mhfu_port.brain import own, spare
 from mhfu_port.manifest import AttackWindow, Steer
 from mhfu_port.p3hits import Hit, Length, Note, Plan, Step, Turn
 
@@ -51,6 +53,10 @@ class Fake:
         self.lengths = LENGTHS
         self.ms = SimpleNamespace(pairs={plan.pair: object()})
         self.hosts, self.active, self._plan = hosts, active, plan
+        self.hits = SimpleNamespace(records=[])
+        self.table = None  # no spare records to hand out
+        self.binding = SimpleNamespace(joint_of={})
+        self.bind = np.zeros((0, 3))
 
     def plan(self, pair: object) -> Plan:
         return self._plan
@@ -60,7 +66,7 @@ class Fake:
         return own.Match(record, host, 0.5 if host is not None else 0.1, False, 4)
 
     def attack(self, host: int) -> object:
-        return SimpleNamespace(unknown_01=self.active)
+        return SimpleNamespace(unknown_01=self.active, power=50)
 
 
 def derive(plan: Plan, **kw):
@@ -69,6 +75,7 @@ def derive(plan: Plan, **kw):
     fake = Fake(plan, **kw)
     d = own.Derivation(m, fake, lambda: fake, found.append)  # type: ignore[arg-type]
     d.run(plan.pair)
+    d.finish()
     return m, found
 
 
@@ -127,6 +134,7 @@ def test_an_attack_with_no_host_record_is_left_out():
     assert [a.id for a in m.moves["p3_7_13"].attacks] == [7]
     (f,) = [f for f in found if f.code == "P3_OWN_ATTACK"]
     assert f.level == "warning" and "26" in f.text and f.item == "p3_7_13"
+    assert "no spare (the host has no attack table)" in f.text
 
 
 def test_the_move_player_holds_four_attacks():
@@ -248,16 +256,37 @@ def test_brute_charge(derived):
 
 def test_brute_rush_and_leap(derived):
     m, found = derived
+    feet = m.attacks[0].id  # donor record 26 plays its spare record
     assert [m.moves[n].clip for n in ("p3_7_14", "p3_7_14_2")] == ["p3_59", "p3_60"]
-    assert windows(m, "p3_7_14") == [(15, 85, 144)]
-    assert windows(m, "p3_7_14_2") == [(15, 0, 14), (7, 94, 124), (8, 96, 106)]
+    assert windows(m, "p3_7_14") == [(15, 85, 144), (feet, 85, 144)]
+    assert windows(m, "p3_7_14_2") == [(15, 0, 14), (feet, 0, 14), (7, 94, 124), (8, 96, 106)]
     assert m.moves["p3_7_14"].steer.rate == 364 and m.moves["p3_7_14"].length == 72
     assert m.moves["p3_7_14"].steer.walls and not m.moves["p3_7_14_2"].steer.walls
     assert windows(m, "p3_7_15") == [(4, 75, 100)]
     assert m.moves["p3_7_15"].steer == Steer(turn="hunter", rate=273, walls=False, window=(0, 20))
-    left_out = [f for f in found if f.code == "P3_OWN_ATTACK"]
-    assert left_out and all("record 26" in f.text for f in left_out)
+    assert not [f for f in found if f.code == "P3_OWN_ATTACK"]
     assert {f.item for f in found if f.code == "P3_OWN_BRANCH"} >= {"p3_7_14"}
+
+
+def host_table(data):
+    return hitbox.primary_table(hitbox.tables(data.fu.overlay(em_overlay(75))))
+
+
+def test_brute_hind_feet_get_a_spare_record(derived, data):
+    m, found = derived
+    (a,) = m.attacks
+    assert a.id in range(34, 107) and a.id != 70 and a.id not in spare.RULED[75]
+    assert (a.kind, a.label) == (2, "donor 26") and a.volume is not None and a.volume >= 18
+    feet = [h for h in m.hitboxes if h.set == a.volume]
+    assert sorted(h.bone for h in feet) == [24, 29], "the donor's two volumes, on the port's joints"
+    assert {(h.radius, h.shape) for h in feet} == {(130.0, "sphere")}
+    # power 25 scaled by the median of 1.0, 0.8, 0.67 and 0.42, the matched records' ratios
+    assert a.power == 18 and a.active == 59, "its node is held from frame 85 to the clip's end"
+    (note,) = [f for f in found if f.code == "P3_OWN_SPARE"]
+    assert "donor record 26" in note.text and f"spare record {a.id}" in note.text
+    t = host_table(data)
+    assert len(t.volumes[a.volume].volumes) >= len(feet) and any(t.attacks[a.id].raw)
+    manifest.check(m)
 
 
 def test_brute_pairs_without_attacks(derived):
@@ -277,7 +306,8 @@ def test_an_attacks_override_beats_the_match(data):
     m.brain.attacks["26"] = 25
     out, found = own.expand(m, data)
     assert [a.id for a in out.moves["p3_7_14"].attacks] == [15, 25]
-    assert not [f for f in found if f.code == "P3_OWN_ATTACK"]
+    assert not [f for f in found if f.code in ("P3_OWN_ATTACK", "P3_OWN_SPARE")]
+    assert out.attacks == [] and out.hitboxes == [], "a chosen record needs no spare"
 
 
 def test_slots_follow_the_expanded_manifest(derived):
@@ -287,17 +317,46 @@ def test_slots_follow_the_expanded_manifest(derived):
     assert slots["p3_7_13"] == sorted(slots).index("p3_7_13")
 
 
-def test_zinogre_derives_without_an_error(data):
+def zinogre(pairs: list[tuple[int, int]]) -> manifest.Manifest:
     text = (PORTS / "zinogre.toml").read_text()
+    body = "".join(f"'{a},{b}' = 'own'\n" for a, b in pairs)
+    brain = f"\n[brain]\ndonor = 40\nsplice = 'base_3'\nentry = 'base_12'\n[brain.pairs]\n{body}"
+    return manifest.loads(text + brain)
+
+
+def test_zinogre_derives_without_an_error(data):
     walk = p3hits.Walk.of(data.p3rd, 40, data.p3rd.read(manifest.Source(model=5339).anim))
     keys = [k for k, p in walk.ms.pairs.items() if p.attacks][:8]
-    pairs = "".join(f"'{a},{b}' = 'own'\n" for a, b in keys)
-    brain = f"\n[brain]\ndonor = 40\nsplice = 'base_3'\nentry = 'base_12'\n[brain.pairs]\n{pairs}"
-    m, found = own.expand(manifest.loads(text + brain), data)
+    m, found = own.expand(zinogre(keys), data)
     assert not [f for f in found if f.level == "error"]
     manifest.check(m)
     made = [mv for n, mv in m.moves.items() if n.startswith("p3_")]
     assert len(made) >= len(keys) and sum(len(mv.attacks) for mv in made) >= len(keys)
+
+
+UNMATCHED = [(7, 2), (7, 3), (7, 8), (7, 9), (7, 15), (7, 40), (7, 162), (7, 163)]
+"""Zinogre's pairs that play the nine donor records no Tigrex record matches (4, 7, 18, 34, 35,
+36, 37, 43, 44); all its 111 pairs with attacks play 27 records, 154 hits."""
+
+
+def test_zinogre_unmatched_records_get_spares(data):
+    m, found = own.expand(zinogre(UNMATCHED), data)
+    assert not [f for f in found if f.level == "error" or f.code == "P3_OWN_ATTACK"]
+    made = [a for a in m.attacks if a.label.startswith("donor ")]
+    assert sorted(int(a.label.split()[1]) for a in made) == [4, 7, 18, 34, 35, 36, 37, 43, 44]
+    assert len([f for f in found if f.code == "P3_OWN_SPARE"]) == 9
+    ids = [a.id for a in made]
+    authored = {6, 31}  # its own [[attack]] levers
+    assert len(set(ids)) == 9 and not set(ids) & {*spare.RULED[75], 70, *authored}
+    t = host_table(data)
+    for a in made:
+        assert (
+            a.volume is not None and a.volume >= 18 and a.volume != 2 and any(t.attacks[a.id].raw)
+        )
+        boxes = [h for h in m.hitboxes if h.set == a.volume]
+        assert 1 <= len(boxes) <= len(t.volumes[a.volume].volumes), f"set {a.volume}"
+    assert {a.kind for a in made} == {1, 2}, "record 18 is the one weak hit"
+    manifest.check(m)
 
 
 def test_a_pair_the_donor_lacks_stops_the_build(data):

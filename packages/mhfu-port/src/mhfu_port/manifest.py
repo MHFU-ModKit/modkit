@@ -413,7 +413,8 @@ class Brain:
     attacks: dict[str, int] = field(default_factory=dict)
     """The host attack record an own move derived from the donor plays for a donor record, keyed
     by the donor's record id; it overrides the match by volumes. The port may define the host
-    record with `[[attack]]` and `[[hitbox]]`."""
+    record with `[[attack]]` and `[[hitbox]]`; a donor record with neither a match nor an entry here
+    gets a spare host record (`brain.spare`)."""
     fatigue: bool = False
     """The donor's stamina runs in the game (`mhfu.em_fatigue`): the build derives the helper's
     table from the donor into the moves module (`brain.fatigue`), and the splice turns the
