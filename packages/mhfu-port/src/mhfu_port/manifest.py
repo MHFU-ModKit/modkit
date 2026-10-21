@@ -443,6 +443,17 @@ class Brain:
         t = self.target(pair)
         return t if isinstance(t, tuple) else None
 
+    def users(self, move: str) -> list[str]:
+        """The `[brain.pairs]` keys that play the own move `move`."""
+        return [k for k in self.pairs if move in self.targets(pair_of(k))]
+
+    def rename_move(self, old: str, new: str) -> None:
+        """Every `[brain.pairs]` item that plays the own move `old` plays `new`."""
+        for key, plays in self.pairs.items():
+            if old in targets_of(plays):
+                renamed = [new if t == old else t for t in targets_of(plays)]
+                self.pairs[key] = renamed if isinstance(plays, list) else renamed[0]
+
     def derived(self) -> dict[str, Pair]:
         """The own moves `OWN` stands for, by name, each with the donor pair it comes from. Another
         pair plays one by naming it: `"7,23" = [[1, 2], "p3_7_0"]` turns, then plays pair (7, 0)'s
