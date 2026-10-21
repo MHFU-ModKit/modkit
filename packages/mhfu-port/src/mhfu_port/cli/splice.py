@@ -94,7 +94,9 @@ def summary(
         grown = len(built.image.data) - (built.lift.end - built.lift.base)
         added += f", {grown:+} bytes, worst run {worst.count} of {LIMIT}"
     lines = [f"  {added}"]
-    for (donor, target), uses in sorted(spliced.uses.items(), key=lambda use: use[0]):
+    for (donor, target), uses in sorted(
+        spliced.uses.items(), key=lambda use: (use[0][0], str(use[0][1]))
+    ):
         to = (
             f"own {target} (slot {spliced.slots[target]})"
             if isinstance(target, str)
