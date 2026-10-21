@@ -130,10 +130,11 @@ the engine counts the flinch and applies the damage, then enters the move's carr
 
 ## Own moves from a manifest
 
-A port's own moves sit in a registry by slot (`mhfu.em_move`). The seam's brain, in C on the
-AI step, plays one through the move player when asked (`mhfu.em_play`), when the move before it
-ends on its clip, its length or a wall and names it as its `after`, or when a rule says
-(`play_move`, and `from_move` to fire while one plays). `mhfu_port.lua` does all of it from the
+A port's own moves sit in a registry by slot (`mhfu.em_move`): `mhfu.addr.EM_MOVES.MOVES_COUNT`
+(96) of them, and the turn keys they share (2048), in one 12.8 KB partition block. The seam's
+brain, in C on the AI step, plays one through the move player when asked (`mhfu.em_play`), when the
+move before it ends on its clip, its length or a wall and names it as its `after`, or when a rule
+says (`play_move`, and `from_move` to fire while one plays). `mhfu_port.lua` does all of it from the
 port's generated `<name>_moves.lua`: `port:move("stamp")` (`ports/README.md` "Moves and
 behaviour"). Its `tip` goes to `mhfu.em_tip`: each tip joint takes its carrier's pose after the
 species brain, so the tail stays whole until it drops.
