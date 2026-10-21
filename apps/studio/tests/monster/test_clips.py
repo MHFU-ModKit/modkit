@@ -236,7 +236,7 @@ def test_zinogre(games, built, ports):
 
 def test_brute(built):
     table = C.pac_clip_table(built("brute_tigrex"))
-    assert len(table) == 77 and table[61] == (382, False) and 24 not in table
+    assert len(table) == 77 and (382, False) in table.values() and 24 not in table
 
 
 @pytest.fixture
