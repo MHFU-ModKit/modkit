@@ -22,7 +22,7 @@ CLIP_END = 20.0
 SPEED = 2.0
 NO = ANY = 0xFF
 UNLIMITED = 0xFFFF_FFFF
-BACK, PAIR = 2, 3
+CLIP, BACK, PAIR = 1, 2, 3
 PLAYING, DONE = 2, 4
 KIND = a.MONSTER_EVENT_KIND.number
 NOTICED, FLINCH, BROKEN, TAIL = (
@@ -113,6 +113,8 @@ class Status(ctypes.Structure):
         ("sever_pct", ctypes.c_uint32),
         ("gate_refused", ctypes.c_uint32),
         ("natural_rage", ctypes.c_uint32),
+        ("own_enters", ctypes.c_uint32),
+        ("own_last", ctypes.c_uint32),
     ]
 
 
@@ -280,6 +282,7 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
         ctypes.c_uint16,
     ]
     lib.mhfu_em_tip.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    lib.mhfu_host_enter.argtypes = [ctypes.c_uint32] * 4
     return lib
 
 
@@ -1448,3 +1451,42 @@ def test_the_second_foreleg_break_reaches_its_rule(g: Game) -> None:
     g.poke(a.ENTITY.FLINCH_MASK, "B", (1 << 4) | (1 << 6))
     g.frame()
     assert g.entered() == [(3, 7)] and g.board("BROKEN") == (1 << 4) | (1 << 6)
+
+
+HUB, SCRIPT_PAIR = (0, 2), (1, 3)  # the carrier of g.own; the pair the AI script enters next
+
+
+def script_frame(g: Game) -> list[tuple[str, int, int, int, int]]:
+    """An AI frame with the engine's SCRIPT_TICK after the host step: a set wake runs the script,
+    which enters SCRIPT_PAIR (mode 1) and has its wake cleared after the run. Returns the calls."""
+    g.frame()
+    if g.peek(a.ENTITY.SCRIPT_WAKE, "B")[0]:
+        g.lib.mhfu_host_enter(ENT, *SCRIPT_PAIR, 1)
+        g.poke(a.ENTITY.SCRIPT_WAKE, "B", 0)
+    return g.calls()
+
+
+def script_enters(g: Game, slot: int) -> None:
+    """`enter 16 slot 0` as the slot-32 stub turns it (test_em_vhook_stubs.py runs the stub): the
+    carrier in mode 1, the forced play filed, and the wake the hub raised cleared by SCRIPT_TICK."""
+    g.lib.mhfu_host_enter(ENT, *HUB, 1)
+    assert g.lib.mhfu_em_play(ENT, slot, 1)
+    g.poke(a.ENTITY.SCRIPT_WAKE, "B", 0)
+
+
+def test_a_script_enter_plays_the_move_to_its_end(g: Game) -> None:
+    """The play starts the AI frame after the enter, past the notice, and the script, woken by the
+    hub twice, does not enter its pair until the carrier hands back."""
+    g.own(2, 46)
+    g.poke(a.ENTITY.AWARE, "B", 1)  # the notice runs: an unforced move would wait
+    g.calls()
+    script_enters(g, 2)
+    assert g.calls() == [("E", ENT, *HUB, 1)]
+    seen = script_frame(g)
+    assert seen == [("E", ENT, *HUB, 0)] and g.lib.mhfu_em_playing() == 2
+    for _ in range(2 + int(CLIP_END / SPEED)):
+        seen += script_frame(g)
+    assert g.move("END", "B") == CLIP and g.moves("PLAYS") == 1
+    assert ("X", ENT, 46, 0, 0) in seen and ("E", ENT, *SCRIPT_PAIR, 1) not in seen
+    g.poke(a.ENTITY.SCRIPT_WAKE, "B", 1)  # the carrier hands back: the hub wakes the script
+    assert script_frame(g) == [("E", ENT, *SCRIPT_PAIR, 1)]

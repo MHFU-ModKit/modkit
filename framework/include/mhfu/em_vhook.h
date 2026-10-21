@@ -110,6 +110,8 @@ typedef struct {
     uint32_t sever_pct;          /* mhfu_em_sever_gate's percent, 0 off */
     uint32_t gate_refused;       /* tail cuts the gate refused */
     uint32_t natural_rage;       /* mhfu_em_natural_rage */
+    uint32_t own_enters;         /* AI script enters of MHFU_OWN_MOVE_MAIN, whether the slot held a move or not */
+    uint32_t own_last;           /* slot + 1 of the last that played, 0 none */
 } mhfu_em_status_t;
 
 /* 1 while a big monster's vtable is wrapped (from its spawn to the next quest_beginning). */
@@ -165,7 +167,15 @@ int  mhfu_em_tip(const uint8_t (*pairs)[2], int n);
  * one through the move player that same AI frame: one asked for (mhfu_em_play), else the AFTER of
  * one of ours that ended on its clip, its length or a wall (forced as that one was), else a
  * rule's. A slot with an AFTER ends into its carrier (its back pair), so the host brain does not
- * cut in before the next. A slot's FORCE is the call's, never the slot's. */
+ * cut in before the next. A slot's FORCE is the call's, never the slot's.
+ *
+ * An AI script plays a slot too: `enter MHFU_OWN_MOVE_MAIN k 0`. The slot-32 stub enters the slot's
+ * carrier (em75's hub (0,2) for an empty or out-of-range slot) in place of the main the game
+ * has no table for, and files the same forced request mhfu_em_play does; the brain plays the move
+ * at the next AI step. The script's next pair waits for the carrier's hand-back, as after a native
+ * pair: the wake the hub raises inside the run is cleared by the script's tick after it, and the
+ * move player clears the one its own entry of the hub raises. mhfu_em_status_t.own_enters counts
+ * these enters, own_last gives the slot of the last that played. */
 #define MHFU_EM_MOVES   MHFU_EM_MOVES_MOVES_COUNT
 #define MHFU_EM_KEYS    MHFU_EM_MOVES_KEYS_COUNT
 #define MHFU_EM_NO_MOVE 0xFFu

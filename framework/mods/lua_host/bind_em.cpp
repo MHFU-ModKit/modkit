@@ -151,6 +151,8 @@ int lb_em_status(lua_State *L)
     SF_INT("req_done",    st.req_done);
     SF_INT("req_main",   (st.req_result >> 8) & 0xFF);
     SF_INT("req_sub",     st.req_result & 0xFF);
+    SF_INT("own_enters",  st.own_enters);
+    if (st.own_last) SF_INT("own_last", st.own_last - 1);
     lua_newtable(L);
     for (int i = 0; i < MHFU_EM_RING; i++) {
         /* oldest first: the newest entry sits at ring_idx */

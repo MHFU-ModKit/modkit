@@ -467,6 +467,8 @@ mhfu.EM_UNLIMITED = -1 -- MHFU_EM_UNLIMITED
 ---@field req_done integer requests entered
 ---@field req_main integer the last request's pair
 ---@field req_sub integer
+---@field own_enters integer AI script enters of `mhfu.addr.OWN_MOVE_MAIN`, whether the slot held a move or not
+---@field own_last? integer the slot of the last that played, nil for none
 ---@field ring mhfu.EmEnter[] the last 8 enter-actions, oldest first
 ---@field rule_fired integer[] fires per rule slot
 ---@field rule_left integer[] budget left per rule slot
