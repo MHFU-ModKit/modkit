@@ -110,8 +110,9 @@ def summary(
             f"tired {stamina.tired} frames"
         )
     if charging is not None:
+        ups = ", ".join(f"{n} {g[0]}/{g[1]}/{g[2]}/{g[3]}" for n, g in sorted(charging.ups.items()))
         lines.append(
-            f"  charge: {len(charging.ups)} charge-up moves, transform {charging.transform}; "
+            f"  charge: {ups or 'no charge-up'}; transform {charging.transform}; "
             f"chips {charging.chip_gauge} gauge, {charging.chip_durability} durability; "
             f"cooldowns {charging.cooldown_up} and {charging.cooldown_out}; "
             f"{len(charging.discharge)} discharge pairs"

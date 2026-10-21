@@ -223,7 +223,8 @@ start sets charged, durability 100, gauge 100. Durability 0 or a `discharge` pai
 traps) discharges it: gauge 0, `cooldown_out` frames of cooldown. The state stays across areas; a new
 monster, the quest's end, `mhfu.em_clear()` and `mhfu.em_charge(nil)` reset or drop it, and
 `mhfu.em_charge_status()` reads it. A moves module's `charge` table does all of it with the port,
-its `ups` keys and `transform` by move name or slot.
+its `ups` keys and `transform` by move name or slot; `mhfu-port` writes it from the donor's code
+with `[brain] charge` (docs/formats/p3rd_ai_script.md).
 
 ## AI scripts from the stick
 

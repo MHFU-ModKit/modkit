@@ -54,7 +54,7 @@ START = {(VARIANT, 1): 0, (GAUGE, 2): 0}
 BANDS = (1.0, 0.85, 0.6, 0.2)
 """An HP ratio inside each of a gain's bands (at least 95 %, 75 %, 40 %, below)."""
 ROW = struct.Struct("<Hh")
-"""A chip row: the step a hit takes and the most one reaction burst takes in steps."""
+"""A chip row: the step a hit takes and the most one burst of hits takes in all."""
 RANK = 0
 """The row of the chip rows taken: the lowest rank's."""
 DEPTH = 2
