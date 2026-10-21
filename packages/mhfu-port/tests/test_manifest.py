@@ -413,6 +413,14 @@ def test_steer_window():
         M.loads(_with(OWN + "[moves.o.steer]\nwindow = [1, 2]\n"))
 
 
+def test_attack_levers():
+    m = M.loads(_with("[[attack]]\nid = 34\npower = 18\nkind = 2\nactive = 59\nvolume = 19\n"))
+    (a,) = m.attacks
+    assert (a.kind, a.active, a.is_empty) == (2, 59, False)
+    assert M.loads(M.dumps(m)) == m and M.Attack(1).is_empty
+    assert not M.Attack(1, active=0).is_empty and not M.Attack(1, kind=1).is_empty
+
+
 def test_brain_attacks():
     text = BRAIN + "[brain.pairs]\n'7,14' = 'own'\n[brain.attacks]\n'26' = 40\n"
     m = M.loads(_with(text))
@@ -486,6 +494,8 @@ def test_cuts_share_a_source():
         ("[[hitbox]]\nbone = 1\nradius = 1.0\nset = -1\n", "set"),
         ("[[hitzone]]\nstate = 's'\nrows = [[0]]\n", "rows"),
         ("[[attack]]\nid = 1\npower = 256\n", "byte"),
+        ("[[attack]]\nid = 1\nkind = 256\n", "byte"),
+        ("[[attack]]\nid = 1\nactive = -1\n", "byte"),
         ("[[attack]]\nid = 1\n[[attack]]\nid = 1\n", "twice"),
         ("[[effect]]\nmove = 'm'\nframe = 1\nid = 1\nbone = 1\n", "not in moves"),
         ("[moves.m]\nmain = 1\nanim = 1\n", "both main and sub"),

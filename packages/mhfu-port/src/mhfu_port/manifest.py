@@ -355,11 +355,16 @@ class Attack:
     element: int | None = None
     volume: int | None = None
     """The volume set the record's node walks."""
+    kind: int | None = None
+    """The record's kind byte: 1 weak, 2 hit, 29 a node that hurts nobody (em75's)."""
+    active: int | None = None
+    """The frames its node stays active."""
     label: str = ""
 
     @property
     def is_empty(self) -> bool:
-        return self.power is None and self.element is None and self.volume is None
+        levers = (self.power, self.element, self.volume, self.kind, self.active)
+        return all(v is None for v in levers)
 
 
 @dataclass
@@ -721,7 +726,7 @@ def _validate(m: Manifest) -> None:
         _need(a.id >= 0, w, "id is 0 or more")
         _need(a.id not in ids, w, f"record {a.id} is declared twice")
         ids.add(a.id)
-        for lever in (a.power, a.element, a.volume):
+        for lever in (a.power, a.element, a.volume, a.kind, a.active):
             _need(lever in (None, *BYTE), w, f"{lever} is not a byte")
     for i, e in enumerate(m.effects):
         _need(e.move in m.moves, f"effect[{i}]", f"move {e.move!r} is not in moves")
