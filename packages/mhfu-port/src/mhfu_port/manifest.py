@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import re
 import tomllib
 import types
 import typing
@@ -369,6 +370,38 @@ class Effect:
     label: str = ""
 
 
+Pair = tuple[int, int]
+_PAIR = re.compile(r"(\d+),(\d+)")
+STORED_VARS = range(1, 5)
+"""Script variables with storage of their own; `set_var` 5 to 9 call species code."""
+
+
+@dataclass
+class Brain:
+    """The donor's AI script spliced into the host's, translated from both games' files at each
+    build (`mhfu_port.brain.splice`): the host keeps its own routines but `splice`, whose body
+    becomes the donor's `entry` and what it calls."""
+
+    donor: int
+    """The MHP3rd monster id whose script it is."""
+    splice: str
+    """The host routine whose body is replaced."""
+    entry: str
+    """The donor routine pasted there."""
+    slot: int = 0
+    """The donor's overlay slot (m0, m1, ...)."""
+    history: int | None = None
+    """The script variable that keeps the last call, for `switch_prev_call`."""
+    pairs: dict[str, Pair] = field(default_factory=dict)
+    """The host pair that each donor pair, keyed `"main,sub"`, enters."""
+    when: dict[str, bool] = field(default_factory=dict)
+    """The arm a donor test with no host counterpart takes, by its MHP3rd opcode name."""
+
+    def host_pair(self, pair: Pair) -> Pair | None:
+        """The host pair the donor's `pair` enters; None when the map has none."""
+        return self.pairs.get(f"{pair[0]},{pair[1]}")
+
+
 @dataclass
 class Manifest:
     """One port. Clips, moves and parts are keyed by name."""
@@ -385,6 +418,7 @@ class Manifest:
     attacks: list[Attack] = field(default_factory=list, metadata=_toml("attack"))
     effects: list[Effect] = field(default_factory=list, metadata=_toml("effect"))
     behaviour: Behaviour = field(default_factory=Behaviour)
+    brain: Brain | None = None
     path: Path | None = field(default=None, compare=False, repr=False, metadata=_toml(""))
     """Where it was loaded from; not part of its identity."""
 
@@ -517,6 +551,16 @@ def _own_move(mv: Move, w: str) -> None:
     _need(s.rate is None or 1 <= s.rate <= 0xFFFF, f"{w}.steer", "rate is 1..65535")
 
 
+def _brain(b: Brain) -> None:
+    _need(b.donor > 0 and b.slot >= 0, "brain", "donor is a monster id and slot 0 or more")
+    _need(b.history in (None, *STORED_VARS), "brain.history", "is a script variable, 1 to 4")
+    for key, (main, sub) in b.pairs.items():
+        m = _PAIR.fullmatch(key)
+        w = f"brain.pairs.{key}"
+        _need(m is not None and all(int(x) in BYTE for x in m.groups()), w, "is main,sub")
+        _need(main in MAIN_STATES and sub in BYTE, w, "a host pair is a main state and a sub")
+
+
 def _validate(m: Manifest) -> None:
     """The rules the types cannot say: bounds and cross-references."""
     slots: dict[int, str] = {}
@@ -599,6 +643,8 @@ def _validate(m: Manifest) -> None:
             _need(lever in (None, *BYTE), w, f"{lever} is not a byte")
     for i, e in enumerate(m.effects):
         _need(e.move in m.moves, f"effect[{i}]", f"move {e.move!r} is not in moves")
+    if m.brain is not None:
+        _brain(m.brain)
     own = sum(mv.own for mv in m.moves.values())
     _need(own <= OWN_MOVES, "moves", f"{own} own moves, the framework holds {OWN_MOVES}")
     validate(m)

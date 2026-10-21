@@ -208,6 +208,17 @@ def blk(i: str, kind: str, extra: str = "") -> str:
     return f"[behaviour.blocks.{i}]\nkind = '{kind}'\nat = [0, 0]\n{extra}"
 
 
+BRAIN = "[brain]\ndonor = 23\nsplice = 'base_3'\nentry = 'base_12'\n"
+
+
+def test_brain():
+    text = BRAIN + "history = 1\n[brain.pairs]\n'2,3' = [1, 2]\n[brain.when]\nif_flag_bca = false\n"
+    m = M.loads(_with(text))
+    assert m.brain is not None and m.brain.host_pair((2, 3)) == (1, 2)
+    assert m.brain.host_pair((7, 0)) is None and m.brain.when == {"if_flag_bca": False}
+    assert M.loads(M.dumps(m)) == m and "slot" not in M.dumps(m)
+
+
 def test_minimal():
     m = M.loads(MINIMAL)
     assert m.build == M.Build()
@@ -417,6 +428,12 @@ def test_cuts_share_a_source():
         (OWN + "[moves.o.steer]\nangle = 90.0\n", "angle goes with"),
         (OWN + "[moves.o.steer]\nturn = 'spin'\n", "one of"),
         (OWN + "[moves.o.steer]\nturn = 'hunter'\nrate = 0\n", "rate"),
+        ("[brain]\ndonor = 23\nsplice = 'base_3'\n", "brain.entry: missing"),
+        (BRAIN + "history = 5\n", "script variable"),
+        (BRAIN + "[brain.pairs]\n'2-3' = [1, 2]\n", "is main,sub"),
+        (BRAIN + "[brain.pairs]\n'2,3' = [8, 2]\n", "a host pair"),
+        (BRAIN + "[brain.pairs]\n'2,3' = [1]\n", "2 values"),
+        (BRAIN + "[brain.when]\nif_flag_bca = 1\n", "expected bool"),
     ],
 )
 def test_invalid(extra, why):
