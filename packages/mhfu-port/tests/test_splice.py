@@ -754,9 +754,167 @@ def test_history_unused_notes_nothing():
     assert lines(t.routines["p3_call_1"]) == ["enter 1 2 0", "end return"]
 
 
-def test_history_read_late():
-    _, t = translate(spec(history=2), base_0=op("call", 1), call_1=f"{enter(2, 3)} {prev('', '')}")
-    assert ("error", "P3_HISTORY") in found(t)
+def routine(**routines: str) -> list[str]:
+    """The lines of `p3_call_1`, translated with the history in variable 2."""
+    _, t = translate(spec(history=2), base_0=op("call", 1), **routines)
+    return lines(t.routines["p3_call_1"])
+
+
+def history_found(**routines: str) -> list[tuple[str, str]]:
+    return found(translate(spec(history=2), base_0=op("call", 1), **routines)[1])
+
+
+READ = prev(enter(2, 3), enter(2, 4))
+IF_READ = [
+    "if_var 2 1",
+    "  set_var 2 1",
+    "  enter 1 2 0",
+    "else",
+    "  set_var 2 1",
+    "  enter 1 3 0",
+]
+
+
+def test_history_read_late_notes_in_the_arms_after_it():
+    got = routine(call_1=f"{enter(2, 3)} {prev(enter(2, 3), '')}")
+    assert got == [
+        "enter 1 2 0",
+        "if_var 2 1",
+        "  set_var 2 1",
+        "  enter 1 2 0",
+        "else",
+        "  set_var 2 1",
+        "end return",
+    ]
+    assert not history_found(call_1=f"{enter(2, 3)} {prev(enter(2, 3), '')}")
+
+
+def test_history_read_in_a_branch_notes_the_other_path_first():
+    code = blk("if_enraged", head=f"{enter(2, 3)} {READ}", arms=[other(enter(2, 4))])
+    want = ["if_enraged", "  enter 1 2 0", *(f"  {x}" for x in IF_READ)]
+    assert routine(call_1=code) == [*want, "else", "  set_var 2 1", "  enter 1 3 0", "end return"]
+    assert not history_found(call_1=code)
+
+
+def test_history_read_in_a_branch_with_no_else_adds_one():
+    got = routine(call_1=blk("if_enraged", head=READ))
+    assert got == [
+        "if_enraged",
+        *(f"  {x}" for x in IF_READ),
+        "else",
+        "  set_var 2 1",
+        "end return",
+    ]
+
+
+def indented(nodes: list[str]) -> list[str]:
+    return [f"  {x}" for x in nodes]
+
+
+def test_history_read_in_a_pick_notes_the_other_arms():
+    random = blk("random", arms=[case(50, READ), case(50, enter(2, 3))])
+    assert routine(call_1=random) == [
+        "random",
+        "branch 16",
+        *indented(IF_READ),
+        "branch 16",
+        "  set_var 2 1",
+        "  enter 1 2 0",
+        "end return",
+    ]
+    ranges = blk("switch_range", arms=[case(0, READ), other(enter(2, 3))])
+    assert routine(call_1=ranges) == [
+        "switch_range",
+        "bucket",
+        *indented(IF_READ),
+        "bucket",
+        "  set_var 2 1",
+        "  enter 1 2 0",
+        "end return",
+    ]
+    assert not history_found(call_1=random) and not history_found(call_1=ranges)
+
+
+def test_history_read_in_a_switch_without_a_default_adds_one():
+    code = blk("switch_dist", arms=[case(5, READ)])
+    want = ["switch_dist", "case 5", *indented(IF_READ), "default", "  set_var 2 1", "end return"]
+    assert routine(call_1=code) == want and not history_found(call_1=code)
+
+
+def test_history_read_nested_in_its_own_default():
+    again = blk("switch_prev_call", arms=[case(2, enter(2, 4)), other(enter(7, 5))])
+    code = blk("switch_prev_call", arms=[case(1, enter(2, 3)), other(again)])
+    assert routine(call_1=code) == [
+        "if_var 2 1",
+        "  set_var 2 1",
+        "  enter 1 2 0",
+        "else",
+        "  if_var 2 2",
+        "    set_var 2 1",
+        "    enter 1 3 0",
+        "  else",
+        "    set_var 2 1",
+        "    enter 1 4 0",
+        "end return",
+    ]
+    assert not history_found(call_1=code)
+
+
+def test_history_read_after_code_in_its_own_default():
+    again = blk("switch_prev_call", arms=[case(2, enter(2, 4)), other("")])
+    code = blk("switch_prev_call", arms=[case(1, enter(2, 3)), other(f"{enter(7, 5)} {again}")])
+    assert routine(call_1=code) == [
+        "if_var 2 1",
+        "  set_var 2 1",
+        "  enter 1 2 0",
+        "else",
+        "  enter 1 4 0",
+        "  if_var 2 2",
+        "    set_var 2 1",
+        "    enter 1 3 0",
+        "  else",
+        "    set_var 2 1",
+        "end return",
+    ]
+    assert not history_found(call_1=code)
+
+
+def test_history_read_after_a_call_warns():
+    call = f"{op('call', 2)} {READ}"
+    got = routine(call_1=call, call_2=enter(2, 3))
+    assert got[:2] == ["set_var 2 2", "enter 1 2 0"]
+    assert history_found(call_1=call, call_2=enter(2, 3)) == [("warning", "P3_HISTORY")]
+
+
+def test_history_read_twice_in_a_row_is_an_error():
+    assert history_found(call_1=f"{READ} {READ}") == [("error", "P3_HISTORY")]
+
+
+def test_history_of_an_inlined_read_is_the_calls_not_the_callers():
+    call = f"{op('call', 2)} {enter(2, 3)}"
+    assert routine(call_1=call, call_2=READ) == [
+        "set_var 2 1",
+        "if_var 2 1",
+        "  set_var 2 2",
+        "  enter 1 2 0",
+        "else",
+        "  set_var 2 2",
+        "  enter 1 3 0",
+        "enter 1 2 0",
+        "end return",
+    ]
+    assert not history_found(call_1=call, call_2=READ)
+
+
+def test_a_late_read_builds():
+    h = host()
+    code = donor(base_0=op("call", 1), call_1=f"{enter(2, 3)} {READ}")
+    s = splice.splice(code, h, spec(pairs=TWO, history=2))
+    assert not s.findings
+    built = build.Built.of(h, s.edits)
+    assert built.ok, built.findings
+    mine = next(r for r in built.program.routines() if r.name == "p3_call_1")
+    assert lines(mine.body)[:2] == ["enter 1 2 0", "if_var 2 1"]
 
 
 def test_history_read_in_a_pasted_routine():

@@ -125,8 +125,8 @@ class Where:
     """The routine it lands in, for findings."""
     tail: bool
     """Nothing runs after the node in its routine."""
-    entered: int | None
-    """The call index, when the node opens the body of a called routine."""
+    call: int | None
+    """The call index of the routine the node is in; None while pasting."""
     body: Body
 
 
@@ -162,10 +162,6 @@ def _branches(n: p3.Block) -> tuple[list[p3.Node], list[p3.Node]]:
     return n.head, next((a.body for a in n.arms if a.sub == p3ops.ELSE), [])
 
 
-def _first(nodes: Sequence[p3.Node], name: str) -> bool:
-    return bool(nodes) and isinstance(nodes[0], p3.Block) and nodes[0].op.name == name
-
-
 class Translator:
     """MHP3rd nodes as MHFU nodes: `paste` the entry, and `routines` holds the new routines."""
 
@@ -194,6 +190,9 @@ class Translator:
         self.var: int | None = None
         """The history variable, once the region is known to read the call before."""
         self._stack: list[str] = []
+        self._placed: set[int] = set()
+        """The history reads whose routine has noted its call: a routine that inlines one sees
+        a call there, no read of its own."""
 
     def add(self, w: Where | str, level: str, code: str, text: str) -> None:
         item = w if isinstance(w, str) else w.item
@@ -289,11 +288,63 @@ class Translator:
         return label
 
     def callee(self, name: str, index: int, level: int, item: str) -> list[ir.Node]:
-        """A called routine's body, which first notes the call in the history variable."""
-        nodes = self.donor.routines[name].body
-        out = self.run(nodes, level, item, True, index)
-        if self.var is not None and not _first(nodes, "switch_prev_call"):
-            out.insert(0, edit.insn("set_var", self.var, index))
+        """A called routine's body, which notes the call in the history variable."""
+        out = self.run(self.donor.routines[name].body, level, item, True, index)
+        return out if self.var is None else self.noted(out, index, item)
+
+    def noted(self, nodes: list[ir.Node], index: int, item: str) -> list[ir.Node]:
+        """`nodes`, a routine's body, with `set_var H index` first on every path, but after a read
+        of the history (an `if_var` on H, from `_prev`), whose arms follow it: the variable holds
+        the call before the newest until then. Right while no call precedes the read in the
+        routine, which a call would make the newest (`P3_HISTORY` warns); two reads in a row
+        break it too, the second seeing the first's note (an error). A routine inlined into this
+        one is a call, whatever it reads."""
+        var = self.var
+        assert var is not None
+
+        def note() -> ir.Node:
+            return edit.insn("set_var", var, index)
+
+        def is_read(x: ir.Located) -> bool:
+            return isinstance(x, ir.Block) and x.op.name == "if_var" and x.args.get("var") == var
+
+        def reads(ns: Sequence[ir.Node]) -> bool:
+            return any(is_read(x) and id(x) not in self._placed for x in ir.walk(ns))
+
+        def calls(ns: Sequence[ir.Node]) -> bool:
+            return any(
+                isinstance(x, ir.Insn)
+                and (x.op.name == "call" or (x.op.name == "set_var" and x.args.get("var") == var))
+                for x in ir.walk(ns)
+            )
+
+        def place(ns: list[ir.Node]) -> list[ir.Node]:
+            at = next((i for i, x in enumerate(ns) if reads([x])), None)
+            if at is None:
+                return [note(), *ns]
+            if calls(ns[:at]):
+                text = "a call runs before switch_prev_call: it reads that call, MHP3rd this one"
+                self.add(item, "warning", "P3_HISTORY", text)
+            if reads(ns[at + 1 :]):
+                text = "switch_prev_call twice in a row: the second would read the first's note"
+                self.add(item, "error", "P3_HISTORY", text)
+            return [*ns[:at], sink(ns[at]), *ns[at + 1 :]]
+
+        def sink(n: ir.Node) -> ir.Node:
+            """The note on each path through the block that does not read."""
+            assert isinstance(n, ir.Block)
+            if n.op.shape is Shape.IF:
+                n.head = place(n.head)
+                if not n.arms:
+                    n.arms.append(ir.Arm(1, {}, []))
+            for a in n.arms:
+                a.body = place(a.body)
+            if n.op.shape is Shape.SWITCH and not any(a.sub == 2 for a in n.arms):
+                n.arms.append(ir.Arm(2, {}, [note()]))
+            return n
+
+        out = place(nodes)
+        self._placed |= {id(x) for x in ir.walk(out) if is_read(x)}
         return out
 
     # ---- nodes
@@ -304,17 +355,17 @@ class Translator:
         level: int,
         item: str,
         tail: bool,
-        entered: int | None = None,
+        call: int | None = None,
     ) -> list[ir.Node]:
         b = Body()
         for i, n in enumerate(nodes):
             last = tail and all(_is_end(x) for x in nodes[i + 1 :])
-            b.out += self.node(n, Where(level, item, last, entered if i == 0 else None, b))
+            b.out += self.node(n, Where(level, item, last, call, b))
         return b.out
 
     def sub(self, nodes: Sequence[p3.Node], w: Where) -> list[ir.Node]:
         """A block's body, where its own node was."""
-        return self.run(nodes, w.level, w.item, w.tail)
+        return self.run(nodes, w.level, w.item, w.tail, w.call)
 
     def node(self, n: p3.Node, w: Where) -> list[ir.Node]:
         if isinstance(n, p3.Leave):
@@ -677,19 +728,12 @@ class Translator:
         return self.sub(arms[0].body if arms else [], w)
 
     def _prev(self, n: p3.Block, w: Where) -> list[ir.Node]:
-        """`if_var` on the history, each arm noting the call after it has read it."""
-        if w.entered is None:
-            self.add(
-                w, "error", "P3_HISTORY", "switch_prev_call is only read at the start of a call"
-            )
+        """`if_var` on the history, case by case; `noted` puts each arm's note first."""
+        if w.call is None:
+            self.add(w, "error", "P3_HISTORY", "switch_prev_call is only read in a called routine")
             return []
         if self.var is None:
             return []
-        var, index = self.var, w.entered
-
-        def note() -> ir.Node:
-            return edit.insn("set_var", var, index)
-
         cases: list[tuple[int, list[ir.Node]]] = []
         out: list[ir.Node] = []
         for a in n.arms:
@@ -698,9 +742,8 @@ class Translator:
                 cases.append((a.value, body))
             else:
                 out = body
-        out = [note(), *out]
         for value, then in reversed(cases):
-            out = [edit.if_("if_var", var, value, then=[note(), *then], else_=out)]
+            out = [edit.if_("if_var", self.var, value, then=then, else_=out)]
         return out
 
     def _host(self, n: p3.Insn | p3.Block, w: Where) -> list[ir.Node]:
