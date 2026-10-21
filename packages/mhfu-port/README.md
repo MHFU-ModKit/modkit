@@ -56,6 +56,13 @@ port.pac, port.summary.text()
 | `mhfu-port fidelity M` | The port's skin weights against the donor's own |
 | `mhfu-port slots`, `labels` | Which host move plays which ported clip; hand labels checked against a build |
 
+## The donor's brain
+
+| Command | What it prints |
+|---|---|
+| `mhfu-port brain ID` | An MHP3rd monster's AI script as text (`mhfu_port.brain`; [format](../../docs/formats/p3rd_ai_script.md)) |
+| `mhfu-port brain --check` | Every monster's script lifted and encoded back to the game's bytes |
+
 ## Status
 
 Builds donors whose animation-record offset is pinned in `records.OFFSET`: the Brute Tigrex and
