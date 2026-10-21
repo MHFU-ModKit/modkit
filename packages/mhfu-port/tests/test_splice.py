@@ -795,6 +795,6 @@ def test_brute_cli_own_moves(brute, data, tmp_path, capsys):
     derived = tmp_path / "derived.toml"
     derived.write_text(path.read_text().replace('"7,13" = "slam"', '"7,13" = "own"'))
     out.unlink()
-    assert main(["splice", str(derived), "-o", str(out), *games]) == 1
-    text = capsys.readouterr().out
-    assert "P3_OWN_MISSING" in text and "p3_7_13" in text and not out.exists()
+    assert main(["splice", str(derived), "-o", str(out), *games]) == 0  # derived from the donor
+    assert "pair 7,13 -> own p3_7_13 (slot 0)" in capsys.readouterr().out
+    assert brainfile.load(out).pairs == {(OWN, 0): "p3_7_13"}

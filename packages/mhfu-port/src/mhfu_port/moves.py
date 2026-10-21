@@ -14,7 +14,8 @@ the carrier (`hub` when it names none), the steer and `after`. `tip` is the tail
 `{ joint, carrier }` pairs (`rig.Tip`), which `mhfu.em_tip` takes.
 
 `slots` is the one numbering of own moves: this module writes it, `mhfu_port.lua` registers by it
-and the brain splice's `enter OWN_MOVE_MAIN k 0` names it.
+and the brain splice's `enter OWN_MOVE_MAIN k 0` names it. The manifest it is given has the own
+moves `[brain.pairs]` derive from the donor (`brain.own.expand`), which `cli.build.modules` adds.
 """
 
 from __future__ import annotations

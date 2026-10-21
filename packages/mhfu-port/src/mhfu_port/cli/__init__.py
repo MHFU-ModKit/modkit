@@ -10,8 +10,16 @@ import sys
 from importlib import import_module
 from typing import TYPE_CHECKING, TypeAlias
 
+from mhfu.em.script.check import Finding
+
 if TYPE_CHECKING:
     Subparsers: TypeAlias = argparse._SubParsersAction[argparse.ArgumentParser]
+
+
+def finding_line(f: Finding) -> str:
+    """A finding as one line: `warning P3_X item: text`."""
+    where = f" {f.item}" if f.item else ""
+    return f"{f.level:7} {f.code}{where}: {f.text}"
 
 
 def parser() -> argparse.ArgumentParser:

@@ -97,8 +97,8 @@ build, warnings (`P3_FOLDED`, `P3_APPROX`, `P3_PAIR_UNUSED`, `P3_WHEN`) and note
 ### Own moves
 
 A `[brain.pairs]` value may name an own move of the port's `[moves]` (`"7,13" = "slam"`) instead of
-a host pair; `"own"` stands for the move the build derives, `p3_7_13`, and needs a slot too
-(`P3_OWN_MISSING` until one is made). The donor's `enter 7 13` becomes `enter 16 k 0`: main 16 is
+a host pair; `"own"` stands for the move the build derives from the donor (below), `p3_7_13`. The
+donor's `enter 7 13` becomes `enter 16 k 0`: main 16 is
 `OWN_MOVE_MAIN`, which no species uses, and `k` the move's registry slot. em_vhook plays move `k`
 in place of the pair and the script goes on after the `enter` when it ends, as for a host pair.
 
@@ -107,6 +107,37 @@ The slots are `mhfu_port.moves.slots`: the own moves by sorted name, numbered fr
 `mhfu_port.lua` registers by it, so the number in the script, the module and the registry is one.
 `mhfu-port splice` passes the slots; `-o` names the pair `(16, k)` after the move in the brain
 file, so the Brain tab reads `Move (own k) slam`.
+
+### Derived own moves
+
+`"own"` has the build derive the move from both games' files each time, in `own.expand`
+(`mhfu_port.brain.own`): the moves module, `splice` and the slots read the manifest it returns,
+and nothing derived is stored. A move of the same name in `[moves]` is used instead.
+`mhfu-port own M` lists them.
+
+The donor's handler for the pair is run an AI frame at a time on the clip cursor its own tests
+ask about (`mhfu_port.p3hits`), which gives a chain of steps, `p3_7_14`, `p3_7_14_2`, ..., each a
+clip that hands to the next by `after`:
+
+- **Clips.** The default path. A branch on something the build cannot know (a bearing, a counter,
+  a wait) is tried each way and the path that spawns most attacks and plays fewest clips is taken;
+  the others are named in `P3_OWN_BRANCH`. A looping clip, or one the handler leaves at a frame it
+  tests, gets the `length` the donor played it for.
+- **Attacks.** A record's START and LEN against the cursor at the spawn give the frames; a node
+  that outlives a clip change is split per clip. The record's volume set is matched to the host
+  record whose volumes overlap it most on the port's rig (the same kind first, then power); below
+  0.25 there is no match and the attack is left out. `[brain.attacks] "26" = 40` names the host
+  record for donor record 26; the port may define it with `[[attack]]` and `[[hitbox]]`.
+- **Turn.** A `hunter` steer with the donor's rate and the cursor window it turned in
+  (`steer.window`). What the donor does by code, not by its clips (a slide, a curve), is not carried.
+
+| Finding | Level | What |
+|---|---|---|
+| `P3_OWN_NOCLIPS`, `P3_OWN_CARRIER`, `P3_OWN_SLOTS` | error | no clip for the pair; no carrier for the host; more own moves than the framework holds |
+| `P3_OWN_ATTACK` | warning | a donor record with no host record, or more attacks on a clip than the move player holds: left out |
+| `P3_OWN_PARTIAL` | warning | the walk gave up, or a clip it could not resolve |
+| `P3_OWN_BRANCH`, `P3_OWN_MOTION`, `P3_OWN_START`, `P3_OWN_NEXT` | info | a branch taken one way; code movement; a clip the donor starts past its first frame; a pair the handler hands over to |
+| `P3_OWN_SPLIT`, `P3_OWN_GROUP`, `P3_OWN_ACTIVE` | info | a node split per clip; records that land one hit between them in the donor; a window longer than the host record's life |
 
 ## Checking
 
