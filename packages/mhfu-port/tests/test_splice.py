@@ -275,6 +275,86 @@ def test_global_540_without_case_2_takes_the_default():
     assert got == ["enter 1 2 0"] and found(t) == [("warning", "P3_FOLDED")]
 
 
+# ---- the species query
+
+CHARGED = [case(1, enter(2, 3)), other(enter(2, 4))]
+
+
+def test_the_queries_are_the_charge_helpers():
+    assert splice.QUERIES == (addresses.CHARGE_QUERY_CHARGED, addresses.CHARGE_QUERY_COOLDOWN)
+    assert splice.QUERIES == (0, 6)
+
+
+@pytest.mark.parametrize("arg", splice.QUERIES)
+def test_an_answered_query_stays_a_switch(arg):
+    got, t = translate(spec(charge=True), base_0=blk("switch_query", arg, arms=CHARGED))
+    want = [f"switch_query {arg}", "case 1", "  enter 1 2 0", "default", "  enter 1 3 0"]
+    assert got == want and not t.findings
+
+
+def test_query_cases_ascend_and_repeats_go():
+    arms = [case(3, enter(2, 3)), case(1, enter(2, 4)), case(3, enter(7, 5)), other("")]
+    got, t = translate(spec(charge=True), base_0=blk("switch_query", 0, arms=arms))
+    assert got == ["switch_query 0", "case 1", "  enter 1 3 0", "case 3", "  enter 1 2 0"]
+    assert found(t) == [("info", "P3_DROPPED")]
+
+
+def test_an_empty_case_still_shields_the_default():
+    arms = [case(1, ""), other(enter(2, 3))]
+    got, _ = translate(spec(charge=True), base_0=blk("switch_query", 0, arms=arms))
+    assert got == ["switch_query 0", "case 1", "default", "  enter 1 2 0"]
+
+
+def test_a_query_with_nothing_to_do():
+    got, t = translate(spec(charge=True), base_0=blk("switch_query", 0, arms=[case(1, "")]))
+    assert got == [] and found(t) == [("info", "P3_DROPPED")]
+
+
+@pytest.mark.parametrize(
+    ("arg", "charge"), [(2, True), (3, True), (7, True), (0, False), (6, False)]
+)
+def test_any_other_query_is_answer_0(arg, charge):
+    arms = [case(0, enter(2, 3)), case(1, enter(2, 4)), other(enter(7, 5))]
+    got, t = translate(spec(charge=charge), base_0=blk("switch_query", arg, arms=arms))
+    assert got == ["enter 1 2 0"] and found(t) == [("warning", "P3_FOLDED")]
+    text = t.findings[0].text
+    assert f"switch_query {arg} taken as answer 0" in text
+    assert "case 1 (1 instructions, first enter 2 4), default (1 instructions" in text
+    assert "case 0" not in text
+
+
+def test_answer_0_without_a_case_0_is_the_default():
+    got, t = translate(
+        base_0=blk("switch_query", 2, arms=[case(1, enter(2, 4)), other(enter(2, 3))])
+    )
+    assert got == ["enter 1 2 0"] and found(t) == [("warning", "P3_FOLDED")]
+    got, t = translate(base_0=blk("switch_query", 2, arms=[case(1, enter(2, 4))]))
+    assert got == [] and found(t) == [("warning", "P3_FOLDED")]
+
+
+def test_a_fold_that_drops_no_code_is_quiet():
+    arms = [case(0, enter(2, 3)), case(1, ""), other("")]
+    got, t = translate(base_0=blk("switch_query", 2, arms=arms))
+    assert got == ["enter 1 2 0"] and not t.findings
+
+
+def test_a_folded_arm_makes_no_routine():
+    arms = [case(0, enter(2, 3)), case(1, op("call", 1))]
+    _, t = translate(base_0=blk("switch_query", 2, arms=arms), call_1=enter(2, 4))
+    assert not t.routines
+
+
+def test_the_splice_builds_a_query():
+    sp = spec(charge=True, pairs=TWO)
+    h = host()
+    s = splice.splice(donor(base_0=blk("switch_query", 0, arms=CHARGED)), h, sp)
+    assert not s.findings
+    built = build.Built.of(h, s.edits)
+    assert built.ok, built.findings
+    base_3 = next(r for r in built.program.routines() if r.name == "base_3")
+    assert lines(base_3.body)[1:3] == ["switch_query 0", "case 1"]
+
+
 # ---- tests without a host state
 
 

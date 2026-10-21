@@ -414,6 +414,11 @@ class Brain:
     table from the donor into the moves module (`brain.fatigue`), and the splice turns the
     donor's `if_tired` (and `if_stamina_low` 0) into the host's `if_gauge_a_low` instead of
     asking `[brain.when]`. The host must leave gauge A alone (`P3_FATIGUE_HOST`)."""
+    charge: bool = False
+    """The donor's charged state runs in the game (the framework's charge helper): the splice keeps
+    the donor's `switch_query` on the two args the helper answers (`CHARGE_QUERY_CHARGED`,
+    `CHARGE_QUERY_COOLDOWN`); without it every `switch_query` is taken as answer 0 (never
+    charged)."""
 
     def targets(self, pair: Pair) -> list[Target]:
         """What the donor's `pair` plays, in order: host pairs and own moves' names (`OWN`

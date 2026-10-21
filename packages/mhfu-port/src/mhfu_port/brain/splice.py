@@ -63,6 +63,8 @@ GLOBAL_540 = 2
 HP_SHIFT = 1
 """MHP3rd's `switch_hp` case matches an HP percent at or below it, MHFU's below it (both compare
 the truncated integer percent), so each case moves up by one."""
+QUERIES = (int(addresses.CHARGE_QUERY_CHARGED), int(addresses.CHARGE_QUERY_COOLDOWN))
+"""The `switch_query` args the framework answers for a port with `[brain] charge`."""
 GAUGE = "if_gauge_a_low"
 """The host test the fatigue helper answers."""
 GAUGE_A_OPS = (GAUGE, "refill_gauge_a")
@@ -526,6 +528,15 @@ class Translator:
             self.add(w, "info", "P3_FOLDED", f"{_text(n)} taken as answer {value} ({why})")
         return self.sub(keep.body, w) if keep else []
 
+    def _query(self, n: p3.Block, w: Where) -> list[ir.Node]:
+        """The host's `switch_query` on an arg the charge helper answers; any other is taken as
+        answer 0, as is every one without `[brain] charge`."""
+        arg = n.args["arg"]
+        if self.spec.charge and arg in QUERIES:
+            return self._switch(n, w, arg, bound=False)
+        why = "no charge helper" if not self.spec.charge else "the helper does not answer it"
+        return self._answer(n, w, 0, why)
+
     def _dist(self, n: p3.Block, w: Where) -> list[ir.Node]:
         return self._switch(n, w)
 
@@ -671,6 +682,7 @@ OPS: Mapping[str, Callable[..., list[ir.Node]]] = {
     "if_enraged": Translator._enraged,
     "if_facing": Translator._facing,
     "if_target_side": Translator._side,
+    "switch_query": Translator._query,
     "switch_dist": Translator._dist,
     "switch_hp": Translator._hp,
     "switch_global_540": Translator._global_540,

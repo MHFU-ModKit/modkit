@@ -81,6 +81,7 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 | `switch_mode` | `if_mode2` for mode 1, the default as its else |
 | `if_enraged` | `if_enraged` |
 | `if_facing ang` | `if_pursuit_off_facing` at `ang * 360 / 256` degrees with the arms swapped; past 127, `if_off_facing` |
+| `switch_query arg` | `[brain] charge`: args 0 (charged) and 6 (cooldown running) stay a `switch_query`, which the framework answers, cases ascending and repeats dropped; any other arg, or no `charge`, is answer 0: the case 0 arm or else the default, the rest dropped (`P3_FOLDED`, naming them) |
 | `switch_dist` | `switch_dist`: the cases are hundreds in both; a case at or under an earlier one, which no distance reaches, goes |
 | `switch_hp` | `switch_hp` with each case one higher: MHP3rd's matches the integer HP percent at or below it, MHFU's below it |
 | `if_target_side` | `if_target_in_arc 0 127`: the target's bearing minus the facing in the first half turn (bit 15 clear), arms as they are |

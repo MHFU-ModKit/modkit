@@ -219,6 +219,13 @@ def test_brain():
     assert M.loads(M.dumps(m)) == m and "slot" not in M.dumps(m)
 
 
+def test_brain_charge():
+    m = M.loads(_with(BRAIN + "charge = true\n"))
+    assert m.brain is not None and m.brain.charge and "charge = true" in M.dumps(m)
+    assert not M.loads(_with(BRAIN)).brain.charge  # type: ignore[union-attr]
+    assert M.loads(M.dumps(m)) == m
+
+
 def test_brain_own_moves():
     own = "[moves.slam]\nanim = 40\n" + BRAIN
     text = own + "[brain.pairs]\n'7,13' = 'own'\n'7,14' = 'slam'\n'2,3' = [1, 2]\n"
