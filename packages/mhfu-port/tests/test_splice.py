@@ -121,6 +121,14 @@ def test_shares(weights, want):
     assert splice.shares(weights)[0] == want
 
 
+@pytest.mark.parametrize(
+    ("weights", "whole", "want"),
+    [([1, 2, 3, 4], 10, [3, 6, 10, 13]), ([5, 5], 10, [16, 16]), ([1, 29], 30, [1, 31])],
+)
+def test_shares_within_a_whole(weights, whole, want):
+    assert splice.shares(weights, whole)[0] == want
+
+
 def test_shares_name_what_is_raised():
     assert splice.shares([1, 99])[1] == [0]
 
@@ -137,10 +145,99 @@ def test_random_pads_when_weights_fall_short():
     assert got == ["random", "branch 16", "  enter 1 2 0", "branch 16"]
 
 
+def picks(nodes: Sequence[ir.Node], p: float = 1.0) -> dict[int, float]:
+    """The chance of each `enter 1 k` the nodes make, by k, through nested randoms."""
+    out: dict[int, float] = {}
+    for n in nodes:
+        if isinstance(n, ir.Insn) and n.op.name == "enter":
+            out[n.args["sub"]] = out.get(n.args["sub"], 0) + p
+        elif isinstance(n, ir.Block) and n.op.name == "random":
+            for arm in n.arms:
+                for k, q in picks(arm.body, p * arm.args["weight"] / splice.TOTAL).items():
+                    out[k] = out.get(k, 0) + q
+    return out
+
+
+def wide(weights: Sequence[int], **kw: object) -> tuple[list[ir.Node], splice.Translator]:
+    arms = [case(w, enter(2, k)) for k, w in enumerate(weights)]
+    sp = spec(pairs={f"2,{k}": (1, k) for k in range(len(weights))}, **kw)
+    t = splice.Translator(donor(base_0=blk("random", arms=arms)), sp)
+    return t.paste("base_0", "base_3"), t
+
+
 def test_random_too_wide():
-    arms = [case(1, enter(2, 3)) for _ in range(splice.ARMS + 1)]
+    arms = [case(1, enter(2, 3)) for _ in range(splice.ARMS * splice.GROUP + 1)]
     got, t = translate(base_0=blk("random", arms=arms))
     assert got == [] and found(t) == [("error", "P3_WIDE")]
+
+
+def test_random_with_thirteen_arms_and_no_padding_fits():
+    nodes, t = wide([8, 8, 8, 8, 8, 8, 8, 8, 7, 7, 7, 7, 8])
+    assert [n.op.name for n in nodes] == ["random"] and len(nodes[0].arms) == splice.ARMS
+    assert not t.findings
+
+
+def test_random_with_thirteen_arms_and_padding_is_split():
+    nodes, t = wide([6] * 13)
+    assert found(t) == [("info", "P3_SPLIT")]
+    (outer,) = nodes
+    assert [a.body[0].op.name for a in outer.arms[:2]] == ["random", "random"]
+    assert [sum(a.args["weight"] for a in outer.arms)] == [splice.TOTAL]
+    assert [len(a.body[0].arms) for a in outer.arms[:2]] == [7, 6]
+
+
+def test_a_wide_random_keeps_what_it_draws():
+    weights = [10, 10, 10, 10, 10, 10, 10, 10, 5, 5, 5, 5, 3, 2]
+    nodes, t = wide(weights)
+    assert found(t) == [("info", "P3_SPLIT")] and "14 live arms" in t.findings[0].text
+    got = picks(nodes)
+    assert sorted(got) == list(range(14))
+    assert all(abs(got[k] - w / 100) < 0.02 for k, w in enumerate(weights))
+    assert abs(sum(got.values()) - 1) < 0.01
+    for n in nodes[0].arms:
+        assert len(n.body[0].arms) <= splice.ARMS
+
+
+def test_a_wide_random_keeps_the_arms_in_order():
+    nodes, _ = wide([4] * 16 + [9] * 4)
+    order = [
+        b.body[0].args["sub"]
+        for outer in nodes[0].arms
+        if outer.body
+        for b in outer.body[0].arms
+        if b.body
+    ]
+    assert order == list(range(20))
+
+
+def test_a_wide_random_that_falls_short_keeps_its_pad():
+    weights = [4] * 14
+    nodes, _ = wide(weights)
+    got = picks(nodes)
+    assert abs(sum(got.values()) - 0.56) < 0.02
+    assert nodes[0].arms[-1].body == [] and nodes[0].arms[-1].args["weight"] >= 13
+
+
+def test_a_wide_random_names_what_it_raises():
+    nodes, t = wide([1] * 3 + [29] * 3 + [1] * 8 + [3])
+    assert ("info", "P3_WEIGHT") in found(t) and ("info", "P3_SPLIT") in found(t)
+    assert picks(nodes)
+
+
+def test_a_wide_random_of_nothing_is_dropped():
+    nothing = op("set_target", 0, 0, 0)
+    got, t = translate(base_0=blk("random", arms=[case(7, nothing) for _ in range(14)]))
+    assert got == [] and ("info", "P3_SPLIT") not in found(t)
+    assert found(t).count(("info", "P3_DROPPED")) == 15
+
+
+def test_a_group_with_nothing_to_do_stays_a_wait():
+    nothing = op("set_target", 0, 0, 0)
+    arms = [case(5, nothing) for _ in range(7)] + [case(5, enter(2, k)) for k in range(7)]
+    sp = spec(pairs={f"2,{k}": (1, k) for k in range(7)})
+    t = splice.Translator(donor(base_0=blk("random", arms=arms)), sp)
+    (outer,) = t.paste("base_0", "base_3")
+    assert [bool(a.body) for a in outer.arms[:2]] == [False, True]
 
 
 # ---- buckets, modes, facing
@@ -893,6 +990,15 @@ def test_a_draw_after_a_draw_is_stepped():
     both = f"{pick} {blk('random', arms=[case(50, enter(2, 4)), case(50, enter(2, 3))])}"
     s = splice.splice(donor(base_0=both), host(), spec(pairs=TWO))
     assert [n.op.name for n in s.edits.inserts["u1"].nodes] == ["random", "rng_step2", "random"]
+
+
+def test_the_inner_draws_of_a_split_random_are_stepped():
+    arms = [case(7, enter(2, 3)) for _ in range(14)]
+    s = splice.splice(donor(base_0=blk("random", arms=arms)), host(), spec(pairs=TWO))
+    (outer,) = s.edits.inserts["u1"].nodes
+    inner = [a.body for a in outer.arms if a.body]
+    assert inner and all([n.op.name for n in b] == ["rng_step2", "random"] for b in inner)
+    assert build.Built.of(host(), s.edits).ok
 
 
 def test_a_draw_after_a_yield_is_not_stepped():

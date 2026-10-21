@@ -76,7 +76,7 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 | Donor | Host |
 |---|---|
 | `enter m s` | `enter M S 0`, the pair from `[brain.pairs]`; an own move there: `enter 16 k 0`; a list there: one `enter` per item |
-| `random` | `random`: each weight `w` becomes `w * 32 / 100` by largest remainder, at least 1; a zero arm goes |
+| `random` | `random`: each weight `w` becomes `w * 32 / 100` by largest remainder, at least 1; a zero arm goes. Too many live arms for MHFU's 13 branches (the padding one counts): an outer `random` over groups of at most 12, weighted by their sums, each group an inner `random` weighted within it (`P3_SPLIT`) |
 | `switch_range` | `switch_range`: case `k` is bucket `k + 1`, the default the last, a missing case copies the default |
 | `switch_mode` | `if_mode2` for mode 1, the default as its else |
 | `if_enraged` | `if_enraged` |
@@ -94,10 +94,10 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 | map and area ops | none: the host's roaming owns them |
 
 A random that can follow another draw in the same run gets an `rng_step2` first, as the host's
-own picks do. Findings are errors (`P3_PAIR_UNMAPPED`, `P3_OWN_MISSING`, `P3_UNSUPPORTED`,
+own picks do (a split one's inner randoms do). Findings are errors (`P3_PAIR_UNMAPPED`, `P3_OWN_MISSING`, `P3_UNSUPPORTED`,
 `P3_HOST_OP`, `P3_UNDECIDED`, `P3_LATCH`, `P3_HISTORY`, `P3_WIDE`, `P3_ROUTINE`, `P3_FATIGUE_HOST`), which stop a
 build, warnings (`P3_FOLDED`, `P3_APPROX`, `P3_PAIR_UNUSED`, `P3_WHEN`, `P3_WHEN_IGNORED`) and notes
-(`P3_DROPPED`, `P3_WEIGHT`).
+(`P3_DROPPED`, `P3_WEIGHT`, `P3_SPLIT`, an `info` `P3_FOLDED`).
 
 ### Own moves
 

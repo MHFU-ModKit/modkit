@@ -49,6 +49,8 @@ TOTAL = 32
 """What an MHFU random's weights add up to; MHP3rd's add up to 100."""
 ARMS = 13
 """Branches of an MHFU random, the padding one included."""
+GROUP = ARMS - 1
+"""Live arms of an inner random of a split one: the padding branch makes it ARMS."""
 BUCKETS = 5
 """Buckets of an MHFU switch_range."""
 MODES: Mapping[int, str] = {1: "if_mode2"}
@@ -128,13 +130,14 @@ class Where:
     body: Body
 
 
-def shares(weights: Sequence[int]) -> tuple[list[int], list[int]]:
-    """MHFU weights for MHP3rd's: each `w * 32 / 100` by largest remainder, a non-zero one at least
-    1, the total at most 32; and the positions that were raised to 1."""
+def shares(weights: Sequence[int], whole: int = 100) -> tuple[list[int], list[int]]:
+    """MHFU weights for MHP3rd's, which add up to `whole` or less: each `w * 32 / whole` by
+    largest remainder, a non-zero one at least 1, the total at most 32; and the positions that
+    were raised to 1."""
     exact = [w * TOTAL for w in weights]
-    out = [e // 100 for e in exact]
-    spare = max(0, min(TOTAL, (sum(exact) + 50) // 100) - sum(out))
-    for i in sorted(range(len(out)), key=lambda j: (-(exact[j] % 100), j))[:spare]:
+    out = [e // whole for e in exact]
+    spare = max(0, min(TOTAL, (sum(exact) + whole // 2) // whole) - sum(out))
+    for i in sorted(range(len(out)), key=lambda j: (-(exact[j] % whole), j))[:spare]:
         out[i] += 1
     raised = [i for i, (w, s) in enumerate(zip(weights, out, strict=True)) if w and not s]
     for i in raised:
@@ -427,21 +430,56 @@ class Translator:
             return []
         return self.pasted(name, w.item)
 
+    def _raised(self, w: Where, values: Sequence[int], raised: Sequence[int], what: str) -> None:
+        for i in raised:
+            text = f"{what} weight {values[i]} is raised to 1 of {TOTAL}"
+            self.add(w, "info", "P3_WEIGHT", text)
+
     def _random(self, n: p3.Block, w: Where) -> list[ir.Node]:
         live = [a for a in n.arms if a.value]
-        weights, raised = shares([a.value or 0 for a in live])
+        values = [a.value or 0 for a in live]
+        weights, raised = shares(values)
         if len(live) + (sum(weights) < TOTAL) > ARMS:
-            self.add(w, "error", "P3_WIDE", f"random has {len(live)} live arms, MHFU takes {ARMS}")
-            return []
-        for i in raised:
-            self.add(
-                w, "info", "P3_WEIGHT", f"random weight {live[i].value} is raised to 1 of {TOTAL}"
-            )
+            return self._split(live, w)
+        self._raised(w, values, raised, "random")
         bodies = [self.sub(a.body, w) for a in live]
         if not any(bodies):
             self.add(w, "info", "P3_DROPPED", "random: every arm is empty")
             return []
         return [edit.random(list(zip(weights, bodies, strict=True)))]
+
+    def _split(self, live: Sequence[p3.Arm], w: Where) -> list[ir.Node]:
+        """A random with more live arms than MHFU's takes: an outer random over groups of at most
+        `GROUP`, weighted by their shares, each group an inner random weighted within it. Each
+        level rounds its own weights, so the sums the donor draws survive."""
+        count = -(-len(live) // GROUP)
+        size = -(-len(live) // count)
+        groups = [live[i : i + size] for i in range(0, len(live), size)]
+        sums = [sum(a.value or 0 for a in g) for g in groups]
+        outer, raised = shares(sums)
+        if len(groups) + (sum(outer) < TOTAL) > ARMS:
+            text = (
+                f"random has {len(live)} live arms, a split over {len(groups)} groups is too wide"
+            )
+            self.add(w, "error", "P3_WIDE", text)
+            return []
+        self._raised(w, sums, raised, "random group")
+        branches: list[tuple[int, list[ir.Node]]] = []
+        for group, whole, weight in zip(groups, sums, outer, strict=True):
+            values = [a.value or 0 for a in group]
+            inner, raised = shares(values, whole)
+            self._raised(w, values, raised, "random")
+            bodies = [self.sub(a.body, w) for a in group]
+            pick: list[ir.Node] = []
+            if any(bodies):
+                pick.append(edit.random(list(zip(inner, bodies, strict=True))))
+            branches.append((weight, pick))
+        if not any(pick for _, pick in branches):
+            self.add(w, "info", "P3_DROPPED", "random: every arm is empty")
+            return []
+        text = f"random with {len(live)} live arms is split into {len(groups)} inner randoms"
+        self.add(w, "info", "P3_SPLIT", text)
+        return [edit.random(branches)]
 
     def _range(self, n: p3.Block, w: Where) -> list[ir.Node]:
         cases: dict[int, list[ir.Node]] = {}
