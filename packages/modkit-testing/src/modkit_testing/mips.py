@@ -129,5 +129,37 @@ def mtc1(rt: Reg, fs: int) -> int:
     return 0x11 << 26 | 0x04 << 21 | gpr(rt) << 16 | (fs & 0x1F) << 11
 
 
+def mfc1(rt: Reg, fs: int) -> int:
+    """`mfc1 rt, $f<fs>`."""
+    return 0x11 << 26 | gpr(rt) << 16 | (fs & 0x1F) << 11
+
+
+def lwc1(ft: int, offset: int, base: Reg) -> int:
+    """`lwc1 $f<ft>, offset(base)`."""
+    return _i(0x31, base, ft, offset)
+
+
+def _single(funct: int, fd: int, fs: int, ft: int = 0) -> int:
+    return (
+        0x11 << 26 | 0x10 << 21 | (ft & 0x1F) << 16 | (fs & 0x1F) << 11 | (fd & 0x1F) << 6 | funct
+    )
+
+
+def add_s(fd: int, fs: int, ft: int) -> int:
+    return _single(0x00, fd, fs, ft)
+
+
+def mul_s(fd: int, fs: int, ft: int) -> int:
+    return _single(0x02, fd, fs, ft)
+
+
+def div_s(fd: int, fs: int, ft: int) -> int:
+    return _single(0x03, fd, fs, ft)
+
+
+def trunc_w_s(fd: int, fs: int) -> int:
+    return _single(0x0D, fd, fs)
+
+
 NOP = 0
 RET = jr("ra")
