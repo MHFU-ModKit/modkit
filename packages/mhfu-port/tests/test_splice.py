@@ -906,6 +906,29 @@ def test_history_of_an_inlined_read_is_the_calls_not_the_callers():
     assert not history_found(call_1=call, call_2=READ)
 
 
+def test_history_reads_copied_into_buckets_stay_noted():
+    ranges = blk("switch_range", arms=[case(1, enter(2, 3)), other(op("call", 2))])
+    inlined = [
+        "if_var 2 1",
+        "  set_var 2 2",
+        "  enter 1 2 0",
+        "else",
+        "  set_var 2 2",
+        "  enter 1 3 0",
+    ]
+    assert routine(call_1=ranges, call_2=READ) == [
+        "set_var 2 1",
+        "switch_range",
+        "bucket",
+        *indented(inlined),
+        "bucket",
+        "  enter 1 2 0",
+        "bucket",
+        *indented(inlined),
+        "end return",
+    ]
+
+
 def test_a_late_read_builds():
     h = host()
     code = donor(base_0=op("call", 1), call_1=f"{enter(2, 3)} {READ}")

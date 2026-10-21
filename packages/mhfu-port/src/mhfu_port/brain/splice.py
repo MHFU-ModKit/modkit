@@ -532,6 +532,14 @@ class Translator:
         self.add(w, "info", "P3_SPLIT", text)
         return [edit.random(branches)]
 
+    def _clone(self, nodes: list[ir.Node]) -> list[ir.Node]:
+        """Copies of translated `nodes`, the history reads among them still noted."""
+        out = edit.clone(nodes)
+        for a, b in zip(ir.walk(nodes), ir.walk(out), strict=True):
+            if id(a) in self._placed:
+                self._placed.add(id(b))
+        return out
+
     def _range(self, n: p3.Block, w: Where) -> list[ir.Node]:
         cases: dict[int, list[ir.Node]] = {}
         default: list[ir.Node] = []
@@ -559,7 +567,7 @@ class Translator:
                     "P3_DROPPED",
                     f"switch_range has no case {k}: it takes the default's body",
                 )
-            buckets.append(cases[k] if k in cases else edit.clone(default))
+            buckets.append(cases[k] if k in cases else self._clone(default))
         buckets.append(default)
         if not any(buckets):
             self.add(w, "info", "P3_DROPPED", "switch_range: every arm is empty")

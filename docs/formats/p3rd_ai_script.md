@@ -96,9 +96,9 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 The history is one variable, MHP3rd's two ids: the variable holds the newest call, and a read before
 the routine's own note sees the call before it. The note goes first on each path, but the read's
 arms follow the read, wherever it is (after code, in a branch, in its own default). That is right
-while no call precedes the read in the routine, as at every site of the Brute's and the
-Zinogre's scripts: a call before it would be the newest (`P3_HISTORY` warns), and two reads in a
-row, the second seeing the first's note, are an error.
+while no call precedes the read in the routine, as at every site of the Zinogre's script: a
+call before it would be the newest (`P3_HISTORY` warns), and two reads in a row, the second seeing
+the first's note, are an error.
 
 A random that can follow another draw in the same run gets an `rng_step2` first, as the host's
 own picks do (a split one's inner randoms do). Findings are errors (`P3_PAIR_UNMAPPED`, `P3_OWN_MISSING`, `P3_UNSUPPORTED`,
