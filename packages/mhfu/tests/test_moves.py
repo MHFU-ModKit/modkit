@@ -54,11 +54,12 @@ def test_report_times_the_hit_against_the_spawn() -> None:
 
 
 def test_steer_packs_as_the_spec():
-    sp = moves.Steer((0, 0x2000, 0xFFFF), "fixed", 64, -90.0, 30, True, 90.0, (0, 6, 1))
+    sp = moves.Steer((0, 0x2000, 0xFFFF), "fixed", 64, -90.0, 30, True, 90.0, (0, 6, 1), (10, 40))
     b = sp.pack()
     assert len(b) == a.STEER_SPEC.size
     turn, walls, rate, total, frames, dir_ = struct.unpack_from("<BBHiHH", b, a.STEER_SPEC.STEER)
     assert (turn, walls, rate, total, frames, dir_) == (3, 1, 64, -0x4000, 30, 0x4000)
+    assert struct.unpack_from("<HH", b, a.STEER_SPEC.STEER + a.STEER_PARAMS.WIN_FROM) == (10, 40)
     assert struct.unpack_from("<HBBB", b, a.STEER_SPEC.KEY_COUNT) == (3, 0, 6, 1)
     assert struct.unpack_from("<3H", b, a.STEER_SPEC.KEYS) == (0, 0x2000, 0xFFFF)
 

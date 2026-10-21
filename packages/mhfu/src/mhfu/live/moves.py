@@ -158,6 +158,8 @@ class Steer:
     dir: float = 0.0
     """Degrees of the travel against YAW: which wall sectors count as ahead."""
     stuck: tuple[int, int, int] = (0, 6, 1)
+    window: tuple[int, int] = (0, 0)
+    """Clip frames [from, to) the hunter and away turns apply in; 0, 0 the whole move."""
 
     def pack(self) -> bytes:
         """struct STEER_SPEC."""
@@ -172,6 +174,7 @@ class Steer:
             "<BBH", out, f.STEER + p.TURN, TURNS.index(self.turn), self.walls, self.rate
         )
         struct.pack_into("<iHH", out, f.STEER + p.TOTAL, total, self.frames, _yaw(self.dir))
+        struct.pack_into("<HH", out, f.STEER + p.WIN_FROM, *self.window)
         struct.pack_into("<HBBB", out, f.KEY_COUNT, len(self.curve), *self.stuck)
         struct.pack_into(f"<{len(self.curve)}H", out, f.KEYS, *(k & 0xFFFF for k in self.curve))
         return bytes(out)

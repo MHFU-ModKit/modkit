@@ -83,6 +83,13 @@ def register(sub: Subparsers) -> None:
     c.add_argument("--walls", action="store_true", help="a wall ahead ends the move")
     c.add_argument("--dir", type=float, default=0.0, help="degrees of the travel against YAW")
     c.add_argument("--stuck", type=_ints, default=(0, 6, 1), metavar="MAIN,SUB,MODE")
+    c.add_argument(
+        "--window",
+        type=_ints,
+        default=(0, 0),
+        metavar="FROM,TO",
+        help="clip frames hunter, away turn",
+    )
     c.set_defaults(run=play)
 
     c = cmds.add_parser("watch", help="report the next moves something else plays")
@@ -236,6 +243,7 @@ def play(args: argparse.Namespace) -> int:
         args.walls,
         args.dir,
         (args.stuck[0], args.stuck[1], args.stuck[2]),
+        (args.window[0], args.window[1]),
     )
     ends: dict[str, int] = {}
     size = _log_size(args)
