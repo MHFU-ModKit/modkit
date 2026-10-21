@@ -274,7 +274,7 @@ clip = "charge"
 donor = 23
 splice = "base_3"
 entry = "base_12"
-history = 1
+history = 2
 
 [brain.pairs]
 "1,1" = [
@@ -384,4 +384,4 @@ history = 1
 
 [brain.when]
 if_target_state = true
-if_flag_bca = false
+if_tired = false
