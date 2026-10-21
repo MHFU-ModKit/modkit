@@ -15,6 +15,11 @@ cursor (`CURSOR_GATES`) and of the clip's end. `Walk` runs it an AI frame at a t
 cursor it keeps, answering those tests itself and reading what `Walker` records; where the code
 branches on something it cannot know (a bearing, a counter, a wait) the plan is the path, of those
 tried, that spawns the most attacks and plays the fewest clips.
+
+A walk can also carry entity cells from one AI frame to the next (`track`, read off the stores it
+meets, a counter or a gauge a handler keeps), start them at known values (`facts`), and answer the
+float tests of the monster's HP ratio against a constant (`hp`); `Walk.settle` runs a pair so and
+returns the cells where it ends.
 """
 
 from __future__ import annotations
@@ -22,13 +27,15 @@ from __future__ import annotations
 import struct
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Literal, NamedTuple
+from typing import Any, Literal, NamedTuple
 
-from mhfu.em.moveset import Decide, Site, Walker, known
+import rabbitizer
+from mhfu.em.moveset import Cell, Decide, Site, Walker, known
 from mhfu.files import Extracted
-from mhfu.mips import Code, Fpr, Gpr
+from mhfu.memory import Unmapped
+from mhfu.mips import Code, Fpr, Gpr, Register
 from mhfu.overlay import Overlay
-from rabbitizer import InstrId
+from rabbitizer import InstrId, Instruction
 
 from . import motion
 from . import p3moveset as p3
@@ -53,6 +60,20 @@ SHAPES = ("sphere", "capsule", "capsule2", "box")
 
 PHASE = 0x5D
 """The entity byte a handler's phase machine switches on."""
+STORES: dict[rabbitizer.Enum, int] = {
+    InstrId.cpu_sb: 1,
+    InstrId.cpu_sh: 2,
+    InstrId.cpu_sw: 4,
+}
+"""The stores a tracked cell is probed at, and their widths."""
+COMPARES = {
+    InstrId.cpu_c_lt_s: lambda x, y: x < y,
+    InstrId.cpu_c_le_s: lambda x, y: x <= y,
+    InstrId.cpu_c_eq_s: lambda x, y: x == y,
+}
+"""The float compares `Walk.hp` answers, as the test of their two operands."""
+SCAN = 16
+"""Instructions back from a float compare the constant it tests is searched for."""
 HOOK = 0x90
 """The species vtable slot called every frame: the attacks a clip spawns on its own."""
 KILL = 0x09C94AFC  # noaddr: (entity, slot) ends the attack node in that slot
@@ -277,6 +298,20 @@ class Plan:
     """The clips of the other paths its branches could take."""
 
 
+@dataclass(frozen=True)
+class Settled:
+    """Where a handler run for `Walk.settle` ended."""
+
+    cells: Mapping[Cell, int]
+    """The tracked cells."""
+    left: bool
+    """The handler handed over: it ended, rather than the walk giving up."""
+    ticks: int
+    """AI frames it ran."""
+    undecided: tuple[int, ...]
+    """The branches it met and could not decide, which fell through."""
+
+
 class _Query(NamedTuple):
     """A test of the clip cursor or of the clip's end the handler made, to ask again later."""
 
@@ -338,6 +373,10 @@ class _Run:
     """The windows of the cursor gates that answered yes this tick."""
     played: bool = False
     """A clip started this tick."""
+    cells: dict[Cell, int] = field(default_factory=dict)
+    """The tracked entity cells, as the handler's stores left them."""
+    hp: float | None = None
+    """The HP ratio the float tests of it are answered for."""
 
     @property
     def current(self) -> _Step | None:
@@ -353,13 +392,25 @@ class Walk:
         hits: Hits,
         lengths: Mapping[int, Length],
         step: float = STEP_FRAMES,
+        *,
+        track: Sequence[Cell] = (),
+        facts: Mapping[Cell, int] | None = None,
     ) -> None:
+        """`track` are entity cells (offset, width) whose value the walk carries from one AI frame
+        to the next, read off the stores it meets; `facts` the values cells hold when a run starts,
+        a tracked one's start or a constant."""
         self.ms, self.hits, self.lengths, self.step = ms, hits, lengths, step
+        self.facts = dict(facts or {})
         stores = {
             i.vram: i.rt
             for i in ms.code
             if i.uniqueId == InstrId.cpu_sb and i.getProcessedImmediate() == PHASE
         }
+        self._cells: dict[int, Cell] = {}
+        for i in ms.code:
+            width = STORES.get(i.uniqueId)
+            if width is not None and (i.getProcessedImmediate(), width) in track:
+                self._cells[i.vram], stores[i.vram] = (i.getProcessedImmediate(), width), i.rt
         self._walker = Walker(
             ms.code,
             WATCH,
@@ -382,16 +433,19 @@ class Walk:
         )
 
     @classmethod
-    def of(cls, extracted: Extracted, monster: int, anim: bytes, slot: int = 0) -> Walk:
+    def of(
+        cls, extracted: Extracted, monster: int, anim: bytes, slot: int = 0, **options: Any
+    ) -> Walk:
         """The walk of MHP3rd monster `monster`'s overlay in `slot`, with the clips of its
-        animation file `anim` (the lengths its handlers' tests are answered from)."""
-        found = Species.read(extracted).slots[monster]
+        animation file `anim` (the lengths its handlers' tests are answered from); `options` are
+        `__init__`'s `track` and `facts`."""
+        found = Species.read(extracted).slots.get(monster, ())
         if slot >= len(found):
             raise ValueError(f"monster {monster} has {len(found)} slots, not {slot + 1}")
         ms = Moveset(extracted.overlay(found[slot].file))
         clips = motion.moveset(anim)
         lengths = {i: Length(motion.frames(c), bool(c.loop)) for i, c in clips.items()}
-        return cls(ms, Hits.read(ms.ovl, found[slot].addr), lengths)
+        return cls(ms, Hits.read(ms.ovl, found[slot].addr), lengths, **options)
 
     def _hook_function(self) -> int | None:
         vt = self.ms.vtable
@@ -432,16 +486,26 @@ class Walk:
             notes.append(Note("limit", f"only {len(runs) - 1} runs of its branches were tried"))
         return Plan(at, tuple(best.done), best.leaves, best.left, tuple(notes), tuple(others))
 
-    def _run(self, pair: Pair, vector: dict[int, int]) -> _Run:
+    def settle(self, pair: Pair, hp: float | None = None) -> Settled:
+        """`pair`'s handler run to its end on the default path, with the float tests of the HP
+        ratio against a constant answered for `hp` (the branches it cannot decide fall through):
+        the tracked cells where it stopped."""
+        run = self._run(pair, {}, hp)
+        return Settled(dict(run.cells), run.left, run.ticks, tuple(run.trail))
+
+    def _run(self, pair: Pair, vector: dict[int, int], hp: float | None = None) -> _Run:
         tick = self.ms.tick_entry
         assert tick is not None
-        run = _Run(dict(vector))
+        run = _Run(dict(vector), cells=dict(self.facts), hp=hp)
         decide = self._decider(run)
         at = self._dispatched(pair)
         while run.ticks < MAX_TICKS:
             run.ended = run.played = False
             run.crossed, run.windows, run.asked = [], [], []
-            facts = known({PHASE: run.phase, p3.MAIN: at[0], p3.SUB: at[1]})
+            facts = {
+                **known({PHASE: run.phase, p3.MAIN: at[0], p3.SUB: at[1]}),
+                **run.cells,
+            }
             sites = self._walker.run(tick, None, facts, decide)
             if self._hook is not None and run.clip is not None:
                 sites += self._hook_walker.run(self._hook, None, None, decide)
@@ -482,6 +546,8 @@ class Walk:
         return decide
 
     def _branch(self, run: _Run, pc: int) -> int:
+        if run.hp is not None and (said := self._test_hp(pc, run.hp)) is not None:
+            return said
         if pc not in run.vector:
             run.vector[pc] = FALL
             run.trail.append(pc)
@@ -496,6 +562,44 @@ class Walk:
         if mode is None or f12 is None or mode > max(WINDOWS):
             return None
         return self._ask(run, _Query(mode, _float(f12), _float(f13) if f13 is not None else 0.0))
+
+    def _test_hp(self, pc: int, hp: float) -> int | None:
+        """The outcome of the float-compare branch at `pc` when one operand is a constant loaded
+        from the species' data and the other, the HP ratio, is `hp`; None for any other branch."""
+        code = self.ms.code
+        branch = code.at(pc)
+        if branch.uniqueId not in (InstrId.cpu_bc1t, InstrId.cpu_bc1f):
+            return None
+        back = [code.at(a) for a in range(pc - 4, pc - 4 * SCAN, -4) if a in code.text]
+        compare = next((i for i in back if i.uniqueId in COMPARES), None)
+        if compare is None:
+            return None
+        value = {r: self._constant(code, compare, r) for r in (compare.fs, compare.ft)}
+        known_ = {r: v for r, v in value.items() if v is not None}
+        if len(known_) != 1:
+            return None
+        x, y = (known_.get(r, hp) for r in (compare.fs, compare.ft))
+        holds = COMPARES[compare.uniqueId](x, y)
+        return int(holds == (branch.uniqueId == InstrId.cpu_bc1t))
+
+    def _constant(self, code: Code, before: Instruction, reg: Register) -> float | None:
+        """The float `reg` holds at `before` when the nearest `lwc1` into it before it loads a
+        constant off a base the code knows."""
+        for a in range(before.vram - 4, before.vram - 4 * SCAN, -4):
+            if a not in code.text:
+                return None
+            ins = code.at(a)
+            if ins.uniqueId == InstrId.cpu_lwc1 and ins.ft == reg:
+                base = code.constant(a, ins.rs)
+                if base is None:
+                    return None
+                try:
+                    return _float(code.mem.u32((base + ins.getProcessedImmediate()) & 0xFFFFFFFF))
+                except Unmapped:
+                    return None
+            if ins.modifiesFd() and ins.fd == reg or ins.modifiesFt() and ins.ft == reg:
+                return None
+        return None
 
     def _ask(self, run: _Run, q: _Query) -> int | None:
         yes = self._answer(q, run.clip, run.cursor)
@@ -570,6 +674,10 @@ class Walk:
                 self._spawn(run, s, kind == "spawn")
             elif kind == "kill":
                 self._kill(run, s.args[0])
+            elif kind == "probe" and s.site in self._cells:
+                cell = self._cells[s.site]
+                if s.args[0] is not None:
+                    run.cells[cell] = s.args[0] & ((1 << 8 * cell[1]) - 1)
             elif kind == "probe":
                 run.phase = s.args[0] if s.args[0] is not None else run.phase
             elif kind == "turn" and run.current is not None:
