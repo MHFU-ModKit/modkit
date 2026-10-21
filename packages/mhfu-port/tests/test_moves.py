@@ -97,11 +97,12 @@ def test_lua():
     assert _body(text) == [
         "moves = {",
         'lunge = { main = 1, sub = 4, clip = "dash", hold_max = 12, claim = { main = { 1 } } },',
-        'stamp = { entry = 46, clip = "stamp", attacks = { { 56, 6, 80 } }, carrier = { 0, 2 }, '
-        'steer = { walls = false, curve = "000020004000" }, after = "dash" },',
-        'dash = { entry = 20, clip = "dash", carrier = { 0, 2 }, length = 40, host_attacks = true, '
-        'steer = { walls = true, dir = 180.0, turn = "hunter" }, after = "lunge" },',
-        "spin = { entry = 9, carrier = { 0, 1 }, "
+        'stamp = { entry = 46, slot = 2, clip = "stamp", attacks = { { 56, 6, 80 } }, '
+        'carrier = { 0, 2 }, steer = { walls = false, curve = "000020004000" }, after = "dash" },',
+        'dash = { entry = 20, slot = 0, clip = "dash", carrier = { 0, 2 }, length = 40, '
+        'host_attacks = true, steer = { walls = true, dir = 180.0, turn = "hunter" }, '
+        'after = "lunge" },',
+        "spin = { entry = 9, slot = 1, carrier = { 0, 1 }, "
         'steer = { walls = true, turn = "fixed", total = 90.0, frames = 50 } },',
         "rules = {",
         '{ play = "stamp", from_main = { 0 }, min_frames = 30, dist = { 0.0, 700.0 }, '
@@ -137,6 +138,24 @@ def test_curve_is_the_turns_module_entry():
     turns = layout.turns_lua(_m(), LAYOUT)
     assert f'[46] = "{moves.curve(_m(), "stamp", LAYOUT)}"' in turns
     assert moves.curve(_m(), "dash", LAYOUT) is None  # turns toward the hunter instead
+
+
+def test_slots_are_the_sorted_names():
+    m = _m()
+    assert moves.slots(m) == {"dash": 0, "spin": 1, "stamp": 2}
+    m.moves["alpha"] = manifest.Move(anim=1)
+    assert moves.slots(m) == {"alpha": 0, "dash": 1, "spin": 2, "stamp": 3}  # a pair move has none
+
+
+def test_slots_stop_at_the_registry():
+    m = _m()
+    for i in range(moves.SLOTS):
+        m.moves[f"o{i:02}"] = manifest.Move(anim=i)
+    assert len(moves.slots(m)) == moves.SLOTS and max(moves.slots(m).values()) == moves.SLOTS - 1
+    assert (
+        f"{moves.SLOTS + 3} own moves, the framework holds {moves.SLOTS}"
+        in moves.problems(m, LAYOUT, {6})[0]
+    )
 
 
 def test_hub():
@@ -228,7 +247,9 @@ def test_zinogre(data):
     }
     assert b.layout.frames[46] == 228 and 6 in moves.records(data.fu, 75)
     assert f'curve = "{b.layout.turns[46].lua()}"' in text
-    stamp = 'stamp = { entry = 46, clip = "stamp_right_claw", attacks = { { 56, 6, 80 } }'
+    at = moves.slots(m)
+    assert sorted(at.values()) == list(range(len(own))) and at["stamp"] == 6
+    stamp = 'stamp = { entry = 46, slot = 6, clip = "stamp_right_claw", attacks = { { 56, 6, 80 } }'
     assert stamp + ", carrier = { 0, 2 }" in text
     assert 'after = "dash_stop"' in text and 'turn = "fixed", total = 90.0, frames = 50' in text
     assert '{ play = "stamp", from = "dash", min_frames = 10' in text

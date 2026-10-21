@@ -239,7 +239,9 @@ P.is_own = is_own
 --           clips is shown while it does. `claim = { main = 1 }` (or `{ main = {0, 1}, sub = 7 }`)
 --           enters this move in place of every host-brain pair in that set, so a port with one
 --           attack rides the host's whole attack timing. A move with `entry` and no `main` is
---           an own move (port:move). Default: the manifest's (P.behaviour)
+--           an own move (port:move) and takes the registry slot of its `slot` (the manifest's
+--           module numbers its own moves, which the brain splice's `enter` names), else the
+--           first free one by name. Default: the manifest's (P.behaviour)
 --   rules   port:rule{} specs installed with the port; default: the manifest's
 --   vars, signals  name -> index of the board's counters and signals (port:var, port:fire); default:
 --           the manifest's
@@ -281,7 +283,7 @@ function P.define(spec)
     _req    = nil,      -- a play() issued through the seam, until it lands
     own     = nil,      -- the own move the move player plays
     _slot   = {},       -- own move name -> its slot in the framework's registry
-    _own_at = {},       -- slot -> own move name
+    _own_at = {},       -- slot (from 0) -> own move name
     -- the moves module the moves or rules came from: a re-run of it (a new build deployed while
     -- the game runs) redefines the port (relink_changed)
     _made   = (spec.moves == nil or spec.rules == nil) and package.loaded[spec.name .. "_moves"]
@@ -293,19 +295,20 @@ function P.define(spec)
   local names = {}
   for n in pairs(self.moves) do names[#names + 1] = n end
   table.sort(names)
+  local free = {}   -- own moves without a slot, by name
   for _, n in ipairs(names) do
     local mv = self.moves[n]
     if is_own(mv) then
-      if #self._own_at < MAX_OWN then
-        self._slot[n] = #self._own_at
-        self._own_at[#self._own_at + 1] = n
-      else
-        log("[port:%s] own move '%s' ignored: the framework holds %d", self.name, n, MAX_OWN)
-      end
+      if mv.slot == nil then free[#free + 1] = n else self:_seat(n, mv.slot) end
     elseif mv.main then
       local k = mv.main * 256 + (mv.sub or 0)
       if self._by_pair[k] == nil then self._by_pair[k] = n end
     end
+  end
+  local at = 0
+  for _, n in ipairs(free) do
+    while self._own_at[at] ~= nil do at = at + 1 end
+    self:_seat(n, at)
   end
   for _, r in ipairs(spec.rules or made.rules or {}) do self:rule(r) end
 
@@ -320,6 +323,16 @@ function P.define(spec)
 
   P.ports[spec.name] = self
   return self
+end
+
+--- Put own move `name` in registry slot `k`, unless it is outside the registry or taken.
+function Port:_seat(name, k)
+  if math.type(k) ~= "integer" or k < 0 or k >= MAX_OWN or self._own_at[k] ~= nil then
+    log("[port:%s] own move '%s' ignored: no free slot %s (the framework holds %d)",
+        self.name, name, tostring(k), MAX_OWN)
+    return
+  end
+  self._slot[name], self._own_at[k] = k, name
 end
 
 --- Register the per-tick brain. `fn(state)` where state carries the monster,
@@ -424,7 +437,7 @@ end
 function Port:own_playing()
   if mhfu.em_playing == nil then return nil end
   local slot = mhfu.em_playing()
-  return slot >= 0 and self._own_at[slot + 1] or nil
+  return slot >= 0 and self._own_at[slot] or nil
 end
 
 --- Latch a clip on the animation channel alone, with no behaviour write: the instrument under
@@ -626,7 +639,7 @@ function Port:_seam_move(name)
   local mv = self.moves[name]
   local t = {}
   for k, v in pairs(mv) do t[k] = v end
-  t.after = nil
+  t.after, t.slot = nil, nil
   local nm = mv.after and self.moves[mv.after]
   if is_own(nm) then t.after = self._slot[mv.after]
   elseif nm and nm.main then t.back = { nm.main, nm.sub, 0 } end
@@ -660,14 +673,17 @@ function Port:_arm_native()
   for k = slot, MAX_SUBS - 1 do mhfu.em_substitute(k, 0, EM_ANY, 0, 0, 0) end
   if mhfu.em_move ~= nil then
     mhfu.em_moves_clear()
-    for k, n in ipairs(self._own_at) do
-      if not mhfu.em_move(k - 1, self:_seam_move(n)) then
-        log("[port:%s] own move '%s' not registered: no room for its turn keys", self.name, n)
+    local made = 0
+    for k = 0, MAX_OWN - 1 do
+      local n = self._own_at[k]
+      if n ~= nil then
+        made = made + 1
+        if not mhfu.em_move(k, self:_seam_move(n)) then
+          log("[port:%s] own move '%s' not registered: no room for its turn keys", self.name, n)
+        end
       end
     end
-    if #self._own_at > 0 then
-      log("[port:%s] %d own move(s) registered", self.name, #self._own_at)
-    end
+    if made > 0 then log("[port:%s] %d own move(s) registered", self.name, made) end
   end
   for i = 1, MAX_RULES do
     local r = self._rules[i]
