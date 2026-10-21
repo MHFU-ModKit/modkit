@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
- * em_vhook: takes over a big monster's AI by wrapping four slots of its species
+ * em_vhook: takes over a big monster's AI by wrapping five slots of its species
  * vtable. A species' AI is an overlay reached through a vtable in the EBOOT; the
  * slots are writable and re-read on every dispatch, and a wrapper that tail-calls
  * the original is indistinguishable from the original. Only a word is written.
@@ -13,6 +13,8 @@
  *                                         attacks, effects, sounds
  *   OBJ_VTABLE.BRAIN                      the per-frame brain around the AI step, which
  *                                         poses the joints (POSE_UPDATE, ATTACH)
+ *   slot 53, MONSTER_VTABLE.QUERY         the species' answer to the AI script's switch_query:
+ *                                         (entity, arg)
  *
  * The stubs read a config block on every dispatch, so all of this is retargetable
  * from Lua without a rebuild (public surface: mhfu/em_vhook.h):
@@ -59,6 +61,12 @@
  *                 species' own gate.
  *   BUDGET        slot-32 post + slot-29 one-shot: the ENTITY.ACTION_BUDGET
  *                 override; the stubs carry it, but nothing arms it.
+ *   CHARGE        the brain keeps a gauge, a charged state and a cooldown for the board's
+ *                 monster, moved by the charge-up own moves it starts, the hits it takes and the
+ *                 pairs it enters, and the transform own move it plays when the gauge is full; the
+ *                 query slot's stub answers the AI script from the block's table (mhfu/charge.h):
+ *                 a frame-free leaf returning answers[arg] for that monster and tail-calling the
+ *                 species' own query for every other, a data write like the other slots.
  *   FATIGUE       the brain keeps a stamina for the board's monster, charged when it enters a
  *                 pair and when one of our own moves starts, and writes gauge A for the AI
  *                 script's if_gauge_a_low to read as "tired" (mhfu/fatigue.h).
@@ -92,6 +100,7 @@
  * the dwell counter and the distance.
  */
 #include "mhfu/call.h"
+#include "mhfu/charge.h"
 #include "mhfu/em_vhook.h"
 #include "mhfu/events.h"
 #include "mhfu/fatigue.h"
@@ -102,6 +111,7 @@
 #include "mhfu/monster_events.h"
 #include "internal.h"
 #include "em_vhook_stubs.h"
+#include "charge_logic.h"
 #include "fatigue_logic.h"
 #include <stddef.h>
 
@@ -218,6 +228,30 @@ static_assert(offsetof(mhfu_fatigue_t, cfg)    == MHFU_FATIGUE_CFG,        "FATI
 static_assert(offsetof(mhfu_fatigue_t, stamina) == MHFU_FATIGUE_STAMINA,   "FATIGUE layout");
 static_assert(offsetof(mhfu_fatigue_t, pair)   == MHFU_FATIGUE_PAIR,       "FATIGUE layout");
 static_assert(offsetof(mhfu_fatigue_t, gauge)  == MHFU_FATIGUE_GAUGE,      "FATIGUE layout");
+static_assert(sizeof(mhfu_charge_up_t)         == MHFU_CHARGE_UP_SIZE,     "CHARGE_UP layout");
+static_assert(offsetof(mhfu_charge_up_t, gain) == MHFU_CHARGE_UP_GAIN,     "CHARGE_UP layout");
+static_assert(sizeof(mhfu_charge_pair_t)       == MHFU_CHARGE_PAIR_SIZE,   "CHARGE_PAIR layout");
+static_assert(sizeof(mhfu_charge_cfg_t)        == MHFU_CHARGE_CFG_SIZE,    "CHARGE_CFG layout");
+static_assert(offsetof(mhfu_charge_cfg_t, pair_count) == MHFU_CHARGE_CFG_PAIR_COUNT,
+              "CHARGE_CFG layout");
+static_assert(offsetof(mhfu_charge_cfg_t, chip_gauge) == MHFU_CHARGE_CFG_CHIP_GAUGE,
+              "CHARGE_CFG layout");
+static_assert(offsetof(mhfu_charge_cfg_t, chip_durability) == MHFU_CHARGE_CFG_CHIP_DURABILITY,
+              "CHARGE_CFG layout");
+static_assert(offsetof(mhfu_charge_cfg_t, cooldown_up) == MHFU_CHARGE_CFG_COOLDOWN_UP,
+              "CHARGE_CFG layout");
+static_assert(offsetof(mhfu_charge_cfg_t, cooldown_out) == MHFU_CHARGE_CFG_COOLDOWN_OUT,
+              "CHARGE_CFG layout");
+static_assert(offsetof(mhfu_charge_cfg_t, ups)   == MHFU_CHARGE_CFG_UPS,   "CHARGE_CFG layout");
+static_assert(offsetof(mhfu_charge_cfg_t, pairs) == MHFU_CHARGE_CFG_PAIRS, "CHARGE_CFG layout");
+static_assert(sizeof(mhfu_charge_t)            == MHFU_CHARGE_SIZE,        "CHARGE layout");
+static_assert(offsetof(mhfu_charge_t, entity)  == MHFU_CHARGE_ENTITY,      "CHARGE layout");
+static_assert(offsetof(mhfu_charge_t, asked)   == MHFU_CHARGE_ASKED,       "CHARGE layout");
+static_assert(offsetof(mhfu_charge_t, cfg)     == MHFU_CHARGE_CFG,         "CHARGE layout");
+static_assert(offsetof(mhfu_charge_t, gauge)   == MHFU_CHARGE_GAUGE,       "CHARGE layout");
+static_assert(offsetof(mhfu_charge_t, hp)      == MHFU_CHARGE_HP,          "CHARGE layout");
+static_assert(offsetof(mhfu_charge_t, hits)    == MHFU_CHARGE_HITS,        "CHARGE layout");
+static_assert(MHFU_CHARGE_ANSWERS == 0 && MHFU_CHARGE_ANSWERS_N == 8, "CHARGE layout");
 
 #define CFG_CANARY_VAL 0x5645484Bu   /* 'VEHK' */
 
@@ -242,20 +276,28 @@ static_assert(sizeof(tail_t) % 4 == 0, "zeroed word by word after the config");
  * They come from the user partition, and only pointers live here. */
 #define RET_INSNS   4     /* jr ra; nop, padded to 16 bytes */
 #define STUBS       (STUB_AI_INSNS + STUB_ACT_INSNS + STUB_EVT_INSNS + 2 * MHFU_WRAP_WORDS \
-                     + RET_INSNS)
-#define BLOCK_BYTES (STUBS * 4 + CFG_SIZE + sizeof(tail_t) + sizeof(mhfu_em_board_t) \
-                     + sizeof(mhfu_fatigue_t) + 128)
+                     + STUB_QRY_INSNS + RET_INSNS)
+#define BLOCK_BYTES (STUBS * 4 + MHFU_EM_BLOCK_SIZE + 128)
+static_assert(CFG_SIZE + sizeof(tail_t) + sizeof(mhfu_em_board_t) + sizeof(mhfu_fatigue_t)
+              + sizeof(mhfu_charge_t) == MHFU_EM_BLOCK_SIZE, "EM_BLOCK layout");
+static_assert(CFG_SIZE + sizeof(tail_t) == MHFU_EM_BLOCK_BOARD, "EM_BLOCK layout");
+static_assert(MHFU_EM_BLOCK_BOARD + sizeof(mhfu_em_board_t) == MHFU_EM_BLOCK_FATIGUE,
+              "EM_BLOCK layout");
+static_assert(MHFU_EM_BLOCK_FATIGUE + sizeof(mhfu_fatigue_t) == MHFU_EM_BLOCK_CHARGE,
+              "EM_BLOCK layout");
 
 static uint32_t *g_stub_ai;
 static uint32_t *g_stub_act;
 static uint32_t *g_stub_evt;
 static uint32_t *g_stub_brain;        /* the OBJ_VTABLE.BRAIN wrapper (wrap.h) */
 static uint32_t *g_stub_gate;         /* the OBJ_VTABLE.CUT_GATE wrapper */
+static uint32_t *g_stub_qry;          /* the MONSTER_VTABLE.QUERY stub */
 static uint32_t *g_stub_ret;
 static em_vhook_cfg_t *g_cfgp;
 static volatile tail_t *T;
 static volatile mhfu_em_board_t *g_board;   /* after the tail: the board the rules and Lua share */
 static volatile mhfu_fatigue_t *g_fat;      /* after the board: the fatigue helper's block */
+static volatile mhfu_charge_t *g_chg;       /* after the fatigue block: the charge helper's */
 static volatile mhfu_em_moves_t *R;   /* the own-move registry */
 
 #define MOVES_MAGIC 0x564F4D45u        /* 'EMOV' */
@@ -300,15 +342,15 @@ static void place_block(uint8_t *base)
     g_stub_brain = (uint32_t *)(base + (STUB_AI_INSNS + STUB_ACT_INSNS + STUB_EVT_INSNS) * 4);
     g_stub_gate = (uint32_t *)(base + (STUB_AI_INSNS + STUB_ACT_INSNS + STUB_EVT_INSNS
                                        + MHFU_WRAP_WORDS) * 4);
+    g_stub_qry = (uint32_t *)(base + (STUBS - RET_INSNS - STUB_QRY_INSNS) * 4);
     g_stub_ret = (uint32_t *)(base + (STUBS - RET_INSNS) * 4);
     g_cfgp     = (em_vhook_cfg_t *)(base + STUBS * 4);
     T          = (volatile tail_t *)(base + STUBS * 4 + CFG_SIZE);
     g_board    = (volatile mhfu_em_board_t *)(base + STUBS * 4 + CFG_SIZE + sizeof(tail_t));
     g_fat      = (volatile mhfu_fatigue_t *)(base + STUBS * 4 + CFG_SIZE + sizeof(tail_t)
                                              + sizeof(mhfu_em_board_t));
-    for (unsigned k = 0; k < (CFG_SIZE + sizeof(tail_t) + sizeof(mhfu_em_board_t)
-                              + sizeof(mhfu_fatigue_t)) / 4; k++)
-        ((uint32_t *)g_cfgp)[k] = 0;
+    g_chg      = (volatile mhfu_charge_t *)(base + STUBS * 4 + MHFU_EM_BLOCK_CHARGE);
+    for (unsigned k = 0; k < MHFU_EM_BLOCK_SIZE / 4; k++) ((uint32_t *)g_cfgp)[k] = 0;
     cfg_reset_live();
 }
 
@@ -374,8 +416,10 @@ static uint32_t g_orig_ai;
 static uint32_t g_orig_act;
 static uint32_t g_orig_evt;
 static uint32_t g_orig_gate;         /* the species' own CUT_GATE */
+static uint32_t g_orig_qry;          /* the species' own QUERY */
 #endif
 static int      g_installed;
+static int      g_qry_wrapped;       /* MONSTER_VTABLE.QUERY carries the charge stub */
 
 /* --- the brain: slot 29 calls it every AI frame, before the C step. ----
  *
@@ -451,6 +495,7 @@ static const volatile mhfu_steer_spec_t *steer_of(const volatile mhfu_em_own_t *
 }
 
 static void fat_own(uint32_t ent, uint32_t slot);
+static void chg_own(uint32_t ent, uint32_t slot);
 
 /* the move player's next move is slot's, on ent: what ours() reads */
 static void tag(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m)
@@ -459,6 +504,7 @@ static void tag(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m
     R->tag_started = m->started + 1;   /* the step starts it right after us */
     R->plays++;
     fat_own(ent, slot);
+    chg_own(ent, slot);
 }
 
 static int play_slot(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m, int force)
@@ -472,6 +518,18 @@ static int play_slot(uint32_t ent, uint32_t slot, const volatile mhfu_move_state
     if (!mhfu_move_play(ent, &mv)) return 0;
     tag(ent, slot, m);
     return 1;
+}
+
+/* The move that just ended on its clip's end into its carrier or on a wall names an AFTER, which
+ * plays this frame: that move's slot, else -1. */
+static int chain_due(uint32_t ent, const volatile mhfu_move_state_t *m)
+{
+    const int k = ours(m);
+    if (k < 0 || m->state != MHFU_MOVE_DONE || m->entity != ent
+        || !(m->end == MHFU_MOVE_END_BACK || m->end == MHFU_MOVE_END_WALL)
+        || R->moves[k].after == MHFU_EM_NO_MOVE)
+        return -1;
+    return k;
 }
 
 /* rule r's pair or own move, dwell, distance and cooldown hold on ent this frame */
@@ -674,11 +732,60 @@ static void fat_off(void)
     fat_forget();
 }
 
+/* --- charge: a gauge, a charged state and a cooldown for the board's monster, answered through
+ * the species' query slot (mhfu/charge.h) ------------------------------------------------------ */
+
+/* A new monster, or none: nothing seen, and the query stub answers for nobody. */
+static void chg_forget(void) { chg_reset(g_chg); }
+
+static void chg_off(void)
+{
+    g_chg->enabled = 0;
+    chg_forget();
+}
+
+/* Each AI frame of the board's monster: the baseline, the cooldown, the hits, a discharge, and the
+ * transform once the gauge is full and the move player has nothing of ours to finish. */
+static void chg_frame(uint32_t ent, uint32_t pair, const volatile mhfu_move_state_t *m)
+{
+    chg_t *c = g_chg;
+    if (!c->enabled || ent != g_board->entity) return;
+    const uint32_t hp = mhfu_mem_read_u16(ent + MHFU_ENTITY_HP);
+    if (!c->seen) {
+        chg_start(c, ent, hp);
+    } else {
+        chg_tick(c);
+        if (hp < c->hp) chg_hit(c);
+        c->hp = hp;
+        chg_settle(c, pair);
+        const uint32_t now = g_cfgp->ai_ticks;
+        if (chg_wants_transform(c) && hp && !busy(m) && chain_due(ent, m) < 0 && !R->req_ent
+            && !chg_pair_discharges(&c->cfg, pair)
+            && (!c->xform_at || now - c->xform_at >= MHFU_CHARGE_ASK_GAP)
+            && mhfu_em_play(ent, c->cfg.transform, 1))
+            c->xform_at = now;
+    }
+    chg_answers(c);
+}
+
+/* The move player took own move `slot` on ent: the transform's start charges, a charge-up's
+ * raises the gauge. */
+static void chg_own(uint32_t ent, uint32_t slot)
+{
+    chg_t *c = g_chg;
+    if (!c->enabled || !c->seen || ent != g_board->entity) return;
+    if (!chg_transform_start(c, slot))
+        chg_up_start(c, slot, mhfu_mem_read_u16(ent + MHFU_ENTITY_HP),
+                     mhfu_mem_read_u16(ent + MHFU_ENTITY_MAX_HP));
+    chg_answers(c);
+}
+
 /* ent's board: counters, signals and parts 0, the generator reseeded; ent 0 for none yet. The
  * monster is due its anger threshold. */
 static void board_reset(uint32_t ent)
 {
     fat_forget();
+    chg_forget();
     volatile uint32_t *w = (volatile uint32_t *)g_board;
     for (unsigned k = 0; k < sizeof(mhfu_em_board_t) / 4; k++) w[k] = 0;
     g_thr_ent = 0;
@@ -978,16 +1085,14 @@ static int act(uint32_t ent, const volatile mhfu_move_state_t *m, const seen_t *
 {
     scan(ent, m, s, 1);
     int took = 0, plays = 0;
-    int k = ours(m);
+    const int due = chain_due(ent, m);
     if (R->req_ent == ent) {
         R->req_ent = 0;
         play_slot(ent, R->req_slot, m, (int)R->req_force);
     } else if (react_take(ent, m, s)) {
         took = 1;
-    } else if (k >= 0 && m->state == MHFU_MOVE_DONE && m->entity == ent
-               && (m->end == MHFU_MOVE_END_BACK || m->end == MHFU_MOVE_END_WALL)
-               && R->moves[k].after != MHFU_EM_NO_MOVE) {
-        if (play_slot(ent, R->moves[k].after, m, m->move.force)) R->chained++;
+    } else if (due >= 0) {
+        if (play_slot(ent, R->moves[due].after, m, m->move.force)) R->chained++;
         else R->tag_slot = MHFU_EM_NO_MOVE;   /* an empty AFTER: not again */
     } else {
         plays = 1;
@@ -1073,6 +1178,7 @@ static uint32_t brain(uint32_t ent)
     fat_frame(ent, pair);
     const volatile mhfu_move_state_t *m = mhfu_move_state();
     if (!m || !R) return 0;
+    chg_frame(ent, pair, m);
     seen_t seen = {};
     seen.edges = mhfu_monster_events_frame(ent, m->entity == ent && m->skipping, &seen.parts,
                                            &seen.broke);
@@ -1205,6 +1311,23 @@ static void build_events_stub(uint32_t original)
         return;
     }
     for (int k = n; k < STUB_EVT_INSNS; k++) g_stub_evt[k] = MIPS_NOP;
+}
+
+/* --- MONSTER_VTABLE.QUERY: the charge block's monster answered from its table, any other
+ * entity by the species' own query. Frame-free and branchless (emv_build_query_stub). 0 when the
+ * stub does not fit. --- */
+static int build_query_stub(uint32_t original)
+{
+    int overflow = 0;
+    int n = emv_build_query_stub(g_stub_qry, STUB_QRY_INSNS, (uint32_t)(uintptr_t)g_chg, original,
+                                 (uint32_t)(uintptr_t)g_stub_ret, &overflow);
+    if (overflow) {
+        mhfu_log("[%s] query stub is %d insns > STUB_QRY_INSNS %d - no charge", OWNER, n,
+                 STUB_QRY_INSNS);
+        return 0;
+    }
+    for (int k = n; k < STUB_QRY_INSNS; k++) g_stub_qry[k] = MIPS_NOP;
+    return 1;
 }
 #endif
 
@@ -1365,6 +1488,7 @@ extern "C" void mhfu_em_clear(void)
     g_natural = 1;
     g_thr_pending = 1;
     fat_off();
+    chg_off();
 }
 
 /* --- the tail tip --- */
@@ -1563,6 +1687,60 @@ extern "C" void mhfu_em_fatigue_status(mhfu_fatigue_status_t *out)
     out->gauge = g_fat->gauge;
 }
 
+/* --- charge --- */
+
+extern "C" int mhfu_em_charge(const mhfu_charge_cfg_t *cfg)
+{
+    if (!g_chg) return 0;
+    if (!cfg) {
+        const int was = g_chg->enabled != 0;
+        chg_off();
+        if (was) mhfu_log("[%s] charge off", OWNER);
+        return 1;
+    }
+    if (const char *bad = chg_check(cfg)) {
+        mhfu_log("[%s] charge refused: %s", OWNER, bad);
+        return 0;
+    }
+    if (g_installed && !g_qry_wrapped) {
+        mhfu_log("[%s] charge refused: the species' query slot is not wrapped", OWNER);
+        return 0;
+    }
+    /* the same settings again change nothing, the state included */
+    const volatile uint32_t *live = (const volatile uint32_t *)&g_chg->cfg;
+    const uint32_t *next = (const uint32_t *)cfg;
+    int same = g_chg->enabled != 0;
+    for (unsigned k = 0; same && k < sizeof(*cfg) / 4; k++) same = live[k] == next[k];
+    if (same) return 1;
+    g_chg->enabled = 0;                      /* off while we write, as a rule's LEFT */
+    copy_words(&g_chg->cfg, cfg, sizeof(*cfg));
+    chg_forget();
+    g_chg->enabled = 1;
+    mhfu_log("[%s] charge: transform slot %d, %u charge-up(s), chips %d/%d, cooldowns %u/%u, "
+             "%u discharge pair(s)", OWNER,
+             cfg->transform == MHFU_CHARGE_NO_SLOT ? -1 : (int)cfg->transform,
+             (unsigned)cfg->up_count, (int)cfg->chip_gauge, (int)cfg->chip_durability,
+             (unsigned)cfg->cooldown_up, (unsigned)cfg->cooldown_out, (unsigned)cfg->pair_count);
+    return 1;
+}
+
+extern "C" void mhfu_em_charge_status(mhfu_charge_status_t *out)
+{
+    if (!out) return;
+    *out = mhfu_charge_status_t();
+    if (!g_chg) return;
+    out->armed = g_chg->enabled;
+    out->charged = g_chg->charged;
+    out->gauge = g_chg->gauge;
+    out->durability = g_chg->durability;
+    out->cooldown = g_chg->cooldown;
+    out->up_starts = g_chg->up_starts;
+    out->transforms = g_chg->transforms;
+    out->discharges = g_chg->discharges;
+    out->hits = g_chg->hits;
+    out->asked = g_chg->asked;
+}
+
 /* --- rage and the cut's gate --- */
 
 extern "C" int mhfu_em_rage(int on)
@@ -1598,6 +1776,7 @@ static void quest_reset(void)
 {
     R->tag_slot = MHFU_EM_NO_MOVE;
     fat_off();
+    chg_off();
     board_reset(0);
 }
 
@@ -1650,6 +1829,23 @@ static void wrap_brain(uint32_t vt)
 }
 
 static int g_gate_wrapped;
+
+/* The species' query slot, wrapped for the charge helper: a vtable swap, claimed with the rest. It
+ * is not needed for the rest, so a failure is logged and mhfu_em_charge refuses. */
+static void wrap_query(uint32_t vt)
+{
+    const uint32_t slot = vt + MHFU_MONSTER_VTABLE_QUERY;
+    g_orig_qry = mhfu_mem_read_u32(slot);
+    if (!g_orig_qry || !build_query_stub(g_orig_qry)) {
+        mhfu_log("[%s] query 0x%08X: no wrapper, no charge", OWNER, (unsigned)g_orig_qry);
+        return;
+    }
+    mhfu_hook_flush_caches();
+    mhfu_hook_rc_t rc = mhfu_hook_vtable(slot, (uint32_t)(uintptr_t)g_stub_qry, OWNER);
+    g_qry_wrapped = rc == MHFU_HOOK_OK;
+    mhfu_log("[%s] query 0x%08X -> 0x%08X%s", OWNER, (unsigned)g_orig_qry,
+             (unsigned)(uintptr_t)g_stub_qry, g_qry_wrapped ? "" : ": claim failed, no charge");
+}
 
 /* The cut's gate of this species, wrapped on the first percent; a vtable swap, claimed with the
  * rest and restored with them. 0 when it cannot be. */
@@ -1722,6 +1918,7 @@ static void install_for(uint32_t entity)
              (unsigned)(uintptr_t)g_stub_act, (unsigned)g_orig_evt,
              (unsigned)(uintptr_t)g_stub_evt);
     wrap_brain(vt);
+    wrap_query(vt);
 }
 
 static void uninstall(void)
@@ -1731,6 +1928,7 @@ static void uninstall(void)
     g_installed = 0;
     g_tip_wrapped = 0;
     g_gate_wrapped = 0;
+    g_qry_wrapped = 0;
     T->count = 0;
     g_cfgp->step_fn = 0;
     mhfu_em_clear();
@@ -1800,6 +1998,7 @@ extern "C" int mhfu_em_init(void)
     place_moves(g_host_moves);
     g_installed = 1;
     g_tip_wrapped = 1;
+    g_qry_wrapped = 1;
     g_host_step = 0;
     rage_reset();
     mhfu_move_init();
@@ -1811,6 +2010,15 @@ extern "C" void mhfu_em_host_latch(uint32_t vtable) { T->vtable = vtable; }
 
 /* the species' gate slot as its wrapper runs it: gate_call, calling mhfu_host_gate for the original */
 extern "C" uint32_t mhfu_em_host_gate(uint32_t ent) { return gate_call(ent); }
+
+/* the species' query slot as its stub runs it: the table for the charge block's monster, 0 for
+ * the species' own (the game_task default) and for an arg past the table */
+extern "C" uint32_t mhfu_em_host_query(uint32_t ent, uint32_t arg)
+{
+    const int own = g_chg->entity && g_chg->entity == ent;
+    if (own) g_chg->asked = g_chg->asked + 1;
+    return own && arg < MHFU_CHARGE_ANSWERS_N ? g_chg->answers[arg] : 0;
+}
 
 /* the monster spawned, as on_spawn's */
 extern "C" void mhfu_em_host_spawn(uint32_t ent) { board_reset(ent); }

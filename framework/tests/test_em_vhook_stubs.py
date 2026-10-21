@@ -12,7 +12,7 @@ import pytest
 from mhfu import addresses
 from mhfu.mips import decode
 from rabbitizer import Instruction
-from unicorn import UC_HOOK_MEM_READ, UcError
+from unicorn import UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE, UcError
 
 BASE = int(addresses.USER_RAM) + 0x100000  # where the words are decoded
 CFG = BASE + 0x4000
@@ -20,6 +20,8 @@ RET = BASE + 0x3000
 ORIG_AI = int(addresses.USER_RAM) + 0x200000
 ORIG_ACT = ORIG_AI + 0x100
 BRAIN_FN = ORIG_AI + 0x200
+ORIG_QRY = ORIG_AI + 0x300
+CHG = BASE + 0x5000
 SP, T7 = 29, 15
 
 SHIM = """
@@ -29,6 +31,9 @@ int ai(uint32_t *o, uint32_t cfg, uint32_t orig, uint32_t ret, uint32_t brain, i
 { return emv_build_ai_stub(o, STUB_AI_INSNS, cfg, orig, ret, brain, ov); }
 int act(uint32_t *o, uint32_t cfg, uint32_t orig, uint32_t moves, int *ov)
 { return emv_build_act_stub(o, STUB_ACT_INSNS, cfg, orig, moves, ov); }
+int qry_cap(void) { return STUB_QRY_INSNS; }
+int qry(uint32_t *o, uint32_t chg, uint32_t orig, uint32_t ret, int *ov)
+{ return emv_build_query_stub(o, STUB_QRY_INSNS, chg, orig, ret, ov); }
 int cfg_size(void) { return CFG_SIZE; }
 int cfg_step(void) { return CFG_STEP_FN; }
 int evt(uint32_t *o, uint32_t cfg, uint32_t orig, uint32_t ret, int *ov)
@@ -48,8 +53,8 @@ int cfg_ring_idx(void) { return CFG_RING_IDX; }
 
 
 class Stubs:
-    def __init__(self, lib: ctypes.CDLL, ai: list[int], act: list[int]) -> None:
-        self.lib, self.ai, self.act = lib, ai, act
+    def __init__(self, lib: ctypes.CDLL, ai: list[int], act: list[int], qry: list[int]) -> None:
+        self.lib, self.ai, self.act, self.qry = lib, ai, act, qry
         self.cfg_size, self.act_frame = lib.cfg_size(), lib.act_frame()
 
 
@@ -62,8 +67,10 @@ def stubs(host_lib: Callable[..., ctypes.CDLL], tmp_path_factory: pytest.TempPat
     n_ai = lib.ai(out, CFG, ORIG_AI, RET, BRAIN_FN, ctypes.byref(ov))
     ai = list(out[:n_ai])
     n_act = lib.act(out, CFG, ORIG_ACT, BASE + 0x8000, ctypes.byref(ov))
+    act = list(out[:n_act])
+    n_qry = lib.qry(out, CHG, ORIG_QRY, RET, ctypes.byref(ov))
     assert not ov.value, "a stub outgrew its slot"
-    return Stubs(lib, ai, list(out[:n_act]))
+    return Stubs(lib, ai, act, list(out[:n_qry]))
 
 
 def _ins(words: list[int]) -> list[Instruction]:
@@ -90,7 +97,7 @@ def _imm(w: int) -> int:
 
 
 def test_branchless(stubs: Stubs) -> None:
-    for words in (stubs.ai, stubs.act):
+    for words in (stubs.ai, stubs.act, stubs.qry):
         assert not any(i.isBranch() for i in _ins(words))
 
 
@@ -382,3 +389,121 @@ def test_a_second_own_enter_replaces_the_play(stubs: Stubs, mips: Any) -> None:
         m.set_reg(reg, v)
     m.run(STUB, CALLER, count=2000)
     assert _req(stubs, m) == [ENTITY, 7, 1, 2, 8]
+
+
+# --- the species' query, MONSTER_VTABLE.QUERY, answered for the charge block's monster
+
+QRY_RET = 0x13000  # the ret stub: jr ra
+CHG_AT = 0x70000  # the charge block in the machine
+OWNER = ENTITY + 0x1000
+SAVED = (
+    "s0",
+    "s1",
+    "s2",
+    "s3",
+    "s4",
+    "s5",
+    "s6",
+    "s7",
+    "gp",
+    "sp",
+    "fp",
+    "ra",
+    "a0",
+    "a1",
+    "a2",
+    "a3",
+)
+
+
+def _run_query(
+    stubs: Stubs,
+    mips: Any,
+    entity: int,
+    arg: int,
+    owner: int = OWNER,
+    answers: tuple[int, ...] = (),
+) -> tuple[Any, int, list[int]]:
+    """Runs the query stub as the AI script's switch_query calls it: (entity, arg), the block's
+    monster `owner` with `answers`. Returns the machine, where it went (the species' own query or
+    the caller) and the data addresses it touched."""
+    out, ov = (ctypes.c_uint32 * 64)(), ctypes.c_int(0)
+    n = stubs.lib.qry(out, CHG_AT, RUN_ORIG, QRY_RET, ctypes.byref(ov))
+    assert not ov.value
+    m = mips()
+    m.write(STUB, list(out[:n]))
+    m.write(QRY_RET, [mips.jr("ra"), mips.NOP])
+    m.write(CHG_AT + int(addresses.CHARGE.ANSWERS), [*answers, *[0] * (8 - len(answers))])
+    m.write(CHG_AT + int(addresses.CHARGE.ENTITY), [owner])
+    touched: list[int] = []
+    m.uc.hook_add(
+        UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE,
+        lambda _u, _t, addr, _s, _v, _d: touched.append(addr),
+    )
+    for k, reg in enumerate(SAVED):
+        m.set_reg(reg, 0x1000 + k if reg not in ("a0", "a1", "ra", "sp") else 0)
+    for reg, v in (("a0", entity), ("a1", arg), ("ra", CALLER), ("sp", 0x3F000)):
+        m.set_reg(reg, v)
+    went: list[int] = []
+    for stop in (RUN_ORIG, CALLER):
+        m.at(stop, lambda mm, s=stop: (went.append(s), mm.uc.emu_stop()))
+    with suppress(UcError):
+        m.uc.emu_start(STUB, 0xFFFFFFF0, count=200)
+    assert len(went) == 1
+    return m, went[0], touched
+
+
+def _asked(m: Any) -> int:
+    return int(m.read(CHG_AT + int(addresses.CHARGE.ASKED))[0])
+
+
+def test_query_stub_is_frame_free_and_ends_in_one_jr(stubs: Stubs) -> None:
+    assert _sp_uses(stubs.qry) == [] and len(stubs.qry) <= stubs.lib.qry_cap()
+    ins = _ins(stubs.qry)
+    assert not any(i.isJumpWithAddress() for i in ins)
+    assert ins[-2].isJump() and not ins[-2].isJrRa() and ins[-1].isNop()
+    assert sum(1 for i in ins if i.isJump()) == 1
+
+
+def test_query_answers_the_blocks_monster_from_its_table(stubs: Stubs, mips: Any) -> None:
+    table = (1, 0, 5, 0, 7, 0, 1, 9)
+    for arg, want in enumerate(table):
+        m, went, _ = _run_query(stubs, mips, OWNER, arg, answers=table)
+        assert went == CALLER and m.reg("v0") == want, arg
+        assert _asked(m) == 1
+
+
+def test_query_past_the_table_answers_0(stubs: Stubs, mips: Any) -> None:
+    for arg in (8, 9, 15, 16, 0x100, 0x7FFFFFFF, 0xFFFFFFFF):
+        m, went, _ = _run_query(stubs, mips, OWNER, arg, answers=(1,) * 8)
+        assert went == CALLER and m.reg("v0") == 0, arg
+
+
+def test_query_of_any_other_entity_runs_the_species_own(stubs: Stubs, mips: Any) -> None:
+    for entity in (ENTITY, OWNER + 0x800, OWNER - 4, 0):
+        m, went, _ = _run_query(stubs, mips, entity, 6, answers=(1,) * 8)
+        assert went == RUN_ORIG and m.reg("a0") == entity and m.reg("a1") == 6
+        assert _asked(m) == 0
+
+
+def test_query_with_no_monster_runs_the_species_own(stubs: Stubs, mips: Any) -> None:
+    for entity in (0, ENTITY, OWNER):
+        m, went, _ = _run_query(stubs, mips, entity, 0, owner=0, answers=(1,) * 8)
+        assert went == RUN_ORIG and _asked(m) == 0
+
+
+def test_query_keeps_the_callers_registers(stubs: Stubs, mips: Any) -> None:
+    for entity in (OWNER, ENTITY):
+        m, _, _ = _run_query(stubs, mips, entity, 6, answers=(1,) * 8)
+        want = {
+            reg: 0x1000 + k for k, reg in enumerate(SAVED) if reg not in ("a0", "a1", "ra", "sp")
+        }
+        assert {reg: m.reg(reg) for reg in want} == want
+        assert (m.reg("a0"), m.reg("a1"), m.reg("ra"), m.reg("sp")) == (entity, 6, CALLER, 0x3F000)
+
+
+def test_query_touches_only_its_block(stubs: Stubs, mips: Any) -> None:
+    size = int(addresses.CHARGE.size or 0)
+    for entity, arg in ((OWNER, 3), (OWNER, 0xFFFFFFFF), (ENTITY, 6)):
+        _, _, touched = _run_query(stubs, mips, entity, arg, answers=(1,) * 8)
+        assert touched and all(CHG_AT <= t < CHG_AT + size for t in touched), (entity, arg)

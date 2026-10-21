@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /* em_vhook: the core wraps slots of the spawned big monster's species vtable,
- * MONSTER_VTABLE.ENTER_ACTION (provisions a behaviour pair), .AI_STEP (every frame), .ANIM_EVENTS
- * and OBJ_VTABLE.BRAIN (the tail tip).
+ * MONSTER_VTABLE.ENTER_ACTION (provisions a behaviour pair), .AI_STEP (every frame), .ANIM_EVENTS,
+ * .QUERY (the AI script's switch_query) and OBJ_VTABLE.BRAIN (the tail tip).
  *
  *   substitution  the engine's (main, id) is rewritten before enter-action runs, so our
  *                 pair is provisioned like a native one;
@@ -23,6 +23,9 @@
  *                 by a rule, or after the move before them;
  *   fatigue       a stamina for the board's monster, charged per pair entered and own move
  *                 started, shown to the AI script as gauge A low (mhfu/fatigue.h);
+ *   charge        a gauge, a charged state and a cooldown for the board's monster, moved by
+ *                 charge-up own moves, hits and a transform own move, answered to the AI script's
+ *                 switch_query (mhfu/charge.h);
  *   step          a C function on every AI frame, on the game thread, before the host step;
  *   tail tip      a port's tip joints posed from carriers of the live tail until the drop.
  *
