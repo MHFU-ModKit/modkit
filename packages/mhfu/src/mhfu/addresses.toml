@@ -939,7 +939,7 @@ VALID = { offset = 0x4C, type = "u32", doc = "1 once written; 0 while it is rewr
 
 [struct.EM_MOVES]
 doc = "em_vhook's own-move registry in partition memory (em_vhook.cpp): a port's own moves by slot, played by the move player on the AI step that asks"
-size = 0x31BC
+size = 0x4DBC
 [struct.EM_MOVES.fields]
 MAGIC = { offset = 0x00, type = "u32", doc = "0x564F4D45 (EMOV)" }
 REQ_ENT = { offset = 0x04, type = "ptr", doc = "a play asked for (mhfu_em_play): the monster, taken at its next AI step; 0 none" }
@@ -950,9 +950,9 @@ PLAYS = { offset = 0x14, type = "u32", doc = "moves started from here: asked, by
 CHAINED = { offset = 0x18, type = "u32", doc = "of them by AFTER" }
 KEY_TOP = { offset = 0x1C, type = "u32", doc = "KEYS in use" }
 MOVES = { offset = 0x20, type = "EM_OWN[96]", doc = "the moves by slot" }
-KEYS = { offset = 0x1FA0, type = "u16[2048]", doc = "every move's turn keys, YAW every 2 clip frames" }
-SCRATCH = { offset = 0x2FA0, type = "STEER_SPEC", doc = "the steering handed to the move player for the move it plays next" }
-REQ_FORCE = { offset = 0x31B8, type = "u32", doc = "1: the play asked for starts while the monster's notice runs (MOVE.FORCE)" }
+KEYS = { offset = 0x1FA0, type = "u16[5632]", doc = "every move's turn keys, YAW every 2 clip frames" }
+SCRATCH = { offset = 0x4BA0, type = "STEER_SPEC", doc = "the steering handed to the move player for the move it plays next" }
+REQ_FORCE = { offset = 0x4DB8, type = "u32", doc = "1: the play asked for starts while the monster's notice runs (MOVE.FORCE)" }
 
 [struct.FLINCH_PART]
 doc = "one part's flinch state (ENTITY.FLINCH_PARTS)"

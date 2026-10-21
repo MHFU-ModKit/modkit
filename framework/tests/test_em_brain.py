@@ -561,12 +561,12 @@ def test_an_own_moves_hunter_turn_keeps_to_its_steer_window(
 
 
 def test_keys_have_room(g: Game) -> None:
-    assert g.own(0, 46, keys=256)
-    for slot in range(1, 8):
+    full = a.EM_MOVES.KEYS.count // 256
+    for slot in range(full):
         assert g.own(slot, 46, keys=256)
-    assert not g.own(8, 46, keys=1)
+    assert not g.own(full, 46, keys=1)
     g.lib.mhfu_em_moves_clear()
-    assert g.own(8, 46, keys=256) and g.moves("KEY_TOP") == 256
+    assert g.own(full, 46, keys=256) and g.moves("KEY_TOP") == 256
 
 
 def test_a_rule_on_an_event_fires_in_the_frame_it_is_seen(g: Game) -> None:

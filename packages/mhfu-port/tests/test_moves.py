@@ -257,8 +257,11 @@ def test_check(extra, lay, known, why):
 
 def test_pool():
     lay = layout.Layout(LAYOUT.entries, turns={46: travel.Turn(500, (0,) * 251, 0, None)})
-    many = "".join(f"[moves.s{i}]\nclip = 'stamp'\n" for i in range(9))
-    with pytest.raises(ManifestError, match="need 2259 keys, the framework holds 2048"):
+    n = moves.POOL // 251 + 1
+    many = "".join(f"[moves.s{i}]\nclip = 'stamp'\n" for i in range(n))
+    with pytest.raises(
+        ManifestError, match=f"need {251 * n} keys, the framework holds {moves.POOL}"
+    ):
         moves.check(_m(many), lay)
 
 
