@@ -4,8 +4,9 @@
 from the extracted game (`places.MHFU`) through `mhfu.em.intel.build`.
 
 The cache is `$XDG_CACHE_HOME/mhfu-studio/species/emNN.json` (`~/.cache` without the variable);
-a cached document is rebuilt when its overlay's sha1 is not the extracted overlay's. Intel with a
-census attached comes from `mhfu intel --log` into a directory you name.
+a cached document is rebuilt when its overlay's sha1 is not the extracted overlay's, or it
+predates the animation events. Intel with a census attached comes from `mhfu intel --log` into a
+directory you name.
 """
 
 from __future__ import annotations
@@ -68,7 +69,7 @@ def cached(species: int, game: Extracted, root: Path | None = None) -> SpeciesIn
     sha1 = hashlib.sha1(game.read(files.em_overlay(species))).hexdigest()
     if path.is_file():
         si = SpeciesIntel.load(path)
-        if si.overlay.get("sha1") == sha1:
+        if si.overlay.get("sha1") == sha1 and si.has_events:
             return si
     from mhfu.em import intel
 

@@ -42,7 +42,7 @@ def test_cache(tmp_path, monkeypatch):
     def build(g, species):
         builds.append(species)
         sha1 = hashlib.sha1(ovl.read_bytes()).hexdigest()
-        return {"host_species": species, "overlay": {"sha1": sha1}, "pairs": []}
+        return {"host_species": species, "overlay": {"sha1": sha1}, "pairs": [], "events": {}}
 
     monkeypatch.setattr(intel, "build", build)
     assert sp.find(75, data=game).host_species == 75 and builds == [75]
@@ -51,6 +51,11 @@ def test_cache(tmp_path, monkeypatch):
     ovl.write_bytes(b"two")
     sp.find(75, data=game)
     assert builds == [75, 75]
+    path = sp.cache_dir() / "em75.json"
+    old = json.loads(path.read_text())
+    del old["events"]  # a document from before the animation events
+    path.write_text(json.dumps(old))
+    assert sp.find(75, data=game).has_events and builds == [75, 75, 75]
     assert sp.find(76, data=game) is None
     monkeypatch.delenv("MHFU_DATA", raising=False)
     assert sp.find(75) is None
