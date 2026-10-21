@@ -39,7 +39,7 @@ uv run studio port push ports/zinogre.toml           # the same writes into the 
 |---|---|
 | `studio open [PATH]` | The window, with PATH open; `--workspace NAME`, `--size WxH` |
 | `studio render selftest\|map\|monster` | A stage or a monster to PNG, without a window |
-| `studio port scene\|clips\|align\|check\|hit\|push` | A port's contents, clip coverage and labels, timing against the host, checks, its Lua module, and the same writes into the running game (`MHFU_LANE` picks a lane's) |
+| `studio port scene\|clips\|align\|check\|hit\|push` | A port's contents, clip coverage and labels, timing against the host (the handler's hit checks and the attacks its entry's animation events spawn), checks, its Lua module, and the same writes into the running game (`MHFU_LANE` picks a lane's) |
 | `studio map inject\|edit\|push\|exits\|surfaces\|budget\|textures\|verify` | A map document into the running game, one edit list offline or live, and what a stage holds |
 
 `--help` on any of them says more.
