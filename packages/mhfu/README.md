@@ -72,6 +72,7 @@ and constants; the commands below are built on it.
 | `mhfu reloc OVERLAY DELTA -o OUT` | An overlay moved to another address |
 | `mhfu moveset`, `phases`, `chain SPECIES` | A big monster's moves, what ends each, what follows it |
 | `mhfu script EM`, `--all`, `--source` | A big monster's AI script, disassembled: routines, structure, stats; `--source` writes a species row as source text (a game listing: keep it out of repositories) |
+| `mhfu script EM --vars` | The script variables 1 to 9, a line each: free to keep a value in, or kept by the engine, the species' own code or the script (`--doc FILE`: a brain file's build) |
 | `mhfu script EM --check FILE`, `--build FILE -o OUT` | An edited source text vetted, one line per finding; `--build` writes the image (`--base ADDR`, `--map MAP` for where things landed) unless a finding is an error |
 | `mhfu effects`, `attacks` | The effects and attacks each move spawns |
 | `mhfu abi inventory\|vtables\|interface\|factory\|classes\|callers` | The engine-to-overlay interface: overlays, entity vtables and their slots, em id to overlay, calls through a slot |

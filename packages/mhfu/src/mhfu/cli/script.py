@@ -6,6 +6,7 @@
     mhfu script 75 --variant 5      # another map type's
     mhfu script 75 --routine ADDR   # one routine, flow-followed from its address
     mhfu script 75 --stats          # counts by kind and opcode, enter pairs, conditions
+    mhfu script 75 --vars           # which script variables are free to use, and who keeps the rest
     mhfu script 75 --json           # the same as data
     mhfu script 75 --row 76         # a sibling species the overlay serves
     mhfu script 75 --source -o F    # the species row as source text, to a file
@@ -13,6 +14,7 @@
     mhfu script 75 --build F -o OUT # the same, then the image to OUT: --base ADDR, --map MAP
     mhfu script 75 --doc F          # a brain file's edits to the row: findings, id, worst run
     mhfu script 75 --doc F --source # the program they build, as source text
+    mhfu script 75 --doc F --vars   # the same survey of that program
     mhfu script --all               # one coverage line per big-monster overlay
 
 The coverage line counts routines, instructions, opcodes the game has no case for and routines
@@ -24,7 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -33,6 +35,7 @@ from ..em import script
 from ..em.script import brainfile, build
 from ..em.script.check import Finding
 from ..em.script.parse import ParseError
+from ..em.script.vars import Var
 from ..files import EM_SPECIES, Extracted
 from .binary import _address
 from .intel import species
@@ -48,6 +51,9 @@ def register(sub: Subparsers) -> None:
     p.add_argument("--row", type=int, help="species row of a sibling the overlay serves (em75: 76)")
     p.add_argument("--routine", type=_address, metavar="ADDR", help="only this routine")
     p.add_argument("--stats", action="store_true", help="counts instead of the listing")
+    p.add_argument(
+        "--vars", action="store_true", help="the script variables: free, or who keeps each"
+    )
     p.add_argument("--json", action="store_true", help="data instead of text")
     p.add_argument(
         "--source",
@@ -76,6 +82,12 @@ def run(args: argparse.Namespace) -> int:
     sc = script.Scripts(game, args.species)
     if args.check or args.build:
         return edited(sc, args)
+    if args.vars:
+        emit(
+            vars_text(script.vars.survey(script.lift.lift(sc, args.row), sc.ovl), args.json),
+            args.out,
+        )
+        return 0
     if args.source:
         lines = script.source.render(script.lift.lift(sc, args.row))
         emit("\n".join(line.text for line in lines), args.out)
@@ -143,13 +155,26 @@ def from_doc(game: Extracted, args: argparse.Namespace) -> int:
     built = build.compile(bf, game, bf.overlay if args.row is None else args.row)
     if not report(built.findings):
         return 1
-    if args.source:
+    if args.vars:
+        emit(vars_text(script.vars.survey(built.program, game.em(bf.overlay)), args.json), args.out)
+    elif args.source:
         emit("\n".join(ln.text for ln in script.source.render(built.program)), args.out)
     else:
         worst = built.budget.worst
         run_text = "" if worst is None else f", worst run {worst.count} of {script.budget.LIMIT}"
         print(f"row {built.row} id {built.id:08X}{run_text}")
     return 0
+
+
+def vars_text(s: Mapping[int, Var], as_json: bool) -> str:
+    """A line per script variable: number, kind, uses, why."""
+    if as_json:
+        rows = [{"var": v.number, "kind": v.kind, "uses": v.uses, "why": v.why} for v in s.values()]
+        return json.dumps(rows, indent=1)
+    return "\n".join(
+        f"var {v.number}  {v.kind:<7}  uses {v.uses:<3}  {'; '.join(v.why)}".rstrip()
+        for v in s.values()
+    )
 
 
 def image_map(img: script.asm.Image) -> dict[str, object]:

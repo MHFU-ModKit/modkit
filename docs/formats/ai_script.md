@@ -81,6 +81,27 @@ and `if_in_section` match a night area by its day twin, `switch_area` a night ma
   `SCRIPT_CONTEXT` picks. The next run resumes there.
 - A raised interrupt bit in `SCRIPT_PENDING` switches the next run to the header's routine for it.
 
+## Variables
+
+`set_var`, `reset_var`, `if_var` and `if_var3_zero` name a script variable, 1 to 9. Who keeps each
+is in `mhfu.em.script.vars`, `mhfu script EM --vars` and the Brain tab's Names list:
+
+| Variable | Storage | Kept by |
+|---|---|---|
+| 1 | `ENTITY.SCRIPT_VAR_1`, u8 | the engine, in every species: `MONSTER_STEP` counts it down every frame while `+0x4C4` is 0; `SET_SCRIPT_VAR_1` sets it to 2 |
+| 2 | `ENTITY.SCRIPT_VAR_2`, u8 | free, except in the species that call `GAUGE_A_LATCH` (em01, em15, em20, em54, em59, em82): it sets 1 when gauge A runs out. Spawn, entering main 6 and `clear_counters` only zero it (a reset) |
+| 3 | `ENTITY.SCRIPT_VAR_3`, s8 | the engine, in every species: `MONSTER_STEP` zeroes it every frame in combat, else counts it down |
+| 4 | `ENTITY.SCRIPT_VAR_4`, u8 | nobody: free unless a script uses it (em75's does, as an area test) |
+| 5 to 9 | none | species code: `set_var` calls the species vtable at `+0x94`, `+0x9C`, `+0xA4`, `+0xCC`, `+0xD4`, `if_var` at `+0x98`, `+0xA0`, `+0xA8`, `+0xD0`, `+0xD8` |
+
+A species' overlay may also store to a byte (em75's move handlers store to 1 and 3). The survey
+counts the stores at exactly a variable's offset in the species overlay, through any base
+register, and its `jal`s to the two helpers; it never scans the engine's own code, which has other
+structs with a field at the same offset. A variable is, in order, engine, species (the overlay
+stores or calls a helper), script (a node names it) or free, which is safe to keep a value in; 5
+to 9 are never free. The splice picks the first free one for the MHP3rd call history
+(`[brain] history`).
+
 ## Run budget
 
 `AI_SCRIPT` counts every dispatch: a counter is bumped before each one, and at 1000 the run ends
