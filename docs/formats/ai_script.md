@@ -79,6 +79,11 @@ and `if_in_section` match a night area by its day twin, `switch_area` a night ma
   run (see "Run budget"). Only `enter` (0x05, `main sub gate`) ends a run: it enters the pair
   through enter-action mode 1 and saves the next address in `SCRIPT_PCS`, under the slot
   `SCRIPT_CONTEXT` picks. The next run resumes there.
+- `enter 16 k 0` (`addresses.OWN_MOVE_MAIN`, main 16 and sub k) is no game pair: with the framework's
+  em_vhook on the species, its enter-action stub enters own move k's carrier (em75's hub `(0,2)`
+  for an empty or out-of-range slot) and plays the move at the next AI step, forced past the
+  notice. The run resumes after it when the move and its `after` chain end and the carrier hands
+  back, as after a native pair. Without the framework the game has no table for main 16.
 - A raised interrupt bit in `SCRIPT_PENDING` switches the next run to the header's routine for it.
 
 ## Variables
@@ -176,7 +181,7 @@ and the resume point behind each `enter`) is an upper bound. `check` turns it in
 | `UNRESOLVED` | error | A label that `resolve` has not turned into an index |
 | `FALLS_OFF` | error | A routine with new code that can run off its end: finish it with `end` or `goto` |
 | `GATE_NONZERO` | error | An `enter` gate other than 0, which lands in the freeze gate |
-| `PAIR_RANGE` | error | An `enter` main outside 0..7, which has no action table |
+| `PAIR_RANGE` | error | An `enter` main outside 0..7, which has no action table, except 16, an own move |
 | `END_KIND_CONTEXT` | error | An `end` kind the game acts on in no entry, or one for a list the routine does not run from (an `end return` in a routine only base lists run) |
 | `OPS_PER_RUN` | warning, error | A path through new code can dispatch more than 900 in a run; more than 999 |
 | `RESTART_LOOP` | error, warning | `base[0]` can restart with no yield: nothing on the path decides; or only when its conditions hold |

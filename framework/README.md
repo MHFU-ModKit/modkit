@@ -138,6 +138,12 @@ port's generated `<name>_moves.lua`: `port:move("stamp")` (`ports/README.md` "Mo
 behaviour"). Its `tip` goes to `mhfu.em_tip`: each tip joint takes its carrier's pose after the
 species brain, so the tail stays whole until it drops.
 
+An AI script plays own move k with `enter 16 k 0` (`mhfu.addr.OWN_MOVE_MAIN`): the enter-action
+stub enters the slot's carrier (the hub `(0,2)` for an empty or out-of-range slot, the game never
+sees main 16), files a forced play, and the brain starts the move at the next AI step; the script
+carries on after its `enter` once the move and its `after` chain end and the carrier hands back.
+`mhfu.em_status()` has `own_enters` and `own_last`, and the ring shows `(16, k)`.
+
 ## Rules on monster events
 
 A brain rule (`mhfu.em_rule`) with `on = "<event>"` fires in C in the AI frame the event is seen,
