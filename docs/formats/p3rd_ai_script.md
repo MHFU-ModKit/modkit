@@ -75,7 +75,7 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 
 | Donor | Host |
 |---|---|
-| `enter m s` | `enter M S 0`, the pair from `[brain.pairs]`; an own move there: `enter 16 k 0` |
+| `enter m s` | `enter M S 0`, the pair from `[brain.pairs]`; an own move there: `enter 16 k 0`; a list there: one `enter` per item |
 | `random` | `random`: each weight `w` becomes `w * 32 / 100` by largest remainder, at least 1; a zero arm goes |
 | `switch_range` | `switch_range`: case `k` is bucket `k + 1`, the default the last, a missing case copies the default |
 | `switch_mode` | `if_mode2` for mode 1, the default as its else |
@@ -101,6 +101,10 @@ a host pair; `"own"` stands for the move the build derives from the donor (below
 donor's `enter 7 13` becomes `enter 16 k 0`: main 16 is
 `OWN_MOVE_MAIN`, which no species uses, and `k` the move's registry slot. em_vhook plays move `k`
 in place of the pair and the script goes on after the `enter` when it ends, as for a host pair.
+
+A value may be a list, played in order, each item one `enter` that yields: `"7,23" = [[1, 2], "own"]`
+is the host's turn (1, 2), then the move. An item is a host pair, an own move's name or `"own"`; the
+build charges the donor pair's stamina to the last item.
 
 The slots are `mhfu_port.moves.slots`: the own moves by sorted name, numbered from 0, at most
 `EM_MOVES.MOVES.count`. The moves module `mhfu-port` writes carries each one as `slot = k` and

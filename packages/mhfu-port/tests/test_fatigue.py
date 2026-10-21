@@ -233,6 +233,13 @@ def test_carriers_of_a_manifest():
     assert fatigue.carriers(plain) == set()
 
 
+def test_a_list_with_an_own_move_rides_the_hub():
+    m = manifest.loads(TEXT.replace('"7,13" = "own"', '"7,13" = [[1, 2], "own"]'))
+    assert fatigue.carriers(m) == {(0, 2)}
+    m = manifest.loads(TEXT.replace('"7,13" = "own"', '"7,13" = [[1, 2], [1, 3]]'))
+    assert fatigue.carriers(m) == set()
+
+
 def test_a_port_without_the_flag_has_no_table():
     m = manifest.loads(TEXT)
     assert fatigue.table(m, None) == (None, [])  # type: ignore[arg-type]  # nothing read

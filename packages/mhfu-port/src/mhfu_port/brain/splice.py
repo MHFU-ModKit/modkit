@@ -19,7 +19,7 @@ that says what each MHP3rd opcode becomes. The code lands as follows:
 
 A donor pair that `[brain.pairs]` maps to an own move becomes `enter OWN_MOVE_MAIN k 0`, `k` the
 move's slot in `slots` (`moves.slots`, the one numbering the moves module and `mhfu_port.lua`
-use); em_vhook plays that move in place of a host pair.
+use); em_vhook plays that move in place of a host pair. A list there enters each item in turn.
 
 With `[brain] fatigue` the donor's `if_tired`, and `if_stamina_low` at 0 (stamina 0 only precedes
 tired), become the host's `if_gauge_a_low`, which the framework's fatigue helper drives
@@ -366,22 +366,24 @@ class Translator:
     # ---- ops
 
     def _enter(self, n: p3.Insn, w: Where) -> list[ir.Node]:
+        """One `enter` per target of the pair, in order."""
         pair = (n.args["main"], n.args["sub"])
-        target = self.spec.target(pair)
-        if target is None:
+        targets = self.spec.targets(pair)
+        if not targets:
             self.add(w, "error", "P3_PAIR_UNMAPPED", f"enter {pair[0]},{pair[1]} has no host pair")
-            return []
-        if isinstance(target, str):
-            slot = self.slots.get(target)
-            if slot is None:
-                text = f"enter {pair[0]},{pair[1]} plays own move {target}, which has no slot"
-                self.add(w, "error", "P3_OWN_MISSING", text)
-                return []
-            enter = edit.insn("enter", addresses.OWN_MOVE_MAIN, slot, 0)
-        else:
-            enter = edit.insn("enter", *target, 0)
-        self.uses[pair, target] += 1
-        return [enter]
+        out: list[ir.Node] = []
+        for target in targets:
+            if isinstance(target, str):
+                slot = self.slots.get(target)
+                if slot is None:
+                    text = f"enter {pair[0]},{pair[1]} plays own move {target}, which has no slot"
+                    self.add(w, "error", "P3_OWN_MISSING", text)
+                    continue
+                out.append(edit.insn("enter", addresses.OWN_MOVE_MAIN, slot, 0))
+            else:
+                out.append(edit.insn("enter", *target, 0))
+            self.uses[pair, target] += 1
+        return out
 
     def _end(self, n: p3.Insn, w: Where) -> list[ir.Node]:
         if not w.tail:

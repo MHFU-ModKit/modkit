@@ -431,6 +431,36 @@ def test_the_splice_without_slots_fails_an_own_pair():
     assert [f.code for f in s.findings] == ["P3_OWN_MISSING"] and s.slots == {}
 
 
+def test_a_list_enters_its_targets_in_order():
+    sp = spec(pairs={"7,13": [(1, 2), "slam"], "2,3": [(1, 2), (1, 3)]})
+    got, t = translate(sp, slots={"slam": 5}, base_0=f"{enter(7, 13)} {enter(2, 3)}")
+    assert got == ["enter 1 2 0", f"enter {OWN} 5 0", "enter 1 2 0", "enter 1 3 0"]
+    assert not t.findings
+    assert dict(t.uses) == {
+        ((7, 13), (1, 2)): 1,
+        ((7, 13), "slam"): 1,
+        ((2, 3), (1, 2)): 1,
+        ((2, 3), (1, 3)): 1,
+    }
+
+
+def test_a_list_names_a_derived_move():
+    sp = spec(pairs={"7,13": [(1, 2), manifest.OWN]})
+    got, _ = translate(sp, slots={"p3_7_13": 2}, base_0=enter(7, 13))
+    assert got == ["enter 1 2 0", f"enter {OWN} 2 0"]
+
+
+def test_a_list_with_a_move_that_has_no_slot_keeps_the_rest():
+    got, t = translate(spec(pairs={"7,13": [(1, 2), "slam"]}), base_0=enter(7, 13))
+    assert got == ["enter 1 2 0"] and found(t) == [("error", "P3_OWN_MISSING")]
+
+
+def test_every_enter_of_a_list_yields_for_the_latch():
+    sp = spec(pairs=TWO | {"7,13": [(1, 2), "slam"]})
+    got, t = translate(sp, slots={"slam": 5}, base_0=latched(enter(7, 13)))
+    assert got == ["enter 1 2 0", f"enter {OWN} 5 0", "enter 1 2 0"] and not t.findings
+
+
 # ---- the call history
 
 

@@ -176,6 +176,11 @@ def test_pairs():
     assert m.brain is not None and own.pairs(m.brain) == [(7, 13)]
 
 
+def test_pairs_sees_own_in_a_list():
+    m = manifest.loads(TEXT + '"7,14" = [[1, 2], "own"]\n"7,15" = [[1, 2], [1, 3]]\n')
+    assert m.brain is not None and own.pairs(m.brain) == [(7, 13), (7, 14)]
+
+
 # --- with the games ---
 
 
