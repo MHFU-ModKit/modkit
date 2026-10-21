@@ -208,8 +208,8 @@ end
 
 --- A port's moves and rules from mods/lib/<name>_moves.lua, which `mhfu-port inject` generates
 --- from the manifest with the clips module: { moves = {...}, rules = {...}, vars = {name = index},
---- signals = {name = index}, sever_below = pct, natural_rage = false, fatigue = {...} }. Empty,
---- logged once, without it.
+--- signals = {name = index}, sever_below = pct, natural_rage = false, fatigue = {...},
+--- charge = {...} }. Empty, logged once, without it.
 function P.behaviour(name)
   local ok, t = pcall(require, name .. "_moves")
   if ok and type(t) == "table" then return t end
@@ -256,6 +256,9 @@ P.is_own = is_own
 --   fatigue a stamina for the monster, charged per pair it enters and own move it starts, shown to
 --           the AI script as gauge A low (mhfu.em_fatigue, mhfu.Fatigue); `own` keys are slots or
 --           own move names; default: the manifest's, none
+--   charge  a gauge, a charged state and a cooldown for the monster, answered to the AI script's
+--           switch_query (mhfu.em_charge, mhfu.Charge): `ups` keys and `transform` are slots or
+--           own move names; default: the manifest's, none
 --
 -- Returns a port handle. Safe to call again (hot reload): the injector is armed once per boot.
 function P.define(spec)
@@ -268,6 +271,7 @@ function P.define(spec)
     moves   = spec.moves or made.moves or {},
     tip     = spec.tip or made.tip,
     fatigue = spec.fatigue or made.fatigue,
+    charge  = spec.charge or made.charge,
     _vars   = spec.vars or made.vars or {},          -- board counter name -> index
     _signals = spec.signals or made.signals or {},   -- board signal name -> index
     _sever_below = spec.sever_below or made.sever_below,   -- the tail cuts only below this HP percent
@@ -677,6 +681,39 @@ function Port:_seam_fatigue()
   return t
 end
 
+--- The port's charge table as mhfu.em_charge takes it: `ups` keyed by slot and `transform` a slot,
+--- a move's name resolved to its slot. An up that is not an own move of the port is dropped, said
+--- once; a charge whose transform is not one is dropped whole, said once; nil without a table.
+function Port:_seam_charge()
+  local c = self.charge
+  if c == nil then return nil end
+  local function lost(what, k)
+    local key = "charge:" .. self.name .. ":" .. what .. ":" .. tostring(k)
+    if not P._once[key] then
+      P._once[key] = true
+      log("[port:%s] charge %s '%s' dropped: no such own move", self.name, what, tostring(k))
+    end
+  end
+  local t = {}
+  for k, v in pairs(c) do t[k] = v end
+  if c.ups ~= nil then
+    t.ups = {}
+    for k, gains in pairs(c.ups) do
+      local slot = k
+      if type(k) == "string" then slot = self._slot[k] end
+      if slot == nil then lost("up", k) else t.ups[slot] = gains end
+    end
+  end
+  if type(c.transform) == "string" then
+    t.transform = self._slot[c.transform]
+    if t.transform == nil then
+      lost("transform", c.transform)
+      return nil
+    end
+  end
+  return t
+end
+
 --- Install every claim, rule and the tail tip on the seam. Runs on the first tick the seam
 --- is live for this port, and again after a redefine (hot reload). Idempotent:
 --- the table is rewritten slot by slot, unused slots cleared.
@@ -754,6 +791,13 @@ function Port:_arm_native()
     local ok = mhfu.em_fatigue(f) == true   -- nil turns it off
     if f ~= nil then
       log("[port:%s] fatigue: %s", self.name, ok and "armed" or "refused (see the framework log)")
+    end
+  end
+  if mhfu.em_charge ~= nil then
+    local c = self:_seam_charge()
+    local ok = mhfu.em_charge(c) == true   -- nil turns it off
+    if c ~= nil then
+      log("[port:%s] charge: %s", self.name, ok and "armed" or "refused (see the framework log)")
     end
   end
   if self.tip then

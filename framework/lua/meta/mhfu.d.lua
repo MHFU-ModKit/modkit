@@ -11,7 +11,7 @@ mhfu = {}
 
 ---The API's version, raised whenever a declaration here changes; a mod that needs something added
 ---in version N checks `mhfu.api_version >= N`.
-mhfu.api_version = 9
+mhfu.api_version = 10
 
 -- log, memory and world state (bind_memory.cpp) ----------------------------------------------
 
@@ -788,6 +788,51 @@ function mhfu.em_fatigue_status() end
 ---@field charges integer costs charged
 ---@field spells integer tired spells begun
 ---@field gauge integer gauge A as the helper last wanted it
+
+-- charge (bind_em.cpp, include/mhfu/charge.h) ---------------------------------------------------
+-- MHP3rd's Zinogre charges up a gauge, transforms at 100 and stays charged until hits wear it
+-- out; its script asks the species "charged" (query `mhfu.addr.CHARGE_QUERY_CHARGED`) and "the
+-- cooldown runs" (`CHARGE_QUERY_COOLDOWN`), which em75 answers 0 to. The helper keeps that state in
+-- C for the wrapped species' monster and answers those two queries to the AI script's
+-- `switch_query` (the species' query slot is wrapped); any other query, and any other monster, gets
+-- the species' own answer.
+
+---Arms the charge helper for the board's monster, from its next AI step; nil turns it off. The
+---gauge gains when the move player starts a charge-up (`ups`, by the monster's HP), a hit chips
+---the gauge (not charged) or the durability (charged), a full gauge plays the transform own move
+---once the move player is idle, durability 0 or a discharge pair discharges. False for settings it
+---refuses (logged), too many ups or pairs, or when the query slot could not be wrapped. The same
+---settings again change nothing, the state included.
+---@param t? mhfu.Charge
+---@return boolean
+function mhfu.em_charge(t) end
+
+---The charge helper's state.
+---@return mhfu.ChargeStatus
+function mhfu.em_charge_status() end
+
+---Settings for `mhfu.em_charge`; every field is optional.
+---@class mhfu.Charge
+---@field ups? table<integer, integer[]> up to `mhfu.addr.CHARGE_CFG.UPS_COUNT` charge-up own moves by slot, each { g95, g75, g40, glow }: the gauge it gains at or above 95, 75, 40 percent of the monster's HP, and below (a `mhfu_port` module may key it by the move's name)
+---@field transform? integer own-move slot played when the gauge is full (a name in a `mhfu_port` module); default none
+---@field chip_gauge? integer gauge a hit takes while not charged, 0..100, default 0
+---@field chip_durability? integer durability a hit takes while charged, 0..100, default 0
+---@field cooldown_up? integer AI frames of cooldown after a charge-up starts, default 420
+---@field cooldown_out? integer AI frames after a discharge, default 900
+---@field discharge? integer[][] up to `mhfu.addr.CHARGE_CFG.PAIRS_COUNT` host { main, sub } pairs that discharge a charged monster at once
+
+---What `mhfu.em_charge_status()` returns.
+---@class mhfu.ChargeStatus
+---@field armed boolean
+---@field charged boolean
+---@field gauge integer 0..100
+---@field durability integer 100 at the transform, 0 when not charged
+---@field cooldown integer AI frames left, counted while not charged
+---@field ups integer charge-ups started
+---@field transforms integer transforms started
+---@field discharges integer
+---@field hits integer hits counted
+---@field asked integer queries answered to the AI script
 
 -- reactions and monster events (bind_move.cpp, bind_monster_events.cpp) ----------------------
 

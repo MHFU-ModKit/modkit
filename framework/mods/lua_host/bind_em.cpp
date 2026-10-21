@@ -376,3 +376,100 @@ int lb_em_fatigue_status(lua_State *L)
 #undef SF_INT
     return 1;
 }
+
+/* --- charge (mhfu/charge.h) --- */
+
+/* t.ups = { [slot] = { g95, g75, g40, glow } }, a table at the top of the stack, into c: the ups
+ * by slot, so the same table is always the same settings. 0 when there are too many. */
+static int charge_ups(lua_State *L, mhfu_charge_cfg_t *c)
+{
+    int n = 0;
+    lua_pushnil(L);
+    while (lua_next(L, -2)) {
+        luaL_argcheck(L, lua_isinteger(L, -2), 1, "ups is keyed by slot");
+        luaL_argcheck(L, lua_istable(L, -1), 1, "an up is { g95, g75, g40, glow }");
+        if (n >= MHFU_CHARGE_MAX_UPS) {
+            lua_pop(L, 2);
+            return 0;
+        }
+        const lua_Integer slot = lua_tointeger(L, -2);
+        luaL_argcheck(L, slot >= 0 && slot < MHFU_EM_MOVES, 1, "an up slot past the registry");
+        mhfu_charge_up_t u = {};
+        u.slot = (uint8_t)slot;
+        for (int b = 0; b < 4; b++) {
+            lua_rawgeti(L, -1, b + 1);
+            const lua_Integer v = lua_isnil(L, -1) ? 0 : luaL_checkinteger(L, -1);
+            luaL_argcheck(L, v >= -32768 && v <= 32767, 1, "a gain past a s16");
+            u.gain[b] = (int16_t)v;
+            lua_pop(L, 1);
+        }
+        int at = n++;
+        for (; at > 0 && c->ups[at - 1].slot > u.slot; at--) c->ups[at] = c->ups[at - 1];
+        c->ups[at] = u;
+        lua_pop(L, 1);
+    }
+    c->up_count = (uint8_t)n;
+    return 1;
+}
+
+/* t.discharge = { {main, sub}, ... } at the top of the stack, into c */
+static int charge_pairs(lua_State *L, mhfu_charge_cfg_t *c)
+{
+    const int n = (int)luaL_len(L, -1);
+    if (n > MHFU_CHARGE_MAX_PAIRS) return 0;
+    for (int i = 0; i < n; i++) {
+        lua_rawgeti(L, -1, i + 1);
+        luaL_checktype(L, -1, LUA_TTABLE);
+        lua_rawgeti(L, -1, 1);
+        lua_rawgeti(L, -2, 2);   /* main, sub at -2, -1 */
+        const lua_Integer m = luaL_checkinteger(L, -2), s = luaL_checkinteger(L, -1);
+        luaL_argcheck(L, m >= 0 && m <= 255 && s >= 0 && s <= 255, 1, "a pair past a byte");
+        c->pairs[i].main = (uint8_t)m;
+        c->pairs[i].sub = (uint8_t)s;
+        lua_pop(L, 3);
+    }
+    c->pair_count = (uint8_t)n;
+    return 1;
+}
+
+int lb_em_charge(lua_State *L)
+{
+    if (lua_isnoneornil(L, 1)) {
+        lua_pushboolean(L, mhfu_em_charge(0));
+        return 1;
+    }
+    luaL_checktype(L, 1, LUA_TTABLE);
+    mhfu_charge_cfg_t c = {};
+    c.transform = (uint8_t)tbl_in(L, 1, "transform", MHFU_CHARGE_NO_SLOT, 0, 255);
+    c.chip_gauge = (int16_t)tbl_in(L, 1, "chip_gauge", 0, -32768, 32767);
+    c.chip_durability = (int16_t)tbl_in(L, 1, "chip_durability", 0, -32768, 32767);
+    c.cooldown_up = (uint16_t)tbl_in(L, 1, "cooldown_up", 420, 0, 65535);
+    c.cooldown_out = (uint16_t)tbl_in(L, 1, "cooldown_out", 900, 0, 65535);
+    int fits = 1;
+    if (lua_getfield(L, 1, "ups") == LUA_TTABLE) fits = charge_ups(L, &c);
+    lua_pop(L, 1);
+    if (fits && lua_getfield(L, 1, "discharge") == LUA_TTABLE) fits = charge_pairs(L, &c);
+    lua_pop(L, 1);
+    lua_pushboolean(L, fits && mhfu_em_charge(&c));
+    return 1;
+}
+
+int lb_em_charge_status(lua_State *L)
+{
+    mhfu_charge_status_t st;
+    mhfu_em_charge_status(&st);
+    lua_newtable(L);
+#define SF_INT(name, v) do { lua_pushinteger(L, (lua_Integer)(v)); lua_setfield(L, -2, name); } while (0)
+    lua_pushboolean(L, (int)st.armed);    lua_setfield(L, -2, "armed");
+    lua_pushboolean(L, (int)st.charged);  lua_setfield(L, -2, "charged");
+    SF_INT("gauge",      st.gauge);
+    SF_INT("durability", st.durability);
+    SF_INT("cooldown",   st.cooldown);
+    SF_INT("ups",        st.up_starts);
+    SF_INT("transforms", st.transforms);
+    SF_INT("discharges", st.discharges);
+    SF_INT("hits",       st.hits);
+    SF_INT("asked",      st.asked);
+#undef SF_INT
+    return 1;
+}
