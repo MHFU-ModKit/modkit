@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """MHP3rd's monster AI scripts: a species' lists of routines read from the game's bytes into a
 tree (`p3`), written back to the same bytes, shown as text and checked over every monster. The
-opcode table (`p3ops`) is the one every part reads.
+opcode table (`p3ops`) is the one every part reads; `splice` translates a routine of it into an
+MHFU host's script.
 
     from mhfu.files import Extracted
     from mhfu_port.brain import p3
@@ -16,6 +17,7 @@ opcode table (`p3ops`) is the one every part reads.
 
     mhfu-port brain 23 | head                # the same as text
     mhfu-port brain --check                  # the check, numbers and known quirk
+    mhfu-port splice ports/brute_tigrex.toml # a manifest's [brain] spliced into its host
 """
 
 from . import p3, p3ops
