@@ -77,7 +77,7 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 |---|---|
 | `enter m s` | `enter M S 0`, the pair from `[brain.pairs]` |
 | `random` | `random`: each weight `w` becomes `w * 32 / 100` by largest remainder, at least 1; a zero arm goes |
-| `switch_range` | `switch_range`: case `k` is bucket `k`, the default the last, a missing case copies the default |
+| `switch_range` | `switch_range`: case `k` is bucket `k + 1`, the default the last, a missing case copies the default |
 | `switch_mode` | `if_mode2` for mode 1, the default as its else |
 | `if_phase` | `if_enraged` |
 | `if_facing ang` | `if_pursuit_off_facing` at `ang * 360 / 256` degrees with the arms swapped; past 127, `if_off_facing` |

@@ -436,13 +436,15 @@ class Translator:
         return self.if_(w, n.op.name, name, [min(deg, 255)], out, self.sub(inside, w))
 
     def _when(self, n: p3.Block, w: Where) -> list[ir.Node]:
+        """The manifest's answer; none is needed when neither arm comes to anything."""
         answer = self.spec.when.get(n.op.name)
-        if answer is None:
-            self.add(
-                w, "error", "P3_UNDECIDED", f"{n.op.name} has no host state: set when.{n.op.name}"
-            )
+        if answer is not None:
+            return self.fold(n, w, answer, f"when.{n.op.name}")
+        if not any(self.sub(arm, w) for arm in _branches(n)):
+            self.add(w, "info", "P3_DROPPED", f"{_text(n)}: every arm is empty")
             return []
-        return self.fold(n, w, answer, f"when.{n.op.name}")
+        self.add(w, "error", "P3_UNDECIDED", f"{n.op.name} has no host state: set when.{n.op.name}")
+        return []
 
     def _near(self, n: p3.Block, w: Where) -> list[ir.Node]:
         return self.fold(n, w, False, "the host has no stage objects")

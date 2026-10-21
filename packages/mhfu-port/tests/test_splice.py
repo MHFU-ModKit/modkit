@@ -216,6 +216,13 @@ def test_when_picks_the_arm(name, args):
     assert got == [] and found(t) == [("error", "P3_UNDECIDED")]
 
 
+def test_when_is_not_asked_of_empty_arms():
+    roll = blk("random", arms=[case(30, blk("if_object_near")), case(70, "")])
+    got, t = translate(base_0=blk("if_gauge_low", 0, head=roll))
+    assert got == [] and ("error", "P3_UNDECIDED") not in found(t)
+    assert found(t)[-1] == ("info", "P3_DROPPED")
+
+
 def test_when_drops_nothing_quietly():
     got, t = translate(
         spec(when={"if_flag_bca": True}), base_0=blk("if_flag_bca", head=enter(2, 3))
