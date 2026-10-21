@@ -25,6 +25,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum, IntEnum
 from typing import NamedTuple
 
+from ... import addresses
 from ...stage import STAGE_NAMES, row_name, stage_id
 from .ir import Arm, Block, Insn, Node, Routine, Sym, Value, walk
 from .opcodes import BY_NAME, END_KINDS, OPCODES, SLOTS, Flow, Op, Operand, Shape, slot
@@ -1181,11 +1182,13 @@ def arm_operands(block: Block, arm: Arm, words: Words = NO_WORDS) -> tuple[Field
 
 
 def pair_text(main: int | str, sub: int | str, pairs: Pairs | None = None) -> str:
-    """A move pair as `(3, 27)`, with its name after it when `pairs` has one."""
+    """A move pair as `(3, 27)`, an own move (main `addresses.OWN_MOVE_MAIN`) as `(own 3)`, with its
+    name after it when `pairs` has one."""
     name = (
         pairs.get((main, sub)) if pairs and isinstance(main, int) and isinstance(sub, int) else None
     )
-    return f"({main}, {sub})" + (f" {name}" if name else "")
+    text = f"(own {sub})" if main == addresses.OWN_MOVE_MAIN else f"({main}, {sub})"
+    return text + (f" {name}" if name else "")
 
 
 def _where(node: Node, w: Words) -> str:

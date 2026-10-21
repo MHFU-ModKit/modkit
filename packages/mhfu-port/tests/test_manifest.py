@@ -219,6 +219,17 @@ def test_brain():
     assert M.loads(M.dumps(m)) == m and "slot" not in M.dumps(m)
 
 
+def test_brain_own_moves():
+    own = "[moves.slam]\nanim = 40\n" + BRAIN
+    text = own + "[brain.pairs]\n'7,13' = 'own'\n'7,14' = 'slam'\n'2,3' = [1, 2]\n"
+    m = M.loads(_with(text))
+    assert m.brain is not None and m.brain.target((7, 13)) == "p3_7_13"
+    assert m.brain.target((7, 14)) == "slam" and m.brain.host_pair((7, 14)) is None
+    assert m.brain.target((2, 3)) == (1, 2) and M.loads(M.dumps(m)) == m
+    with pytest.raises(M.ManifestError, match="no own move"):
+        M.loads(_with(own + "[brain.pairs]\n'7,14' = 'bite'\n"))
+
+
 def test_minimal():
     m = M.loads(MINIMAL)
     assert m.build == M.Build()

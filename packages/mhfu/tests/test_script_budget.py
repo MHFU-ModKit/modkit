@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import pytest
+from mhfu import addresses
 from mhfu.em import script
 from mhfu.em.script import asm, budget, check, edit, ir, lift
 from mhfu.em.script.budget import Budget
@@ -428,6 +429,7 @@ def test_enter_fields():
     assert bad(8, 0, 0) == {"PAIR_RANGE"}
     assert bad(255, 0, 7) == {"GATE_NONZERO", "PAIR_RANGE"}
     assert bad(7, 255, 0) == set()
+    assert bad(addresses.OWN_MOVE_MAIN, 3, 0) == set()  # em_vhook's own move
 
 
 def test_weight_zero():
