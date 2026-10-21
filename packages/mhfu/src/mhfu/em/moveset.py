@@ -260,6 +260,8 @@ class _Operand:
     jr: int
 
 
+Decide = Callable[[int, int | None, tuple[int | None, ...]], int | None]
+"""What a caller of `Walker.run` decides: see there."""
 _Env = dict["Register | _Operand", Value]
 _PASSED = (Gpr.a0, Gpr.a1, Gpr.a2, Gpr.a3, Fpr.fa0)
 """What a descended-into callee is seeded with."""
@@ -366,22 +368,38 @@ class Walker:
         self.guards, self.max_paths, self.max_steps = guards, max_paths, max_steps
         self.truncated: set[int] = set()
         self._memo: dict[tuple[object, ...], tuple[Site, ...]] = {}
+        self._decide: Decide | None = None
         self._operands = {s.operand.vram: s.jr for s in code.switches.values() if s.operand}
         self._tables = {
             s.table + 4 * i: t for s in code.switches.values() for i, t in enumerate(s.targets)
         }
 
     def run(
-        self, fn: int, seed: Mapping[Register, Value] | None = None, facts: Facts | None = None
+        self,
+        fn: int,
+        seed: Mapping[Register, Value] | None = None,
+        facts: Facts | None = None,
+        decide: Decide | None = None,
     ) -> list[Site]:
-        """Every watched call some path from `fn` reaches, once per distinct Site."""
+        """Every watched call some path from `fn` reaches, once per distinct Site.
+
+        `decide(pc, target, args)` answers for the caller: the $v0 a call at `pc` to `target`
+        leaves (`args`: the walker's argument registers there) or the outcome of a branch at `pc`
+        the walk cannot decide (1 taken, 0 not; no target, `args` empty). None leaves it to the
+        walk, which forks. A run with `decide` is not memoised."""
         env: _Env = {r: v for r, v in (seed or {}).items()}
-        return list(self._run(fn, env, {**self.facts, **(facts or {})}, 0, ()))
+        before, self._decide = self._decide, decide
+        try:
+            return list(self._run(fn, env, {**self.facts, **(facts or {})}, 0, ()))
+        finally:
+            self._decide = before
 
     def _run(
         self, fn: int, seed: _Env, facts: dict[Cell, Known], depth: int, via: tuple[int, ...]
     ) -> tuple[Site, ...]:
         key = (fn, frozenset(seed.items()), frozenset(facts.items()), depth, via)
+        if self._decide is not None:
+            return self._walk(_Path(fn, {Gpr.a0: ENTITY, **seed}, facts), depth, via)
         if key not in self._memo:
             start = _Path(fn, {Gpr.a0: ENTITY, **seed}, facts)
             self._memo[key] = self._walk(start, depth, via)
@@ -464,6 +482,9 @@ class Walker:
             p.pc = target
             return
         f = self._cond(ins, p)
+        if f.outcome is None and self._decide is not None:
+            said = self._decide(p.pc, None, ())
+            f = f if said is None else _Fork(bool(said))
         likely = ins.isBranchLikely()
         if f.outcome is not None:
             # a decided branch back into code this path ran is a counted loop: leave it
@@ -541,9 +562,17 @@ class Walker:
         if target in _FRAMED:
             bits = p.env.get(Fpr.fa0)
             frame = round(_bits(bits), 2) if isinstance(bits, int) else None
+        said = None
+        if self._decide is not None:
+            args = tuple(v if isinstance(v := p.env.get(r), int) else None for r in self.args)
+            said = self._decide(p.pc, target if isinstance(target, int) else None, args)
         for r in CALL_CLOBBERS:
             p.env.pop(r, None)
-        p.env[Gpr.v0] = Tag("result", target if isinstance(target, int) else None, frame, site=p.pc)
+        p.env[Gpr.v0] = (
+            said
+            if said is not None
+            else Tag("result", target if isinstance(target, int) else None, frame, site=p.pc)
+        )
         if isinstance(target, int) and target in self.returns:
             p.env[Fpr.fv0] = self.returns[target]
 

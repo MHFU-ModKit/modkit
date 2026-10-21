@@ -186,6 +186,40 @@ def test_calls_of_one_function_have_their_own_guards():
     assert (f"gate@{va(0):x}", f"!gate@{va(5):x}") in found
 
 
+def test_decide_answers_a_call_and_a_branch():
+    gate, thing = 0x0020_0000, a.ACTION_EXECUTOR
+    c = code(
+        asm.jal(gate),
+        asm.NOP,
+        asm.beq("v0", "zero", va(6), va(2)),  # the gate said no: skip the first play
+        asm.NOP,
+        asm.li("a1", 1),
+        asm.jal(thing),
+        asm.NOP,
+        asm.lbu("v1", 0x280, "a0"),  # 7 a cell no fact names
+        asm.bne("v1", "zero", va(12), va(8)),
+        asm.NOP,
+        asm.li("a1", 2),
+        asm.jal(thing),
+        asm.NOP,  # 12
+        asm.RET,
+        asm.NOP,
+    )
+    w = Walker(c, {thing: "anim"}, guards=False)
+    both = {s.args[0] for s in w.run(BASE)}
+    assert both == {1, 2}
+
+    def decide(yes: int, taken: int):
+        def answer(pc, target, args):
+            return {va(0): yes, va(8): taken}.get(pc) if target in (gate, None) else None
+
+        return answer
+
+    assert [s.args[0] for s in w.run(BASE, decide=decide(1, 1))] == [1]
+    assert [s.args[0] for s in w.run(BASE, decide=decide(0, 0))] == [2]
+    assert {s.args[0] for s in w.run(BASE)} == both  # a decided run leaves nothing behind
+
+
 def test_game(game):
     for species in files.EM_SPECIES:
         ms = Moveset(game.em(species))
