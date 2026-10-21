@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import tomli_w
 from mhfu import addresses, files, hitzone, inject
+from mhfu.em.script import vars as script_vars
 
 from . import behaviour
 from .behaviour import Behaviour, Rule, migrate, validate
@@ -372,8 +373,6 @@ class Effect:
 
 Pair = tuple[int, int]
 _PAIR = re.compile(r"(\d+),(\d+)")
-STORED_VARS = range(1, 5)
-"""Script variables with storage of their own; `set_var` 5 to 9 call species code."""
 
 
 @dataclass
@@ -554,7 +553,7 @@ def _own_move(mv: Move, w: str) -> None:
 
 def _brain(b: Brain) -> None:
     _need(b.donor > 0 and b.slot >= 0, "brain", "donor is a monster id and slot 0 or more")
-    _need(b.history in (None, *STORED_VARS), "brain.history", "is a script variable, 1 to 4")
+    _need(b.history in (None, *script_vars.BYTE), "brain.history", "is a script variable, 1 to 4")
     for key, (main, sub) in b.pairs.items():
         m = _PAIR.fullmatch(key)
         w = f"brain.pairs.{key}"

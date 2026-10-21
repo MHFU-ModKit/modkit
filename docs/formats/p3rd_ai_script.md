@@ -85,7 +85,7 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 | `if_object_near` | false |
 | `set_target 0 0 0` | dropped: the host picked its target before |
 | `set_latch`, `switch_latch` | folded: case 0 when something between them yields, else the default |
-| `switch_prev_call` | `if_var` on `[brain] history`, a script variable each called routine sets first |
+| `switch_prev_call` | `if_var` on `[brain] history` (unset: the host's first free variable, `mhfu script N --vars`), which each called routine sets first |
 | map and area ops | none: the host's roaming owns them |
 
 A random that can follow another draw in the same run gets an `rng_step2` first, as the host's
