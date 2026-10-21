@@ -34,6 +34,7 @@ from mhfu_studio.monster import brain_graph as model
 from mhfu_studio.monster.brain import var_of
 from mhfu_studio.monster.brain_edit import Gesture, PaletteEntry, Place
 from mhfu_studio.monster.panels import brain_names
+from mhfu_studio.monster.panels.move_preview import MovePopup
 from mhfu_studio.monster.panels.node_graph import FrameSpec, GraphView, LinkSpec, NodeSpec
 from mhfu_studio.shell.overlay import RGBA
 from mhfu_studio.ui import kit, theme
@@ -124,9 +125,13 @@ class GraphPane(QWidget):
     link_followed = Signal(str)
     """A link was followed: the routine it leads to; the panel goes there."""
 
-    def __init__(self, ws: MonsterWorkspace, studio: Studio) -> None:
+    def __init__(
+        self, ws: MonsterWorkspace, studio: Studio, preview: MovePopup | None = None
+    ) -> None:
         super().__init__()
         self.ws, self.studio = ws, studio
+        #: a Move node under the mouse in miniature, shared with the operand bar's
+        self.preview = preview or MovePopup(ws, studio, self)
         self._at: tuple[int, str, str] | None = None
         self._scene: model.Scene | None = None
         #: what was drawn last (nodes at the origin, frames) and the sizes it was drawn at
@@ -147,6 +152,7 @@ class GraphPane(QWidget):
         self.view.delete_requested.connect(self._delete)
         self.view.create_requested.connect(self._create)
         self.view.menu_requested.connect(self._menu)
+        self.view.hovered.connect(self._hover)
         self.trail = QHBoxLayout()
         self.trail.setContentsMargins(0, 0, 0, 0)
         self.trail.setSpacing(2)
@@ -370,6 +376,16 @@ class GraphPane(QWidget):
         box = self._box(now)
         if box is None or box.kind not in ("entry", "join"):
             self.node_picked.emit(now)
+
+    def _hover(self, node: object) -> None:
+        """A Move node under the mouse: its move in miniature, above or below the node."""
+        if self._at is not None and isinstance(node, str):
+            row = self._at[0]
+            pair, near = self.ws.brain_move(row, node), self.view.node_on_screen(node)
+            if pair is not None and near is not None:
+                self.preview.ask(row, pair, near)
+                return
+        self.preview.drop()
 
     def _activate(self, node: str) -> None:
         """Double-click or Return: a compact block opens, a call follows its link."""
