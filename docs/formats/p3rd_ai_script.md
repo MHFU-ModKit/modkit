@@ -79,9 +79,9 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 | `random` | `random`: each weight `w` becomes `w * 32 / 100` by largest remainder, at least 1; a zero arm goes |
 | `switch_range` | `switch_range`: case `k` is bucket `k + 1`, the default the last, a missing case copies the default |
 | `switch_mode` | `if_mode2` for mode 1, the default as its else |
-| `if_phase` | `if_enraged` |
+| `if_enraged` | `if_enraged` |
 | `if_facing ang` | `if_pursuit_off_facing` at `ang * 360 / 256` degrees with the arms swapped; past 127, `if_off_facing` |
-| `if_target_state`, `if_flag_bca`, `if_gauge_low`, `if_target_set` | no host state: `[brain.when]` picks the arm |
+| `if_target_state`, `if_tired`, `if_stamina_low`, `if_target_set` | no host state: `[brain.when]` picks the arm |
 | `if_object_near` | false |
 | `set_target 0 0 0` | dropped: the host picked its target before |
 | `set_latch`, `switch_latch` | folded: case 0 when something between them yields, else the default |

@@ -171,9 +171,9 @@ def test_mode_without_host_mode():
     assert got == ["enter 1 3 0"] and found(t) == [("error", "P3_UNSUPPORTED")]
 
 
-def test_phase_is_enraged():
+def test_rage_is_enraged():
     arms = [other(enter(2, 4))]
-    got, _ = translate(base_0=blk("if_phase", head=enter(2, 3), arms=arms))
+    got, _ = translate(base_0=blk("if_enraged", head=enter(2, 3), arms=arms))
     assert got == ["if_enraged", "  enter 1 2 0", "else", "  enter 1 3 0"]
 
 
@@ -201,8 +201,8 @@ def test_facing_swaps_arms_and_scales(ang, name, deg):
     ("name", "args"),
     [
         ("if_target_state", (7, 0)),
-        ("if_flag_bca", ()),
-        ("if_gauge_low", (3,)),
+        ("if_tired", ()),
+        ("if_stamina_low", (3,)),
         ("if_target_set", ()),
     ],
 )
@@ -218,15 +218,13 @@ def test_when_picks_the_arm(name, args):
 
 def test_when_is_not_asked_of_empty_arms():
     roll = blk("random", arms=[case(30, blk("if_object_near")), case(70, "")])
-    got, t = translate(base_0=blk("if_gauge_low", 0, head=roll))
+    got, t = translate(base_0=blk("if_stamina_low", 0, head=roll))
     assert got == [] and ("error", "P3_UNDECIDED") not in found(t)
     assert found(t)[-1] == ("info", "P3_DROPPED")
 
 
 def test_when_drops_nothing_quietly():
-    got, t = translate(
-        spec(when={"if_flag_bca": True}), base_0=blk("if_flag_bca", head=enter(2, 3))
-    )
+    got, t = translate(spec(when={"if_tired": True}), base_0=blk("if_tired", head=enter(2, 3)))
     assert got == ["enter 1 2 0"] and not t.findings
 
 
@@ -263,15 +261,15 @@ def test_latch_with_no_yield_takes_the_default():
 
 
 def test_latch_over_a_decided_test():
-    between = blk("if_flag_bca", head=enter(7, 5))
-    got, _ = translate(spec(when={"if_flag_bca": True}), base_0=latched(between))
+    between = blk("if_tired", head=enter(7, 5))
+    got, _ = translate(spec(when={"if_tired": True}), base_0=latched(between))
     assert got == ["enter 1 4 0", "enter 1 2 0"]
-    got, _ = translate(spec(when={"if_flag_bca": False}), base_0=latched(between))
+    got, _ = translate(spec(when={"if_tired": False}), base_0=latched(between))
     assert got == ["enter 1 3 0"]
 
 
 def test_latch_that_may_yield():
-    got, t = translate(base_0=latched(blk("if_phase", head=enter(7, 5))))
+    got, t = translate(base_0=latched(blk("if_enraged", head=enter(7, 5))))
     assert got == ["if_enraged", "  enter 1 4 0"] and found(t) == [("error", "P3_LATCH")]
 
 
@@ -373,7 +371,7 @@ def test_tail_call_base_is_pasted():
 def test_tail_call_base_in_arms():
     arms = [other(op("call_base", 2))]
     got, _ = translate(
-        base_0=blk("if_phase", head=op("call_base", 1), arms=arms),
+        base_0=blk("if_enraged", head=op("call_base", 1), arms=arms),
         base_1=enter(2, 3),
         base_2=enter(2, 4),
     )
@@ -391,7 +389,7 @@ def test_call_base_from_a_call():
 
 
 def test_end_inside_a_routine():
-    code = f"{blk('if_phase', head=f'{enter(2, 3)} {END}')} {enter(2, 4)}"
+    code = f"{blk('if_enraged', head=f'{enter(2, 3)} {END}')} {enter(2, 4)}"
     _, t = translate(base_0=code)
     assert found(t) == [("error", "P3_UNSUPPORTED")]
 
@@ -422,12 +420,12 @@ def test_empty_blocks_are_dropped():
     arms = [case(50, nothing), case(50, nothing)]
     got, t = translate(base_0=blk("random", arms=arms))
     assert got == [] and found(t).count(("info", "P3_DROPPED")) == 3
-    got, t = translate(base_0=blk("if_phase", head=nothing))
+    got, t = translate(base_0=blk("if_enraged", head=nothing))
     assert got == []
 
 
 def test_empty_then_keeps_the_else():
-    got, _ = translate(base_0=blk("if_phase", arms=[other(enter(2, 3))]))
+    got, _ = translate(base_0=blk("if_enraged", arms=[other(enter(2, 3))]))
     assert got == ["if_enraged", "else", "  enter 1 2 0"]
 
 
@@ -478,7 +476,7 @@ def test_splice_keeps_an_end():
 
 
 def test_splice_flags_manifest_entries_nothing_reads():
-    sp = spec(pairs=PAIRS | {"5,5": (1, 5)}, when={"if_phase": True})
+    sp = spec(pairs=PAIRS | {"5,5": (1, 5)}, when={"if_enraged": True})
     s = splice.splice(donor(base_0=enter(2, 3)), host(), sp)
     assert [(f.level, f.code) for f in s.findings] == [
         ("warning", "P3_PAIR_UNUSED"),
@@ -552,7 +550,7 @@ def brute(data: Data) -> tuple[p3.Brain, ir.Program]:
 def brute_spec(brain: p3.Brain, distinct: bool = False) -> manifest.Brain:
     """Every pair of the region mapped to (1, 2), or each to a host pair of its own."""
     to = {p: (1, p[0] * 32 + p[1]) if distinct else (1, 2) for p in region_pairs(brain)}
-    when = {"if_target_state": True, "if_flag_bca": True, "if_gauge_low": True}
+    when = {"if_target_state": True, "if_tired": False, "if_stamina_low": False}
     return manifest.Brain(
         23,
         "base_3",
@@ -594,7 +592,7 @@ def test_brute_cli(brute, data, tmp_path, capsys):
     brain, _ = brute
     sp = brute_spec(brain)
     pairs = "".join(f'"{k}" = [{v[0]}, {v[1]}]\n' for k, v in sp.pairs.items())
-    when = "".join(f"{k} = true\n" for k in sp.when)
+    when = "".join(f"{k} = {str(v).lower()}\n" for k, v in sp.when.items())
     path = tmp_path / "m.toml"
     path.write_text(
         '[port]\nname = "t"\nhost_species = 75\npac = "t.bin"\n[source]\nmodel = 5248\n'

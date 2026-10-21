@@ -212,10 +212,10 @@ BRAIN = "[brain]\ndonor = 23\nsplice = 'base_3'\nentry = 'base_12'\n"
 
 
 def test_brain():
-    text = BRAIN + "history = 1\n[brain.pairs]\n'2,3' = [1, 2]\n[brain.when]\nif_flag_bca = false\n"
+    text = BRAIN + "history = 1\n[brain.pairs]\n'2,3' = [1, 2]\n[brain.when]\nif_tired = false\n"
     m = M.loads(_with(text))
     assert m.brain is not None and m.brain.host_pair((2, 3)) == (1, 2)
-    assert m.brain.host_pair((7, 0)) is None and m.brain.when == {"if_flag_bca": False}
+    assert m.brain.host_pair((7, 0)) is None and m.brain.when == {"if_tired": False}
     assert M.loads(M.dumps(m)) == m and "slot" not in M.dumps(m)
 
 
@@ -433,7 +433,7 @@ def test_cuts_share_a_source():
         (BRAIN + "[brain.pairs]\n'2-3' = [1, 2]\n", "is main,sub"),
         (BRAIN + "[brain.pairs]\n'2,3' = [8, 2]\n", "a host pair"),
         (BRAIN + "[brain.pairs]\n'2,3' = [1]\n", "2 values"),
-        (BRAIN + "[brain.when]\nif_flag_bca = 1\n", "expected bool"),
+        (BRAIN + "[brain.when]\nif_tired = 1\n", "expected bool"),
     ],
 )
 def test_invalid(extra, why):

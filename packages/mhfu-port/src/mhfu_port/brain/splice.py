@@ -41,7 +41,7 @@ BUCKETS = 5
 """Buckets of an MHFU switch_range."""
 MODES: Mapping[int, str] = {1: "if_mode2"}
 """MHP3rd's mode byte to the MHFU test that holds in that mode."""
-WHEN = ("if_target_state", "if_flag_bca", "if_gauge_low", "if_target_set")
+WHEN = ("if_target_state", "if_tired", "if_stamina_low", "if_target_set")
 """The tests the manifest answers, in `[brain.when]`: MHFU has no state for them."""
 HOST_OPS = (
     "set_dest",
@@ -418,7 +418,7 @@ class Translator:
             out = self.if_(w, "switch_mode", MODES[value], [], then, out)
         return out
 
-    def _phase(self, n: p3.Block, w: Where) -> list[ir.Node]:
+    def _enraged(self, n: p3.Block, w: Where) -> list[ir.Node]:
         then, other = _branches(n)
         return self.if_(w, n.op.name, "if_enraged", [], self.sub(then, w), self.sub(other, w))
 
@@ -518,7 +518,7 @@ OPS: Mapping[str, Callable[..., list[ir.Node]]] = {
     "random": Translator._random,
     "switch_range": Translator._range,
     "switch_mode": Translator._mode,
-    "if_phase": Translator._phase,
+    "if_enraged": Translator._enraged,
     "if_facing": Translator._facing,
     "if_object_near": Translator._near,
     "set_target": Translator._target,
