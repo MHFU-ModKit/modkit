@@ -200,6 +200,81 @@ def test_facing_swaps_arms_and_scales(ang, name, deg):
     assert found(t) == ([("warning", "P3_APPROX")] if name == "if_off_facing" else [])
 
 
+# ---- distance, side, HP, the global word
+
+
+def test_dist_cases_keep_their_hundreds_and_the_default():
+    arms = [case(5, enter(2, 3)), case(10, ""), other(enter(2, 4))]
+    got, t = translate(base_0=blk("switch_dist", arms=arms))
+    assert got == ["switch_dist", "case 5", "  enter 1 2 0", "case 10", "default", "  enter 1 3 0"]
+    assert not t.findings
+
+
+def test_dist_without_a_default_adds_none():
+    got, _ = translate(base_0=blk("switch_dist", arms=[case(5, enter(2, 3))]))
+    assert got == ["switch_dist", "case 5", "  enter 1 2 0"]
+
+
+def test_a_case_nothing_reaches_goes_before_it_is_translated():
+    arms = [case(10, enter(2, 3)), case(10, op("call", 1)), case(4, enter(2, 4))]
+    got, t = translate(base_0=blk("switch_dist", arms=arms), call_1=enter(2, 4))
+    assert got == ["switch_dist", "case 10", "  enter 1 2 0"]
+    assert found(t) == [("info", "P3_DROPPED")] * 2 and not t.routines
+
+
+def test_dist_with_nothing_to_do():
+    arms = [case(5, ""), other("")]
+    got, t = translate(base_0=blk("switch_dist", arms=arms))
+    assert got == [] and found(t) == [("info", "P3_DROPPED")]
+
+
+def test_hp_cases_are_one_percent_up():
+    arms = [case(25, enter(2, 3)), case(70, enter(2, 4)), other(enter(7, 5))]
+    got, t = translate(base_0=blk("switch_hp", arms=arms))
+    assert got == [
+        "switch_hp",
+        "case 26",
+        "  enter 1 2 0",
+        "case 71",
+        "  enter 1 3 0",
+        "default",
+        "  enter 1 4 0",
+    ]
+    assert not t.findings
+
+
+def test_hp_cases_stop_at_a_byte():
+    arms = [case(254, enter(2, 3)), case(255, enter(2, 4))]
+    got, t = translate(base_0=blk("switch_hp", arms=arms))
+    assert got == ["switch_hp", "case 255", "  enter 1 2 0"] and found(t) == [
+        ("info", "P3_DROPPED")
+    ]
+
+
+def test_side_is_an_arc_with_the_arms_as_they_are():
+    got, t = translate(base_0=blk("if_target_side", head=enter(2, 3), arms=[other(enter(2, 4))]))
+    assert got == ["if_target_in_arc 0 127", "  enter 1 2 0", "else", "  enter 1 3 0"]
+    assert not t.findings
+
+
+def test_global_540_is_case_2():
+    got, t = translate(base_0=blk("switch_global_540", arms=[case(2, enter(2, 3))]))
+    assert got == ["enter 1 2 0"] and found(t) == [("info", "P3_FOLDED")]
+
+
+def test_global_540_names_the_arms_it_drops():
+    arms = [case(1, enter(2, 4)), case(2, enter(2, 3)), other(enter(7, 5))]
+    got, t = translate(base_0=blk("switch_global_540", arms=arms))
+    assert got == ["enter 1 2 0"] and found(t) == [("warning", "P3_FOLDED")]
+    assert "case 1 (1 instructions" in t.findings[0].text and "default" in t.findings[0].text
+
+
+def test_global_540_without_case_2_takes_the_default():
+    arms = [case(1, enter(2, 4)), other(enter(2, 3))]
+    got, t = translate(base_0=blk("switch_global_540", arms=arms))
+    assert got == ["enter 1 2 0"] and found(t) == [("warning", "P3_FOLDED")]
+
+
 # ---- tests without a host state
 
 

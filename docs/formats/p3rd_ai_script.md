@@ -81,6 +81,10 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 | `switch_mode` | `if_mode2` for mode 1, the default as its else |
 | `if_enraged` | `if_enraged` |
 | `if_facing ang` | `if_pursuit_off_facing` at `ang * 360 / 256` degrees with the arms swapped; past 127, `if_off_facing` |
+| `switch_dist` | `switch_dist`: the cases are hundreds in both; a case at or under an earlier one, which no distance reaches, goes |
+| `switch_hp` | `switch_hp` with each case one higher: MHP3rd's matches the integer HP percent at or below it, MHFU's below it |
+| `if_target_side` | `if_target_in_arc 0 127`: the target's bearing minus the facing in the first half turn (bit 15 clear), arms as they are |
+| `switch_global_540` | its case 2, the only value the scripts test (the default without one): the host has no such word |
 | `if_target_state`, `if_tired`, `if_stamina_low`, `if_target_set` | no host state: `[brain.when]` picks the arm; with `[brain] fatigue`, `if_tired` and `if_stamina_low 0` are `if_gauge_a_low` ([Fatigue](#fatigue)) |
 | `if_object_near` | false |
 | `set_target 0 0 0` | dropped: the host picked its target before |

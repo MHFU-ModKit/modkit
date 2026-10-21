@@ -1126,3 +1126,5 @@ names = ["clip", "back", "pair", "stopped", "replaced", "refused", "lost", "wall
 
 [const]
 OWN_MOVE_MAIN = { value = 16, doc = "an AI script `enter` main no species has (they use 0..7; 16 is past the 8-bit main mask of em_vhook's substitutions): em_vhook's enter-action stub enters the carrier of own move <sub> (an EM_MOVES slot; em75's hub (0,2) when it is empty or out of range) instead and plays that move at the next AI step" }
+CHARGE_QUERY_CHARGED = { value = 0, doc = "the AI script `switch_query` arg that asks whether a port with `[brain] charge` is charged (MHP3rd's own numbering of the query): the framework answers 1 or 0" }
+CHARGE_QUERY_COOLDOWN = { value = 6, doc = "the `switch_query` arg that asks whether the charge cooldown runs (MHP3rd's numbering): the framework answers 1 or 0" }

@@ -55,6 +55,14 @@ MODES: Mapping[int, str] = {1: "if_mode2"}
 """MHP3rd's mode byte to the MHFU test that holds in that mode."""
 WHEN = ("if_target_state", "if_tired", "if_stamina_low", "if_target_set")
 """The tests the manifest answers, in `[brain.when]`: MHFU has no state for them."""
+SIDE = (0, 127)
+"""The arc `if_target_in_arc` tests for `if_target_side`: the target's bearing minus the facing in
+0 to 127/256 of a turn, MHP3rd's bit 15 clear (its upper bound is the byte below the half)."""
+GLOBAL_540 = 2
+"""The one value of the word `switch_global_540` reads that the donors' scripts test for."""
+HP_SHIFT = 1
+"""MHP3rd's `switch_hp` case matches an HP percent at or below it, MHFU's below it (both compare
+the truncated integer percent), so each case moves up by one."""
 GAUGE = "if_gauge_a_low"
 """The host test the fatigue helper answers."""
 GAUGE_A_OPS = (GAUGE, "refill_gauge_a")
@@ -467,6 +475,72 @@ class Translator:
             return []
         return [edit.switch("switch_range", cases=[(b,) for b in buckets])]
 
+    def _cases(
+        self, n: p3.Block, w: Where, bound: bool, shift: int = 0
+    ) -> tuple[list[tuple[int, list[ir.Node]]], list[ir.Node]]:
+        """A switch's cases, translated and ascending, and its default. A case no value reaches is
+        dropped before it is translated: with `bound` (the first limit above the value wins) one
+        at or under an earlier case, else one that repeats a value. `shift` moves each value up."""
+        cases: dict[int, list[ir.Node]] = {}
+        default: list[ir.Node] = []
+        top = -1
+        for a in n.arms:
+            if a.sub != p3ops.CASE or a.value is None:
+                default = self.sub(a.body, w)
+                continue
+            value = min(a.value + shift, 0xFF)
+            if value <= top if bound else value in cases:
+                self.add(w, "info", "P3_DROPPED", f"{n.op.name} case {a.value} is never reached")
+                continue
+            cases[value] = self.sub(a.body, w)
+            top = max(top, value)
+        return sorted(cases.items()), default
+
+    def _switch(
+        self, n: p3.Block, w: Where, *args: int, bound: bool = True, shift: int = 0
+    ) -> list[ir.Node]:
+        """A switch of the same name on the host, its cases kept in step."""
+        cases, default = self._cases(n, w, bound, shift)
+        if not default and not any(body for _, body in cases):
+            self.add(w, "info", "P3_DROPPED", f"{n.op.name}: every arm is empty")
+            return []
+        return [edit.switch(n.op.name, *args, cases=cases, default=default or None)]
+
+    def _answer(
+        self, n: p3.Block, w: Where, value: int, why: str, say: bool = False
+    ) -> list[ir.Node]:
+        """A switch whose value is taken as `value`: the case with it, else the default, in its
+        place; the arms with code that go are named (a note even when none does, with `say`)."""
+        arms = [a for a in n.arms if a.sub == p3ops.CASE and a.value == value]
+        keep = next(iter(arms or [a for a in n.arms if a.sub != p3ops.CASE]), None)
+        gone = [a for a in n.arms if a is not keep and a.body]
+        if gone:
+            names = ", ".join(
+                f"{f'case {a.value}' if a.sub == p3ops.CASE else 'default'} "
+                f"({p3.count(a.body)} instructions, first {_text(a.body[0])})"
+                for a in gone
+            )
+            text = f"{_text(n)} taken as answer {value} ({why}): arms dropped: {names}"
+            self.add(w, "warning", "P3_FOLDED", text)
+        elif say:
+            self.add(w, "info", "P3_FOLDED", f"{_text(n)} taken as answer {value} ({why})")
+        return self.sub(keep.body, w) if keep else []
+
+    def _dist(self, n: p3.Block, w: Where) -> list[ir.Node]:
+        return self._switch(n, w)
+
+    def _hp(self, n: p3.Block, w: Where) -> list[ir.Node]:
+        return self._switch(n, w, shift=HP_SHIFT)
+
+    def _side(self, n: p3.Block, w: Where) -> list[ir.Node]:
+        then, other = _branches(n)
+        return self.if_(
+            w, n.op.name, "if_target_in_arc", SIDE, self.sub(then, w), self.sub(other, w)
+        )
+
+    def _global_540(self, n: p3.Block, w: Where) -> list[ir.Node]:
+        return self._answer(n, w, GLOBAL_540, "the host has no such word", say=True)
+
     def _mode(self, n: p3.Block, w: Where) -> list[ir.Node]:
         cases: list[tuple[int, list[ir.Node]]] = []
         out: list[ir.Node] = []
@@ -596,6 +670,10 @@ OPS: Mapping[str, Callable[..., list[ir.Node]]] = {
     "switch_mode": Translator._mode,
     "if_enraged": Translator._enraged,
     "if_facing": Translator._facing,
+    "if_target_side": Translator._side,
+    "switch_dist": Translator._dist,
+    "switch_hp": Translator._hp,
+    "switch_global_540": Translator._global_540,
     "if_object_near": Translator._near,
     "set_target": Translator._target,
     "set_latch": Translator._set_latch,
