@@ -279,9 +279,9 @@ OPS: Mapping[int, P3Op] = {
         ),
         _if(
             0x1D,
-            "if_off_facing",
+            "if_facing",
             "ang",
-            doc="true when the pursuit target is off the facing by more than ang / 256 of a turn",
+            doc="true when the pursuit target is within ang / 256 of a turn of the facing",
         ),
         _plain(
             0x1E,
