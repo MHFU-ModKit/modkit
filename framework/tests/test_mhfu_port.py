@@ -589,6 +589,35 @@ def test_own_move_slots(lua: Any) -> None:
     lua.execute(SLOTS)
 
 
+STEER_WINDOW = """
+local SEAM = { moves = {} }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) SEAM.moves[slot] = t; return true end
+function mhfu.em_moves_clear() SEAM.moves = {}; return true end
+local P = require("mhfu_port")
+
+-- a moves module's steer window is handed to the registry as it is, beside the rest of the steer
+package.loaded.z_moves = {
+  moves = {
+    lunge = { entry = 20, slot = 0, steer = { turn = "hunter", rate = 546, window = { 10, 40 } } },
+    spin = { entry = 9, slot = 1, steer = { turn = "away" } },
+  },
+  rules = {},
+}
+local z = P.define{ name = "z", species = 75 }
+z.ent = ENT
+ticks(1)
+local w = SEAM.moves[0].steer
+assert(w.turn == "hunter" and w.rate == 546 and w.window[1] == 10 and w.window[2] == 40)
+assert(SEAM.moves[1].steer.window == nil)
+"""
+
+
+def test_steer_window_reaches_the_registry(lua: Any) -> None:
+    memory(lua)
+    lua.execute(STEER_WINDOW)
+
+
 RELINK = """
 local SEAM = { moves = {}, rules = {} }
 function mhfu.em_installed() return true end
