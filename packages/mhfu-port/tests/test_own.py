@@ -318,10 +318,10 @@ def test_slots_follow_the_expanded_manifest(derived):
 
 
 def zinogre(pairs: list[tuple[int, int]]) -> manifest.Manifest:
-    text = (PORTS / "zinogre.toml").read_text()
-    body = "".join(f"'{a},{b}' = 'own'\n" for a, b in pairs)
-    brain = f"\n[brain]\ndonor = 40\nsplice = 'base_3'\nentry = 'base_12'\n[brain.pairs]\n{body}"
-    return manifest.loads(text + brain)
+    """The Zinogre port with a `[brain]` of its own, every pair `own`."""
+    m = manifest.load(PORTS / "zinogre.toml")
+    m.brain = manifest.Brain(40, "base_3", "base_12", pairs={f"{a},{b}": "own" for a, b in pairs})
+    return m
 
 
 def test_zinogre_derives_without_an_error(data):

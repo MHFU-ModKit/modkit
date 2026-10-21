@@ -338,16 +338,15 @@ def test_the_zinogre_opens(
     ws.all_view = B.CANVAS  # a loaded document starts in order
     p = make(qtbot, ws)
     m = zin.manifest
-    assert len(m.behaviour.blocks) == 39 and len(p.view._shown) == 39 + len(m.moves)
+    assert len(m.behaviour.blocks) == 17 and len(p.view._shown) == 17 + len(m.moves)
     plays = sorted(badge(p, i) for i in m.behaviour.blocks if badge(p, i))
-    assert plays == sorted(f"#{k}" for k in range(1, 18))
+    assert plays == sorted(f"#{k}" for k in range(1, 11))
     for k, path in enumerate(B.read(m).paths, 1):  # a path that plays nothing has its place too
         assert badge(p, path.blocks[-1]) == rank(k)
-    assert [badge(p, i) for i in ("b15", "b17", "b23", "b39")] == [rank(k) for k in (1, 2, 3, 4)]
-    assert badge(p, "b4") == rank(5) and badge(p, "b27") == rank(14)
-    assert badge(p, "b36") == rank(17) and p.rage.isChecked()
-    assert bar_on(p, "b23").controls["counter"].get_value() == "flinches"
-    assert options(p, "b15", "flag") == ["flinches", "in_combat"]
+    assert [badge(p, i) for i in ("b15", "b17")] == [rank(k) for k in (1, 2)]
+    assert badge(p, "b4") == rank(3) and badge(p, "b6") == rank(4)
+    assert badge(p, "b36") == rank(10) and p.rage.isChecked()
+    assert options(p, "b15", "flag") == ["in_combat"]
     assert all(p.view._shown[i].view.opacity() == 1.0 for i in m.behaviour.blocks)
     assert in_step(p, ws)
     wrote = {i: p.view._shown[i].view.xy_pos for i in m.behaviour.blocks}

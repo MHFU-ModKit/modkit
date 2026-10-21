@@ -103,7 +103,8 @@ the first's note, are an error.
 A random that can follow another draw in the same run gets an `rng_step2` first, as the host's
 own picks do (a split one's inner randoms do). Findings are errors (`P3_PAIR_UNMAPPED`, `P3_OWN_MISSING`, `P3_UNSUPPORTED`,
 `P3_HOST_OP`, `P3_UNDECIDED`, `P3_LATCH`, `P3_HISTORY`, `P3_WIDE`, `P3_ROUTINE`, `P3_FATIGUE_HOST`), which stop a
-build, warnings (`P3_FOLDED`, `P3_APPROX`, `P3_PAIR_UNUSED`, `P3_WHEN`, `P3_WHEN_IGNORED`, a
+build, warnings (`P3_FOLDED`, `P3_APPROX`, `P3_PAIR_UNUSED` (not for a pair the charge table names or whose
+move another pair plays), `P3_WHEN`, `P3_WHEN_IGNORED`, a
 `P3_HISTORY` for a call before the read) and notes (`P3_DROPPED`, `P3_WEIGHT`, `P3_SPLIT`, an `info`
 `P3_FOLDED`).
 
@@ -118,6 +119,13 @@ in place of the pair and the script goes on after the `enter` when it ends, as f
 A value may be a list, played in order, each item one `enter` that yields: `"7,23" = [[1, 2], "own"]`
 is the host's turn (1, 2), then the move. An item is a host pair, an own move's name or `"own"`; the
 build charges the donor pair's stamina to the last item.
+
+A pair can also name the move another pair derives, `"7,23" = [[1, 2], "p3_7_0"]` where `"7,0" =
+"own"`: a turn wrapper (a donor pair that turns toward the target, then enters another pair)
+plays the move of the pair it leads to rather than a duplicate of its own handler, and twin pairs
+(same clips, attacks and steer) share one move, which saves slots and turn keys. The name must be
+`own_name` of a pair mapped to `"own"` (`Brain.derived`), and that pair is not reported unused
+while another pair plays its move (`Brain.shared`).
 
 The slots are `mhfu_port.moves.slots`: the own moves by sorted name, numbered from 0, at most
 `EM_MOVES.MOVES.count`. The moves module `mhfu-port` writes carries each one as `slot = k` and
