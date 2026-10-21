@@ -190,9 +190,9 @@ class Translator:
         self.var: int | None = None
         """The history variable, once the region is known to read the call before."""
         self._stack: list[str] = []
-        self._placed: set[int] = set()
-        """The history reads whose routine has noted its call: a routine that inlines one sees
-        a call there, no read of its own."""
+        self._placed: dict[int, ir.Located] = {}
+        """The history reads whose routine has noted its call, by `id` (held, so no other node
+        takes it): a routine that inlines one sees a call there, no read of its own."""
 
     def add(self, w: Where | str, level: str, code: str, text: str) -> None:
         item = w if isinstance(w, str) else w.item
@@ -344,7 +344,7 @@ class Translator:
             return n
 
         out = place(nodes)
-        self._placed |= {id(x) for x in ir.walk(out) if is_read(x)}
+        self._placed |= {id(x): x for x in ir.walk(out) if is_read(x)}
         return out
 
     # ---- nodes
@@ -537,7 +537,7 @@ class Translator:
         out = edit.clone(nodes)
         for a, b in zip(ir.walk(nodes), ir.walk(out), strict=True):
             if id(a) in self._placed:
-                self._placed.add(id(b))
+                self._placed[id(b)] = b
         return out
 
     def _range(self, n: p3.Block, w: Where) -> list[ir.Node]:

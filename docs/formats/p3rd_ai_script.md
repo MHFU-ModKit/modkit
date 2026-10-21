@@ -103,8 +103,9 @@ the first's note, are an error.
 A random that can follow another draw in the same run gets an `rng_step2` first, as the host's
 own picks do (a split one's inner randoms do). Findings are errors (`P3_PAIR_UNMAPPED`, `P3_OWN_MISSING`, `P3_UNSUPPORTED`,
 `P3_HOST_OP`, `P3_UNDECIDED`, `P3_LATCH`, `P3_HISTORY`, `P3_WIDE`, `P3_ROUTINE`, `P3_FATIGUE_HOST`), which stop a
-build, warnings (`P3_FOLDED`, `P3_APPROX`, `P3_PAIR_UNUSED`, `P3_WHEN`, `P3_WHEN_IGNORED`) and notes
-(`P3_DROPPED`, `P3_WEIGHT`, `P3_SPLIT`, an `info` `P3_FOLDED`).
+build, warnings (`P3_FOLDED`, `P3_APPROX`, `P3_PAIR_UNUSED`, `P3_WHEN`, `P3_WHEN_IGNORED`, a
+`P3_HISTORY` for a call before the read) and notes (`P3_DROPPED`, `P3_WEIGHT`, `P3_SPLIT`, an `info`
+`P3_FOLDED`).
 
 ### Own moves
 
