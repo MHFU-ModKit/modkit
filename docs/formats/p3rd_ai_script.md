@@ -30,7 +30,7 @@ yet. The MHFU script is [ai_script.md](ai_script.md).
 
 An instruction is an opcode byte and `u8` operands. The opcodes are 0x00 to 0x6F and 0xFF;
 `p3ops.OPS` has each one's name, kind, operands, flow and a line on what it does. 0x10 is the same
-end as 0xFF (`end_alias`). 0x70 to 0xFE do not exist. A name with an offset in it (`if_flag_bca`)
+end as 0xFF (`end_alias`). 0x70 to 0xFE do not exist. A name with an offset in it (`if_flag_3a8`)
 is a placeholder for a byte the species code or an unnamed field owns.
 
 The length comes from one rule, the game's own: a plain opcode is 1 byte plus its operands. A

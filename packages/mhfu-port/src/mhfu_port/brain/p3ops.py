@@ -275,7 +275,9 @@ OPS: Mapping[int, P3Op] = {
             doc="set_target that stops dist * 100 short of the target (flag 1 sets walk mode 5)",
         ),
         _if(
-            0x1C, "if_flag_bca", doc="true when +0xBCA is 1 and the entity is not in a locked pair"
+            0x1C,
+            "if_enraged",
+            doc="true while the rage window +0xBCA is open and the entity is not in a locked pair",
         ),
         _if(
             0x1D,
@@ -307,8 +309,8 @@ OPS: Mapping[int, P3Op] = {
         _switch(0x23, "switch_spawn_state", doc="branch on the byte +0x2E4 from the spawn record"),
         _if(
             0x24,
-            "if_phase",
-            doc="true when +0xBBF is 2 or 3 and the entity is not in a locked pair",
+            "if_tired",
+            doc="true when fatigue +0xBBF is 2 or 3 (tired, recovering), not in a locked pair",
         ),
         _if(
             0x25,
@@ -343,7 +345,7 @@ OPS: Mapping[int, P3Op] = {
         _plain(
             0x2F, "wait", "frames", flow=Flow.YIELD, doc="wait `frames` script ticks, then resume"
         ),
-        _plain(0x30, "calm", doc="add to the anger gauge and clear the rage mode"),
+        _plain(0x30, "recover", doc="end fatigue: refill stamina, top up a rage gauge over 80 %"),
         _block(
             0x31,
             "repeat",
@@ -374,9 +376,9 @@ OPS: Mapping[int, P3Op] = {
         _switch(0x40, "switch_intent", doc="branch on the pending intent's type +0x3A4"),
         _if(
             0x41,
-            "if_gauge_low",
+            "if_stamina_low",
             "pct10",
-            doc="true when the anger gauge is at most pct10 * 10, or the monster is enraged",
+            doc="true when stamina +0xBC2 is at most pct10 * 10, or the monster is tired",
         ),
         _if(0x42, "if_flag_bcc", doc="true when +0xBCC is non-zero"),
         _if(
@@ -429,7 +431,7 @@ OPS: Mapping[int, P3Op] = {
             "walk_next",
             doc="species hook; by default advances the armed route to its next node",
         ),
-        _if(0x50, "if_enraged", doc="true while the enrage timer +0xC6E is above 0"),
+        _if(0x50, "if_timer_c6e", doc="true while the timer +0xC6E is above 0"),
         _switch(0x51, "switch_role", doc="branch on the own role byte (+0x132 & 0x7F)"),
         _switch(
             0x52, "switch_event_param", doc="branch on the first byte of the pending event record"
@@ -487,7 +489,7 @@ OPS: Mapping[int, P3Op] = {
             "param",
             doc="true when a live slot record has the entity's species (and `param`, if non-zero)",
         ),
-        _if(0x68, "if_flag_bd5_0", doc="true when bit 0 of +0xBD5 is set"),
+        _if(0x68, "if_flag_bd5_0", doc="true when bit 0 of +0xBD5 is set: fatigue began"),
         _if(0x69, "if_flag_bd5_1", doc="true when bit 1 of +0xBD5 is set"),
         _switch(0x6A, "switch_global_540", doc="branch on halfword +0x540 of the global object"),
         _plain(0x6B, "clear_counters", doc="zero +0x4E8 to +0x4EB and reset +0x585"),

@@ -74,7 +74,7 @@ def test_flat_instructions():
 
 def test_if_has_head_and_else():
     block = routine("if").body[0]
-    assert isinstance(block, p3.Block) and block.op is BY_NAME["if_enraged"]
+    assert isinstance(block, p3.Block) and block.op is BY_NAME["if_timer_c6e"]
     assert [n.args for n in block.head] == [{"main": 1, "sub": 2}]
     [arm] = block.arms
     assert (arm.sub, arm.value) == (2, None)
@@ -159,7 +159,7 @@ def test_encode_checks_operands():
     with pytest.raises(ValueError, match="needs value"):
         p3.encode_nodes([p3.Block(BY_NAME["switch_mode"], {}, [], [p3.Arm(1, None, [])])])
     with pytest.raises(ValueError, match="takes no value"):
-        p3.encode_nodes([p3.Block(BY_NAME["if_enraged"], {}, [], [p3.Arm(2, 5, [])])])
+        p3.encode_nodes([p3.Block(BY_NAME["if_timer_c6e"], {}, [], [p3.Arm(2, 5, [])])])
 
 
 def test_new_nodes_encode():
@@ -181,9 +181,9 @@ def test_render_indents_blocks_and_levels_markers():
     assert p3.render(brain_of("break"), "break") == [
         "; break 0x00000100",
         "repeat mode=1 count=3",
-        "  if_enraged",
+        "  if_timer_c6e",
         "    repeat.break",
-        "  if_enraged.end",
+        "  if_timer_c6e.end",
         "repeat.end",
         "end",
     ]
