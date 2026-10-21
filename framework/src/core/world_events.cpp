@@ -9,11 +9,13 @@
 #include "mhfu/world.h"
 #include "mhfu/entity.h"
 #include "internal.h"
+#include "registry_watch.h"
 #include "addresses.gen.h"
 
 static uint32_t     g_last_quest_timer;
 static uint16_t     g_last_area_index;
 static volatile int g_quest_armed;   /* QUEST_BEGINNING fired, QUEST_ENTERED not yet */
+static registry_watch_t g_watch;     /* what the registry poll reported (below) */
 
 static void fill_ctx(mhfu_event_ctx_t *c, mhfu_event_id_t id, uint32_t cell,
                      const mhfu_regs_t *r)
@@ -31,6 +33,9 @@ extern "C" void mhfu_event_dispatch_quest_beginning(mhfu_regs_t *regs)
     if (prev != 0 || cur == 0) return;   /* the 0 -> non-zero edge: the quest commit */
 
     g_quest_armed = 1;
+    /* The last quest's monsters are gone from the registry by now (it empties when a quest ends)
+     * and the new ones not yet in it, so nothing stale can be reported again. */
+    watch_forget(&g_watch);
     mhfu_event_ctx_t ctx;
     fill_ctx(&ctx, MHFU_EVENT_QUEST_BEGINNING, cur, regs);
     mhfu_event_fire(MHFU_EVENT_QUEST_BEGINNING, &ctx);
@@ -65,8 +70,6 @@ extern "C" void mhfu_event_dispatch_quest_entered(mhfu_regs_t *regs)
 /* Main and extra RAM: the engine ticks entity clones in the extra-RAM window too. */
 static int entity_in_ram(uint32_t e) { return e >= MHFU_MAIN_RAM && e < MHFU_EXTRA_RAM_END; }
 
-static uint32_t g_last_entity[MHFU_ENTITY_REGISTRY_COUNT];
-
 static void dispatch_monster_spawned(int slot, uint32_t ent)
 {
     uint8_t  type = mhfu_entity_monster_type(ent);
@@ -90,14 +93,13 @@ extern "C" int mhfu_event_spawn_poll_thread(SceSize args, void *argp)
     (void)args; (void)argp;
     for (;;) {
         sceKernelDelayThread(200 * 1000);   /* 5 Hz */
+        watch_begin(&g_watch);
         /* reading game memory while the savedata utility starts froze the save load */
         if (!mhfu_world_ms0_io_safe()) continue;
         for (int slot = 1; slot < MHFU_ENTITY_REGISTRY_COUNT; slot++) {
             uint32_t cur = mhfu_entity_at(slot);
             if (!entity_in_ram(cur)) cur = 0;
-            if (cur == g_last_entity[slot]) continue;
-            g_last_entity[slot] = cur;
-            if (cur) dispatch_monster_spawned(slot, cur);
+            if (watch_spawned(&g_watch, slot, cur)) dispatch_monster_spawned(slot, cur);
         }
         mhfu_ai_poll_death();
     }
