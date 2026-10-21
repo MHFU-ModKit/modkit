@@ -13,8 +13,8 @@ against the clip cursor when a handler spawns it; its volume set says where. A h
 machine on one entity byte that plays clips, spawns, kills and turns behind tests of the clip
 cursor (`CURSOR_GATES`) and of the clip's end. `Walk` runs it an AI frame at a time on a clip
 cursor it keeps, answering those tests itself and reading what `Walker` records; where the code
-branches on something it cannot know (a bearing, a counter) it takes the branch falling through,
-then each in turn, and the plan is the path that plays the fewest clips.
+branches on something it cannot know (a bearing, a counter, a wait) the plan is the path, of those
+tried, that spawns the most attacks and plays the fewest clips.
 """
 
 from __future__ import annotations
@@ -71,8 +71,10 @@ MOTION = (
 STEP_FRAMES = 2.0
 """Clip frames the cursor advances in an AI frame at normal speed."""
 MAX_TICKS = 3000
+MAX_STEPS = 24
 MAX_RUNS = 32
-"""Bounds on one simulation, and on the runs of a pair with their branches going the other way."""
+"""Bounds on one simulation (AI frames, clips played), and on the runs of a pair with their
+branches going the other way."""
 FALL, TAKEN, LOOPS, EXITS = 0, 1, 2, 3
 """How a branch the walk cannot decide goes: falls through, is taken, is taken until the clip ends
 and then falls through (a wait), or falls through until the clip ends and then is taken."""
@@ -158,11 +160,12 @@ class Hits:
             raw = ovl.read(records_at + i * RECORD_SIZE, RECORD_SIZE)
             start, length, power, kind = RECORD.unpack_from(raw)
             records.append(Record(i, start, length, power, kind, raw[RECORD_TAG], raw[RECORD_SET]))
-        sets = []
-        at = sets_at
-        while at in ovl.initialised and (va := ovl.u32(at)) in ovl.initialised:
+        needed = max((r.volumes for r in records), default=-1) + 1
+        sets: list[tuple[Volume, ...]] = []
+        for at in range(sets_at, sets_at + 4 * needed, 4):
+            if at not in ovl.initialised or (va := ovl.u32(at)) not in ovl.initialised:
+                raise ValueError(f"the hit block at 0x{hits:08X} lacks volume set {len(sets)}")
             sets.append(_volumes(ovl, va))
-            at += 4
         return cls(tuple(records), tuple(sets))
 
     def volumes(self, record: int) -> tuple[Volume, ...]:
@@ -400,15 +403,15 @@ class Walk:
     # --- the plan ---
 
     def plan(self, pair: Pair) -> Plan:
-        """The default path through `pair`'s handler: with every branch the walk cannot decide
-        falling through, and with each of them taken in turn, the outcome that spawns the most
-        attacks, of those the one that plays the fewest clips, the first found among equals."""
+        """The default path through `pair`'s handler. Every branch the walk cannot decide falls
+        through; then each is tried alone another way (`BRANCHES`). The outcome that spawns the
+        most attacks wins, then the one that plays the fewest clips, then the first tried."""
         at = (pair.main, pair.sub)
         if pair.handler is None or self.ms.tick_entry is None:
             return Plan(at, (), (), False, (Note("unresolved", "it has no handler of its own"),))
         first = self._run(pair, {})
         runs = [first]
-        for how in (TAKEN, LOOPS, EXITS):
+        for how in BRANCHES:
             for pc in first.trail:
                 if len(runs) < MAX_RUNS:
                     runs.append(self._run(pair, {**first.vector, pc: how}))
@@ -425,8 +428,8 @@ class Walk:
             for pc, how in best.vector.items()
             if how != FALL
         ]
-        if len(runs) >= MAX_RUNS:
-            notes.append(Note("limit", f"only {MAX_RUNS - 1} runs of its branches were tried"))
+        if len(first.trail) * len(BRANCHES) >= MAX_RUNS:
+            notes.append(Note("limit", f"only {len(runs) - 1} runs of its branches were tried"))
         return Plan(at, tuple(best.done), best.leaves, best.left, tuple(notes), tuple(others))
 
     def _run(self, pair: Pair, vector: dict[int, int]) -> _Run:
@@ -601,6 +604,8 @@ class Walk:
             run.notes.append(Note("unresolved", f"the clips played at 0x{s.site:08X} are computed"))
             run.finished = True
             return
+        if ids[0] == run.clip:  # such a helper is called every frame and keeps its clip playing
+            return
         if len(ids) > 1:
             run.notes.append(Note("record", f"clip {ids[0]} of {', '.join(map(str, ids))}"))
         self._start(run, ids[0], None, 0)
@@ -608,6 +613,10 @@ class Walk:
     def _start(self, run: _Run, clip: int, blend: int | None, start: int) -> None:
         if clip not in self.lengths:
             run.notes.append(Note("unresolved", f"the donor has no clip {clip}"))
+            run.finished = True
+            return
+        if len(run.done) >= MAX_STEPS:
+            run.notes.append(Note("limit", f"the handler played {MAX_STEPS} clips without ending"))
             run.finished = True
             return
         self._close_step(run, "clip" if run.ended else "cursor")

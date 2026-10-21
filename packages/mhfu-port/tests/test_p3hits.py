@@ -297,6 +297,13 @@ def test_brute_rush_takes_the_straight_path(brute):
     assert {n.code for n in plan.notes} == {"branch", "motion"}
 
 
+def test_brute_hook_spawns_by_clip(brute):
+    (step,) = plan_of(brute, 1, 4).steps  # clip 26: its vt+0x90 hook spawns record 17 at frame 132
+    assert (step.clip, step.hits) == (26, (Hit(0, 17, 0, 132, 142),))
+    (step,) = plan_of(brute, 1, 1).steps  # clip 25 spawns record 13 twice
+    assert [(h.record, h.frame, h.end) for h in step.hits] == [(13, 238, 248), (13, 284, 294)]
+
+
 def test_brute_pairs_without_attacks(brute):
     for key, clips in {
         (1, 15): [63],
