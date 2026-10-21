@@ -363,6 +363,29 @@ def test_block_params_are_flat():
     assert M.loads(text) == m and "[[rule]]" not in text
 
 
+def test_steer_window():
+    hunter = OWN + "[moves.o.steer]\nturn = 'hunter'\nrate = 546\nwindow = [10, 40]\n"
+    m = M.loads(_with(hunter))
+    assert m.moves["o"].steer.window == (10, 40) and M.loads(M.dumps(m)) == m
+    assert "window" not in M.dumps(M.loads(_with(OWN)))
+    for window, why in (("[40, 10]", "0 <= from < to"), ("[-1, 4]", "0 <= from < to")):
+        with pytest.raises(M.ManifestError, match=why):
+            M.loads(_with(hunter.replace("[10, 40]", window)))
+    with pytest.raises(M.ManifestError, match="goes with turn"):
+        M.loads(_with(OWN + "[moves.o.steer]\nwindow = [1, 2]\n"))
+
+
+def test_brain_attacks():
+    text = BRAIN + "[brain.pairs]\n'7,14' = 'own'\n[brain.attacks]\n'26' = 40\n"
+    m = M.loads(_with(text))
+    assert m.brain is not None and m.brain.attacks == {"26": 40}
+    assert M.loads(M.dumps(m)) == m and "attacks" not in M.dumps(M.loads(_with(BRAIN)))
+    with pytest.raises(M.ManifestError, match="donor record id"):
+        M.loads(_with(BRAIN + "[brain.attacks]\nlegs = 4\n"))
+    with pytest.raises(M.ManifestError, match="0 or more"):
+        M.loads(_with(BRAIN + "[brain.attacks]\n'26' = -1\n"))
+
+
 def test_v1_loads_as_the_graph():
     old = M.loads(V1)
     assert B.compile(old) == B.compile(M.loads(FULL.replace('label = "any run"\n', "")))

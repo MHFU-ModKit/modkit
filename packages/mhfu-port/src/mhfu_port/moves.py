@@ -210,6 +210,8 @@ def _steer(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
         out["turn"] = s.turn
         if s.rate is not None:
             out["rate"] = s.rate
+        if s.window is not None:
+            out["window"] = list(s.window)
     elif s.turn == "fixed":
         out |= {"turn": "fixed", "total": s.angle, "frames": s.frames}
     elif (keys := curve(m, name, layout)) is not None:
