@@ -1488,6 +1488,15 @@ def test_a_wild_group_count_stops_at_the_groups_there_are(g: Game) -> None:
     assert latches(g, TIGREX_ID) == 1 and latches(g, POPO_ID) == 0
 
 
+def test_a_host_spawned_under_another_target_latches(g: Game) -> None:
+    g.lib.host_groups(1)
+    g.lib.host_target(0, 0x4D)  # a swap's record names the replaced species
+    g.lib.host_big(1)
+    assert latches(g, TIGREX_ID) == 1
+    g.lib.host_big(0)
+    assert latches(g, POPO_ID) == 0
+
+
 def test_a_quest_without_groups_asks_the_species_list(g: Game) -> None:
     g.lib.host_big(1)
     assert latches(g, TIGREX_ID) == 1

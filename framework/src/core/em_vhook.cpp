@@ -1407,15 +1407,15 @@ extern "C" int mhfu_em_sever_gate(int pct)
     return 1;
 }
 
-/* ent is a big monster of this quest, so its species vtable may take the latch. The vtable band
- * alone passes any species, a Popo's too, and the first spawn seen took the latch. The quest's
- * target groups name its big monsters (the ADD path's groups too); a quest with none falls back
- * on the species list. */
+/* ent is a big monster, so its species vtable may take the latch. The vtable band alone passes
+ * any species, a Popo's too, and the first spawn seen took the latch. A big monster is one of the
+ * framework's species list (a port's host, which a swap may spawn under another target's record)
+ * or of the quest's target groups (the ADD path's groups too). */
 static int latches(uint32_t ent)
 {
+    if (mhfu_entity_is_bigmonster(ent)) return 1;
     const uint8_t species = mhfu_mem_read_u8(ent + MHFU_ENTITY_SPECIES);
     uint32_t groups = mhfu_mem_read_u32(MHFU_QUEST_SINGLETON + MHFU_QUEST_GROUP_COUNT);
-    if (!groups) return mhfu_entity_is_bigmonster(ent);
     if (groups > MHFU_QUEST_TARGETS_COUNT) groups = MHFU_QUEST_TARGETS_COUNT;
     for (uint32_t k = 0; k < groups; k++) {
         const uint32_t t = MHFU_QUEST_SINGLETON + MHFU_QUEST_TARGETS + k * MHFU_QUEST_TARGET_SIZE;
