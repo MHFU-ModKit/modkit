@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import re
+import struct
 import threading
 import time
 from collections.abc import Callable
@@ -15,9 +16,11 @@ import pytest
 from mhfu import files
 from mhfu.em.intel import SpeciesIntel
 from mhfu.em.script import build, edit, ir, source
+from mhfu.em.script import vars as script_vars
 from mhfu.em.script.editset import Anchor, EditSet, Insert, apply, set_args
 from mhfu.em.script.graph import ENTRY, Projection, Stmt, edited_ids, join_id
 from mhfu.files import Extracted
+from mhfu.overlay import TEXT
 from mhfu_port.data import Data
 from mhfu_studio.monster import brain, species
 from mhfu_studio.monster import brain_graph as bg
@@ -27,6 +30,9 @@ from mhfu_studio.monster.workspace import MonsterWorkspace
 from mhfu_studio.shell import places
 
 from .conftest import end, enter, program
+from .test_brain_edit import world
+
+SB = 0x28
 
 
 def heads(v: BrainView) -> list[str]:
@@ -256,6 +262,47 @@ def test_the_history_is_bounded() -> None:
     for _ in range(brain.LIMIT - 1):
         assert h.back() is not None
     assert h.back() is None and h.current == 30
+
+
+# ---- the variables
+
+
+def em_file(root: Path, species_: int, *offsets: int) -> Path:
+    """`root`'s em overlay of `species_`: one `sb $zero, offset($s0)` per offset."""
+    words = [SB << 26 | 16 << 21 | at for at in offsets] or [0]
+    text = struct.pack(f"<{len(words)}I", *words)
+    head = struct.pack("<4sIIIIIII", b"MWo3", 1, 0x100000, len(text), 0, 0, 0, 0)
+    path = root / "data_files" / f"file_{files.em_overlay(species_):05d}.bin"
+    path.parent.mkdir(exist_ok=True)
+    path.write_bytes(head.ljust(TEXT, b"\0") + text)
+    return path
+
+
+def test_uses_are_the_survey_and_the_ranges() -> None:
+    p = world()
+    got = brain.uses(p)
+    assert got.vars == script_vars.survey(p) and got.ranges == 1
+    assert brain.var_of is script_vars.var_of
+
+
+def test_uses_scan_the_overlay(tmp_path: Path) -> None:
+    em_file(tmp_path, 75, 0x52B)
+    got = brain.uses(world(), brain.em_overlay(lambda: Extracted(tmp_path), 75))
+    assert got.vars[2].kind is script_vars.Kind.SPECIES and got.vars[4].kind.value == "free"
+
+
+def test_the_em_overlay_is_read_once_and_may_be_missing(tmp_path: Path) -> None:
+    game = Extracted(tmp_path)
+    assert brain.em_overlay(lambda: game, 75) is None
+    em_file(tmp_path, 75)
+    first = brain.em_overlay(lambda: game, 75)
+    assert first is not None and brain.em_overlay(lambda: game, 75) is first
+    assert brain.em_overlay(lambda: game, 76) is None  # no overlay for the row
+
+    def lost() -> Extracted:
+        raise FileNotFoundError("no game")
+
+    assert brain.em_overlay(lost, 75) is None
 
 
 # ---- the Code pane and the Graph pane agree
