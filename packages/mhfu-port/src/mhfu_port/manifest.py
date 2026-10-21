@@ -404,6 +404,11 @@ class Brain:
     """The host attack record an own move derived from the donor plays for a donor record, keyed
     by the donor's record id; it overrides the match by volumes. The port may define the host
     record with `[[attack]]` and `[[hitbox]]`."""
+    fatigue: bool = False
+    """The donor's stamina runs in the game (`mhfu.em_fatigue`): the build derives the helper's
+    table from the donor into the moves module (`brain.fatigue`), and the splice turns the
+    donor's `if_tired` (and `if_stamina_low` 0) into the host's `if_gauge_a_low` instead of
+    asking `[brain.when]`. The host must leave gauge A alone (`P3_FATIGUE_HOST`)."""
 
     def target(self, pair: Pair) -> Pair | str | None:
         """What the donor's `pair` plays: a host pair or an own move's name (`OWN` resolved to
