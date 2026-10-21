@@ -15,6 +15,7 @@ from mhfu_port.data import Data
 
 PAIRS = {"2,3": (1, 2), "2,4": (1, 3), "7,5": (1, 4)}
 TWO = {k: PAIRS[k] for k in ("2,3", "2,4")}
+ONE = {"2,3": (1, 2)}
 END = "ff"
 
 
@@ -231,6 +232,94 @@ def test_when_is_not_asked_of_empty_arms():
 def test_when_drops_nothing_quietly():
     got, t = translate(spec(when={"if_tired": True}), base_0=blk("if_tired", head=enter(2, 3)))
     assert got == ["enter 1 2 0"] and not t.findings
+
+
+# ---- fatigue
+
+TIRED = blk("if_tired", head=enter(2, 3), arms=[other(enter(2, 4))])
+
+
+def test_fatigue_turns_if_tired_into_gauge_a():
+    got, t = translate(spec(fatigue=True), base_0=TIRED)
+    assert got == ["if_gauge_a_low", "  enter 1 2 0", "else", "  enter 1 3 0"] and not t.findings
+    assert t.asked == set()
+
+
+@pytest.mark.parametrize(("name", "args"), [("if_tired", ()), ("if_stamina_low", (0,))])
+def test_fatigue_leaves_nothing_to_when(name, args):
+    got, t = translate(spec(fatigue=True), base_0=blk(name, *args, head=enter(2, 3)))
+    assert got == ["if_gauge_a_low", "  enter 1 2 0"] and not t.findings
+
+
+def test_fatigue_takes_stamina_low_only_at_zero():
+    code = blk("if_stamina_low", 3, head=enter(2, 3), arms=[other(enter(2, 4))])
+    got, t = translate(spec(fatigue=True, when={"if_stamina_low": True}), base_0=code)
+    assert got == ["enter 1 2 0"] and found(t) == [("warning", "P3_FOLDED")]
+    got, t = translate(spec(fatigue=True), base_0=code)
+    assert got == [] and found(t) == [("error", "P3_UNDECIDED")]
+
+
+def test_fatigue_drops_an_empty_test():
+    roll = blk("random", arms=[case(30, blk("if_object_near")), case(70, "")])
+    got, t = translate(spec(fatigue=True), base_0=blk("if_stamina_low", 0, head=roll))
+    assert got == [] and set(found(t)) == {("info", "P3_DROPPED")}
+
+
+def test_without_fatigue_if_tired_still_asks():
+    got, t = translate(spec(when={"if_tired": False}), base_0=TIRED)
+    assert got == ["enter 1 3 0"] and found(t) == [("warning", "P3_FOLDED")]
+
+
+def test_a_when_the_helper_answers_is_ignored():
+    sp = spec(fatigue=True, pairs=TWO, when={"if_tired": True, "if_stamina_low": True})
+    s = splice.splice(donor(base_0=TIRED), host(), sp)
+    assert [(f.level, f.code) for f in s.findings] == [
+        ("warning", "P3_WHEN_IGNORED"),
+        ("warning", "P3_WHEN_IGNORED"),
+    ]
+    assert [f.text.split()[0] for f in s.findings] == ["when.if_tired", "when.if_stamina_low"]
+    late = blk("if_stamina_low", 3, head=enter(2, 3), arms=[other(enter(2, 4))])
+    s = splice.splice(donor(base_0=f"{TIRED} {late}"), host(), sp)
+    assert [f.text.split()[0] for f in s.findings if f.code == "P3_WHEN_IGNORED"] == [
+        "when.if_tired"
+    ]
+
+
+def test_when_is_not_ignored_without_fatigue():
+    s = splice.splice(donor(base_0=TIRED), host(), spec(pairs=TWO, when={"if_tired": True}))
+    assert [f.code for f in s.findings] == ["P3_FOLDED"]
+
+
+def host_using(*body: ir.Node, where: str = "call_0") -> ir.Program:
+    h = host()
+    next(r for r in h.routines() if r.name == where).body[:0] = body
+    return h
+
+
+@pytest.mark.parametrize("op_", ["refill_gauge_a", "if_gauge_a_low"])
+def test_fatigue_wants_the_host_to_leave_gauge_a(op_):
+    use = edit.insn(op_, 0) if op_ == "refill_gauge_a" else edit.if_(op_, then=[], else_=None)
+    sp = spec(fatigue=True, pairs=ONE)
+    s = splice.splice(donor(base_0=enter(2, 3)), host_using(use), sp)
+    assert [(f.level, f.code) for f in s.findings] == [("error", "P3_FATIGUE_HOST")]
+    assert op_ in s.findings[0].text and "outside base_3" in s.findings[0].text
+    s = splice.splice(donor(base_0=enter(2, 3)), host_using(use), spec(pairs=ONE))
+    assert not s.findings
+    s = splice.splice(donor(base_0=enter(2, 3)), host_using(use, where="base_3"), sp)
+    assert not s.findings
+
+
+def test_fatigue_wants_a_species_that_does_not_drain_gauge_a(monkeypatch):
+    latch = int(addresses.GAUGE_A_LATCH)
+    monkeypatch.setattr(script_vars, "scan", lambda o: script_vars.Sites({}, {latch: 2}))
+    sp = spec(fatigue=True, pairs=ONE)
+    lifted = donor(base_0=enter(2, 3))
+    s = splice.splice(lifted, host(), sp, overlay=object())  # type: ignore[arg-type]
+    assert [(f.level, f.code) for f in s.findings] == [("error", "P3_FATIGUE_HOST")]
+    assert "GAUGE_A_LATCH 2x" in s.findings[0].text
+    assert not splice.splice(lifted, host(), sp).findings
+    other_spec = spec(pairs=ONE)
+    assert not splice.splice(lifted, host(), other_spec, overlay=object()).findings  # type: ignore[arg-type]
 
 
 def test_object_near_is_false():
@@ -715,6 +804,41 @@ def test_brute_routines_enter_what_the_donor_does(brute):
         assert got == expanded(brain, brain.routines[name].body), name
 
 
+def test_brute_with_fatigue(brute, data):
+    brain, h = brute
+    sp = brute_spec(brain)
+    sp.fatigue = True
+    del sp.when["if_tired"], sp.when["if_stamina_low"]
+    base = splice.splice(brain, h, brute_spec(brain))
+    s = splice.splice(brain, h, sp, overlay=data.fu.em(75))
+    assert not [f for f in s.findings if f.level == "error"], s.findings
+    assert "P3_WHEN_IGNORED" not in {f.code for f in s.findings}
+    built = build.Built.of(h, s.edits)
+    assert built.ok, built.findings
+    assert built.budget.worst is not None and built.budget.worst.count <= budget.LIMIT
+    tired = [
+        n
+        for n in p3.walk(brain.routines["base_13"].body)
+        if isinstance(n, p3.Block) and n.op.name == "if_tired"
+    ]
+    assert len(tired) == 1 and brain.routines["base_13"].body[1] is tired[0]
+    gauge = [
+        n
+        for nodes in (i.nodes for i in s.edits.inserts.values())
+        for n in ir.walk(nodes)
+        if isinstance(n, ir.Block) and n.op.name == "if_gauge_a_low"
+    ]
+    assert len(gauge) == 1
+    assert not any(
+        n.op.name == "if_gauge_a_low"
+        for i in base.edits.inserts.values()
+        for n in ir.walk(i.nodes)
+        if isinstance(n, ir.Block)
+    )
+    assert set(s.routines) - set(base.routines) == {"p3_call_24", "p3_call_37"}
+    assert set(base.routines) <= set(s.routines)
+
+
 def test_brute_with_an_own_move(brute, data, tmp_path):
     brain, h = brute
     sp = brute_spec(brain, distinct=True)
@@ -769,6 +893,26 @@ def test_brute_cli(brute, data, tmp_path, capsys):
     out.unlink()
     assert main(["splice", str(bad), "-o", str(out), *games]) == 1
     assert "P3_PAIR_UNMAPPED" in capsys.readouterr().out and not Path(out).exists()
+
+
+def test_brute_cli_fatigue(brute, data, tmp_path, capsys):
+    brain, _ = brute
+    sp = brute_spec(brain)
+    pairs = "".join(f'"{k}" = [{v[0]}, {v[1]}]\n' for k, v in sp.pairs.items() if k != "7,13")
+    when = "".join(f"{k} = {str(v).lower()}\n" for k, v in sp.when.items())
+    path = tmp_path / "m.toml"
+    path.write_text(
+        '[port]\nname = "t"\nhost_species = 75\npac = "t.bin"\n[source]\nmodel = 5248\n'
+        + f'{BRAIN}fatigue = true\n[brain.pairs]\n{pairs}"7,13" = "own"\n[brain.when]\n{when}'
+    )
+    games = ["--data", str(data.fu.root), "--p3rd-data", str(data.p3rd.root)]
+    assert main(["splice", str(path), *games]) == 0
+    text = capsys.readouterr().out
+    assert "own moves; stamina 400 or 600 of 1000, tired 2250 frames" in text
+    assert "1 own moves" in text and "P3_FATIGUE_SHARED" in text
+    ignored = [line.split(":")[0] for line in text.splitlines() if line.startswith("warning")]
+    assert ignored.count("warning P3_WHEN_IGNORED base_3") == 2
+    assert "error" not in text
 
 
 def test_brute_cli_own_moves(brute, data, tmp_path, capsys):

@@ -18,7 +18,7 @@ from mhfu.em.script.build import Built, lift_row
 from mhfu.em.script.check import Finding
 
 from .. import data, manifest, moves
-from ..brain import own, p3, splice
+from ..brain import fatigue, own, p3, splice
 from . import finding_line
 
 if TYPE_CHECKING:
@@ -54,13 +54,15 @@ def run(args: argparse.Namespace) -> int:
     m, derived = own.expand(m, games)
     row = m.port.host_species
     host = lift_row(games.fu, row, row)
-    survey = script_vars.survey(host, games.fu.em(row))
+    overlay = games.fu.em(row)
+    survey = script_vars.survey(host, overlay)
     donor = p3.lift(games.p3rd, b.donor, b.slot)
-    spliced = splice.splice(donor, host, b, survey, moves.slots(m))
+    spliced = splice.splice(donor, host, b, survey, moves.slots(m), overlay)
     built = Built.of(host, spliced.edits)
-    findings = [*derived, *spliced.findings, *built.findings]
+    stamina, helper = fatigue.table(m, games)
+    findings = [*derived, *helper, *spliced.findings, *built.findings]
     print(f"splice {m.port.name}: MHP3rd {b.donor} {b.entry} into em{row} {b.splice}")
-    print(summary(spliced, built, findings))
+    print(summary(spliced, built, findings, stamina))
     for f in findings:
         print(finding_line(f))
     ok = not any(f.level == "error" for f in findings)
@@ -76,8 +78,14 @@ def run(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
-def summary(spliced: splice.Spliced, built: Built, findings: list[Finding]) -> str:
-    """What the splice came to: routines and bytes added, the longest run, the pairs used."""
+def summary(
+    spliced: splice.Spliced,
+    built: Built,
+    findings: list[Finding],
+    stamina: fatigue.Fatigue | None = None,
+) -> str:
+    """What the splice came to: routines and bytes added, the longest run, the pairs used, the
+    fatigue table's size."""
     added = f"{len(spliced.routines)} routines added"
     if built.image and (worst := built.budget.worst):
         grown = len(built.image.data) - (built.lift.end - built.lift.base)
@@ -90,6 +98,12 @@ def summary(spliced: splice.Spliced, built: Built, findings: list[Finding]) -> s
             else f"{target[0]},{target[1]}"
         )
         lines.append(f"  pair {donor[0]},{donor[1]} -> {to}  x{uses}")
+    if stamina is not None:
+        lines.append(
+            f"  fatigue: {len(stamina.pairs)} pair costs, {len(stamina.own)} own moves; "
+            f"stamina {stamina.starts[0]} or {stamina.starts[1]} of {stamina.max}, "
+            f"tired {stamina.tired} frames"
+        )
     codes = Counter(f.code for f in findings)
     lines.append(
         "  findings: " + (", ".join(f"{c} {n}" for c, n in sorted(codes.items())) or "none")
