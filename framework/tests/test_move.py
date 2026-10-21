@@ -39,7 +39,8 @@ class Move(ctypes.Structure):
         ("spawner", ctypes.c_uint32),
         ("host_attacks", ctypes.c_uint8),
         ("force", ctypes.c_uint8),
-        ("_pad", ctypes.c_uint8 * 2),
+        ("hold_script", ctypes.c_uint8),
+        ("_pad", ctypes.c_uint8),
     ]
 
 
@@ -191,6 +192,21 @@ def test_skip_takes_the_frame_except_on_a_hit(g: Game) -> None:
     assert g.frame() == 0
     g.poke(a.ENTITY.HIT_PENDING, "B", 0)
     assert g.frame() == 1
+
+
+@pytest.mark.parametrize("hold", [0, 1])
+def test_the_back_pair_clears_the_wake_when_a_move_follows(g: Game, hold: int) -> None:
+    """The hub's entry at the end wakes the AI script (here: it stays set); with hold_script the
+    move player clears it, so the script cannot pick a pair before the next move starts."""
+    g.play(46, length=10, back_main=0, back_sub=2, hold_script=hold)
+    for _ in range(20):
+        g.poke(a.ENTITY.SCRIPT_WAKE, "B", 1)
+        g.frame()
+        if ("E", ENT, 0, 2, 0) in g.calls():
+            break
+    else:
+        raise AssertionError("the back pair was never entered")
+    assert g.peek(a.ENTITY.SCRIPT_WAKE, "B") == (1 - hold,)
 
 
 def test_length_enters_the_back_pair(g: Game) -> None:

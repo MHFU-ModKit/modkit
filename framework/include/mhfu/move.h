@@ -14,6 +14,11 @@
  * While a move plays, the host's animation events for the entry its clip sits in (attacks and
  * effects at the host clip's frames) are skipped, unless HOST_ATTACKS keeps them.
  *
+ * The hub (0,2), which carries most moves, raises ENTITY.SCRIPT_WAKE when entered, and the AI
+ * script, run on the next host step, enters its next pair and so ends the carrier. The start
+ * clears the wake for a move on the hub or during the notice, and a move with HOLD_SCRIPT clears
+ * it where it enters its back pair, so the script resumes only when the carrier hands back.
+ *
  * A move asked for while the monster's notice runs (the player's ENTITY.AWARE bit set,
  * COMBAT_MODE still 0: the roar, the hub, the AI script's combat entry) waits for it, up to
  * MHFU_MOVE_WAIT AI frames, unless the call FORCEs it. One asked for while the tail cut waits for
@@ -63,7 +68,10 @@ typedef struct {
     uint32_t spawner;                     /* 0 = MHFU_TIGREX_ATTACK_SPAWN */
     uint8_t  host_attacks;                /* 1 keeps the host entry's animation events */
     uint8_t  force;                       /* this call: 1 starts while the monster's notice runs */
-    uint8_t  _pad[2];
+    uint8_t  hold_script;                 /* 1: entering the back pair clears ENTITY.SCRIPT_WAKE, so the
+                                           * AI script does not pick between this move and the one that
+                                           * follows (em_vhook sets it for a move with an AFTER) */
+    uint8_t  _pad;
 } mhfu_move_t;
 
 /* MOVE_STATE.STATE */

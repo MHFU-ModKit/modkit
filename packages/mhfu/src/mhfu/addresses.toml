@@ -842,6 +842,7 @@ ATTACKS = { offset = 0x0C, type = "MOVE_ATTACK[4]", doc = "attacks, spawned once
 SPAWNER = { offset = 0x2C, type = "ptr", doc = "the species' attack spawner; 0 = TIGREX_ATTACK_SPAWN" }
 HOST_ATTACKS = { offset = 0x30, type = "u8", doc = "1 keeps the host entry's animation events (MONSTER_VTABLE.ANIM_EVENTS) while the move plays; 0 skips them" }
 FORCE = { offset = 0x31, type = "u8", doc = "1 starts while the monster's notice runs (the player's ENTITY.AWARE bit, COMBAT_MODE 0); 0 waits up to 450 AI frames for its roar and combat entry; per call, not per move" }
+HOLD_SCRIPT = { offset = 0x32, type = "u8", doc = "1: entering the back pair clears ENTITY.SCRIPT_WAKE, which the hub raises there, so the AI script does not pick a pair between this move and the one that follows (an own move with an AFTER)" }
 
 [struct.MOVE_STATE]
 doc = "the move player's block in partition memory (move.cpp): the move it runs and what happened, read by mhfu.live.moves"

@@ -166,8 +166,9 @@ int  mhfu_em_tip(const uint8_t (*pairs)[2], int n);
  * A port's own moves, by slot, in partition memory. The brain, in C on the wrapped AI step, plays
  * one through the move player that same AI frame: one asked for (mhfu_em_play), else the AFTER of
  * one of ours that ended on its clip, its length or a wall (forced as that one was), else a
- * rule's. A slot with an AFTER ends into its carrier (its back pair), so the host brain does not
- * cut in before the next. A slot's FORCE is the call's, never the slot's.
+ * rule's. A slot with an AFTER ends into its carrier (its back pair) with the AI script's wake
+ * cleared (MOVE.HOLD_SCRIPT), so the host brain does not cut in before the next. A slot's FORCE is
+ * the call's, never the slot's.
  *
  * An AI script plays a slot too: `enter MHFU_OWN_MOVE_MAIN k 0`. The slot-32 stub enters the slot's
  * carrier (em75's hub (0,2) for an empty or out-of-range slot) in place of the main the game

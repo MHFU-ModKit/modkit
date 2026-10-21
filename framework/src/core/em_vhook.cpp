@@ -32,7 +32,7 @@
  *                 move at the next AI step. The script's wake the hub raises inside the run is
  *                 cleared by SCRIPT_TICK after it, and move.cpp's start quiets the one the hub
  *                 raises again, so the script's next pair cannot cut the move; the carrier hands
- *                 back once the move ends, which wakes the script.
+ *                 back once the move (and its AFTER chain) ends, which wakes the script.
  *   CUT           the brain: while the tail cut waits for its drop (cut_waits), the
  *                 request, the plays and the rules wait, and the move player's start
  *                 with them; the events seen meanwhile reach the rules after the drop.
@@ -1286,7 +1286,9 @@ extern "C" int mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_sp
     volatile mhfu_em_own_t *o = &R->moves[slot];
     o->valid = 0;
     copy_words(&o->move, mv, sizeof(*mv));
-    /* the carrier again at the end, so AFTER follows before the host brain picks */
+    /* the carrier again at the end, so AFTER follows before the host brain picks; the hub it
+     * enters wakes the AI script, so the move player clears that wake */
+    o->move.hold_script = after != MHFU_EM_NO_MOVE;
     if (after != MHFU_EM_NO_MOVE && mv->back_main == MHFU_MOVE_NO_PAIR) {
         o->move.back_main = mv->carrier_main;
         o->move.back_sub = mv->carrier_sub;

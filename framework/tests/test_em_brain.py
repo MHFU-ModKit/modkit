@@ -54,7 +54,8 @@ class Move(ctypes.Structure):
         ("spawner", ctypes.c_uint32),
         ("host_attacks", ctypes.c_uint8),
         ("force", ctypes.c_uint8),
-        ("_pad", ctypes.c_uint8 * 2),
+        ("hold_script", ctypes.c_uint8),
+        ("_pad", ctypes.c_uint8),
     ]
 
 
@@ -1490,3 +1491,14 @@ def test_a_script_enter_plays_the_move_to_its_end(g: Game) -> None:
     assert ("X", ENT, 46, 0, 0) in seen and ("E", ENT, *SCRIPT_PAIR, 1) not in seen
     g.poke(a.ENTITY.SCRIPT_WAKE, "B", 1)  # the carrier hands back: the hub wakes the script
     assert script_frame(g) == [("E", ENT, *SCRIPT_PAIR, 1)]
+
+
+def test_a_script_enter_follows_its_after_chain(g: Game) -> None:
+    g.own(0, 46, after=1)
+    g.own(1, 53)
+    script_enters(g, 0)
+    seen = []
+    for _ in range(4 + 2 * int(CLIP_END / SPEED)):
+        seen += script_frame(g)
+    assert [x[2] for x in seen if x[0] == "X"] == [46, 53]
+    assert ("E", ENT, *SCRIPT_PAIR, 1) not in seen and g.moves("CHAINED") == 1
