@@ -618,6 +618,78 @@ def test_steer_window_reaches_the_registry(lua: Any) -> None:
     lua.execute(STEER_WINDOW)
 
 
+FATIGUE = """
+local SEAM = { moves = {}, fatigue = "unset", calls = 0 }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) SEAM.moves[slot] = t; return true end
+function mhfu.em_moves_clear() SEAM.moves = {}; return true end
+function mhfu.em_fatigue(t) SEAM.fatigue, SEAM.calls = t, SEAM.calls + 1; return true end
+local P = require("mhfu_port")
+local MOVES = { stamp = { entry = 46, slot = 0 }, spin = { entry = 9, slot = 3 },
+                lunge = { main = 1, sub = 4 } }
+
+-- a moves module's fatigue table is armed with the port; `own` by slot or by the move's name
+package.loaded.z_moves = {
+  moves = MOVES, rules = {},
+  fatigue = {
+    max = 1000, starts = { 400, 600 }, tired = 2250, refill = 500, low_hp = 25, calm = true,
+    pairs = { { 2, 10, 15 }, { 7, 1, 5 } },
+    own = { stamp = 15, [3] = 7, ghost = 99, lunge = 5 },
+  },
+}
+local z = P.define{ name = "z", species = 75 }
+z.ent = ENT
+ticks(1)
+local f = SEAM.fatigue
+assert(f.max == 1000 and f.starts[1] == 400 and f.starts[2] == 600 and f.tired == 2250)
+assert(f.refill == 500 and f.low_hp == 25 and f.calm == true)
+assert(#f.pairs == 2 and f.pairs[1][3] == 15 and f.pairs[2][1] == 7)
+assert(f.own[0] == 15 and f.own[3] == 7 and f.own.stamp == nil and f.own.ghost == nil)
+assert(f.own.lunge == nil and f.own[1] == nil)   -- a pair move has no slot, nor does a stranger
+assert(count("fatigue cost of 'ghost' dropped") == 1 and count("fatigue cost of 'lunge'") == 1)
+assert(count("fatigue: armed") == 1 and SEAM.calls == 1)
+
+-- a redefine from the same module arms it again (the framework keeps an unchanged one as it is);
+-- one whose module has none turns it off
+z = P.define{ name = "z", species = 75 }
+ticks(1)
+assert(SEAM.calls == 2 and SEAM.fatigue.max == 1000)
+package.loaded.z_moves = { moves = MOVES, rules = {} }
+z = P.define{ name = "z", species = 75 }
+ticks(1)
+assert(SEAM.calls == 3 and SEAM.fatigue == nil)
+assert(count("fatigue cost of 'ghost' dropped") == 1, "said once")
+"""
+
+
+def test_fatigue_is_armed_with_the_port(lua: Any) -> None:
+    memory(lua)
+    lua.execute(FATIGUE)
+
+
+FATIGUE_SPEC = """
+local SEAM = { fatigue = "unset" }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) return true end
+function mhfu.em_moves_clear() return true end
+function mhfu.em_fatigue(t) SEAM.fatigue = t; return false end
+local P = require("mhfu_port")
+
+-- a hand-written port gives its own; a refusal is logged and the port goes on
+local h = P.define{ name = "h", species = 75, moves = { a = { entry = 1 } },
+                    fatigue = { max = 500, own = { a = 3 } } }
+h.ent = ENT
+ticks(1)
+assert(SEAM.fatigue.max == 500 and SEAM.fatigue.own[0] == 3)
+assert(count("fatigue: refused") == 1)
+"""
+
+
+def test_fatigue_of_a_hand_written_port(lua: Any) -> None:
+    memory(lua)
+    lua.execute(FATIGUE_SPEC)
+
+
 RELINK = """
 local SEAM = { moves = {}, rules = {} }
 function mhfu.em_installed() return true end

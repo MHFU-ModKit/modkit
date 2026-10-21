@@ -188,6 +188,21 @@ starts rage (`true` restores it). `mhfu.em_sever_gate(pct)` wraps the species' t
 HP; the species' own gate still runs on the cuts it allows. A port's moves module sets the last
 two with `natural_rage = false` and `sever_below = <pct>`; the quest's end drops both.
 
+## Fatigue
+
+MHFU's monsters tire of nothing and its AI script cannot count, so `mhfu.em_fatigue{ ... }`
+(`include/mhfu/fatigue.h`) keeps a stamina for the wrapped species' monster in C and shows it to
+the script as gauge A low: `if_gauge_a_low` is true at or below 30 % of gauge A, which em75 never
+tests and nothing drains. The brain charges a cost when the monster enters a pair (`pairs = {
+{ main, sub, cost } }`) and when the move player starts one of our own moves (`own = { [slot] =
+cost }`), halved at or below `low_hp` percent of HP and never while enraged or tired; at 0 stamina
+the monster is tired for `tired` AI frames (gauge A low, `calm` keeps its anger from starting rage)
+and then has `refill` stamina. The first AI step picks the stamina from `starts` by the board's
+generator, and a new monster starts afresh. A moves module's `fatigue` table does all of it with
+the port (`own` keyed by move name there too); the quest's end, `mhfu.em_clear()` and
+`mhfu.em_fatigue(nil)` drop it, and `mhfu.em_fatigue_status()` reads the state. Do not arm it on a
+species whose AI step drains gauge A itself (those that call `GAUGE_A_LATCH`).
+
 ## AI scripts from the stick
 
 `mhfu brain deploy EM [FILE]` writes a species' AI script as an `MHAI` stick container,
