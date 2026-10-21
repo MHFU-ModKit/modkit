@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from mhfu import inject
 
 from .. import data, layout, manifest, moves
-from ..brain import fatigue, own
+from ..brain import charge, fatigue, own
 from ..build import Built, build
 from .own import say
 
@@ -75,17 +75,24 @@ def modules(
 ) -> list[Path]:
     """Write the port's clips, turns and moves modules into `where`, each whole and only when it
     changed, since the game re-runs a module that changed on disk; those written. The moves
-    module carries the own moves `[brain.pairs]` derive (`own.expand`) and, with `[brain] fatigue`,
-    the stamina table (`fatigue.table`), each finding of which goes to `report`. Raises
+    module carries the own moves `[brain.pairs]` derive (`own.expand`) and, with `[brain] fatigue`
+    and `charge`, the stamina and charge tables (`fatigue.table`, `charge.table`), each finding of
+    which goes to `report`. Raises
     `ManifestError` for a move the moves module cannot carry, before any is written."""
     m = own.expanded(m, games, report)
     stamina = fatigue.expanded(m, games, report)
+    charging = charge.expanded(m, games, report)
     known = moves.records(games.fu, m.port.host_species)
     texts = {
         layout.module_name(m): layout.lua(m, built.layout),
         layout.turns_module_name(m): layout.turns_lua(m, built.layout),
         moves.module_name(m): moves.lua(
-            m, built.layout, known, built.tip, None if stamina is None else stamina.module()
+            m,
+            built.layout,
+            known,
+            built.tip,
+            None if stamina is None else stamina.module(),
+            None if charging is None else charging.module(),
         ),
     }
     where.mkdir(parents=True, exist_ok=True)

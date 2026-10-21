@@ -70,13 +70,16 @@ port.pac, port.summary.text()
 A donor pair that `[brain.pairs]` maps to an own move of `[moves]` becomes `enter 16 k 0`, `k` its
 slot in `mhfu_port.moves.slots`; a list value (`[[1, 2], "own"]`) enters each item in turn.
 `[brain] charge = true` keeps the donor's `switch_query` on the two args the framework's charge
-helper answers (charged, cooldown running); any other query is taken as answer 0.
+helper answers (charged, cooldown running; any other query is taken as answer 0) and has the
+build write the donor's charge-ups, transform, chips and cooldowns into the moves module for it
+(`brain.charge`, `p3charge`).
 `[brain] fatigue = true` also has the build write the donor's stamina into the moves module for the
 framework's helper, and the splice read it as `if_gauge_a_low` (`brain.fatigue`).
 `-o FILE` holds code translated from the game: keep it in the workspace, never in a repo. How a
 donor routine maps onto the host's brain is in the
-[format notes](../../docs/formats/p3rd_ai_script.md#onto-an-mhfu-brain) and
-[fatigue](../../docs/formats/p3rd_ai_script.md#fatigue).
+[format notes](../../docs/formats/p3rd_ai_script.md#onto-an-mhfu-brain),
+[fatigue](../../docs/formats/p3rd_ai_script.md#fatigue) and
+[charge](../../docs/formats/p3rd_ai_script.md#charge).
 
 ## Status
 

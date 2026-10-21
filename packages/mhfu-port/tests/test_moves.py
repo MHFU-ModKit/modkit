@@ -148,6 +148,29 @@ def test_fatigue():
     assert moves.build_of(text) != moves.build_of(plain)
 
 
+def test_charge():
+    table = {
+        "ups": {"stamp": [25, 35, 40, 55]},
+        "transform": "dash",
+        "chip_gauge": 5,
+        "chip_durability": 4,
+        "cooldown_up": 420,
+        "cooldown_out": 900,
+        "discharge": [[4, 16], [4, 30]],
+    }
+    text = moves.lua(_m(), LAYOUT, {6}, None, None, table)
+    assert _body(text)[-1] == (
+        'charge = { ups = { stamp = { 25, 35, 40, 55 } }, transform = "dash", chip_gauge = 5, '
+        "chip_durability = 4, cooldown_up = 420, cooldown_out = 900, "
+        "discharge = { { 4, 16 }, { 4, 30 } } },"
+    )
+    plain = moves.lua(_m(), LAYOUT, {6})
+    assert not any(line.startswith("charge") for line in _body(plain))
+    assert moves.build_of(text) != moves.build_of(plain)
+    both = moves.lua(_m(), LAYOUT, {6}, None, {"max": 1000}, table)
+    assert [line.split(" = ")[0] for line in _body(both)[-2:]] == ["fatigue", "charge"]
+
+
 def test_graph_makes_the_same_module():
     m = _m()
     again = manifest.loads(manifest.dumps(m))

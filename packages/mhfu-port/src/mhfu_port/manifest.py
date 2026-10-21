@@ -423,8 +423,8 @@ class Brain:
     charge: bool = False
     """The donor's charged state runs in the game (the framework's charge helper): the splice keeps
     the donor's `switch_query` on the two args the helper answers (`CHARGE_QUERY_CHARGED`,
-    `CHARGE_QUERY_COOLDOWN`); without it every `switch_query` is taken as answer 0 (never
-    charged)."""
+    `CHARGE_QUERY_COOLDOWN`), and the build writes the donor's charge table into the moves module
+    (`brain.charge`); without it every `switch_query` is taken as answer 0 (never charged)."""
 
     def targets(self, pair: Pair) -> list[Target]:
         """What the donor's `pair` plays, in order: host pairs and own moves' names (`OWN`
