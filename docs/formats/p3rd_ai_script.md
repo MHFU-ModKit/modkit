@@ -4,8 +4,9 @@ A monster's brain in MHP3rd is bytecode, as in MHFU, with its own opcode numberi
 operand. The script picks what the monster does next; the moves themselves are code in the
 overlay. Read and written by `mhfu_port.brain` (`mhfu-port brain ID`): the 71 ids that have a
 script lift into trees, and each routine encodes back to the game's bytes. It is static
-research: nothing here has run on a PSP or in PPSSPP, and no part of it is carried into MHFU
-yet. The MHFU script is [ai_script.md](ai_script.md).
+research: nothing here has run on a PSP or in PPSSPP. A manifest's `[brain]` carries one routine
+into an MHFU host's script ([below](#onto-an-mhfu-brain)). The MHFU script is
+[ai_script.md](ai_script.md).
 
 ## Finding a script
 
@@ -58,6 +59,39 @@ dead end after `goto_base`).
 - `call` runs a routine of list 1, `call_base` one of list 0, `call_list2` routine 0 of list 2;
   all come back. `goto_base` restarts routine 0 of list 0.
 - What follows an end depends on the list its routine runs from.
+
+## Onto an MHFU brain
+
+A manifest's `[brain]` names a donor routine (`entry`) and a routine of the host species' script
+(`splice`). `mhfu-port splice` (`mhfu_port.brain.splice`) reads both games and makes the host
+routine's body the donor's, as an edit set that `mhfu brain push|deploy` carries on. The host
+keeps everything else: its roaming, sections, target pick and interrupts.
+
+- The host routine keeps its leading plain instructions and its `end`. The donor's `entry` is
+  pasted after them without its `end`, and so is the base routine it ends on with `call_base`.
+- A `call n` in pasted code runs a new routine `p3_<name>` that ends `end return`. A `call` from
+  there is inlined, so no call nests deeper than one level.
+- A donor op maps as below; any other op is a finding.
+
+| Donor | Host |
+|---|---|
+| `enter m s` | `enter M S 0`, the pair from `[brain.pairs]` |
+| `random` | `random`: each weight `w` becomes `w * 32 / 100` by largest remainder, at least 1; a zero arm goes |
+| `switch_range` | `switch_range`: case `k` is bucket `k`, the default the last, a missing case copies the default |
+| `switch_mode` | `if_mode2` for mode 1, the default as its else |
+| `if_phase` | `if_enraged` |
+| `if_facing ang` | `if_pursuit_off_facing` at `ang * 360 / 256` degrees with the arms swapped; past 127, `if_off_facing` |
+| `if_target_state`, `if_flag_bca`, `if_gauge_low`, `if_target_set` | no host state: `[brain.when]` picks the arm |
+| `if_object_near` | false |
+| `set_target 0 0 0` | dropped: the host picked its target before |
+| `set_latch`, `switch_latch` | folded: case 0 when something between them yields, else the default |
+| `switch_prev_call` | `if_var` on `[brain] history`, a script variable each called routine sets first |
+| map and area ops | none: the host's roaming owns them |
+
+A random that can follow another draw in the same run gets an `rng_step2` first, as the host's
+own picks do. Findings are errors (`P3_PAIR_UNMAPPED`, `P3_UNSUPPORTED`, `P3_HOST_OP`,
+`P3_UNDECIDED`, `P3_LATCH`, `P3_HISTORY`, `P3_WIDE`, `P3_ROUTINE`), which stop a build, warnings
+(`P3_FOLDED`, `P3_APPROX`, `P3_PAIR_UNUSED`, `P3_WHEN`) and notes (`P3_DROPPED`, `P3_WEIGHT`).
 
 ## Checking
 
