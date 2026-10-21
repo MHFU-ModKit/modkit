@@ -4,6 +4,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 import pytest
+from mhfu import addresses
 from mhfu.em.script import brainfile, budget, build, edit, ir, opcodes, source
 from mhfu.em.script import vars as script_vars
 from mhfu.em.script.editset import Anchor
@@ -72,9 +73,10 @@ def lines(nodes: Sequence[ir.Node]) -> list[str]:
 def translate(
     sp: manifest.Brain | None = None,
     survey: dict[int, script_vars.Var] | None = None,
+    slots: dict[str, int] | None = None,
     **routines: str,
 ) -> tuple[list[str], splice.Translator]:
-    t = splice.Translator(donor(**routines), sp or spec(), survey)
+    t = splice.Translator(donor(**routines), sp or spec(), survey, slots)
     return lines(t.paste("base_0", "base_3")), t
 
 
@@ -280,6 +282,64 @@ def test_latch_with_no_set():
     arms = [case(0, enter(2, 3))]
     got, t = translate(base_0=blk("switch_latch", arms=arms))
     assert got == [] and found(t) == [("error", "P3_LATCH")]
+
+
+# ---- own moves
+
+OWN = addresses.OWN_MOVE_MAIN
+SLAM = {"2,3": (1, 2), "7,13": "slam"}
+
+
+def test_an_own_move_is_enter_16_slot():
+    got, t = translate(
+        spec(pairs=SLAM), slots={"bite": 0, "slam": 5}, base_0=f"{enter(2, 3)} {enter(7, 13)}"
+    )
+    assert got == ["enter 1 2 0", f"enter {OWN} 5 0"] and not t.findings
+    assert dict(t.uses) == {((2, 3), (1, 2)): 1, ((7, 13), "slam"): 1}
+
+
+def test_own_names_a_derived_move():
+    sp = spec(pairs={"7,13": manifest.OWN})
+    got, t = translate(sp, slots={"p3_7_13": 2}, base_0=enter(7, 13))
+    assert got == [f"enter {OWN} 2 0"] and dict(t.uses) == {((7, 13), "p3_7_13"): 1}
+
+
+@pytest.mark.parametrize("slots", [None, {}, {"bite": 0}])
+def test_an_own_move_with_no_slot(slots):
+    got, t = translate(spec(pairs=SLAM), slots=slots, base_0=f"{enter(2, 3)} {enter(7, 13)}")
+    assert got == ["enter 1 2 0"] and found(t) == [("error", "P3_OWN_MISSING")]
+    assert "7,13" in t.findings[0].text and "slam" in t.findings[0].text
+    assert dict(t.uses) == {((2, 3), (1, 2)): 1}
+
+
+def test_own_enters_are_in_a_called_routine():
+    _, t = translate(spec(pairs=SLAM), slots={"slam": 5}, base_0=op("call", 1), call_1=enter(7, 13))
+    assert lines(t.routines["p3_call_1"]) == [f"enter {OWN} 5 0", "end return"]
+
+
+def test_an_own_enter_yields_for_the_latch():
+    got, t = translate(spec(pairs=SLAM), slots={"slam": 5}, base_0=latched(enter(7, 13)))
+    assert got == [f"enter {OWN} 5 0", "enter 1 2 0"] and not t.findings
+
+
+def test_the_splice_names_the_slots_it_used():
+    h = host()
+    s = splice.splice(
+        donor(base_0=f"{enter(2, 3)} {enter(7, 13)}"), h, spec(pairs=SLAM), slots={"slam": 5}
+    )
+    assert not s.findings and s.slots == {"slam": 5}
+    assert dict(s.uses) == {((2, 3), (1, 2)): 1, ((7, 13), "slam"): 1}
+    built = build.Built.of(h, s.edits)
+    assert built.ok, built.findings
+    base_3 = next(r for r in built.program.routines() if r.name == "base_3")
+    assert lines(base_3.body)[1:3] == ["enter 1 2 0", f"enter {OWN} 5 0"]
+    s = splice.splice(donor(base_0=enter(2, 3)), host(), spec(pairs=SLAM), slots={"slam": 5})
+    assert s.slots == {}  # the donor enters none
+
+
+def test_the_splice_without_slots_fails_an_own_pair():
+    s = splice.splice(donor(base_0=f"{enter(2, 3)} {enter(7, 13)}"), host(), spec(pairs=SLAM))
+    assert [f.code for f in s.findings] == ["P3_OWN_MISSING"] and s.slots == {}
 
 
 # ---- the call history
@@ -653,6 +713,38 @@ def test_brute_routines_enter_what_the_donor_does(brute):
             if isinstance(n, ir.Insn) and n.op.name == "enter"
         ]
         assert got == expanded(brain, brain.routines[name].body), name
+
+
+def test_brute_with_an_own_move(brute, data, tmp_path):
+    brain, h = brute
+    sp = brute_spec(brain, distinct=True)
+    sp.pairs["7,13"] = "slam"
+    s = splice.splice(brain, h, sp, slots={"slam": 5})
+    assert not [f for f in s.findings if f.level == "error"], s.findings
+    assert s.slots == {"slam": 5} and s.uses[(7, 13), "slam"] == 2
+    built = build.Built.of(h, s.edits)
+    assert built.ok, built.findings
+    found = set()
+    for label, name in s.routines.items():
+        got = [
+            (n.args["main"], n.args["sub"])
+            for n in ir.walk(s.edits.routines[label])
+            if isinstance(n, ir.Insn) and n.op.name == "enter"
+        ]
+        want = [
+            (OWN, 5) if p == (7, 13) else (1, p[0] * 32 + p[1])
+            for p in expanded(brain, brain.routines[name].body)
+        ]
+        assert got == want, name
+        if (OWN, 5) in got:
+            found.add(label)
+    assert found == {"p3_call_33", "p3_call_36"}
+    applied = {r.name: lines(r.body) for r in built.program.routines() if r.name in found}
+    assert all("enter 16 5 0" in text for text in applied.values()) and len(applied) == 2
+    bf = brainfile.new(75)
+    bf.put(s.edits)
+    path = brainfile.save(bf, tmp_path / "em75.toml")
+    assert build.compile(brainfile.load(path), data.fu, 75, lift=h).id == built.id
 
 
 def test_brute_cli(brute, data, tmp_path, capsys):

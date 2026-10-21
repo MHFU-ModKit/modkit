@@ -6,7 +6,7 @@ translated into MHFU nodes and set into the host's `splice` routine, as an edit 
     donor = p3.lift(p3rd, 23)
     host = build.lift_row(fu, 75, 75)
     survey = vars.survey(host, fu.em(75))                       # which script variables are free
-    spliced = splice.splice(donor, host, manifest.brain, survey)   # edits, findings, new routines
+    spliced = splice.splice(donor, host, manifest.brain, survey, moves.slots(manifest))
     built = build.Built.of(host, spliced.edits)                    # vetted, laid out, packed
 
 `Translator` needs no host: MHP3rd nodes in, MHFU nodes and findings out. `OPS` is the one table
@@ -16,6 +16,10 @@ that says what each MHP3rd opcode becomes. The code lands as follows:
   host routine's body (its leading plain instructions and its `end` stay);
 - a new routine `p3_<name>` for each `call n` from pasted code, ending `end 1`;
 - inlined: each `call n` from those, so no call goes deeper than one level.
+
+A donor pair that `[brain.pairs]` maps to an own move becomes `enter OWN_MOVE_MAIN k 0`, `k` the
+move's slot in `slots` (`moves.slots`, the one numbering the moves module and `mhfu_port.lua`
+use); em_vhook plays that move in place of a host pair.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 
+from mhfu import addresses
 from mhfu.em.script import budget, edit, editset, ir
 from mhfu.em.script import vars as script_vars
 from mhfu.em.script.check import Finding
@@ -145,15 +150,19 @@ class Translator:
         donor: p3.Brain,
         spec: manifest.Brain,
         survey: Mapping[int, script_vars.Var] | None = None,
+        slots: Mapping[str, int] | None = None,
     ) -> None:
         self.donor, self.spec, self.survey = donor, spec, survey
+        self.slots: Mapping[str, int] = slots or {}
+        """The registry slot of each own move, by name."""
         self.findings: list[Finding] = []
         self.routines: dict[str, list[ir.Node]] = {}
         """The new routines, by name."""
         self.sources: dict[str, str] = {}
         """The donor routine each new routine comes from."""
-        self.uses: Counter[tuple[Pair, Pair]] = Counter()
-        """Each enter translated, by donor pair and host pair."""
+        self.uses: Counter[tuple[Pair, Pair | str]] = Counter()
+        """Each enter translated, by donor pair and what it plays: a host pair or an own move's
+        name."""
         self.entered: set[Pair] = set()
         """The donor pairs the routines the entry reaches enter, whether or not they are kept."""
         self.var: int | None = None
@@ -345,12 +354,21 @@ class Translator:
 
     def _enter(self, n: p3.Insn, w: Where) -> list[ir.Node]:
         pair = (n.args["main"], n.args["sub"])
-        host = self.spec.host_pair(pair)
-        if host is None:
+        target = self.spec.target(pair)
+        if target is None:
             self.add(w, "error", "P3_PAIR_UNMAPPED", f"enter {pair[0]},{pair[1]} has no host pair")
             return []
-        self.uses[pair, host] += 1
-        return [edit.insn("enter", *host, 0)]
+        if isinstance(target, str):
+            slot = self.slots.get(target)
+            if slot is None:
+                text = f"enter {pair[0]},{pair[1]} plays own move {target}, which has no slot"
+                self.add(w, "error", "P3_OWN_MISSING", text)
+                return []
+            enter = edit.insn("enter", addresses.OWN_MOVE_MAIN, slot, 0)
+        else:
+            enter = edit.insn("enter", *target, 0)
+        self.uses[pair, target] += 1
+        return [enter]
 
     def _end(self, n: p3.Insn, w: Where) -> list[ir.Node]:
         if not w.tail:
@@ -571,8 +589,11 @@ class Spliced:
     findings: list[Finding]
     routines: dict[str, str]
     """Each new routine's name, and the donor routine it comes from."""
-    uses: dict[tuple[Pair, Pair], int] = field(default_factory=dict)
-    """Each donor pair entered, with the host pair it became, and how often."""
+    uses: dict[tuple[Pair, Pair | str], int] = field(default_factory=dict)
+    """Each donor pair entered, with the host pair or own move (its name) it became, and how
+    often."""
+    slots: dict[str, int] = field(default_factory=dict)
+    """The slot of each own move the enters name."""
 
 
 def _origin(donor: p3.Brain, name: str) -> str:
@@ -615,10 +636,12 @@ def splice(
     host: ir.Program,
     spec: manifest.Brain,
     survey: Mapping[int, script_vars.Var] | None = None,
+    slots: Mapping[str, int] | None = None,
 ) -> Spliced:
     """The host's `spec.splice` routine with the donor's `spec.entry` in its place, as edits to
     `host`; `findings` say what could not carry over, an error that it cannot be built. `survey`
-    (`vars.survey` of the host) picks the call history's variable when `spec.history` is None."""
+    (`vars.survey` of the host) picks the call history's variable when `spec.history` is None;
+    `slots` (`moves.slots`) numbers the own moves that `spec.pairs` plays."""
     es = EditSet.of(host)
     target = next((r for r in host.routines() if r.name == spec.splice), None)
     last = target.body[-1] if target and target.body else None
@@ -633,7 +656,7 @@ def splice(
         keep += 1
     for n in target.body[keep:-1]:
         es.node(n.id).delete = True
-    t = Translator(donor, spec, survey)
+    t = Translator(donor, spec, survey, slots)
     nodes = t.paste(spec.entry, spec.splice)
     for label, body in t.routines.items():
         es.routines[label] = body
@@ -646,7 +669,8 @@ def splice(
         es.inserts[key] = Insert(where, nodes)
         es.notes[key] = _origin(donor, spec.entry)
     _steps(host, es)
-    return Spliced(es, [*t.findings, *_unused(spec, t)], dict(t.sources), dict(t.uses))
+    own = {n: t.slots[n] for _, n in t.uses if isinstance(n, str)}
+    return Spliced(es, [*t.findings, *_unused(spec, t)], dict(t.sources), dict(t.uses), own)
 
 
 def _failed(es: EditSet, spec: manifest.Brain, text: str) -> Spliced:
