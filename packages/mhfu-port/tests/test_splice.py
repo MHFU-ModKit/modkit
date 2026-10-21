@@ -769,3 +769,32 @@ def test_brute_cli(brute, data, tmp_path, capsys):
     out.unlink()
     assert main(["splice", str(bad), "-o", str(out), *games]) == 1
     assert "P3_PAIR_UNMAPPED" in capsys.readouterr().out and not Path(out).exists()
+
+
+def test_brute_cli_own_moves(brute, data, tmp_path, capsys):
+    brain, _ = brute
+    sp = brute_spec(brain)
+    pairs = "".join(f'"{k}" = [{v[0]}, {v[1]}]\n' for k, v in sp.pairs.items() if k != "7,13")
+    when = "".join(f"{k} = {str(v).lower()}\n" for k, v in sp.when.items())
+    path = tmp_path / "m.toml"
+    path.write_text(
+        '[port]\nname = "t"\nhost_species = 75\npac = "t.bin"\n[source]\nmodel = 5248\n'
+        + f'[moves.slam]\nanim = 40\n{BRAIN}[brain.pairs]\n{pairs}"7,13" = "slam"\n'
+        + f"[brain.when]\n{when}"
+    )
+    games = ["--data", str(data.fu.root), "--p3rd-data", str(data.p3rd.root)]
+    out = tmp_path / "em75.toml"
+    assert main(["splice", str(path), "-o", str(out), *games]) == 0
+    assert "pair 7,13 -> own slam (slot 0)  x2" in capsys.readouterr().out
+    bf = brainfile.load(out)
+    assert bf.pairs == {(OWN, 0): "slam"}
+    built = build.compile(bf, data.fu, 75)
+    assert built.ok and "enter 16 0 0" in [
+        line for r in built.program.routines() for line in lines(r.body)
+    ]
+    derived = tmp_path / "derived.toml"
+    derived.write_text(path.read_text().replace('"7,13" = "slam"', '"7,13" = "own"'))
+    out.unlink()
+    assert main(["splice", str(derived), "-o", str(out), *games]) == 1
+    text = capsys.readouterr().out
+    assert "P3_OWN_MISSING" in text and "p3_7_13" in text and not out.exists()
