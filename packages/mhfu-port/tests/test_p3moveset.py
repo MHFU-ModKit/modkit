@@ -117,7 +117,18 @@ D0 = (
     asm.NOP,
 )
 HANDLERS = (
-    *handler("h00", *play(5), asm.li("a1", 1), asm.li("a2", 2), asm.jal(p3.ACT_SET), asm.NOP),
+    *handler(
+        "h00",
+        *play(5),
+        asm.li("a1", 2),
+        asm.li("a2", 7),
+        asm.jal(p3.ATTACK0),
+        asm.NOP,
+        asm.li("a1", 1),
+        asm.li("a2", 2),
+        asm.jal(p3.ACT_SET),
+        asm.NOP,
+    ),
     *handler(
         "h01",
         *play(6),
@@ -275,6 +286,7 @@ def test_what_a_pair_does(species):
     ms, _ = species
     assert ms.pairs[0, 0].next == ((1, 2),)
     assert ms.pairs[0, 1].attacks == (Attack(3, 11, 1),)
+    assert ms.pairs[0, 0].attacks == (Attack(2, 7, 0),)  # the spawner that takes no flags
     assert ms.pairs[1, 4].next == tuple(sorted(p3.END[LEAVE]))
     assert ms.pairs[1, 4].clips == ()
 
@@ -431,6 +443,12 @@ def test_brute(brute, mhp3rd_data):
         (2, 0): frozenset([(2, 1)]),
         (2, 25): frozenset([(2, 3)]),
     }
+
+
+def test_brute_variants_ride_the_entry(brute):
+    ids = {k: brute.pairs[k].entry[0] for k in ((2, 4), (2, 20), (2, 23))}
+    assert ids == {(2, 4): 0, (2, 20): 2, (2, 23): 3}  # one handler, a variant per pair
+    assert brute.pairs[7, 15].attacks == (Attack(0, 22, 0),)
 
 
 def test_zinogre(zinogre, mhp3rd_data):

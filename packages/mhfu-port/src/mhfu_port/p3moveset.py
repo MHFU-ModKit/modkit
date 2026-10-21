@@ -106,8 +106,10 @@ END = {
 }
 """Move-end helpers, each entering the pairs it can leave the monster in."""
 ATTACK = 0x09C97F04  # noaddr: (entity, slot, record, flags) spawns an attack from a 28-byte row
+ATTACK0 = 0x09C9811C  # noaddr: the same with flags 0
 
 PLAY, RECORD, REACT, ENTERS, ENDS, ATTACKS = "play", "record", "react", "enter", "end", "attack"
+ATTACKS0 = "attack0"
 WATCH = {
     **dict.fromkeys(PLAYERS, PLAY),
     **dict.fromkeys(RECORDS, RECORD),
@@ -115,6 +117,7 @@ WATCH = {
     **dict.fromkeys(ENTER, ENTERS),
     **dict.fromkeys(END, ENDS),
     ATTACK: ATTACKS,
+    ATTACK0: ATTACKS0,
 }
 """What a pair walk records, by call target."""
 ARGS = (Gpr.a1, Gpr.a2, Gpr.a3, Gpr.t0)
@@ -166,6 +169,8 @@ class Pair:
     """The pairs it enters with literal arguments, its end helpers' rest pairs included."""
     sites: frozenset[int] = field(default_factory=frozenset)
     """The play calls it reaches."""
+    entry: tuple[int | None, ...] = ()
+    """The literal a1 to t0 of the call into the handler; a variant rides there."""
 
 
 class _Route(NamedTuple):
@@ -206,6 +211,10 @@ class Moveset:
     def _calls(self) -> dict[int, int]:
         """The callee of each call site whose callee is known."""
         return {c.site: c.target for c in self.code.calls if c.target is not None}
+
+    def callee(self, site: int) -> int | None:
+        """The function the call at `site` goes to, None where it is not a literal."""
+        return self._calls.get(site)
 
     def _dispatcher(self, label: int) -> int | None:
         """The overlay function the case at `label` calls."""
@@ -357,7 +366,7 @@ class Moveset:
                 elif r.chain:
                     handler = self._case(r.chain[0], sub)
                 sites = self._clips.run(tick, facts=known({MAIN: main, SUB: sub}))
-                out[main, sub] = _pair(main, sub, handler, self._read(sites, r.entry))
+                out[main, sub] = _pair(main, sub, handler, self._read(sites, r.entry), r.entry)
         return out
 
     def _case(self, dispatcher: int, sub: int) -> int | None:
@@ -401,13 +410,13 @@ class Moveset:
                 f.sites.add(s.site)
                 if a[0] is not None:
                     f.clips.add(a[0])
-                elif (ids := self._id_from_table(s.site, entry)) is not None:
+                elif (ids := self.table_ids(s.site, entry)) is not None:
                     f.clips.update(ids)
                 else:
                     f.computed = True
             elif s.kind == RECORD:
                 helper = RECORDS[self._calls[s.site]]
-                ids = self._descriptors(a[helper.arg], helper.offsets)
+                ids = self.descriptors(a[helper.arg], helper.offsets)
                 f.sites.add(s.site)
                 if ids is None:
                     f.computed = True
@@ -418,9 +427,11 @@ class Moveset:
                 if a[0] is None or a[0] not in self.ovl.initialised:
                     f.computed = True
                 else:
-                    f.reactions.update(self._steps(a[0]))
+                    f.reactions.update(self.steps(a[0]))
             elif s.kind == ATTACKS:
                 f.attacks[Attack(*a[:3])] = None
+            elif s.kind == ATTACKS0:
+                f.attacks[Attack(a[0], a[1], 0)] = None
             elif s.kind == ENTERS:
                 if a[0] is not None and a[1] is not None:
                     f.next.add((a[0], a[1]))
@@ -428,7 +439,7 @@ class Moveset:
                 f.next.update(END[self._calls[s.site]])
         return f
 
-    def _descriptors(self, rec: int | None, offsets: tuple[int, ...]) -> list[int] | None:
+    def descriptors(self, rec: int | None, offsets: tuple[int, ...]) -> list[int] | None:
         """The clip ids of the descriptors at `offsets` of the record at `rec`; None if the
         record is not a literal."""
         if rec is None or rec not in self.ovl.initialised:
@@ -436,7 +447,7 @@ class Moveset:
         found = (DESCRIPTOR.unpack(self.ovl.read(rec + off, DESCRIPTOR.size)) for off in offsets)
         return [d[0] for d in found if any(d)]
 
-    def _steps(self, table: int) -> list[int]:
+    def steps(self, table: int) -> list[int]:
         """The clip ids a reaction step list plays, up to its end step."""
         ids = []
         for i in range(STEPS):
@@ -449,7 +460,7 @@ class Moveset:
                 ids.append(self.ovl.u16(arg))
         return ids
 
-    def _id_from_table(self, site: int, entry: tuple[int | None, ...]) -> list[int] | None:
+    def table_ids(self, site: int, entry: tuple[int | None, ...]) -> list[int] | None:
         """The ids of a play whose id is a byte of the constant table its handler copies to its
         stack at entry, indexed `variant * PHASES + phase`: the variant's row, or the whole table
         where the call into the handler passes none."""
@@ -498,7 +509,9 @@ def _loaded(code: Code, site: int, reg: Register) -> bool:
     return False
 
 
-def _pair(main: int, sub: int, handler: int | None, f: _Found) -> Pair:
+def _pair(
+    main: int, sub: int, handler: int | None, f: _Found, entry: tuple[int | None, ...]
+) -> Pair:
     return Pair(
         main,
         sub,
@@ -509,6 +522,7 @@ def _pair(main: int, sub: int, handler: int | None, f: _Found) -> Pair:
         tuple(f.attacks),
         tuple(sorted(f.next)),
         frozenset(f.sites),
+        entry,
     )
 
 
@@ -524,6 +538,7 @@ def _alias(src: Pairs, into: list[Pair]) -> Pair:
         tuple(dict.fromkeys(a for p in into for a in p.attacks)),
         tuple(sorted({n for p in into for n in p.next})),
         frozenset().union(*(p.sites for p in into)),
+        first.entry if len({p.entry for p in into}) == 1 else (),
     )
 
 
