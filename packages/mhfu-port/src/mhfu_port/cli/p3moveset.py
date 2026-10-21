@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, TextIO
 from mhfu.files import Extracted
 from mhfu.overlay import Overlay
 
+from ..brain import p3
 from ..p3moveset import Moveset, Pair, Pairs
 
 if TYPE_CHECKING:
@@ -26,9 +27,10 @@ COLUMNS = ("main", "sub", "kind", "handler", "clips", "computed", "next", "attac
 def register(sub: Subparsers) -> None:
     p = sub.add_parser("p3moveset", help="an MHP3rd em overlay's (main, sub) pairs, as CSV")
     p.add_argument(
-        "file", type=int, nargs="?", help="extracted file id of the overlay (em058m0: 5246)"
+        "id", type=int, nargs="?", help="MHP3rd monster id (23 Brute Tigrex, 40 Zinogre)"
     )
-    p.add_argument("--overlay", type=Path, help="an overlay file, instead of a file id")
+    p.add_argument("--slot", type=int, default=0, help="overlay slot: 0 for m0, 1 for m1, ...")
+    p.add_argument("--overlay", type=Path, help="an em overlay file, instead of a monster id")
     p.add_argument("--p3rd-data", type=Path, help="extracted MHP3rd (default: $MHP3RD_DATA)")
     p.add_argument("-o", "--out", type=Path, help="CSV file (default: stdout)")
     p.set_defaults(run=run)
@@ -52,11 +54,15 @@ def run(args: argparse.Namespace) -> int:
 
 
 def _overlay(args: argparse.Namespace) -> Overlay:
-    if (args.file is None) == (args.overlay is None):
-        raise ValueError("give an extracted file id or --overlay FILE")
+    if (args.id is None) == (args.overlay is None):
+        raise ValueError("give a monster id or --overlay FILE")
     if args.overlay is not None:
         return Overlay.from_path(args.overlay)
-    return Extracted.find(args.p3rd_data, env="MHP3RD_DATA").overlay(args.file)
+    extracted = Extracted.find(args.p3rd_data, env="MHP3RD_DATA")
+    slots = p3.Species.read(extracted).slots.get(args.id, ())
+    if args.slot >= len(slots):
+        raise ValueError(f"id {args.id} has {len(slots)} slots, not {args.slot + 1}")
+    return extracted.overlay(slots[args.slot].file)
 
 
 def write(ms: Moveset, out: TextIO) -> None:

@@ -388,8 +388,8 @@ def test_cli(written, tmp_path, capsys):
 
 def test_cli_needs_one_overlay(written, capsys):
     assert main(["p3moveset"]) == 1
-    assert main(["p3moveset", "5246", "--overlay", str(written)]) == 1
-    assert "file id or --overlay" in capsys.readouterr().err
+    assert main(["p3moveset", "23", "--overlay", str(written)]) == 1
+    assert "monster id or --overlay" in capsys.readouterr().err
 
 
 def test_cli_not_an_em_overlay(tmp_path, capsys):
@@ -451,8 +451,9 @@ def test_zinogre_alias(zinogre):
     assert zinogre.pairs[7, 1].clips == (218, 219, 220)
 
 
-def test_cli_by_file_id(mhp3rd_data, capsys):
-    assert main(["p3moveset", str(BRUTE), "--p3rd-data", str(mhp3rd_data)]) == 0
+def test_cli_by_monster_id(mhp3rd_data, capsys):
+    assert main(["p3moveset", "23", "--p3rd-data", str(mhp3rd_data)]) == 0
     out, err = capsys.readouterr()
-    assert len(list(csv.reader(io.StringIO(out)))) == 132
+    assert len(list(csv.reader(io.StringIO(out)))) == 1 + 131
     assert "145 of 145 play calls reached" in err
+    assert main(["p3moveset", "23", "--slot", "9", "--p3rd-data", str(mhp3rd_data)]) == 1
