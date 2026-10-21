@@ -5,8 +5,9 @@ One Qt window for authoring MHFU mods offline, with the commands behind it. Two 
 - **Monster**: a ported monster's clips, labels, parts, hitboxes and moves, kept in its manifest
   in [`ports/`](../../ports), checked against the base monster's data from the game. Its hit
   tables are one set of writes over the base monster's, exported as a Lua module the framework
-  loads (`<name>_hit.lua`) or pushed into the running game through PPSSPP's debugger. Its Brain
-  tab reads the base monster's AI script.
+  loads (`<name>_hit.lua`) or pushed into the running game through PPSSPP's debugger; a port
+  with a `[brain]` also ships the spare attack records its own moves play, derived from both games
+  each time and never saved. Its Brain tab reads the base monster's AI script.
 - **Map**: edits to a stage's mesh, collision and textures, kept as edit lists in a `map.toml`
   document and pushed into the running game through PPSSPP's debugger; and named points (the
   Point tool, the Points panel), which `mhfu rig goto|walk` takes the hunter to.

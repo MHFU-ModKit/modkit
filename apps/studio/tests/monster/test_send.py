@@ -2,12 +2,14 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """Send to game: the hit tables as they are now, onto a memory stick in tmp_path."""
 
+import shutil
 import struct
 from pathlib import Path
 
 import pytest
 from mhfu import inject
 from mhfu.em.intel import SpeciesIntel
+from mhfu_port.data import Data
 from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.workspace import MonsterWorkspace
@@ -106,3 +108,21 @@ def test_send_failure_is_a_message(ws: MonsterWorkspace, mods: Path) -> None:
     mods.rmdir()
     ws.send()
     assert ws.message.startswith("send failed: ")
+
+
+def test_send_derives_the_spare_records_of_a_brain_port(
+    mods: Path, games: Data, em75: SpeciesIntel, ports: Path, tmp_path: Path
+) -> None:
+    path = tmp_path / "brute_tigrex.toml"
+    shutil.copyfile(ports / "brute_tigrex.toml", path)
+    w = MonsterWorkspace(games)
+    w.intel_cache[75] = em75
+    w.doc = PortDocument.open(path)
+    assert w.exportable() and w.send_blocker() is None and w.push_blocker() is None
+    w.send()
+    text = (mods / "brute_tigrex_hit.lua").read_text()
+    assert w.message.startswith("sent brute_tigrex_hit.lua and lib/mhfu_port.lua to ")
+    assert "ports/brute_tigrex.toml + the donor's spare attack records" in text
+    assert 'what = "attack set ' in text and "-- donor 26" in text
+    assert w._sent is w.manifest, "the document, not the derived copy, counts as sent"
+    assert w.manifest is not None and not w.manifest.attacks, "nothing derived is saved"

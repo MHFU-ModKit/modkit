@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
+import copy
 import importlib.util
 import struct
 from pathlib import Path
@@ -11,6 +12,7 @@ from mhfu import files, hitzone
 from mhfu.hitzone import HitVolume
 from mhfu.memory import Image, Space
 from mhfu.writes import Refused, Write, apply
+from mhfu_port import manifest
 from mhfu_port.manifest import Attack, Hitbox, HitzoneState, Hurtbox, ManifestError
 from mhfu_studio.monster import runtime as RT
 
@@ -82,6 +84,29 @@ def test_plan(make):
     assert p.notes == ("grid: 1 state(s), host em75 has 2: 1 written",)
 
 
+def test_plan_carries_a_spare_record(make):
+    m = make()
+    m.hitboxes = [Hitbox(9, 130.0, 19, offset=[0.0, 1.0, 2.0], label="donor 26")]
+    m.attacks = [Attack(34, power=18, volume=19, kind=2, active=59, label="donor 26")]
+    p = RT.plan(m, HOST)
+    assert [w.what for w in p.writes] == [
+        "attack set 19",
+        "attack 34 power",
+        "attack 34 volume",
+        "attack 34 kind",
+        "attack 34 active",
+    ]
+    rec = a.ATTACK_RECORD
+    base = 0x6000 + 34 * rec.step
+    got = {w.what: (w.at - base, w.data) for w in p.writes[1:]}
+    assert got == {
+        "attack 34 power": (rec.POWER, bytes([18])),
+        "attack 34 volume": (rec.VOLUME_SET, bytes([19])),
+        "attack 34 kind": (rec.KIND, bytes([2])),
+        "attack 34 active": (rec.UNKNOWN_01, bytes([59])),
+    }
+
+
 def test_plan_leaves_out(make):
     m = hurt(make())
     m.hurtboxes *= 2
@@ -134,6 +159,10 @@ def test_content_id(make):
     m.hitboxes[0].label = "renamed"
     ids.append(RT.content_id(m))
     assert len(set(ids)) == 4 and all(len(i) == 8 for i in ids)
+    m.attacks[0] = Attack(6, power=41, kind=2)
+    m2 = RT.content_id(m)
+    m.attacks[0] = Attack(6, power=41, active=9)
+    assert len({ids[2], m2, RT.content_id(m)}) == 3
 
 
 def test_export_and_deploy(make, tmp_path, monkeypatch):
@@ -154,6 +183,22 @@ def test_export_and_deploy(make, tmp_path, monkeypatch):
     assert (mods / "lib" / "mhfu_port.lua").read_text() == "-- the library\n"
     assert not (mods / "mhfu_port.lua").exists()
     assert RT.deploy(path, mods, lib).library is None
+
+
+def boom() -> None:
+    raise AssertionError("no game data is read")
+
+
+def test_only_a_port_with_own_moves_to_derive_is_expanded(make):
+    m = hits(make())
+    assert not RT.derives(m) and RT.expanded(m, boom, "ports/t.toml") == (m, "ports/t.toml")  # type: ignore[arg-type]
+    brain = '[brain]\ndonor = 23\nsplice = "base_3"\nentry = "base_12"\n'
+    plain = make(brain)
+    assert not RT.derives(plain) and RT.expanded(plain, boom)[0] is plain  # type: ignore[arg-type]
+    pairs = brain + '[brain.pairs]\n"7,13" = "own"\n'
+    assert RT.derives(make(pairs))
+    own = make('[clips.c]\nsource = 61\n[moves.p3_7_13]\nclip = "c"\n' + pairs)
+    assert not RT.derives(own) and RT.expanded(own, boom)[0] is own  # type: ignore[arg-type]
 
 
 def test_library():
@@ -336,3 +381,66 @@ def test_notes_reach_the_log(lua, make):
     logs = run(lua, RT.lua_hit_module(m, HOST))
     assert any("hit tables: hurtboxes: 4 volume(s), the host's set holds 3" in x for x in logs)
     assert any("NOT written: hurtboxes: 0x" in x for x in logs), "the empty game fails a guard"
+
+
+# a port with a [brain]: the spare record its own moves play ships with the tables
+
+
+@pytest.fixture(scope="module")
+def brute(games: Any, ports: Path) -> tuple[Any, str]:
+    m = manifest.load(ports / "brute_tigrex.toml")
+    assert not RT.has_tables(m), "every table of the plan comes from the derivation"
+    return RT.expanded(m, lambda: games)
+
+
+def feet(m: Any) -> Attack:
+    (spare,) = m.attacks
+    return spare
+
+
+def test_the_hit_plan_of_a_brain_port_carries_the_spare_record(brute, em75):
+    m, source = brute
+    assert source == "ports/brute_tigrex.toml + the donor's spare attack records"
+    host = RT.host(em75)
+    spare = feet(m)
+    p = RT.plan(m, host, source)
+    assert [w.what for w in p.writes] == [
+        f"attack set {spare.volume}",
+        *(f"attack {spare.id} {lever}" for lever in ("power", "volume", "kind", "active")),
+    ]
+    assert not p.notes and "donor 26" in RT.lua_hit_module(m, host, source)
+
+
+def test_the_spare_record_lands_in_the_game(brute, games, em75):
+    m, _ = brute
+    host = RT.host(em75)
+    assert host is not None and host.attacks is not None
+    spare = feet(m)
+    space = game(games)
+    done = apply(space, RT.plan(m, host))
+    assert not done.mismatched
+    rec = a.ATTACK_RECORD
+    at = host.attacks.records_va + spare.id * rec.step
+    assert space.read(at + rec.POWER, 1) == bytes([spare.power])
+    assert space.read(at + rec.KIND, 1) == bytes([spare.kind])
+    assert space.read(at + rec.UNKNOWN_01, 1) == bytes([spare.active])
+    assert space.read(at + rec.VOLUME_SET, 1) == bytes([spare.volume])
+    va, cap = host.attacks.sets[spare.volume]
+    volumes = [HitVolume(space, va + i * REC) for i in range(3)]
+    assert [(v.bone, v.shape, v.radius) for v in volumes[:2]] == [(24, 0, 130.0), (29, 0, 130.0)]
+    assert cap >= 2 and volumes[2].bone == hitzone.SENTINEL_BONE
+
+
+def test_the_stick_writes_the_spare_record_as_the_push_does(lua, brute, games, em75):
+    m, source = copy.deepcopy(brute[0]), brute[1]
+    m.port.name = "t"  # the port `run` defines
+    host = RT.host(em75)
+    p = RT.plan(m, host, source)
+    space = game(games)
+    mem = Mem(lua)
+    seed(mem, space, p.writes)
+    assert not apply(space, p).mismatched
+    (line,) = applied(run(lua, RT.lua_hit_module(m, host, source)))
+    assert f"{len(p.writes)} write(s), {p.size} byte(s)" in line
+    for w in p.writes:
+        assert mem.read(w.at, len(w.data)) == space.read(w.at, len(w.data)) == w.data, w.what

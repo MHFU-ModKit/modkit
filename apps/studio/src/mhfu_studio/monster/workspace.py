@@ -1031,19 +1031,25 @@ class MonsterWorkspace(Workspace):
     # the runtime module: the manifest as it is now, saved or not (its header says which)
 
     def exportable(self) -> bool:
-        """The manifest has tables the runtime module carries."""
+        """The manifest has tables the runtime module carries, or its `[brain]` derives some."""
+        return self.manifest is not None and self._tables(self.manifest)
+
+    @staticmethod
+    def _tables(m: Manifest) -> bool:
         from mhfu_studio.monster import runtime
 
-        return self.manifest is not None and runtime.has_tables(self.manifest)
+        return runtime.has_tables(m) or runtime.derives(m)
 
     def _module(self) -> tuple[Manifest, Host | None, str]:
-        """What `runtime.export` takes for the document as it is now."""
+        """What `runtime.export` takes for the document as it is now: with a `[brain]`, the
+        spare attack records its own moves play are derived from the games (a few seconds)."""
         from mhfu_studio.monster import runtime
 
         if self.doc is None:
             raise ValueError("no port manifest open")
         m, intel = self.doc.manifest, self.host_intel()
         source = f"{runtime.source_of(m)}, unsaved edits" if self.doc.dirty else ""
+        m, source = runtime.expanded(m, self.games, source)
         return m, runtime.host(intel), source
 
     def export_hit(self) -> None:
@@ -1062,7 +1068,7 @@ class MonsterWorkspace(Workspace):
         m, host, source = self._module()
         out = runtime.cache_dir() / runtime.module_name(m)
         dep = runtime.ship(m, out, host, mods_dir=self.mods_dir(), source=source)
-        self._sent = m
+        self._sent = self.manifest  # not `m`: with a `[brain]` that is a derived copy
         lib = "" if dep.library is None else f" and {runtime.LIB_SUBDIR}/{runtime.LIBRARY}"
         self.message = (
             f"sent {dep.module.name}{lib} to {_home(dep.module.parent)}; it applies when a mod"
@@ -1085,13 +1091,14 @@ class MonsterWorkspace(Workspace):
             if self.scene is None:
                 return "no port open: open a port manifest (ports/<name>.toml)"
             return "a bare PAC has no hit tables: open its port manifest (.toml) instead"
-        if not runtime.has_tables(m):
+        if not self._tables(m):
             return (
                 "nothing to send yet: your port has no hitboxes, hurtboxes or damage grid. Copy"
                 " the base monster's in Hitboxes or Parts first."
             )
         try:
-            runtime.check(m, runtime.host(self.host_intel()))
+            if runtime.has_tables(m):  # a derived table is checked when it is made
+                runtime.check(m, runtime.host(self.host_intel()))
         except ManifestError as e:
             return self._cannot("send", m, e)
         try:
@@ -1125,10 +1132,11 @@ class MonsterWorkspace(Workspace):
         from mhfu_studio.monster import runtime
 
         m = self.manifest
-        if m is None or not runtime.has_tables(m):
+        if m is None or not self._tables(m):
             return self.send_blocker()
         try:
-            runtime.check(m, runtime.host(self.host_intel()))
+            if runtime.has_tables(m):
+                runtime.check(m, runtime.host(self.host_intel()))
         except ManifestError as e:
             return self._cannot("push", m, e)
         return None
