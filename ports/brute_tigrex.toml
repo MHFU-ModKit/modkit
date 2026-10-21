@@ -274,7 +274,6 @@ clip = "charge"
 donor = 23
 splice = "base_3"
 entry = "base_12"
-history = 2
 
 [brain.pairs]
 "1,1" = [

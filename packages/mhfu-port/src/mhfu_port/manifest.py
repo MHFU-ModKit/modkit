@@ -391,7 +391,8 @@ class Brain:
     slot: int = 0
     """The donor's overlay slot (m0, m1, ...)."""
     history: int | None = None
-    """The script variable that keeps the last call, for `switch_prev_call`."""
+    """The script variable that keeps the last call, for `switch_prev_call`. None: the host's
+    first free variable (`mhfu.em.script.vars`)."""
     pairs: dict[str, Pair] = field(default_factory=dict)
     """The host pair that each donor pair, keyed `"main,sub"`, enters."""
     when: dict[str, bool] = field(default_factory=dict)
