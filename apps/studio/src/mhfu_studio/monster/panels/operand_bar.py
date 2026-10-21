@@ -24,6 +24,7 @@ from PySide6.QtWidgets import QComboBox, QHBoxLayout, QSpinBox, QWidget
 
 from mhfu_studio.monster import brain_edit
 from mhfu_studio.monster.brain_edit import Bar, Choice, Control, Gesture
+from mhfu_studio.monster.panels.move_preview import ChoiceHover, MovePopup
 from mhfu_studio.ui import kit
 
 if TYPE_CHECKING:
@@ -107,9 +108,13 @@ class OperandBar(QWidget):
     """The bar for one node or arm of one row's script. `show_node` points it; `sync` brings it
     to what the workspace has now."""
 
-    def __init__(self, ws: MonsterWorkspace, studio: Studio) -> None:
+    def __init__(
+        self, ws: MonsterWorkspace, studio: Studio, preview: MovePopup | None = None
+    ) -> None:
         super().__init__()
         self.ws, self.studio = ws, studio
+        #: the move under the mouse in miniature, shared with the graph's
+        self.preview = preview or MovePopup(ws, studio, self)
         self._at: tuple[int, str | None] | None = None
         self._bar: Bar | None = None
         self._pick: Pick | None = None
@@ -194,6 +199,8 @@ class OperandBar(QWidget):
             self.fields[focused].setFocus()
 
     def _clear(self) -> None:
+        if "pair" in self.fields:
+            self.preview.drop()  # its choice goes, and with it the Leave that would close it
         while (item := self.body.takeAt(0)) is not None:
             if (w := item.widget()) is not None:
                 w.deleteLater()
@@ -224,6 +231,9 @@ class OperandBar(QWidget):
             on=lambda cid: self._set_pair(bar.pairs[int(cid)]),
             current="0",
         )
+        if self._at is not None:
+            pairs = [p.value if isinstance(p.value, tuple) else None for p in bar.pairs]
+            ChoiceHover(self.preview, box, self._at[0], pairs)
         self._field("pair", "Plays", box)
 
     def _pair_spin(self, bar: Bar, name: str) -> None:

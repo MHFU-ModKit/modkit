@@ -857,3 +857,27 @@ def test_em75_opens_edits_finds_and_sends(
         assert mw.budget_text(b).endswith(" of 999") and b.worst is not None
     finally:
         w.close()
+
+
+# a move in miniature
+
+
+def test_a_move_node_names_its_pair(ws: MonsterWorkspace, clock: Clock) -> None:
+    settle(ws, clock)
+    assert ws.brain_move(75, HUB) == (3, 0)
+    assert ws.brain_move(75, "75:00002004") is None, "the end"
+    assert ws.brain_move(75, "nowhere") is None and ws.brain_move(5, HUB) is None
+
+
+def test_a_reel_is_the_actions_anims_on_the_rows_model(
+    ws: MonsterWorkspace, species: Any, make_pair: Any
+) -> None:
+    ws.intel_cache[75] = species([make_pair(1, 4, a1=[2, 1, 9]), make_pair(0, 6, a1=[])])
+    r = ws.move_reel(75, 1, 4)
+    assert r.title.startswith("(1, 4)") and r.scene is ws.scene
+    assert [c.slot for c in r.clips] == [2, 1] and r.missing == (9,)
+    assert ws.move_reel(75, 0, 6).why.startswith("Names no anim")
+    sibling = ws.move_reel(76, 1, 4).scene
+    assert sibling is not None and sibling is not ws.scene, "76 plays on its own model"
+    assert ws.move_reel(76, 0, 6).scene is sibling, "read once"
+    assert ws.move_reel(77, 1, 4).why.startswith("No model for")

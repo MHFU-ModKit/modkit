@@ -42,6 +42,8 @@ class Plays:
     claimed: bool = False
     computed: bool = False
     why: str = ""
+    also: tuple[int, ...] = ()
+    """The action's other anims, as the intel lists them; the game's order is not known."""
 
     @property
     def playable(self) -> bool:
@@ -155,7 +157,8 @@ def plays_now(
     a1 = () if p is None else p.a1
     if not a1:
         return Plays(None, computed=p is not None and p.a1_computed)
-    return _plays(m, next((a for a in a1 if a in cov.slots), a1[0]), cov)
+    slot = next((a for a in a1 if a in cov.slots), a1[0])
+    return _plays(m, slot, cov, also=tuple(a for a in a1 if a != slot))
 
 
 def _plays(
@@ -164,6 +167,7 @@ def _plays(
     cov: clips.Coverage,
     move: str | None = None,
     claimed: bool = False,
+    also: tuple[int, ...] = (),
 ) -> Plays:
     if slot is None:
         return Plays(None, move=move, claimed=claimed)
@@ -183,6 +187,7 @@ def _plays(
         move,
         claimed,
         why=why,
+        also=also,
     )
 
 

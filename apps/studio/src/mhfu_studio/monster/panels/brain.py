@@ -71,6 +71,7 @@ from mhfu_studio.monster.panels.brain_code import (
     tag_width,
 )
 from mhfu_studio.monster.panels.brain_graph import GraphPane
+from mhfu_studio.monster.panels.move_preview import MovePopup
 from mhfu_studio.monster.panels.operand_bar import OperandBar
 from mhfu_studio.monster.workspace import budget_text
 from mhfu_studio.shell.findings import LEVELS, Level
@@ -629,8 +630,9 @@ class BrainPanel(kit.Panel):
         self.ticker.timeout.connect(studio.guard("follow the game", self._tick))
         self._modes(False)
         self._ready(False)
-        self.graph = GraphPane(ws, studio)
-        self.operands = OperandBar(ws, studio)
+        self.preview = MovePopup(ws, studio, self)
+        self.graph = GraphPane(ws, studio, self.preview)
+        self.operands = OperandBar(ws, studio, self.preview)
         self.graph.node_picked.connect(self.on_node)
         self.graph.link_followed.connect(self.on_node)
         self.graph.scope_opened.connect(self.on_scope)
@@ -675,6 +677,7 @@ class BrainPanel(kit.Panel):
 
     def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802
         super().hideEvent(event)
+        self.preview.drop()
         self.poll.stop()
         self._arm()
 

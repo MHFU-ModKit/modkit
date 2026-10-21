@@ -1052,6 +1052,11 @@ def real(qtbot: Any, em75: tuple[Any, Clock]) -> Rig:
     return Rig(qtbot, *em75)
 
 
+def test_the_tigrex_lunge_reels_both_its_anims(real: Rig) -> None:
+    r = real.ws.move_reel(75, 3, 6)
+    assert [c.slot for c in r.clips] == [47, 48] and r.scene is real.ws.scene
+
+
 def overlaps(rig: Rig) -> list[tuple[str, str]]:
     """The pairs of nodes drawn over each other."""
     rects = {i: rig.view.node_rect(i) for i in rig.view._shown}

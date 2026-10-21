@@ -72,6 +72,7 @@ from mhfu_studio.monster import (
     clips,
     inputs,
     move_game,
+    previews,
     rule_game,
     sequences,
     species,
@@ -83,6 +84,7 @@ from mhfu_studio.monster.core.scene import Scene
 from mhfu_studio.monster.document import PortDocument
 from mhfu_studio.monster.panels.graph import MoveGraph
 from mhfu_studio.monster.parts import PartSession
+from mhfu_studio.monster.render.preview import MovePreview
 from mhfu_studio.monster.species_doc import Builds, SpeciesDocument
 from mhfu_studio.monster.tools import HIT, HURT, NOUN, VolumeTools, describe
 from mhfu_studio.monster.tools import KEYS as VOLUME_KEYS
@@ -326,6 +328,10 @@ class MonsterWorkspace(Workspace):
         self.species_doc: BrainDocument | None = None
         self.scene: Scene | None = None
         self.vp: MonsterViewport | None = None
+        #: a move in miniature, on the 3D view's context (`preview`)
+        self._preview: MovePreview | None = None
+        #: the model a miniature last read from the game, by its file
+        self._model: tuple[Path, Scene] | None = None
         self.message = ""
         #: a dock to bring forward, for the window (`take_focus`)
         self._focus: str | None = None
@@ -943,6 +949,9 @@ class MonsterWorkspace(Workspace):
             self.focus("Actions")
 
     def close(self) -> None:
+        if self._preview is not None:
+            self._preview.release()
+            self._preview = None
         if self.vp is not None:
             self.vp.release()
             self.vp = None
@@ -1613,25 +1622,15 @@ class MonsterWorkspace(Workspace):
         held = self._shown.get(row)
         if held is None or self.species_doc is None:
             return None
-        program = held.built.program
-        if held.index is None:
-            held.index = ir.Index(program)
-            held.blocks = {
-                a.id: n
-                for r in program.routines()
-                for n in ir.walk(r.body)
-                if isinstance(n, ir.Block)
-                for a in n.arms
-            }
         try:
-            node = held.index.node(ref)
+            node = self._index(held).node(ref)
         except KeyError:
             return None
         block = (held.blocks or {}).get(ref) if isinstance(node, ir.Arm) else None
         try:
             return brain_edit.bar(
                 node,
-                program,
+                held.built.program,
                 block=block,
                 header=header,
                 words=self.brain_words(row),
@@ -1640,6 +1639,61 @@ class MonsterWorkspace(Workspace):
         except EditError as e:
             self.message = str(e)
             return None
+
+    def _index(self, held: _Shown) -> ir.Index:
+        """The build's index and the block of each arm, made once per build."""
+        if held.index is None:
+            program = held.built.program
+            held.index = ir.Index(program)
+            held.blocks = {
+                a.id: n
+                for r in program.routines()
+                for n in ir.walk(r.body)
+                if isinstance(n, ir.Block)
+                for a in n.arms
+            }
+        return held.index
+
+    def brain_move(self, row: int, ref: str) -> Pair | None:
+        """The pair node `ref` of the build shown plays; None for a node that is no Move."""
+        held = self._shown.get(row)
+        if held is None:
+            return None
+        try:
+            return brain.pair_of(self._index(held).node(ref))
+        except KeyError:
+            return None
+
+    def move_reel(self, row: int, main: int, sub: int) -> previews.Reel:
+        """What the miniature of row `row`'s move `(main, sub)` shows: named as the operand bar
+        names it, the anims the action plays on the row's own model."""
+        title = cat.pair_text(main, sub, self.brain_words(row).pairs)
+        doc = self.species_doc
+        if doc is None:
+            return previews.Reel(title, why="No brain file is open")
+        try:
+            scene = self._model_of(row)
+        except (OSError, ValueError, LookupError) as e:
+            return previews.Reel(title, why=f"No model for {species.label(row)}: {e}")
+        return previews.reel(title, scene, self.plays(main, sub, species=doc.overlay))
+
+    def _model_of(self, row: int) -> Scene:
+        """Species row `row`'s model: the one open when it is, else read from the game and kept
+        for the next ask."""
+        sc = self.scene
+        if sc is not None and sc.path is not None and species.of_model_file(sc.path) == row:
+            return sc
+        path = self.fu().path(files.monster_pac(row))
+        if self._model is None or self._model[0] != path:
+            self._model = (path, Scene.from_path(path))
+        return self._model[1]
+
+    def preview(self) -> MovePreview | None:
+        """The miniature, on the 3D view's context, made the first time; None while the view
+        has none. Call it inside `Studio.gl_current`."""
+        if self._preview is None and self.vp is not None:
+            self._preview = MovePreview(self.vp.ctx)
+        return self._preview
 
     def brain_budget(self, row: int) -> Budget | None:
         """The build's run budget (`budget_text`), worked out on the brain worker the first time

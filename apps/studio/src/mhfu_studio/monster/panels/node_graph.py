@@ -25,13 +25,14 @@ from typing import Any
 from NodeGraphQt import BackdropNode, BaseNode, NodeGraph, Port
 from NodeGraphQt.constants import LayoutDirectionEnum, PipeLayoutEnum
 from NodeGraphQt.qgraphics.node_base import NodeItem
-from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
     QFontMetricsF,
     QInputDevice,
     QKeyEvent,
+    QMouseEvent,
     QNativeGestureEvent,
     QPainter,
     QPen,
@@ -215,6 +216,36 @@ class _Navigation(QObject):
         lo, hi = min(_SCALE[0], now), max(_SCALE[1], now)
         f = min(max(factor, lo / now), hi / now)
         v.scale(f, f, v.mapToScene(at))
+
+
+class _Hover(QObject):
+    """The node under the mouse, to `on`, each time it changes; None off any node and while a
+    button is held."""
+
+    def __init__(
+        self,
+        viewer: Any,
+        node_at: Callable[[QPoint], str | None],
+        on: Callable[[str | None], object],
+    ) -> None:
+        super().__init__(viewer)
+        self._node_at, self._on = node_at, on
+        self._now: str | None = None
+        viewer.viewport().setMouseTracking(True)
+        viewer.viewport().installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if isinstance(event, QMouseEvent) and event.type() == QEvent.Type.MouseMove:
+            held = event.buttons() != Qt.MouseButton.NoButton
+            self._tell(None if held else self._node_at(event.position().toPoint()))
+        elif event.type() in (QEvent.Type.Leave, QEvent.Type.MouseButtonPress, QEvent.Type.Wheel):
+            self._tell(None)
+        return False
+
+    def _tell(self, node: str | None) -> None:
+        if node != self._now:
+            self._now = node
+            self._on(node)
 
 
 def _tuples(body: QColor, edge: QColor) -> tuple[tuple[int, ...], tuple[int, ...]]:
@@ -480,6 +511,8 @@ class GraphView(QWidget):
     settled = Signal()
     #: a node was double-clicked, or Return pressed with one node selected: its id
     activated = Signal(str)
+    #: the mouse came onto a node (its id) or off every node (`None`)
+    hovered = Signal(object)
 
     def __init__(self, parent: QWidget | None = None, *, tree: bool = False) -> None:
         """A `tree` canvas flows down the page: a node's input is at its top, its outputs along
@@ -516,6 +549,7 @@ class GraphView(QWidget):
             # a repeat's loop wire is a cycle, and NodeGraphQt's check of one never ends
             self._graph.set_acyclic(False)
         self._navigation = _Navigation(viewer)
+        self._hover = _Hover(viewer, self._node_at, self.hovered.emit)
         viewer.setMinimumSize(240, 160)
         for act in (viewer.qaction_for_undo(), viewer.qaction_for_redo()):
             act.setShortcuts([])  # else Ctrl+Z stops here, at an empty stack, not at the studio
@@ -613,6 +647,15 @@ class GraphView(QWidget):
         """Where a node is now, in scene units; None for an id not drawn."""
         shown = self._shown.get(node)
         return None if shown is None else QRectF(shown.view.sceneBoundingRect())
+
+    def node_on_screen(self, node: str) -> QRect | None:
+        """Where a node is drawn, in global pixels; None for an id not drawn."""
+        rect = self.node_rect(node)
+        if rect is None:
+            return None
+        v = self.viewer
+        drawn = v.mapFromScene(rect).boundingRect()
+        return QRect(v.viewport().mapToGlobal(drawn.topLeft()), drawn.size())
 
     def frame_rects(self) -> dict[str, QRectF]:
         """Where each frame is now, in scene units."""
@@ -947,6 +990,14 @@ class GraphView(QWidget):
     def _double(self, node: Any) -> None:
         if node.id in self._shown:
             self._raise(lambda: self.activated.emit(node.id), revert=False)
+
+    def _node_at(self, at: QPoint) -> str | None:
+        """The node drawn at viewport pixel `at`, whichever part of it is there."""
+        views = {id(s.view): k for k, s in self._shown.items()}
+        item = self.viewer.itemAt(at)
+        while item is not None and id(item) not in views:
+            item = item.parentItem()
+        return None if item is None else views[id(item)]
 
     def _picked(self) -> str | None:
         frames, ids = self.selected_frames(), self.selected()

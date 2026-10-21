@@ -473,4 +473,5 @@ QMenu::item:selected {{ background: {t.soft}; }}
 QMenu::item:disabled {{ color: {t.muted}; }}
 QMenu::separator {{ height: 1px; background: {t.line}; margin: 5px 8px; }}
 QToolTip {{ background: {t.menu}; color: {t.text}; border: 1px solid {t.line}; padding: 6px 8px; }}
+QFrame#MovePreview {{ background: {t.menu}; border: 1px solid {t.line}; border-radius: 8px; }}
 """

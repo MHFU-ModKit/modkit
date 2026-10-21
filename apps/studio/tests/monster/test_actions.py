@@ -83,6 +83,13 @@ claim = 1
     assert A.bound_move(m, 3, 9) == "bite" and A.claimer(m, 1, 30) == "rush"
 
 
+def test_plays_the_build_has_first(make_pair: Any, species: Any) -> None:
+    si = species([make_pair(1, 4, a1=[9, 2, 1])])
+    now = A.plays_now(None, si.pair(1, 4), 1, 4, None, COV)
+    assert (now.slot, now.also) == (2, (9, 1)), "the 3D view's anim, then the rest as listed"
+    assert A.plays_now(None, si.pair(1, 4), 1, 4, None, C.Coverage()).also == (2, 1)
+
+
 def test_timing_in_the_row(make: Any, intel: SpeciesIntel) -> None:
     m = make(
         '[clips.walk]\nslot = 1\nimpact_frame = 7\n[moves.c]\nmain = 1\nsub = 4\nclip = "walk"'

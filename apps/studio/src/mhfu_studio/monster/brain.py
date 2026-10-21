@@ -117,6 +117,15 @@ def var_of(op: Op, args: Mapping[str, ir.Value]) -> int | None:
     return v if isinstance(v, int) and 1 <= v <= cat.VARS else None
 
 
+def pair_of(node: object) -> tuple[int, int] | None:
+    """The move pair a Move node plays; None for any other node, or one whose pair is not two
+    numbers."""
+    if not isinstance(node, ir.Insn) or node.op.name != "enter":
+        return None
+    main, sub = node.args.get("main"), node.args.get("sub")
+    return (main, sub) if isinstance(main, int) and isinstance(sub, int) else None
+
+
 @dataclass(frozen=True)
 class Uses:
     """How often a script names each variable, and how many distance ranges it branches on."""
@@ -481,12 +490,10 @@ def view(
             flagged.add(row)
         if isinstance(n, ir.Block) and n.close is not None:
             closes[n.close] = row
-        if isinstance(n, ir.Insn) and n.op.name == "enter":
-            main, sub = n.args["main"], n.args["sub"]
-            if isinstance(main, int) and isinstance(sub, int):
-                pairs[row] = (main, sub)
-                if n.pc is not None:
-                    ends[n.pc + n.length] = row
+        if (pr := pair_of(n)) is not None:
+            pairs[row] = pr
+            if isinstance(n, ir.Insn) and n.pc is not None:
+                ends[n.pc + n.length] = row
     flagged |= {_top(parent, row) for row in flagged}
     flagged |= {routine_row[r.name] for r in p.routines() if r.va is None and r.name in routine_row}
     return BrainView(
