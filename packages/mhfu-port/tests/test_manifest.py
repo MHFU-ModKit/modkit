@@ -254,6 +254,25 @@ def test_brain_pairs_may_be_lists():
     assert M.loads(M.dumps(m)) == m
 
 
+def test_a_pair_plays_the_move_another_pair_derives():
+    text = BRAIN + "[brain.pairs]\n'7,0' = 'own'\n'7,23' = [[1, 2], 'p3_7_0']\n'7,24' = 'p3_7_0'\n"
+    b = M.loads(_with(text)).brain
+    assert b is not None
+    assert b.derived() == {"p3_7_0": (7, 0)} and b.shared() == {(7, 0)}
+    assert b.targets((7, 23)) == [(1, 2), "p3_7_0"] and b.target((7, 24)) == "p3_7_0"
+    assert M.loads(M.dumps(M.loads(_with(text)))) == M.loads(_with(text))
+    alone = M.loads(_with(BRAIN + "[brain.pairs]\n'7,0' = 'own'\n'7,1' = [[1, 2], 'own']\n")).brain
+    assert alone is not None and alone.shared() == set()
+    assert alone.derived() == {"p3_7_0": (7, 0), "p3_7_1": (7, 1)}
+
+
+def test_a_name_no_pair_derives_is_no_own_move():
+    with pytest.raises(M.ManifestError, match="'p3_7_0' is no own move"):
+        M.loads(_with(BRAIN + "[brain.pairs]\n'7,23' = [[1, 2], 'p3_7_0']\n"))
+    with pytest.raises(M.ManifestError, match="'p3_7_0' is no own move"):
+        M.loads(_with(BRAIN + "[brain.pairs]\n'7,0' = [1, 2]\n'7,23' = 'p3_7_0'\n"))
+
+
 @pytest.mark.parametrize(
     ("pairs", "why"),
     [

@@ -405,9 +405,9 @@ class Brain:
     first free variable (`mhfu.em.script.vars`)."""
     pairs: dict[str, Plays] = field(default_factory=dict)
     """What each donor pair, keyed `"main,sub"`, plays: a host pair, the name of an own move in
-    `[moves]`, or `OWN`; or a list of those, each entered in turn (`[[1, 2], "own"]`: the host's
-    turn, then the move). The splice enters an own move as `enter OWN_MOVE_MAIN k 0`, `k` its
-    `moves.slots` slot."""
+    `[moves]`, or `OWN`, or the name `OWN` gives another pair (`derived`); or a list of those, each
+    entered in turn (`[[1, 2], "own"]`: the host's turn, then the move). The splice enters an own
+    move as `enter OWN_MOVE_MAIN k 0`, `k` its `moves.slots` slot."""
     when: dict[str, bool] = field(default_factory=dict)
     """The arm a donor test with no host counterpart takes, by its MHP3rd opcode name."""
     attacks: dict[str, int] = field(default_factory=dict)
@@ -442,6 +442,30 @@ class Brain:
         """The host pair the donor's `pair` enters; None when the map has none or an own move."""
         t = self.target(pair)
         return t if isinstance(t, tuple) else None
+
+    def derived(self) -> dict[str, Pair]:
+        """The own moves `OWN` stands for, by name, each with the donor pair it comes from. Another
+        pair plays one by naming it: `"7,23" = [[1, 2], "p3_7_0"]` turns, then plays pair (7, 0)'s
+        move."""
+        pairs = {pair_of(key): plays for key, plays in self.pairs.items()}
+        return {own_name(p): p for p, plays in pairs.items() if OWN in targets_of(plays)}
+
+    def shared(self) -> set[Pair]:
+        """The pairs mapped to `OWN` whose move another pair plays, so the script need not enter
+        them."""
+        names = self.derived()
+        return {
+            names[t]
+            for key in self.pairs
+            for t in self.targets(pair_of(key))
+            if isinstance(t, str) and t in names and names[t] != pair_of(key)
+        }
+
+
+def pair_of(key: str) -> Pair:
+    """The donor pair a `[brain.pairs]` key names."""
+    main, _, sub = key.partition(",")
+    return int(main), int(sub)
 
 
 def targets_of(plays: Plays | None) -> list[Target]:
@@ -686,9 +710,11 @@ def _validate(m: Manifest) -> None:
                 _need(key not in claimed, w, f"claims main {k} as moves.{claimed.get(key)} does")
                 claimed[key] = name
     if m.brain is not None:
+        _brain(m.brain)
+        derived = m.brain.derived()
         for donor, plays in m.brain.pairs.items():
             for t in targets_of(plays):
-                if isinstance(t, str) and t != OWN:
+                if isinstance(t, str) and t != OWN and t not in derived:
                     target = m.moves.get(t)
                     _need(
                         target is not None and target.own,
@@ -731,8 +757,6 @@ def _validate(m: Manifest) -> None:
             _need(lever in (None, *BYTE), w, f"{lever} is not a byte")
     for i, e in enumerate(m.effects):
         _need(e.move in m.moves, f"effect[{i}]", f"move {e.move!r} is not in moves")
-    if m.brain is not None:
-        _brain(m.brain)
     own = sum(mv.own for mv in m.moves.values())
     _need(own <= OWN_MOVES, "moves", f"{own} own moves, the framework holds {OWN_MOVES}")
     validate(m)
