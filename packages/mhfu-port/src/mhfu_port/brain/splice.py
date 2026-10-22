@@ -5,8 +5,9 @@ translated into MHFU nodes and set into the host's `splice` routine, as an edit 
 
     donor = p3.lift(p3rd, 23)
     host = build.lift_row(fu, 75, 75)
-    spliced = splice.splice(donor, host, manifest.brain)    # edits, findings, new routines
-    built = build.Built.of(host, spliced.edits)             # vetted, laid out, packed
+    survey = vars.survey(host, fu.em(75))                       # which script variables are free
+    spliced = splice.splice(donor, host, manifest.brain, survey)   # edits, findings, new routines
+    built = build.Built.of(host, spliced.edits)                    # vetted, laid out, packed
 
 `Translator` needs no host: MHP3rd nodes in, MHFU nodes and findings out. `OPS` is the one table
 that says what each MHP3rd opcode becomes. The code lands as follows:
@@ -25,6 +26,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from mhfu.em.script import budget, edit, editset, ir
+from mhfu.em.script import vars as script_vars
 from mhfu.em.script.check import Finding
 from mhfu.em.script.editset import Anchor, EditSet, Insert
 from mhfu.em.script.opcodes import Shape
@@ -138,8 +140,13 @@ def _first(nodes: Sequence[p3.Node], name: str) -> bool:
 class Translator:
     """MHP3rd nodes as MHFU nodes: `paste` the entry, and `routines` holds the new routines."""
 
-    def __init__(self, donor: p3.Brain, spec: manifest.Brain) -> None:
-        self.donor, self.spec = donor, spec
+    def __init__(
+        self,
+        donor: p3.Brain,
+        spec: manifest.Brain,
+        survey: Mapping[int, script_vars.Var] | None = None,
+    ) -> None:
+        self.donor, self.spec, self.survey = donor, spec, survey
         self.findings: list[Finding] = []
         self.routines: dict[str, list[ir.Node]] = {}
         """The new routines, by name."""
@@ -187,12 +194,37 @@ class Translator:
                 at = n.op.entry(n.args) if n.op.name in TRANSFERS else None
                 if at and (to := self.donor.entry(*at)):
                     todo.append(to)
-        if reads and self.spec.history is None:
+        if reads:
+            self.var = self.history_var(item)
+
+    def history_var(self, item: str) -> int | None:
+        """The variable that keeps the last call: the manifest's, which the survey may doubt, else
+        the host's first free one."""
+        want, survey = self.spec.history, self.survey
+        if want is not None:
+            v = None if survey is None else survey.get(want)
+            if v is not None and v.kind is not script_vars.Kind.FREE:
+                text = f"brain.history {want} is not free ({v.kind}): {'; '.join(v.reasons)}"
+                self.add(item, "warning", "P3_HISTORY", text)
+            return want
+        if survey is None:
             self.add(
                 item, "error", "P3_HISTORY", "switch_prev_call needs brain.history, a script var"
             )
-        elif reads:
-            self.var = self.spec.history
+            return None
+        if not (free := script_vars.free(survey)):
+            kinds = ", ".join(f"{v.number} {v.kind}" for v in survey.values())
+            self.add(
+                item, "error", "P3_HISTORY", f"no script variable is free for the history: {kinds}"
+            )
+            return None
+        self.add(
+            item,
+            "info",
+            "P3_HISTORY",
+            f"the call history is script variable {free[0]}, the first free one",
+        )
+        return free[0]
 
     def pasted(self, name: str, item: str) -> list[ir.Node]:
         if name in self._stack:
@@ -578,9 +610,15 @@ def _steps(host: ir.Program, es: EditSet) -> None:
         home.insert(next(i for i, x in enumerate(home) if x is found), edit.insn("rng_step2"))
 
 
-def splice(donor: p3.Brain, host: ir.Program, spec: manifest.Brain) -> Spliced:
+def splice(
+    donor: p3.Brain,
+    host: ir.Program,
+    spec: manifest.Brain,
+    survey: Mapping[int, script_vars.Var] | None = None,
+) -> Spliced:
     """The host's `spec.splice` routine with the donor's `spec.entry` in its place, as edits to
-    `host`; `findings` say what could not carry over, an error that it cannot be built."""
+    `host`; `findings` say what could not carry over, an error that it cannot be built. `survey`
+    (`vars.survey` of the host) picks the call history's variable when `spec.history` is None."""
     es = EditSet.of(host)
     target = next((r for r in host.routines() if r.name == spec.splice), None)
     last = target.body[-1] if target and target.body else None
@@ -595,7 +633,7 @@ def splice(donor: p3.Brain, host: ir.Program, spec: manifest.Brain) -> Spliced:
         keep += 1
     for n in target.body[keep:-1]:
         es.node(n.id).delete = True
-    t = Translator(donor, spec)
+    t = Translator(donor, spec, survey)
     nodes = t.paste(spec.entry, spec.splice)
     for label, body in t.routines.items():
         es.routines[label] = body

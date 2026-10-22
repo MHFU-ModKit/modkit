@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from mhfu.em.script import brainfile, source
+from mhfu.em.script import vars as script_vars
 from mhfu.em.script.budget import LIMIT
 from mhfu.em.script.build import Built, lift_row
 from mhfu.em.script.check import Finding
@@ -48,7 +49,8 @@ def run(args: argparse.Namespace) -> int:
     games = data.from_arguments(args)
     row = m.port.host_species
     host = lift_row(games.fu, row, row)
-    spliced = splice.splice(p3.lift(games.p3rd, m.brain.donor, m.brain.slot), host, m.brain)
+    survey = script_vars.survey(host, games.fu.em(row))
+    spliced = splice.splice(p3.lift(games.p3rd, m.brain.donor, m.brain.slot), host, m.brain, survey)
     built = Built.of(host, spliced.edits)
     findings = [*spliced.findings, *built.findings]
     b = m.brain

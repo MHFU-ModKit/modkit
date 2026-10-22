@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from mhfu.em.script import brainfile, budget, build, edit, ir, opcodes, source
+from mhfu.em.script import vars as script_vars
 from mhfu.em.script.editset import Anchor
 from mhfu_port import manifest
 from mhfu_port.brain import p3, p3ops, splice
@@ -69,9 +70,11 @@ def lines(nodes: Sequence[ir.Node]) -> list[str]:
 
 
 def translate(
-    sp: manifest.Brain | None = None, **routines: str
+    sp: manifest.Brain | None = None,
+    survey: dict[int, script_vars.Var] | None = None,
+    **routines: str,
 ) -> tuple[list[str], splice.Translator]:
-    t = splice.Translator(donor(**routines), sp or spec())
+    t = splice.Translator(donor(**routines), sp or spec(), survey)
     return lines(t.paste("base_0", "base_3")), t
 
 
@@ -336,6 +339,70 @@ def test_history_needs_a_var():
     assert lines(t.routines["p3_call_1"]) == ["end return"]
 
 
+def survey_of(*body: ir.Node) -> dict[int, script_vars.Var]:
+    """The variables of a host script with `body` in its routine, no overlay."""
+    h = host()
+    h.routines()[1].body[:0] = body
+    return script_vars.survey(h)
+
+
+def reads(sp: manifest.Brain, survey: dict[int, script_vars.Var] | None):
+    return translate(sp, survey, base_0=op("call", 1), call_1=prev(enter(2, 3), ""))
+
+
+def test_history_is_the_first_free_variable():
+    _, t = reads(spec(), survey_of())
+    assert t.var == 2 and found(t) == [("info", "P3_HISTORY")]
+    assert lines(t.routines["p3_call_1"])[:2] == ["if_var 2 1", "  set_var 2 1"]
+    assert "variable 2" in t.findings[0].text
+
+
+def test_history_skips_a_variable_the_host_uses():
+    _, t = reads(spec(), survey_of(edit.insn("set_var", 2, 1)))
+    assert t.var == 4 and found(t) == [("info", "P3_HISTORY")]
+
+
+def test_history_with_no_free_variable_is_an_error():
+    used = [edit.insn("set_var", 2, 1), edit.insn("set_var", 4, 1)]
+    _, t = reads(spec(), survey_of(*used))
+    assert t.var is None and found(t) == [("error", "P3_HISTORY")]
+    assert "1 engine, 2 script" in t.findings[0].text
+    assert lines(t.routines["p3_call_1"]) == ["end return"]
+
+
+def test_history_named_and_free_is_quiet():
+    _, t = reads(spec(history=2), survey_of())
+    assert t.var == 2 and not t.findings
+
+
+@pytest.mark.parametrize(("var", "why"), [(1, "MONSTER_STEP"), (4, "1 script node names it")])
+def test_history_named_but_not_free_is_a_warning(var, why):
+    _, t = reads(spec(history=var), survey_of(edit.insn("set_var", 4, 1)))
+    assert t.var == var and found(t) == [("warning", "P3_HISTORY")]
+    assert f"brain.history {var} is not free" in t.findings[0].text and why in t.findings[0].text
+
+
+def test_history_unread_asks_nothing_of_the_host():
+    _, t = translate(spec(), survey_of(), base_0=enter(2, 3))
+    assert t.var is None and not t.findings
+
+
+def test_splice_takes_the_survey():
+    s = splice.splice(
+        donor(base_0=op("call", 1), call_1=prev(enter(2, 3), "")),
+        host(),
+        spec(pairs={"2,3": (1, 2)}),
+        survey_of(),
+    )
+    assert [(f.level, f.code) for f in s.findings] == [("info", "P3_HISTORY")]
+    assert any(
+        n.op.name == "if_var" and n.args["var"] == 2
+        for r in s.edits.routines.values()
+        for n in ir.walk(r)
+        if isinstance(n, ir.Block)
+    )
+
+
 # ---- calls and pastes
 
 
@@ -524,7 +591,7 @@ def test_cli_wants_a_brain_table(tmp_path, capsys):
 
 
 def region_pairs(brain: p3.Brain) -> set[tuple[int, int]]:
-    t = splice.Translator(brain, manifest.Brain(23, "base_3", "base_12", history=1))
+    t = splice.Translator(brain, manifest.Brain(23, "base_3", "base_12", history=2))
     t.scan("base_12", "base_3")
     return t.entered
 
@@ -555,7 +622,7 @@ def brute_spec(brain: p3.Brain, distinct: bool = False) -> manifest.Brain:
         23,
         "base_3",
         "base_12",
-        history=1,
+        history=2,
         pairs={f"{m},{s}": v for (m, s), v in to.items()},
         when=when,
     )
@@ -596,13 +663,14 @@ def test_brute_cli(brute, data, tmp_path, capsys):
     path = tmp_path / "m.toml"
     path.write_text(
         '[port]\nname = "t"\nhost_species = 75\npac = "t.bin"\n[source]\nmodel = 5248\n'
-        + f"{BRAIN}history = 1\n[brain.pairs]\n{pairs}[brain.when]\n{when}"
+        + f"{BRAIN}[brain.pairs]\n{pairs}[brain.when]\n{when}"
     )
     games = ["--data", str(data.fu.root), "--p3rd-data", str(data.p3rd.root)]
     out = tmp_path / "em75.toml"
     assert main(["splice", str(path), "--source", "-o", str(out), *games]) == 0
     text = capsys.readouterr().out
     assert "routines added" in text and "routine p3_call_11" in text and out.is_file()
+    assert "info    P3_HISTORY base_3: the call history is script variable 2" in text
     assert brainfile.load(out).edits(75) is not None
     bad = tmp_path / "bad.toml"
     bad.write_text(path.read_text().replace('"2,3" = [1, 2]\n', ""))

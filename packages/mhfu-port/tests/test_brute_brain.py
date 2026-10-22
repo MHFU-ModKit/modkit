@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from mhfu.em.script import build
+from mhfu.em.script import vars as script_vars
 from mhfu_port import layout, manifest, motion, slots
 from mhfu_port.brain import p3, splice
 
@@ -38,6 +39,17 @@ def test_brain_splices_into_its_host(data):
     m = manifest.load(PORT)
     assert m.brain is not None
     host = build.lift_row(data.fu, m.port.host_species, m.port.host_species)
-    s = splice.splice(p3.lift(data.p3rd, m.brain.donor, m.brain.slot), host, m.brain)
+    survey = script_vars.survey(host, data.fu.em(m.port.host_species))
+    s = splice.splice(p3.lift(data.p3rd, m.brain.donor, m.brain.slot), host, m.brain, survey)
     assert not [f for f in s.findings if f.level == "error" or f.code == "P3_PAIR_UNUSED"]
     assert build.Built.of(host, s.edits).ok
+
+
+def test_brain_keeps_its_call_history_in_the_first_free_variable(data):
+    m = manifest.load(PORT)
+    assert m.brain is not None and m.brain.history is None
+    host = build.lift_row(data.fu, m.port.host_species, m.port.host_species)
+    survey = script_vars.survey(host, data.fu.em(m.port.host_species))
+    s = splice.splice(p3.lift(data.p3rd, m.brain.donor, m.brain.slot), host, m.brain, survey)
+    (note,) = [f for f in s.findings if f.code == "P3_HISTORY"]
+    assert note.level == "info" and "script variable 2" in note.text
