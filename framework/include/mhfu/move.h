@@ -8,8 +8,16 @@
  * crosses its frame, and an attack with an end frame is ended there (or when the move ends
  * first) through the node's own end state; without one it lives as long as its record says. The
  * move ends when its clip does (the carrier hands off to the brain, or
- * the move enters its back pair), after LENGTH frames, or when anything else changes the pair, a
- * reaction first of all. With SKIP the host AI step does not run while the clip plays, except
+ * the move enters its back pair), when the timing part's cursor reaches STOP, after LENGTH frames,
+ * or when anything else changes the pair, a reaction first of all.
+ *
+ * START and STOP are clip frames, so they hold whatever the blend and the cursor's rate are: the
+ * clip starts at START (the executor's a3) and an attack before it never spawns, one at it spawns
+ * on the first playing frame. LENGTH counts AI frames from the dispatch instead, the blend's
+ * (2 to 5, the cursor held at START) among them, at the cursor's SPEED (2.0 a frame calm, 2.8
+ * enraged).
+ *
+ * With SKIP the host AI step does not run while the clip plays, except
  * on a frame with a hit pending, so the brain cannot cut in; the host still takes the damage.
  * While a move plays, the host's animation events for the entry its clip sits in (attacks and
  * effects at the host clip's frames) are skipped, unless HOST_ATTACKS keeps them.
@@ -72,6 +80,10 @@ typedef struct {
                                            * AI script does not pick between this move and the one that
                                            * follows (em_vhook sets it for a move with an AFTER) */
     uint8_t  _pad;
+    uint16_t start;                       /* clip frame the clip starts at (the executor's a3); 0 = the
+                                           * row's own, frame 0 on em75 */
+    uint16_t stop;                        /* the move ends when part's cursor reaches this clip
+                                           * frame; 0 = none */
 } mhfu_move_t;
 
 /* MOVE_STATE.STATE */

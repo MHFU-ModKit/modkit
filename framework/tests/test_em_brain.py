@@ -56,7 +56,12 @@ class Move(ctypes.Structure):
         ("force", ctypes.c_uint8),
         ("hold_script", ctypes.c_uint8),
         ("_pad", ctypes.c_uint8),
+        ("start", ctypes.c_uint16),
+        ("stop", ctypes.c_uint16),
     ]
+
+
+assert ctypes.sizeof(Move) == a.MOVE.size
 
 
 class Op(ctypes.Structure):
@@ -431,6 +436,14 @@ def test_play_asked_starts_that_frame(g: Game) -> None:
     g.frame()
     assert ("X", ENT, 46, 0, 0) in g.calls() and g.moves("PLAYS") == 1
     assert g.lib.mhfu_em_play(ENT, 1, 0) == 0  # an empty slot
+
+
+def test_a_slots_start_and_stop_reach_the_move(g: Game) -> None:
+    assert g.own(0, 46, start=6, stop=14) and g.lib.mhfu_em_play(ENT, 0, 0)
+    g.frames(2)
+    assert ("X", ENT, 46, 0, 6) in g.calls()
+    g.until(lambda: g.move("STATE", "B") == DONE)
+    assert g.move("END", "B") == BACK and g.move("END_FRAME") == 4  # (14 - 6) / SPEED
 
 
 def test_after_follows_through_the_carrier(g: Game) -> None:

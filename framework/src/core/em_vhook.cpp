@@ -426,8 +426,8 @@ static int      g_qry_wrapped;       /* MONSTER_VTABLE.QUERY carries the charge 
  * It enters the pair mhfu_em_request asked for, keeps the pair's dwell, the hunter's distance and
  * the monster events, then plays or enters at most one thing: an own move asked for
  * (mhfu_em_play), else the move of the rule on the flinch whose reaction the last host step
- * replaced, else the AFTER of the registry's move that just ended on its clip, its length or a
- * wall, else the first rule that holds. Last, the rules on the
+ * replaced, else the AFTER of the registry's move that just ended on its clip, its length, its
+ * stop or a wall, else the first rule that holds. Last, the rules on the
  * flinch arm the reaction replacement for the host step that follows. An own move goes to the
  * move player here, and its step, called right after, enters the carrier the same AI frame. While
  * the tail cut waits for its drop it enters and plays nothing (cut_waits). Runs inside the
