@@ -63,7 +63,7 @@ port.pac, port.summary.text()
 | `mhfu-port brain ID` | An MHP3rd monster's AI script as text (`mhfu_port.brain`; [format](../../docs/formats/p3rd_ai_script.md)) |
 | `mhfu-port brain --check` | Every monster's script lifted and encoded back to the game's bytes |
 | `mhfu-port p3moveset ID` | The monster's (main, sub) pairs, the clips each plays and the pairs it enters, as CSV (`p3moveset`) |
-| `mhfu-port own M` | The own moves a manifest's `[brain.pairs] ... = "own"` derives from the donor: each chain, its clips, its attacks as donor record to host record (a spare one where no host record matches, `brain.spare`), its turn, and the findings (`brain.own`) |
+| `mhfu-port own M` | The own moves a manifest's `[brain.pairs] ... = "own"` derives from the donor: each chain, across the pairs its handlers hand over to, its clips, its attacks as donor record to host record (a spare one where no host record matches, `brain.spare`), its turn, and the findings (`brain.own`) |
 | `mhfu-port splice M` | A manifest's `[brain]`: the donor's routine translated into the host's script, the findings on what did not carry over, the size and the longest run (`brain.splice`; `--source`, `-o FILE`) |
 
 `splice` writes an edit set for the host's row, which `mhfu brain push|deploy --doc FILE` sends on.

@@ -14,7 +14,7 @@ from mhfu import addresses
 from mhfu.em.script import brainfile, build, draw, edit, ir
 from mhfu.em.script import vars as script_vars
 from mhfu.em.script.budget import LIMIT
-from mhfu_port import behaviour, manifest, moves
+from mhfu_port import behaviour, manifest, moves, sequence
 from mhfu_port.brain import charge, fatigue, own, p3, p3ops, splice
 from mhfu_port.build import build as build_port
 from mhfu_port.cli import main
@@ -119,9 +119,9 @@ def chain_of(m: manifest.Manifest, name: str) -> list[tuple[object, ...]]:
     return out
 
 
-D2 = {"p3_7_17_3": 42, "p3_7_17_5": 24, "p3_7_19_3": 42, "p3_7_19_5": 24}
+D2 = {"p3_7_17_3": 42, "p3_7_17_5": 24}
 """The steps that ended on a frame past their attack, live D2: `length` in AI frames stopped
-them at cursor 54 of the 56 the attack needs."""
+them at cursor 54 of the 56 the attack needs. (7, 19)'s are the same moves."""
 
 
 def test_the_d2_steps_start_where_the_donor_did_and_stop_past_their_attack(zinogre):
@@ -135,9 +135,9 @@ def test_the_d2_steps_start_where_the_donor_did_and_stop_past_their_attack(zinog
 def test_every_derived_window_lies_inside_its_move_s_frames(zinogre, module_text):
     _, built = module_text
     made = {n: mv for n, mv in zinogre.m.moves.items() if n.startswith("p3_")}
-    assert sum(bool(mv.start) for mv in made.values()) == 10
+    assert sum(bool(mv.start) for mv in made.values()) == 14
     assert sum(bool(mv.stop) for mv in made.values()) == 13
-    assert sum(mv.length is not None for mv in made.values()) == 14
+    assert sum(mv.length is not None for mv in made.values()) == 16
     for name, mv in made.items():
         frames = built.layout.frames[moves.entry(zinogre.m, name, built.layout)]
         assert mv.start < frames and mv.stop <= frames, name
@@ -146,9 +146,66 @@ def test_every_derived_window_lies_inside_its_move_s_frames(zinogre, module_text
             assert mv.start <= a.frame < a.end <= (mv.stop or frames), name
 
 
+HANDS = {
+    "p3_7_4": [212, 213, 209, 210],
+    "p3_7_12": [203, 200, 257, 253],
+    "p3_7_13": [204, 253, 258, 200],
+    "p3_7_14": [32, 34, 221, 222, 223],
+    "p3_7_16": [30, 34, 221, 222, 223],
+    "p3_7_33": [25, 27, 225, 226],
+    "p3_7_65": [237],
+    "p3_7_67": [227, 230, 27, 225, 226],
+    "p3_7_68": [202, 253, 258, 200, 257, 253],
+    "p3_7_69": [201, 200, 257, 253, 258, 200],
+    "p3_7_99": [231, 235, 212, 213, 209, 210],
+    "p3_7_100": [213, 209, 210, 212, 213, 209, 210],
+}
+"""The donor clips each head whose handler hands over plays, in order, across the pairs."""
+
+
+def test_the_chains_play_the_donor_s_clips_across_its_hand_overs(zinogre):
+    m = zinogre.m
+    for head, clips in HANDS.items():
+        steps = sequence.chain(m, head)
+        assert [m.clips[m.moves[n].clip].id for n in steps] == clips, head
+    assert not [n for n in ("p3_7_237", "p3_7_5") if n in m.moves], "twins are the kept move"
+
+
+def test_every_hand_over_is_followed_but_to_the_pair_with_no_clip(zinogre):
+    (f,) = [f for f in zinogre.derived if f.code == "P3_OWN_NEXT"]
+    assert f.item == "p3_7_65" and "pair 8,0, which the port does not play" in f.text
+    assert zinogre.m.moves["p3_7_65"].after is None
+
+
+def test_equal_tails_are_one_move(zinogre):
+    m = zinogre.m
+    assert sequence.chain(m, "p3_7_14")[-3:] == ["p3_7_0", "p3_7_0_2", "p3_7_0_3"]
+    assert m.moves["p3_7_16"].after == "p3_7_14_2" == m.moves["p3_7_14"].after
+    assert m.moves["p3_7_19"].after == "p3_7_17_2" == m.moves["p3_7_17"].after
+    assert "p3_7_19_3" not in m.moves
+    assert {"p3_1_6", "p3_1_15", "p3_1_17"} <= set(m.moves), "named moves stay apart"
+    assert all(f.item in m.moves for f in zinogre.derived if f.item and f.item.startswith("p3_"))
+
+
+ELSEWHERE = {"7,70", "7,71", "7,79", "7,80", "7,81", "7,82", "7,116", "7,117", "7,118", "7,119"}
+"""The twins whose handler hands over to another pair than their twin's: they play their twin's
+whole chain. Deriving them would take 125 own moves of 96."""
+
+
+def own_steps(m: manifest.Manifest, name: str) -> list[tuple[object, ...]]:
+    """The leading steps of `chain_of` that come from the pair `name` heads, up to its hand-over."""
+    out = []
+    for n, step in zip(sequence.chain(m, name), chain_of(m, name), strict=True):
+        if m.moves[n].label != m.moves[name].label:
+            break
+        out.append(step)
+    return out
+
+
 def test_the_pairs_that_share_a_move_derive_the_same_one(zinogre, data):
-    """A pair that names its twin's move would derive that very move itself. (7, 71), (7, 82) and
-    (7, 119) are not the script's: only wrappers lead to them, and play (7, 13)'s move."""
+    """A pair that names its twin's move would derive that very move itself, up to where it hands
+    over. (7, 71), (7, 82) and (7, 119) are not the script's: only wrappers lead to them, and play
+    (7, 13)'s move."""
     b = zinogre.m.brain
     named = {k: v for k, v in b.pairs.items() if isinstance(v, str)}
     twins = {k: v for k, v in named.items() if v in b.derived()}
@@ -157,9 +214,14 @@ def test_the_pairs_that_share_a_move_derive_the_same_one(zinogre, data):
     apart = manifest.load(PORT)
     apart.brain.pairs |= {k: manifest.OWN for k in twins}
     again, _ = own.expand(apart, data)
+    differ = set()
     for key, first in twins.items():
         name = manifest.own_name(manifest.pair_of(key))
-        assert chain_of(again, name) == chain_of(again, first), key
+        want = own_steps(again, first)
+        assert chain_of(again, name)[: len(want)] == want, key
+        if chain_of(again, name) != chain_of(again, first):
+            differ.add(key)
+    assert differ == ELSEWHERE
 
 
 def test_what_fought_the_brain_is_gone(zinogre):
@@ -392,7 +454,7 @@ def test_the_own_moves_fit_the_framework(zinogre, module_text):
     _, built = module_text
     names = [n for n, mv in zinogre.m.moves.items() if mv.own]
     keys = sum(len(moves.curve(zinogre.m, n, built.layout) or "") // 4 for n in names)
-    assert len(names) == 89 and keys == 4642
+    assert len(names) == 93 and keys == 4701
     assert len(names) <= moves.SLOTS and keys <= moves.POOL
     assert not moves.problems(zinogre.m, built.layout, moves.records(Data.find().fu, 75))
 
