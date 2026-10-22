@@ -62,6 +62,7 @@ port.pac, port.summary.text()
 |---|---|
 | `mhfu-port brain ID` | An MHP3rd monster's AI script as text (`mhfu_port.brain`; [format](../../docs/formats/p3rd_ai_script.md)) |
 | `mhfu-port brain --check` | Every monster's script lifted and encoded back to the game's bytes |
+| `mhfu-port p3moveset ID` | The monster's (main, sub) pairs, the clips each plays and the pairs it enters, as CSV (`p3moveset`) |
 
 ## Status
 
