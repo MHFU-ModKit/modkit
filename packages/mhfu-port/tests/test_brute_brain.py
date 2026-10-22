@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
+from collections import Counter
 from pathlib import Path
 
 from mhfu import addresses
@@ -55,6 +56,13 @@ def test_brain_splices_into_its_host(data):
     assert build.Built.of(host, s.edits).ok
     names = {own.own_name(p) for p in OWN}
     assert names <= set(s.slots) and {n for _, n in s.uses if isinstance(n, str)} == names
+
+
+def test_brain_has_no_split_and_one_draw_after_a_draw(data):
+    _, _, host, s = spliced(data)
+    found = Counter(f.code for f in [*s.findings, *build.Built.of(host, s.edits).findings])
+    assert not found["P3_SPLIT"] and not found["ARM_UNREACHABLE"]
+    assert found["CORRELATED_DRAW"] == 1
 
 
 def test_brain_enters_own_moves_and_reads_tired_from_gauge_a(data):

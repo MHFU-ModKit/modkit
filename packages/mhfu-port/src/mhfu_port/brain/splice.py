@@ -21,6 +21,11 @@ A donor pair that `[brain.pairs]` maps to an own move becomes `enter OWN_MOVE_MA
 move's slot in `slots` (`moves.slots`, the one numbering the moves module and `mhfu_port.lua`
 use); em_vhook plays that move in place of a host pair. A list there enters each item in turn.
 
+A donor `random` of more live arms than MHFU's 13 branches is split: an outer `random` over groups
+of arms and an inner one per group. MHFU's `random` reads the entity's counter without advancing it
+(`rng_step` only adds 1), so the inner reads the outer's draw, and its weights are laid out over the
+outer's share of it (`layout`): every arm keeps the share the one rounding gives it.
+
 With `[brain] fatigue` the donor's `if_tired`, and `if_stamina_low` at 0 (stamina 0 only precedes
 tired), become the host's `if_gauge_a_low`, which the framework's fatigue helper drives
 (`brain.fatigue`); no `[brain.when]` answer is asked for them. The host must leave gauge A alone.
@@ -145,6 +150,25 @@ def shares(weights: Sequence[int], whole: int = 100) -> tuple[list[int], list[in
     while sum(out) > TOTAL:
         out[out.index(max(out))] -= 1
     return out, raised
+
+
+def layout(slots: Sequence[Sequence[int]]) -> list[tuple[int, list[int]]]:
+    """A split random's groups, each an outer branch and an inner random over one draw: `slots` is
+    the share of each arm of each group, in order, from one `shares` over all the arms. A group
+    owning the draws `lo..hi` is an outer branch of `hi - lo`, and its inner random reads the same
+    draw, so its weights are the arms' own, the draws below `lo` added to the first arm and those
+    from `hi` to `TOTAL` to the last: they never reach it, and every value that does takes the arm
+    the single-level layout gives. Each pair is the outer weight and the inner weights."""
+    out = []
+    lo = 0
+    for group in slots:
+        hi = lo + sum(group)
+        inner = list(group)
+        inner[0] += lo
+        inner[-1] += TOTAL - hi
+        out.append((hi - lo, inner))
+        lo = hi
+    return out
 
 
 def _text(n: p3.Node) -> str:
@@ -491,7 +515,7 @@ class Translator:
         values = [a.value or 0 for a in live]
         weights, raised = shares(values)
         if len(live) + (sum(weights) < TOTAL) > ARMS:
-            return self._split(live, w)
+            return self._split(live, weights, raised, w)
         self._raised(w, values, raised, "random")
         bodies = [self.sub(a.body, w) for a in live]
         if not any(bodies):
@@ -499,36 +523,35 @@ class Translator:
             return []
         return [edit.random(list(zip(weights, bodies, strict=True)))]
 
-    def _split(self, live: Sequence[p3.Arm], w: Where) -> list[ir.Node]:
+    def _split(
+        self, live: Sequence[p3.Arm], weights: Sequence[int], raised: Sequence[int], w: Where
+    ) -> list[ir.Node]:
         """A random with more live arms than MHFU's takes: an outer random over groups of at most
-        `GROUP`, weighted by their shares, each group an inner random weighted within it. Each
-        level rounds its own weights, so the sums the donor draws survive."""
+        `GROUP`, each group an inner random, every one reading the same draw. `weights` are the
+        arms' shares of it (`shares` over all of them); `layout` lays the inner weights out over
+        the outer's, so no arm falls outside its group's band. A group of one arm is its body."""
         count = -(-len(live) // GROUP)
         size = -(-len(live) // count)
-        groups = [live[i : i + size] for i in range(0, len(live), size)]
-        sums = [sum(a.value or 0 for a in g) for g in groups]
-        outer, raised = shares(sums)
-        if len(groups) + (sum(outer) < TOTAL) > ARMS:
-            text = (
-                f"random has {len(live)} live arms, a split over {len(groups)} groups is too wide"
-            )
+        cuts = range(0, len(live), size)
+        if len(cuts) + (sum(weights) < TOTAL) > ARMS:
+            text = f"random has {len(live)} live arms, a split over {len(cuts)} groups is too wide"
             self.add(w, "error", "P3_WIDE", text)
             return []
-        self._raised(w, sums, raised, "random group")
+        self._raised(w, [a.value or 0 for a in live], raised, "random")
+        placed = layout([weights[i : i + size] for i in cuts])
         branches: list[tuple[int, list[ir.Node]]] = []
-        for group, whole, weight in zip(groups, sums, outer, strict=True):
-            values = [a.value or 0 for a in group]
-            inner, raised = shares(values, whole)
-            self._raised(w, values, raised, "random")
-            bodies = [self.sub(a.body, w) for a in group]
+        for i, (weight, inner) in zip(cuts, placed, strict=True):
+            bodies = [self.sub(a.body, w) for a in live[i : i + size]]
             pick: list[ir.Node] = []
-            if any(bodies):
+            if len(bodies) == 1:
+                pick = bodies[0]
+            elif any(bodies):
                 pick.append(edit.random(list(zip(inner, bodies, strict=True))))
             branches.append((weight, pick))
         if not any(pick for _, pick in branches):
             self.add(w, "info", "P3_DROPPED", "random: every arm is empty")
             return []
-        text = f"random with {len(live)} live arms is split into {len(groups)} inner randoms"
+        text = f"random with {len(live)} live arms is split into {len(cuts)} inner randoms"
         self.add(w, "info", "P3_SPLIT", text)
         return [edit.random(branches)]
 
@@ -819,7 +842,8 @@ def _home(nodes: list[ir.Node], target: ir.Located) -> list[ir.Node] | None:
 
 def _steps(host: ir.Program, es: EditSet) -> None:
     """A random that can follow another draw in a run is preceded by `rng_step2`, as the host's
-    own picks are: the draws are found on the program the edits make."""
+    own picks are: the draws are found on the program the edits make. One that is the first node
+    of an arm of a random is not: it reads its parent's draw, which `layout` counts on."""
     applied = editset.apply(host, es)
     if not applied.ok:
         return
