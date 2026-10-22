@@ -230,24 +230,14 @@ def test_triggers_list_every_kind_and_group_the_zinogre_by_what_starts_it():
     assert held == {
         "on_combat_entered": (1,),
         "on_combat_left": (2,),
-        "on_flinch": (3,),
-        "during:charge_up": (4,),
-        "during:lunge": (5, 6),
-        "during:lunge_stop": (7,),
-        "during:dash": (8,),
-        "on_noticed": (9,),
-        "on_part_broken": (10, 11, 12, 13),
-        "idle": (14, 15, 16),
-        "on_signal:roar": (17,),
+        "during:lunge": (3, 4),
+        "on_noticed": (5,),
+        "on_part_broken": (6, 7, 8, 9),
+        "on_signal:roar": (10,),
     }
-    assert [t.key for t in ts if t.section == "move"] == [
-        "during:charge_up",
-        "during:lunge",
-        "during:lunge_stop",
-        "during:dash",
-    ]
+    assert [t.key for t in ts if t.section == "move"] == ["during:lunge"]
     by_rank = sorted((r, p) for t in ts for r, p in t.rules)
-    assert [p for _, p in by_rank] == B.paths(m) and [r for r, _ in by_rank] == list(range(1, 18))
+    assert [p for _, p in by_rank] == B.paths(m) and [r for r, _ in by_rank] == list(range(1, 11))
 
 
 def test_a_flinch_of_any_part_is_one_trigger():
@@ -1067,20 +1057,11 @@ ZINOGRE = [  # the paths that play nothing, then the rest
     Rule(
         None,
         on="combat_entered",
-        effects=[("var_set", 1, 1)],
+        effects=[("var_set", 0, 1)],
         label="combat start -> set in_combat",
     ),
     Rule(
-        None, on="combat_left", effects=[("var_set", 1, 0)], label="combat end -> clear in_combat"
-    ),
-    Rule(None, on="flinch", effects=[("var_add", 0, 1)], label="count the flinches"),
-    Rule(
-        None,
-        from_move="charge_up",
-        min_frames=120,
-        cooldown=250,
-        effects=[("enrage", 0, 0)],
-        label="after the charge -> enrage",
+        None, on="combat_left", effects=[("var_set", 0, 0)], label="combat end -> clear in_combat"
     ),
     Rule(
         "lunge_stop",
@@ -1093,21 +1074,6 @@ ZINOGRE = [  # the paths that play nothing, then the rest
     ),
     Rule("lunge_stop", from_move="lunge", min_frames=75, cooldown=30, label="run budget by time"),
     Rule(
-        "stamp",
-        from_move="lunge_stop",
-        min_frames=20,
-        dist=(0.0, 1200.0),
-        cooldown=150,
-        label="the hunter close once the skid has stood -> stamp",
-    ),
-    Rule(
-        "stamp",
-        from_move="dash",
-        min_frames=10,
-        dist=(0.0, 800.0),
-        label="the hunter close during the dash -> stamp",
-    ),
-    Rule(
         "notice_howl",
         on="noticed",
         force=True,
@@ -1117,47 +1083,23 @@ ZINOGRE = [  # the paths that play nothing, then the rest
     Rule("topple_left", on="part_broken", part=4, label="left foreleg breaks -> topple left"),
     Rule("topple_right", on="part_broken", part=6, label="right foreleg breaks -> topple right"),
     Rule("break_howl", on="part_broken", label="a part breaks"),
-    Rule(
-        "charge_up",
-        from_main=[0],
-        conds=[("var_at_least", 1, 1), ("var_at_least", 0, 2)],
-        effects=[("var_set", 0, 0)],
-        label="2nd flinch -> charge up",
-    ),
-    Rule(
-        "dash",
-        from_main=[0],
-        dist=(1500.0, B.UNLIMITED_DIST),
-        cooldown=300,
-        conds=[("var_at_least", 1, 1)],
-        label="hunter far -> dash",
-    ),
-    Rule(
-        "notice_howl",
-        from_main=[0],
-        conds=[("var_at_least", 1, 1), ("hp_below", 0, 30)],
-        count=1,
-        label="below 30% HP -> howl",
-    ),
     Rule("notice_howl", signal=0, label="a mod's roar -> howl"),
 ]
 
 
 def test_zinogre_compiles_to_its_rules():
+    """What stays of the hand-built rules: the brain picks the rest."""
     m = M.load(PORTS / "zinogre.toml")
     assert B.compile(m) == ZINOGRE
     assert B.loose(m) == [] and B.refused(m) == {}
-    assert B.vars(m) == {"flinches": 0, "in_combat": 1} and B.signals(m) == {"roar": 0}
-    old = [r for r in ZINOGRE if r.from_move and r.play]
-    assert len(old) == 4
-    assert all(not r.conds and not r.effects and r.signal is None for r in old)
+    assert B.vars(m) == {"in_combat": 0} and B.signals(m) == {"roar": 0}
+    skids = [r for r in ZINOGRE if r.from_move and r.play]
+    assert len(skids) == 2
+    assert all(not r.conds and not r.effects and r.signal is None for r in skids)
     assert len(ZINOGRE) <= B.SEAM_RULES
-    idle = [r for r in ZINOGRE if r.from_main == [0]]
-    assert len(idle) == 3 and all(("var_at_least", 1, 1) in r.conds for r in idle)
-    notice = next(i for i, r in enumerate(ZINOGRE) if r.on == "noticed")
-    assert notice < ZINOGRE.index(idle[0]), "the notice scans before the idle paths"
+    assert not [r for r in ZINOGRE if r.from_main == [0]], "nothing picks from idle but the brain"
     quiet = [i for i, r in enumerate(ZINOGRE) if r.play is None]
-    assert quiet == [0, 1, 2, 3], "the rules that play nothing run first"
+    assert quiet == [0, 1], "the rules that play nothing run first"
 
 
 def test_zinogre_topples_end_in_the_stamp():

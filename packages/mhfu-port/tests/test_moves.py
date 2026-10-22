@@ -257,8 +257,11 @@ def test_check(extra, lay, known, why):
 
 def test_pool():
     lay = layout.Layout(LAYOUT.entries, turns={46: travel.Turn(500, (0,) * 251, 0, None)})
-    many = "".join(f"[moves.s{i}]\nclip = 'stamp'\n" for i in range(9))
-    with pytest.raises(ManifestError, match="need 2259 keys, the framework holds 2048"):
+    n = moves.POOL // 251 + 1
+    many = "".join(f"[moves.s{i}]\nclip = 'stamp'\n" for i in range(n))
+    with pytest.raises(
+        ManifestError, match=f"need {251 * n} keys, the framework holds {moves.POOL}"
+    ):
         moves.check(_m(many), lay)
 
 
@@ -304,26 +307,15 @@ def test_zinogre(data):
     assert sorted(at.values()) == list(range(len(own))) and at["stamp"] == 6
     stamp = 'stamp = { entry = 46, slot = 6, clip = "stamp_right_claw", attacks = { { 56, 6, 80 } }'
     assert stamp + ", carrier = { 0, 2 }" in text
-    assert 'after = "dash_stop"' in text and 'turn = "fixed", total = 90.0, frames = 50' in text
-    assert '{ play = "stamp", from = "dash", min_frames = 10' in text
+    assert 'turn = "fixed", total = 90.0, frames = 50' in text and "claim" not in text
+    dash = next(line for line in text.splitlines() if line.strip().startswith("dash = {"))
+    assert "after" not in dash, "the brain's pairs end the dash themselves"
     assert '{ play = "flinch_head", on = "part_broken", part = 0' in text
     assert '{ play = "topple_left", on = "part_broken", part = 4' in text
-    assert '{ no_play = true, on = "flinch", effects = { { "var_add", 0, 1 } }' in text
-    assert 'conds = { { "var_at_least", 1, 1 }, { "var_at_least", 0, 2 } }, ' in text
-    assert 'effects = { { "var_set", 0, 0 } }' in text and "signal = 0" in text
-    enrage = '{ no_play = true, from = "charge_up", min_frames = 120, cooldown = 250, '
-    assert enrage + 'effects = { { "enrage", 0, 0 } }' in text
-    # it fires in the last frames of the charge (2 clip frames an AI frame), not in its first
-    rule = next(r for r in behaviour.compile(m) if r.from_move == "charge_up")
-    ai_frames = b.layout.frames[own["charge_up"]] // 2
-    assert ai_frames - 5 <= rule.min_frames < ai_frames and rule.cooldown >= 200
+    assert "signal = 0" in text and "enrage" not in text and "var_add" not in text
     assert "  sever_below = 50,\n  tip = " in text and "natural_rage" not in text
-    assert '{ no_play = true, on = "combat_entered", effects = { { "var_set", 1, 1 } }' in text
-    assert 'conds = { { "var_at_least", 1, 1 }, { "hp_below", 0, 30 } }' in text
-    assert (
-        "  vars = { flinches = 0, in_combat = 1 },\n  signals = { roar = 0 },\n  sever_below"
-        in text
-    )
+    assert '{ no_play = true, on = "combat_entered", effects = { { "var_set", 0, 1 } }' in text
+    assert "  vars = { in_combat = 0 },\n  signals = { roar = 0 },\n  sever_below" in text
     assert '{ play = "notice_howl", on = "noticed", force = true' in text
     assert "length = 78, steer = { walls = false" in text and 'after = "topple_left_2"' in text
 

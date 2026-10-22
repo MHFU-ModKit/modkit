@@ -479,7 +479,7 @@ def drop_move(doc: PortDocument, name: str) -> str:
 
 
 def rename_move(doc: PortDocument, old: str, new: str) -> str:
-    """Renames a move and every `after`, block and effect that names it."""
+    """Renames a move and every `after`, block, `[brain.pairs]` item and effect that names it."""
     new = check_name(new)
     if old not in doc.manifest.moves:
         raise ManifestError(f"no move {old!r}")
@@ -493,6 +493,8 @@ def rename_move(doc: PortDocument, old: str, new: str) -> str:
         for mv in m.moves.values():
             mv.after = new if mv.after == old else mv.after
         behaviour.rename_move(m, old, new)
+        if m.brain is not None:
+            m.brain.rename_move(old, new)
         for e in m.effects:
             e.move = new if e.move == old else e.move
 
@@ -501,9 +503,11 @@ def rename_move(doc: PortDocument, old: str, new: str) -> str:
 
 
 def move_users(m: Manifest, name: str) -> list[str]:
-    """What names move `name`: other moves' `after`, the behaviour graph and effects."""
+    """What names move `name`: other moves' `after`, the behaviour graph, `[brain.pairs]` and
+    effects."""
     out = [f"moves.{k} (after)" for k, mv in m.moves.items() if mv.after == name]
     out += behaviour.uses(m, name)
+    out += [f"brain.pairs.{k}" for k in ([] if m.brain is None else m.brain.users(name))]
     out += [f"effect {e.id}" for e in m.effects if e.move == name]
     return out
 

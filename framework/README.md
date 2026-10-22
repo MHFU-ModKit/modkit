@@ -131,7 +131,8 @@ the engine counts the flinch and applies the damage, then enters the move's carr
 ## Own moves from a manifest
 
 A port's own moves sit in a registry by slot (`mhfu.em_move`): `mhfu.addr.EM_MOVES.MOVES_COUNT`
-(96) of them, and the turn keys they share (2048), in one 12.8 KB partition block. The seam's
+(96) of them, and the turn keys they share (`EM_MOVES.KEYS_COUNT`, 5632), in one 19.9 KB
+partition block. The seam's
 brain, in C on the AI step, plays one through the move player when asked (`mhfu.em_play`), when the
 move before it ends on its clip, its length or a wall and names it as its `after`, or when a rule
 says (`play_move`, and `from_move` to fire while one plays). `mhfu_port.lua` does all of it from the
@@ -223,7 +224,8 @@ start sets charged, durability 100, gauge 100. Durability 0 or a `discharge` pai
 traps) discharges it: gauge 0, `cooldown_out` frames of cooldown. The state stays across areas; a new
 monster, the quest's end, `mhfu.em_clear()` and `mhfu.em_charge(nil)` reset or drop it, and
 `mhfu.em_charge_status()` reads it. A moves module's `charge` table does all of it with the port,
-its `ups` keys and `transform` by move name or slot.
+its `ups` keys and `transform` by move name or slot; `mhfu-port` writes it from the donor's code
+with `[brain] charge` (docs/formats/p3rd_ai_script.md).
 
 ## AI scripts from the stick
 

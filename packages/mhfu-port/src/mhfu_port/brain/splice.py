@@ -887,9 +887,9 @@ def _failed(es: EditSet, spec: manifest.Brain, text: str) -> Spliced:
 
 
 def _unused(spec: manifest.Brain, t: Translator, named: Collection[Pair] = ()) -> list[Finding]:
-    """Manifest entries that match nothing in the donor's code and that the charge table does not
-    name."""
-    met = {f"{m},{s}" for m, s in [*t.entered, *named]}
+    """Manifest entries that match nothing in the donor's code, that the charge table does not name
+    and whose move no other entry plays."""
+    met = {f"{m},{s}" for m, s in [*t.entered, *named, *spec.shared()]}
     out = [
         Finding("warning", "P3_PAIR_UNUSED", f"{k} is mapped but the donor code never enters it")
         for k in spec.pairs

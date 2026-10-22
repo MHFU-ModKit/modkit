@@ -36,7 +36,6 @@ from .. import build, fk, layout, moves, p3hits, p3moveset
 from ..data import Data
 from ..manifest import (
     MOVE_ATTACKS,
-    OWN,
     OWN_MOVES,
     AttackWindow,
     Brain,
@@ -46,7 +45,6 @@ from ..manifest import (
     Move,
     Steer,
     own_name,
-    targets_of,
 )
 from ..p3hits import Plan, Step, Walk
 from .spare import HOST_NO_DAMAGE, NO_DAMAGE, POWER_SCALE, Spare, Spares
@@ -414,12 +412,7 @@ class Derivation:
 
 def pairs(b: Brain) -> list[Pair]:
     """The donor pairs whose own move the build derives, in order."""
-    found = []
-    for key, target in b.pairs.items():
-        main, _, sub = key.partition(",")
-        if OWN in targets_of(target):
-            found.append((int(main), int(sub)))
-    return sorted(found)
+    return sorted(b.derived().values())
 
 
 def expand(m: Manifest, data: Data) -> tuple[Manifest, list[Finding]]:

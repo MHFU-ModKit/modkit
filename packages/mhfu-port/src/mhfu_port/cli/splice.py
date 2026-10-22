@@ -94,7 +94,9 @@ def summary(
         grown = len(built.image.data) - (built.lift.end - built.lift.base)
         added += f", {grown:+} bytes, worst run {worst.count} of {LIMIT}"
     lines = [f"  {added}"]
-    for (donor, target), uses in sorted(spliced.uses.items(), key=lambda use: use[0]):
+    for (donor, target), uses in sorted(
+        spliced.uses.items(), key=lambda use: (use[0][0], str(use[0][1]))
+    ):
         to = (
             f"own {target} (slot {spliced.slots[target]})"
             if isinstance(target, str)
@@ -108,8 +110,9 @@ def summary(
             f"tired {stamina.tired} frames"
         )
     if charging is not None:
+        ups = ", ".join(f"{n} {g[0]}/{g[1]}/{g[2]}/{g[3]}" for n, g in sorted(charging.ups.items()))
         lines.append(
-            f"  charge: {len(charging.ups)} charge-up moves, transform {charging.transform}; "
+            f"  charge: {ups or 'no charge-up'}; transform {charging.transform}; "
             f"chips {charging.chip_gauge} gauge, {charging.chip_durability} durability; "
             f"cooldowns {charging.cooldown_up} and {charging.cooldown_out}; "
             f"{len(charging.discharge)} discharge pairs"

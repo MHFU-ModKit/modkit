@@ -1175,6 +1175,13 @@ def test_a_pair_the_charge_table_names_is_not_unused():
     assert "1,4" in [f.text.split()[0] for f in plain.findings if f.code == "P3_PAIR_UNUSED"]
 
 
+def test_a_pair_whose_move_another_pair_plays_is_not_unused():
+    sp = spec(pairs=PAIRS | {"5,5": "own", "5,6": [(1, 2), "p3_5_5"]})
+    s = splice.splice(donor(base_0=enter(2, 3)), host(), sp, slots={"p3_5_5": 0})
+    unused = [f.text.split()[0] for f in s.findings if f.code == "P3_PAIR_UNUSED"]
+    assert "5,5" not in unused and "5,6" in unused
+
+
 def test_a_draw_after_a_draw_is_stepped():
     pick = blk("random", arms=[case(50, ""), case(50, enter(2, 3))])
     both = f"{pick} {blk('random', arms=[case(50, enter(2, 4)), case(50, enter(2, 3))])}"

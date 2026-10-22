@@ -552,11 +552,6 @@ clip = "lunge_forward"
 after = "lunge_stop"
 hold_max = 12
 
-[moves.lunge.claim]
-main = [
-    1,
-]
-
 [moves.lunge_stop]
 main = 0
 sub = 3
@@ -575,8 +570,7 @@ walls = false
 
 [moves.dash]
 clip = "dash_forward"
-after = "dash_stop"
-label = "the long dash, ended by a wall ahead, then the stop"
+label = "the long dash, ended by a wall ahead"
 
 [moves.dash_stop]
 clip = "dash_forward_stop"
@@ -917,63 +911,6 @@ play = [
     "lunge_stop",
 ]
 
-[behaviour.blocks.b7]
-kind = "played_for"
-at = [
-    400.0,
-    400.0,
-]
-frames = 20
-next = [
-    "b8",
-]
-label = "the hunter close once the skid has stood -> stamp"
-
-[behaviour.blocks.b8]
-kind = "distance"
-at = [
-    680.0,
-    400.0,
-]
-hi = 1200.0
-next = [
-    "b9",
-]
-
-[behaviour.blocks.b9]
-kind = "cooldown"
-at = [
-    960.0,
-    400.0,
-]
-frames = 150
-play = [
-    "stamp",
-]
-
-[behaviour.blocks.b10]
-kind = "played_for"
-at = [
-    400.0,
-    600.0,
-]
-frames = 10
-next = [
-    "b11",
-]
-label = "the hunter close during the dash -> stamp"
-
-[behaviour.blocks.b11]
-kind = "distance"
-at = [
-    680.0,
-    600.0,
-]
-hi = 800.0
-play = [
-    "stamp",
-]
-
 [behaviour.blocks.b12]
 kind = "on_noticed"
 at = [
@@ -1081,161 +1018,6 @@ play = [
 ]
 label = "a part breaks"
 
-[behaviour.blocks.b22]
-kind = "on_flinch"
-at = [
-    400.0,
-    2200.0,
-]
-next = [
-    "b23",
-]
-label = "count the flinches"
-
-[behaviour.blocks.b23]
-kind = "counter_add"
-at = [
-    680.0,
-    2200.0,
-]
-counter = "flinches"
-by = 1
-
-[behaviour.blocks.b24]
-kind = "idle"
-at = [
-    400.0,
-    2400.0,
-]
-next = [
-    "b25",
-]
-label = "2nd flinch -> charge up"
-
-[behaviour.blocks.b25]
-kind = "flag_is"
-at = [
-    680.0,
-    2400.0,
-]
-flag = "in_combat"
-next = [
-    "b26",
-]
-
-[behaviour.blocks.b26]
-kind = "counter_is"
-at = [
-    960.0,
-    2400.0,
-]
-counter = "flinches"
-test = "at least"
-value = 2
-next = [
-    "b27",
-]
-
-[behaviour.blocks.b27]
-kind = "counter_set"
-at = [
-    1240.0,
-    2400.0,
-]
-counter = "flinches"
-to = 0
-play = [
-    "charge_up",
-]
-
-[behaviour.blocks.b28]
-kind = "idle"
-at = [
-    400.0,
-    2640.0,
-]
-next = [
-    "b29",
-]
-label = "hunter far -> dash"
-
-[behaviour.blocks.b29]
-kind = "flag_is"
-at = [
-    680.0,
-    2640.0,
-]
-flag = "in_combat"
-next = [
-    "b30",
-]
-
-[behaviour.blocks.b30]
-kind = "distance"
-at = [
-    960.0,
-    2640.0,
-]
-lo = 1500.0
-next = [
-    "b31",
-]
-
-[behaviour.blocks.b31]
-kind = "cooldown"
-at = [
-    1240.0,
-    2640.0,
-]
-frames = 300
-play = [
-    "dash",
-]
-
-[behaviour.blocks.b32]
-kind = "idle"
-at = [
-    400.0,
-    2840.0,
-]
-next = [
-    "b33",
-]
-label = "below 30% HP -> howl"
-
-[behaviour.blocks.b33]
-kind = "flag_is"
-at = [
-    680.0,
-    2840.0,
-]
-flag = "in_combat"
-next = [
-    "b34",
-]
-
-[behaviour.blocks.b34]
-kind = "monster_hp"
-at = [
-    960.0,
-    2840.0,
-]
-hi = 30
-next = [
-    "b35",
-]
-
-[behaviour.blocks.b35]
-kind = "limit"
-at = [
-    1240.0,
-    2840.0,
-]
-times = 1
-play = [
-    "notice_howl",
-]
-
 [behaviour.blocks.b36]
 kind = "on_signal"
 at = [
@@ -1247,36 +1029,6 @@ play = [
     "notice_howl",
 ]
 label = "a mod's roar -> howl"
-
-[behaviour.blocks.b37]
-kind = "played_for"
-at = [
-    400.0,
-    3200.0,
-]
-frames = 120
-next = [
-    "b38",
-]
-label = "after the charge -> enrage"
-
-[behaviour.blocks.b38]
-kind = "cooldown"
-at = [
-    680.0,
-    3200.0,
-]
-frames = 250
-next = [
-    "b39",
-]
-
-[behaviour.blocks.b39]
-kind = "enrage"
-at = [
-    960.0,
-    3200.0,
-]
 
 [behaviour.moves.lunge]
 at = [
@@ -1292,24 +1044,6 @@ during = [
 at = [
     0.0,
     400.0,
-]
-during = [
-    "b7",
-]
-
-[behaviour.moves.stamp]
-at = [
-    1520.0,
-    400.0,
-]
-
-[behaviour.moves.dash]
-at = [
-    0.0,
-    600.0,
-]
-during = [
-    "b10",
 ]
 
 [behaviour.moves.notice_howl]
@@ -1342,11 +1076,389 @@ at = [
     2000.0,
 ]
 
-[behaviour.moves.charge_up]
-at = [
-    0.0,
-    3200.0,
+[brain]
+donor = 40
+splice = "base_3"
+entry = "base_3"
+fatigue = true
+charge = true
+
+[brain.pairs]
+"0,255" = [
+    0,
+    1,
 ]
-during = [
-    "b37",
+"1,1" = [
+    1,
+    2,
 ]
+"1,2" = "break_howl"
+"1,3" = "own"
+"1,4" = "own"
+"1,6" = "own"
+"1,15" = "own"
+"1,16" = "charge_up"
+"1,17" = "own"
+"1,19" = "own"
+"1,20" = "own"
+"2,3" = "dash_stop"
+"2,4" = "dash"
+"2,5" = [
+    1,
+    2,
+]
+"2,6" = [
+    1,
+    2,
+]
+"2,10" = "own"
+"2,11" = "p3_2_10"
+"2,12" = [
+    1,
+    0,
+]
+"2,13" = [
+    1,
+    0,
+]
+"2,14" = [
+    1,
+    0,
+]
+"2,16" = [
+    1,
+    0,
+]
+"2,17" = [
+    1,
+    0,
+]
+"2,21" = [
+    1,
+    0,
+]
+"2,22" = "own"
+"2,23" = [
+    1,
+    0,
+]
+"2,24" = [
+    1,
+    0,
+]
+"2,25" = [
+    1,
+    0,
+]
+"2,26" = [
+    1,
+    2,
+]
+"7,0" = "own"
+"7,4" = "own"
+"7,5" = "p3_7_4"
+"7,12" = "own"
+"7,13" = "own"
+"7,14" = "own"
+"7,16" = "own"
+"7,17" = "own"
+"7,19" = "own"
+"7,22" = "own"
+"7,23" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_0",
+]
+"7,24" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_0",
+]
+"7,27" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_86",
+]
+"7,28" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_86",
+]
+"7,29" = [
+    [
+        1,
+        2,
+    ],
+    "dash",
+]
+"7,30" = [
+    [
+        1,
+        2,
+    ],
+    "dash",
+]
+"7,33" = "own"
+"7,35" = "own"
+"7,38" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_13",
+]
+"7,39" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_12",
+]
+"7,40" = "own"
+"7,43" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_40",
+]
+"7,44" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_40",
+]
+"7,45" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_35",
+]
+"7,46" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_35",
+]
+"7,55" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_22",
+]
+"7,56" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_22",
+]
+"7,57" = [
+    [
+        1,
+        2,
+    ],
+    "p3_2_10",
+]
+"7,58" = [
+    [
+        1,
+        2,
+    ],
+    "p3_2_10",
+]
+"7,59" = [
+    [
+        1,
+        2,
+    ],
+    "p3_2_10",
+]
+"7,60" = [
+    [
+        1,
+        2,
+    ],
+    "p3_2_10",
+]
+"7,65" = "own"
+"7,66" = "own"
+"7,67" = "own"
+"7,68" = "own"
+"7,69" = "own"
+"7,70" = "p3_7_12"
+"7,72" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_12",
+]
+"7,73" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_13",
+]
+"7,74" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_67",
+]
+"7,75" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_67",
+]
+"7,79" = "p3_7_68"
+"7,80" = "p3_7_69"
+"7,81" = "p3_7_12"
+"7,83" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_12",
+]
+"7,84" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_13",
+]
+"7,85" = "own"
+"7,86" = "own"
+"7,87" = "own"
+"7,89" = "own"
+"7,92" = [
+    [
+        1,
+        2,
+    ],
+    "p3_1_19",
+]
+"7,93" = [
+    [
+        1,
+        2,
+    ],
+    "p3_1_19",
+]
+"7,94" = "own"
+"7,95" = [
+    [
+        1,
+        2,
+    ],
+    "p3_2_22",
+]
+"7,96" = [
+    [
+        1,
+        2,
+    ],
+    "p3_2_22",
+]
+"7,97" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_89",
+]
+"7,98" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_89",
+]
+"7,99" = "own"
+"7,100" = "own"
+"7,101" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_99",
+]
+"7,102" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_99",
+]
+"7,103" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_100",
+]
+"7,104" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_100",
+]
+"7,107" = "p3_7_87"
+"7,108" = "p3_7_87"
+"7,109" = "own"
+"7,110" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_109",
+]
+"7,111" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_109",
+]
+"7,113" = "p3_7_94"
+"7,114" = "p3_7_94"
+"7,115" = "p3_7_94"
+"7,116" = "p3_7_68"
+"7,117" = "p3_7_69"
+"7,118" = "p3_7_12"
+"7,120" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_12",
+]
+"7,121" = [
+    [
+        1,
+        2,
+    ],
+    "p3_7_13",
+]
+
+[brain.when]
+if_target_set = true
+if_target_state = true

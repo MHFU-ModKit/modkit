@@ -4,8 +4,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from mhfu_port import layout, manifest, motion, moves, slots
+from mhfu_port.brain.splice import Spliced
 from mhfu_port.cli import main
 from mhfu_port.cli.build import modules
+from mhfu_port.cli.splice import summary
 
 PORTS = Path(__file__).parents[3] / "ports"
 TEXT = """
@@ -66,3 +68,21 @@ def test_the_splice_enters_the_derived_moves(data, capsys):
     assert main(["splice", str(PORTS / "brute_tigrex.toml"), *args]) == 0
     out = capsys.readouterr().out
     assert "pair 7,13 -> own p3_7_13 (slot 6)" in out and "pair 7,14 -> own p3_7_14 (slot 7)" in out
+
+
+def test_the_summary_sorts_a_pair_that_turns_then_plays_a_move():
+
+    uses = {
+        ((7, 23), (1, 2)): 3,
+        ((7, 23), "p3_7_0"): 3,
+        ((7, 0), "p3_7_0"): 1,
+        ((2, 5), (1, 2)): 4,
+    }
+    spliced = Spliced(None, [], {}, uses, {"p3_7_0": 5})  # type: ignore[arg-type]
+    lines = summary(spliced, SimpleNamespace(image=None), []).splitlines()  # type: ignore[arg-type]
+    assert [line for line in lines if "pair" in line] == [
+        "  pair 2,5 -> 1,2  x4",
+        "  pair 7,0 -> own p3_7_0 (slot 5)  x1",
+        "  pair 7,23 -> 1,2  x3",
+        "  pair 7,23 -> own p3_7_0 (slot 5)  x3",
+    ]

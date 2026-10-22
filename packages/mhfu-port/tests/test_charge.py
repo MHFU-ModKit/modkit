@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from mhfu_port import manifest, moves, p3charge
 from mhfu_port.brain import charge, fatigue, own
+from mhfu_port.brain.splice import Spliced
+from mhfu_port.cli.splice import summary
 from mhfu_port.p3charge import Chip
 
 PORTS = Path(__file__).parents[3] / "ports"
@@ -159,6 +162,17 @@ def test_the_module_table():
         "discharge": [[4, 16], [4, 30]],
     }
     assert moves.lua_value(ch.module()).startswith("{ ups = { p3_1_15 = { 25, 35, 40, 55 }, ")
+
+
+def test_the_splice_summary_names_the_table():
+    ch, _ = derive(brain(**ALL))
+    spliced = Spliced(None, [], {}, {}, {})  # type: ignore[arg-type]
+    lines = summary(spliced, SimpleNamespace(image=None), [], None, ch).splitlines()  # type: ignore[arg-type]
+    assert lines[-2] == (
+        "  charge: p3_1_15 25/35/40/55, p3_1_16 40/55/65/100, p3_1_6 10/15/15/20; "
+        "transform p3_1_4; chips 5 gauge, 4 durability; cooldowns 420 and 900; "
+        "2 discharge pairs"
+    )
 
 
 def test_the_classes_are_fatigues():
