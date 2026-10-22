@@ -59,6 +59,9 @@
  *                 species' own gate.
  *   BUDGET        slot-32 post + slot-29 one-shot: the ENTITY.ACTION_BUDGET
  *                 override; the stubs carry it, but nothing arms it.
+ *   FATIGUE       the brain keeps a stamina for the board's monster, charged when it enters a
+ *                 pair and when one of our own moves starts, and writes gauge A for the AI
+ *                 script's if_gauge_a_low to read as "tired" (mhfu/fatigue.h).
  *   STEP          slot-29 pre: a C function per AI frame (mhfu_em_step), which may
  *                 take the frame from the host step; the move player's seam (move.cpp).
  *   MUTE          slot 30: one entity's animation events skipped (mhfu_em_mute_events),
@@ -91,6 +94,7 @@
 #include "mhfu/call.h"
 #include "mhfu/em_vhook.h"
 #include "mhfu/events.h"
+#include "mhfu/fatigue.h"
 #include "mhfu/hooks.h"
 #include "mhfu/log.h"
 #include "mhfu/memory.h"
@@ -98,6 +102,7 @@
 #include "mhfu/monster_events.h"
 #include "internal.h"
 #include "em_vhook_stubs.h"
+#include "fatigue_logic.h"
 #include <stddef.h>
 
 #ifndef MHFU_HOST
@@ -194,6 +199,25 @@ static_assert(offsetof(mhfu_em_board_t, broken) == MHFU_EM_BOARD_BROKEN,   "EM_B
 static_assert(offsetof(mhfu_em_board_t, rng)   == MHFU_EM_BOARD_RNG,       "EM_BOARD layout");
 static_assert(offsetof(mhfu_em_board_t, entity) == MHFU_EM_BOARD_ENTITY,   "EM_BOARD layout");
 static_assert(offsetof(mhfu_em_board_t, rage)  == MHFU_EM_BOARD_RAGE,      "EM_BOARD layout");
+static_assert(sizeof(mhfu_fatigue_pair_t)      == MHFU_FATIGUE_PAIR_SIZE,  "FATIGUE_PAIR layout");
+static_assert(offsetof(mhfu_fatigue_pair_t, cost) == MHFU_FATIGUE_PAIR_COST, "FATIGUE_PAIR layout");
+static_assert(sizeof(mhfu_fatigue_cfg_t)       == MHFU_FATIGUE_CFG_SIZE,   "FATIGUE_CFG layout");
+static_assert(offsetof(mhfu_fatigue_cfg_t, starts) == MHFU_FATIGUE_CFG_STARTS, "FATIGUE_CFG layout");
+static_assert(offsetof(mhfu_fatigue_cfg_t, refill) == MHFU_FATIGUE_CFG_REFILL, "FATIGUE_CFG layout");
+static_assert(offsetof(mhfu_fatigue_cfg_t, tired_frames) == MHFU_FATIGUE_CFG_TIRED_FRAMES,
+              "FATIGUE_CFG layout");
+static_assert(offsetof(mhfu_fatigue_cfg_t, low_hp_pct) == MHFU_FATIGUE_CFG_LOW_HP_PCT,
+              "FATIGUE_CFG layout");
+static_assert(offsetof(mhfu_fatigue_cfg_t, calm) == MHFU_FATIGUE_CFG_CALM, "FATIGUE_CFG layout");
+static_assert(offsetof(mhfu_fatigue_cfg_t, pair_count) == MHFU_FATIGUE_CFG_PAIR_COUNT,
+              "FATIGUE_CFG layout");
+static_assert(offsetof(mhfu_fatigue_cfg_t, pairs) == MHFU_FATIGUE_CFG_PAIRS, "FATIGUE_CFG layout");
+static_assert(offsetof(mhfu_fatigue_cfg_t, own)   == MHFU_FATIGUE_CFG_OWN,   "FATIGUE_CFG layout");
+static_assert(sizeof(mhfu_fatigue_t)           == MHFU_FATIGUE_SIZE,       "FATIGUE layout");
+static_assert(offsetof(mhfu_fatigue_t, cfg)    == MHFU_FATIGUE_CFG,        "FATIGUE layout");
+static_assert(offsetof(mhfu_fatigue_t, stamina) == MHFU_FATIGUE_STAMINA,   "FATIGUE layout");
+static_assert(offsetof(mhfu_fatigue_t, pair)   == MHFU_FATIGUE_PAIR,       "FATIGUE layout");
+static_assert(offsetof(mhfu_fatigue_t, gauge)  == MHFU_FATIGUE_GAUGE,      "FATIGUE layout");
 
 #define CFG_CANARY_VAL 0x5645484Bu   /* 'VEHK' */
 
@@ -219,7 +243,8 @@ static_assert(sizeof(tail_t) % 4 == 0, "zeroed word by word after the config");
 #define RET_INSNS   4     /* jr ra; nop, padded to 16 bytes */
 #define STUBS       (STUB_AI_INSNS + STUB_ACT_INSNS + STUB_EVT_INSNS + 2 * MHFU_WRAP_WORDS \
                      + RET_INSNS)
-#define BLOCK_BYTES (STUBS * 4 + CFG_SIZE + sizeof(tail_t) + sizeof(mhfu_em_board_t) + 128)
+#define BLOCK_BYTES (STUBS * 4 + CFG_SIZE + sizeof(tail_t) + sizeof(mhfu_em_board_t) \
+                     + sizeof(mhfu_fatigue_t) + 128)
 
 static uint32_t *g_stub_ai;
 static uint32_t *g_stub_act;
@@ -230,6 +255,7 @@ static uint32_t *g_stub_ret;
 static em_vhook_cfg_t *g_cfgp;
 static volatile tail_t *T;
 static volatile mhfu_em_board_t *g_board;   /* after the tail: the board the rules and Lua share */
+static volatile mhfu_fatigue_t *g_fat;      /* after the board: the fatigue helper's block */
 static volatile mhfu_em_moves_t *R;   /* the own-move registry */
 
 #define MOVES_MAGIC 0x564F4D45u        /* 'EMOV' */
@@ -278,7 +304,10 @@ static void place_block(uint8_t *base)
     g_cfgp     = (em_vhook_cfg_t *)(base + STUBS * 4);
     T          = (volatile tail_t *)(base + STUBS * 4 + CFG_SIZE);
     g_board    = (volatile mhfu_em_board_t *)(base + STUBS * 4 + CFG_SIZE + sizeof(tail_t));
-    for (unsigned k = 0; k < (CFG_SIZE + sizeof(tail_t) + sizeof(mhfu_em_board_t)) / 4; k++)
+    g_fat      = (volatile mhfu_fatigue_t *)(base + STUBS * 4 + CFG_SIZE + sizeof(tail_t)
+                                             + sizeof(mhfu_em_board_t));
+    for (unsigned k = 0; k < (CFG_SIZE + sizeof(tail_t) + sizeof(mhfu_em_board_t)
+                              + sizeof(mhfu_fatigue_t)) / 4; k++)
         ((uint32_t *)g_cfgp)[k] = 0;
     cfg_reset_live();
 }
@@ -421,12 +450,15 @@ static const volatile mhfu_steer_spec_t *steer_of(const volatile mhfu_em_own_t *
     return sp;
 }
 
-/* the move player's next move is slot's: what ours() reads */
-static void tag(uint32_t slot, const volatile mhfu_move_state_t *m)
+static void fat_own(uint32_t ent, uint32_t slot);
+
+/* the move player's next move is slot's, on ent: what ours() reads */
+static void tag(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m)
 {
     R->tag_slot = slot;
     R->tag_started = m->started + 1;   /* the step starts it right after us */
     R->plays++;
+    fat_own(ent, slot);
 }
 
 static int play_slot(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m, int force)
@@ -438,7 +470,7 @@ static int play_slot(uint32_t ent, uint32_t slot, const volatile mhfu_move_state
     mv.force = (uint8_t)(force != 0);
     mhfu_move_steer((const mhfu_steer_spec_t *)steer_of(o));
     if (!mhfu_move_play(ent, &mv)) return 0;
-    tag(slot, m);
+    tag(ent, slot, m);
     return 1;
 }
 
@@ -554,10 +586,99 @@ static uint32_t gate_call(uint32_t ent)
     return gate_orig(ent);
 }
 
+/* --- fatigue: a stamina for the board's monster, shown as gauge A (mhfu/fatigue.h) ------------- */
+
+static int enraged_now(uint32_t ent)
+{
+    return (mhfu_mem_read_u32(ent + MHFU_ENTITY_FLAGS) & MHFU_MONSTER_FLAG_ENRAGED) != 0;
+}
+
+static int fat_low_hp_now(uint32_t ent)
+{
+    return fat_low_hp(mhfu_mem_read_u16(ent + MHFU_ENTITY_HP),
+                      mhfu_mem_read_u16(ent + MHFU_ENTITY_MAX_HP), g_fat->cfg.low_hp_pct);
+}
+
+/* The species' own anger starts no rage while the monster is tired and CFG.CALM asks; the
+ * setting Lua made is given back after, and is left alone when it was already off. */
+static void fat_rage(void)
+{
+    fat_t *f = g_fat;
+    const int want = f->tired && f->cfg.calm;
+    if (want && !f->held && g_natural) {
+        g_natural = 0;
+        g_thr_pending = 1;
+        f->held = 1;
+    } else if (!want && f->held) {
+        g_natural = 1;
+        g_thr_pending = 1;
+        f->held = 0;
+    }
+}
+
+/* A tired spell starts at 0 stamina; gauge A follows the state, written only when it differs. */
+static void fat_settle_now(uint32_t ent, int enraged)
+{
+    fat_t *f = g_fat;
+    fat_settle(f, enraged);
+    fat_rage();
+    const int32_t gmax = (int32_t)mhfu_mem_read_u32(ent + MHFU_ENTITY_GAUGE_A_MAX);
+    if (gmax <= 0) return;
+    const int32_t want = fat_gauge(f->cfg.max, f->stamina, (int)f->tired, gmax);
+    if ((int32_t)mhfu_mem_read_u32(ent + MHFU_ENTITY_GAUGE_A) != want)
+        mhfu_mem_write_u32(ent + MHFU_ENTITY_GAUGE_A, (uint32_t)want);
+    f->gauge = want;
+}
+
+/* Each AI frame of the board's monster: the start, the cost of a pair entered, the tired spell. */
+static void fat_frame(uint32_t ent, uint32_t pair)
+{
+    fat_t *f = g_fat;
+    if (!f->enabled || ent != g_board->entity) return;
+    const int enraged = enraged_now(ent);
+    if (!f->seen) {
+        fat_start(f, rng_next() >> 8, pair);
+    } else if (pair != f->pair) {
+        f->pair = pair;
+        if (!enraged) fat_charge(f, fat_pair_cost(&f->cfg, pair >> 8, pair & 0xFF),
+                                 fat_low_hp_now(ent));
+    }
+    fat_tick(f);
+    fat_settle_now(ent, enraged);
+}
+
+/* The move player took own move `slot` on ent: its cost. */
+static void fat_own(uint32_t ent, uint32_t slot)
+{
+    fat_t *f = g_fat;
+    if (!f->enabled || !f->seen || ent != g_board->entity) return;
+    const int enraged = enraged_now(ent);
+    if (!enraged) fat_charge(f, fat_own_cost(&f->cfg, slot), fat_low_hp_now(ent));
+    fat_settle_now(ent, enraged);
+}
+
+/* A new monster, or none: nothing seen, and the species' anger given back. */
+static void fat_forget(void)
+{
+    fat_t *f = g_fat;
+    if (f->held) {
+        g_natural = 1;
+        g_thr_pending = 1;
+    }
+    fat_reset(f);
+}
+
+static void fat_off(void)
+{
+    g_fat->enabled = 0;
+    fat_forget();
+}
+
 /* ent's board: counters, signals and parts 0, the generator reseeded; ent 0 for none yet. The
  * monster is due its anger threshold. */
 static void board_reset(uint32_t ent)
 {
+    fat_forget();
     volatile uint32_t *w = (volatile uint32_t *)g_board;
     for (unsigned k = 0; k < sizeof(mhfu_em_board_t) / 4; k++) w[k] = 0;
     g_thr_ent = 0;
@@ -795,7 +916,7 @@ static int react_take(uint32_t ent, const volatile mhfu_move_state_t *m, const s
     if (!first) return 1;   /* the rules went meanwhile: the carrier runs as it is */
     const volatile mhfu_em_own_t *o = &R->moves[first->play_move - 1];
     mhfu_move_react_take((const mhfu_move_t *)&o->move, steer_of(o));
-    tag(first->play_move - 1u, m);
+    tag(ent, first->play_move - 1u, m);
     count_fire(first, ent);
     return 1;
 }
@@ -949,6 +1070,7 @@ static uint32_t brain(uint32_t ent)
              - mhfu_mem_read_f32(MHFU_PLAYER_ENTITY + MHFU_ENTITY_TRANSLATION + 8);
     c->d2_prev = c->d2;
     c->d2 = f32_bits(dx * dx + dz * dz);
+    fat_frame(ent, pair);
     const volatile mhfu_move_state_t *m = mhfu_move_state();
     if (!m || !R) return 0;
     seen_t seen = {};
@@ -1242,6 +1364,7 @@ extern "C" void mhfu_em_clear(void)
     g_gate_pct = 0;
     g_natural = 1;
     g_thr_pending = 1;
+    fat_off();
 }
 
 /* --- the tail tip --- */
@@ -1394,6 +1517,52 @@ extern "C" int mhfu_em_signal(int k)
 
 extern "C" const volatile mhfu_em_board_t *mhfu_em_board(void) { return g_board; }
 
+/* --- fatigue --- */
+
+extern "C" int mhfu_em_fatigue(const mhfu_fatigue_cfg_t *cfg)
+{
+    if (!g_fat) return 0;
+    if (!cfg) {
+        const int was = g_fat->enabled != 0;
+        fat_off();
+        if (was) mhfu_log("[%s] fatigue off", OWNER);
+        return 1;
+    }
+    if (const char *bad = fat_check(cfg)) {
+        mhfu_log("[%s] fatigue refused: %s", OWNER, bad);
+        return 0;
+    }
+    /* the same settings again change nothing, a monster's stamina included */
+    const volatile uint32_t *live = (const volatile uint32_t *)&g_fat->cfg;
+    const uint32_t *next = (const uint32_t *)cfg;
+    int same = g_fat->enabled != 0;
+    for (unsigned k = 0; same && k < sizeof(*cfg) / 4; k++) same = live[k] == next[k];
+    if (same) return 1;
+    g_fat->enabled = 0;                      /* off while we write, as a rule's LEFT */
+    copy_words(&g_fat->cfg, cfg, sizeof(*cfg));
+    fat_forget();
+    g_fat->enabled = 1;
+    mhfu_log("[%s] fatigue: max %d, starts %d/%d, tired %u frames, refill %d, %u pair cost(s)%s",
+             OWNER, (int)cfg->max, (int)cfg->starts[0], (int)cfg->starts[1],
+             (unsigned)cfg->tired_frames, (int)cfg->refill, (unsigned)cfg->pair_count,
+             cfg->calm ? ", no anger while tired" : "");
+    return 1;
+}
+
+extern "C" void mhfu_em_fatigue_status(mhfu_fatigue_status_t *out)
+{
+    if (!out) return;
+    *out = mhfu_fatigue_status_t();
+    if (!g_fat) return;
+    out->armed = g_fat->enabled;
+    out->stamina = g_fat->stamina;
+    out->tired = g_fat->tired;
+    out->left = g_fat->left;
+    out->charges = g_fat->charges;
+    out->spells = g_fat->spells;
+    out->gauge = g_fat->gauge;
+}
+
 /* --- rage and the cut's gate --- */
 
 extern "C" int mhfu_em_rage(int on)
@@ -1428,6 +1597,7 @@ extern "C" int mhfu_em_sever_gate(int pct)
 static void quest_reset(void)
 {
     R->tag_slot = MHFU_EM_NO_MOVE;
+    fat_off();
     board_reset(0);
 }
 

@@ -11,7 +11,7 @@ mhfu = {}
 
 ---The API's version, raised whenever a declaration here changes; a mod that needs something added
 ---in version N checks `mhfu.api_version >= N`.
-mhfu.api_version = 8
+mhfu.api_version = 9
 
 -- log, memory and world state (bind_memory.cpp) ----------------------------------------------
 
@@ -749,6 +749,45 @@ function mhfu.em_moves_status() end
 ---@field plays integer own moves started
 ---@field chained integer of them by `after`
 ---@field keys integer turn keys in use
+
+-- fatigue (bind_em.cpp, include/mhfu/fatigue.h) ---------------------------------------------------
+-- MHFU has no fatigue and its AI script cannot count. A stamina for the wrapped species' monster is
+-- kept in C: charged when it enters a pair and when one of our own moves starts, and shown to the
+-- script as gauge A low (`if_gauge_a_low`), which em75 never tests otherwise. Do not arm it on a
+-- species whose AI step drains gauge A itself (ENTITY.GAUGE_A).
+
+---Arms the stamina helper for the board's monster, from its next AI step; nil turns it off. The
+---same settings again change nothing, a stamina included. False for settings it refuses (logged),
+---or too many pairs. A cost halves at low HP, is not charged while the monster is enraged or
+---tired, and a negative one gives stamina back; at 0 a tired spell begins.
+---@param t? mhfu.Fatigue
+---@return boolean
+function mhfu.em_fatigue(t) end
+
+---The stamina helper's state.
+---@return mhfu.FatigueStatus
+function mhfu.em_fatigue_status() end
+
+---Settings for `mhfu.em_fatigue`; every field is optional.
+---@class mhfu.Fatigue
+---@field max? integer stamina maximum, 1..30000, default 1000
+---@field starts? integer[] { a, b }: stamina at the monster's first AI step, one of them by chance; default { max, max }
+---@field tired? integer AI frames a tired spell lasts, default 2250 (75 s at 30 fps)
+---@field refill? integer stamina when it ends, 1..max, default max / 2
+---@field low_hp? integer costs halve at or below this HP percent; default 0, never
+---@field calm? boolean the species' own anger starts no rage while tired (`mhfu.em_natural_rage`)
+---@field pairs? integer[][] up to `mhfu.addr.FATIGUE_CFG.PAIRS_COUNT` of { main, sub, cost }: the cost of entering a pair
+---@field own? table<integer, integer> the cost of starting an own move, by slot (a `mhfu_port` module may key it by the move's name)
+
+---What `mhfu.em_fatigue_status()` returns.
+---@class mhfu.FatigueStatus
+---@field armed boolean
+---@field stamina integer the board's monster's, 0 until its first AI step after arming
+---@field tired boolean in a tired spell: gauge A reads low
+---@field left integer AI frames of the spell left
+---@field charges integer costs charged
+---@field spells integer tired spells begun
+---@field gauge integer gauge A as the helper last wanted it
 
 -- reactions and monster events (bind_move.cpp, bind_monster_events.cpp) ----------------------
 

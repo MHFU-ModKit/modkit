@@ -21,6 +21,8 @@
  *                 (mhfu_em_sever_gate);
  *   own moves     a port's moves by slot, played by the move player (mhfu/move.h) when asked,
  *                 by a rule, or after the move before them;
+ *   fatigue       a stamina for the board's monster, charged per pair entered and own move
+ *                 started, shown to the AI script as gauge A low (mhfu/fatigue.h);
  *   step          a C function on every AI frame, on the game thread, before the host step;
  *   tail tip      a port's tip joints posed from carriers of the live tail until the drop.
  *

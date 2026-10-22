@@ -410,6 +410,8 @@ STEER = { offset = 0x637, type = "u8", doc = "big monsters: set by a charge's tr
 RUN_BUDGET = { offset = 0x76C, type = "f32", doc = "big monsters: distance a run move may still travel; BUDGET_STEP subtracts the clip's root motion, the translator seeds it" }
 CLIP_BLOCKS = { offset = 0x080, type = "CLIP_BLOCK[3]", doc = "big monsters: one clip player per body part (Bone.stream); CLIP and CLIP_FLAGS are part 0's" }
 SCRIPT_WAKE = { offset = 0x4B5, type = "u8", doc = "big monsters: set as the brain hubs (0,1)/(0,2) run; SCRIPT_TICK runs the AI script and clears it. A pair entered from outside with it set is cut short by the script's next pair" }
+GAUGE_A = { offset = 0x498, type = "s32", doc = "big monsters: gauge A. if_gauge_a_low (op 0x21) is true at or below GAUGE_A_MAX * 30 / 100 (truncated); GAUGE_A_LATCH drains it in the species that call it (not em75, whose script never tests it and whose AI step drains gauge B), refill_gauge_a adds half the maximum; the framework's fatigue helper writes it (mhfu/fatigue.h). A spawn refills a gauge found at 0" }
+GAUGE_A_MAX = { offset = 0x4A0, type = "s32", doc = "big monsters: gauge A's maximum, the species' row (em75 120000)" }
 SCRIPT_HEADER = { offset = 0x4C8, type = "ptr", doc = "big monsters: the AI script's header (SCRIPT_HEADERS row, set by SCRIPT_INIT); mhfu.em.script reads it" }
 SCRIPT_PCS = { offset = 0x4CC, type = "u32[4]", doc = "big monsters: the AI script's resume addresses, base then contexts 0x20, 0x10, 0x01 (SCRIPT_CONTEXT picks one); only `enter` stores one" }
 SCRIPT_CONTEXT = { offset = 0x4C1, type = "u8", doc = "big monsters: the AI script's running context, a bit of SCRIPT_PENDING or 0 for the base routine" }
@@ -1052,12 +1054,51 @@ RNG = { offset = 0x34, type = "u32", doc = "xorshift32 state for CHANCE" }
 ENTITY = { offset = 0x38, type = "ptr", doc = "the monster it belongs to" }
 RAGE = { offset = 0x3C, type = "u8", doc = "a rage request Lua queued (mhfu_em_rage): 1 enrage, 2 calm, 0 none; the brain applies it as the enrage or calm effect in its next AI frame and clears it" }
 
+[struct.FATIGUE_PAIR]
+doc = "one fatigue cost by pair (fatigue.h mhfu_fatigue_pair_t): the stamina charged when the monster enters the pair"
+size = 0x4
+[struct.FATIGUE_PAIR.fields]
+MAIN = { offset = 0x0, type = "u8", doc = "ENTITY.MAIN_STATE" }
+SUB = { offset = 0x1, type = "u8", doc = "ENTITY.SUB_STATE" }
+COST = { offset = 0x2, type = "s16", doc = "stamina taken; halved at low HP; negative gives stamina back" }
+
+[struct.FATIGUE_CFG]
+doc = "what a fatigue helper is set to (fatigue.h mhfu_fatigue_cfg_t), written by mhfu_em_fatigue"
+size = 0x178
+[struct.FATIGUE_CFG.fields]
+MAX = { offset = 0x00, type = "s32", doc = "stamina maximum (MHP3rd's Brute 1000)" }
+STARTS = { offset = 0x04, type = "s32[2]", doc = "stamina at the monster's first AI step, one of the two by the board's generator (Brute 400, 600)" }
+REFILL = { offset = 0x0C, type = "s32", doc = "stamina when a tired spell ends (Brute 500)" }
+TIRED_FRAMES = { offset = 0x10, type = "u32", doc = "AI frames a tired spell lasts (Brute 2250, 75 s)" }
+LOW_HP_PCT = { offset = 0x14, type = "u8", doc = "costs halve at or below this percent of MAX_HP; 0 never" }
+CALM = { offset = 0x15, type = "u8", doc = "1: the species' own anger starts no rage while tired" }
+PAIR_COUNT = { offset = 0x16, type = "u16", doc = "PAIRS in use" }
+PAIRS = { offset = 0x18, type = "FATIGUE_PAIR[64]", doc = "the cost of entering a pair" }
+OWN = { offset = 0x118, type = "s16[48]", doc = "the cost of starting an own move, by EM_MOVES slot; one per slot" }
+
+[struct.FATIGUE]
+doc = "em_vhook's fatigue block (fatigue.h mhfu_fatigue_t): one per wrapped species, for the board's monster; a new monster resets everything after CFG"
+size = 0x1A0
+[struct.FATIGUE.fields]
+ENABLED = { offset = 0x00, type = "u32", doc = "1 once mhfu_em_fatigue armed it; the quest's end and mhfu_em_clear turn it off" }
+CFG = { offset = 0x04, type = "FATIGUE_CFG", doc = "the settings" }
+STAMINA = { offset = 0x17C, type = "s32", doc = "0..CFG.MAX; set at the monster's first AI step after arming" }
+TIRED = { offset = 0x180, type = "u32", doc = "1 during a tired spell: gauge A reads low" }
+LEFT = { offset = 0x184, type = "u32", doc = "AI frames of the tired spell left" }
+SEEN = { offset = 0x188, type = "u32", doc = "1 once the first AI step chose the start" }
+PAIR = { offset = 0x18C, type = "u32", doc = "(main << 8) | sub the last AI frame saw; a different one is charged" }
+HELD = { offset = 0x190, type = "u32", doc = "1 while this block keeps the species' anger off (CFG.CALM, tired)" }
+CHARGES = { offset = 0x194, type = "u32", doc = "costs charged" }
+SPELLS = { offset = 0x198, type = "u32", doc = "tired spells begun" }
+GAUGE = { offset = 0x19C, type = "s32", doc = "ENTITY.GAUGE_A as this block last wanted it" }
+
 [struct.EM_BLOCK]
-doc = "em_vhook's partition block from its config block on (em_vhook.cpp place_block): the config block, the tail's map and the cut's wait, then the board; the block's address moves with the PRX build, a debugger finds it by EM_CFG.CANARY"
-size = 0xD68
+doc = "em_vhook's partition block from its config block on (em_vhook.cpp place_block): the config block, the tail's map and the cut's wait, then the board and the fatigue block; the block's address moves with the PRX build, a debugger finds it by EM_CFG.CANARY"
+size = 0xEE8
 [struct.EM_BLOCK.fields]
 CFG = { offset = 0x00, type = "EM_CFG", doc = "the config block" }
 BOARD = { offset = 0xD08, type = "EM_BOARD", doc = "the board, after the tail: sizeof(tail_t) is 0x28" }
+FATIGUE = { offset = 0xD48, type = "FATIGUE", doc = "the fatigue block, after the board" }
 
 [enum.EM_COND]
 doc = "a brain rule's condition, EM_OP.OP - 1: hp_at_least/hp_below HP percent of MAX_HP against VALUE; broken/not_broken part ARG in EM_BOARD.BROKEN; enraged/calm ENTITY.FLAGS 0x20; side the hunter in a sector of the monster's facing in mask ARG (90 degrees each, left the monster's own); chance VALUE percent; var_* EM_BOARD.VARS[ARG] against VALUE"
