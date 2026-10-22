@@ -273,13 +273,16 @@ class Step:
     """AI frames it played, from the first after the play to the one that ended it."""
     hits: tuple[Hit, ...]
     turns: tuple[Turn, ...]
+    stop: float | None = None
+    """The clip frame the cursor test that ended it was crossed at; None when its clip or the
+    pair ended it, or no test of the cursor changed its answer on the tick."""
 
 
 @dataclass(frozen=True)
 class Note:
     """What a plan cannot say."""
 
-    code: Literal["branch", "motion", "start", "unresolved", "limit", "record"]
+    code: Literal["branch", "motion", "unresolved", "limit", "record"]
     text: str
 
 
@@ -701,10 +704,7 @@ class Walk:
             run.notes.append(Note("unresolved", f"the clip played at 0x{s.site:08X} is computed"))
             run.finished = True
             return
-        start = s.args[2] or 0
-        if start:
-            run.notes.append(Note("start", f"clip {clip} starts at frame {start}"))
-        self._start(run, clip, s.args[1], start)
+        self._start(run, clip, s.args[1], s.args[2] or 0)
 
     def _play_first(self, run: _Run, ids: Sequence[int] | None, s: Site) -> None:
         """A helper that plays one of several clips it is given a record of: the first."""
@@ -727,7 +727,7 @@ class Walk:
             run.notes.append(Note("limit", f"the handler played {MAX_STEPS} clips without ending"))
             run.finished = True
             return
-        self._close_step(run, "clip" if run.ended else "cursor")
+        self._close_step(run, "clip" if run.ended else "cursor", self._crossed(run))
         carried = {}
         for slot, node in run.nodes.items():
             if not node.hit.flags & FLAG_OUTLIVES or (node.left is not None and node.left <= 0):
@@ -794,7 +794,24 @@ class Walk:
         if length is not None and length.loop and run.cursor >= length.frames:
             run.cursor %= length.frames
 
-    def _close_step(self, run: _Run, how: How) -> None:
+    def _crossed(self, run: _Run) -> float | None:
+        """The clip frame the step ends at: of the last cursor test this tick whose answer changed
+        since the tick before, its `lo`, or its `hi` for a window the cursor left. None on a
+        step's first tick, which has no tick before."""
+        step, clip = run.current, run.clip
+        length = self.lengths.get(clip) if clip is not None else None
+        if step is None or step.ticks < 1 or run.ended or clip is None or length is None:
+            return None
+        before = run.cursor - self.step
+        if length.loop:
+            before %= length.frames
+        for q, yes in reversed(run.asked):
+            was = None if q.mode is None else self._answer(q, clip, before)
+            if was is not None and was != yes:
+                return q.hi if was and q.mode in WINDOWS else q.lo
+        return None
+
+    def _close_step(self, run: _Run, how: How, stop: float | None = None) -> None:
         step = run.current
         if step is None:
             return
@@ -805,7 +822,16 @@ class Walk:
             for h in step.hits
         ]
         run.done.append(
-            Step(step.clip, step.blend, step.start, how, step.ticks + 1, tuple(hits), _turns(step))
+            Step(
+                step.clip,
+                step.blend,
+                step.start,
+                how,
+                step.ticks + 1,
+                tuple(hits),
+                _turns(step),
+                stop,
+            )
         )
         run.steps.pop()
 

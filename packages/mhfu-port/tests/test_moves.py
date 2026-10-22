@@ -111,6 +111,36 @@ def test_lua():
     ]
 
 
+SPAN = OWN.replace('after = "dash"\n', 'after = "dash"\nstart = 24\nstop = 86\n', 1)
+"""The stamp playing its clip from frame 24 to 86, its attack at 56 to 80 inside."""
+
+
+def test_start_and_stop_reach_the_module():
+    text = moves.lua(_m(SPAN), LAYOUT, {6})
+    assert "carrier = { 0, 2 }, start = 24, stop = 86, steer = { walls = false," in text
+    assert " start = " not in moves.lua(_m(), LAYOUT, {6})
+
+
+def test_a_derived_moves_span_is_checked_here():
+    """Derived moves never go through the manifest's load: `problems` is what refuses them."""
+    m = _m(SPAN)
+    mv = m.moves["stamp"]
+    assert moves.problems(m, LAYOUT, {6}) == []
+    mv.start, mv.stop = 90, 80
+    found = moves.problems(m, LAYOUT, {6})
+    assert found == [
+        "moves.stamp: stop 80 is not after start 90",
+        "moves.stamp.attack[0]: frame 56 is before start 90",
+    ]
+    mv.start, mv.stop = 300, 0
+    assert moves.problems(m, LAYOUT, {6}) == [
+        "moves.stamp: start 300 is past the clip's 228 frames",
+        "moves.stamp.attack[0]: frame 56 is before start 300",
+    ]
+    with pytest.raises(ManifestError, match="start 300 is past"):
+        moves.check(m, LAYOUT, {6})
+
+
 def test_steer_window():
     hunter = OWN.replace(
         'turn = "hunter"\ndir = 180.0', 'turn = "hunter"\nrate = 546\nwindow = [10, 40]'
@@ -235,6 +265,21 @@ def test_hub():
             None,
             "frame 228 is past the clip's 228",
         ),
+        (
+            OWN.replace("anim = 9\n", "anim = 9\nstart = 100\n"),
+            LAYOUT,
+            None,
+            "spin: start 100 is past",
+        ),
+        (SPAN.replace("stop = 86", "stop = 229"), LAYOUT, None, "stop 229 is past the clip's 228"),
+        (SPAN.replace("stop = 86", "stop = 24"), LAYOUT, None, "stop 24 is not after start 24"),
+        (
+            SPAN.replace("start = 24", "start = 60"),
+            LAYOUT,
+            None,
+            r"attack\[0\]: frame 56 is before",
+        ),
+        (SPAN.replace("stop = 86", "stop = 70"), LAYOUT, None, "lasts to 80, past stop 70"),
         (
             OWN,
             layout.Layout(LAYOUT.entries, turns={46: travel.Turn(600, (0,) * 301, 0, None)}),

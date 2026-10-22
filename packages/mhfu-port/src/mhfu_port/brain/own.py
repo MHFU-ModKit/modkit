@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The own moves a manifest's `[brain.pairs] "7,13" = "own"` stands for, derived at each build
-from both games' files: the clips the donor's handler plays, the attacks it spawns with their
-frames, matched to the host species' attack records, and how it turns.
+from both games' files: the clips the donor's handler plays, from the clip frame it starts them
+at to the one it ends them at, the attacks it spawns with their frames, matched to the host
+species' attack records, and how it turns.
 
     m, findings = own.expand(manifest, data)    # the manifest with `p3_7_13` and its clips
 
@@ -60,7 +61,6 @@ FLOOR = 0.25
 SAMPLES = 100_000
 """Points the overlap of two volume sets is sampled at."""
 MAX_RATE = 0xFFFF
-STEP = p3hits.STEP_FRAMES
 
 Report = Callable[[Finding], None]
 
@@ -266,7 +266,6 @@ class Derivation:
             "record": ("info", "P3_OWN_BRANCH"),
             "limit": ("info", "P3_OWN_BRANCH"),
             "motion": ("info", "P3_OWN_MOTION"),
-            "start": ("info", "P3_OWN_START"),
             "unresolved": ("warning", "P3_OWN_PARTIAL"),
         }
         for n in plan.notes:
@@ -295,22 +294,30 @@ class Derivation:
         return name
 
     def _move(self, step: Step, after: str | None) -> Move:
+        """The step as a move, from the clip frame the donor started it at to the one its handler
+        tested when it ended it (`Step.stop`); `length`, in AI frames, only for a step that ended
+        on no frame of its clip: a pair, a loop, a test the cursor never changed."""
         length = self.walk.lengths[step.clip]
+        frames, start = round(length.frames), round(step.start)
+        stop = round(step.stop) if step.stop is not None else 0
+        stop = stop if start < stop <= frames else 0
         cut = length.loop or step.ended != "clip"
-        until = step.start + step.ticks * STEP if cut else length.frames
         return Move(
             clip=self._clip(step.clip),
-            attacks=self._attacks(step, until if length.loop else min(until, length.frames)),
+            attacks=self._attacks(step, start, stop or frames),
             steer=self._steer(step, walls=length.loop),
-            length=max(1, step.ticks) if cut else None,
+            length=max(1, step.ticks) if cut and not stop else None,
+            start=start,
+            stop=stop,
             after=after,
             label=f"MHP3rd {self.pair[0]},{self.pair[1]}",
         )
 
-    def _attacks(self, step: Step, until: float) -> list[AttackWindow]:
+    def _attacks(self, step: Step, start: int, until: int) -> list[AttackWindow]:
+        """The step's attack windows inside `[start, until]`."""
         out: list[AttackWindow] = []
         for h in sorted(step.hits, key=lambda h: (h.frame, h.slot)):
-            frame = round(h.frame)
+            frame = max(start, round(h.frame))
             end = round(until if h.end is None else min(h.end, until))
             if end <= frame:
                 continue

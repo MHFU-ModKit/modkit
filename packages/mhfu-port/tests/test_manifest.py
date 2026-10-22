@@ -190,6 +190,8 @@ STAMP = (
     OWN
     + """carrier = [0, 2]
 length = 90
+start = 24
+stop = 90
 host_attacks = true
 [[moves.o.attack]]
 id = 6
@@ -474,8 +476,10 @@ def test_own_move():
     o = m.moves["o"]
     assert o.own and o.pair is None and m.moves == M.loads(M.dumps(m)).moves
     assert o.attacks == [M.AttackWindow(6, 56, 80)] and o.steer.angle == -90.0
+    assert (o.length, o.start, o.stop) == (90, 24, 90)
     assert not M.loads(_with(MOVE)).moves["m"].own
-    assert "steer" not in M.dumps(M.loads(_with(OWN)))
+    text = M.dumps(M.loads(_with(OWN)))
+    assert "steer" not in text and "start" not in text and "stop" not in text
 
 
 CUT = (
@@ -529,11 +533,25 @@ def test_cuts_share_a_source():
         ("[[effect]]\nmove = 'm'\nframe = 1\nid = 1\nbone = 1\n", "not in moves"),
         ("[moves.m]\nmain = 1\nanim = 1\n", "both main and sub"),
         (MOVE + "length = 9\n", "for an own move"),
+        (MOVE + "start = 9\n", "for an own move"),
+        (MOVE + "stop = 9\n", "for an own move"),
         (MOVE + "[[moves.m.attack]]\nid = 6\nframe = 1\n", "for an own move"),
         (OWN + "hold_max = 9\n", "no claim or hold_max"),
         (OWN + "[[moves.o.attack]]\nid = 6\nframe = 1\n" * 5, "holds 4 attacks"),
         (OWN + "[[moves.o.attack]]\nid = 6\nframe = 9\nend = 9\n", "after frame"),
         (OWN + "length = 0\n", "length"),
+        (OWN + "start = 70000\n", "start and stop are clip frames, 0 to 65535"),
+        (OWN + "stop = -1\n", "start and stop are clip frames"),
+        (OWN + "start = 90\nstop = 80\n", "moves.o: stop 80 is not after start 90"),
+        (
+            OWN + "start = 60\n[[moves.o.attack]]\nid = 6\nframe = 56\n",
+            r"o.attack\[0\]: frame 56 is before",
+        ),
+        (
+            OWN + "stop = 70\n[[moves.o.attack]]\nid = 6\nframe = 56\nend = 80\n",
+            "lasts to 80, past stop 70",
+        ),
+        (OWN + "stop = 50\n[[moves.o.attack]]\nid = 6\nframe = 56\n", "lasts to 56, past stop 50"),
         (OWN + "carrier = [9, 0]\n", "carrier main"),
         (OWN + "[moves.o.steer]\nturn = 'fixed'\n", "angle goes with"),
         (OWN + "[moves.o.steer]\nangle = 90.0\n", "angle goes with"),

@@ -79,8 +79,8 @@ def derive(plan: Plan, **kw):
     return m, found
 
 
-def step(clip: int, hits=(), turns=(), ended="clip", ticks=10, start=0.0) -> Step:
-    return Step(clip, 4, start, ended, ticks, tuple(hits), tuple(turns))
+def step(clip: int, hits=(), turns=(), ended="clip", ticks=10, start=0.0, stop=None) -> Step:
+    return Step(clip, 4, start, ended, ticks, tuple(hits), tuple(turns), stop)
 
 
 def plan(*steps: Step, **kw) -> Plan:
@@ -123,9 +123,38 @@ def test_a_chain_hands_on_and_a_loop_is_cut():
     assert set(m.clips) == {"charge", "p3_59", "p3_60"}
 
 
-def test_a_crossing_ends_a_clip_early():
-    m, _ = derive(plan(step(61, ended="cursor", ticks=55)))
-    assert m.moves["p3_7_13"].length == 55
+def spans(m: manifest.Manifest, name: str = "p3_7_13") -> tuple[int, int, int | None]:
+    mv = m.moves[name]
+    return mv.start, mv.stop, mv.length
+
+
+def test_the_frame_a_test_ended_a_step_at_is_its_stop():
+    hits = [Hit(1, 21, 16, 56.0, 200.0), Hit(0, 28, 8, 10.0, 20.0)]
+    m, _ = derive(plan(step(61, hits, ended="cursor", ticks=31, start=24.0, stop=86.0)))
+    assert spans(m) == (24, 86, None)
+    # clamped to [start, stop]; the one over before the start is dropped
+    assert [(a.id, a.frame, a.end) for a in m.moves["p3_7_13"].attacks] == [(7, 56, 86)]
+    manifest.check(m)
+
+
+def test_a_loop_stops_where_the_donor_left_it():
+    p = plan(step(59, [Hit(0, 19, 3, 68.0, None)], ended="cursor", ticks=57, stop=114.0))
+    m, _ = derive(p)
+    assert spans(m) == (0, 114, None) and m.moves["p3_7_13"].attacks[0].end == 114
+
+
+def test_a_start_is_carried_and_the_clip_plays_on_to_its_end():
+    m, found = derive(plan(step(61, ended="clip", ticks=100, start=18.0)))
+    assert spans(m) == (18, 0, None) and "P3_OWN_START" not in codes(found)
+
+
+@pytest.mark.parametrize(
+    ("ended", "stop"), [("cursor", None), ("pair", None), ("cursor", 500.0), ("cursor", 24.0)]
+)
+def test_a_step_with_no_frame_to_stop_on_keeps_its_length(ended, stop):
+    """No frame, or one outside the clip or not after the start."""
+    m, _ = derive(plan(step(61, ended=ended, ticks=55, start=24.0, stop=stop)))
+    assert spans(m) == (24, 0, 55)
 
 
 def test_an_attack_with_no_host_record_is_left_out():
@@ -227,6 +256,21 @@ def test_brute_derives_its_seven_pairs(derived):
         "p3_7_15",
     ]
     assert sequence.chain(m, "p3_7_14") == ["p3_7_14", "p3_7_14_2"]
+
+
+def test_brute_windows_lie_inside_their_spans(derived, data):
+    m, _ = derived
+    made = {n: mv for n, mv in m.moves.items() if n.startswith("p3_")}
+    assert {n: (mv.start, mv.stop, mv.length) for n, mv in made.items() if mv.start or mv.stop} == {
+        "p3_2_19_3": (6, 0, None)
+    }
+    assert {n: mv.length for n, mv in made.items() if mv.length is not None} == {
+        "p3_2_19_2": 39,
+        "p3_7_14": 72,
+    }
+    for name, mv in made.items():
+        for a in mv.attacks:
+            assert mv.start <= a.frame < a.end <= (mv.stop or 10_000), name
 
 
 def test_brute_records_match_by_volume(data):

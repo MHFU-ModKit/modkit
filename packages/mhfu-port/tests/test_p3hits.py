@@ -205,6 +205,53 @@ def test_straight_pair():
     assert (step.clip, step.start, step.ended, step.ticks) == (61, 0, "clip", 50)
     assert step.hits == (Hit(0, 5, 0, 20, 50), Hit(1, 6, 0, 60, 70))
     assert [(t.rate, t.window) for t in step.turns] == [(100, (0, 40))]
+    assert step.stop is None  # the clip ended it
+
+
+def test_a_step_stops_at_the_frame_its_gate_crossed():
+    def second(a: Asm) -> None:
+        gate(a, 0, F60)
+        a.branch("beq", "v0", "zero", "done")
+        play(a, 62)
+        a.call(LEAVE)
+
+    plan = walk(species(second, lambda a: play(a, 61)), {61: Length(100.0), 62: Length(40.0)}).plan(
+        pair()
+    )
+    first, last = plan.steps
+    assert (first.clip, first.ended, first.ticks, first.stop) == (61, "cursor", 30, 60.0)
+    assert (last.clip, last.ended, last.stop) == (62, "pair", None)
+
+
+def test_a_step_stops_at_the_end_of_the_window_it_left():
+    def second(a: Asm) -> None:
+        gate(a, 3, F0, F40)
+        a.branch("bne", "v0", "zero", "done")
+        play(a, 62)
+        a.call(LEAVE)
+
+    plan = walk(species(second, lambda a: play(a, 61)), {61: Length(100.0), 62: Length(40.0)}).plan(
+        pair()
+    )
+    assert [(s.ended, s.ticks, s.stop) for s in plan.steps] == [
+        ("cursor", 21, 40.0),
+        ("pair", 1, None),
+    ]
+
+
+def test_a_step_ended_on_its_first_tick_has_no_frame_to_stop_on():
+    def second(a: Asm) -> None:
+        gate(a, 1, F0)  # already true on the first tick: nothing changed since a tick before
+        play(a, 62)
+        a.call(LEAVE)
+
+    plan = walk(species(second, lambda a: play(a, 61)), {61: Length(100.0), 62: Length(40.0)}).plan(
+        pair()
+    )
+    assert [(s.ended, s.ticks, s.stop) for s in plan.steps] == [
+        ("cursor", 1, None),
+        ("pair", 1, None),
+    ]
 
 
 def test_a_branch_the_walk_cannot_decide_is_taken_for_the_attack():

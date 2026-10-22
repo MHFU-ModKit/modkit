@@ -81,12 +81,19 @@ player on its carrier (none given: the host's hub, `mhfu_port.moves.HUBS`, em75'
 [moves.stamp]
 clip = "stamp_right_claw"
 attack = [{ id = 6, frame = 56, end = 80 }]   # an attack record, spawned and ended at clip frames
+start = 24                                     # the clip starts at this frame ...
+stop = 86                                      # ... and the move ends at this one
 after = "dash"                                 # played when this one ends; own or a pair
 
 [moves.stamp.steer]
 turn = "clip"       # or still, hunter, away, fixed (angle over frames)
 walls = true        # a wall ahead ends it
 ```
+
+`start` and `stop` are clip frames, so they hold at any blend and cursor rate; `length` is AI
+frames from the dispatch, which the blend and the rate change. An attack must lie inside
+`[start, stop]`. A move derived from a donor pair gets its `start` and `stop` from the donor's own
+clip frames (`mhfu-port own` lists them).
 
 `[behaviour]` decides when a move plays, as a graph. A block is `[behaviour.blocks.<id>]`: its
 `kind`, the kind's params flat beside it, `at` (canvas x, y), `next` (the blocks it feeds), `play`
