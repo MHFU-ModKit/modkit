@@ -8,10 +8,13 @@ indices resolved, its `signal` index and, for a path that plays nothing, `no_pla
 percent) and `natural_rage = false` appear only when the manifest sets them.
 
 A pair move goes as the runtime paints it on its host pair. An own move goes as the move player
-takes it (`mhfu.move_play`): its clip's executor entry and, for `turn = "clip"`, its turn keys,
-both from the build's layout; the attack windows, the carrier (`hub` when it names none), the
-steer and `after`. `tip` is the tail tip's `{ joint, carrier }` pairs (`rig.Tip`), which
-`mhfu.em_tip` takes.
+takes it (`mhfu.move_play`): its `slot` in the framework's registry (`slots`), its clip's executor
+entry and, for `turn = "clip"`, its turn keys, both from the build's layout; the attack windows,
+the carrier (`hub` when it names none), the steer and `after`. `tip` is the tail tip's
+`{ joint, carrier }` pairs (`rig.Tip`), which `mhfu.em_tip` takes.
+
+`slots` is the one numbering of own moves: this module writes it, `mhfu_port.lua` registers by it
+and the brain splice's `enter OWN_MOVE_MAIN k 0` names it.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ from mhfu.files import Extracted, em_overlay
 from . import behaviour
 from .behaviour import Rule
 from .layout import Layout
-from .manifest import Manifest, ManifestError, Move
+from .manifest import OWN_MOVES, Manifest, ManifestError, Move
 from .rig import Tip
 
 Pair = tuple[int, int]
@@ -39,6 +42,15 @@ KEYS: int = addresses.STEER_SPEC.KEYS.count or 0
 """Turn keys the move player holds for one move."""
 POOL: int = addresses.EM_MOVES.KEYS.count or 0
 """Turn keys the framework holds for all of a port's own moves."""
+SLOTS: int = OWN_MOVES
+"""Own moves the framework's registry holds."""
+
+
+def slots(m: Manifest) -> dict[str, int]:
+    """Each own move's registry slot: sorted by name, numbered from 0, at most `SLOTS` (`problems`
+    names the rest)."""
+    own = sorted(name for name, mv in m.moves.items() if mv.own)
+    return {name: k for k, name in enumerate(own[:SLOTS])}
 
 
 def hub(species: int) -> Pair | None:
@@ -106,11 +118,14 @@ def records(game: Extracted, species: int) -> frozenset[int]:
 
 
 def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> list[str]:
-    """Every own move or rule the module cannot carry: a clip with no entry, an attack past its
-    clip or with no record in `known` (the host's, when given), more turn keys than the framework
-    holds, no carrier; rules on the flinch whose moves ride different carriers."""
+    """Every own move or rule the module cannot carry: more own moves than slots, a clip with no
+    entry, an attack past its clip or with no record in `known` (the host's, when given), more
+    turn keys than the framework holds, no carrier; rules on the flinch whose moves ride
+    different carriers."""
     out: list[str] = []
     pool = 0
+    if (n := sum(mv.own for mv in m.moves.values())) > SLOTS:
+        out.append(f"moves: {n} own moves, the framework holds {SLOTS}")
     for name, mv in m.moves.items():
         if not mv.own:
             continue
@@ -202,9 +217,9 @@ def _steer(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
     return out
 
 
-def _own_move(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
+def _own_move(m: Manifest, name: str, layout: Layout, slot: int) -> dict[str, Any]:
     mv = m.moves[name]
-    out: dict[str, Any] = {"entry": entry(m, name, layout)}
+    out: dict[str, Any] = {"entry": entry(m, name, layout), "slot": slot}
     if mv.clip is not None:
         out["clip"] = mv.clip
     if mv.attacks:
@@ -300,8 +315,9 @@ def lua(
         "return {",
         "  moves = {",
     ]
+    at = slots(m)
     for name, mv in m.moves.items():
-        body = _own_move(m, name, layout) if mv.own else pair_move(mv)
+        body = _own_move(m, name, layout, at[name]) if mv.own else pair_move(mv)
         out.append(f"    {lua_key(name)} = {lua_value(body)},")
     out += ["  },", "  rules = {"]
     out += [f"    {lua_value(_rule(r))}," for r in behaviour.compile(m)]

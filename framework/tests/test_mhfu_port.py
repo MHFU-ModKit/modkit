@@ -462,7 +462,7 @@ local z = P.define{ name = "z", species = 75 }
 z.ent = ENT
 ticks(1)
 
--- own moves numbered by name; `after` a slot, or a pair move's pair as the back pair
+-- own moves in the module's slots; `after` a slot, or a pair move's pair as the back pair
 assert(z._slot.dash == 0 and z._slot.spin == 1 and z._slot.stamp == 2)
 local st, da = SEAM.moves[2], SEAM.moves[0]
 assert(st.entry == 46 and st.after == 0 and st.attacks[1][1] == 56 and st.steer.curve)
@@ -527,6 +527,66 @@ def test_own_moves(lua: Any, tmp_path: Path) -> None:
     lua.execute(f"package.path = package.path .. ';' .. {str(tmp_path / '?.lua')!r}")
     memory(lua)
     lua.execute(OWN)
+
+
+SLOTS = """
+local SEAM = { moves = {} }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) SEAM.moves[slot] = t; return true end
+function mhfu.em_moves_clear() SEAM.moves = {}; return true end
+local P = require("mhfu_port")
+local MAX = mhfu.addr.EM_MOVES.MOVES_COUNT
+
+-- a moves module's `slot` is the slot, whatever the names sort to; it is not sent on
+package.loaded.z_moves = {
+  moves = {
+    stamp = { entry = 46, slot = 0 }, spin = { entry = 9, slot = 1 },
+    dash = { entry = 20, slot = 3 }, lunge = { main = 1, sub = 4 },
+  },
+  rules = {},
+}
+local z = P.define{ name = "z", species = 75 }
+z.ent = ENT
+ticks(1)
+assert(z._slot.stamp == 0 and z._slot.spin == 1 and z._slot.dash == 3 and z._slot.lunge == nil)
+assert(z._own_at[3] == "dash" and z._own_at[2] == nil)
+assert(SEAM.moves[3].entry == 20 and SEAM.moves[0].entry == 46 and SEAM.moves[2] == nil)
+assert(SEAM.moves[3].slot == nil)
+mhfu.em_playing = function() return 3 end
+assert(z:own_playing() == "dash")
+
+-- a hand-written port's own moves have none: sorted by name
+local h = P.define{
+  name = "h", species = 75, moves = { b = { entry = 2 }, c = { entry = 3 }, a = { entry = 1 } },
+}
+assert(h._slot.a == 0 and h._slot.b == 1 and h._slot.c == 2 and h._own_at[0] == "a")
+
+-- both: the ones with a slot keep it, the rest take the free slots by name
+local m = P.define{
+  name = "m", species = 75,
+  moves = {
+    b = { entry = 2, slot = 0 }, a = { entry = 1 }, c = { entry = 3 }, d = { entry = 4, slot = 1 },
+  },
+}
+assert(m._slot.b == 0 and m._slot.d == 1 and m._slot.a == 2 and m._slot.c == 3)
+
+-- a taken slot or one past the registry: the move is left out, said once
+local n = P.define{
+  name = "n", species = 75,
+  moves = {
+    a = { entry = 1, slot = 0 }, b = { entry = 2, slot = 0 }, c = { entry = 3, slot = MAX },
+  },
+}
+assert(n._slot.a == 0 and n._slot.b == nil and n._slot.c == nil)
+ticks(1)
+assert(count("own move 'b' ignored: no free slot 0") == 1)
+assert(count("own move 'c' ignored: no free slot " .. MAX) == 1)
+"""
+
+
+def test_own_move_slots(lua: Any) -> None:
+    memory(lua)
+    lua.execute(SLOTS)
 
 
 RELINK = """

@@ -394,7 +394,8 @@ class Brain:
     first free variable (`mhfu.em.script.vars`)."""
     pairs: dict[str, Pair | str] = field(default_factory=dict)
     """What each donor pair, keyed `"main,sub"`, plays: a host pair, the name of an own move in
-    `[moves]`, or `OWN`."""
+    `[moves]`, or `OWN`. The splice enters an own move as `enter OWN_MOVE_MAIN k 0`, `k` its
+    `moves.slots` slot."""
     when: dict[str, bool] = field(default_factory=dict)
     """The arm a donor test with no host counterpart takes, by its MHP3rd opcode name."""
 

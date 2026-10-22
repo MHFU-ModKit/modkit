@@ -75,7 +75,7 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 
 | Donor | Host |
 |---|---|
-| `enter m s` | `enter M S 0`, the pair from `[brain.pairs]` |
+| `enter m s` | `enter M S 0`, the pair from `[brain.pairs]`; an own move there: `enter 16 k 0` |
 | `random` | `random`: each weight `w` becomes `w * 32 / 100` by largest remainder, at least 1; a zero arm goes |
 | `switch_range` | `switch_range`: case `k` is bucket `k + 1`, the default the last, a missing case copies the default |
 | `switch_mode` | `if_mode2` for mode 1, the default as its else |
@@ -89,9 +89,24 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 | map and area ops | none: the host's roaming owns them |
 
 A random that can follow another draw in the same run gets an `rng_step2` first, as the host's
-own picks do. Findings are errors (`P3_PAIR_UNMAPPED`, `P3_UNSUPPORTED`, `P3_HOST_OP`,
-`P3_UNDECIDED`, `P3_LATCH`, `P3_HISTORY`, `P3_WIDE`, `P3_ROUTINE`), which stop a build, warnings
-(`P3_FOLDED`, `P3_APPROX`, `P3_PAIR_UNUSED`, `P3_WHEN`) and notes (`P3_DROPPED`, `P3_WEIGHT`).
+own picks do. Findings are errors (`P3_PAIR_UNMAPPED`, `P3_OWN_MISSING`, `P3_UNSUPPORTED`,
+`P3_HOST_OP`, `P3_UNDECIDED`, `P3_LATCH`, `P3_HISTORY`, `P3_WIDE`, `P3_ROUTINE`), which stop a
+build, warnings (`P3_FOLDED`, `P3_APPROX`, `P3_PAIR_UNUSED`, `P3_WHEN`) and notes (`P3_DROPPED`,
+`P3_WEIGHT`).
+
+### Own moves
+
+A `[brain.pairs]` value may name an own move of the port's `[moves]` (`"7,13" = "slam"`) instead of
+a host pair; `"own"` stands for the move the build derives, `p3_7_13`, and needs a slot too
+(`P3_OWN_MISSING` until one is made). The donor's `enter 7 13` becomes `enter 16 k 0`: main 16 is
+`OWN_MOVE_MAIN`, which no species uses, and `k` the move's registry slot. em_vhook plays move `k`
+in place of the pair and the script goes on after the `enter` when it ends, as for a host pair.
+
+The slots are `mhfu_port.moves.slots`: the own moves by sorted name, numbered from 0, at most
+`EM_MOVES.MOVES.count`. The moves module `mhfu-port` writes carries each one as `slot = k` and
+`mhfu_port.lua` registers by it, so the number in the script, the module and the registry is one.
+`mhfu-port splice` passes the slots; `-o` names the pair `(16, k)` after the move in the brain
+file, so the Brain tab reads `Move (own k) slam`.
 
 ## Checking
 

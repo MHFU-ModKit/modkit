@@ -66,6 +66,8 @@ port.pac, port.summary.text()
 | `mhfu-port splice M` | A manifest's `[brain]`: the donor's routine translated into the host's script, the findings on what did not carry over, the size and the longest run (`brain.splice`; `--source`, `-o FILE`) |
 
 `splice` writes an edit set for the host's row, which `mhfu brain push|deploy --doc FILE` sends on.
+A donor pair that `[brain.pairs]` maps to an own move of `[moves]` becomes `enter 16 k 0`, `k` its
+slot in `mhfu_port.moves.slots`.
 `-o FILE` holds code translated from the game: keep it in the workspace, never in a repo. How a
 donor routine maps onto the host's brain is in the
 [format notes](../../docs/formats/p3rd_ai_script.md#onto-an-mhfu-brain).

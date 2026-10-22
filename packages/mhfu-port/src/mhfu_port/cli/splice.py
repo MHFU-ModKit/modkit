@@ -10,13 +10,14 @@ from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from mhfu import addresses
 from mhfu.em.script import brainfile, source
 from mhfu.em.script import vars as script_vars
 from mhfu.em.script.budget import LIMIT
 from mhfu.em.script.build import Built, lift_row
 from mhfu.em.script.check import Finding
 
-from .. import data, manifest
+from .. import data, manifest, moves
 from ..brain import p3, splice
 
 if TYPE_CHECKING:
@@ -35,8 +36,9 @@ def register(sub: Subparsers) -> None:
         "-o",
         "--out",
         type=Path,
-        help="write the host row's edits as a brain file (for `mhfu brain push|deploy --doc`); "
-        "it holds code translated from the game: keep it in the workspace, never in a repo",
+        help="write the host row's edits as a brain file (for `mhfu brain push|deploy --doc`), "
+        "with each own move's pair named; it holds code translated from the game: keep it in the "
+        "workspace, never in a repo",
     )
     data.add_arguments(p)
     p.set_defaults(run=run)
@@ -50,7 +52,8 @@ def run(args: argparse.Namespace) -> int:
     row = m.port.host_species
     host = lift_row(games.fu, row, row)
     survey = script_vars.survey(host, games.fu.em(row))
-    spliced = splice.splice(p3.lift(games.p3rd, m.brain.donor, m.brain.slot), host, m.brain, survey)
+    donor = p3.lift(games.p3rd, m.brain.donor, m.brain.slot)
+    spliced = splice.splice(donor, host, m.brain, survey, moves.slots(m))
     built = Built.of(host, spliced.edits)
     findings = [*spliced.findings, *built.findings]
     b = m.brain
@@ -66,6 +69,7 @@ def run(args: argparse.Namespace) -> int:
         if not ok:
             raise ValueError(f"the splice has errors, {args.out} is not written")
         bf = brainfile.new(row, m.port.name)
+        bf.pairs |= {(addresses.OWN_MOVE_MAIN, k): name for name, k in spliced.slots.items()}
         bf.put(spliced.edits)
         print(f"wrote {brainfile.save(bf, args.out)}")
     return 0 if ok else 1
@@ -78,8 +82,13 @@ def summary(spliced: splice.Spliced, built: Built, findings: list[Finding]) -> s
         grown = len(built.image.data) - (built.lift.end - built.lift.base)
         added += f", {grown:+} bytes, worst run {worst.count} of {LIMIT}"
     lines = [f"  {added}"]
-    for (donor, host), uses in sorted(spliced.uses.items()):
-        lines.append(f"  pair {donor[0]},{donor[1]} -> {host[0]},{host[1]}  x{uses}")
+    for (donor, target), uses in sorted(spliced.uses.items(), key=lambda use: use[0]):
+        to = (
+            f"own {target} (slot {spliced.slots[target]})"
+            if isinstance(target, str)
+            else f"{target[0]},{target[1]}"
+        )
+        lines.append(f"  pair {donor[0]},{donor[1]} -> {to}  x{uses}")
     codes = Counter(f.code for f in findings)
     lines.append(
         "  findings: " + (", ".join(f"{c} {n}" for c, n in sorted(codes.items())) or "none")

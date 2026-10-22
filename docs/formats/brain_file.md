@@ -47,7 +47,7 @@ if_enraged
 | `schema` | 1 |
 | `overlay` | The em overlay: one of `files.EM_SPECIES` |
 | `label` | A name to show, optional |
-| `pairs` | Display names of move pairs, `"main,sub" = "name"`: for graphs and findings, no bytes depend on them |
+| `pairs` | Display names of move pairs, `"main,sub" = "name"`: for graphs and findings, no bytes depend on them. An own move is the pair `16,k` (`mhfu-port splice -o` names them) |
 | `vars` | Display names of script variables 1 to 9 (1 to 4 are the monster's own bytes, 5 to 9 call the species overlay; which are free: `mhfu script N --vars`) |
 | `ranges` | Display names of distance ranges: 1 to 4 within that limit of the species' range set, 5 past them or with no target |
 | `row.N` | The edits to species row N, one edit set (below) |
