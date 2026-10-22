@@ -44,6 +44,7 @@ def test_the_cli_lists_the_moves(data, capsys):
     out = capsys.readouterr().out
     assert code == 0 and "p3_7_13 (slot 6)  clip 61 charge" in out
     assert "donor 21 -> host record 7, frames 135-165" in out
+    assert "donor 26 -> host record 34 (spare), frames 85-144" in out
 
 
 def test_the_moves_module_carries_the_derived_moves(data, tmp_path):
@@ -57,7 +58,7 @@ def test_the_moves_module_carries_the_derived_moves(data, tmp_path):
     assert f'p3_7_14 = {{ entry = {entry}, slot = 7, clip = "p3_59"' in text
     assert "attacks = { { 135, 7, 165 }, { 138, 8, 148 } }" in text
     assert 'turn = "hunter", rate = 546, window = { 10, 40 }' in text
-    assert 'after = "p3_7_14_2"' in text and any(f.code == "P3_OWN_ATTACK" for f in seen)
+    assert 'after = "p3_7_14_2"' in text and any(f.code == "P3_OWN_SPARE" for f in seen)
 
 
 def test_the_splice_enters_the_derived_moves(data, capsys):

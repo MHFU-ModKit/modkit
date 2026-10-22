@@ -14,12 +14,15 @@ instead; nothing derived is stored.
 A pair with several clips is a chain, `p3_7_14`, `p3_7_14_2`, ..., each step handing to the next
 through `after`; a step carries the donor's attacks that are active on its clip. A donor record
 becomes the host record whose volumes overlap it most on the port's rig (`[brain.attacks]` names
-one instead), and the node plays with the host record's power and life.
+one instead), and the node plays with the host record's power and life. A record nothing matches
+gets a spare host record (`brain.spare`), added to the returned manifest as `[[attack]]` and
+`[[hitbox]]`; the studio's hit tables write it into the game.
 """
 
 from __future__ import annotations
 
 import copy
+import statistics
 from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
@@ -46,6 +49,7 @@ from ..manifest import (
     targets_of,
 )
 from ..p3hits import Plan, Step, Walk
+from .spare import HOST_NO_DAMAGE, NO_DAMAGE, POWER_SCALE, Spare, Spares
 
 Pair = tuple[int, int]
 Floats = NDArray[np.float64]
@@ -57,10 +61,6 @@ FLOOR = 0.25
 0.30 or more, measured (27 on 8 is 0.297); the best that does not is 0.12."""
 SAMPLES = 100_000
 """Points the overlap of two volume sets is sampled at."""
-NO_DAMAGE = 0x34
-"""The donor record kind of the roar's and the slams' node, which hurts nobody."""
-HOST_NO_DAMAGE = 0x1D
-"""The host record kind it pairs with."""
 MAX_RATE = 0xFFFF
 STEP = p3hits.STEP_FRAMES
 
@@ -197,24 +197,42 @@ class Derivation:
     """One pair's plan turned into moves and findings."""
 
     def __init__(
-        self, m: Manifest, walk: Walk, matcher: Callable[[], Matcher], say: Report
+        self,
+        m: Manifest,
+        walk: Walk,
+        matcher: Callable[[], Matcher],
+        say: Report,
+        pairs: Sequence[Pair] = (),
     ) -> None:
         self.m, self.walk, self.matcher, self.say = m, walk, matcher, say
+        self.pairs = list(pairs)
+        """Every pair being derived: the spare records' power scale reads all their matches."""
         self.pair: Pair = (0, 0)
         self.item = ""
         """The move findings are about."""
+        self._plans: dict[Pair, Plan] = {}
+        self._spares: Spares | None = None
+        self._near: dict[int, tuple[str, str]] = {}
+        """Spare donor record -> what it came closest to, and the move that first needed it."""
 
     def find(self, level: str, code: str, text: str) -> None:
         self.say(Finding(level, code, text, None, self.item))
 
+    def _plan(self, pair: Pair) -> Plan | None:
+        donor = self.walk.ms.pairs.get(pair)
+        if donor is None:
+            return None
+        if pair not in self._plans:
+            self._plans[pair] = self.walk.plan(donor)
+        return self._plans[pair]
+
     def run(self, pair: Pair) -> None:
         head = own_name(pair)
         self.pair, self.item = pair, head
-        donor = self.walk.ms.pairs.get(pair)
-        if donor is None:
+        plan = self._plan(pair)
+        if plan is None:
             self.find("error", "P3_OWN_NOCLIPS", "the donor has no such pair")
             return
-        plan = self.walk.plan(donor)
         self._notes(plan)
         if not plan.steps:
             self.find("error", "P3_OWN_NOCLIPS", "its handler plays no clip")
@@ -226,6 +244,23 @@ class Derivation:
             self.item = names[k]
             after = names[k + 1] if k + 1 < len(names) else None
             self.m.moves[names[k]] = self._move(step, after)
+
+    def finish(self) -> None:
+        """One `P3_OWN_SPARE` per spare record taken, once every pair has had its say: the
+        record's final active frames are known only then."""
+        for record, (near, item) in self._near.items():
+            got = self._spares.take(record) if self._spares is not None else None
+            if isinstance(got, Spare):
+                a = got.attack
+                joints = ", ".join(map(str, sorted(set(got.joints))))
+                self.item = item
+                self.find(
+                    "info",
+                    "P3_OWN_SPARE",
+                    f"donor record {record} has no host record{near}: spare record {got.id} on "
+                    f"set {got.set} ({got.volumes} volume(s) on joint(s) {joints}), power "
+                    f"{a.power}, {got.family}, active {a.active} frames",
+                )
 
     def _notes(self, plan: Plan) -> None:
         codes = {
@@ -284,27 +319,21 @@ class Derivation:
             if h.carried:
                 self.find("info", "P3_OWN_SPLIT", f"record {h.record} spans clips: split per clip")
             match = self.matcher().match(h.record)
-            if match.host is None:
-                near = (
-                    ""
-                    if match.best is None
-                    else f" (closest {match.best}, overlap {match.overlap:.2f})"
-                )
-                self.find(
-                    "warning",
-                    "P3_OWN_ATTACK",
-                    f"donor record {h.record} has no host record{near}: left out",
-                )
-                continue
-            active = self.matcher().attack(match.host)
-            if active is not None and end - frame > active.unknown_01 > 0:
+            host, life = match.host, None
+            if host is None:
+                spare = self._spare(h.record, match, end - frame)
+                if spare is None:
+                    continue
+                host, life = spare.id, spare.attack.active
+            elif (active := self.matcher().attack(host)) is not None:
+                life = active.unknown_01
+            if life is not None and end - frame > life > 0:
                 self.find(
                     "info",
                     "P3_OWN_ACTIVE",
-                    f"record {h.record} is active {end - frame} frames, host record {match.host} "
-                    f"{active.unknown_01}",
+                    f"record {h.record} is active {end - frame} frames, host record {host} {life}",
                 )
-            out.append(AttackWindow(match.host, frame, end, label=f"donor {h.record}"))
+            out.append(AttackWindow(host, frame, end, label=f"donor {h.record}"))
         opens = [h for h in step.hits if h.flags & p3hits.FLAG_OPENS]
         joins = [h for h in step.hits if h.flags & p3hits.FLAG_JOINS]
         if opens and joins:
@@ -321,6 +350,46 @@ class Derivation:
             )
             out = out[:MOVE_ATTACKS]
         return out
+
+    def _spare(self, record: int, match: Match, frames: int) -> Spare | None:
+        """The spare host record for a donor record nothing matches; None, with the warning,
+        when there is none."""
+        got = self._pool().take(record, frames)
+        near = ""
+        if match.best is not None:
+            near = f" (closest {match.best}, overlap {match.overlap:.2f})"
+        if isinstance(got, str):
+            self.find(
+                "warning",
+                "P3_OWN_ATTACK",
+                f"donor record {record} has no host record{near} and no spare ({got}): left out",
+            )
+            return None
+        self._near.setdefault(record, (near, self.item))
+        return got
+
+    def _pool(self) -> Spares:
+        if self._spares is None:
+            mt = self.matcher()
+            self._spares = Spares(
+                self.m, mt.hits, mt.table, mt.binding.joint_of, mt.bind, self._scale()
+            )
+        return self._spares
+
+    def _scale(self) -> float:
+        """Host power over donor power for a spare record: the median over the records of this
+        port's pairs that matched (the ones `[brain.attacks]` chose left out)."""
+        mt = self.matcher()
+        plans = (self._plan(p) for p in dict.fromkeys([*self.pairs, self.pair]))
+        used = {h.record for plan in plans if plan for s in plan.steps for h in s.hits}
+        ratios = []
+        for r in sorted(used):
+            got = mt.match(r)
+            host = None if got.host is None or got.given else mt.attack(got.host)
+            donor = self.walk.hits.records[r] if 0 <= r < len(self.walk.hits.records) else None
+            if host is not None and donor is not None and host.power and donor.power:
+                ratios.append(host.power / donor.power)
+        return statistics.median(ratios) if ratios else POWER_SCALE
 
     def _steer(self, step: Step, walls: bool) -> Steer:
         """The donor's turn; a wall ends only a step on a looping clip, a run (the donor ends no
@@ -370,9 +439,10 @@ def expand(m: Manifest, data: Data) -> tuple[Manifest, list[Finding]]:
             cache.append(Matcher(m, data, walk.hits))
         return cache[0]
 
-    derive = Derivation(out, walk, matcher, found.append)
+    derive = Derivation(out, walk, matcher, found.append, wanted)
     for pair in wanted:
         derive.run(pair)
+    derive.finish()
     species = m.port.host_species
     if (
         any(mv.own and mv.carrier is None for mv in out.moves.values())

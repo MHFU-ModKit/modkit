@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -18,6 +19,7 @@ from mhfu_studio.shell import places
 
 if TYPE_CHECKING:
     from mhfu.em.intel import SpeciesIntel
+    from mhfu.em.script.check import Finding
     from mhfu_port.data import Data
     from mhfu_port.manifest import Manifest
 
@@ -377,24 +379,42 @@ def _host(args: argparse.Namespace, m: Manifest) -> Host | None:
     return host
 
 
+def _expanded(args: argparse.Namespace, m: Manifest) -> tuple[Manifest, str]:
+    """`runtime.expanded`: a port with a `[brain]` also ships the spare attack records its own
+    moves play; what the derivation says about them goes to stderr."""
+    from mhfu_port.cli import finding_line
+
+    from mhfu_studio.monster import runtime
+
+    def say(f: Finding) -> None:
+        if f.level != "info" or f.code == "P3_OWN_SPARE":
+            print(finding_line(f), file=sys.stderr)
+
+    return runtime.expanded(m, lambda: _games(args), report=say)
+
+
 def run_hit(args: argparse.Namespace) -> int:
     from mhfu_studio.monster import runtime
 
-    m = _manifest(args.manifest)
+    m, source = _expanded(args, _manifest(args.manifest))
     host = _host(args, m)
     if args.print:
-        print(runtime.lua_hit_module(m, host), end="")
+        print(runtime.lua_hit_module(m, host, source), end="")
         return 0
     path = args.out or Path(runtime.module_name(m))
-    dep = runtime.ship(m, path, host, library_path=args.library) if args.deploy else None
+    dep = (
+        runtime.ship(m, path, host, library_path=args.library, source=source)
+        if args.deploy
+        else None
+    )
     if dep is None:
-        runtime.export(m, path, host)
+        runtime.export(m, path, host, source)
     print(
         f"wrote {path} ({len(m.hurtboxes)} volume(s), {len(m.hitzones)} state(s), "
         f"{len(runtime.sets_of(m))} attack set(s), {len(m.attacks)} attack record(s), "
         f"id {runtime.content_id(m)})"
     )
-    for note in runtime.plan(m, host).notes:
+    for note in runtime.plan(m, host, source).notes:
         print(note)
     if dep is not None:
         print(f"deployed {dep.describe()}")
@@ -404,14 +424,14 @@ def run_hit(args: argparse.Namespace) -> int:
 def run_push(args: argparse.Namespace) -> int:
     from mhfu_studio.monster import push, runtime
 
-    m = _manifest(args.manifest)
+    m, source = _expanded(args, _manifest(args.manifest))
     host = _host(args, m)
     if args.dry:
-        for w in runtime.plan(m, host).writes:
+        for w in runtime.plan(m, host, source).writes:
             print(f"0x{w.at:08X} {len(w.data):5d} B  {w.what}  ({len(w.guards)} guard(s))")
         return 0
     try:
-        print(push.to_game(m, host).describe())
+        print(push.to_game(m, host, source).describe())
     except Refused as e:
         print(f"refused: {e}")
         return 1

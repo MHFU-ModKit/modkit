@@ -10,6 +10,9 @@ record's named levers, one byte each. Every write carries guards, bytes the game
 hold (the pointer that leads to the table, the host set's own sentinel) that no write changes:
 another or a relocated overlay fails them, and then nothing is written.
 
+A port with a `[brain]` is planned from `expanded`: the manifest with the spare attack records
+its own moves play (`mhfu_port.brain.own`), which are never saved.
+
 The routes: `<name>_hit.lua` on the memory stick, which the framework's `mhfu_port.lua` applies
 once the port is live in-area and re-applies after a reload (`export`, `ship`), and `push`,
 which writes through the debugger and reads back. The module is regenerated, never edited, and
@@ -21,7 +24,7 @@ from __future__ import annotations
 import hashlib
 import shutil
 import struct
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -29,6 +32,9 @@ from mhfu import addresses as a
 from mhfu import hitzone
 from mhfu.em.intel import SpeciesIntel
 from mhfu.writes import Plan, Write
+from mhfu_port import manifest
+from mhfu_port.brain import own
+from mhfu_port.data import Data
 from mhfu_port.manifest import Hitbox, Hurtbox, Manifest, ManifestError
 
 from mhfu_studio.shell import places
@@ -43,8 +49,11 @@ LEVERS = {
     "power": a.ATTACK_RECORD.POWER,
     "element": a.ATTACK_RECORD.ELEMENT,
     "volume": a.ATTACK_RECORD.VOLUME_SET,
+    "kind": a.ATTACK_RECORD.KIND,
+    "active": a.ATTACK_RECORD.UNKNOWN_01,
 }
-"""The attack record bytes a manifest may set."""
+"""The attack record bytes a manifest may set; `active` is the byte the struct leaves unnamed at
++0x01, which counts the frames the node is active (measured)."""
 WORD = 4
 """Bytes per group in the module's hex."""
 
@@ -162,13 +171,38 @@ def content_id(m: Manifest) -> str:
         for hb in vols:
             h.update(attack_volume(hb))
     for at in m.attacks:
-        h.update(f"atk{at.id}:{at.power},{at.element},{at.volume};".encode())
+        more = "" if at.kind is None and at.active is None else f",{at.kind},{at.active}"
+        h.update(f"atk{at.id}:{at.power},{at.element},{at.volume}{more};".encode())
     return h.hexdigest()[:8]
 
 
 def has_tables(m: Manifest) -> bool:
     """`m` authors something the plan writes."""
     return bool(m.hurtboxes or m.hitzones or m.hitboxes or m.attacks)
+
+
+def derives(m: Manifest) -> bool:
+    """`m`'s `[brain]` has own moves to derive (one the manifest defines itself is not), whose
+    spare attack records `expanded` adds."""
+    return m.brain is not None and any(
+        manifest.own_name(p) not in m.moves for p in own.pairs(m.brain)
+    )
+
+
+def expanded(
+    m: Manifest,
+    games: Callable[[], Data],
+    source: str = "",
+    report: own.Report | None = None,
+) -> tuple[Manifest, str]:
+    """`m` as the plan takes it, and the source line for the module's header. A port with a
+    `[brain]` gets the spare attack records and volumes its own moves play, derived from `games()`
+    (read only then); `ManifestError` where the derivation fails. Any other `m` is returned as
+    it is."""
+    if not derives(m):
+        return m, source
+    out = own.expanded(m, games(), report)
+    return out, (source or source_of(m)) + " + the donor's spare attack records"
 
 
 def module_name(m: Manifest) -> str:
