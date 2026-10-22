@@ -5,6 +5,7 @@
 frame then advances the clip."""
 
 import ctypes
+import math
 import struct
 from collections.abc import Callable
 
@@ -41,13 +42,19 @@ class Move(ctypes.Structure):
         ("force", ctypes.c_uint8),
         ("hold_script", ctypes.c_uint8),
         ("_pad", ctypes.c_uint8),
+        ("start", ctypes.c_uint16),
+        ("stop", ctypes.c_uint16),
     ]
+
+
+assert ctypes.sizeof(Move) == a.MOVE.size
 
 
 class Game:
     def __init__(self, lib: ctypes.CDLL) -> None:
         self.lib = lib
         self.mem = (ctypes.c_uint8 * 0x4000).from_address(lib.host_mem())
+        self.speed = SPEED
 
     def poke(self, off: int, fmt: str, *values: float) -> None:
         struct.pack_into("<" + fmt, self.mem, ENT - BASE + off, *values)
@@ -69,14 +76,20 @@ class Game:
         return int(a.ENTITY.CLIP_BLOCKS) + part * a.CLIP_BLOCK.size
 
     def frame(self) -> int:
-        """One AI frame: the step, then the clip advances and stops at its end."""
+        """One AI frame: the step, then the clip advances at `speed`, held while the blend
+        counts down, and stops at its end."""
         skip = int(self.lib.host_frame(ENT))
         for k in range(3):
             b = self.block(k)
             (phase,) = self.peek(b + a.CLIP_BLOCK.PHASE, "f")
             (end,) = self.peek(b + a.CLIP_BLOCK.END, "f")
             if self.peek(b + a.CLIP_BLOCK.FLAGS, "H")[0] & 1:
-                phase = min(phase + SPEED, end)
+                (left,) = self.peek(b + a.CLIP_BLOCK.BLEND, "i")
+                if left:
+                    self.poke(b + a.CLIP_BLOCK.BLEND, "i", left - 1)
+                    if left > 1:
+                        continue
+                phase = min(phase + self.speed, end)
                 self.poke(b + a.CLIP_BLOCK.PHASE, "f", phase)
                 if phase >= end:
                     self.poke(b + a.CLIP_BLOCK.FLAGS, "H", 0)
@@ -122,6 +135,7 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     lib.host_frame.restype = ctypes.c_uint32
     lib.host_frame.argtypes = [ctypes.c_uint32]
     lib.host_set.argtypes = [ctypes.c_int, ctypes.c_float]
+    lib.host_blend.argtypes = [ctypes.c_int]
     lib.mhfu_move_state.restype = ctypes.c_void_p
     lib.mhfu_move_play.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
     lib.mhfu_move_steer.argtypes = [ctypes.c_void_p]
@@ -215,6 +229,54 @@ def test_length_enters_the_back_pair(g: Game) -> None:
         g.frame()
     assert ("E", ENT, 0, 2, 0) in g.calls()
     assert g.state("END", "B") == (BACK,) and g.state("END_FRAME") == (10,)
+
+
+def test_start_is_the_executors_a3(g: Game) -> None:
+    g.play(46, start=24)
+    g.frame()
+    g.frame()
+    assert g.calls() == [("E", ENT, 0, 1, 0), ("M", ENT, 0, 0, 0), ("X", ENT, 46, 0, 24)]
+    cursors = {g.peek(g.block(k) + a.CLIP_BLOCK.PHASE, "f") for k in range(3)}
+    assert cursors == {(24.0 + SPEED,)}  # every part on the dispatch frame's step
+
+
+SPANS = [(0, 60, 0, 2.0), (24, 86, 4, 2.0), (24, 86, 4, 2.8), (42, 102, 3, 2.8)]
+
+
+@pytest.mark.parametrize(("start", "stop", "blend", "speed"), SPANS)
+def test_stop_ends_the_move_at_a_clip_frame(
+    g: Game, start: int, stop: int, blend: int, speed: float
+) -> None:
+    g.lib.host_blend(blend)
+    g.speed = speed
+    g.play(46, start=start, stop=stop)
+    while g.state("STATE", "B")[0] != DONE:
+        g.frame()
+    held = blend + math.ceil((stop - start) / speed)  # the AI frame the cursor reaches stop
+    assert g.state("END", "B") == (BACK,) and g.state("END_FRAME") == (held,)
+    assert g.pair == (0, 1)  # the carrier again: its handler hands back
+
+
+def test_stop_comes_before_a_longer_length_and_the_clips_end(g: Game) -> None:
+    g.play(46, start=0, stop=100, length=200)
+    while g.state("STATE", "B")[0] != DONE:
+        g.frame()
+    assert g.state("END_FRAME") == (50,)
+    g.play(46, stop=300)  # past the clip's end
+    while g.state("STATE", "B")[0] != 3:
+        g.frame()
+    assert g.state("END", "B") == (CLIP,)
+
+
+def test_an_attack_before_start_never_spawns(g: Game) -> None:
+    g.lib.host_blend(2)
+    g.play(46, start=24, attacks=[(10, 3), (24, 5), (56, 6)])  # type: ignore[arg-type]
+    for _ in range(30):
+        g.frame()
+    assert [c[3] for c in g.calls() if c[0] == "S"] == [5, 6]
+    # the one at START on the first playing frame, with the cursor still held there
+    assert g.state("SPAWN_FRAME", "III") == (NEVER, 1, 18)
+    assert g.state("SPAWN_CURSOR", "fff") == (-1.0, 24.0, 56.0)
 
 
 def test_carrier_that_does_not_land_is_refused(g: Game) -> None:

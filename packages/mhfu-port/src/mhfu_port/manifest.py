@@ -59,6 +59,8 @@ MOVE_ATTACKS: int = addresses.MOVE.ATTACKS.count or 0
 """Attacks the move player holds per move."""
 OWN_MOVES: int = addresses.EM_MOVES.MOVES.count or 0
 """Own moves the framework holds per port."""
+MAX_FRAME = 0xFFFF
+"""The clip frame a move's `start` or `stop` can name: the executor stores it in 16 bits."""
 ROWS = range(hitzone.MAX_ROW + 1)
 BYTE = range(0x100)
 JOINER, NODE_CAPSULE, NODE_SPHERE = hitzone.MARKER_BONES
@@ -231,7 +233,8 @@ class Move:
 
     An own move plays its clip on every body part, riding `carrier` (None: the host's hub),
     spawns `attacks` at its clip frames and turns as `steer` says; the host's attacks for the
-    clip's entry are muted unless `host_attacks`.
+    clip's entry are muted unless `host_attacks`. It plays from clip frame `start` to `stop` (or
+    the clip's end), both clip frames, so they hold at any blend and cursor rate.
     """
 
     main: int | None = None
@@ -250,7 +253,12 @@ class Move:
     attacks: list[AttackWindow] = field(default_factory=list, metadata=_toml("attack"))
     steer: Steer = field(default_factory=Steer)
     length: int | None = None
-    """AI frames from the clip's dispatch; None: until the clip ends."""
+    """AI frames from the clip's dispatch, the blend's among them; None: until the clip ends."""
+    start: int = 0
+    """Clip frame the clip starts at; 0: its first. An attack before it never spawns."""
+    stop: int = 0
+    """Clip frame the move ends at, when the cursor reaches it; 0: where `length` or the clip's
+    end says."""
     carrier: tuple[int, int] | None = None
     host_attacks: bool = False
     label: str = ""
@@ -635,6 +643,26 @@ def _vec3(v: list[float] | None, where: str) -> None:
     _need(v is None or len(v) == 3, where, "needs x, y, z")
 
 
+def span_problems(mv: Move, frames: int | None = None) -> list[tuple[str, str]]:
+    """What is wrong with an own move's `start`, `stop` and attack windows, as (where under the
+    move, text); with the clip's `frames`, also what lies past it."""
+    if not 0 <= mv.start <= MAX_FRAME or not 0 <= mv.stop <= MAX_FRAME:
+        return [("", f"start and stop are clip frames, 0 to {MAX_FRAME}")]
+    out: list[tuple[str, str]] = []
+    if mv.stop and mv.stop <= mv.start:
+        out.append(("", f"stop {mv.stop} is not after start {mv.start}"))
+    if frames is not None and mv.start >= frames:
+        out.append(("", f"start {mv.start} is past the clip's {frames} frames"))
+    if frames is not None and mv.stop > frames:
+        out.append(("", f"stop {mv.stop} is past the clip's {frames} frames"))
+    for i, a in enumerate(mv.attacks):
+        if a.frame < mv.start:
+            out.append((f".attack[{i}]", f"frame {a.frame} is before start {mv.start}"))
+        elif mv.stop and (a.end or a.frame) > mv.stop:
+            out.append((f".attack[{i}]", f"it lasts to {a.end or a.frame}, past stop {mv.stop}"))
+    return out
+
+
 def _own_move(mv: Move, w: str) -> None:
     _need(mv.claim is None and mv.hold_max is None, w, "an own move has no claim or hold_max")
     _need(len(mv.attacks) <= MOVE_ATTACKS, w, f"the move player holds {MOVE_ATTACKS} attacks")
@@ -642,6 +670,8 @@ def _own_move(mv: Move, w: str) -> None:
         _need(a.id >= 0 and a.frame >= 0, f"{w}.attack[{i}]", "id and frame are 0 or more")
         _need(a.end is None or a.end > a.frame, f"{w}.attack[{i}]", "end is after frame")
     _need(mv.length is None or mv.length >= 1, w, "length is at least 1 AI frame")
+    for sub, text in span_problems(mv):
+        _need(False, w + sub, text)
     _need(mv.carrier is None or mv.carrier[0] in MAIN_STATES, w, "carrier main is a main state")
     s = mv.steer
     fixed = s.turn == "fixed"
@@ -707,11 +737,11 @@ def _validate(m: Manifest) -> None:
             _own_move(mv, w)
         else:
             plain = Move(mv.main, mv.sub)
+            fields = ("attacks", "steer", "length", "start", "stop", "carrier", "host_attacks")
             _need(
-                (mv.attacks, mv.steer, mv.length, mv.carrier, mv.host_attacks)
-                == (plain.attacks, plain.steer, plain.length, plain.carrier, plain.host_attacks),
+                all(getattr(mv, k) == getattr(plain, k) for k in fields),
                 w,
-                "attack, steer, length, carrier and host_attacks are for an own move",
+                "attack, steer, length, start, stop, carrier and host_attacks are for an own move",
             )
         if mv.claim is not None:
             _need(bool(mv.claim.mains), w, "claim needs a main")

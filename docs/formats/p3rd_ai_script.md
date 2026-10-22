@@ -163,8 +163,11 @@ clip that hands to the next by `after`:
 
 - **Clips.** The default path. A branch on something the build cannot know (a bearing, a counter,
   a wait) is tried each way and the path that spawns most attacks and plays fewest clips is taken;
-  the others are named in `P3_OWN_BRANCH`. A looping clip, or one the handler leaves at a frame it
-  tests, gets the `length` the donor played it for.
+  the others are named in `P3_OWN_BRANCH`. A clip the donor starts past its first frame gets that
+  `start`; one the handler leaves at a frame it tests gets that frame as `stop`. Both are clip
+  frames, so they hold at any blend and cursor rate (a blend holds the cursor 2 to 5 AI frames,
+  enraged it runs 2.8 a frame). Only a step that ended on no frame of its clip (a pair, a loop,
+  a test the cursor never changed) gets the `length`, in AI frames, the donor played it for.
 - **Attacks.** A record's START and LEN against the cursor at the spawn give the frames; a node
   that outlives a clip change is split per clip. The record's volume set is matched to the host
   record whose volumes overlap it most on the port's rig (the same kind first, then power); below
@@ -180,7 +183,7 @@ clip that hands to the next by `after`:
 | `P3_OWN_ATTACK` | warning | a donor record with no host record and no spare, or more attacks on a clip than the move player holds: left out |
 | `P3_OWN_SPARE` | info | a donor record with no host record took a spare one: its id, set, volumes, power, kind, active frames |
 | `P3_OWN_PARTIAL` | warning | the walk gave up, or a clip it could not resolve |
-| `P3_OWN_BRANCH`, `P3_OWN_MOTION`, `P3_OWN_START`, `P3_OWN_NEXT` | info | a branch taken one way; code movement; a clip the donor starts past its first frame; a pair the handler hands over to |
+| `P3_OWN_BRANCH`, `P3_OWN_MOTION`, `P3_OWN_NEXT` | info | a branch taken one way; code movement; a pair the handler hands over to |
 | `P3_OWN_SPLIT`, `P3_OWN_GROUP`, `P3_OWN_ACTIVE` | info | a node split per clip; records that land one hit between them in the donor; a window longer than the host record's life |
 
 ### Spare attack records

@@ -108,15 +108,42 @@ def test_the_walks_play_own_moves_not_the_host_pair_1_0(zinogre):
 
 
 def chain_of(m: manifest.Manifest, name: str) -> list[tuple[object, ...]]:
-    """What a derived move plays, step by step: clip, attacks, steer, length."""
+    """What a derived move plays, step by step: clip, attacks, steer, length, start, stop."""
     out = []
     mv: manifest.Move | None = m.moves[name]
     while mv is not None:
         clip = m.clips[mv.clip].source if mv.clip else mv.anim
         attacks = tuple((a.id, a.frame, a.end) for a in mv.attacks)
-        out.append((clip, attacks, mv.steer, mv.length))
+        out.append((clip, attacks, mv.steer, mv.length, mv.start, mv.stop))
         mv = m.moves[mv.after] if mv.after else None
     return out
+
+
+D2 = {"p3_7_17_3": 42, "p3_7_17_5": 24, "p3_7_19_3": 42, "p3_7_19_5": 24}
+"""The steps that ended on a frame past their attack, live D2: `length` in AI frames stopped
+them at cursor 54 of the 56 the attack needs."""
+
+
+def test_the_d2_steps_start_where_the_donor_did_and_stop_past_their_attack(zinogre):
+    for name, start in D2.items():
+        mv = zinogre.m.moves[name]
+        (attack,) = mv.attacks
+        assert (mv.start, mv.length) == (start, None), name
+        assert attack.frame <= attack.end <= mv.stop and mv.stop > attack.frame, name
+
+
+def test_every_derived_window_lies_inside_its_move_s_frames(zinogre, module_text):
+    _, built = module_text
+    made = {n: mv for n, mv in zinogre.m.moves.items() if n.startswith("p3_")}
+    assert sum(bool(mv.start) for mv in made.values()) == 10
+    assert sum(bool(mv.stop) for mv in made.values()) == 13
+    assert sum(mv.length is not None for mv in made.values()) == 14
+    for name, mv in made.items():
+        frames = built.layout.frames[moves.entry(zinogre.m, name, built.layout)]
+        assert mv.start < frames and mv.stop <= frames, name
+        assert not (mv.stop and mv.length is not None), name
+        for a in mv.attacks:
+            assert mv.start <= a.frame < a.end <= (mv.stop or frames), name
 
 
 def test_the_pairs_that_share_a_move_derive_the_same_one(zinogre, data):

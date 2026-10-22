@@ -10,8 +10,9 @@ percent) and `natural_rage = false` appear only when the manifest sets them.
 A pair move goes as the runtime paints it on its host pair. An own move goes as the move player
 takes it (`mhfu.move_play`): its `slot` in the framework's registry (`slots`), its clip's executor
 entry and, for `turn = "clip"`, its turn keys, both from the build's layout; the attack windows,
-the carrier (`hub` when it names none), the steer and `after`. `tip` is the tail tip's
-`{ joint, carrier }` pairs (`rig.Tip`), which `mhfu.em_tip` takes.
+the carrier (`hub` when it names none), the steer and `after`, and `start` and `stop`, the clip
+frames it plays from and to, when it sets them (`length` counts AI frames instead). `tip` is the
+tail tip's `{ joint, carrier }` pairs (`rig.Tip`), which `mhfu.em_tip` takes.
 
 `fatigue` is the stamina table `mhfu.em_fatigue` takes (`brain.fatigue`), given when the manifest's
 `[brain] fatigue` is set; `mhfu_port.lua` arms it with the port, an own move keyed by name.
@@ -36,7 +37,7 @@ from mhfu.files import Extracted, em_overlay
 from . import behaviour
 from .behaviour import Rule
 from .layout import Layout
-from .manifest import OWN_MOVES, Manifest, ManifestError, Move
+from .manifest import OWN_MOVES, Manifest, ManifestError, Move, span_problems
 from .rig import Tip
 
 Pair = tuple[int, int]
@@ -125,9 +126,10 @@ def records(game: Extracted, species: int) -> frozenset[int]:
 
 def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> list[str]:
     """Every own move or rule the module cannot carry: more own moves than slots, a clip with no
-    entry, an attack past its clip or with no record in `known` (the host's, when given), more
-    turn keys than the framework holds, no carrier; rules on the flinch whose moves ride
-    different carriers."""
+    entry, a start or stop past its clip or an attack outside them (`manifest.span_problems`), an
+    attack past its clip or with no record in `known` (the host's, when given), more turn keys
+    than the framework holds, no carrier; rules on the flinch whose moves ride different
+    carriers."""
     out: list[str] = []
     pool = 0
     if (n := sum(mv.own for mv in m.moves.values())) > SLOTS:
@@ -143,6 +145,7 @@ def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) 
             out.append(str(err))
             continue
         frames = layout.frames.get(e)
+        out += [f"{w}{sub}: {text}" for sub, text in span_problems(mv, frames)]
         for i, a in enumerate(mv.attacks):
             if known is not None and a.id not in known:
                 out.append(
@@ -237,6 +240,10 @@ def _own_move(m: Manifest, name: str, layout: Layout, slot: int) -> dict[str, An
     out["carrier"] = list(carrier(m, name))
     if mv.length is not None:
         out["length"] = mv.length
+    if mv.start:
+        out["start"] = mv.start
+    if mv.stop:
+        out["stop"] = mv.stop
     if mv.host_attacks:
         out["host_attacks"] = True
     out["steer"] = _steer(m, name, layout)

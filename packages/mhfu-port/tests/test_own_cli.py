@@ -7,6 +7,7 @@ from mhfu_port import layout, manifest, motion, moves, slots
 from mhfu_port.brain.splice import Spliced
 from mhfu_port.cli import main
 from mhfu_port.cli.build import modules
+from mhfu_port.cli.own import describe
 from mhfu_port.cli.splice import summary
 
 PORTS = Path(__file__).parents[3] / "ports"
@@ -38,6 +39,16 @@ def test_the_cli_needs_an_own_pair(tmp_path, capsys):
     path.write_text(TEXT.replace('"7,13" = "own"', '"7,13" = [2, 8]'))
     assert main(["own", str(path)]) == 1
     assert "no [brain.pairs] entry" in capsys.readouterr().err
+
+
+def test_the_list_shows_the_frames_a_move_plays():
+    m = manifest.loads(TEXT + "[moves.p3_7_13]\nclip = 'charge'\nstart = 24\nstop = 86\n")
+    assert describe(m, "p3_7_13", 3).startswith("  p3_7_13 (slot 3)  clip 61 charge  frames 24-86")
+    plain = manifest.loads(TEXT + "[moves.p3_7_13]\nclip = 'charge'\nstart = 24\n")
+    assert "frames 24-end" in describe(plain, "p3_7_13", 3)
+    assert "frames" not in describe(
+        manifest.loads(TEXT + "[moves.p3_7_13]\nclip = 'charge'\n"), "p3_7_13", 3
+    )
 
 
 def test_the_cli_lists_the_moves(data, capsys):

@@ -64,6 +64,8 @@ def register(sub: Subparsers) -> None:
     c.add_argument("--carrier", type=_ints, default=(0, 2), metavar="MAIN,SUB")
     c.add_argument("--back", type=_ints, metavar="MAIN,SUB[,MODE]", help="entered at the end")
     c.add_argument("--length", type=int, default=0, help="AI frames; default the clip's")
+    c.add_argument("--start", type=int, default=0, help="clip frame the clip starts at")
+    c.add_argument("--stop", type=int, default=0, help="clip frame the move ends at")
     c.add_argument("--skip", action="store_true", help="no host AI step while the clip plays")
     c.add_argument("--part", type=int, default=0, help="body part whose cursor times attacks")
     c.add_argument(
@@ -226,6 +228,8 @@ def play(args: argparse.Namespace) -> int:
         args.part,
         host_attacks=args.host_attacks,
         force=args.force,
+        start=args.start,
+        stop=args.stop,
     )
     curve: tuple[int, ...] = ()
     if args.curve:

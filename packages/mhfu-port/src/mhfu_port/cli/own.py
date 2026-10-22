@@ -59,10 +59,12 @@ def run(args: argparse.Namespace) -> int:
 
 
 def describe(m: manifest.Manifest, name: str, slot: int | None) -> str:
-    """One derived move: its slot, clip, length and steer, then its attacks."""
+    """One derived move: its slot, clip, frames, length and steer, then its attacks."""
     mv = m.moves[name]
     clip = m.clips[mv.clip] if mv.clip is not None else None
     head = f"  {name} (slot {slot})  clip {clip.id if clip else mv.anim} {mv.clip}"
+    if mv.start or mv.stop:
+        head += f"  frames {mv.start}-{mv.stop or 'end'}"
     if mv.length is not None:
         head += f"  {mv.length} AI frames"
     s = mv.steer

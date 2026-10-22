@@ -27,6 +27,14 @@ def test_no_back_pair_is_ff() -> None:
     assert raw[a.MOVE.FORCE] == 1 and moves.Move.unpack(raw).force
 
 
+def test_start_and_stop_round_trip() -> None:
+    mv = moves.Move(53, (moves.Attack(36, 56, 66),), start=24, stop=86, length=9)
+    raw = mv.pack()
+    assert struct.unpack_from("<HH", raw, a.MOVE.START) == (24, 86)
+    assert moves.Move.unpack(raw) == mv
+    assert moves.Move(53).pack()[a.MOVE.START :] == bytes(4)
+
+
 def test_attack_word() -> None:
     assert cli._attack("6@56") == moves.Attack(6, 56)
     assert cli._attack("6@56-90") == moves.Attack(6, 56, 90)

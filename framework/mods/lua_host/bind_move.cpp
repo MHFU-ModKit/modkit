@@ -27,6 +27,11 @@ static void spec_of(lua_State *L, int t, mhfu_move_t *mv)
 {
     mhfu_move_init_spec(mv, (uint16_t)opt_field(L, t, "entry", 0));
     mv->length = (uint16_t)opt_field(L, t, "length", 0);
+    int start = opt_field(L, t, "start", 0), stop = opt_field(L, t, "stop", 0);
+    luaL_argcheck(L, start >= 0 && start <= 0xFFFF && stop >= 0 && stop <= 0xFFFF, t,
+                  "start and stop are clip frames, 0..65535");
+    mv->start = (uint16_t)start;
+    mv->stop = (uint16_t)stop;
     mv->part = (uint8_t)opt_field(L, t, "part", 0);
     mv->spawner = (uint32_t)opt_field(L, t, "spawner", 0);
     lua_getfield(L, t, "skip");

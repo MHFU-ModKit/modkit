@@ -652,7 +652,9 @@ function mhfu.move_block() end
 ---A move for `mhfu.move_play`; every field but `entry` is optional.
 ---@class mhfu.Move
 ---@field entry integer executor entry: the clip
----@field length? integer AI frames from the clip's dispatch, default 0 = until the clip ends
+---@field length? integer AI frames from the clip's dispatch (the blend's among them), default 0 = until the clip ends or `stop`
+---@field start? integer clip frame the clip starts at, default 0 = its first; an attack before it never spawns
+---@field stop? integer clip frame the move ends at, when `part`'s cursor reaches it, whatever the blend and the cursor's rate; default 0 = none
 ---@field carrier? integer[] { main, sub } the native pair the move rides, default { 0, 2 }
 ---@field back? integer[] { main, sub, mode } entered at the end, default none
 ---@field skip? boolean the host AI step skips while the clip plays, except on a hit
@@ -711,7 +713,7 @@ function mhfu.move_block() end
 -- it ends and names it (`after`), or when a rule says (EmRule.play_move).
 
 ---Own move slot 0..mhfu.addr.EM_MOVES.MOVES_COUNT-1 plays `spec`; `spec.after` is the slot played when it ends on its clip, its
----length or a wall. False for a bad slot or no room left for its turn keys.
+---length, its stop or a wall. False for a bad slot or no room left for its turn keys.
 ---@param slot integer
 ---@param spec mhfu.OwnMove
 ---@return boolean
@@ -739,7 +741,7 @@ function mhfu.em_moves_status() end
 
 ---An own move for `mhfu.em_move`: a `mhfu.Move` and the slot after it.
 ---@class mhfu.OwnMove: mhfu.Move
----@field after? integer own move slot played when this one ends on its clip, its length or a wall
+---@field after? integer own move slot played when this one ends on its clip, its length, its stop or a wall
 
 ---What `mhfu.em_moves_status()` returns.
 ---@class mhfu.OwnMovesStatus

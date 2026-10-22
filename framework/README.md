@@ -116,6 +116,12 @@ for while the monster's notice runs (it knows the player, not yet in combat) wai
 and the combat entry; the call's `force` starts it at once (`mhfu.move_play(ent, spec, true)`).
 `mhfu.monster_state(ent)` says whether it noticed the player, is in combat, runs its notice.
 
+`start` and `stop` are clip frames: the clip starts at `start` (the executor's a3, so every part
+agrees and an attack before it never spawns) and the move ends when the timing part's cursor
+reaches `stop`, as the clip's end or `length` would end it. Neither depends on the blend (2 to 5
+AI frames held at `start`) or on the cursor's rate (2.0 a frame, 2.8 enraged); `length` counts
+AI frames from the dispatch and does.
+
 ## Monster events
 
 The same AI step finds what a mod may answer, one AI frame after the engine's change at most,
@@ -131,10 +137,10 @@ the engine counts the flinch and applies the damage, then enters the move's carr
 ## Own moves from a manifest
 
 A port's own moves sit in a registry by slot (`mhfu.em_move`): `mhfu.addr.EM_MOVES.MOVES_COUNT`
-(96) of them, and the turn keys they share (`EM_MOVES.KEYS_COUNT`, 5632), in one 19.9 KB
+(96) of them, and the turn keys they share (`EM_MOVES.KEYS_COUNT`, 5632), in one 20.3 KB
 partition block. The seam's
 brain, in C on the AI step, plays one through the move player when asked (`mhfu.em_play`), when the
-move before it ends on its clip, its length or a wall and names it as its `after`, or when a rule
+move before it ends on its clip, its length, its stop or a wall and names it as its `after`, or when a rule
 says (`play_move`, and `from_move` to fire while one plays). `mhfu_port.lua` does all of it from the
 port's generated `<name>_moves.lua`: `port:move("stamp")` (`ports/README.md` "Moves and
 behaviour"). Its `tip` goes to `mhfu.em_tip`: each tip joint takes its carrier's pose after the
