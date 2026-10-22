@@ -58,6 +58,7 @@ static_assert(offsetof(mhfu_move_t, attacks) == MHFU_MOVE_ATTACKS, "MOVE layout"
 static_assert(offsetof(mhfu_move_t, spawner) == MHFU_MOVE_SPAWNER, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, host_attacks) == MHFU_MOVE_HOST_ATTACKS, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, force) == MHFU_MOVE_FORCE, "MOVE layout");
+static_assert(offsetof(mhfu_move_t, hold_script) == MHFU_MOVE_HOLD_SCRIPT, "MOVE layout");
 static_assert(MHFU_MOVE_ATTACKS_COUNT == MHFU_MOVE_MAX_ATTACKS, "MOVE layout");
 static_assert(sizeof(mhfu_move_state_t) == MHFU_MOVE_STATE_SIZE, "MOVE_STATE layout");
 static_assert(offsetof(mhfu_move_state_t, state) == MHFU_MOVE_STATE_STATE, "MOVE_STATE layout");
@@ -353,6 +354,9 @@ static uint32_t play(uint32_t ent)
             enter(ent, back ? S->move.back_main : S->move.carrier_main,
                   back ? S->move.back_sub : S->move.carrier_sub,
                   back ? S->move.back_mode : 0);
+            /* the hub's entry wakes the AI script, which would pick a pair before the next move
+             * starts, a frame on */
+            if (S->move.hold_script) mhfu_mem_write_u8(ent + MHFU_ENTITY_SCRIPT_WAKE, 0);
             finish(wall ? MHFU_MOVE_END_WALL : MHFU_MOVE_END_BACK, pair_of(ent));
             return 0;
         }

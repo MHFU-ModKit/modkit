@@ -12,7 +12,7 @@ import pytest
 from mhfu import addresses
 from mhfu.mips import decode
 from rabbitizer import Instruction
-from unicorn import UcError
+from unicorn import UC_HOOK_MEM_READ, UcError
 
 BASE = int(addresses.USER_RAM) + 0x100000  # where the words are decoded
 CFG = BASE + 0x4000
@@ -27,8 +27,8 @@ SHIM = """
 extern "C" {
 int ai(uint32_t *o, uint32_t cfg, uint32_t orig, uint32_t ret, uint32_t brain, int *ov)
 { return emv_build_ai_stub(o, STUB_AI_INSNS, cfg, orig, ret, brain, ov); }
-int act(uint32_t *o, uint32_t cfg, uint32_t orig, int *ov)
-{ return emv_build_act_stub(o, STUB_ACT_INSNS, cfg, orig, ov); }
+int act(uint32_t *o, uint32_t cfg, uint32_t orig, uint32_t moves, int *ov)
+{ return emv_build_act_stub(o, STUB_ACT_INSNS, cfg, orig, moves, ov); }
 int cfg_size(void) { return CFG_SIZE; }
 int cfg_step(void) { return CFG_STEP_FN; }
 int evt(uint32_t *o, uint32_t cfg, uint32_t orig, uint32_t ret, int *ov)
@@ -39,6 +39,10 @@ int act_frame(void) { return ACT_FRAME; }
 int cfg_react(void) { return CFG_REACT_ENT; }
 int cfg_sub(void) { return CFG_SUB_BASE; }
 int cfg_req(void) { return CFG_REQ_PENDING; }
+int cfg_own_enters(void) { return CFG_OWN_ENTERS; }
+int cfg_own_last(void) { return CFG_OWN_LAST; }
+int cfg_ring(void) { return CFG_RING; }
+int cfg_ring_idx(void) { return CFG_RING_IDX; }
 }
 """
 
@@ -57,7 +61,7 @@ def stubs(host_lib: Callable[..., ctypes.CDLL], tmp_path_factory: pytest.TempPat
     out, ov = (ctypes.c_uint32 * 1024)(), ctypes.c_int(0)
     n_ai = lib.ai(out, CFG, ORIG_AI, RET, BRAIN_FN, ctypes.byref(ov))
     ai = list(out[:n_ai])
-    n_act = lib.act(out, CFG, ORIG_ACT, ctypes.byref(ov))
+    n_act = lib.act(out, CFG, ORIG_ACT, BASE + 0x8000, ctypes.byref(ov))
     assert not ov.value, "a stub outgrew its slot"
     return Stubs(lib, ai, list(out[:n_act]))
 
@@ -237,7 +241,7 @@ def _run_act(
     """Runs the slot-32 stub on an enter-action (ENTITY, 4, sub, 2) with the reaction entry armed
     for ENTITY's flinch of `parts`; returns the machine and the (main, sub) the original got."""
     out, ov = (ctypes.c_uint32 * 1024)(), ctypes.c_int(0)
-    n = stubs.lib.act(out, RUN_CFG, RUN_ORIG, ctypes.byref(ov))
+    n = stubs.lib.act(out, RUN_CFG, RUN_ORIG, MOVES, ctypes.byref(ov))
     m = mips()
     m.write(STUB, list(out[:n]))
     m.write(RUN_ORIG, [mips.jr("ra"), mips.NOP])
@@ -278,3 +282,103 @@ def test_act_stub_takes_only_its_parts(stubs: Stubs, mips: Any) -> None:
     for gate, parts, want in ((0b10, 0b01, [4, 1]), (0b11, 0b01, [0, 2]), (0b10, 0, [4, 1])):
         _, got = _run_act(stubs, mips, 1, gate, parts=parts)
         assert got == want
+
+
+MOVES = 0x60000  # the own-move registry in the machine
+OWN = int(addresses.OWN_MOVE_MAIN)
+SLOTS = addresses.EM_MOVES.MOVES.count or 0
+HUB = (0, 2)
+
+
+def _run_own(
+    stubs: Stubs, mips: Any, main: int, sub: int, valid: tuple[int, ...] = (), moves: int = MOVES
+) -> tuple[Any, list[int], list[int]]:
+    """Runs the slot-32 stub on an enter-action (ENTITY, main, sub, 1) with a registry whose slots
+    in `valid` hold a move riding carrier (3, 10 + slot); `moves` 0 builds it with no registry.
+    Returns the machine, what the original got (a0..a3) and the addresses read past the registry."""
+    out, ov = (ctypes.c_uint32 * 1024)(), ctypes.c_int(0)
+    n = stubs.lib.act(out, RUN_CFG, RUN_ORIG, moves, ctypes.byref(ov))
+    assert not ov.value
+    m = mips()
+    m.write(STUB, list(out[:n]))
+    m.write(RUN_ORIG, [mips.jr("ra"), mips.NOP])
+    m.write(RUN_CFG, [0] * (stubs.cfg_size // 4))
+    size = int(addresses.EM_OWN.size)
+    for slot in range(256):  # a word the stub must not trust past the registry
+        at = MOVES + int(addresses.EM_MOVES.MOVES) + slot * size
+        if slot in valid or slot >= SLOTS:
+            m.write(at + int(addresses.EM_OWN.VALID), [1])
+        m.uc.mem_write(
+            at + int(addresses.EM_OWN.MOVE) + int(addresses.MOVE.CARRIER_MAIN),
+            bytes([3, (10 + slot) & 0xFF]),
+        )
+    got: list[int] = []
+    m.at(RUN_ORIG, lambda mm: got.extend(mm.reg(r) for r in ("a0", "a1", "a2", "a3")))
+    strays: list[int] = []
+    past = MOVES + int(addresses.EM_MOVES.size)
+    m.uc.hook_add(
+        UC_HOOK_MEM_READ,
+        lambda _u, _t, addr, _s, _v, _d: strays.append(addr),
+        begin=past,
+        end=past + 0x8000,
+    )
+    for reg, v in (("a0", ENTITY), ("a1", main), ("a2", sub), ("a3", 1), ("ra", CALLER)):
+        m.set_reg(reg, v)
+    m.set_reg("sp", 0x3F000)
+    m.run(STUB, CALLER, count=2000)
+    return m, got, strays
+
+
+def _req(stubs: Stubs, m: Any) -> list[int]:
+    """The play filed (EM_MOVES REQ_ENT, REQ_SLOT, REQ_FORCE), then own_enters and own_last."""
+    reg = (addresses.EM_MOVES.REQ_ENT, addresses.EM_MOVES.REQ_SLOT, addresses.EM_MOVES.REQ_FORCE)
+    last = m.uc.mem_read(RUN_CFG + stubs.lib.cfg_own_last(), 1)[0]
+    return [
+        *(m.read(MOVES + int(o))[0] for o in reg),
+        m.read(RUN_CFG + stubs.lib.cfg_own_enters())[0],
+        last,
+    ]
+
+
+def test_own_enter_enters_the_carrier_and_files_the_play(stubs: Stubs, mips: Any) -> None:
+    m, got, strays = _run_own(stubs, mips, OWN, 3, valid=(3,))
+    assert got == [ENTITY, 3, 13, 1]  # the carrier (3, 13), the mode as the script gave it
+    assert _req(stubs, m) == [ENTITY, 3, 1, 1, 4]  # own_last is slot + 1
+    ring = m.read(
+        RUN_CFG + stubs.lib.cfg_ring() + 4 * m.read(RUN_CFG + stubs.lib.cfg_ring_idx())[0]
+    )
+    assert ring == [(1 << 16) | (OWN << 8) | 3]  # the ring keeps (16, 3)
+    assert strays == []
+
+
+def test_own_enter_of_an_empty_slot_goes_to_the_hub(stubs: Stubs, mips: Any) -> None:
+    m, got, _ = _run_own(stubs, mips, OWN, 5, valid=(3,))
+    assert got == [ENTITY, *HUB, 1]
+    assert _req(stubs, m) == [0, 0, 0, 1, 0]  # counted, no play filed
+
+
+@pytest.mark.parametrize("sub", [SLOTS, SLOTS + 1, 200, 255])
+def test_own_enter_past_the_registry_goes_to_the_hub(stubs: Stubs, mips: Any, sub: int) -> None:
+    m, got, strays = _run_own(stubs, mips, OWN, sub, valid=(0, 3))  # slot 0 holds a move
+    assert got == [ENTITY, *HUB, 1] and _req(stubs, m) == [0, 0, 0, 1, 0]
+    assert strays == []  # an id past the slots reads slot 0, never past the registry
+
+
+def test_own_enter_without_a_registry_goes_to_the_hub(stubs: Stubs, mips: Any) -> None:
+    m, got, _ = _run_own(stubs, mips, OWN, 3, valid=(3,), moves=0)
+    assert got == [ENTITY, *HUB, 1] and _req(stubs, m) == [0, 0, 0, 1, 0]
+
+
+@pytest.mark.parametrize("main", [0, 1, 4, 7, 15, 17, 255])
+def test_any_other_main_is_left_alone(stubs: Stubs, mips: Any, main: int) -> None:
+    m, got, _ = _run_own(stubs, mips, main, 3, valid=(3,))
+    assert got == [ENTITY, main, 3, 1] and _req(stubs, m) == [0, 0, 0, 0, 0]
+
+
+def test_a_second_own_enter_replaces_the_play(stubs: Stubs, mips: Any) -> None:
+    m, _, _ = _run_own(stubs, mips, OWN, 3, valid=(3, 7))
+    m.set_reg("a0", ENTITY)
+    for reg, v in (("a1", OWN), ("a2", 7), ("a3", 1), ("ra", CALLER), ("sp", 0x3F000)):
+        m.set_reg(reg, v)
+    m.run(STUB, CALLER, count=2000)
+    assert _req(stubs, m) == [ENTITY, 7, 1, 2, 8]

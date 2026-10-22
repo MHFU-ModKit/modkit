@@ -26,6 +26,13 @@
  *   REQUEST       the brain, first: a pair Lua wants entered now, issued on the game
  *                 thread in the next AI frame through the engine's dispatcher
  *                 (MHFU_ENTER_ACTION), so it is provisioned too.
+ *   OWN ENTER     slot-32 pre, after the table: an AI script's `enter MHFU_OWN_MOVE_MAIN k`
+ *                 is entered as own move k's carrier (em75's hub for an empty or out-of-range
+ *                 slot) and files the request mhfu_em_play files, forced; the brain plays the
+ *                 move at the next AI step. The script's wake the hub raises inside the run is
+ *                 cleared by SCRIPT_TICK after it, and move.cpp's start quiets the one the hub
+ *                 raises again, so the script's next pair cannot cut the move; the carrier hands
+ *                 back once the move (and its AFTER chain) ends, which wakes the script.
  *   CUT           the brain: while the tail cut waits for its drop (cut_waits), the
  *                 request, the plays and the rules wait, and the move player's start
  *                 with them; the events seen meanwhile reach the rules after the drop.
@@ -120,9 +127,9 @@ typedef struct {
     uint32_t prev_pair, prev2_pair;                 /* +0x20 */
     uint32_t frames;                                /* +0x28 */
     uint32_t ra_spill, a_spill[4];                  /* +0x2C */
-    uint32_t d2, d2_prev, brain_fires, scratch;     /* +0x40 */
+    uint32_t d2, d2_prev, brain_fires, own_enters;  /* +0x40 */
     uint32_t req_pending;                           /* +0x50 */
-    uint8_t  req_main, req_sub, req_mode, _pad;     /* +0x54 */
+    uint8_t  req_main, req_sub, req_mode, own_last; /* +0x54 */
     uint32_t req_done, req_result;                  /* +0x58 */
     cfg_sub_t subs[MHFU_EM_SUBS];                  /* +0x60 */
     uint32_t sub_hits, sub_landed, sub_last_in;     /* +0x80 */
@@ -142,7 +149,8 @@ static_assert(offsetof(em_vhook_cfg_t, frames)      == CFG_FRAMES,      "cfg lay
 static_assert(offsetof(em_vhook_cfg_t, ra_spill)    == CFG_RA_SPILL,    "cfg layout");
 static_assert(offsetof(em_vhook_cfg_t, a_spill)     == CFG_A0_SPILL,    "cfg layout");
 static_assert(offsetof(em_vhook_cfg_t, d2)          == CFG_D2,          "cfg layout");
-static_assert(offsetof(em_vhook_cfg_t, scratch)     == CFG_SCRATCH,     "cfg layout");
+static_assert(offsetof(em_vhook_cfg_t, own_enters)  == CFG_OWN_ENTERS,  "cfg layout");
+static_assert(offsetof(em_vhook_cfg_t, own_last)    == CFG_OWN_LAST,    "cfg layout");
 static_assert(offsetof(em_vhook_cfg_t, req_pending) == CFG_REQ_PENDING, "cfg layout");
 static_assert(offsetof(em_vhook_cfg_t, req_main)    == CFG_REQ_MAIN,    "cfg layout");
 static_assert(offsetof(em_vhook_cfg_t, req_result)  == CFG_REQ_RESULT,  "cfg layout");
@@ -239,6 +247,9 @@ static_assert(offsetof(mhfu_em_moves_t, moves) == MHFU_EM_MOVES_MOVES, "EM_MOVES
 static_assert(offsetof(mhfu_em_moves_t, keys) == MHFU_EM_MOVES_KEYS, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, scratch) == MHFU_EM_MOVES_SCRATCH, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, req_force) == MHFU_EM_MOVES_REQ_FORCE, "EM_MOVES layout");
+/* the act stub reaches them by 16-bit offsets from the registry and from a slot */
+static_assert(MHFU_EM_MOVES_REQ_FORCE < 0x8000 && MHFU_EM_MOVES_MOVES + MHFU_EM_OWN_VALID < 0x8000,
+              "EM_MOVES offsets past a 16-bit immediate");
 
 static void cfg_reset_live(void)
 {
@@ -1044,7 +1055,8 @@ static void build_act_stub(uint32_t original)
 {
     uint32_t cfg = (uint32_t)(uintptr_t)g_cfgp;
     int overflow = 0;
-    int n = emv_build_act_stub(g_stub_act, STUB_ACT_INSNS, cfg, original, &overflow);
+    int n = emv_build_act_stub(g_stub_act, STUB_ACT_INSNS, cfg, original,
+                               (uint32_t)(uintptr_t)R, &overflow);
     if (overflow) {
         mhfu_log("[%s] act stub is %d insns > STUB_ACT_INSNS %d - installing a plain "
                  "trampoline instead", OWNER, n, STUB_ACT_INSNS);
@@ -1053,7 +1065,7 @@ static void build_act_stub(uint32_t original)
         return;
     }
     for (int k = n; k < STUB_ACT_INSNS; k++) g_stub_act[k] = MIPS_NOP;
-    mhfu_log("[%s] act stub: %d-entry substitution PRE, original, budget POST; "
+    mhfu_log("[%s] act stub: %d-entry substitution PRE, own-move enter, original, budget POST; "
              "%d insns, frame 0x%X", OWNER, MHFU_EM_SUBS, n, ACT_FRAME);
 }
 
@@ -1274,7 +1286,9 @@ extern "C" int mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_sp
     volatile mhfu_em_own_t *o = &R->moves[slot];
     o->valid = 0;
     copy_words(&o->move, mv, sizeof(*mv));
-    /* the carrier again at the end, so AFTER follows before the host brain picks */
+    /* the carrier again at the end, so AFTER follows before the host brain picks; the hub it
+     * enters wakes the AI script, so the move player clears that wake */
+    o->move.hold_script = after != MHFU_EM_NO_MOVE;
     if (after != MHFU_EM_NO_MOVE && mv->back_main == MHFU_MOVE_NO_PAIR) {
         o->move.back_main = mv->carrier_main;
         o->move.back_sub = mv->carrier_sub;
@@ -1343,6 +1357,8 @@ extern "C" void mhfu_em_status(mhfu_em_status_t *out)
     out->req_pending = g_cfgp->req_pending;
     out->req_done    = g_cfgp->req_done;
     out->req_result  = g_cfgp->req_result;
+    out->own_enters  = g_cfgp->own_enters;
+    out->own_last    = g_cfgp->own_last;
     out->ring_idx    = g_cfgp->ring_idx;
     for (int i = 0; i < MHFU_EM_RING; i++)  out->ring[i] = g_cfgp->ring[i];
     for (int i = 0; i < MHFU_EM_RULES; i++) { out->rule_fired[i] = g_cfgp->rules[i].fired;
@@ -1547,11 +1563,11 @@ static void uninstall(void)
     g_cfgp->step_fn = 0;
     mhfu_em_clear();
     mhfu_log("[%s] restored vtable 0x%08X (ai_ticks=%u act_enters=%u sub %u/%u "
-             "req %u brain %u tip %u cut %u)", OWNER, (unsigned)g_vtable,
+             "req %u own %u brain %u tip %u cut %u)", OWNER, (unsigned)g_vtable,
              (unsigned)g_cfgp->ai_ticks, (unsigned)g_cfgp->act_enters,
              (unsigned)g_cfgp->sub_hits, (unsigned)g_cfgp->sub_landed,
-             (unsigned)g_cfgp->req_done, (unsigned)g_cfgp->brain_fires,
-             (unsigned)T->copies, (unsigned)T->waits);
+             (unsigned)g_cfgp->req_done, (unsigned)g_cfgp->own_enters,
+             (unsigned)g_cfgp->brain_fires, (unsigned)T->copies, (unsigned)T->waits);
 }
 
 static void on_spawn(const mhfu_monster_spawn_ctx_t *ctx)
@@ -1575,6 +1591,7 @@ static void on_quest(const mhfu_event_ctx_t *ctx)
     g_cfgp->sub_hits = g_cfgp->sub_landed = g_cfgp->brain_fires = 0;
     g_cfgp->muted = 0;
     g_cfgp->req_done = 0;
+    g_cfgp->own_enters = g_cfgp->own_last = 0;
     quest_reset();
 }
 

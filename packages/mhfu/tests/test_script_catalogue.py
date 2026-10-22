@@ -7,6 +7,7 @@ import string
 from collections import Counter
 
 import pytest
+from mhfu import addresses
 from mhfu.em import script
 from mhfu.em.script import catalogue as cat
 from mhfu.em.script import edit, ir, lift
@@ -196,6 +197,7 @@ def test_summary():
     assert cat.summary(insn("enter", 3, 27, 0)) == "Move (3, 27)"
     assert cat.summary(insn("enter", 3, 27, 0), pairs) == "Move (3, 27) Roar"
     assert cat.summary(insn("enter", 2, 1, 0), pairs) == "Move (2, 1)"
+    assert cat.summary(insn("enter", addresses.OWN_MOVE_MAIN, 3, 0)) == "Move (own 3)"
     assert cat.summary(insn("enter", ir.Sym("a"), ir.Sym("b"), 0)) == "Move (@a, @b)"
     assert cat.summary(insn("set_var", 4, 1)) == "var 4 = 1"
     assert cat.summary(insn("call_deep", 3, 7)) == "Call deep3[7]"

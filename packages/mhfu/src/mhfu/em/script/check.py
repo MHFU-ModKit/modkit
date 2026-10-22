@@ -24,6 +24,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cached_property
 
+from ... import addresses
 from . import asm, budget, ir, walk
 from .disasm import SENTINEL, Reader
 from .lift import LiftError, routine
@@ -36,7 +37,8 @@ _TOTAL = 32
 _RANDOM = 0x80
 """The marker a random and a random_shifted share."""
 _MAINS = range(8)
-"""The `main` of a pair the game has an action table for."""
+"""The `main` of a pair the game has an action table for; `addresses.OWN_MOVE_MAIN` is em_vhook's
+own move, which the game never sees."""
 Token = tuple[object, ...]
 
 
@@ -184,7 +186,7 @@ class _Checks:
             if isinstance(gate, int) and gate != 0:
                 text = f"enter: gate {gate} lands in the freeze gate; natively it is 0"
                 self.add("error", "GATE_NONZERO", text, n.id, r.name)
-            if isinstance(main, int) and main not in _MAINS:
+            if isinstance(main, int) and main not in _MAINS and main != addresses.OWN_MOVE_MAIN:
                 text = f"enter: main {main} is outside 0..{_MAINS[-1]}"
                 self.add("error", "PAIR_RANGE", text, n.id, r.name)
         elif n.op.name == "end" and isinstance(kind := n.args.get("kind"), int):

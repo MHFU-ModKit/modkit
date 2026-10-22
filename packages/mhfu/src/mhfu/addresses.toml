@@ -842,6 +842,7 @@ ATTACKS = { offset = 0x0C, type = "MOVE_ATTACK[4]", doc = "attacks, spawned once
 SPAWNER = { offset = 0x2C, type = "ptr", doc = "the species' attack spawner; 0 = TIGREX_ATTACK_SPAWN" }
 HOST_ATTACKS = { offset = 0x30, type = "u8", doc = "1 keeps the host entry's animation events (MONSTER_VTABLE.ANIM_EVENTS) while the move plays; 0 skips them" }
 FORCE = { offset = 0x31, type = "u8", doc = "1 starts while the monster's notice runs (the player's ENTITY.AWARE bit, COMBAT_MODE 0); 0 waits up to 450 AI frames for its roar and combat entry; per call, not per move" }
+HOLD_SCRIPT = { offset = 0x32, type = "u8", doc = "1: entering the back pair clears ENTITY.SCRIPT_WAKE, which the hub raises there, so the AI script does not pick a pair between this move and the one that follows (an own move with an AFTER)" }
 
 [struct.MOVE_STATE]
 doc = "the move player's block in partition memory (move.cpp): the move it runs and what happened, read by mhfu.live.moves"
@@ -1079,3 +1080,6 @@ names = ["noticed", "combat_entered", "combat_left", "flinch", "part_broken", "t
 [enum.MOVE_END]
 doc = "MOVE_STATE.END, why the move player's move ended: its clip ended (the carrier handed off); the clip or LENGTH ended and the back pair was entered; the pair changed under it; stopped; replaced; the enter-action did not land the carrier; another dispatch replaced the clip; a wall ahead; a class-2 wall (the stuck pair entered); a reaction mhfu_move_react replaces started its move"
 names = ["clip", "back", "pair", "stopped", "replaced", "refused", "lost", "wall", "stuck", "reaction"]
+
+[const]
+OWN_MOVE_MAIN = { value = 16, doc = "an AI script `enter` main no species has (they use 0..7; 16 is past the 8-bit main mask of em_vhook's substitutions): em_vhook's enter-action stub enters the carrier of own move <sub> (an EM_MOVES slot; em75's hub (0,2) when it is empty or out of range) instead and plays that move at the next AI step" }

@@ -8,6 +8,7 @@
     addresses.ENTITY_REGISTRY.count   # 21: the n of a `type[n]` entry, else None
     addresses.MONSTER_EVENT_KIND.names  # an enum's names, numbered from 1 in C and Lua
     addresses.FREE_ROAM_SCENES    # a set of addresses, a frozenset
+    addresses.OWN_MOVE_MAIN       # a constant: a number C, Lua and Python agree on, no address
 
 The C header, the Lua table and the C data lua_host builds mhfu.addr from are generated from
 the same file:
@@ -112,6 +113,13 @@ class Enum:
         return self.names.index(name) + 1
 
 
+class Const(_Named):
+    """A number the game does not hold that C, Lua and Python must agree on (`[const]`)."""
+
+    def __repr__(self) -> str:
+        return f"<{self.name} {int(self)}>"
+
+
 class AddressSet(frozenset[Address]):
     """Addresses named together (`[set]`); `of` keeps the file's order."""
 
@@ -131,6 +139,7 @@ class Table:
     structs: dict[str, Struct]
     enums: dict[str, Enum] = field(default_factory=dict)
     sets: dict[str, AddressSet] = field(default_factory=dict)
+    consts: dict[str, Const] = field(default_factory=dict)
 
 
 def load(path: Path | None = None) -> Table:
@@ -148,7 +157,7 @@ def table() -> Table:
 def parse(data: dict[str, Any]) -> Table:
     """Build a table from parsed TOML; raises ValueError listing every problem."""
     problems: list[str] = []
-    unknown = set(data) - {"address", "struct", "enum", "set"}
+    unknown = set(data) - {"address", "struct", "enum", "set", "const"}
     if unknown:
         problems.append(f"unknown top-level tables: {sorted(unknown)}")
 
@@ -248,6 +257,20 @@ def parse(data: dict[str, Any]) -> Table:
         elif _doc_ok(where, entry["doc"], problems):
             sets[name] = AddressSet(tuple(addresses[n] for n in of), name, entry["doc"])
 
+    consts: dict[str, Const] = {}
+    for name, entry in data.get("const", {}).items():
+        where = f"const.{name}"
+        if not _NAME.match(name):
+            problems.append(f"{where}: names are UPPER_SNAKE_CASE")
+        if not isinstance(entry, dict) or set(entry) != {"value", "doc"}:
+            problems.append(f"{where}: expects exactly value and doc")
+            continue
+        value = entry["value"]
+        if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 0xFFFF_FFFF:
+            problems.append(f"{where}: value is an integer from 0 to 0xFFFFFFFF")
+        elif _doc_ok(where, entry["doc"], problems):
+            consts[name] = Const(value, name, "u32", entry["doc"])
+
     # every generated name (Python and Lua namespace, C macro) must be unique
     for name in addresses.keys() & structs.keys():
         problems.append(f"{name}: is both an address and a struct")
@@ -255,6 +278,8 @@ def parse(data: dict[str, Any]) -> Table:
         problems.append(f"{name}: is an enum and an address or struct")
     for name in sets.keys() & (addresses.keys() | structs.keys() | enums.keys()):
         problems.append(f"{name}: is a set and an address, struct or enum")
+    for name in consts.keys() & (addresses.keys() | structs.keys() | enums.keys() | sets.keys()):
+        problems.append(f"{name}: is a const and an address, struct, enum or set")
     macros: dict[str, str] = {}
     members = [(f"address.{n}", n) for n in addresses]
     members += [(f"address.{n}_COUNT", f"{n}_COUNT") for n, a in addresses.items() if a.count]
@@ -266,6 +291,7 @@ def parse(data: dict[str, Any]) -> Table:
         names = [*(n.upper() for n in e.names), "COUNT", "NAMES"]
         members += [(f"enum.{e.name}.{m}", f"{e.name}_{m}") for m in names]
     members += [(f"set.{n}{m}", f"{n}{m}") for n in sets for m in ("", "_COUNT")]
+    members += [(f"const.{n}", n) for n in consts]
     for where, macro in members:
         if macro in macros:
             problems.append(f"{where}: MHFU_{macro} clashes with {macros[macro]}")
@@ -273,7 +299,7 @@ def parse(data: dict[str, Any]) -> Table:
 
     if problems:
         raise ValueError("addresses.toml:\n  " + "\n  ".join(problems))
-    return Table(addresses, structs, enums, sets)
+    return Table(addresses, structs, enums, sets, consts)
 
 
 def _entry_ok(where: str, name: str, entry: Any, key: str, problems: list[str]) -> bool:
@@ -340,6 +366,8 @@ def render_c(t: Table) -> str:
             f"#define MHFU_{st.name} {{ " + ", ".join(f"MHFU_{a.name}" for a in st.of) + " }"
         )
         out.append(f"#define MHFU_{st.name}_COUNT {len(st.of)}")
+    for c in t.consts.values():
+        out += ["", f"/* const: {c.doc} */", f"#define MHFU_{c.name} {int(c)}"]
     out += ["", "#endif", ""]
     return "\n".join(out)
 
@@ -378,6 +406,8 @@ def render_lua(t: Table) -> str:
         out += [f"    ---set, member = address: {st.doc}", f"    {st.name} = {{"]
         out += [f"        {a.name} = 0x{int(a):08X}," for a in st.of]
         out.append("    },")
+    for c in t.consts.values():
+        out += [f"    ---const: {c.doc}", f"    {c.name} = {int(c)},"]
     out += ["}", "", "return addr", ""]
     return "\n".join(out)
 
@@ -422,6 +452,8 @@ def render_c_table(t: Table) -> str:
         out += [f'    {{ "{a.name}", MHFU_{a.name} }},' for a in st.of]
         out += ["    { 0, 0 },", "};"]
         rows.append(f'    {{ "{st.name}", 0, k_addr_{st.name}, 0 }},')
+    for c in t.consts.values():
+        rows.append(f'    {{ "{c.name}", MHFU_{c.name}, 0, 0 }},')
     out += [
         "",
         "static const mhfu_addr_entry k_mhfu_addr[] = {",
@@ -446,12 +478,14 @@ def __getattr__(name: str) -> Any:
         return t.enums[name]
     if name in t.sets:
         return t.sets[name]
+    if name in t.consts:
+        return t.consts[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__() -> list[str]:
     t = table()
-    return sorted({*globals(), *t.addresses, *t.structs, *t.enums, *t.sets})
+    return sorted({*globals(), *t.addresses, *t.structs, *t.enums, *t.sets, *t.consts})
 
 
 def main(argv: list[str] | None = None) -> int:
