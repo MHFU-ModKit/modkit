@@ -101,6 +101,7 @@ def test_build(game, tmp_path):
     assert all(p["provenance"]["entered"] == intel.ABSENT for p in doc["pairs"])
     assert {p["ends_on"] for p in handled} <= {"clip", "clip+cursor", "budget", "cursor", "unknown"}
     assert intel.summarise(doc).startswith("em33.ovl")
+    assert not doc["events"]["present"] and "animation events" not in intel.summarise(doc)
 
     log = tmp_path / "framework.log"
     states = [(0, 0, 1), (99, 0, 3), (0, 0, 9)]
@@ -115,6 +116,16 @@ def test_build(game, tmp_path):
     )
     assert pairs[0, 1]["measured"]["entered"] == 0  # looked, and never saw it
     assert "not in the overlay's" in pairs[99, 0]["note"]  # only the census knows it
+
+
+def test_events(game):
+    doc = intel.build(intel.Game(game), 75)
+    si = intel.SpeciesIntel(doc)
+    assert si.has_events and len(si.events) == 71
+    assert si.events[46].spawn_frames == [120.0]
+    assert "animation events: 71 entry(ies), 19 spawning" in intel.summarise(doc)
+    old = intel.SpeciesIntel({k: v for k, v in doc.items() if k != "events"})
+    assert not old.has_events and old.events == {}
 
 
 def test_cli(game, tmp_path, capsys):

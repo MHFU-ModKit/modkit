@@ -78,7 +78,7 @@ and constants; the commands below are built on it.
 | `mhfu abi inventory\|vtables\|interface\|factory\|classes\|callers` | The engine-to-overlay interface: overlays, entity vtables and their slots, em id to overlay, calls through a slot |
 | `mhfu hitzones`, `hitboxes SPECIES` | Where a monster can be hit, and where it hits |
 | `mhfu census --log framework.log` | How long each move lasted in a real game, from the framework's log |
-| `mhfu intel --all` | All of the above per species, as `species/emNN.json` |
+| `mhfu intel --all` | All of the above per species, with each executor entry's animation events (the attacks slot 30 spawns at a clip frame), as `species/emNN.json` |
 | `mhfu stage ids\|maps\|exits\|surfaces` | Stage files, the map table, area exits, surface tables |
 | `mhfu stage spots\|spawns` | In the running game: the quest's gathering spots and small-monster spawns |
 | `mhfu inject FILE_ID FILE` | Places a finished file for the framework's live injection |
@@ -114,6 +114,7 @@ with Session.launch(cold=True) as s:  # PPSSPP here, or in the modkit container
 | `mhfu brain build EM [FILE] -o OUT`, `deploy EM [FILE]` | The same script as a stick container, in a file (`build`) or on the memory stick with the mod that has the framework install it in every quest (`deploy`, no game needed; a monster already running keeps the game's script) |
 | `mhfu rig points\|goto\|walk` | Named points of a map document; the player put at one (one area change away) or walked to it, exit to exit |
 | `mhfu observe trace\|cost` | Which engine functions a big monster's overlay calls in each of its states, and how often, without stopping the game |
+| `mhfu hits [--seconds N] [--reach R] [--json OUT]` | A big monster's hit census: per (main, sub) pair its entries, attack spawns (and those within reach of the hunter), hits on the hunter and damage |
 
 `mhfu.live.script` reads a big monster's AI script state from the running game (`monsters(mem)`:
 its header, where each context resumes, the interrupts raised), which the studio's Brain tab marks
@@ -145,6 +146,46 @@ PPSSPP must open its debugger at startup (`RemoteDebuggerOnStartup = True` in `p
 `MHFU_LAUNCHER=docker` (with `MHFU_CONTAINER`) uses the container from `ppsspp/`.
 `--lane N` (`MHFU_LANE`) runs a hidden PPSSPP of its own, so several run side by side
 ([`ppsspp/README.md`](../../ppsspp/README.md)).
+
+### Hit census
+
+`mhfu hits` attaches to a game already in a quest (`--lane N` or `MHFU_LANE`; it never starts
+one) and watches the first big monster (`--slot N` for another) for `--seconds` of emulated time
+with four log-only breakpoints, so the game keeps running: the pair change, the species' attack
+spawner, the attack table setter (which node a hit came from) and the engine's HP change of the
+hunter. It prints one line per pair, with how many entries, spawns, hits and points of damage
+were in reach (`--reach`, units from the hunter at the spawn), and writes the census with every
+event under `--json`.
+
+```text
+pair     entries   dwell  spawns in reach  hits in reach  damage  ids
+(0,3)         40   18.4s       0        0     0        0       0  -
+(1,4)         22   31.2s      22       19    19       17    1331  6x22
+```
+
+The hunter's HP is held (`--hp`, default 1000; 0 leaves it) and small monsters are zeroed
+(`--keep-small`), so the damage is the big monster's and the window measures what it deals, not
+whether a hunter survives. `--engage` brings the monster back by one summon when it is out of
+the section, far in combat or idle. The window ends early (exit status 1) when the hunter dies or
+leaves the area.
+
+A zero is a result only if its breakpoint can fire, so the last lines name every breakpoint that
+logged nothing, and a spawner that logs while no node is built, or the reverse. em75's attack
+spawner is an address of the list; any other species' is the one its overlay calls like a moveset
+(`mhfu attacks`), which needs the extracted game (`--data` or `MHFU_DATA`); a species with none
+(em01, em33) is refused with that said. Do not arm another debugger connection meanwhile:
+PPSSPP logs to the newest one only.
+
+```python
+from mhfu.files import Extracted
+from mhfu.live import clips, hits
+from mhfu.live.rig import Rig
+
+with Rig.attach() as rig:
+    _, monster = clips.monster(rig.s)
+    aim = hits.target(monster.vtable, Extracted.find())
+    print(hits.report(hits.run(rig.s, monster, aim, seconds=60)))
+```
 
 ## Status
 

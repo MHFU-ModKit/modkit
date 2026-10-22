@@ -34,12 +34,13 @@ from ..files import Extracted
 from ..memory import Space
 from ..mips import Code
 from ..overlay import Overlay
+from . import abi, phases
 from . import attacks as atk
 from . import census as cs
 from . import chain as ch
 from . import effects as fx
+from . import events as ev
 from . import moveset as mv
-from . import phases
 
 SCHEMA = "mhfu.species_intel/1"
 EFFECT_CALL_DEPTH = 2
@@ -484,12 +485,18 @@ class Game:
     def bias(self) -> dict[int, int]:
         return fx.bias(Code(self.task, self.task.text))
 
+    @cached_property
+    def engine(self) -> abi.Engine:
+        return abi.Engine.load(self.game)
+
 
 def build(game: Game, species: int, measured: Measured | None = None, reason: str = "") -> Doc:
     """The species' document; `measured` must come from a log of this species."""
     ovl = game.game.em(species)
     ms = mv.Moveset(ovl)
     code = ms.code
+    owner = game.engine.owners.get(species)
+    events_fn = None if owner is None else owner.vtable.slots[ev.SLOT]
     credit = Credit.of(code)
     chain = ch.Chain(ms)
     prev = chain.predecessors()
@@ -571,6 +578,7 @@ def build(game: Game, species: int, measured: Measured | None = None, reason: st
         "unattributed_effects": credit.unattributed(),
         "parts": parts(game.task, ovl, species, game.game.path(files.GAME_TASK).name),
         "attacks": attacks(ovl, code, species, credit),
+        "events": ev.document(ev.table(code, events_fn, species), events_fn),
     }
 
 
@@ -614,6 +622,13 @@ def summarise(doc: Doc) -> str:
         )
     else:
         out.append(f"  attacks: ABSENT ({at['reason']})")
+    entries = ev.read(doc.get("events"))
+    if entries:
+        spawning = [e for e in entries.values() if e.attacks]
+        out.append(
+            f"  animation events: {len(entries)} entry(ies), {len(spawning)} spawning "
+            f"{sum(len(e.attacks) for e in spawning)} attack(s), keyed by the playing entry"
+        )
     c = doc["census"]
     out.append(
         f"  census: {c['transitions']} transitions ({c['forced_skipped']} forced, skipped), "
@@ -1337,6 +1352,10 @@ class SpeciesIntel:
         self.chain: Doc = dict(doc.get("chain") or {})
         self.parts = PartIntel.read(doc.get("parts"))
         self.attacks = AttackIntel.read(doc.get("attacks"))
+        self.has_events = "events" in doc
+        self.events = ev.read(doc.get("events"))
+        """Executor entry -> its animation events; empty when the document predates them or the
+        species' event function has no entry branches (`has_events` tells which)."""
 
     @classmethod
     def load(cls, path: str | Path) -> SpeciesIntel:
