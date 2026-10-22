@@ -79,7 +79,38 @@ and `if_in_section` match a night area by its day twin, `switch_area` a night ma
   run (see "Run budget"). Only `enter` (0x05, `main sub gate`) ends a run: it enters the pair
   through enter-action mode 1 and saves the next address in `SCRIPT_PCS`, under the slot
   `SCRIPT_CONTEXT` picks. The next run resumes there.
+- `enter 16 k 0` (`addresses.OWN_MOVE_MAIN`, main 16 and sub k) is no game pair: with the framework's
+  em_vhook on the species, its enter-action stub enters own move k's carrier (em75's hub `(0,2)`
+  for an empty or out-of-range slot) and plays the move at the next AI step, forced past the
+  notice. The run resumes after it when the move and its `after` chain end and the carrier hands
+  back, as after a native pair. Without the framework the game has no table for main 16.
+- `switch_query a` (0x79) asks the species' own query, `MONSTER_VTABLE.QUERY(entity, a)`: em75's is
+  game_task's default, which answers 0. With the framework's charge helper armed (`mhfu.em_charge`)
+  its stub answers a port's monster 1 to `addresses.CHARGE_QUERY_CHARGED` (0) while the monster is
+  charged and to `CHARGE_QUERY_COOLDOWN` (6) while the charge cooldown runs, and 0 to every other
+  arg; any other monster gets the species' answer.
 - A raised interrupt bit in `SCRIPT_PENDING` switches the next run to the header's routine for it.
+
+## Variables
+
+`set_var`, `reset_var`, `if_var` and `if_var3_zero` name a script variable, 1 to 9. Who keeps each
+is in `mhfu.em.script.vars`, `mhfu script EM --vars` and the Brain tab's Names list:
+
+| Variable | Storage | Kept by |
+|---|---|---|
+| 1 | `ENTITY.SCRIPT_VAR_1`, u8 | the engine, in every species: `MONSTER_STEP` counts it down every frame while `+0x4C4` is 0; `SET_SCRIPT_VAR_1` sets it to 2 |
+| 2 | `ENTITY.SCRIPT_VAR_2`, u8 | free, except in the species that call `GAUGE_A_LATCH` (em01, em15, em20, em54, em59, em82): it sets 1 when gauge A runs out. Spawn, entering main 6 and `clear_counters` only zero it (a reset) |
+| 3 | `ENTITY.SCRIPT_VAR_3`, s8 | the engine, in every species: `MONSTER_STEP` zeroes it every frame in combat, else counts it down |
+| 4 | `ENTITY.SCRIPT_VAR_4`, u8 | nobody: free unless a script uses it (em75's does, as an area test) |
+| 5 to 9 | none | species code: `set_var` calls the species vtable at `+0x94`, `+0x9C`, `+0xA4`, `+0xCC`, `+0xD4`, `if_var` at `+0x98`, `+0xA0`, `+0xA8`, `+0xD0`, `+0xD8` |
+
+A species' overlay may also store to a byte (em75's move handlers store to 1 and 3). The survey
+counts the stores at exactly a variable's offset in the species overlay, through any base
+register, and its `jal`s to the two helpers; it never scans the engine's own code, which has other
+structs with a field at the same offset. A variable is, in order, engine, species (the overlay
+stores or calls a helper), script (a node names it) or free, which is safe to keep a value in; 5
+to 9 are never free. The splice picks the first free one for the MHP3rd call history
+(`[brain] history`).
 
 ## Run budget
 
@@ -155,11 +186,12 @@ and the resume point behind each `enter`) is an upper bound. `check` turns it in
 | `UNRESOLVED` | error | A label that `resolve` has not turned into an index |
 | `FALLS_OFF` | error | A routine with new code that can run off its end: finish it with `end` or `goto` |
 | `GATE_NONZERO` | error | An `enter` gate other than 0, which lands in the freeze gate |
-| `PAIR_RANGE` | error | An `enter` main outside 0..7, which has no action table |
+| `PAIR_RANGE` | error | An `enter` main outside 0..7, which has no action table, except 16, an own move |
 | `END_KIND_CONTEXT` | error | An `end` kind the game acts on in no entry, or one for a list the routine does not run from (an `end return` in a routine only base lists run) |
 | `OPS_PER_RUN` | warning, error | A path through new code can dispatch more than 900 in a run; more than 999 |
 | `RESTART_LOOP` | error, warning | `base[0]` can restart with no yield: nothing on the path decides; or only when its conditions hold |
-| `CORRELATED_DRAW` | warning | A `random` that follows another draw in the run: a draw steps by 1, so its odds follow the first |
+| `CORRELATED_DRAW` | warning | A `random` that follows another draw in the run: the draw is a counter that a step adds 1 to, so its branch follows the earlier draw's even after a step; a `random` that opens a branch of a `random` reads its parent's draw and is not one |
+| `ARM_UNREACHABLE` | warning | A branch with a weight of a `random` that opens a branch of a `random`, which no draw of the parent's branch takes (its parent's draw is the same, within the branch's band) |
 | `DEAD_CODE` | warning | Code after an `end` or `goto` that never runs |
 | `WEIGHT_ZERO` | warning | A random branch that never runs |
 | `PAIR_UNKNOWN` | warning | An `enter` of a pair the species' intel has no record of, or measured never entered; unmeasured says nothing |

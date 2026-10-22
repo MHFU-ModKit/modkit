@@ -366,17 +366,19 @@ def test_the_palette_offers_every_kind(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_the_zinogre_reads(ports: Path) -> None:
     m = manifest.load(ports / "zinogre.toml")
     r = B.read(m)
-    assert len(m.behaviour.blocks) == 39 and len(r.paths) == 17
-    assert sorted(n for ns in r.priority.values() for n in ns) == list(range(1, 18))
+    assert len(m.behaviour.blocks) == 17 and len(r.paths) == 10
+    assert sorted(n for ns in r.priority.values() for n in ns) == list(range(1, 11))
     assert r.loose == [] and r.refused == {} and r.capped is None
-    assert [p.blocks[-1] for p in r.paths if p.play is None] == ["b15", "b17", "b23", "b39"]
-    assert [p.play is None for p in r.paths] == [True] * 4 + [False] * 13, "bookkeeping runs first"
-    assert model.names(m, "var") == ["flinches", "in_combat"]
-    enrage = r.paths[3]  # while charge_up plays: 120 frames, wait 250, enrage
-    assert (enrage.blocks, enrage.during) == (("b37", "b38", "b39"), "charge_up")
-    assert m.behaviour.blocks["b39"].kind == "enrage" and B.natural_rage(m)
-    charge = r.paths[13]  # the 2nd flinch, from idle: charge up
-    assert (charge.blocks[-1], charge.play) == ("b27", "charge_up")
+    assert [p.blocks[-1] for p in r.paths if p.play is None] == ["b15", "b17"]
+    assert [p.play is None for p in r.paths] == [True] * 2 + [False] * 8, "bookkeeping runs first"
+    assert model.names(m, "var") == ["in_combat"]
+    skid = r.paths[2]  # while the lunge plays: past the hunter, a skid
+    assert (skid.blocks, skid.during, skid.play) == (
+        ("b1", "b2", "b3", "b4"),
+        "lunge",
+        "lunge_stop",
+    )
+    assert B.natural_rage(m) and not [b for b in m.behaviour.blocks.values() if b.kind == "enrage"]
     assert min(b.at[0] for b in m.behaviour.blocks.values()) == model.LEFT
     assert {w.dst for w in B.wires(m) if w.dst_port == "play"} >= {"move:flinch_head"}
     assert len(B.spots(m)) == len(m.moves)
@@ -385,10 +387,10 @@ def test_the_zinogre_reads(ports: Path) -> None:
 def test_renaming_a_move_keeps_its_paths(ports: Path) -> None:
     z = PortDocument(manifest.load(ports / "zinogre.toml"))
     before = model.compile(z.manifest)
-    clips.rename_move(z, "stamp", "stomp")
+    clips.rename_move(z, "notice_howl", "greet")
     clips.rename_move(z, "lunge", "lunge_fwd")
-    assert {"stomp", "lunge_fwd"} <= set(z.manifest.behaviour.moves)
-    names = {"stomp": "stamp", "lunge_fwd": "lunge"}
+    assert {"greet", "lunge_fwd"} <= set(z.manifest.behaviour.moves)
+    names = {"greet": "notice_howl", "lunge_fwd": "lunge"}
     back = [
         dataclasses.replace(
             r, play=names.get(r.play, r.play), from_move=names.get(r.from_move or "", r.from_move)
@@ -399,6 +401,33 @@ def test_renaming_a_move_keeps_its_paths(ports: Path) -> None:
     z.undo()
     z.undo()
     assert model.compile(z.manifest) == before
+
+
+def test_renaming_a_move_the_brain_plays_follows_its_pairs(ports: Path) -> None:
+    z = PortDocument(manifest.load(ports / "zinogre.toml"))
+    b = z.manifest.brain
+    assert b is not None and b.users("dash") == ["2,4", "7,29", "7,30"]
+    clips.rename_move(z, "dash", "rush")
+    assert z.manifest.brain is not None
+    assert z.manifest.brain.targets((2, 4)) == ["rush"]
+    assert z.manifest.brain.targets((7, 29)) == [(1, 2), "rush"]
+    assert clips.move_users(z.manifest, "rush") == [
+        "brain.pairs.2,4",
+        "brain.pairs.7,29",
+        "brain.pairs.7,30",
+    ]
+    z.undo()
+    assert z.manifest.brain is not None and z.manifest.brain.users("dash") == [
+        "2,4",
+        "7,29",
+        "7,30",
+    ]
+
+
+def test_a_move_the_brain_plays_is_not_deleted(ports: Path) -> None:
+    z = PortDocument(manifest.load(ports / "zinogre.toml"))
+    with pytest.raises(ManifestError, match="brain.pairs.2,4"):
+        clips.drop_move(z, "dash")
 
 
 def test_a_move_in_use_is_not_deleted(ports: Path) -> None:

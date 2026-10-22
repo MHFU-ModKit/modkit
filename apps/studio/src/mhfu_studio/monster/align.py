@@ -3,15 +3,16 @@
 """The host action's expectations and the port's clip on one frame axis.
 
 A move pairs a host behaviour pair, which owns the hitbox, damage and effects, with a clip, which
-only paints the animation; it works when the clip's contact lands where the handler looks. Four
+only paints the animation; it works when the clip's contact lands where the handler looks. Five
 facts decide that: the cursor frames the handler tests (a gate past the clip's end never runs),
-what ends the action (the clip, or the frame budget), the effects it spawns at the HOST's bone
-numbers, and the measured dwell (a pair the census saw never entered survives one tick).
+the attacks the host's animation events spawn at a frame of the entry the clip plays in, what ends
+the action (the clip, or the frame budget), the effects it spawns at the HOST's bone numbers, and
+the measured dwell (a pair the census saw never entered survives one tick).
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Sized
 from dataclasses import dataclass, field
 
 from mhfu.em.intel import PairIntel, SpeciesIntel
@@ -86,7 +87,7 @@ class Alignment:
 
     @property
     def gates(self) -> list[float]:
-        """Every frame the handler names, of either kind."""
+        """Every frame the handler or the clip's entry events name, of either kind."""
         return sorted({m.frame for m in self.markers if m.kind in (GATE, WINDOW)})
 
     def marker_map(self) -> dict[float, str]:
@@ -165,10 +166,12 @@ def align_pair(
             f"({main},{sub}) is in neither the overlay's jump tables nor the census, so there "
             "is nothing to check the clip against."
         )
+        _events(a, intel)
         _impact_marker(a)
         _our_effects(a, m, move, rig)
         return a
     _gates(a, a.pair)
+    _events(a, intel)
     _ends_on(a, a.pair)
     _effects(a, a.pair, rig)
     _our_effects(a, m, move, rig)
@@ -264,6 +267,65 @@ def _gates(a: Alignment, p: PairIntel) -> None:
             + ". A ported clip may be any length, but not shorter than the frames the handler "
             "names.",
         )
+
+
+def _events(a: Alignment, intel: SpeciesIntel) -> None:
+    """The attacks the host's animation events spawn in the entry the clip plays in. They are
+    keyed by that entry, not by the pair, so they run for any clip there."""
+    if a.slot is None:
+        return
+    if not intel.has_events:
+        a._add(
+            "info",
+            "EVENTS_ABSENT",
+            "this species document predates the animation events, so the attacks they spawn are "
+            "not checked: rebuild it with `mhfu intel`.",
+        )
+        return
+    entry = intel.events.get(a.slot)
+    if entry is None or not entry.attacks:
+        return
+    at: dict[float, list[int | None]] = {}
+    for spawn in entry.attacks:
+        if spawn.frame is not None:
+            at.setdefault(spawn.frame, []).append(spawn.id)
+    for frame, ids in sorted(at.items()):
+        detail = f"the animation events of entry {a.slot} spawn attack {', '.join(_ids(ids))} here"
+        past = a.frames is not None and frame > a.frames
+        a.markers.append(Marker(frame, GATE, "atk" + ",".join(_ids(ids)), detail, past))
+    unframed = sum(spawn.frame is None for spawn in entry.attacks)
+    named = _ids(sum(at.values(), []))
+    framed = f"attack{_s(named)} {', '.join(named)} at frame{_s(at)} {_gate_list(sorted(at))}"
+    a._add(
+        "info",
+        "EVENT_ATTACKS",
+        f"entry {a.slot}'s animation events spawn "
+        + (framed if at else "no attack at a known frame")
+        + (f"{'; ' if at else ', '}{unframed} behind a frame read from data" if unframed else "")
+        + ", for whatever clip plays there.",
+    )
+    late = {f: ids for f, ids in at.items() if a.frames is not None and f > a.frames}
+    if late:
+        gone = _ids(sum(late.values(), []))
+        never = "those attacks never spawn" if len(gone) > 1 else "that attack never spawns"
+        a._add(
+            "error",
+            "GATE_BEYOND_CLIP",
+            f"entry {a.slot}'s animation events spawn attack{_s(gone)} {', '.join(gone)} at "
+            f"frame{_s(late)} {_gate_list(sorted(late))} but the clip ends at {a.frames}: the "
+            f"cursor never gets there, so {never}. A ported clip may be any length, but not "
+            "shorter than the frames the events name.",
+        )
+
+
+def _s(many: Sized) -> str:
+    return "s" if len(many) > 1 else ""
+
+
+def _ids(ids: Sequence[int | None]) -> list[str]:
+    """Attack ids, each once, lowest first; `?` where the code computes one."""
+    ordered = sorted(set(ids), key=lambda i: (i is None, i or 0))
+    return ["?" if i is None else str(i) for i in ordered]
 
 
 def _ends_on(a: Alignment, p: PairIntel) -> None:

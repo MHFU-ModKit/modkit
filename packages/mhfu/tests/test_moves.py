@@ -27,6 +27,14 @@ def test_no_back_pair_is_ff() -> None:
     assert raw[a.MOVE.FORCE] == 1 and moves.Move.unpack(raw).force
 
 
+def test_start_and_stop_round_trip() -> None:
+    mv = moves.Move(53, (moves.Attack(36, 56, 66),), start=24, stop=86, length=9)
+    raw = mv.pack()
+    assert struct.unpack_from("<HH", raw, a.MOVE.START) == (24, 86)
+    assert moves.Move.unpack(raw) == mv
+    assert moves.Move(53).pack()[a.MOVE.START :] == bytes(4)
+
+
 def test_attack_word() -> None:
     assert cli._attack("6@56") == moves.Attack(6, 56)
     assert cli._attack("6@56-90") == moves.Attack(6, 56, 90)
@@ -54,11 +62,12 @@ def test_report_times_the_hit_against_the_spawn() -> None:
 
 
 def test_steer_packs_as_the_spec():
-    sp = moves.Steer((0, 0x2000, 0xFFFF), "fixed", 64, -90.0, 30, True, 90.0, (0, 6, 1))
+    sp = moves.Steer((0, 0x2000, 0xFFFF), "fixed", 64, -90.0, 30, True, 90.0, (0, 6, 1), (10, 40))
     b = sp.pack()
     assert len(b) == a.STEER_SPEC.size
     turn, walls, rate, total, frames, dir_ = struct.unpack_from("<BBHiHH", b, a.STEER_SPEC.STEER)
     assert (turn, walls, rate, total, frames, dir_) == (3, 1, 64, -0x4000, 30, 0x4000)
+    assert struct.unpack_from("<HH", b, a.STEER_SPEC.STEER + a.STEER_PARAMS.WIN_FROM) == (10, 40)
     assert struct.unpack_from("<HBBB", b, a.STEER_SPEC.KEY_COUNT) == (3, 0, 6, 1)
     assert struct.unpack_from("<3H", b, a.STEER_SPEC.KEYS) == (0, 0x2000, 0xFFFF)
 

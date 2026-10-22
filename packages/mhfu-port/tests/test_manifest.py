@@ -190,6 +190,8 @@ STAMP = (
     OWN
     + """carrier = [0, 2]
 length = 90
+start = 24
+stop = 90
 host_attacks = true
 [[moves.o.attack]]
 id = 6
@@ -206,6 +208,95 @@ walls = false
 
 def blk(i: str, kind: str, extra: str = "") -> str:
     return f"[behaviour.blocks.{i}]\nkind = '{kind}'\nat = [0, 0]\n{extra}"
+
+
+BRAIN = "[brain]\ndonor = 23\nsplice = 'base_3'\nentry = 'base_12'\n"
+
+
+def test_brain():
+    text = BRAIN + "history = 1\n[brain.pairs]\n'2,3' = [1, 2]\n[brain.when]\nif_tired = false\n"
+    m = M.loads(_with(text))
+    assert m.brain is not None and m.brain.host_pair((2, 3)) == (1, 2)
+    assert m.brain.host_pair((7, 0)) is None and m.brain.when == {"if_tired": False}
+    assert M.loads(M.dumps(m)) == m and "slot" not in M.dumps(m)
+
+
+def test_brain_charge():
+    m = M.loads(_with(BRAIN + "charge = true\n"))
+    assert m.brain is not None and m.brain.charge and "charge = true" in M.dumps(m)
+    assert not M.loads(_with(BRAIN)).brain.charge  # type: ignore[union-attr]
+    assert M.loads(M.dumps(m)) == m
+
+
+def test_brain_own_moves():
+    own = "[moves.slam]\nanim = 40\n" + BRAIN
+    text = own + "[brain.pairs]\n'7,13' = 'own'\n'7,14' = 'slam'\n'2,3' = [1, 2]\n"
+    m = M.loads(_with(text))
+    assert m.brain is not None and m.brain.target((7, 13)) == "p3_7_13"
+    assert m.brain.target((7, 14)) == "slam" and m.brain.host_pair((7, 14)) is None
+    assert m.brain.target((2, 3)) == (1, 2) and M.loads(M.dumps(m)) == m
+    with pytest.raises(M.ManifestError, match="no own move"):
+        M.loads(_with(own + "[brain.pairs]\n'7,14' = 'bite'\n"))
+
+
+def test_brain_pairs_may_be_lists():
+    own = "[moves.slam]\nanim = 40\n" + BRAIN
+    text = (
+        own
+        + "[brain.pairs]\n'7,13' = [[1, 2], 'own']\n'7,14' = [[1, 2], 'slam']\n'2,3' = [[1, 2]]\n"
+    )
+    m = M.loads(_with(text))
+    b = m.brain
+    assert b is not None
+    assert b.pairs["7,13"] == [(1, 2), "own"] and b.pairs["2,3"] == [(1, 2)]
+    assert b.targets((7, 13)) == [(1, 2), "p3_7_13"] and b.targets((7, 14)) == [(1, 2), "slam"]
+    assert b.target((7, 13)) == "p3_7_13" and b.target((2, 3)) == (1, 2)
+    assert b.host_pair((2, 3)) == (1, 2) and b.host_pair((7, 14)) is None
+    assert b.targets((9, 9)) == [] and b.target((9, 9)) is None
+    assert M.loads(M.dumps(m)) == m
+
+
+def test_a_pair_plays_the_move_another_pair_derives():
+    text = BRAIN + "[brain.pairs]\n'7,0' = 'own'\n'7,23' = [[1, 2], 'p3_7_0']\n'7,24' = 'p3_7_0'\n"
+    b = M.loads(_with(text)).brain
+    assert b is not None
+    assert b.derived() == {"p3_7_0": (7, 0)} and b.shared() == {(7, 0)}
+    assert b.targets((7, 23)) == [(1, 2), "p3_7_0"] and b.target((7, 24)) == "p3_7_0"
+    assert M.loads(M.dumps(M.loads(_with(text)))) == M.loads(_with(text))
+    alone = M.loads(_with(BRAIN + "[brain.pairs]\n'7,0' = 'own'\n'7,1' = [[1, 2], 'own']\n")).brain
+    assert alone is not None and alone.shared() == set()
+    assert alone.derived() == {"p3_7_0": (7, 0), "p3_7_1": (7, 1)}
+
+
+def test_the_pairs_that_play_a_move_follow_its_name():
+    own = "[moves.slam]\nanim = 40\n" + BRAIN
+    text = own + "[brain.pairs]\n'7,13' = 'slam'\n'7,14' = [[1, 2], 'slam']\n'7,15' = 'own'\n"
+    b = M.loads(_with(text)).brain
+    assert b is not None and b.users("slam") == ["7,13", "7,14"] and b.users("p3_7_15") == ["7,15"]
+    b.rename_move("slam", "bash")
+    assert b.pairs["7,13"] == "bash" and b.pairs["7,14"] == [(1, 2), "bash"]
+    assert b.pairs["7,15"] == "own" and b.users("slam") == []
+
+
+def test_a_name_no_pair_derives_is_no_own_move():
+    with pytest.raises(M.ManifestError, match="'p3_7_0' is no own move"):
+        M.loads(_with(BRAIN + "[brain.pairs]\n'7,23' = [[1, 2], 'p3_7_0']\n"))
+    with pytest.raises(M.ManifestError, match="'p3_7_0' is no own move"):
+        M.loads(_with(BRAIN + "[brain.pairs]\n'7,0' = [1, 2]\n'7,23' = 'p3_7_0'\n"))
+
+
+@pytest.mark.parametrize(
+    ("pairs", "why"),
+    [
+        ("[]", "needs a target"),
+        ("[[1, 2], 'bite']", "no own move"),
+        ("[[8, 2], 'own']", "a host pair"),
+        ("[[1, 2], [3]]", "2 values"),
+    ],
+)
+def test_brain_pair_lists_are_checked(pairs, why):
+    with pytest.raises(ManifestError, match=why):
+        M.loads(_with(BRAIN + f"[brain.pairs]\n'7,13' = {pairs}\n"))
 
 
 def test_minimal():
@@ -341,6 +432,37 @@ def test_block_params_are_flat():
     assert M.loads(text) == m and "[[rule]]" not in text
 
 
+def test_steer_window():
+    hunter = OWN + "[moves.o.steer]\nturn = 'hunter'\nrate = 546\nwindow = [10, 40]\n"
+    m = M.loads(_with(hunter))
+    assert m.moves["o"].steer.window == (10, 40) and M.loads(M.dumps(m)) == m
+    assert "window" not in M.dumps(M.loads(_with(OWN)))
+    for window, why in (("[40, 10]", "0 <= from < to"), ("[-1, 4]", "0 <= from < to")):
+        with pytest.raises(M.ManifestError, match=why):
+            M.loads(_with(hunter.replace("[10, 40]", window)))
+    with pytest.raises(M.ManifestError, match="goes with turn"):
+        M.loads(_with(OWN + "[moves.o.steer]\nwindow = [1, 2]\n"))
+
+
+def test_attack_levers():
+    m = M.loads(_with("[[attack]]\nid = 34\npower = 18\nkind = 2\nactive = 59\nvolume = 19\n"))
+    (a,) = m.attacks
+    assert (a.kind, a.active, a.is_empty) == (2, 59, False)
+    assert M.loads(M.dumps(m)) == m and M.Attack(1).is_empty
+    assert not M.Attack(1, active=0).is_empty and not M.Attack(1, kind=1).is_empty
+
+
+def test_brain_attacks():
+    text = BRAIN + "[brain.pairs]\n'7,14' = 'own'\n[brain.attacks]\n'26' = 40\n"
+    m = M.loads(_with(text))
+    assert m.brain is not None and m.brain.attacks == {"26": 40}
+    assert M.loads(M.dumps(m)) == m and "attacks" not in M.dumps(M.loads(_with(BRAIN)))
+    with pytest.raises(M.ManifestError, match="donor record id"):
+        M.loads(_with(BRAIN + "[brain.attacks]\nlegs = 4\n"))
+    with pytest.raises(M.ManifestError, match="0 or more"):
+        M.loads(_with(BRAIN + "[brain.attacks]\n'26' = -1\n"))
+
+
 def test_v1_loads_as_the_graph():
     old = M.loads(V1)
     assert B.compile(old) == B.compile(M.loads(FULL.replace('label = "any run"\n', "")))
@@ -354,8 +476,10 @@ def test_own_move():
     o = m.moves["o"]
     assert o.own and o.pair is None and m.moves == M.loads(M.dumps(m)).moves
     assert o.attacks == [M.AttackWindow(6, 56, 80)] and o.steer.angle == -90.0
+    assert (o.length, o.start, o.stop) == (90, 24, 90)
     assert not M.loads(_with(MOVE)).moves["m"].own
-    assert "steer" not in M.dumps(M.loads(_with(OWN)))
+    text = M.dumps(M.loads(_with(OWN)))
+    assert "steer" not in text and "start" not in text and "stop" not in text
 
 
 CUT = (
@@ -403,20 +527,42 @@ def test_cuts_share_a_source():
         ("[[hitbox]]\nbone = 1\nradius = 1.0\nset = -1\n", "set"),
         ("[[hitzone]]\nstate = 's'\nrows = [[0]]\n", "rows"),
         ("[[attack]]\nid = 1\npower = 256\n", "byte"),
+        ("[[attack]]\nid = 1\nkind = 256\n", "byte"),
+        ("[[attack]]\nid = 1\nactive = -1\n", "byte"),
         ("[[attack]]\nid = 1\n[[attack]]\nid = 1\n", "twice"),
         ("[[effect]]\nmove = 'm'\nframe = 1\nid = 1\nbone = 1\n", "not in moves"),
         ("[moves.m]\nmain = 1\nanim = 1\n", "both main and sub"),
         (MOVE + "length = 9\n", "for an own move"),
+        (MOVE + "start = 9\n", "for an own move"),
+        (MOVE + "stop = 9\n", "for an own move"),
         (MOVE + "[[moves.m.attack]]\nid = 6\nframe = 1\n", "for an own move"),
         (OWN + "hold_max = 9\n", "no claim or hold_max"),
         (OWN + "[[moves.o.attack]]\nid = 6\nframe = 1\n" * 5, "holds 4 attacks"),
         (OWN + "[[moves.o.attack]]\nid = 6\nframe = 9\nend = 9\n", "after frame"),
         (OWN + "length = 0\n", "length"),
+        (OWN + "start = 70000\n", "start and stop are clip frames, 0 to 65535"),
+        (OWN + "stop = -1\n", "start and stop are clip frames"),
+        (OWN + "start = 90\nstop = 80\n", "moves.o: stop 80 is not after start 90"),
+        (
+            OWN + "start = 60\n[[moves.o.attack]]\nid = 6\nframe = 56\n",
+            r"o.attack\[0\]: frame 56 is before",
+        ),
+        (
+            OWN + "stop = 70\n[[moves.o.attack]]\nid = 6\nframe = 56\nend = 80\n",
+            "lasts to 80, past stop 70",
+        ),
+        (OWN + "stop = 50\n[[moves.o.attack]]\nid = 6\nframe = 56\n", "lasts to 56, past stop 50"),
         (OWN + "carrier = [9, 0]\n", "carrier main"),
         (OWN + "[moves.o.steer]\nturn = 'fixed'\n", "angle goes with"),
         (OWN + "[moves.o.steer]\nangle = 90.0\n", "angle goes with"),
         (OWN + "[moves.o.steer]\nturn = 'spin'\n", "one of"),
         (OWN + "[moves.o.steer]\nturn = 'hunter'\nrate = 0\n", "rate"),
+        ("[brain]\ndonor = 23\nsplice = 'base_3'\n", "brain.entry: missing"),
+        (BRAIN + "history = 5\n", "script variable"),
+        (BRAIN + "[brain.pairs]\n'2-3' = [1, 2]\n", "is main,sub"),
+        (BRAIN + "[brain.pairs]\n'2,3' = [8, 2]\n", "a host pair"),
+        (BRAIN + "[brain.pairs]\n'2,3' = [1]\n", "2 values"),
+        (BRAIN + "[brain.when]\nif_tired = 1\n", "expected bool"),
     ],
 )
 def test_invalid(extra, why):

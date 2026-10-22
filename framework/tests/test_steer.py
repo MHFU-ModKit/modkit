@@ -27,6 +27,8 @@ class Steer(ctypes.Structure):
         ("total", ctypes.c_int32),
         ("frames", ctypes.c_uint16),
         ("dir", ctypes.c_uint16),
+        ("win_from", ctypes.c_uint16),
+        ("win_to", ctypes.c_uint16),
     ]
 
 
@@ -133,3 +135,57 @@ def test_step_stops_at_a_wall_before_turning(lib: ctypes.CDLL) -> None:
     p.walls = 0
     assert lib.mhfu_steer_step(e, Vec3(), p, 0) == GO
     assert yaw_of(e) == 0x8400
+
+
+def test_layout() -> None:
+    p = a.STEER_PARAMS
+    assert ctypes.sizeof(Steer) == p.size
+    assert (Steer.dir.offset, Steer.win_from.offset, Steer.win_to.offset) == (
+        p.DIR,
+        p.WIN_FROM,
+        p.WIN_TO,
+    )
+
+
+def turned(lib: ctypes.CDLL, p: Steer, frames: int = 30) -> list[int]:
+    """The YAW change of each clip frame 0..frames-1, the hunter 90 degrees to the left."""
+    e = entity(0x0000, (0.0, 0.0, 0.0))
+    out = []
+    for f in range(frames):
+        before = yaw_of(e)
+        assert lib.mhfu_steer_step(e, Vec3(1000.0, 0.0, 0.0), p, f) == GO
+        out.append((yaw_of(e) - before + TURN // 2) % TURN - TURN // 2)
+    return out
+
+
+@pytest.mark.parametrize("mode", [HUNTER, AWAY])
+def test_window_edges(lib: ctypes.CDLL, mode: int) -> None:
+    """Turns in [from, to) only: the frame before from and the frame at to do not."""
+    step = 64 if mode == HUNTER else -64
+    got = turned(lib, Steer(turn=mode, rate=64, win_from=10, win_to=20))
+    assert got == [0] * 10 + [step] * 10 + [0] * 10
+
+
+def test_no_window_is_the_whole_move(lib: ctypes.CDLL) -> None:
+    assert turned(lib, Steer(turn=HUNTER, rate=64)) == [64] * 30
+
+
+def test_a_window_needs_both_ends_to_be_open(lib: ctypes.CDLL) -> None:
+    """Only 0, 0 means no window: from > 0 with to 0 is an empty one, as is from == to."""
+    assert turned(lib, Steer(turn=HUNTER, rate=64, win_from=5)) == [0] * 30
+    assert turned(lib, Steer(turn=HUNTER, rate=64, win_from=7, win_to=7)) == [0] * 30
+
+
+def test_window_from_zero(lib: ctypes.CDLL) -> None:
+    assert turned(lib, Steer(turn=HUNTER, rate=64, win_from=0, win_to=4)) == [64] * 4 + [0] * 26
+
+
+def test_window_leaves_fixed_and_walls_alone(lib: ctypes.CDLL) -> None:
+    e = entity(0xF000, (0.0, 0.0, 0.0))
+    p = Steer(turn=FIXED, total=0x2000, frames=30, win_from=40, win_to=50)
+    for f in range(30):
+        assert lib.mhfu_steer_step(e, Vec3(), p, f) == GO
+    assert yaw_of(e) == 0x1000
+    wall = entity(0x8000, (0.0, 0.0, 0.0), sectors=0x80000000, stuck=1)
+    p = Steer(turn=HUNTER, walls=1, rate=64, win_from=40, win_to=50)
+    assert lib.mhfu_steer_step(wall, Vec3(1000.0, 0.0, 0.0), p, 0) == STUCK

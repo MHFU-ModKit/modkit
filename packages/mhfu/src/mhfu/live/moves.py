@@ -91,6 +91,11 @@ class Move:
     """Keep the host entry's own attacks and effects (MONSTER_VTABLE.ANIM_EVENTS)."""
     force: bool = False
     """Start while the monster's notice runs instead of waiting for combat (MOVE.FORCE)."""
+    start: int = 0
+    """Clip frame the clip starts at, every part (MOVE.START); 0: the row's own, frame 0 on em75."""
+    stop: int = 0
+    """Clip frame `part`'s cursor ends the move at, whatever the blend and the rate (MOVE.STOP);
+    0: none."""
 
     @classmethod
     def unpack(cls, raw: bytes) -> Move:
@@ -107,6 +112,7 @@ class Move:
             (end,) = struct.unpack_from("<H", raw, at + a.MOVE_ATTACK.END)
             attacks.append(Attack(id_, frame, end or None))
         (spawner,) = struct.unpack_from("<I", raw, f.SPAWNER)
+        start, stop = struct.unpack_from("<HH", raw, f.START)
         return cls(
             entry,
             tuple(attacks),
@@ -118,6 +124,8 @@ class Move:
             spawner,
             bool(raw[f.HOST_ATTACKS]),
             bool(raw[f.FORCE]),
+            start,
+            stop,
         )
 
     def pack(self) -> bytes:
@@ -138,6 +146,7 @@ class Move:
             struct.pack_into("<H", out, at + a.MOVE_ATTACK.END, atk.end or 0)
         struct.pack_into("<I", out, f.SPAWNER, self.spawner)
         struct.pack_into("<BB", out, f.HOST_ATTACKS, int(self.host_attacks), int(self.force))
+        struct.pack_into("<HH", out, f.START, self.start, self.stop)
         return bytes(out)
 
 
@@ -158,6 +167,8 @@ class Steer:
     dir: float = 0.0
     """Degrees of the travel against YAW: which wall sectors count as ahead."""
     stuck: tuple[int, int, int] = (0, 6, 1)
+    window: tuple[int, int] = (0, 0)
+    """Clip frames [from, to) the hunter and away turns apply in; 0, 0 the whole move."""
 
     def pack(self) -> bytes:
         """struct STEER_SPEC."""
@@ -172,6 +183,7 @@ class Steer:
             "<BBH", out, f.STEER + p.TURN, TURNS.index(self.turn), self.walls, self.rate
         )
         struct.pack_into("<iHH", out, f.STEER + p.TOTAL, total, self.frames, _yaw(self.dir))
+        struct.pack_into("<HH", out, f.STEER + p.WIN_FROM, *self.window)
         struct.pack_into("<HBBB", out, f.KEY_COUNT, len(self.curve), *self.stuck)
         struct.pack_into(f"<{len(self.curve)}H", out, f.KEYS, *(k & 0xFFFF for k in self.curve))
         return bytes(out)

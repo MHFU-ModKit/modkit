@@ -71,18 +71,19 @@ void mhfu_host_enter(uint32_t e, uint32_t m, uint32_t s, uint32_t mode)
     record('E', e, m, s, mode);
     uint8_t *cell = at(e + MHFU_ENTITY_MAIN_STATE, 2);
     if (cell) { cell[0] = (uint8_t)m; cell[1] = (uint8_t)s; }
+    if (m == 0 && s == 2) mhfu_mem_write_u8(e + MHFU_ENTITY_SCRIPT_WAKE, 1);   /* the hub wakes the AI script */
 }
-void mhfu_host_execute(uint32_t e, uint32_t entry)
+void mhfu_host_execute(uint32_t e, uint32_t entry, uint32_t start)
 {
-    record('X', e, entry, 0, 0);
+    record('X', e, entry, 0, start);
     for (uint32_t k = 0; k < MHFU_ENTITY_CLIP_BLOCKS_COUNT; k++) {
         uint32_t b = e + MHFU_ENTITY_CLIP_BLOCKS + k * MHFU_CLIP_BLOCK_SIZE;
         uint32_t node = 0x5000u + entry;
-        float zero = 0;
+        float phase = (float)start;
         uint16_t playing = 1;
         memcpy(at(b + MHFU_CLIP_BLOCK_NODE, 4), &node, 4);
         memcpy(at(b + MHFU_CLIP_BLOCK_END, 4), &g_clip_end, 4);
-        memcpy(at(b + MHFU_CLIP_BLOCK_PHASE, 4), &zero, 4);
+        memcpy(at(b + MHFU_CLIP_BLOCK_PHASE, 4), &phase, 4);
         memcpy(at(b + MHFU_CLIP_BLOCK_FLAGS, 2), &playing, 2);
     }
 }

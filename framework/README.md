@@ -116,6 +116,12 @@ for while the monster's notice runs (it knows the player, not yet in combat) wai
 and the combat entry; the call's `force` starts it at once (`mhfu.move_play(ent, spec, true)`).
 `mhfu.monster_state(ent)` says whether it noticed the player, is in combat, runs its notice.
 
+`start` and `stop` are clip frames: the clip starts at `start` (the executor's a3, so every part
+agrees and an attack before it never spawns) and the move ends when the timing part's cursor
+reaches `stop`, as the clip's end or `length` would end it. Neither depends on the blend (2 to 5
+AI frames held at `start`) or on the cursor's rate (2.0 a frame, 2.8 enraged); `length` counts
+AI frames from the dispatch and does.
+
 ## Monster events
 
 The same AI step finds what a mod may answer, one AI frame after the engine's change at most,
@@ -130,13 +136,27 @@ the engine counts the flinch and applies the damage, then enters the move's carr
 
 ## Own moves from a manifest
 
-A port's own moves sit in a registry by slot (`mhfu.em_move`). The seam's brain, in C on the
-AI step, plays one through the move player when asked (`mhfu.em_play`), when the move before it
-ends on its clip, its length or a wall and names it as its `after`, or when a rule says
-(`play_move`, and `from_move` to fire while one plays). `mhfu_port.lua` does all of it from the
+A port's own moves sit in a registry by slot (`mhfu.em_move`): `mhfu.addr.EM_MOVES.MOVES_COUNT`
+(96) of them, and the turn keys they share (`EM_MOVES.KEYS_COUNT`, 5632), in one 20.3 KB
+partition block. The seam's
+brain, in C on the AI step, plays one through the move player when asked (`mhfu.em_play`), when the
+move before it ends on its clip, its length, its stop or a wall and names it as its `after`, or when a rule
+says (`play_move`, and `from_move` to fire while one plays). `mhfu_port.lua` does all of it from the
 port's generated `<name>_moves.lua`: `port:move("stamp")` (`ports/README.md` "Moves and
 behaviour"). Its `tip` goes to `mhfu.em_tip`: each tip joint takes its carrier's pose after the
 species brain, so the tail stays whole until it drops.
+
+An own move's `steer` (`mhfu.MoveSteer`) sets how YAW follows its clip: a turn curve, a turn
+toward or away from the hunter at `rate` units a frame, a fixed turn, walls that end the move. The
+hunter and away turns apply on every frame of the move unless the steer has a `window = { from,
+to }`: then only while the clip frame (part 0's cursor) is in `[from, to)`, as the donor turns in
+a cursor window.
+
+An AI script plays own move k with `enter 16 k 0` (`mhfu.addr.OWN_MOVE_MAIN`): the enter-action
+stub enters the slot's carrier (the hub `(0,2)` for an empty or out-of-range slot, the game never
+sees main 16), files a forced play, and the brain starts the move at the next AI step; the script
+carries on after its `enter` once the move and its `after` chain end and the carrier hands back.
+`mhfu.em_status()` has `own_enters` and `own_last`, and the ring shows `(16, k)`.
 
 ## Rules on monster events
 
@@ -176,6 +196,43 @@ starts rage (`true` restores it). `mhfu.em_sever_gate(pct)` wraps the species' t
 HP; the species' own gate still runs on the cuts it allows. A port's moves module sets the last
 two with `natural_rage = false` and `sever_below = <pct>`; the quest's end drops both.
 
+## Fatigue
+
+MHFU's monsters tire of nothing and its AI script cannot count, so `mhfu.em_fatigue{ ... }`
+(`include/mhfu/fatigue.h`) keeps a stamina for the wrapped species' monster in C and shows it to
+the script as gauge A low: `if_gauge_a_low` is true at or below 30 % of gauge A, which em75 never
+tests and nothing drains. The brain charges a cost when the monster enters a pair (`pairs = {
+{ main, sub, cost } }`) and when the move player starts one of our own moves (`own = { [slot] =
+cost }`), halved at or below `low_hp` percent of HP and never while enraged or tired; at 0 stamina
+the monster is tired for `tired` AI frames (gauge A low, `calm` keeps its anger from starting rage)
+and then has `refill` stamina. The first AI step picks the stamina from `starts` by the board's
+generator, and a new monster starts afresh. A moves module's `fatigue` table does all of it with
+the port (`own` keyed by move name there too); the quest's end, `mhfu.em_clear()` and
+`mhfu.em_fatigue(nil)` drop it, and `mhfu.em_fatigue_status()` reads the state. Do not arm it on a
+species whose AI step drains gauge A itself (those that call `GAUGE_A_LATCH`).
+
+## Charge
+
+MHP3rd's Zinogre charges a gauge, transforms at 100 and stays charged until hits wear it out; its
+AI script asks the species "charged?" (`mhfu.addr.CHARGE_QUERY_CHARGED`, 0) and "is the cooldown
+running?" (`CHARGE_QUERY_COOLDOWN`, 6) with `switch_query`, which em75 answers 0 to.
+`mhfu.em_charge{ ... }` (`include/mhfu/charge.h`) keeps that state in C for the wrapped species'
+monster and answers the two: em_vhook wraps the species' query slot (`MONSTER_VTABLE.QUERY`) with a
+frame-free, branchless stub that returns the helper's table for that monster, and the species' own
+answer for every other entity and arg.
+
+The gauge rises by `ups[slot] = { g95, g75, g40, glow }` (at 95, 75, 40 percent of the monster's HP,
+and below) when the move player starts that own move, whoever asked, and `cooldown_up` frames of
+cooldown start; they run down while it is not charged. A hit (an AI frame in which its HP fell)
+takes `chip_gauge` from the gauge, or `chip_durability` from the durability while charged. At 100,
+once the move player is idle and no chain is due, it plays the `transform` own move, forced: its
+start sets charged, durability 100, gauge 100. Durability 0 or a `discharge` pair (the knockout, the
+traps) discharges it: gauge 0, `cooldown_out` frames of cooldown. The state stays across areas; a new
+monster, the quest's end, `mhfu.em_clear()` and `mhfu.em_charge(nil)` reset or drop it, and
+`mhfu.em_charge_status()` reads it. A moves module's `charge` table does all of it with the port,
+its `ups` keys and `transform` by move name or slot; `mhfu-port` writes it from the donor's code
+with `[brain] charge` (docs/formats/p3rd_ai_script.md).
+
 ## AI scripts from the stick
 
 `mhfu brain deploy EM [FILE]` writes a species' AI script as an `MHAI` stick container,
@@ -212,7 +269,7 @@ declared API; it needs a host `c++` (else those tests skip) and `lupa`, which `u
 
 ## Status
 
-Runs in PPSSPP and on a real PSP under PRO CFW, for MHFU EU only. The Lua API is version 6
+Runs in PPSSPP and on a real PSP under PRO CFW, for MHFU EU only. The Lua API is version 10
 (`mhfu.api_version`); `mhfu.clone_combat` is experimental and can crash the game.
 
 ## Licence

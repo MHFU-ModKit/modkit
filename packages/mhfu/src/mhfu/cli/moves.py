@@ -64,6 +64,8 @@ def register(sub: Subparsers) -> None:
     c.add_argument("--carrier", type=_ints, default=(0, 2), metavar="MAIN,SUB")
     c.add_argument("--back", type=_ints, metavar="MAIN,SUB[,MODE]", help="entered at the end")
     c.add_argument("--length", type=int, default=0, help="AI frames; default the clip's")
+    c.add_argument("--start", type=int, default=0, help="clip frame the clip starts at")
+    c.add_argument("--stop", type=int, default=0, help="clip frame the move ends at")
     c.add_argument("--skip", action="store_true", help="no host AI step while the clip plays")
     c.add_argument("--part", type=int, default=0, help="body part whose cursor times attacks")
     c.add_argument(
@@ -83,6 +85,13 @@ def register(sub: Subparsers) -> None:
     c.add_argument("--walls", action="store_true", help="a wall ahead ends the move")
     c.add_argument("--dir", type=float, default=0.0, help="degrees of the travel against YAW")
     c.add_argument("--stuck", type=_ints, default=(0, 6, 1), metavar="MAIN,SUB,MODE")
+    c.add_argument(
+        "--window",
+        type=_ints,
+        default=(0, 0),
+        metavar="FROM,TO",
+        help="clip frames hunter, away turn",
+    )
     c.set_defaults(run=play)
 
     c = cmds.add_parser("watch", help="report the next moves something else plays")
@@ -219,6 +228,8 @@ def play(args: argparse.Namespace) -> int:
         args.part,
         host_attacks=args.host_attacks,
         force=args.force,
+        start=args.start,
+        stop=args.stop,
     )
     curve: tuple[int, ...] = ()
     if args.curve:
@@ -236,6 +247,7 @@ def play(args: argparse.Namespace) -> int:
         args.walls,
         args.dir,
         (args.stuck[0], args.stuck[1], args.stuck[2]),
+        (args.window[0], args.window[1]),
     )
     ends: dict[str, int] = {}
     size = _log_size(args)

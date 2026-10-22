@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 sp00ktober
+"""`mhfu-port own`: the own moves a manifest's `[brain.pairs] ... = "own"` derives from the donor,
+and what the derivation could not carry over."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from mhfu.em.script.check import Finding
+
+from .. import data, manifest, moves, sequence
+from ..brain import own
+from . import finding_line
+
+if TYPE_CHECKING:
+    from . import Subparsers
+
+
+def register(sub: Subparsers) -> None:
+    p = sub.add_parser(
+        "own", help="list the own moves a manifest's [brain.pairs] derive from the donor"
+    )
+    p.add_argument("manifest", type=Path)
+    data.add_arguments(p)
+    p.set_defaults(run=run)
+
+
+def say(f: Finding) -> None:
+    """A finding on stderr, for the commands that build with derived moves."""
+    print(finding_line(f), file=sys.stderr)
+
+
+def run(args: argparse.Namespace) -> int:
+    m = manifest.load(args.manifest)
+    if m.brain is None or not own.pairs(m.brain):
+        raise ValueError(f"{args.manifest} has no [brain.pairs] entry that is {manifest.OWN!r}")
+    games = data.from_arguments(args)
+    out, findings = own.expand(m, games)
+    slots = moves.slots(out)
+    print(f"own {m.port.name}: MHP3rd {m.brain.donor}, {len(own.pairs(m.brain))} pairs")
+    for pair in own.pairs(m.brain):
+        head = manifest.own_name(pair)
+        print(f"{pair[0]},{pair[1]}", end="")
+        if head in m.moves:
+            print(f"  {head}: the manifest's own move")
+            continue
+        steps = sequence.chain(out, head)
+        print(f"  {head}" + (f" + {len(steps) - 1} more" if len(steps) > 1 else ""))
+        for name in steps:
+            print(describe(out, name, slots.get(name)))
+    errors = [f for f in findings if f.level == "error"]
+    for f in findings:
+        print(finding_line(f))
+    return 1 if errors else 0
+
+
+def describe(m: manifest.Manifest, name: str, slot: int | None) -> str:
+    """One derived move: its slot, clip, frames, length and steer, then its attacks."""
+    mv = m.moves[name]
+    clip = m.clips[mv.clip] if mv.clip is not None else None
+    head = f"  {name} (slot {slot})  clip {clip.id if clip else mv.anim} {mv.clip}"
+    if mv.start or mv.stop:
+        head += f"  frames {mv.start}-{mv.stop or 'end'}"
+    if mv.length is not None:
+        head += f"  {mv.length} AI frames"
+    s = mv.steer
+    if s.turn == "hunter":
+        window = "" if s.window is None else f" in frames {s.window[0]}-{s.window[1]}"
+        head += f"  turns to the hunter at {s.rate or 'the host charge'}{window}"
+    lines = [head]
+    spare = {a.id for a in m.attacks}
+    for a in mv.attacks:
+        kind = " (spare)" if a.id in spare else ""
+        lines.append(f"      {a.label} -> host record {a.id}{kind}, frames {a.frame}-{a.end}")
+    return "\n".join(lines)

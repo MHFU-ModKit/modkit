@@ -81,12 +81,19 @@ player on its carrier (none given: the host's hub, `mhfu_port.moves.HUBS`, em75'
 [moves.stamp]
 clip = "stamp_right_claw"
 attack = [{ id = 6, frame = 56, end = 80 }]   # an attack record, spawned and ended at clip frames
+start = 24                                     # the clip starts at this frame ...
+stop = 86                                      # ... and the move ends at this one
 after = "dash"                                 # played when this one ends; own or a pair
 
 [moves.stamp.steer]
 turn = "clip"       # or still, hunter, away, fixed (angle over frames)
 walls = true        # a wall ahead ends it
 ```
+
+`start` and `stop` are clip frames, so they hold at any blend and cursor rate; `length` is AI
+frames from the dispatch, which the blend and the rate change. An attack must lie inside
+`[start, stop]`. A move derived from a donor pair gets its `start` and `stop` from the donor's own
+clip frames (`mhfu-port own` lists them).
 
 `[behaviour]` decides when a move plays, as a graph. A block is `[behaviour.blocks.<id>]`: its
 `kind`, the kind's params flat beside it, `at` (canvas x, y), `next` (the blocks it feeds), `play`
@@ -165,8 +172,8 @@ A signal fires its rules in the AI frame the brain takes it, once. An unknown na
 
 A flinch rule that plays a move is armed ahead of the flinch: its conditions are judged in the
 AI frame before the host step that flinches, so a counter it tests misses the flinch about to be
-counted, in any order. The Zinogre counts flinches on a no-play rule and charges up from idle
-once `flinches` is 2, not on the flinch itself.
+counted, in any order: a rule that counts flinches and one that acts on the count go on the
+following frames, not on the flinch itself.
 
 `enrage` starts the engine's own rage, roar included, unless the monster is enraged; `calm` ends
 it, if it is. In a mod, `port:enrage()` and `port:calm()` ask the same, applied in the brain's
@@ -201,22 +208,28 @@ port with them; `mhfu move play --own NAME [--force]` plays one of its own moves
 `framework/lua/examples/ported_brute.lua` loads the Brute Tigrex in place of a Giadrome;
 `ported_zinogre.lua` the Zinogre with its manifest's moves and behaviour.
 
-The Zinogre's paths, after the lunge and dash chains (higher is checked first; 2, 4 and 7 play
-nothing and so run first):
+The Zinogre's moves are the donor's: `[brain]` splices MHP3rd's own script (`base_3`, its charged
+picker `base_6` and its normal one `base_5`) into em75's brain, so what he picks, when he charges
+up (the helper's gauge, `[brain] charge`) and when he is tired (`[brain] fatigue`) is the donor's.
+A donor pair plays a host pair (a turn), the authored move that is the donor's
+(`charge_up`, `dash`, `dash_stop`, `break_howl`) or an own move derived from the donor
+(`"own"`); a pair that only turns, then enters another, turns on em75's (1, 2) and plays the
+move of the pair it leads to; pairs whose derived moves come out identical (twins) share the
+first one's. The donor's walks are derived moves on their own walk clips: em75's (1, 0) walks to a
+destination its own script sets first (docs/formats/p3rd_ai_script.md). His 89 own moves, the 14 authored and the 75 derived, take 4642 of
+the registry's 5632 turn keys and 89 of its 96 slots.
+
+What stays of the hand-built rules, after the brain's own picks (2 plays nothing and so runs
+first):
 
 1. The notice plays `notice_howl` at once, before anything that idles.
 2. Combat start sets the flag `in_combat`, combat end clears it; both play nothing.
 3. A break of the head plays `flinch_head`; of the left foreleg `topple_left`; of the right
    `topple_right`; of any part `break_howl`. A topple is a sequence: fall, lie helpless, get up,
    then `stamp` (`after`).
-4. A flinch adds 1 to `flinches` and plays nothing.
-5. Idle, in combat: with `flinches` at least 2, set it to 0 and play `charge_up`; with the
-   hunter 1500 away, play `dash`, then wait 300; below 30% HP, play `notice_howl` once.
-6. The signal `roar` plays `notice_howl`.
-7. Once `charge_up` has played 120 AI frames, just short of its end (121 by its clip, 125
-   measured), he enrages, then waits 250 frames. The roar starts one AI frame after the enrage,
-   so it comes after the charge; on the charge path itself it would cut the charge after one
-   frame.
+4. The signal `roar` plays `notice_howl`.
+5. While the lunge (1, 4) plays, em75's own interrupts skid it by distance and time
+   (`lunge_stop`).
 
 His tail cuts only below 50% HP (`sever_below`); natural rage stays on.
 

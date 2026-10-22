@@ -20,21 +20,23 @@ kept across the views of a header draws only the routines the edit replaced agai
 from __future__ import annotations
 
 import re
-from collections import Counter
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from functools import cache, cached_property
+from functools import cache, cached_property, lru_cache
 
 from mhfu import files, stage
 from mhfu.em import script
 from mhfu.em.script import catalogue as cat
 from mhfu.em.script import ir, source
+from mhfu.em.script import vars as script_vars
 from mhfu.em.script.brainfile import BrainFile
 from mhfu.em.script.graph import ENTRY, join_id
-from mhfu.em.script.opcodes import BY_NAME, Op
+from mhfu.em.script.opcodes import BY_NAME
 from mhfu.em.script.source import Line
+from mhfu.em.script.vars import var_of as var_of  # the panels import it from here
 from mhfu.files import Extracted
 from mhfu.memory import Space
+from mhfu.overlay import Overlay
 from mhfu.structs import Species
 
 
@@ -109,14 +111,6 @@ def words(
     )
 
 
-def var_of(op: Op, args: Mapping[str, ir.Value]) -> int | None:
-    """The script variable 1 to 9 a node of `op` with `args` sets or tests; None for none."""
-    if op.name == "if_var3_zero":
-        return 3
-    v = next((args.get(i.name) for i in cat.entry(op).operands if i.fmt is cat.Fmt.VAR), None)
-    return v if isinstance(v, int) and 1 <= v <= cat.VARS else None
-
-
 def pair_of(node: object) -> tuple[int, int] | None:
     """The move pair a Move node plays; None for any other node, or one whose pair is not two
     numbers."""
@@ -128,21 +122,34 @@ def pair_of(node: object) -> tuple[int, int] | None:
 
 @dataclass(frozen=True)
 class Uses:
-    """How often a script names each variable, and how many distance ranges it branches on."""
+    """What the Names list shows: the variables as `vars.survey` finds them, and how many
+    distance ranges the script branches on."""
 
-    vars: Counter[int]
+    vars: Mapping[int, script_vars.Var]
     ranges: int
 
 
-def uses(p: ir.Program) -> Uses:
-    out: Counter[int] = Counter()
-    ranges = 0
-    for n in p.nodes():
-        if isinstance(n, ir.Insn | ir.Block):
-            if (v := var_of(n.op, n.args)) is not None:
-                out[v] += 1
-            ranges += n.op.name == "switch_range"
-    return Uses(out, ranges)
+@lru_cache(maxsize=4)
+def _em(game: Extracted, species: int) -> Overlay:
+    return game.em(species)
+
+
+def em_overlay(game: Callable[[], Extracted], species: int) -> Overlay | None:
+    """The em overlay of `species` that the survey scans for its stores; None without the game or
+    its file. Kept per game, so a rebuild reads nothing again."""
+    try:
+        return _em(game(), species)
+    except (OSError, ValueError, LookupError):
+        return None
+
+
+def uses(p: ir.Program, overlay: Overlay | None = None) -> Uses:
+    """`p`'s variables (`vars.survey`, which scans `overlay` for the species' own stores) and
+    distance-range switches."""
+    ranges = sum(
+        isinstance(n, ir.Insn | ir.Block) and n.op.name == "switch_range" for n in p.nodes()
+    )
+    return Uses(script_vars.survey(p, overlay), ranges)
 
 
 @dataclass(frozen=True)

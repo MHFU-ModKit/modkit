@@ -177,8 +177,8 @@ def built(games: Data, ports: Path) -> Callable[[str], bytes]:
 
 
 @pytest.fixture(scope="session")
-def em75(games: Data) -> SpeciesIntel:
-    return SpeciesIntel(intel.build(intel.Game(games.fu), 75))
+def em75(mhfu_data: Path) -> SpeciesIntel:
+    return SpeciesIntel(intel.build(intel.Game(Extracted.find(mhfu_data)), 75))
 
 
 # ---- a synthetic port: every panel branch without game data ----

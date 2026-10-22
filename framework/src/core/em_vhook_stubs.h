@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
- * em_vhook's three stubs, assembled word by word. Plain C with no PSP SDK (only
+ * em_vhook's four stubs, assembled word by word. Plain C with no PSP SDK (only
  * <stdint.h>, mhfu/mips.h and addresses.gen.h), so the same builders also compile
  * on the host, where a check disassembles the words and asserts:
  *   - no branch in either stub: every decision is a MOVN/MOVZ select, so the JIT
@@ -20,6 +20,7 @@
 
 #include <stdint.h>
 #include "mhfu/mips.h"
+#include "mhfu/move.h"        /* MHFU_MOVE_HUB_MAIN/SUB */
 #include "addresses.gen.h"
 
 /* ---- config block layout (byte offsets from the block base) --------------- */
@@ -45,12 +46,13 @@
 #define CFG_D2          0x40   /* f32 bits  player<->monster XZ distance^2; the brain's */
 #define CFG_D2_PREV     0x44   /* f32 bits  ... at the previous tick            */
 #define CFG_BRAIN_FIRES 0x48   /* u32  rule fires, total                        */
-#define CFG_SCRATCH     0x4C   /* u32  spare                                    */
+#define CFG_OWN_ENTERS  0x4C   /* u32  slot-32 enters of main MHFU_OWN_MOVE_MAIN */
 /* request slot: the C brain's (mhfu_em_request) */
 #define CFG_REQ_PENDING 0x50   /* u32  1 = issue on the next frame              */
 #define CFG_REQ_MAIN    0x54   /* u8 */
 #define CFG_REQ_SUB     0x55   /* u8 */
 #define CFG_REQ_MODE    0x56   /* u8 */
+#define CFG_OWN_LAST    0x57   /* u8   slot + 1 of the last own enter that filed a play; 0 none */
 #define CFG_REQ_DONE    0x58   /* u32  requests issued                          */
 #define CFG_REQ_RESULT  0x5C   /* u32  (main<<8)|sub read back after the call   */
 /* substitution table: MHFU_EM_SUBS entries of 8 bytes */
@@ -95,8 +97,9 @@
 
 /* slot sizes, in instructions. The check asserts the builders fit. */
 #define STUB_AI_INSNS   480
-#define STUB_ACT_INSNS  240
+#define STUB_ACT_INSNS  272
 #define STUB_EVT_INSNS  16
+#define STUB_QRY_INSNS  24
 
 /* -------------------------------------------------------------------------- */
 /* register aliases used below */
@@ -118,6 +121,7 @@
 #define R_SP MIPS_REG_SP
 #define R_RA MIPS_REG_RA
 #define R_V0 MIPS_REG_V0
+#define R_V1 MIPS_REG_V1
 
 typedef struct {
     uint32_t *s;
@@ -302,6 +306,79 @@ static inline void emv_react(emv_asm_t *a)
     E(mips_sw(R_T6, CFG_REACT_LAST, R_T7));
 }
 
+/* x * k for a constant k in shifts and adds: rd = rs * k, tmp scratch; rd differs from rs and tmp. */
+static inline void emv_mul_const(emv_asm_t *a, int rd, int rs, int tmp, uint32_t k)
+{
+    int first = 1;
+    for (int b = 0; b < 32; b++) {
+        if (!((k >> b) & 1u)) continue;
+        if (first) {
+            E(mips_sll(rd, rs, (uint32_t)b));
+            first = 0;
+        } else {
+            E(mips_sll(tmp, rs, (uint32_t)b));
+            E(mips_addu(rd, rd, tmp));
+        }
+    }
+}
+
+/* An own-move enter, after the substitution table and the reaction replacement, with t0/t1 the
+ * main and id as passed, t7 the config block and `moves` the registry's address (0: none). The id is
+ * a registry slot. The game never sees main MHFU_OWN_MOVE_MAIN: a1/a2 become the slot's carrier
+ * when the slot holds a move, else em75's hub; with a move, the play is filed as mhfu_em_play files
+ * it (EM_MOVES REQ_SLOT, REQ_FORCE 1, REQ_ENT the entity: the brain starts it at the next AI step,
+ * the AI script's wake quieted as for any move on the hub), and every store of a miss lands in the
+ * sink. The slot is clamped before its address is formed, so an id past the registry reads slot 0.
+ * Clobbers t0, t1, t5, t6, t9, v0, v1; keeps a0, a3, t3, t4, t7, t8. */
+static inline void emv_own_move(emv_asm_t *a, uint32_t moves)
+{
+    E(mips_xori(R_T5, R_T0, MHFU_OWN_MOVE_MAIN));
+    E(mips_sltiu(R_T5, R_T5, 1));                      /* t5 = an own enter */
+    E(mips_addu(R_T0, R_ZERO, R_ZERO));                /* t0 = the slot holds a move: no */
+    if (moves) {
+        E(mips_sltiu(R_T6, R_T1, MHFU_EM_MOVES_MOVES_COUNT));   /* the id is a slot */
+        E(mips_addu(R_V1, R_ZERO, R_ZERO));
+        E(mips_movn(R_V1, R_T1, R_T6));                /* v1 = the slot, 0 past the registry */
+        emv_mul_const(a, R_T9, R_V1, R_V0, MHFU_EM_OWN_SIZE);
+        E(mips_lui(R_V0, (uint16_t)(moves >> 16)));
+        E(mips_ori(R_V0, R_V0, (uint16_t)moves));      /* v0 = the registry */
+        E(mips_addu(R_T9, R_T9, R_V0));                /* t9 = the slot, short of MOVES */
+        E(mips_lw(R_T0, (int16_t)(MHFU_EM_MOVES_MOVES + MHFU_EM_OWN_VALID), R_T9));
+        E(mips_sltu(R_T0, R_ZERO, R_T0));
+        E(mips_and(R_T0, R_T0, R_T6));
+        E(mips_and(R_T0, R_T0, R_T5));                 /* t0 = an own enter of a slot with a move */
+        E(mips_lbu(R_T6, (int16_t)(MHFU_EM_MOVES_MOVES + MHFU_EM_OWN_MOVE + MHFU_MOVE_CARRIER_MAIN),
+                   R_T9));
+        E(mips_lbu(R_T9, (int16_t)(MHFU_EM_MOVES_MOVES + MHFU_EM_OWN_MOVE + MHFU_MOVE_CARRIER_SUB),
+                   R_T9));
+    }
+    E(mips_addiu(R_V1, R_ZERO, MHFU_MOVE_HUB_MAIN));
+    E(mips_movn(R_A1, R_V1, R_T5));
+    E(mips_addiu(R_V1, R_ZERO, MHFU_MOVE_HUB_SUB));
+    E(mips_movn(R_A2, R_V1, R_T5));
+    E(mips_lw(R_V1, CFG_OWN_ENTERS, R_T7));
+    E(mips_addu(R_V1, R_V1, R_T5));
+    E(mips_sw(R_V1, CFG_OWN_ENTERS, R_T7));
+    if (!moves) return;
+    E(mips_movn(R_A1, R_T6, R_T0));
+    E(mips_movn(R_A2, R_T9, R_T0));
+    E(mips_lbu(R_V1, CFG_OWN_LAST, R_T7));
+    E(mips_addiu(R_T6, R_T1, 1));
+    E(mips_movn(R_V1, R_T6, R_T0));
+    E(mips_sb(R_V1, CFG_OWN_LAST, R_T7));
+    E(mips_addiu(R_T6, R_T7, CFG_SINK));               /* t6 = the sink */
+    E(mips_addiu(R_T5, R_ZERO, 1));                    /* REQ_FORCE */
+    const struct { int off; int reg; } req[] = {
+        { MHFU_EM_MOVES_REQ_SLOT, R_T1 }, { MHFU_EM_MOVES_REQ_FORCE, R_T5 },
+        { MHFU_EM_MOVES_REQ_ENT, R_A0 },              /* last: the brain takes it by the entity */
+    };
+    for (int k = 0; k < 3; k++) {
+        E(mips_addiu(R_V1, R_V0, (int16_t)req[k].off));
+        E(mips_movz(R_V1, R_T6, R_T0));
+        E(mips_sw((uint32_t)req[k].reg, 0, R_V1));
+    }
+}
+
 /* --- slot 32: substitution pre part, the original, the budget post part. --- */
 #define ACT_FRAME   0x10
 #define ACT_SP_ENT  0x00
@@ -310,7 +387,7 @@ static inline void emv_react(emv_asm_t *a)
 #define ACT_SP_RA   0x0C
 
 static inline int emv_build_act_stub(uint32_t *out, int cap, uint32_t cfg,
-                                     uint32_t original, int *overflow)
+                                     uint32_t original, uint32_t moves, int *overflow)
 {
     emv_asm_t A = { out, 0, cap, 0 };
     emv_asm_t *a = &A;
@@ -365,6 +442,7 @@ static inline int emv_build_act_stub(uint32_t *out, int cap, uint32_t cfg,
         E(mips_sw(R_T6, B + SUB_LEFT, R_T7));
     }
     emv_react(a);
+    emv_own_move(a, moves);
     /* bookkeeping on the whole table */
     E(mips_lw(R_T6, CFG_SUB_HITS, R_T7));
     E(mips_addu(R_T6, R_T6, R_T8));
@@ -463,6 +541,46 @@ static inline int emv_build_events_stub(uint32_t *out, int cap, uint32_t cfg,
     E(mips_lui(R_T6, (uint16_t)(ret_stub >> 16)));
     E(mips_ori(R_T6, R_T6, (uint16_t)ret_stub));
     E(mips_movn(R_T9, R_T6, R_T0));
+    E(mips_jr(R_T9));
+    E(MIPS_NOP);
+
+    if (overflow) *overflow = A.overflow;
+    return A.i;
+}
+
+/* --- the species' query (MONSTER_VTABLE.QUERY), what the AI script's switch_query asks:
+ * query(entity, arg). For the charge block's monster the answer is its table's entry (v0 =
+ * answers[arg], 0 past the table) and the ret stub returns it; any other entity, or no monster
+ * yet, runs the species' own query with a0 and a1 as they came. Frame-free and branchless: the
+ * table is read whatever the entity, and one jr goes to the original or to the ret stub. ---- */
+static_assert(MHFU_CHARGE_ANSWERS_COUNT == 8, "the stub masks the arg with 7");
+static inline int emv_build_query_stub(uint32_t *out, int cap, uint32_t chg, uint32_t original,
+                                       uint32_t ret_stub, int *overflow)
+{
+    emv_asm_t A = { out, 0, cap, 0 };
+    emv_asm_t *a = &A;
+
+    E(mips_lui(R_T7, (uint16_t)(chg >> 16)));
+    E(mips_ori(R_T7, R_T7, (uint16_t)chg));
+    E(mips_lw(R_T0, MHFU_CHARGE_ENTITY, R_T7));
+    E(mips_xor(R_T1, R_T0, R_A0));
+    E(mips_sltiu(R_T1, R_T1, 1));                      /* the entity is the block's */
+    E(mips_sltu(R_T0, R_ZERO, R_T0));                  /* the block has one */
+    E(mips_and(R_T1, R_T1, R_T0));                     /* t1 = answer it */
+    E(mips_sltiu(R_T2, R_A1, MHFU_CHARGE_ANSWERS_COUNT));   /* the arg is in the table */
+    E(mips_andi(R_T3, R_A1, MHFU_CHARGE_ANSWERS_COUNT - 1));
+    E(mips_sll(R_T3, R_T3, 2));
+    E(mips_addu(R_T3, R_T3, R_T7));
+    E(mips_lw(R_V0, MHFU_CHARGE_ANSWERS, R_T3));
+    E(mips_movz(R_V0, R_ZERO, R_T2));                  /* an arg past the table answers 0 */
+    E(mips_lw(R_T4, MHFU_CHARGE_ASKED, R_T7));
+    E(mips_addu(R_T4, R_T4, R_T1));
+    E(mips_sw(R_T4, MHFU_CHARGE_ASKED, R_T7));
+    E(mips_lui(R_T9, (uint16_t)(original >> 16)));
+    E(mips_ori(R_T9, R_T9, (uint16_t)original));
+    E(mips_lui(R_T6, (uint16_t)(ret_stub >> 16)));
+    E(mips_ori(R_T6, R_T6, (uint16_t)ret_stub));
+    E(mips_movn(R_T9, R_T6, R_T1));
     E(mips_jr(R_T9));
     E(MIPS_NOP);
 

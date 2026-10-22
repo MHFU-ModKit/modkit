@@ -87,6 +87,10 @@ def sb(rt: Reg, offset: int, base: Reg) -> int:
     return _i(0x28, base, rt, offset)
 
 
+def sh(rt: Reg, offset: int, base: Reg) -> int:
+    return _i(0x29, base, rt, offset)
+
+
 def beq(rs: Reg, rt: Reg, target: int, at: int, likely: bool = False) -> int:
     return _branch(0x14 if likely else 0x04, rs, rt, target, at)
 
@@ -127,6 +131,58 @@ def sll(rd: Reg, rt: Reg, sa: int) -> int:
 def mtc1(rt: Reg, fs: int) -> int:
     """`mtc1 rt, $f<fs>`."""
     return 0x11 << 26 | 0x04 << 21 | gpr(rt) << 16 | (fs & 0x1F) << 11
+
+
+def mfc1(rt: Reg, fs: int) -> int:
+    """`mfc1 rt, $f<fs>`."""
+    return 0x11 << 26 | gpr(rt) << 16 | (fs & 0x1F) << 11
+
+
+def lwc1(ft: int, offset: int, base: Reg) -> int:
+    """`lwc1 $f<ft>, offset(base)`."""
+    return _i(0x31, base, ft, offset)
+
+
+def _single(funct: int, fd: int, fs: int, ft: int = 0) -> int:
+    return (
+        0x11 << 26 | 0x10 << 21 | (ft & 0x1F) << 16 | (fs & 0x1F) << 11 | (fd & 0x1F) << 6 | funct
+    )
+
+
+def add_s(fd: int, fs: int, ft: int) -> int:
+    return _single(0x00, fd, fs, ft)
+
+
+def mul_s(fd: int, fs: int, ft: int) -> int:
+    return _single(0x02, fd, fs, ft)
+
+
+def div_s(fd: int, fs: int, ft: int) -> int:
+    return _single(0x03, fd, fs, ft)
+
+
+def trunc_w_s(fd: int, fs: int) -> int:
+    return _single(0x0D, fd, fs)
+
+
+def c_lt_s(fs: int, ft: int) -> int:
+    """`c.lt.s $f<fs>, $f<ft>`."""
+    return _single(0x3C, 0, fs, ft)
+
+
+def c_le_s(fs: int, ft: int) -> int:
+    """`c.le.s $f<fs>, $f<ft>`."""
+    return _single(0x3E, 0, fs, ft)
+
+
+def bc1t(target: int, at: int) -> int:
+    """Branch if the float compare held."""
+    return 0x11 << 26 | 0x08 << 21 | 1 << 16 | (target - at - 4) >> 2 & 0xFFFF
+
+
+def bc1f(target: int, at: int) -> int:
+    """Branch if the float compare did not hold."""
+    return 0x11 << 26 | 0x08 << 21 | (target - at - 4) >> 2 & 0xFFFF
 
 
 NOP = 0

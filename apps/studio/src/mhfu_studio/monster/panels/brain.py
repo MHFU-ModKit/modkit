@@ -893,9 +893,11 @@ class BrainPanel(kit.Panel):
         self.model.notes = notes
         if changed:
             self.tree.viewport().update()
-        if built is not None:
-            if self._uses is None or self._uses[0] is not built:
-                self._uses = (built, brain.uses(built.program))
+        doc = self.ws.species_doc
+        if built is not None and doc is not None:
+            if self._uses is None or self._uses[0] is not built:  # once a build: the survey scans
+                overlay = brain.em_overlay(self.ws.fu, doc.overlay)
+                self._uses = (built, brain.uses(built.program, overlay))
             self.names.show_names(words, self._uses[1])
 
     def _rename(self, table: str, key: str | int) -> None:

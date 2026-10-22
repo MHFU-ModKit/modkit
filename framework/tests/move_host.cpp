@@ -19,6 +19,7 @@ static uint32_t g_calls[64][5];
 static int g_n;
 static int g_lands = 1;          /* enter-action writes the pair cells */
 static float g_clip_end = 228;   /* what the executor installs on every part */
+static int g_blend;              /* blend frames the executor installs (CLIP_BLOCK.BLEND) */
 
 /* BREAK_TABLE, where the game has it */
 static uint8_t g_breaks[MHFU_BREAK_TABLE_COUNT * MHFU_BREAK_ROW_SIZE];
@@ -82,17 +83,20 @@ void mhfu_host_enter(uint32_t e, uint32_t m, uint32_t s, uint32_t mode)
     uint8_t *cell = at(e + MHFU_ENTITY_MAIN_STATE, 2);
     if (g_lands && cell) { cell[0] = (uint8_t)m; cell[1] = (uint8_t)s; }
 }
-void mhfu_host_execute(uint32_t e, uint32_t entry)
+/* the executor: every part's clip at cursor `start`, held for the blend as CLIP_SET does */
+void mhfu_host_execute(uint32_t e, uint32_t entry, uint32_t start)
 {
-    record('X', e, entry, 0, 0);
+    record('X', e, entry, 0, start);
     for (uint32_t k = 0; k < MHFU_ENTITY_CLIP_BLOCKS_COUNT; k++) {
         uint32_t b = e + MHFU_ENTITY_CLIP_BLOCKS + k * MHFU_CLIP_BLOCK_SIZE;
         uint32_t node = 0x5000u + entry;
-        float zero = 0;
+        float phase = (float)start;
+        int32_t blend = g_blend ? g_blend + 1 : 0;
         uint16_t playing = 1;
         memcpy(at(b + MHFU_CLIP_BLOCK_NODE, 4), &node, 4);
         memcpy(at(b + MHFU_CLIP_BLOCK_END, 4), &g_clip_end, 4);
-        memcpy(at(b + MHFU_CLIP_BLOCK_PHASE, 4), &zero, 4);
+        memcpy(at(b + MHFU_CLIP_BLOCK_PHASE, 4), &phase, 4);
+        memcpy(at(b + MHFU_CLIP_BLOCK_BLEND, 4), &blend, 4);
         memcpy(at(b + MHFU_CLIP_BLOCK_FLAGS, 2), &playing, 2);
     }
 }
@@ -150,8 +154,10 @@ void     host_set(int lands, float clip_end)
 {
     memset(g_breaks, 0, sizeof(g_breaks));
     g_lands = lands; g_clip_end = clip_end; g_n = 0; g_step = 0; g_nraised = 0; g_cut = 0;
+    g_blend = 0;
     memset(g_react, 0, sizeof(g_react));
 }
+void     host_blend(int frames) { g_blend = frames; }
 int      host_has_step(void) { return g_step != 0; }
 int      host_calls(uint32_t *out) { memcpy(out, g_calls, sizeof(g_calls)); int n = g_n; g_n = 0; return n; }
 uint32_t host_frame(uint32_t ent) { return g_step ? g_step(ent) : 0xFFFFFFFFu; }

@@ -48,9 +48,10 @@ from mhfu_studio.ui.testing import FakeWorkspace
 from PySide6.QtCore import QItemSelectionModel, QPoint, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QTreeWidgetItem, QWidget
 
 from ..conftest import program
+from ..test_brain import em_file
 from ..test_brain_edit import world
 from ..test_brain_game import H0, H1, state
 
@@ -1601,6 +1602,55 @@ def test_the_names_list(editor: BrainPanel, monkeypatch: pytest.MonkeyPatch) -> 
     answer(monkeypatch, "hunt")
     n.itemActivated.emit(n.topLevelItem(0).child(3), 0)
     assert doc.brainfile.vars == {4: "hunt"}
+
+
+def var_rows(p: BrainPanel) -> list[QTreeWidgetItem]:
+    return [p.names.topLevelItem(0).child(i) for i in range(9)]
+
+
+def test_the_names_mark_the_free_variables(editor: BrainPanel) -> None:
+    rows = var_rows(editor)
+    assert [r.text(3) for r in rows] == ["engine", "free", "engine", "free", *["code"] * 5]
+    engine, free, _, _, code = rows[0], rows[1], rows[2], rows[3], rows[4]
+    assert free.foreground(3).color() == theme.accent()
+    assert engine.foreground(3).color() == theme.level("warning")
+    assert code.foreground(3).color() == theme.text(muted=True)
+    assert "safe to use" in free.toolTip(1) and "MONSTER_STEP" in engine.toolTip(1)
+    assert "not safe" in engine.toolTip(3) and "not safe" in code.toolTip(0)
+    assert all(not r.text(2) for r in rows)  # the fake script names none
+    assert kit.missing_tips(editor) == []
+
+
+def test_the_names_scan_the_species_overlay(
+    qtbot: Any, pak: Extracted, edit_ws: MonsterWorkspace, clock: Clock
+) -> None:
+    em_file(pak.root, 75, 0x52B)
+    p = make(qtbot, edit_ws)
+    settle(p, clock)
+    rows = var_rows(p)
+    assert [r.text(3) for r in rows][:4] == ["engine", "species", "engine", "free"]
+    assert "1 store in the species overlay" in rows[1].toolTip(1)
+    assert rows[1].foreground(3).color() == theme.level("warning")
+
+
+def test_the_survey_is_made_once_a_build(
+    editor: BrainPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[object] = []
+    uses = brain.uses
+
+    def counted(p: ir.Program, overlay: object = None) -> brain.Uses:
+        calls.append(p)
+        return uses(p)
+
+    monkeypatch.setattr(brain, "uses", counted)
+    for _ in range(3):
+        editor._pull()
+    assert calls == []  # the build shown is the one surveyed
+    editor._uses = None
+    editor._pull()
+    editor._pull()
+    assert len(calls) == 1
 
 
 def test_a_line_says_more_than_its_numbers(editor: BrainPanel) -> None:

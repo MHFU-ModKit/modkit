@@ -14,6 +14,7 @@ does it.
 | Stage | [stage.md](stage.md) | `mhp_formats.fu.stage.Stage`; `mhfu.stage`; `mhfu_studio.stage` | `st<NNN>.pac`: terrain, textures, collision, and the rules for editing a map |
 | AI script | [ai_script.md](ai_script.md) | `mhfu.em.script` | A big monster's brain: the bytecode that picks its next move |
 | Brain file | [brain_file.md](brain_file.md) | `mhfu.em.script.brainfile`, `build` | A species' edits to its brain, against the game's own script (`brains/emNN.toml`) |
+| MHP3rd AI script | [p3rd_ai_script.md](p3rd_ai_script.md) | `mhfu_port.brain` | A MHP3rd monster's brain: the bytecode, read into a tree and written back |
 
 ## Conventions
 

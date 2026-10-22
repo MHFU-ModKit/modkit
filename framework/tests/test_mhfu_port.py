@@ -462,7 +462,7 @@ local z = P.define{ name = "z", species = 75 }
 z.ent = ENT
 ticks(1)
 
--- own moves numbered by name; `after` a slot, or a pair move's pair as the back pair
+-- own moves in the module's slots; `after` a slot, or a pair move's pair as the back pair
 assert(z._slot.dash == 0 and z._slot.spin == 1 and z._slot.stamp == 2)
 local st, da = SEAM.moves[2], SEAM.moves[0]
 assert(st.entry == 46 and st.after == 0 and st.attacks[1][1] == 56 and st.steer.curve)
@@ -527,6 +527,258 @@ def test_own_moves(lua: Any, tmp_path: Path) -> None:
     lua.execute(f"package.path = package.path .. ';' .. {str(tmp_path / '?.lua')!r}")
     memory(lua)
     lua.execute(OWN)
+
+
+SLOTS = """
+local SEAM = { moves = {} }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) SEAM.moves[slot] = t; return true end
+function mhfu.em_moves_clear() SEAM.moves = {}; return true end
+local P = require("mhfu_port")
+local MAX = mhfu.addr.EM_MOVES.MOVES_COUNT
+
+-- a moves module's `slot` is the slot, whatever the names sort to; it is not sent on
+package.loaded.z_moves = {
+  moves = {
+    stamp = { entry = 46, slot = 0 }, spin = { entry = 9, slot = 1 },
+    dash = { entry = 20, slot = 3 }, lunge = { main = 1, sub = 4 },
+  },
+  rules = {},
+}
+local z = P.define{ name = "z", species = 75 }
+z.ent = ENT
+ticks(1)
+assert(z._slot.stamp == 0 and z._slot.spin == 1 and z._slot.dash == 3 and z._slot.lunge == nil)
+assert(z._own_at[3] == "dash" and z._own_at[2] == nil)
+assert(SEAM.moves[3].entry == 20 and SEAM.moves[0].entry == 46 and SEAM.moves[2] == nil)
+assert(SEAM.moves[3].slot == nil)
+mhfu.em_playing = function() return 3 end
+assert(z:own_playing() == "dash")
+
+-- a hand-written port's own moves have none: sorted by name
+local h = P.define{
+  name = "h", species = 75, moves = { b = { entry = 2 }, c = { entry = 3 }, a = { entry = 1 } },
+}
+assert(h._slot.a == 0 and h._slot.b == 1 and h._slot.c == 2 and h._own_at[0] == "a")
+
+-- both: the ones with a slot keep it, the rest take the free slots by name
+local m = P.define{
+  name = "m", species = 75,
+  moves = {
+    b = { entry = 2, slot = 0 }, a = { entry = 1 }, c = { entry = 3 }, d = { entry = 4, slot = 1 },
+  },
+}
+assert(m._slot.b == 0 and m._slot.d == 1 and m._slot.a == 2 and m._slot.c == 3)
+
+-- a taken slot or one past the registry: the move is left out, said once
+local n = P.define{
+  name = "n", species = 75,
+  moves = {
+    a = { entry = 1, slot = 0 }, b = { entry = 2, slot = 0 }, c = { entry = 3, slot = MAX },
+  },
+}
+assert(n._slot.a == 0 and n._slot.b == nil and n._slot.c == nil)
+ticks(1)
+assert(count("own move 'b' ignored: no free slot 0") == 1)
+assert(count("own move 'c' ignored: no free slot " .. MAX) == 1)
+"""
+
+
+def test_own_move_slots(lua: Any) -> None:
+    memory(lua)
+    lua.execute(SLOTS)
+
+
+STEER_WINDOW = """
+local SEAM = { moves = {} }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) SEAM.moves[slot] = t; return true end
+function mhfu.em_moves_clear() SEAM.moves = {}; return true end
+local P = require("mhfu_port")
+
+-- a moves module's steer window is handed to the registry as it is, beside the rest of the steer
+package.loaded.z_moves = {
+  moves = {
+    lunge = { entry = 20, slot = 0, steer = { turn = "hunter", rate = 546, window = { 10, 40 } } },
+    spin = { entry = 9, slot = 1, steer = { turn = "away" } },
+  },
+  rules = {},
+}
+local z = P.define{ name = "z", species = 75 }
+z.ent = ENT
+ticks(1)
+local w = SEAM.moves[0].steer
+assert(w.turn == "hunter" and w.rate == 546 and w.window[1] == 10 and w.window[2] == 40)
+assert(SEAM.moves[1].steer.window == nil)
+"""
+
+
+def test_steer_window_reaches_the_registry(lua: Any) -> None:
+    memory(lua)
+    lua.execute(STEER_WINDOW)
+
+
+FATIGUE = """
+local SEAM = { moves = {}, fatigue = "unset", calls = 0 }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) SEAM.moves[slot] = t; return true end
+function mhfu.em_moves_clear() SEAM.moves = {}; return true end
+function mhfu.em_fatigue(t) SEAM.fatigue, SEAM.calls = t, SEAM.calls + 1; return true end
+local P = require("mhfu_port")
+local MOVES = { stamp = { entry = 46, slot = 0 }, spin = { entry = 9, slot = 3 },
+                lunge = { main = 1, sub = 4 } }
+
+-- a moves module's fatigue table is armed with the port; `own` by slot or by the move's name
+package.loaded.z_moves = {
+  moves = MOVES, rules = {},
+  fatigue = {
+    max = 1000, starts = { 400, 600 }, tired = 2250, refill = 500, low_hp = 25, calm = true,
+    pairs = { { 2, 10, 15 }, { 7, 1, 5 } },
+    own = { stamp = 15, [3] = 7, ghost = 99, lunge = 5 },
+  },
+}
+local z = P.define{ name = "z", species = 75 }
+z.ent = ENT
+ticks(1)
+local f = SEAM.fatigue
+assert(f.max == 1000 and f.starts[1] == 400 and f.starts[2] == 600 and f.tired == 2250)
+assert(f.refill == 500 and f.low_hp == 25 and f.calm == true)
+assert(#f.pairs == 2 and f.pairs[1][3] == 15 and f.pairs[2][1] == 7)
+assert(f.own[0] == 15 and f.own[3] == 7 and f.own.stamp == nil and f.own.ghost == nil)
+assert(f.own.lunge == nil and f.own[1] == nil)   -- a pair move has no slot, nor does a stranger
+assert(count("fatigue cost of 'ghost' dropped") == 1 and count("fatigue cost of 'lunge'") == 1)
+assert(count("fatigue: armed") == 1 and SEAM.calls == 1)
+
+-- a redefine from the same module arms it again (the framework keeps an unchanged one as it is);
+-- one whose module has none turns it off
+z = P.define{ name = "z", species = 75 }
+ticks(1)
+assert(SEAM.calls == 2 and SEAM.fatigue.max == 1000)
+package.loaded.z_moves = { moves = MOVES, rules = {} }
+z = P.define{ name = "z", species = 75 }
+ticks(1)
+assert(SEAM.calls == 3 and SEAM.fatigue == nil)
+assert(count("fatigue cost of 'ghost' dropped") == 1, "said once")
+"""
+
+
+def test_fatigue_is_armed_with_the_port(lua: Any) -> None:
+    memory(lua)
+    lua.execute(FATIGUE)
+
+
+FATIGUE_SPEC = """
+local SEAM = { fatigue = "unset" }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) return true end
+function mhfu.em_moves_clear() return true end
+function mhfu.em_fatigue(t) SEAM.fatigue = t; return false end
+local P = require("mhfu_port")
+
+-- a hand-written port gives its own; a refusal is logged and the port goes on
+local h = P.define{ name = "h", species = 75, moves = { a = { entry = 1 } },
+                    fatigue = { max = 500, own = { a = 3 } } }
+h.ent = ENT
+ticks(1)
+assert(SEAM.fatigue.max == 500 and SEAM.fatigue.own[0] == 3)
+assert(count("fatigue: refused") == 1)
+"""
+
+
+def test_fatigue_of_a_hand_written_port(lua: Any) -> None:
+    memory(lua)
+    lua.execute(FATIGUE_SPEC)
+
+
+CHARGE = """
+local SEAM = { moves = {}, charge = "unset", calls = 0 }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) SEAM.moves[slot] = t; return true end
+function mhfu.em_moves_clear() SEAM.moves = {}; return true end
+function mhfu.em_charge(t) SEAM.charge, SEAM.calls = t, SEAM.calls + 1; return true end
+local P = require("mhfu_port")
+local MOVES = { up_a = { entry = 46, slot = 0 }, up_b = { entry = 9, slot = 3 },
+                roar = { entry = 20, slot = 4 }, lunge = { main = 1, sub = 4 } }
+
+-- a moves module's charge table is armed with the port; `ups` keys and `transform` by slot or by
+-- the move's name, the rest as it is
+package.loaded.z_moves = {
+  moves = MOVES, rules = {},
+  charge = {
+    ups = { up_a = { 20, 15, 10, 5 }, [3] = { 30, 25, 20, 10 }, ghost = { 1, 1, 1, 1 },
+            lunge = { 1, 1, 1, 1 } },
+    transform = "roar", chip_gauge = 5, chip_durability = 10, cooldown_up = 420,
+    cooldown_out = 900, discharge = { { 11, 0 }, { 11, 1 } },
+  },
+}
+local z = P.define{ name = "z", species = 75 }
+z.ent = ENT
+ticks(1)
+local c = SEAM.charge
+assert(c.transform == 4 and c.chip_gauge == 5 and c.chip_durability == 10)
+assert(c.cooldown_up == 420 and c.cooldown_out == 900)
+assert(c.ups[0][1] == 20 and c.ups[0][4] == 5 and c.ups[3][2] == 25 and c.ups.up_a == nil)
+assert(c.ups.ghost == nil and c.ups.lunge == nil and c.ups[1] == nil)  -- a stranger, a pair move
+assert(#c.discharge == 2 and c.discharge[2][2] == 1)
+assert(count("charge up 'ghost' dropped") == 1 and count("charge up 'lunge'") == 1)
+assert(count("charge: armed") == 1 and SEAM.calls == 1)
+
+-- a redefine from the same module arms it again (the framework keeps an unchanged one as it is);
+-- one whose module has none turns it off
+z = P.define{ name = "z", species = 75 }
+ticks(1)
+assert(SEAM.calls == 2 and SEAM.charge.transform == 4)
+package.loaded.z_moves = { moves = MOVES, rules = {} }
+z = P.define{ name = "z", species = 75 }
+ticks(1)
+assert(SEAM.calls == 3 and SEAM.charge == nil)
+assert(count("charge up 'ghost' dropped") == 1, "said once")
+
+-- a transform that is no own move of the port drops the charge, said once
+package.loaded.z_moves = { moves = MOVES, rules = {}, charge = { transform = "lunge" } }
+z = P.define{ name = "z", species = 75 }
+ticks(1)
+z = P.define{ name = "z", species = 75 }
+ticks(1)
+assert(SEAM.charge == nil and count("charge transform 'lunge' dropped") == 1)
+assert(count("charge: armed") == 2, "the two armings before it, none after")
+"""
+
+
+def test_charge_is_armed_with_the_port(lua: Any) -> None:
+    memory(lua)
+    lua.execute(CHARGE)
+
+
+CHARGE_SPEC = """
+local SEAM = { charge = "unset" }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) return true end
+function mhfu.em_moves_clear() return true end
+function mhfu.em_charge(t) SEAM.charge = t; return false end
+local P = require("mhfu_port")
+
+-- a hand-written port gives its own, with the slots as numbers; a refusal is logged and the port
+-- goes on
+local h = P.define{ name = "h", species = 75, moves = { a = { entry = 1 }, b = { entry = 2 } },
+                    charge = { transform = 1, ups = { [0] = { 10, 10, 10, 10 } } } }
+h.ent = ENT
+ticks(1)
+assert(SEAM.charge.transform == 1 and SEAM.charge.ups[0][1] == 10)
+assert(count("charge: refused") == 1)
+
+-- the names resolve through the same slot map as an own move's
+local n = P.define{ name = "n", species = 75, moves = { a = { entry = 1 }, b = { entry = 2 } },
+                    charge = { transform = "b", ups = { a = { 1, 2, 3, 4 } } } }
+n.ent = ENT
+ticks(1)
+assert(SEAM.charge.transform == 1 and SEAM.charge.ups[0][4] == 4)
+"""
+
+
+def test_charge_of_a_hand_written_port(lua: Any) -> None:
+    memory(lua)
+    lua.execute(CHARGE_SPEC)
 
 
 RELINK = """

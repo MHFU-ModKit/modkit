@@ -87,6 +87,19 @@ def test_hit(offline, games, tmp_path, capsys, monkeypatch):
     assert capsys.readouterr().out.endswith("80 B  hurtboxes  (2 guard(s))\n")
 
 
+def test_hit_of_a_port_with_a_brain(games, ports, capsys):
+    data = ["--data", str(games.fu.root), "--p3rd-data", str(games.p3rd.root)]
+    path = str(ports / "brute_tigrex.toml")
+    assert main(["port", "hit", path, "--print", *data]) == 0
+    got = capsys.readouterr()
+    assert 'P.hit("brute_tigrex", {' in got.out and "-- donor 26" in got.out
+    assert "+ the donor's spare attack records" in got.out
+    assert "P3_OWN_SPARE" in got.err and "P3_OWN_BRANCH" not in got.err, "warnings and spares"
+    assert main(["port", "push", path, "--dry", *data]) == 0
+    whats = capsys.readouterr().out
+    assert " attack set " in whats and " kind  " in whats and " active  " in whats
+
+
 def test_clips(games, ports, tmp_path, capsys):
     data = ["--data", str(games.fu.root), "--p3rd-data", str(games.p3rd.root)]
     assert main(["port", "clips", str(ports / "zinogre.toml"), *data]) == 0

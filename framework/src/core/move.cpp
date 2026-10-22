@@ -58,6 +58,9 @@ static_assert(offsetof(mhfu_move_t, attacks) == MHFU_MOVE_ATTACKS, "MOVE layout"
 static_assert(offsetof(mhfu_move_t, spawner) == MHFU_MOVE_SPAWNER, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, host_attacks) == MHFU_MOVE_HOST_ATTACKS, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, force) == MHFU_MOVE_FORCE, "MOVE layout");
+static_assert(offsetof(mhfu_move_t, hold_script) == MHFU_MOVE_HOLD_SCRIPT, "MOVE layout");
+static_assert(offsetof(mhfu_move_t, start) == MHFU_MOVE_START, "MOVE layout");
+static_assert(offsetof(mhfu_move_t, stop) == MHFU_MOVE_STOP, "MOVE layout");
 static_assert(MHFU_MOVE_ATTACKS_COUNT == MHFU_MOVE_MAX_ATTACKS, "MOVE layout");
 static_assert(sizeof(mhfu_move_state_t) == MHFU_MOVE_STATE_SIZE, "MOVE_STATE layout");
 static_assert(offsetof(mhfu_move_state_t, state) == MHFU_MOVE_STATE_STATE, "MOVE_STATE layout");
@@ -82,6 +85,10 @@ static_assert(offsetof(mhfu_move_state_t, reactions) == MHFU_MOVE_STATE_REACTION
 static_assert(offsetof(mhfu_move_state_t, react_pair) == MHFU_MOVE_STATE_REACT_PAIR, "MOVE_STATE layout");
 static_assert(offsetof(mhfu_move_state_t, waited) == MHFU_MOVE_STATE_WAITED, "MOVE_STATE layout");
 static_assert(offsetof(mhfu_move_state_t, events) == MHFU_MOVE_STATE_EVENTS, "MOVE_STATE layout");
+static_assert(sizeof(mhfu_steer_t) == MHFU_STEER_PARAMS_SIZE, "STEER_PARAMS layout");
+static_assert(offsetof(mhfu_steer_t, dir) == MHFU_STEER_PARAMS_DIR, "STEER_PARAMS layout");
+static_assert(offsetof(mhfu_steer_t, win_from) == MHFU_STEER_PARAMS_WIN_FROM, "STEER_PARAMS layout");
+static_assert(offsetof(mhfu_steer_t, win_to) == MHFU_STEER_PARAMS_WIN_TO, "STEER_PARAMS layout");
 static_assert(sizeof(mhfu_steer_spec_t) == MHFU_STEER_SPEC_SIZE, "STEER_SPEC layout");
 static_assert(offsetof(mhfu_steer_spec_t, key_count) == MHFU_STEER_SPEC_KEY_COUNT, "STEER_SPEC layout");
 static_assert(offsetof(mhfu_steer_spec_t, stuck_main) == MHFU_STEER_SPEC_STUCK_MAIN, "STEER_SPEC layout");
@@ -90,6 +97,9 @@ static_assert(sizeof(mhfu_steer_state_t) == MHFU_STEER_STATE_SIZE, "STEER_STATE 
 static_assert(offsetof(mhfu_steer_state_t, now) == MHFU_STEER_STATE_NOW, "STEER_STATE layout");
 static_assert(offsetof(mhfu_steer_state_t, base) == MHFU_STEER_STATE_BASE, "STEER_STATE layout");
 static_assert(offsetof(mhfu_steer_state_t, yaw0) == MHFU_STEER_STATE_YAW0, "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, wall) == MHFU_STEER_STATE_WALL, "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, cursor) == MHFU_STEER_STATE_CURSOR, "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, yaw) == MHFU_STEER_STATE_YAW, "STEER_STATE layout");
 
 /* --- the engine ------------------------------------------------------------------------- */
 
@@ -98,10 +108,10 @@ static void enter(uint32_t ent, uint32_t main_state, uint32_t sub_state, uint32_
 {
     mhfu_call(MHFU_ENTER_ACTION, ent, main_state, sub_state, mode);
 }
-/* a2 a3 as the hub handlers pass them */
-static void execute(uint32_t ent, uint32_t entry)
+/* a2 as the hub handlers pass it (the row's blend); a3 the clip's start frame, 0 the row's */
+static void execute(uint32_t ent, uint32_t entry, uint32_t start)
 {
-    mhfu_call(MHFU_ACTION_EXECUTOR, ent, entry, 0, 0);
+    mhfu_call(MHFU_ACTION_EXECUTOR, ent, entry, 0, start);
 }
 /* natives pass *COLLISION_WORLD_PTR as the unused first argument */
 static uint32_t spawn(uint32_t spawner, uint32_t ent, uint32_t id)
@@ -114,11 +124,11 @@ static void end_node(uint32_t node, uint32_t vtable)
 }
 #else
 extern "C" void     mhfu_host_enter(uint32_t ent, uint32_t m, uint32_t s, uint32_t mode);
-extern "C" void     mhfu_host_execute(uint32_t ent, uint32_t entry);
+extern "C" void     mhfu_host_execute(uint32_t ent, uint32_t entry, uint32_t start);
 extern "C" uint32_t mhfu_host_spawn(uint32_t spawner, uint32_t ent, uint32_t id);
 extern "C" void     mhfu_host_end(uint32_t node, uint32_t vtable);
 static void     enter(uint32_t e, uint32_t m, uint32_t s, uint32_t mode) { mhfu_host_enter(e, m, s, mode); }
-static void     execute(uint32_t e, uint32_t entry) { mhfu_host_execute(e, entry); }
+static void     execute(uint32_t e, uint32_t entry, uint32_t start) { mhfu_host_execute(e, entry, start); }
 static uint32_t spawn(uint32_t sp, uint32_t e, uint32_t id) { return mhfu_host_spawn(sp, e, id); }
 static void     end_node(uint32_t node, uint32_t vtable) { mhfu_host_end(node, vtable); }
 extern "C" void *mhfu_host_at(uint32_t addr);
@@ -285,7 +295,7 @@ static void dispatch(uint32_t ent)
 {
     uint32_t now = pair_of(ent);
     if (now != carrier()) { finish(MHFU_MOVE_END_PAIR, now); return; }
-    execute(ent, S->move.entry);
+    execute(ent, S->move.entry, S->move.start);
     for (int k = 0; k < MHFU_ENTITY_CLIP_BLOCKS_COUNT; k++) {
         S->node[k] = mhfu_mem_read_u32(clip_block(ent, k) + MHFU_CLIP_BLOCK_NODE);
         S->clip_end[k] = mhfu_mem_read_f32(clip_block(ent, k) + MHFU_CLIP_BLOCK_END);
@@ -324,6 +334,8 @@ static uint32_t play(uint32_t ent)
     if (now != carrier()) { finish(MHFU_MOVE_END_PAIR, now); return 0; }
     int p = S->move.part;
     float prev = S->peak[p];
+    const float before = (float)S->move.start - 1.0f;   /* an attack before START never spawns */
+    if (prev < before) prev = before;
     for (int k = 0; k < MHFU_ENTITY_CLIP_BLOCKS_COUNT; k++) {
         uint32_t b = clip_block(ent, k);
         float cur = mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_PHASE);
@@ -335,7 +347,8 @@ static uint32_t play(uint32_t ent)
         finish(MHFU_MOVE_END_LOST, now);
         return 0;
     }
-    attacks(ent, prev, mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_PHASE));
+    const float cursor = mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_PHASE);
+    attacks(ent, prev, cursor);
     int wall = steer(ent);
     if (wall == MHFU_STEER_STUCK) {
         /* as the Tigrex charge ends on such a wall; the AI script waits for the hub after it */
@@ -346,13 +359,17 @@ static uint32_t play(uint32_t ent)
         return 0;
     }
     int done = !(mhfu_mem_read_u16(b + MHFU_CLIP_BLOCK_FLAGS) & 1) || wall == MHFU_STEER_WALL;
-    int timed = S->move.length && S->frames >= S->move.length;
+    int timed = (S->move.length && S->frames >= S->move.length)
+             || (S->move.stop && cursor >= (float)S->move.stop);
     if (done || timed) {
         if (S->move.back_main != MHFU_MOVE_NO_PAIR || timed) {
             int back = S->move.back_main != MHFU_MOVE_NO_PAIR;
             enter(ent, back ? S->move.back_main : S->move.carrier_main,
                   back ? S->move.back_sub : S->move.carrier_sub,
                   back ? S->move.back_mode : 0);
+            /* the hub's entry wakes the AI script, which would pick a pair before the next move
+             * starts, a frame on */
+            if (S->move.hold_script) mhfu_mem_write_u8(ent + MHFU_ENTITY_SCRIPT_WAKE, 0);
             finish(wall ? MHFU_MOVE_END_WALL : MHFU_MOVE_END_BACK, pair_of(ent));
             return 0;
         }

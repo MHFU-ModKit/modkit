@@ -4,8 +4,8 @@
 (`lift`, `ir`), edited (`edit`, `editset`, vetted by `check`, `walk` and `budget`), encoded back
 (`asm`), written as source text (`source`), read back from it (`parse`), worded for an editor
 (`catalogue`) and drawn as a graph (`graph`), kept as a species' edit file (`brainfile`) and
-built from it (`build`), pushed into the running game (`inject`) and put on the memory stick for
-the framework to load (`stick`).
+built from it (`build`), pushed into the running game (`inject`), put on the memory stick for
+the framework to load (`stick`) and surveyed for the script variables a modder may use (`vars`).
 
     from mhfu.em import script
     sc = script.Scripts(game, 75)         # an em overlay and the species table in game_task
@@ -35,6 +35,7 @@ from . import (
     parse,
     source,
     stick,
+    vars,
     walk,
 )
 from .budget import Budget
@@ -127,5 +128,6 @@ __all__ = [
     "source",
     "stick",
     "sweep",
+    "vars",
     "walk",
 ]

@@ -22,6 +22,8 @@
 #include "bigmon_overlay.h"
 #include "ovl_reloc.h"
 #include "em_vhook.h"
+#include "fatigue.h"
+#include "charge.h"
 #include "move.h"
 #include "monster_events.h"
 #include "npc.h"

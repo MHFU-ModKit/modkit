@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING
 from mhfu import inject
 
 from .. import data, layout, manifest, moves
+from ..brain import charge, fatigue, own
 from ..build import Built, build
+from .own import say
 
 if TYPE_CHECKING:
     from . import Subparsers
@@ -40,7 +42,7 @@ def run_build(args: argparse.Namespace) -> int:
     games = data.from_arguments(args)
     built = build(m, games)
     out: Path = args.out or Path(m.port.pac)
-    written = modules(m, built, out.parent, games)
+    written = modules(m, built, out.parent, games, say)
     out.write_bytes(built.pac)
     print(f"wrote {out}, {_listed(written)}\n{built.summary.text()}")
     return 0
@@ -51,7 +53,7 @@ def run_inject(args: argparse.Namespace) -> int:
     games = data.from_arguments(args)
     built = build(m, games)
     lib = args.lib or inject.memstick() / inject.MODS_SUBDIR / layout.LIB
-    written = modules(m, built, lib, games)
+    written = modules(m, built, lib, games, say)
     host = m.port.host_frame
     path = inject.write_relocate_bytes(
         built.pac, host, args.dir, orig=games.fu.read(host), name=m.port.pac
@@ -64,15 +66,34 @@ def _listed(written: list[Path]) -> str:
     return ", ".join(map(str, written)) or "the modules unchanged"
 
 
-def modules(m: manifest.Manifest, built: Built, where: Path, games: data.Data) -> list[Path]:
+def modules(
+    m: manifest.Manifest,
+    built: Built,
+    where: Path,
+    games: data.Data,
+    report: own.Report | None = None,
+) -> list[Path]:
     """Write the port's clips, turns and moves modules into `where`, each whole and only when it
-    changed, since the game re-runs a module that changed on disk; those written. Raises
+    changed, since the game re-runs a module that changed on disk; those written. The moves
+    module carries the own moves `[brain.pairs]` derive (`own.expand`) and, with `[brain] fatigue`
+    and `charge`, the stamina and charge tables (`fatigue.table`, `charge.table`), each finding of
+    which goes to `report`. Raises
     `ManifestError` for a move the moves module cannot carry, before any is written."""
+    m = own.expanded(m, games, report)
+    stamina = fatigue.expanded(m, games, report)
+    charging = charge.expanded(m, games, report)
     known = moves.records(games.fu, m.port.host_species)
     texts = {
         layout.module_name(m): layout.lua(m, built.layout),
         layout.turns_module_name(m): layout.turns_lua(m, built.layout),
-        moves.module_name(m): moves.lua(m, built.layout, known, built.tip),
+        moves.module_name(m): moves.lua(
+            m,
+            built.layout,
+            known,
+            built.tip,
+            None if stamina is None else stamina.module(),
+            None if charging is None else charging.module(),
+        ),
     }
     where.mkdir(parents=True, exist_ok=True)
     out = []

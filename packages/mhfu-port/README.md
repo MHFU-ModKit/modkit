@@ -56,6 +56,31 @@ port.pac, port.summary.text()
 | `mhfu-port fidelity M` | The port's skin weights against the donor's own |
 | `mhfu-port slots`, `labels` | Which host move plays which ported clip; hand labels checked against a build |
 
+## The donor's brain
+
+| Command | What it prints |
+|---|---|
+| `mhfu-port brain ID` | An MHP3rd monster's AI script as text (`mhfu_port.brain`; [format](../../docs/formats/p3rd_ai_script.md)) |
+| `mhfu-port brain --check` | Every monster's script lifted and encoded back to the game's bytes |
+| `mhfu-port p3moveset ID` | The monster's (main, sub) pairs, the clips each plays and the pairs it enters, as CSV (`p3moveset`) |
+| `mhfu-port own M` | The own moves a manifest's `[brain.pairs] ... = "own"` derives from the donor: each chain, its clips, its attacks as donor record to host record (a spare one where no host record matches, `brain.spare`), its turn, and the findings (`brain.own`) |
+| `mhfu-port splice M` | A manifest's `[brain]`: the donor's routine translated into the host's script, the findings on what did not carry over, the size and the longest run (`brain.splice`; `--source`, `-o FILE`) |
+
+`splice` writes an edit set for the host's row, which `mhfu brain push|deploy --doc FILE` sends on.
+A donor pair that `[brain.pairs]` maps to an own move of `[moves]` becomes `enter 16 k 0`, `k` its
+slot in `mhfu_port.moves.slots`; a list value (`[[1, 2], "own"]`) enters each item in turn.
+`[brain] charge = true` keeps the donor's `switch_query` on the two args the framework's charge
+helper answers (charged, cooldown running; any other query is taken as answer 0) and has the
+build write the donor's charge-ups, transform, chips and cooldowns into the moves module for it
+(`brain.charge`, `p3charge`).
+`[brain] fatigue = true` also has the build write the donor's stamina into the moves module for the
+framework's helper, and the splice read it as `if_gauge_a_low` (`brain.fatigue`).
+`-o FILE` holds code translated from the game: keep it in the workspace, never in a repo. How a
+donor routine maps onto the host's brain is in the
+[format notes](../../docs/formats/p3rd_ai_script.md#onto-an-mhfu-brain),
+[fatigue](../../docs/formats/p3rd_ai_script.md#fatigue) and
+[charge](../../docs/formats/p3rd_ai_script.md#charge).
+
 ## Status
 
 Builds donors whose animation-record offset is pinned in `records.OFFSET`: the Brute Tigrex and

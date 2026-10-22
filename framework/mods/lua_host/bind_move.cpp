@@ -27,6 +27,11 @@ static void spec_of(lua_State *L, int t, mhfu_move_t *mv)
 {
     mhfu_move_init_spec(mv, (uint16_t)opt_field(L, t, "entry", 0));
     mv->length = (uint16_t)opt_field(L, t, "length", 0);
+    int start = opt_field(L, t, "start", 0), stop = opt_field(L, t, "stop", 0);
+    luaL_argcheck(L, start >= 0 && start <= 0xFFFF && stop >= 0 && stop <= 0xFFFF, t,
+                  "start and stop are clip frames, 0..65535");
+    mv->start = (uint16_t)start;
+    mv->stop = (uint16_t)stop;
     mv->part = (uint8_t)opt_field(L, t, "part", 0);
     mv->spawner = (uint32_t)opt_field(L, t, "spawner", 0);
     lua_getfield(L, t, "skip");
@@ -73,8 +78,9 @@ static int hex(int c)
 }
 
 /* t.steer (mhfu/steer.h): turn = "still" | "hunter" | "away" | "fixed", rate (YAW units a
- * frame), total (degrees) over frames, dir (degrees), walls, stuck = { main, sub, mode }, curve
- * = the entry's string in the port's turns module */
+ * frame), window = { from, to } (clip frames the hunter and away turns apply in), total
+ * (degrees) over frames, dir (degrees), walls, stuck = { main, sub, mode }, curve = the entry's
+ * string in the port's turns module */
 static void steer_of(lua_State *L, int t, mhfu_steer_spec_t *sp)
 {
     mhfu_steer_init_spec(sp);
@@ -96,6 +102,15 @@ static void steer_of(lua_State *L, int t, mhfu_steer_spec_t *sp)
     lua_pop(L, 1);
     lua_getfield(L, s, "dir");
     sp->steer.dir = (uint16_t)(int32_t)(luaL_optnumber(L, -1, 0) * MHFU_STEER_TURN / 360);
+    lua_pop(L, 1);
+    if (lua_getfield(L, s, "window") == LUA_TTABLE) {
+        int w = lua_gettop(L);
+        int from = list_at(L, w, 1, 0), to = list_at(L, w, 2, 0);
+        luaL_argcheck(L, from >= 0 && from < to && to <= 0xFFFF, 2,
+                      "steer.window is { from, to } with 0 <= from < to");
+        sp->steer.win_from = (uint16_t)from;
+        sp->steer.win_to = (uint16_t)to;
+    }
     lua_pop(L, 1);
     if (lua_getfield(L, s, "stuck") == LUA_TTABLE) {
         int k = lua_gettop(L);

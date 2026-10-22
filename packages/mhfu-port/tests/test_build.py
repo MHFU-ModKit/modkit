@@ -17,7 +17,7 @@ from mhp_formats.skeleton import Bone, Skeleton
 
 PORTS = Path(__file__).parents[3] / "ports"
 BUILT = {
-    "brute_tigrex": "adb479193d5f752ec8c64aed58598057511bd0d6eaf54390d8c847a4b5068bba",
+    "brute_tigrex": "8f6e613b7fd54a3aae855d4c8406211d49ea895c8410be9a250d39cfc2009732",
     "zinogre": "31ff8e2018efb28853f388396c39304163011f0d965acd42dee4cdbfbee79024",
 }
 """sha256 of each manifest's build: changes only with an intended change to the port."""
@@ -177,7 +177,7 @@ def test_cli(data, tmp_path):
     assert (tmp_path / port.orig).read_bytes() == data.fu.read(port.host_frame)
     for module in (layout.module_name(m), layout.turns_module_name(m), moves.module_name(m)):
         assert (lib / module).read_text() == (out.parent / module).read_text()
-    assert "  charge = 61,  -- MHP3rd 61\n" in (lib / layout.module_name(m)).read_text()
+    assert "  charge = 101,  -- MHP3rd 61\n" in (lib / layout.module_name(m)).read_text()
     stamp = (lib / moves.module_name(m)).stat().st_mtime_ns
     assert main(["inject", str(toml), "--dir", str(tmp_path), "--lib", str(lib), *games]) == 0
     assert (lib / moves.module_name(m)).stat().st_mtime_ns == stamp, "unchanged, not rewritten"

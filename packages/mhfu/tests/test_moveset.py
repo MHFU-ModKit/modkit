@@ -121,6 +121,105 @@ def test_tail_call_and_probe():
     assert found == {("probe", 7, (va(4),)), ("anim", 7, (va(4),))}
 
 
+def test_float_constants():
+    thing = a.ACTION_EXECUTOR
+    words = [
+        asm.lui("v0", asm.hi(BASE + 0x40)),
+        asm.lwc1(1, asm.lo(BASE + 0x40), "v0"),
+        asm.lwc1(2, asm.lo(BASE + 0x44), "v0"),
+        asm.mul_s(0, 1, 2),
+        asm.lwc1(3, asm.lo(BASE + 0x48), "v0"),
+        asm.add_s(0, 0, 3),
+        asm.trunc_w_s(0, 0),
+        asm.mfc1("a1", 0),
+        asm.jal(thing),
+        asm.NOP,
+        asm.RET,
+        asm.NOP,
+    ]
+    pad = [0] * (16 - len(words))
+    data = [struct.unpack("<I", struct.pack("<f", x))[0] for x in (1.5, 8192.0, 0.5)]
+    mem = Image(struct.pack(f"<{16 + 3}I", *words, *pad, *data), BASE)
+    c = Code(mem, range(BASE, va(len(words))))
+    (site,) = Walker(c, {thing: "anim"}).run(BASE)
+    assert site.args[0] == 12288
+
+
+def test_float_returned_by_a_call():
+    step, thing = 0x0020_0000, a.ACTION_EXECUTOR
+    words = [
+        asm.jal(step),
+        asm.NOP,
+        asm.mul_s(0, 0, 0),  # $f0 squared
+        asm.trunc_w_s(0, 0),
+        asm.mfc1("a1", 0),
+        asm.jal(thing),
+        asm.NOP,
+        asm.RET,
+        asm.NOP,
+    ]
+    c = code(*words)
+    assert [s.args[0] for s in Walker(c, {thing: "anim"}, returns={step: 3.0}).run(BASE)] == [9]
+    assert [s.args[0] for s in Walker(c, {thing: "anim"}).run(BASE)] == [None]
+
+
+def test_calls_of_one_function_have_their_own_guards():
+    gate, thing = 0x0020_0000, a.ACTION_EXECUTOR
+    twice = code(
+        asm.jal(gate),
+        asm.NOP,
+        asm.bne("v0", "zero", va(5), va(3)),
+        asm.NOP,
+        asm.li("a1", 1),
+        asm.jal(gate),  # 5
+        asm.NOP,
+        asm.bne("v0", "zero", va(10), va(8)),
+        asm.NOP,
+        asm.li("a1", 2),
+        asm.jal(thing),  # 10
+        asm.NOP,
+        asm.RET,
+        asm.NOP,
+    )
+    w = Walker(twice, {thing: "anim"}, names={gate: "gate@{site:x}"})
+    found = {s.guards for s in w.run(BASE)}
+    assert (f"gate@{va(0):x}", f"!gate@{va(5):x}") in found
+
+
+def test_decide_answers_a_call_and_a_branch():
+    gate, thing = 0x0020_0000, a.ACTION_EXECUTOR
+    c = code(
+        asm.jal(gate),
+        asm.NOP,
+        asm.beq("v0", "zero", va(6), va(2)),  # the gate said no: skip the first play
+        asm.NOP,
+        asm.li("a1", 1),
+        asm.jal(thing),
+        asm.NOP,
+        asm.lbu("v1", 0x280, "a0"),  # 7 a cell no fact names
+        asm.bne("v1", "zero", va(12), va(8)),
+        asm.NOP,
+        asm.li("a1", 2),
+        asm.jal(thing),
+        asm.NOP,  # 12
+        asm.RET,
+        asm.NOP,
+    )
+    w = Walker(c, {thing: "anim"}, guards=False)
+    both = {s.args[0] for s in w.run(BASE)}
+    assert both == {1, 2}
+
+    def decide(yes: int, taken: int):
+        def answer(pc, target, args):
+            return {va(0): yes, va(8): taken}.get(pc) if target in (gate, None) else None
+
+        return answer
+
+    assert [s.args[0] for s in w.run(BASE, decide=decide(1, 1))] == [1]
+    assert [s.args[0] for s in w.run(BASE, decide=decide(0, 0))] == [2]
+    assert {s.args[0] for s in w.run(BASE)} == both  # a decided run leaves nothing behind
+
+
 def test_game(game):
     for species in files.EM_SPECIES:
         ms = Moveset(game.em(species))

@@ -97,11 +97,12 @@ def test_lua():
     assert _body(text) == [
         "moves = {",
         'lunge = { main = 1, sub = 4, clip = "dash", hold_max = 12, claim = { main = { 1 } } },',
-        'stamp = { entry = 46, clip = "stamp", attacks = { { 56, 6, 80 } }, carrier = { 0, 2 }, '
-        'steer = { walls = false, curve = "000020004000" }, after = "dash" },',
-        'dash = { entry = 20, clip = "dash", carrier = { 0, 2 }, length = 40, host_attacks = true, '
-        'steer = { walls = true, dir = 180.0, turn = "hunter" }, after = "lunge" },',
-        "spin = { entry = 9, carrier = { 0, 1 }, "
+        'stamp = { entry = 46, slot = 2, clip = "stamp", attacks = { { 56, 6, 80 } }, '
+        'carrier = { 0, 2 }, steer = { walls = false, curve = "000020004000" }, after = "dash" },',
+        'dash = { entry = 20, slot = 0, clip = "dash", carrier = { 0, 2 }, length = 40, '
+        'host_attacks = true, steer = { walls = true, dir = 180.0, turn = "hunter" }, '
+        'after = "lunge" },',
+        "spin = { entry = 9, slot = 1, carrier = { 0, 1 }, "
         'steer = { walls = true, turn = "fixed", total = 90.0, frames = 50 } },',
         "rules = {",
         '{ play = "stamp", from_main = { 0 }, min_frames = 30, dist = { 0.0, 700.0 }, '
@@ -110,11 +111,94 @@ def test_lua():
     ]
 
 
+SPAN = OWN.replace('after = "dash"\n', 'after = "dash"\nstart = 24\nstop = 86\n', 1)
+"""The stamp playing its clip from frame 24 to 86, its attack at 56 to 80 inside."""
+
+
+def test_start_and_stop_reach_the_module():
+    text = moves.lua(_m(SPAN), LAYOUT, {6})
+    assert "carrier = { 0, 2 }, start = 24, stop = 86, steer = { walls = false," in text
+    assert " start = " not in moves.lua(_m(), LAYOUT, {6})
+
+
+def test_a_derived_moves_span_is_checked_here():
+    """Derived moves never go through the manifest's load: `problems` is what refuses them."""
+    m = _m(SPAN)
+    mv = m.moves["stamp"]
+    assert moves.problems(m, LAYOUT, {6}) == []
+    mv.start, mv.stop = 90, 80
+    found = moves.problems(m, LAYOUT, {6})
+    assert found == [
+        "moves.stamp: stop 80 is not after start 90",
+        "moves.stamp.attack[0]: frame 56 is before start 90",
+    ]
+    mv.start, mv.stop = 300, 0
+    assert moves.problems(m, LAYOUT, {6}) == [
+        "moves.stamp: start 300 is past the clip's 228 frames",
+        "moves.stamp.attack[0]: frame 56 is before start 300",
+    ]
+    with pytest.raises(ManifestError, match="start 300 is past"):
+        moves.check(m, LAYOUT, {6})
+
+
+def test_steer_window():
+    hunter = OWN.replace(
+        'turn = "hunter"\ndir = 180.0', 'turn = "hunter"\nrate = 546\nwindow = [10, 40]'
+    )
+    text = moves.lua(_m(hunter), LAYOUT, {6})
+    assert 'steer = { walls = true, turn = "hunter", rate = 546, window = { 10, 40 } }' in text
+    assert "window" not in moves.lua(_m(), LAYOUT, {6})
+
+
 def test_tip():
     tip = Tip(((46, 42), (47, 42), (48, 43)), (0.0, 0.0, -705.0))
     body = _body(moves.lua(_m(), LAYOUT, {6}, tip))
     assert body[-1] == "tip = { { 46, 42 }, { 47, 42 }, { 48, 43 } },"
     assert not any(line.startswith("tip") for line in _body(moves.lua(_m(), LAYOUT, {6})))
+
+
+def test_fatigue():
+    table = {
+        "max": 1000,
+        "starts": [400, 600],
+        "tired": 2250,
+        "refill": 500,
+        "low_hp": 15,
+        "calm": True,
+        "pairs": [[3, 3, 5]],
+        "own": {"stamp": 15},
+    }
+    text = moves.lua(_m(), LAYOUT, {6}, None, table)
+    assert _body(text)[-1] == (
+        "fatigue = { max = 1000, starts = { 400, 600 }, tired = 2250, refill = 500, low_hp = 15, "
+        "calm = true, pairs = { { 3, 3, 5 } }, own = { stamp = 15 } },"
+    )
+    plain = moves.lua(_m(), LAYOUT, {6})
+    assert not any(line.startswith("fatigue") for line in _body(plain))
+    assert moves.build_of(text) != moves.build_of(plain)
+
+
+def test_charge():
+    table = {
+        "ups": {"stamp": [25, 35, 40, 55]},
+        "transform": "dash",
+        "chip_gauge": 5,
+        "chip_durability": 4,
+        "cooldown_up": 420,
+        "cooldown_out": 900,
+        "discharge": [[4, 16], [4, 30]],
+    }
+    text = moves.lua(_m(), LAYOUT, {6}, None, None, table)
+    assert _body(text)[-1] == (
+        'charge = { ups = { stamp = { 25, 35, 40, 55 } }, transform = "dash", chip_gauge = 5, '
+        "chip_durability = 4, cooldown_up = 420, cooldown_out = 900, "
+        "discharge = { { 4, 16 }, { 4, 30 } } },"
+    )
+    plain = moves.lua(_m(), LAYOUT, {6})
+    assert not any(line.startswith("charge") for line in _body(plain))
+    assert moves.build_of(text) != moves.build_of(plain)
+    both = moves.lua(_m(), LAYOUT, {6}, None, {"max": 1000}, table)
+    assert [line.split(" = ")[0] for line in _body(both)[-2:]] == ["fatigue", "charge"]
 
 
 def test_graph_makes_the_same_module():
@@ -137,6 +221,24 @@ def test_curve_is_the_turns_module_entry():
     turns = layout.turns_lua(_m(), LAYOUT)
     assert f'[46] = "{moves.curve(_m(), "stamp", LAYOUT)}"' in turns
     assert moves.curve(_m(), "dash", LAYOUT) is None  # turns toward the hunter instead
+
+
+def test_slots_are_the_sorted_names():
+    m = _m()
+    assert moves.slots(m) == {"dash": 0, "spin": 1, "stamp": 2}
+    m.moves["alpha"] = manifest.Move(anim=1)
+    assert moves.slots(m) == {"alpha": 0, "dash": 1, "spin": 2, "stamp": 3}  # a pair move has none
+
+
+def test_slots_stop_at_the_registry():
+    m = _m()
+    for i in range(moves.SLOTS):
+        m.moves[f"o{i:02}"] = manifest.Move(anim=i)
+    assert len(moves.slots(m)) == moves.SLOTS and max(moves.slots(m).values()) == moves.SLOTS - 1
+    assert (
+        f"{moves.SLOTS + 3} own moves, the framework holds {moves.SLOTS}"
+        in moves.problems(m, LAYOUT, {6})[0]
+    )
 
 
 def test_hub():
@@ -164,6 +266,21 @@ def test_hub():
             "frame 228 is past the clip's 228",
         ),
         (
+            OWN.replace("anim = 9\n", "anim = 9\nstart = 100\n"),
+            LAYOUT,
+            None,
+            "spin: start 100 is past",
+        ),
+        (SPAN.replace("stop = 86", "stop = 229"), LAYOUT, None, "stop 229 is past the clip's 228"),
+        (SPAN.replace("stop = 86", "stop = 24"), LAYOUT, None, "stop 24 is not after start 24"),
+        (
+            SPAN.replace("start = 24", "start = 60"),
+            LAYOUT,
+            None,
+            r"attack\[0\]: frame 56 is before",
+        ),
+        (SPAN.replace("stop = 86", "stop = 70"), LAYOUT, None, "lasts to 80, past stop 70"),
+        (
             OWN,
             layout.Layout(LAYOUT.entries, turns={46: travel.Turn(600, (0,) * 301, 0, None)}),
             None,
@@ -185,8 +302,11 @@ def test_check(extra, lay, known, why):
 
 def test_pool():
     lay = layout.Layout(LAYOUT.entries, turns={46: travel.Turn(500, (0,) * 251, 0, None)})
-    many = "".join(f"[moves.s{i}]\nclip = 'stamp'\n" for i in range(9))
-    with pytest.raises(ManifestError, match="need 2259 keys, the framework holds 2048"):
+    n = moves.POOL // 251 + 1
+    many = "".join(f"[moves.s{i}]\nclip = 'stamp'\n" for i in range(n))
+    with pytest.raises(
+        ManifestError, match=f"need {251 * n} keys, the framework holds {moves.POOL}"
+    ):
         moves.check(_m(many), lay)
 
 
@@ -228,28 +348,19 @@ def test_zinogre(data):
     }
     assert b.layout.frames[46] == 228 and 6 in moves.records(data.fu, 75)
     assert f'curve = "{b.layout.turns[46].lua()}"' in text
-    stamp = 'stamp = { entry = 46, clip = "stamp_right_claw", attacks = { { 56, 6, 80 } }'
+    at = moves.slots(m)
+    assert sorted(at.values()) == list(range(len(own))) and at["stamp"] == 6
+    stamp = 'stamp = { entry = 46, slot = 6, clip = "stamp_right_claw", attacks = { { 56, 6, 80 } }'
     assert stamp + ", carrier = { 0, 2 }" in text
-    assert 'after = "dash_stop"' in text and 'turn = "fixed", total = 90.0, frames = 50' in text
-    assert '{ play = "stamp", from = "dash", min_frames = 10' in text
+    assert 'turn = "fixed", total = 90.0, frames = 50' in text and "claim" not in text
+    dash = next(line for line in text.splitlines() if line.strip().startswith("dash = {"))
+    assert "after" not in dash, "the brain's pairs end the dash themselves"
     assert '{ play = "flinch_head", on = "part_broken", part = 0' in text
     assert '{ play = "topple_left", on = "part_broken", part = 4' in text
-    assert '{ no_play = true, on = "flinch", effects = { { "var_add", 0, 1 } }' in text
-    assert 'conds = { { "var_at_least", 1, 1 }, { "var_at_least", 0, 2 } }, ' in text
-    assert 'effects = { { "var_set", 0, 0 } }' in text and "signal = 0" in text
-    enrage = '{ no_play = true, from = "charge_up", min_frames = 120, cooldown = 250, '
-    assert enrage + 'effects = { { "enrage", 0, 0 } }' in text
-    # it fires in the last frames of the charge (2 clip frames an AI frame), not in its first
-    rule = next(r for r in behaviour.compile(m) if r.from_move == "charge_up")
-    ai_frames = b.layout.frames[own["charge_up"]] // 2
-    assert ai_frames - 5 <= rule.min_frames < ai_frames and rule.cooldown >= 200
+    assert "signal = 0" in text and "enrage" not in text and "var_add" not in text
     assert "  sever_below = 50,\n  tip = " in text and "natural_rage" not in text
-    assert '{ no_play = true, on = "combat_entered", effects = { { "var_set", 1, 1 } }' in text
-    assert 'conds = { { "var_at_least", 1, 1 }, { "hp_below", 0, 30 } }' in text
-    assert (
-        "  vars = { flinches = 0, in_combat = 1 },\n  signals = { roar = 0 },\n  sever_below"
-        in text
-    )
+    assert '{ no_play = true, on = "combat_entered", effects = { { "var_set", 0, 1 } }' in text
+    assert "  vars = { in_combat = 0 },\n  signals = { roar = 0 },\n  sever_below" in text
     assert '{ play = "notice_howl", on = "noticed", force = true' in text
     assert "length = 78, steer = { walls = false" in text and 'after = "topple_left_2"' in text
 

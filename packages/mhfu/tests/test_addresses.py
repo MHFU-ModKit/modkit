@@ -29,6 +29,7 @@ def constants(t: addresses.Table) -> dict[str, int]:
         out[f"{e.name}_COUNT"] = len(e.names)
     for st in t.sets.values():
         out |= {f"{st.name}_{a.name}": int(a) for a in st.of}
+    out |= {name: int(c) for name, c in t.consts.items()}
     return out
 
 
@@ -112,6 +113,7 @@ def in_lua(t: addresses.Table) -> dict[str, int]:
         out[f"{e.name}_COUNT"] = len(names)
     for st in t.sets.values():
         out |= {f"{st.name}_{m}": v for m, v in addr[st.name].items()}
+    out |= {name: addr[name] for name in t.consts}
     return out
 
 
@@ -194,6 +196,13 @@ def test_a_set_reaches_all_three_languages(tmp_path):
     for found in (in_c(t, tmp_path), in_c_table(t, tmp_path), in_lua(t)):
         assert (found["AB_A"], found["AB_B"]) == (BASE + 8, BASE + 4)
     assert "#define MHFU_AB { MHFU_A, MHFU_B }" in addresses.render_c(t)
+
+
+def test_a_const_reaches_all_three_languages(tmp_path):
+    t = addresses.parse({"const": {"K": {"value": 16, "doc": "d"}}})
+    assert t.consts["K"] == 16 and t.consts["K"].doc == "d"
+    for found in (in_c(t, tmp_path), in_c_table(t, tmp_path), in_lua(t)):
+        assert found["K"] == 16
 
 
 def test_a_set_is_a_frozenset():

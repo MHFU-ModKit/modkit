@@ -11,7 +11,7 @@ mhfu = {}
 
 ---The API's version, raised whenever a declaration here changes; a mod that needs something added
 ---in version N checks `mhfu.api_version >= N`.
-mhfu.api_version = 7
+mhfu.api_version = 10
 
 -- log, memory and world state (bind_memory.cpp) ----------------------------------------------
 
@@ -467,6 +467,8 @@ mhfu.EM_UNLIMITED = -1 -- MHFU_EM_UNLIMITED
 ---@field req_done integer requests entered
 ---@field req_main integer the last request's pair
 ---@field req_sub integer
+---@field own_enters integer AI script enters of `mhfu.addr.OWN_MOVE_MAIN`, whether the slot held a move or not
+---@field own_last? integer the slot of the last that played, nil for none
 ---@field ring mhfu.EmEnter[] the last 8 enter-actions, oldest first
 ---@field rule_fired integer[] fires per rule slot
 ---@field rule_left integer[] budget left per rule slot
@@ -650,7 +652,9 @@ function mhfu.move_block() end
 ---A move for `mhfu.move_play`; every field but `entry` is optional.
 ---@class mhfu.Move
 ---@field entry integer executor entry: the clip
----@field length? integer AI frames from the clip's dispatch, default 0 = until the clip ends
+---@field length? integer AI frames from the clip's dispatch (the blend's among them), default 0 = until the clip ends or `stop`
+---@field start? integer clip frame the clip starts at, default 0 = its first; an attack before it never spawns
+---@field stop? integer clip frame the move ends at, when `part`'s cursor reaches it, whatever the blend and the cursor's rate; default 0 = none
 ---@field carrier? integer[] { main, sub } the native pair the move rides, default { 0, 2 }
 ---@field back? integer[] { main, sub, mode } entered at the end, default none
 ---@field skip? boolean the host AI step skips while the clip plays, except on a hit
@@ -665,6 +669,7 @@ function mhfu.move_block() end
 ---@field curve? string YAW while the clip plays: the entry's string in `<port>_turns.lua`
 ---@field turn? "still"|"hunter"|"away"|"fixed" also: toward or away from the hunter at `rate`, or `total` over `frames`
 ---@field rate? integer YAW units an AI frame toward or away, default 64 (the Tigrex charge's)
+---@field window? integer[] { from, to }: clip frames, 0 <= from < to, in which "hunter" and "away" turn (the donor turns inside a window); default the whole move
 ---@field total? number degrees for "fixed", positive the way YAW grows
 ---@field frames? integer AI frames "fixed" spreads `total` over
 ---@field walls? boolean a wall ahead ends the move; a class-2 one enters `stuck`
@@ -708,7 +713,7 @@ function mhfu.move_block() end
 -- it ends and names it (`after`), or when a rule says (EmRule.play_move).
 
 ---Own move slot 0..mhfu.addr.EM_MOVES.MOVES_COUNT-1 plays `spec`; `spec.after` is the slot played when it ends on its clip, its
----length or a wall. False for a bad slot or no room left for its turn keys.
+---length, its stop or a wall. False for a bad slot or no room left for its turn keys.
 ---@param slot integer
 ---@param spec mhfu.OwnMove
 ---@return boolean
@@ -736,7 +741,7 @@ function mhfu.em_moves_status() end
 
 ---An own move for `mhfu.em_move`: a `mhfu.Move` and the slot after it.
 ---@class mhfu.OwnMove: mhfu.Move
----@field after? integer own move slot played when this one ends on its clip, its length or a wall
+---@field after? integer own move slot played when this one ends on its clip, its length, its stop or a wall
 
 ---What `mhfu.em_moves_status()` returns.
 ---@class mhfu.OwnMovesStatus
@@ -746,6 +751,90 @@ function mhfu.em_moves_status() end
 ---@field plays integer own moves started
 ---@field chained integer of them by `after`
 ---@field keys integer turn keys in use
+
+-- fatigue (bind_em.cpp, include/mhfu/fatigue.h) ---------------------------------------------------
+-- MHFU has no fatigue and its AI script cannot count. A stamina for the wrapped species' monster is
+-- kept in C: charged when it enters a pair and when one of our own moves starts, and shown to the
+-- script as gauge A low (`if_gauge_a_low`), which em75 never tests otherwise. Do not arm it on a
+-- species whose AI step drains gauge A itself (ENTITY.GAUGE_A).
+
+---Arms the stamina helper for the board's monster, from its next AI step; nil turns it off. The
+---same settings again change nothing, a stamina included. False for settings it refuses (logged),
+---or too many pairs. A cost halves at low HP, is not charged while the monster is enraged or
+---tired, and a negative one gives stamina back; at 0 a tired spell begins.
+---@param t? mhfu.Fatigue
+---@return boolean
+function mhfu.em_fatigue(t) end
+
+---The stamina helper's state.
+---@return mhfu.FatigueStatus
+function mhfu.em_fatigue_status() end
+
+---Settings for `mhfu.em_fatigue`; every field is optional.
+---@class mhfu.Fatigue
+---@field max? integer stamina maximum, 1..30000, default 1000
+---@field starts? integer[] { a, b }: stamina at the monster's first AI step, one of them by chance; default { max, max }
+---@field tired? integer AI frames a tired spell lasts, default 2250 (75 s at 30 fps)
+---@field refill? integer stamina when it ends, 1..max, default max / 2
+---@field low_hp? integer costs halve at or below this HP percent; default 0, never
+---@field calm? boolean the species' own anger starts no rage while tired (`mhfu.em_natural_rage`)
+---@field pairs? integer[][] up to `mhfu.addr.FATIGUE_CFG.PAIRS_COUNT` of { main, sub, cost }: the cost of entering a pair
+---@field own? table<integer, integer> the cost of starting an own move, by slot (a `mhfu_port` module may key it by the move's name)
+
+---What `mhfu.em_fatigue_status()` returns.
+---@class mhfu.FatigueStatus
+---@field armed boolean
+---@field stamina integer the board's monster's, 0 until its first AI step after arming
+---@field tired boolean in a tired spell: gauge A reads low
+---@field left integer AI frames of the spell left
+---@field charges integer costs charged
+---@field spells integer tired spells begun
+---@field gauge integer gauge A as the helper last wanted it
+
+-- charge (bind_em.cpp, include/mhfu/charge.h) ---------------------------------------------------
+-- MHP3rd's Zinogre charges up a gauge, transforms at 100 and stays charged until hits wear it
+-- out; its script asks the species "charged" (query `mhfu.addr.CHARGE_QUERY_CHARGED`) and "the
+-- cooldown runs" (`CHARGE_QUERY_COOLDOWN`), which em75 answers 0 to. The helper keeps that state in
+-- C for the wrapped species' monster and answers those two queries to the AI script's
+-- `switch_query` (the species' query slot is wrapped); any other query, and any other monster, gets
+-- the species' own answer.
+
+---Arms the charge helper for the board's monster, from its next AI step; nil turns it off. The
+---gauge gains when the move player starts a charge-up (`ups`, by the monster's HP), a hit chips
+---the gauge (not charged) or the durability (charged), a full gauge plays the transform own move
+---once the move player is idle, durability 0 or a discharge pair discharges. False for settings it
+---refuses (logged), too many ups or pairs, or when the query slot could not be wrapped. The same
+---settings again change nothing, the state included.
+---@param t? mhfu.Charge
+---@return boolean
+function mhfu.em_charge(t) end
+
+---The charge helper's state.
+---@return mhfu.ChargeStatus
+function mhfu.em_charge_status() end
+
+---Settings for `mhfu.em_charge`; every field is optional.
+---@class mhfu.Charge
+---@field ups? table<integer, integer[]> up to `mhfu.addr.CHARGE_CFG.UPS_COUNT` charge-up own moves by slot, each { g95, g75, g40, glow }: the gauge it gains at or above 95, 75, 40 percent of the monster's HP, and below (a `mhfu_port` module may key it by the move's name)
+---@field transform? integer own-move slot played when the gauge is full (a name in a `mhfu_port` module); default none
+---@field chip_gauge? integer gauge a hit takes while not charged, 0..100, default 0
+---@field chip_durability? integer durability a hit takes while charged, 0..100, default 0
+---@field cooldown_up? integer AI frames of cooldown after a charge-up starts, default 420
+---@field cooldown_out? integer AI frames after a discharge, default 900
+---@field discharge? integer[][] up to `mhfu.addr.CHARGE_CFG.PAIRS_COUNT` host { main, sub } pairs that discharge a charged monster at once
+
+---What `mhfu.em_charge_status()` returns.
+---@class mhfu.ChargeStatus
+---@field armed boolean
+---@field charged boolean
+---@field gauge integer 0..100
+---@field durability integer 100 at the transform, 0 when not charged
+---@field cooldown integer AI frames left, counted while not charged
+---@field ups integer charge-ups started
+---@field transforms integer transforms started
+---@field discharges integer
+---@field hits integer hits counted
+---@field asked integer queries answered to the AI script
 
 -- reactions and monster events (bind_move.cpp, bind_monster_events.cpp) ----------------------
 

@@ -8,10 +8,20 @@ indices resolved, its `signal` index and, for a path that plays nothing, `no_pla
 percent) and `natural_rage = false` appear only when the manifest sets them.
 
 A pair move goes as the runtime paints it on its host pair. An own move goes as the move player
-takes it (`mhfu.move_play`): its clip's executor entry and, for `turn = "clip"`, its turn keys,
-both from the build's layout; the attack windows, the carrier (`hub` when it names none), the
-steer and `after`. `tip` is the tail tip's `{ joint, carrier }` pairs (`rig.Tip`), which
-`mhfu.em_tip` takes.
+takes it (`mhfu.move_play`): its `slot` in the framework's registry (`slots`), its clip's executor
+entry and, for `turn = "clip"`, its turn keys, both from the build's layout; the attack windows,
+the carrier (`hub` when it names none), the steer and `after`, and `start` and `stop`, the clip
+frames it plays from and to, when it sets them (`length` counts AI frames instead). `tip` is the
+tail tip's `{ joint, carrier }` pairs (`rig.Tip`), which `mhfu.em_tip` takes.
+
+`fatigue` is the stamina table `mhfu.em_fatigue` takes (`brain.fatigue`), given when the manifest's
+`[brain] fatigue` is set; `mhfu_port.lua` arms it with the port, an own move keyed by name.
+`charge` is the same for the charge helper (`mhfu.em_charge`, `brain.charge`, `[brain] charge`):
+the charge-up moves' gains and the transform move, by name.
+
+`slots` is the one numbering of own moves: this module writes it, `mhfu_port.lua` registers by it
+and the brain splice's `enter OWN_MOVE_MAIN k 0` names it. The manifest it is given has the own
+moves `[brain.pairs]` derive from the donor (`brain.own.expand`), which `cli.build.modules` adds.
 """
 
 from __future__ import annotations
@@ -27,7 +37,7 @@ from mhfu.files import Extracted, em_overlay
 from . import behaviour
 from .behaviour import Rule
 from .layout import Layout
-from .manifest import Manifest, ManifestError, Move
+from .manifest import OWN_MOVES, Manifest, ManifestError, Move, span_problems
 from .rig import Tip
 
 Pair = tuple[int, int]
@@ -39,6 +49,15 @@ KEYS: int = addresses.STEER_SPEC.KEYS.count or 0
 """Turn keys the move player holds for one move."""
 POOL: int = addresses.EM_MOVES.KEYS.count or 0
 """Turn keys the framework holds for all of a port's own moves."""
+SLOTS: int = OWN_MOVES
+"""Own moves the framework's registry holds."""
+
+
+def slots(m: Manifest) -> dict[str, int]:
+    """Each own move's registry slot: sorted by name, numbered from 0, at most `SLOTS` (`problems`
+    names the rest)."""
+    own = sorted(name for name, mv in m.moves.items() if mv.own)
+    return {name: k for k, name in enumerate(own[:SLOTS])}
 
 
 def hub(species: int) -> Pair | None:
@@ -106,11 +125,15 @@ def records(game: Extracted, species: int) -> frozenset[int]:
 
 
 def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> list[str]:
-    """Every own move or rule the module cannot carry: a clip with no entry, an attack past its
-    clip or with no record in `known` (the host's, when given), more turn keys than the framework
-    holds, no carrier; rules on the flinch whose moves ride different carriers."""
+    """Every own move or rule the module cannot carry: more own moves than slots, a clip with no
+    entry, a start or stop past its clip or an attack outside them (`manifest.span_problems`), an
+    attack past its clip or with no record in `known` (the host's, when given), more turn keys
+    than the framework holds, no carrier; rules on the flinch whose moves ride different
+    carriers."""
     out: list[str] = []
     pool = 0
+    if (n := sum(mv.own for mv in m.moves.values())) > SLOTS:
+        out.append(f"moves: {n} own moves, the framework holds {SLOTS}")
     for name, mv in m.moves.items():
         if not mv.own:
             continue
@@ -122,6 +145,7 @@ def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) 
             out.append(str(err))
             continue
         frames = layout.frames.get(e)
+        out += [f"{w}{sub}: {text}" for sub, text in span_problems(mv, frames)]
         for i, a in enumerate(mv.attacks):
             if known is not None and a.id not in known:
                 out.append(
@@ -195,6 +219,8 @@ def _steer(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
         out["turn"] = s.turn
         if s.rate is not None:
             out["rate"] = s.rate
+        if s.window is not None:
+            out["window"] = list(s.window)
     elif s.turn == "fixed":
         out |= {"turn": "fixed", "total": s.angle, "frames": s.frames}
     elif (keys := curve(m, name, layout)) is not None:
@@ -202,9 +228,9 @@ def _steer(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
     return out
 
 
-def _own_move(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
+def _own_move(m: Manifest, name: str, layout: Layout, slot: int) -> dict[str, Any]:
     mv = m.moves[name]
-    out: dict[str, Any] = {"entry": entry(m, name, layout)}
+    out: dict[str, Any] = {"entry": entry(m, name, layout), "slot": slot}
     if mv.clip is not None:
         out["clip"] = mv.clip
     if mv.attacks:
@@ -214,6 +240,10 @@ def _own_move(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
     out["carrier"] = list(carrier(m, name))
     if mv.length is not None:
         out["length"] = mv.length
+    if mv.start:
+        out["start"] = mv.start
+    if mv.stop:
+        out["stop"] = mv.stop
     if mv.host_attacks:
         out["host_attacks"] = True
     out["steer"] = _steer(m, name, layout)
@@ -288,7 +318,12 @@ def lua_value(v: object) -> str:
 
 
 def lua(
-    m: Manifest, layout: Layout, known: Collection[int] | None = None, tip: Tip | None = None
+    m: Manifest,
+    layout: Layout,
+    known: Collection[int] | None = None,
+    tip: Tip | None = None,
+    fatigue: Mapping[str, Any] | None = None,
+    charge: Mapping[str, Any] | None = None,
 ) -> str:
     """The module; `check`s first."""
     check(m, layout, known)
@@ -300,8 +335,9 @@ def lua(
         "return {",
         "  moves = {",
     ]
+    at = slots(m)
     for name, mv in m.moves.items():
-        body = _own_move(m, name, layout) if mv.own else pair_move(mv)
+        body = _own_move(m, name, layout, at[name]) if mv.own else pair_move(mv)
         out.append(f"    {lua_key(name)} = {lua_value(body)},")
     out += ["  },", "  rules = {"]
     out += [f"    {lua_value(_rule(r))}," for r in behaviour.compile(m)]
@@ -315,6 +351,10 @@ def lua(
         out.append("  natural_rage = false,")
     if tip is not None:
         out.append(f"  tip = {lua_value(tip.pairs)},")
+    if fatigue is not None:
+        out.append(f"  fatigue = {lua_value(fatigue)},")
+    if charge is not None:
+        out.append(f"  charge = {lua_value(charge)},")
     out += ["}", ""]
     text = "\n".join(out)
     build = zlib.crc32(text.encode("utf-8")) & 0x7FFF_FFFF or 1

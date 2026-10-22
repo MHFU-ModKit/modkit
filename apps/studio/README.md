@@ -5,8 +5,9 @@ One Qt window for authoring MHFU mods offline, with the commands behind it. Two 
 - **Monster**: a ported monster's clips, labels, parts, hitboxes and moves, kept in its manifest
   in [`ports/`](../../ports), checked against the base monster's data from the game. Its hit
   tables are one set of writes over the base monster's, exported as a Lua module the framework
-  loads (`<name>_hit.lua`) or pushed into the running game through PPSSPP's debugger. Its Brain
-  tab reads the base monster's AI script.
+  loads (`<name>_hit.lua`) or pushed into the running game through PPSSPP's debugger; a port
+  with a `[brain]` also ships the spare attack records its own moves play, derived from both games
+  each time and never saved. Its Brain tab reads the base monster's AI script.
 - **Map**: edits to a stage's mesh, collision and textures, kept as edit lists in a `map.toml`
   document and pushed into the running game through PPSSPP's debugger; and named points (the
   Point tool, the Points panel), which `mhfu rig goto|walk` takes the hunter to.
@@ -39,7 +40,7 @@ uv run studio port push ports/zinogre.toml           # the same writes into the 
 |---|---|
 | `studio open [PATH]` | The window, with PATH open; `--workspace NAME`, `--size WxH` |
 | `studio render selftest\|map\|monster` | A stage or a monster to PNG, without a window |
-| `studio port scene\|clips\|align\|check\|hit\|push` | A port's contents, clip coverage and labels, timing against the host, checks, its Lua module, and the same writes into the running game (`MHFU_LANE` picks a lane's) |
+| `studio port scene\|clips\|align\|check\|hit\|push` | A port's contents, clip coverage and labels, timing against the host (the handler's hit checks and the attacks its entry's animation events spawn), checks, its Lua module, and the same writes into the running game (`MHFU_LANE` picks a lane's) |
 | `studio map inject\|edit\|push\|exits\|surfaces\|budget\|textures\|verify` | A map document into the running game, one edit list offline or live, and what a stage holds |
 
 `--help` on any of them says more.
