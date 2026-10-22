@@ -12,10 +12,10 @@ Image checks assemble the program, or take the image it was assembled to, and re
 the way the game does (`walk`) and the way the decoder does. Run checks follow the program's
 paths the way `budget` does and speak only of a path through new code: OPS_PER_RUN, RESTART_LOOP
 and CORRELATED_DRAW. Anything that makes a routine run off its end, and a restart that never
-yields, is an error; dead code, a random that follows another draw and a branch that never runs
-are warnings. Every native routine ends each path with an end or a goto, so one with new code
-in it that can run off its end is the edit's doing; a deleted `end` in a routine with nothing new
-is left to the decoder (DECODE).
+yields, is an error; dead code, a random that follows another draw, a branch that never runs and
+a branch no draw reaches (ARM_UNREACHABLE) are warnings. Every native routine ends each path with
+an end or a goto, so one with new code in it that can run off its end is the edit's doing; a
+deleted `end` in a routine with nothing new is left to the decoder (DECODE).
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from functools import cached_property
 
 from ... import addresses
-from . import asm, budget, ir, walk
+from . import asm, budget, draw, ir, walk
 from .disasm import SENTINEL, Reader
 from .lift import LiftError, routine
 from .opcodes import END_KINDS, OPCODES, Flow, Shape, slot
@@ -87,6 +87,8 @@ class _Checks:
         self.p = p
         self.out: list[Finding] = []
         self.touched: set[int] = set()
+        self.bands: dict[int, range] = {}
+        """The draws that reach each random that reads its parent's draw (`draw.nested`)."""
         self.reach = p.reach()
         self.tables = p.tables()
         self.headers = {h.name: h for h in p.headers()}
@@ -97,6 +99,8 @@ class _Checks:
     def run(self) -> list[Finding]:
         for r in self.p.routines():
             _touched(r.body, self.touched)
+            self.bands |= draw.nested(r.body)
+        for r in self.p.routines():
             self.nodes(r, r.body, [])
         for t in self.p.items:
             if isinstance(t, ir.Table) and len(t.slots) > ir.MAX_LIST:
@@ -145,8 +149,8 @@ class _Checks:
     def block(self, r: ir.Routine, b: ir.Block) -> None:
         op = b.op
         if op.shape is Shape.RANDOM:
-            weights = [w for a in b.arms if isinstance(w := a.args.get("weight"), int)]
-            if len(weights) == len(b.arms) and sum(weights) != _TOTAL:
+            weights = draw.weights(b)
+            if weights is not None and sum(weights) != _TOTAL:
                 text = f"{op.name} weights add up to {sum(weights)}, not {_TOTAL}"
                 self.add("error", "RANDOM_WEIGHTS", text, b.id, r.name)
             for a in b.arms:
@@ -154,6 +158,8 @@ class _Checks:
                     self.add(
                         "warning", "WEIGHT_ZERO", f"{op.name}: this branch never runs", a.id, r.name
                     )
+            if weights is not None and id(b) in self.bands:
+                self.unreachable(r, b, weights, self.bands[id(b)])
         if op.code == walk.SHORT and b.pc is None:
             text = f"{op.name}: the game steps its opener onto the first case value"
             self.add("error", "SKIP_SHORT", text, b.id, r.name)
@@ -162,6 +168,15 @@ class _Checks:
             self.add("error", "REPEAT_COUNT", f"repeat runs {count} times", b.id, r.name)
         if op.ordered:
             self.ordered(r, b)
+
+    def unreachable(self, r: ir.Routine, b: ir.Block, weights: list[int], band: range) -> None:
+        """ARM_UNREACHABLE: a branch of a random that reads its parent's draw, which only the
+        draws of `band` reach, and none of them takes."""
+        text = f"{b.op.name}: only draws {band.start} to {band.stop - 1} reach it, none this branch"
+        got = draw.spans(weights, band.start, band.stop)
+        for a, w, span in zip(b.arms, weights, got, strict=True):
+            if w and not span:
+                self.add("warning", "ARM_UNREACHABLE", text, a.id, r.name)
 
     def ordered(self, r: ir.Routine, b: ir.Block) -> None:
         """Adjacent cases, one of them new, must ascend: the game's scan stops at the first
@@ -395,7 +410,10 @@ def _runs(c: _Checks, b: budget.Budget | None) -> None:
         )
         c.add("error" if rs.forced else "warning", "RESTART_LOOP", text, rs.node, None)
     for d in b.draws:
-        text = "this random follows another draw in the run, and a draw steps by 1: its odds follow"
+        text = (
+            "this random follows another draw in the run; the draw is a counter that a step adds 1"
+            " to, so its branch follows the earlier draw's, steps or not"
+        )
         c.add("warning", "CORRELATED_DRAW", text, d.node, index.routine(d.node).name)
 
 

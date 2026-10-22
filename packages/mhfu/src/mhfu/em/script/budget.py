@@ -44,6 +44,7 @@ from functools import cached_property
 from typing import NamedTuple
 
 from . import ir
+from .draw import nested
 from .opcodes import END_KINDS, LISTS, SLOTS, Flow, Shape, slot
 
 __all__ = ["LIMIT", "WARN", "Budget", "Draw", "Restart", "Run", "contexts", "needs"]
@@ -115,6 +116,8 @@ class _Site:
     node: ir.Insn | None = None
     arg: int = 0
     """A repeat's count; 1 on an opener that draws."""
+    nested: bool = False
+    """A random that is the first node of a branch of a random: it reads that draw."""
 
 
 class _St(NamedTuple):
@@ -161,6 +164,9 @@ class _Graph:
         self.p = p
         self.sites: list[_Site] = []
         self.entry: dict[str, int] = {}
+        self.nested: set[int] = set()
+        for r in p.routines():
+            self.nested |= nested(r.body).keys()
         for r in p.routines():
             fall = self._add(_Site("fall", "", r.va is None))
             self.entry[r.name] = self._list(r.body, fall)
@@ -197,9 +203,8 @@ class _Graph:
         skips = shape is Shape.SWITCH or (shape is Shape.IF and not b.arms)
         if skips and not any(a.sub == 2 for a in b.arms):
             to.append(after)
-        return self._add(
-            _Site("open", b.id, new, dirty, to=tuple(to), arg=int(shape is Shape.RANDOM))
-        )
+        draws, inside = int(shape is Shape.RANDOM), id(b) in self.nested
+        return self._add(_Site("open", b.id, new, dirty, to=tuple(to), arg=draws, nested=inside))
 
 
 class _Walk:
@@ -561,7 +566,8 @@ class Budget:
     @cached_property
     def draws(self) -> list[Draw]:
         """The new or edited randoms that can run after another draw in the same run, a restart of
-        base[0] starting a new one."""
+        base[0] starting a new one. A random that is the first node of a branch of a random reads
+        its parent's draw, not a later one, and is not among them."""
         found: dict[str, Draw] = {}
         sites = self.graph.sites
         if not any(s.dirty and s.arg for s in sites):
@@ -577,7 +583,7 @@ class Budget:
                 st, drew = key
                 s = sites[st.site]
                 if s.kind == "open" and s.arg:
-                    if drew and s.dirty and s.id not in found:
+                    if drew and s.dirty and not s.nested and s.id not in found:
                         found[s.id] = Draw(s.id, w.h.name)
                     drew = True
                 stp = w.step(st)

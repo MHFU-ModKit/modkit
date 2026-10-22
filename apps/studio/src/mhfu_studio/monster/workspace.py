@@ -153,6 +153,7 @@ FIXES = {
     "WEIGHT_ZERO": "Give the branch a weight, or take it out.",
     "RANDOM_WEIGHTS": "The weights must add up to 32: Even sets them.",
     "CORRELATED_DRAW": "Fold the two chances into one pick.",
+    "ARM_UNREACHABLE": "Give the branch weight inside its outer branch, or fold the two picks.",
     "PAIR_UNKNOWN": "Pick a pair from the list the bar offers.",
     "PAIR_RANGE": "main is 0 to 7.",
     "DOC_ANCHOR": "Its anchor is gone: remove this edit, or Back to the game's.",

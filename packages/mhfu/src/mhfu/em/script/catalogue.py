@@ -27,6 +27,7 @@ from typing import NamedTuple
 
 from ... import addresses
 from ...stage import STAGE_NAMES, row_name, stage_id
+from . import draw
 from .ir import Arm, Block, Insn, Node, Routine, Sym, Value, walk
 from .opcodes import BY_NAME, END_KINDS, OPCODES, SLOTS, Flow, Op, Operand, Shape, slot
 from .opcodes import operands as layout_operands
@@ -78,7 +79,7 @@ __all__ = [
     "title",
 ]
 
-DRAW = 32
+DRAW = draw.DRAW
 """Steps of a pick's draw; a branch's weight is a share of it."""
 ANY = 0xFFFF
 """An area operand that is every area, or the monster's own."""
@@ -1250,32 +1251,15 @@ def gloss(node: Node | Arm, words: Words = NO_WORDS, block: Block | None = None)
 
 
 def shares(weights: Sequence[int]) -> tuple[int, ...]:
-    """The steps of the draw each branch gets: a 0 is skipped, a 255 takes the rest, the others
-    take their weight in turn and the last branch gets what is left."""
-    out = [0] * len(weights)
-    for d in range(DRAW):
-        total, pick = 0, len(weights) - 1
-        for k, w in enumerate(weights):
-            if w == 0:
-                continue
-            total += w
-            if w == 0xFF or d < total:
-                pick = k
-                break
-        out[pick] += 1
-    return tuple(out)
-
-
-def _weights(b: Block) -> list[int] | None:
-    ws = [a.args.get("weight") for a in b.arms]
-    return [w for w in ws if isinstance(w, int)] if all(isinstance(w, int) for w in ws) else None
+    """The steps of the draw each branch gets (`draw.take`)."""
+    return tuple(len(r) for r in draw.spans(weights))
 
 
 def chance(b: Block) -> Chance | None:
     """A pick of two arms, one of them empty: the arm with a body and its share."""
     if b.op.shape is not Shape.RANDOM or len(b.arms) != 2:
         return None
-    ws = _weights(b)
+    ws = draw.weights(b)
     full = [i for i, a in enumerate(b.arms) if a.body]
     if ws is None or len(full) != 1:
         return None
@@ -1357,7 +1341,7 @@ _MARKS = {Shape.IF: "then", Shape.REPEAT: "body"}
 def ports(b: Block, words: Words = NO_WORDS) -> Ports:
     """The names of a block's ports: its head, where it has one, and each arm."""
     op, e = b.op, entry(b.op)
-    ws = _weights(b)
+    ws = draw.weights(b)
     got = shares(ws) if ws else None
     c = chance(b)
     arms = []

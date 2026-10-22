@@ -1168,8 +1168,8 @@ def test_random_nested():
     edit.put(
         ok, "base_0", [edit.random([(16, [edit.random([(8, [])])])]), edit.random([], shift=3)]
     )
-    # a random in a random is skipped whole; each of the three draws follows another
-    assert codes(ok) == [("warning", "CORRELATED_DRAW")] * 2
+    # a random in a random is skipped whole; the one that opens its branch reads its draw
+    assert codes(ok) == [("warning", "CORRELATED_DRAW")]
 
 
 def test_skip_short():
