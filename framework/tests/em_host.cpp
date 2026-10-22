@@ -13,6 +13,8 @@
 
 static uint8_t g_mem[SIZE];
 static uint8_t g_hunter[0x300];
+static uint8_t g_quest[0x900];   /* the quest singleton, MHFU_QUEST_SINGLETON */
+static uint32_t g_big_ret;       /* what mhfu_entity_is_bigmonster answers */
 static uint32_t g_calls[64][5];
 static int g_n;
 static float g_clip_end = 100;
@@ -26,6 +28,8 @@ static uint8_t *at(uint32_t a, uint32_t n)
     if (a >= MHFU_BREAK_TABLE && a + n <= MHFU_BREAK_TABLE + sizeof(g_breaks))
         return g_breaks + (a - MHFU_BREAK_TABLE);
     if (a >= BASE && a + n <= BASE + SIZE) return g_mem + (a - BASE);
+    if (a >= MHFU_QUEST_SINGLETON && a + n <= MHFU_QUEST_SINGLETON + sizeof(g_quest))
+        return g_quest + (a - MHFU_QUEST_SINGLETON);
     if (a >= MHFU_PLAYER_ENTITY && a + n <= MHFU_PLAYER_ENTITY + sizeof(g_hunter))
         return g_hunter + (a - MHFU_PLAYER_ENTITY);
     return 0;
@@ -51,6 +55,16 @@ void    *mhfu_host_at(uint32_t a) { return at(a, 4); }
 void mhfu_log(const char *, ...) {}
 uint32_t mhfu_host_usec(void) { return 0; }
 void mhfu_event_fire(mhfu_event_id_t, const void *) {}
+int mhfu_entity_is_bigmonster(uint32_t) { return (int)g_big_ret; }
+
+/* the quest's target groups: n of them, group k holding species em_id */
+void host_groups(uint32_t n) { memcpy(g_quest + MHFU_QUEST_GROUP_COUNT, &n, 4); }
+void host_target(int k, uint32_t em_id)
+{
+    memcpy(g_quest + MHFU_QUEST_TARGETS + k * MHFU_QUEST_TARGET_SIZE + MHFU_QUEST_TARGET_EM_ID,
+           &em_id, 4);
+}
+void host_big(uint32_t ret) { g_big_ret = ret; }
 
 void mhfu_host_enter(uint32_t e, uint32_t m, uint32_t s, uint32_t mode)
 {
@@ -127,6 +141,8 @@ void     host_reset(float clip_end)
     memset(g_breaks, 0, sizeof(g_breaks));
     memset(g_mem, 0, sizeof(g_mem));
     memset(g_hunter, 0, sizeof(g_hunter));
+    memset(g_quest, 0, sizeof(g_quest));
+    g_big_ret = 0;
     g_clip_end = clip_end;
     g_gate_ret = 1;
     g_n = 0;

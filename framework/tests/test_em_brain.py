@@ -389,6 +389,10 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     lib.mhfu_em_host_reaction.argtypes = [ctypes.c_uint32, ctypes.c_uint8, ctypes.c_uint8]
     lib.mhfu_em_host_brain.argtypes = [ctypes.c_uint32]
     lib.mhfu_em_host_latch.argtypes = [ctypes.c_uint32]
+    lib.mhfu_em_host_latches.argtypes = [ctypes.c_uint32]
+    lib.host_groups.argtypes = [ctypes.c_uint32]
+    lib.host_target.argtypes = [ctypes.c_int, ctypes.c_uint32]
+    lib.host_big.argtypes = [ctypes.c_uint32]
     lib.mhfu_em_host_spawn.argtypes = [ctypes.c_uint32]
     lib.mhfu_em_var.argtypes = [ctypes.c_int]
     lib.mhfu_em_set_var.argtypes = [ctypes.c_int, ctypes.c_int]
@@ -1617,6 +1621,56 @@ def test_the_second_foreleg_break_reaches_its_rule(g: Game) -> None:
     g.poke(a.ENTITY.FLINCH_MASK, "B", (1 << 4) | (1 << 6))
     g.frame()
     assert g.entered() == [(3, 7)] and g.board("BROKEN") == (1 << 4) | (1 << 6)
+
+
+TIGREX_ID, POPO_ID = 0x4B, 0x46
+
+
+def latches(g: Game, species: int) -> int:
+    g.poke(a.ENTITY.SPECIES, "B", species)
+    return int(g.lib.mhfu_em_host_latches(ENT))
+
+
+def test_only_a_target_species_latches(g: Game) -> None:
+    g.lib.host_groups(1)
+    g.lib.host_target(0, TIGREX_ID)
+    assert latches(g, TIGREX_ID) == 1 and latches(g, POPO_ID) == 0
+
+
+def test_every_target_group_counts(g: Game) -> None:
+    g.lib.host_groups(2)
+    g.lib.host_target(0, TIGREX_ID)
+    g.lib.host_target(1, 0x4D)
+    assert latches(g, 0x4D) == 1 and latches(g, POPO_ID) == 0
+
+
+def test_a_group_past_the_count_does_not_count(g: Game) -> None:
+    g.lib.host_groups(1)
+    g.lib.host_target(0, TIGREX_ID)
+    g.lib.host_target(1, POPO_ID)  # stale: the count is 1
+    assert latches(g, POPO_ID) == 0
+
+
+def test_a_wild_group_count_stops_at_the_groups_there_are(g: Game) -> None:
+    g.lib.host_groups(0xFFFFFFFF)
+    g.lib.host_target(0, TIGREX_ID)
+    assert latches(g, TIGREX_ID) == 1 and latches(g, POPO_ID) == 0
+
+
+def test_a_host_spawned_under_another_target_latches(g: Game) -> None:
+    g.lib.host_groups(1)
+    g.lib.host_target(0, 0x4D)  # a swap's record names the replaced species
+    g.lib.host_big(1)
+    assert latches(g, TIGREX_ID) == 1
+    g.lib.host_big(0)
+    assert latches(g, POPO_ID) == 0
+
+
+def test_a_quest_without_groups_asks_the_species_list(g: Game) -> None:
+    g.lib.host_big(1)
+    assert latches(g, TIGREX_ID) == 1
+    g.lib.host_big(0)
+    assert latches(g, POPO_ID) == 0
 
 
 HUB, SCRIPT_PAIR = (0, 2), (1, 3)  # the carrier of g.own; the pair the AI script enters next

@@ -94,14 +94,15 @@
  * build_act_stub).
  *
  * A slot's code is valid only while that species' overlay is resident, so we latch
- * onto the vtable of a big monster the engine spawned and restore on quest exit,
- * dropping every rule, substitution and request with it. One config block per
+ * onto the vtable of a big monster of the quest the engine spawned (latches()) and restore
+ * on quest exit, dropping every rule, substitution and request with it. One config block per
  * latched vtable, not per entity: two live monsters of that species would share
  * the dwell counter and the distance.
  */
 #include "mhfu/call.h"
 #include "mhfu/charge.h"
 #include "mhfu/em_vhook.h"
+#include "mhfu/entity.h"
 #include "mhfu/events.h"
 #include "mhfu/fatigue.h"
 #include "mhfu/hooks.h"
@@ -1771,6 +1772,23 @@ extern "C" int mhfu_em_sever_gate(int pct)
     return 1;
 }
 
+/* ent is a big monster, so its species vtable may take the latch. The vtable band alone passes
+ * any species, a Popo's too, and the first spawn seen took the latch. A big monster is one of the
+ * framework's species list (a port's host, which a swap may spawn under another target's record)
+ * or of the quest's target groups (the ADD path's groups too). */
+static int latches(uint32_t ent)
+{
+    if (mhfu_entity_is_bigmonster(ent)) return 1;
+    const uint8_t species = mhfu_mem_read_u8(ent + MHFU_ENTITY_SPECIES);
+    uint32_t groups = mhfu_mem_read_u32(MHFU_QUEST_SINGLETON + MHFU_QUEST_GROUP_COUNT);
+    if (groups > MHFU_QUEST_TARGETS_COUNT) groups = MHFU_QUEST_TARGETS_COUNT;
+    for (uint32_t k = 0; k < groups; k++) {
+        const uint32_t t = MHFU_QUEST_SINGLETON + MHFU_QUEST_TARGETS + k * MHFU_QUEST_TARGET_SIZE;
+        if ((mhfu_mem_read_u32(t + MHFU_QUEST_TARGET_EM_ID) & 0xFF) == species) return 1;
+    }
+    return 0;
+}
+
 /* A new quest: no move is ours and the board belongs to no monster yet. */
 static void quest_reset(void)
 {
@@ -1872,6 +1890,11 @@ static int wrap_gate(void)
 static void install_for(uint32_t entity)
 {
     if (g_installed || !entity) return;
+    if (!latches(entity)) {
+        mhfu_log("[%s] entity 0x%08X species 0x%02X is no target of the quest - skipping", OWNER,
+                 (unsigned)entity, (unsigned)mhfu_mem_read_u8(entity + MHFU_ENTITY_SPECIES));
+        return;
+    }
     if (alloc_block() < 0) return;
     uint32_t vt = mhfu_mem_read_u32(entity);
     /* every species entity vtable lies in this band: a corrupt pointer never
@@ -2004,6 +2027,9 @@ extern "C" int mhfu_em_init(void)
     mhfu_move_init();
     return 0;
 }
+
+/* install_for's gate on a spawned entity */
+extern "C" int mhfu_em_host_latches(uint32_t ent) { return latches(ent); }
 
 /* the species vtable latched, as install_for's */
 extern "C" void mhfu_em_host_latch(uint32_t vtable) { T->vtable = vtable; }

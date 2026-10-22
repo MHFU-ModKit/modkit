@@ -19,7 +19,7 @@ typedef enum {
     MHFU_EVENT_QUEST_BEGINNING,          /* the player commits to a quest */
     MHFU_EVENT_QUEST_ENTERED,            /* the first area after QUEST_BEGINNING */
     MHFU_EVENT_MAP_SECTION_ENTERED,      /* the area index changed */
-    MHFU_EVENT_MONSTER_SPAWNED,          /* a new entity in registry slot 1 or above */
+    MHFU_EVENT_MONSTER_SPAWNED,          /* a new entity in registry slot 1 or above; each quest reports its own */
     MHFU_EVENT_QUEST_TARGETS_BUILDING,   /* edit the quest's monster list here (quest.h) */
     /* big monsters, ai.h */
     MHFU_EVENT_AI_OVERLAY_LOADED,
