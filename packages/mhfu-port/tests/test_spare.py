@@ -289,6 +289,37 @@ def test_a_donor_record_without_a_match_plays_its_spare():
     manifest.check(m)
 
 
+class Two(Stub):
+    """A walk over several pairs."""
+
+    def __init__(self, plans: dict, hits: Hits, hosts: dict[int, int]) -> None:
+        super().__init__(next(iter(plans.values())), hits, hosts)
+        self.plans = plans
+        self.ms = SimpleNamespace(pairs={p: p for p in plans})
+
+    def plan(self, pair: object) -> Plan:
+        return self.plans[pair]
+
+
+def test_the_scale_reads_the_pairs_a_handler_hands_over_to():
+    hits = donor(rec(1, power=40), rec(2, power=100), rec(3, power=60, length=40))
+
+    def one(pair: tuple[int, int], to: tuple[int, int], *spawns: Hit) -> Plan:
+        return Plan(pair, (Step(61, 4, 0.0, "clip", 191, spawns, ()),), (to,), True)
+
+    plans = {
+        (7, 13): one((7, 13), (7, 14), Hit(0, 3, 0, 140.0, 170.0)),
+        (7, 14): one((7, 14), (0, 0), Hit(0, 1, 0, 135.0, 165.0), Hit(1, 2, 0, 135.0, 165.0)),
+    }
+    m = manifest_of("[clips.charge]\nsource = 61\n")
+    stub = Two(plans, hits, {1: 7, 2: 8})
+    d = own.Derivation(m, stub, lambda: stub, [].append, [(7, 13)])  # type: ignore[arg-type]
+    d.run((7, 13))
+    assert m.moves["p3_7_13"].after == "p3_7_14"
+    (a,) = m.attacks
+    assert a.power == round(60 * 0.875), "the ratios 1.25 and 0.5 are the follow-up's"
+
+
 def test_the_scale_falls_back_where_nothing_matched():
     m, _ = derive(donor(rec(1, power=100)), {}, [Hit(0, 1, 0, 10.0, 20.0)])
     assert m.attacks[0].power == round(100 * spare.POWER_SCALE)
