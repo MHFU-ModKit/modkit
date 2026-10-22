@@ -64,16 +64,13 @@ def test_the_manifest_carries_its_brain(zinogre):
     assert (b.donor, b.splice, b.entry, b.fatigue, b.charge) == (40, "base_3", "base_3", True, True)
     assert b.when == {"if_target_set": True, "if_target_state": True}
     assert manifest.loads(manifest.dumps(m)) == m
-    assert len(b.pairs) == 99 and len(b.derived()) == len(own.pairs(b)) == 18
+    assert len(b.pairs) == 104 and len(b.derived()) == len(own.pairs(b)) == 34
 
 
 def test_a_donor_pair_plays_the_authored_move_where_it_is_the_donors(zinogre):
     b = zinogre.m.brain
-    assert [b.targets((1, k)) for k in (15, 16, 2)] == [
-        ["charge_up"],
-        ["charge_up"],
-        ["break_howl"],
-    ]
+    assert b.targets((1, 16)) == ["charge_up"] and b.targets((1, 15)) == ["p3_1_15"]
+    assert b.targets((1, 2)) == ["break_howl"]
     assert [b.targets(p) for p in [(2, 3), (2, 4)]] == [["dash_stop"], ["dash"]]
     assert b.targets((7, 29)) == b.targets((7, 30)) == [TURN, "dash"]
     assert zinogre.m.moves["dash"].after is None
@@ -85,8 +82,37 @@ def test_a_wrapper_turns_and_plays_the_move_of_the_pair_it_leads_to(zinogre):
     assert b.targets((7, 110)) == [TURN, "p3_7_109"] and b.targets((7, 109)) == ["p3_7_109"]
     twins = [b.targets((2, 11)), b.targets((7, 5))]
     assert twins == [["p3_2_10"], ["p3_7_4"]]
-    assert {p for p in b.derived().values()} >= {(7, 0), (7, 109), (2, 10), (7, 4), (1, 4)}
+    assert set(b.derived().values()) >= {(7, 0), (7, 109), (2, 10), (7, 4), (1, 4), (7, 13)}
     assert b.shared() <= set(b.derived().values()) and (7, 0) in b.shared()
+    assert (7, 13) in b.shared() and b.targets((7, 84)) == [TURN, "p3_7_13"]
+
+
+def chain_of(m: manifest.Manifest, name: str) -> list[tuple[object, ...]]:
+    """What a derived move plays, step by step: clip, attacks, steer, length."""
+    out = []
+    mv: manifest.Move | None = m.moves[name]
+    while mv is not None:
+        clip = m.clips[mv.clip].source if mv.clip else mv.anim
+        attacks = tuple((a.id, a.frame, a.end) for a in mv.attacks)
+        out.append((clip, attacks, mv.steer, mv.length))
+        mv = m.moves[mv.after] if mv.after else None
+    return out
+
+
+def test_the_pairs_that_share_a_move_derive_the_same_one(zinogre, data):
+    """A pair that names its twin's move would derive that very move itself. (7, 71), (7, 82) and
+    (7, 119) are not the script's: only wrappers lead to them, and play (7, 13)'s move."""
+    b = zinogre.m.brain
+    named = {k: v for k, v in b.pairs.items() if isinstance(v, str)}
+    twins = {k: v for k, v in named.items() if v in b.derived()}
+    twins |= {"7,71": "p3_7_13", "7,82": "p3_7_13", "7,119": "p3_7_13"}
+    assert len(twins) == 17
+    apart = manifest.load(PORT)
+    apart.brain.pairs |= {k: manifest.OWN for k in twins}
+    again, _ = own.expand(apart, data)
+    for key, first in twins.items():
+        name = manifest.own_name(manifest.pair_of(key))
+        assert chain_of(again, name) == chain_of(again, first), key
 
 
 def test_what_fought_the_brain_is_gone(zinogre):
@@ -226,19 +252,24 @@ def test_zinogre_brain_file_round_trip(zinogre, data, tmp_path):
 def test_the_charge_table(zinogre):
     ch = zinogre.charge
     assert ch is not None
-    assert ch.ups == {"charge_up": (40, 55, 65, 100)} and ch.transform == "p3_1_4"
-    assert (ch.chip_gauge, ch.chip_durability, ch.cooldown_up, ch.cooldown_out) == (5, 5, 420, 900)
+    assert ch.ups == {
+        "p3_1_6": (10, 15, 15, 20),
+        "p3_1_15": (25, 35, 40, 55),
+        "charge_up": (40, 55, 65, 100),
+        "p3_1_17": (55, 75, 100, 100),
+        "p3_1_3": (50, 50, 50, 50),
+        "p3_1_20": (50, 50, 50, 50),
+    }
+    assert ch.transform == "p3_1_4" and (ch.chip_gauge, ch.chip_durability) == (5, 5)
+    assert (ch.cooldown_up, ch.cooldown_out) == (420, 900)
     assert ch.discharge == ((4, 16), (4, 29), (4, 30), (4, 31))
-    got = [(f.level, f.code) for f in zinogre.said]
-    assert got.count(("warning", "P3_CHARGE_UNMAPPED")) == 4 and ("info", "P3_CHARGE_SHARED") in got
-    never = {f.text.split()[1] for f in zinogre.said if f.code == "P3_CHARGE_UNMAPPED"}
-    assert never == {"1,3", "1,6", "1,17", "1,20"} and len(zinogre.said) == 5
+    assert zinogre.said == [], "every charge-up pair has its own move"
 
 
 def test_the_fatigue_table(zinogre, data):
     fat, found = fatigue.table(zinogre.m, data)
     assert fat is not None and not [f for f in found if f.level == "error"]
-    assert fat.pairs[4, 16] == 200 and {"p3_7_12", "p3_7_94", "stamp"} <= set(fat.own)
+    assert fat.pairs[4, 16] == 200 and {"p3_7_12", "p3_7_94", "p3_7_85"} <= set(fat.own)
 
 
 @pytest.fixture(scope="module")
@@ -255,9 +286,11 @@ def test_the_moves_module_carries_fatigue_and_charge(module_text):
     lines = {line.split(" = ")[0].strip(): line for line in text.splitlines()}
     assert "fatigue" in lines and "calm = true" in lines["fatigue"]
     assert lines["charge"].strip() == (
-        'charge = { ups = { charge_up = { 40, 55, 65, 100 } }, transform = "p3_1_4", '
-        "chip_gauge = 5, chip_durability = 5, cooldown_up = 420, cooldown_out = 900, "
-        "discharge = { { 4, 16 }, { 4, 29 }, { 4, 30 }, { 4, 31 } } },"
+        "charge = { ups = { charge_up = { 40, 55, 65, 100 }, p3_1_15 = { 25, 35, 40, 55 }, "
+        "p3_1_17 = { 55, 75, 100, 100 }, p3_1_20 = { 50, 50, 50, 50 }, "
+        "p3_1_3 = { 50, 50, 50, 50 }, p3_1_6 = { 10, 15, 15, 20 } }, "
+        'transform = "p3_1_4", chip_gauge = 5, chip_durability = 5, cooldown_up = 420, '
+        "cooldown_out = 900, discharge = { { 4, 16 }, { 4, 29 }, { 4, 30 }, { 4, 31 } } },"
     )
 
 
@@ -266,6 +299,7 @@ def test_the_own_moves_fit_the_framework(zinogre, module_text):
     _, built = module_text
     names = [n for n, mv in zinogre.m.moves.items() if mv.own]
     keys = sum(len(moves.curve(zinogre.m, n, built.layout) or "") // 4 for n in names)
+    assert len(names) == 83 and keys == 4367
     assert len(names) <= moves.SLOTS and keys <= moves.POOL
     assert not moves.problems(zinogre.m, built.layout, moves.records(Data.find().fu, 75))
 
@@ -275,5 +309,5 @@ def test_the_cli_splices_the_port(data, capsys):
     assert main(["splice", str(PORT), *args]) == 0
     out = capsys.readouterr().out
     assert "routines added" in out and "worst run" in out
-    assert "  charge: charge_up 40/55/65/100; transform p3_1_4;" in out
+    assert "  charge: charge_up 40/55/65/100, p3_1_15 25/35/40/55, " in out
     assert "  pair 7,23 -> 1,2  x" in out and "  pair 7,23 -> own p3_7_0 (slot " in out

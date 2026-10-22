@@ -207,11 +207,9 @@ up (the helper's gauge, `[brain] charge`) and when he is tired (`[brain] fatigue
 A donor pair plays a host pair (a turn, a walk), the authored move that is the donor's
 (`charge_up`, `dash`, `dash_stop`, `break_howl`) or an own move derived from the donor
 (`"own"`); a pair that only turns, then enters another, turns on em75's (1, 2) and plays the
-move of the pair it leads to. The registry holds 2048 turn keys for all own moves, which the
-authored moves take 991 of, so the derived moves are the ones that fit; a donor move that did not
-plays the nearest move that did: the other horn charges the right-horn one, the long claw combos
-their opening, the tumbles and the straight flip the backflip, the second smackdown the first,
-the claw into a backflip the `stamp`.
+move of the pair it leads to; pairs whose derived moves come out identical (twins) share the
+first one's. His 83 own moves, the 14 authored and the 69 derived, take 4367 of the registry's
+5632 turn keys and 83 of its 96 slots.
 
 What stays of the hand-built rules, after the brain's own picks (2 plays nothing and so runs
 first):
