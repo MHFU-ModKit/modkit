@@ -81,7 +81,7 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 | `switch_mode` | `if_mode2` for mode 1, the default as its else |
 | `if_enraged` | `if_enraged` |
 | `if_facing ang` | `if_pursuit_off_facing` at `ang * 360 / 256` degrees with the arms swapped; past 127, `if_off_facing` |
-| `if_target_state`, `if_tired`, `if_stamina_low`, `if_target_set` | no host state: `[brain.when]` picks the arm |
+| `if_target_state`, `if_tired`, `if_stamina_low`, `if_target_set` | no host state: `[brain.when]` picks the arm; with `[brain] fatigue`, `if_tired` and `if_stamina_low 0` are `if_gauge_a_low` ([Fatigue](#fatigue)) |
 | `if_object_near` | false |
 | `set_target 0 0 0` | dropped: the host picked its target before |
 | `set_latch`, `switch_latch` | folded: case 0 when something between them yields, else the default |
@@ -90,9 +90,9 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 
 A random that can follow another draw in the same run gets an `rng_step2` first, as the host's
 own picks do. Findings are errors (`P3_PAIR_UNMAPPED`, `P3_OWN_MISSING`, `P3_UNSUPPORTED`,
-`P3_HOST_OP`, `P3_UNDECIDED`, `P3_LATCH`, `P3_HISTORY`, `P3_WIDE`, `P3_ROUTINE`), which stop a
-build, warnings (`P3_FOLDED`, `P3_APPROX`, `P3_PAIR_UNUSED`, `P3_WHEN`) and notes (`P3_DROPPED`,
-`P3_WEIGHT`).
+`P3_HOST_OP`, `P3_UNDECIDED`, `P3_LATCH`, `P3_HISTORY`, `P3_WIDE`, `P3_ROUTINE`, `P3_FATIGUE_HOST`), which stop a
+build, warnings (`P3_FOLDED`, `P3_APPROX`, `P3_PAIR_UNUSED`, `P3_WHEN`, `P3_WHEN_IGNORED`) and notes
+(`P3_DROPPED`, `P3_WEIGHT`).
 
 ### Own moves
 
@@ -138,6 +138,43 @@ clip that hands to the next by `after`:
 | `P3_OWN_PARTIAL` | warning | the walk gave up, or a clip it could not resolve |
 | `P3_OWN_BRANCH`, `P3_OWN_MOTION`, `P3_OWN_START`, `P3_OWN_NEXT` | info | a branch taken one way; code movement; a clip the donor starts past its first frame; a pair the handler hands over to |
 | `P3_OWN_SPLIT`, `P3_OWN_GROUP`, `P3_OWN_ACTIVE` | info | a node split per clip; records that land one hit between them in the donor; a window longer than the host record's life |
+
+### Fatigue
+
+MHP3rd keeps a stamina per monster and its script asks `if_tired`; MHFU has none and its script
+cannot count. `[brain] fatigue = true` has the framework's helper (`mhfu.em_fatigue`, armed by
+`mhfu_port.lua` from the moves module's `fatigue` table) keep it and show "tired" as the host's
+gauge A, which `if_gauge_a_low` tests. The build does two things (`mhfu_port.brain.fatigue`):
+
+- **The splice** turns `if_tired`, and `if_stamina_low` at 0 (stamina 0 only precedes tired), into
+  `if_gauge_a_low` with the arms as they are. Any other `if_stamina_low` stays a `[brain.when]`
+  answer. The host must leave gauge A alone: `P3_FATIGUE_HOST` (error) where its species code calls
+  `GAUGE_A_LATCH` or a routine other than `splice` tests or refills it. em75 does neither.
+- **The moves module** gets `fatigue = {...}` from the donor species' row (descriptor `+0xA4`, its
+  `+0x3C`): the maximum (1000), the two starting staminas the spawn rolls between (row 0 of the
+  start rows: 400 or 600), the frames a tired spell lasts, what `recover` adds afterwards (the
+  stamina after a spell), and the HP percent at or below which costs halve; no rage starts while
+  tired (`calm`).
+
+A donor pair's cost, which MHP3rd charges when the move ends, is charged when the host enters what
+`[brain.pairs]` plays for it: a host pair into `pairs`, an own move into `own` by name (its head
+only, one charge per donor pair, whatever its chain). Two donor pairs on one target with different
+costs (a free one counts) charge the larger. The hub pair that carries own moves has no entry, so
+the moves are not charged twice.
+
+The donor's reactions cost by sub in three classes (15, 50, 200 for the Brute). em75's reaction
+pairs, from the cases of its AI step (`EM75_REACTIONS`), are sorted into the same three: a
+knockout where a trap's REACTION_CHECK code enters the pair, a fall where it plays three or more
+clips, else a flinch, which is also what a pair that cannot be told costs. Other hosts have none:
+hits cost nothing there.
+
+| Finding | Level | What |
+|---|---|---|
+| `P3_FATIGUE_DONOR`, `P3_FATIGUE_PAIRS`, `P3_FATIGUE_HOST` | error | the species has no fatigue row; more pair costs than the helper holds; the host keeps gauge A itself |
+| `P3_WHEN_IGNORED`, `P3_FATIGUE_HUB`, `P3_FATIGUE_REACTIONS` | warning | a `[brain.when]` answer the helper gives; a cost on a pair that carries own moves, dropped; no reaction table for the host |
+| `P3_FATIGUE_SHARED`, `P3_FATIGUE_UNMAPPED`, `P3_FATIGUE_STARTS` | info | the larger of two costs on one target; donor pairs that cost stamina but have no host move; a spawn roll that is not a coin flip |
+
+`mhfu-port splice` prints the table's size and findings with the splice's.
 
 ## Checking
 

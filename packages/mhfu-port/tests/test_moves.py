@@ -127,6 +127,27 @@ def test_tip():
     assert not any(line.startswith("tip") for line in _body(moves.lua(_m(), LAYOUT, {6})))
 
 
+def test_fatigue():
+    table = {
+        "max": 1000,
+        "starts": [400, 600],
+        "tired": 2250,
+        "refill": 500,
+        "low_hp": 15,
+        "calm": True,
+        "pairs": [[3, 3, 5]],
+        "own": {"stamp": 15},
+    }
+    text = moves.lua(_m(), LAYOUT, {6}, None, table)
+    assert _body(text)[-1] == (
+        "fatigue = { max = 1000, starts = { 400, 600 }, tired = 2250, refill = 500, low_hp = 15, "
+        "calm = true, pairs = { { 3, 3, 5 } }, own = { stamp = 15 } },"
+    )
+    plain = moves.lua(_m(), LAYOUT, {6})
+    assert not any(line.startswith("fatigue") for line in _body(plain))
+    assert moves.build_of(text) != moves.build_of(plain)
+
+
 def test_graph_makes_the_same_module():
     m = _m()
     again = manifest.loads(manifest.dumps(m))

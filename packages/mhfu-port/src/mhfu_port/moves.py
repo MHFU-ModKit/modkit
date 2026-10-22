@@ -13,6 +13,9 @@ entry and, for `turn = "clip"`, its turn keys, both from the build's layout; the
 the carrier (`hub` when it names none), the steer and `after`. `tip` is the tail tip's
 `{ joint, carrier }` pairs (`rig.Tip`), which `mhfu.em_tip` takes.
 
+`fatigue` is the stamina table `mhfu.em_fatigue` takes (`brain.fatigue`), given when the manifest's
+`[brain] fatigue` is set; `mhfu_port.lua` arms it with the port, an own move keyed by name.
+
 `slots` is the one numbering of own moves: this module writes it, `mhfu_port.lua` registers by it
 and the brain splice's `enter OWN_MOVE_MAIN k 0` names it. The manifest it is given has the own
 moves `[brain.pairs]` derive from the donor (`brain.own.expand`), which `cli.build.modules` adds.
@@ -306,7 +309,11 @@ def lua_value(v: object) -> str:
 
 
 def lua(
-    m: Manifest, layout: Layout, known: Collection[int] | None = None, tip: Tip | None = None
+    m: Manifest,
+    layout: Layout,
+    known: Collection[int] | None = None,
+    tip: Tip | None = None,
+    fatigue: Mapping[str, Any] | None = None,
 ) -> str:
     """The module; `check`s first."""
     check(m, layout, known)
@@ -334,6 +341,8 @@ def lua(
         out.append("  natural_rage = false,")
     if tip is not None:
         out.append(f"  tip = {lua_value(tip.pairs)},")
+    if fatigue is not None:
+        out.append(f"  fatigue = {lua_value(fatigue)},")
     out += ["}", ""]
     text = "\n".join(out)
     build = zlib.crc32(text.encode("utf-8")) & 0x7FFF_FFFF or 1

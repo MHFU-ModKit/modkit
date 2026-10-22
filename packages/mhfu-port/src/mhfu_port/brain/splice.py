@@ -20,6 +20,10 @@ that says what each MHP3rd opcode becomes. The code lands as follows:
 A donor pair that `[brain.pairs]` maps to an own move becomes `enter OWN_MOVE_MAIN k 0`, `k` the
 move's slot in `slots` (`moves.slots`, the one numbering the moves module and `mhfu_port.lua`
 use); em_vhook plays that move in place of a host pair.
+
+With `[brain] fatigue` the donor's `if_tired`, and `if_stamina_low` at 0 (stamina 0 only precedes
+tired), become the host's `if_gauge_a_low`, which the framework's fatigue helper drives
+(`brain.fatigue`); no `[brain.when]` answer is asked for them. The host must leave gauge A alone.
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ from mhfu.em.script import vars as script_vars
 from mhfu.em.script.check import Finding
 from mhfu.em.script.editset import Anchor, EditSet, Insert
 from mhfu.em.script.opcodes import Shape
+from mhfu.overlay import Overlay
 
 from .. import manifest
 from . import p3, p3ops
@@ -50,6 +55,12 @@ MODES: Mapping[int, str] = {1: "if_mode2"}
 """MHP3rd's mode byte to the MHFU test that holds in that mode."""
 WHEN = ("if_target_state", "if_tired", "if_stamina_low", "if_target_set")
 """The tests the manifest answers, in `[brain.when]`: MHFU has no state for them."""
+GAUGE = "if_gauge_a_low"
+"""The host test the fatigue helper answers."""
+GAUGE_A_OPS = (GAUGE, "refill_gauge_a")
+"""The host ops that use gauge A."""
+FATIGUE_TESTS = ("if_tired", "if_stamina_low")
+"""The `[brain.when]` tests `[brain] fatigue` takes over."""
 HOST_OPS = (
     "set_dest",
     "transit",
@@ -165,6 +176,8 @@ class Translator:
         name."""
         self.entered: set[Pair] = set()
         """The donor pairs the routines the entry reaches enter, whether or not they are kept."""
+        self.asked: set[str] = set()
+        """The `[brain.when]` tests the translation looked up."""
         self.var: int | None = None
         """The history variable, once the region is known to read the call before."""
         self._stack: list[str] = []
@@ -485,8 +498,19 @@ class Translator:
         out = self.sub(outside, w)
         return self.if_(w, n.op.name, name, [min(deg, 255)], out, self.sub(inside, w))
 
+    def _gauge(self, n: p3.Block) -> bool:
+        """Whether the fatigue helper answers this test."""
+        if not self.spec.fatigue:
+            return False
+        return n.op.name == "if_tired" or (n.op.name == "if_stamina_low" and n.args["pct10"] == 0)
+
     def _when(self, n: p3.Block, w: Where) -> list[ir.Node]:
-        """The manifest's answer; none is needed when neither arm comes to anything."""
+        """The host's gauge A where the helper answers; else the manifest's answer, none being
+        needed when neither arm comes to anything."""
+        if self._gauge(n):
+            then, other = _branches(n)
+            return self.if_(w, n.op.name, GAUGE, [], self.sub(then, w), self.sub(other, w))
+        self.asked.add(n.op.name)
         answer = self.spec.when.get(n.op.name)
         if answer is not None:
             return self.fold(n, w, answer, f"when.{n.op.name}")
@@ -637,11 +661,13 @@ def splice(
     spec: manifest.Brain,
     survey: Mapping[int, script_vars.Var] | None = None,
     slots: Mapping[str, int] | None = None,
+    overlay: Overlay | None = None,
 ) -> Spliced:
     """The host's `spec.splice` routine with the donor's `spec.entry` in its place, as edits to
     `host`; `findings` say what could not carry over, an error that it cannot be built. `survey`
     (`vars.survey` of the host) picks the call history's variable when `spec.history` is None;
-    `slots` (`moves.slots`) numbers the own moves that `spec.pairs` plays."""
+    `slots` (`moves.slots`) numbers the own moves that `spec.pairs` plays; `overlay` (the host's
+    species overlay) lets `spec.fatigue` see whether its code drains gauge A."""
     es = EditSet.of(host)
     target = next((r for r in host.routines() if r.name == spec.splice), None)
     last = target.body[-1] if target and target.body else None
@@ -670,7 +696,8 @@ def splice(
         es.notes[key] = _origin(donor, spec.entry)
     _steps(host, es)
     own = {n: t.slots[n] for _, n in t.uses if isinstance(n, str)}
-    return Spliced(es, [*t.findings, *_unused(spec, t)], dict(t.sources), dict(t.uses), own)
+    found = [*t.findings, *_unused(spec, t), *_gauge_a(host, spec, overlay)]
+    return Spliced(es, found, dict(t.sources), dict(t.uses), own)
 
 
 def _failed(es: EditSet, spec: manifest.Brain, text: str) -> Spliced:
@@ -685,10 +712,48 @@ def _unused(spec: manifest.Brain, t: Translator) -> list[Finding]:
         for k in spec.pairs
         if k not in met
     ]
-    return out + [
+    out += [
         Finding(
             "warning", "P3_WHEN", f"when.{k} is no test the translation folds: {', '.join(WHEN)}"
         )
         for k in spec.when
         if k not in WHEN
     ]
+    if spec.fatigue:
+        out += [
+            Finding(
+                "warning",
+                "P3_WHEN_IGNORED",
+                f"when.{k} is not asked: `[brain] fatigue` answers {k}"
+                + (" at 0" if k == "if_stamina_low" else ""),
+                None,
+                spec.splice,
+            )
+            for k in spec.when
+            if k in FATIGUE_TESTS and k not in t.asked
+        ]
+    return out
+
+
+def _gauge_a(host: ir.Program, spec: manifest.Brain, overlay: Overlay | None) -> list[Finding]:
+    """With `spec.fatigue`, what already keeps gauge A: the host species' code that calls
+    `GAUGE_A_LATCH` (not looked at without `overlay`), and a host routine other than `spec.splice`
+    that tests or refills it."""
+    if not spec.fatigue:
+        return []
+    out = []
+    latch = addresses.GAUGE_A_LATCH
+    if overlay is not None and (n := script_vars.scan(overlay).calls.get(latch, 0)):
+        text = f"the host's species code calls {latch.name} {n}x and drains gauge A itself"
+        out.append(Finding("error", "P3_FATIGUE_HOST", text, None, spec.splice))
+    users = Counter(
+        n.op.name
+        for r in host.routines()
+        if r.name != spec.splice
+        for n in ir.walk(r.body)
+        if isinstance(n, ir.Insn | ir.Block) and n.op.name in GAUGE_A_OPS
+    )
+    for op, count in sorted(users.items()):
+        text = f"the host's script uses gauge A: {op} {count}x outside {spec.splice}"
+        out.append(Finding("error", "P3_FATIGUE_HOST", text, None, spec.splice))
+    return out
