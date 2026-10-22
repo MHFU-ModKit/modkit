@@ -18,7 +18,8 @@ from mhfu.em.script.build import Built, lift_row
 from mhfu.em.script.check import Finding
 
 from .. import data, manifest, moves
-from ..brain import p3, splice
+from ..brain import own, p3, splice
+from . import finding_line
 
 if TYPE_CHECKING:
     from . import Subparsers
@@ -46,22 +47,22 @@ def register(sub: Subparsers) -> None:
 
 def run(args: argparse.Namespace) -> int:
     m = manifest.load(args.manifest)
-    if m.brain is None:
+    b = m.brain
+    if b is None:
         raise ValueError(f"{args.manifest} has no [brain] table")
     games = data.from_arguments(args)
+    m, derived = own.expand(m, games)
     row = m.port.host_species
     host = lift_row(games.fu, row, row)
     survey = script_vars.survey(host, games.fu.em(row))
-    donor = p3.lift(games.p3rd, m.brain.donor, m.brain.slot)
-    spliced = splice.splice(donor, host, m.brain, survey, moves.slots(m))
+    donor = p3.lift(games.p3rd, b.donor, b.slot)
+    spliced = splice.splice(donor, host, b, survey, moves.slots(m))
     built = Built.of(host, spliced.edits)
-    findings = [*spliced.findings, *built.findings]
-    b = m.brain
+    findings = [*derived, *spliced.findings, *built.findings]
     print(f"splice {m.port.name}: MHP3rd {b.donor} {b.entry} into em{row} {b.splice}")
     print(summary(spliced, built, findings))
     for f in findings:
-        where = f" {f.item}" if f.item else ""
-        print(f"{f.level:7} {f.code}{where}: {f.text}")
+        print(finding_line(f))
     ok = not any(f.level == "error" for f in findings)
     if args.source:
         print("\n".join(routines(built)))

@@ -25,6 +25,7 @@ import rabbitizer
 from rabbitizer import InstrId, Instruction
 
 from .. import addresses as a
+from ..memory import Unmapped
 from ..mips import CALL_CLOBBERS, Call, Code, Fpr, Gpr, Register, Switch
 from ..overlay import Overlay
 
@@ -207,6 +208,8 @@ class Tag:
     """For a clip predicate's result, the frame it tested."""
     size: int = 0
     """For a cell, the load's width in bytes."""
+    site: int | None = None
+    """For a result, the call it came from, so two calls of one function stay apart."""
 
 
 Value = int | Tag
@@ -257,6 +260,8 @@ class _Operand:
     jr: int
 
 
+Decide = Callable[[int, int | None, tuple[int | None, ...]], int | None]
+"""What a caller of `Walker.run` decides: see there."""
 _Env = dict["Register | _Operand", Value]
 _PASSED = (Gpr.a0, Gpr.a1, Gpr.a2, Gpr.a3, Fpr.fa0)
 """What a descended-into callee is seeded with."""
@@ -302,6 +307,20 @@ def _bits(value: int) -> float:
     return float(struct.unpack("<f", struct.pack("<I", value & _MASK))[0])
 
 
+def _float_bits(value: float) -> int:
+    """`value` rounded to single precision, as the word a float register holds."""
+    return int(struct.unpack("<I", struct.pack("<f", value))[0])
+
+
+_FLOAT: dict[rabbitizer.Enum, Callable[[float, float], float]] = {
+    InstrId.cpu_add_s: lambda x, y: x + y,
+    InstrId.cpu_sub_s: lambda x, y: x - y,
+    InstrId.cpu_mul_s: lambda x, y: x * y,
+    InstrId.cpu_div_s: lambda x, y: x / y,
+}
+"""Single-precision arithmetic the walker carries out; a divide by zero is unknown."""
+
+
 class Walker:
     """A bounded path walk of one function that interprets what it can.
 
@@ -315,8 +334,11 @@ class Walker:
     stands for all of it) up to `depth` nested calls, a tail call not counting as one. It
     records every call to a `watch` target or a `methods` vtable slot, tail calls included,
     with the values of `args` there, and the value of a `probes` instruction's register as it
-    runs (a Site of kind "probe"). A pc runs at most once per path; `max_paths` path ends and
-    `max_steps` per path bound a walk, and `truncated` names the functions that hit one.
+    runs (a Site of kind "probe"). It reads constant-pool floats and does single-precision
+    arithmetic on them; a call to a `returns` target leaves that float in $f0. A float register
+    is held as its bits, so `args` can name one (`Fpr.fa0`). A pc runs at most once per path;
+    `max_paths` path ends and `max_steps` per path bound a walk, and `truncated` names the
+    functions that hit one.
     """
 
     def __init__(
@@ -331,6 +353,7 @@ class Walker:
         names: Mapping[int, str] | None = None,
         args: tuple[Register, ...] = (Gpr.a1, Gpr.a2, Gpr.a3),
         probes: Mapping[int, Register] | None = None,
+        returns: Mapping[int, float] | None = None,
         guards: bool = True,
         max_paths: int = 4000,
         max_steps: int = 700,
@@ -340,26 +363,43 @@ class Walker:
         self.follow = follow
         self.depth, self.facts, self.names = depth, dict(facts or {}), dict(names or {})
         self.args, self.probes = args, dict(probes or {})
+        self.returns = {target: _float_bits(v) for target, v in (returns or {}).items()}
         self._found: list[tuple[dict[Site, None], tuple[int, ...]]] = []
         self.guards, self.max_paths, self.max_steps = guards, max_paths, max_steps
         self.truncated: set[int] = set()
         self._memo: dict[tuple[object, ...], tuple[Site, ...]] = {}
+        self._decide: Decide | None = None
         self._operands = {s.operand.vram: s.jr for s in code.switches.values() if s.operand}
         self._tables = {
             s.table + 4 * i: t for s in code.switches.values() for i, t in enumerate(s.targets)
         }
 
     def run(
-        self, fn: int, seed: Mapping[Register, Value] | None = None, facts: Facts | None = None
+        self,
+        fn: int,
+        seed: Mapping[Register, Value] | None = None,
+        facts: Facts | None = None,
+        decide: Decide | None = None,
     ) -> list[Site]:
-        """Every watched call some path from `fn` reaches, once per distinct Site."""
+        """Every watched call some path from `fn` reaches, once per distinct Site.
+
+        `decide(pc, target, args)` answers for the caller: the $v0 a call at `pc` to `target`
+        leaves (`args`: the walker's argument registers there) or the outcome of a branch at `pc`
+        the walk cannot decide (1 taken, 0 not; no target, `args` empty). None leaves it to the
+        walk, which forks. A run with `decide` is not memoised."""
         env: _Env = {r: v for r, v in (seed or {}).items()}
-        return list(self._run(fn, env, {**self.facts, **(facts or {})}, 0, ()))
+        before, self._decide = self._decide, decide
+        try:
+            return list(self._run(fn, env, {**self.facts, **(facts or {})}, 0, ()))
+        finally:
+            self._decide = before
 
     def _run(
         self, fn: int, seed: _Env, facts: dict[Cell, Known], depth: int, via: tuple[int, ...]
     ) -> tuple[Site, ...]:
         key = (fn, frozenset(seed.items()), frozenset(facts.items()), depth, via)
+        if self._decide is not None:
+            return self._walk(_Path(fn, {Gpr.a0: ENTITY, **seed}, facts), depth, via)
         if key not in self._memo:
             start = _Path(fn, {Gpr.a0: ENTITY, **seed}, facts)
             self._memo[key] = self._walk(start, depth, via)
@@ -442,6 +482,9 @@ class Walker:
             p.pc = target
             return
         f = self._cond(ins, p)
+        if f.outcome is None and self._decide is not None:
+            said = self._decide(p.pc, None, ())
+            f = f if said is None else _Fork(bool(said))
         likely = ins.isBranchLikely()
         if f.outcome is not None:
             # a decided branch back into code this path ran is a counted loop: leave it
@@ -519,9 +562,19 @@ class Walker:
         if target in _FRAMED:
             bits = p.env.get(Fpr.fa0)
             frame = round(_bits(bits), 2) if isinstance(bits, int) else None
+        said = None
+        if self._decide is not None:
+            args = tuple(v if isinstance(v := p.env.get(r), int) else None for r in self.args)
+            said = self._decide(p.pc, target if isinstance(target, int) else None, args)
         for r in CALL_CLOBBERS:
             p.env.pop(r, None)
-        p.env[Gpr.v0] = Tag("result", target if isinstance(target, int) else None, frame)
+        p.env[Gpr.v0] = (
+            said
+            if said is not None
+            else Tag("result", target if isinstance(target, int) else None, frame, site=p.pc)
+        )
+        if isinstance(target, int) and target in self.returns:
+            p.env[Fpr.fv0] = self.returns[target]
 
     # --- conditions ---
 
@@ -571,7 +624,8 @@ class Walker:
             name = self.names.get(v.n)
             if name is None:
                 return f"0x{v.n:08X}()"
-            return name.format(frame="?" if v.frame is None else f"{v.frame:g}")
+            frame = "?" if v.frame is None else f"{v.frame:g}"
+            return name.format(frame=frame, site=v.site)
         return None
 
     # --- data flow ---
@@ -630,6 +684,11 @@ class Walker:
                 return Tag("method", off)
             if isinstance(base, int) and u == InstrId.cpu_lw:
                 return self._tables.get((base + off) & _MASK)
+            if isinstance(base, int) and u == InstrId.cpu_lwc1:
+                try:
+                    return self.code.mem.u32((base + off) & _MASK)
+                except Unmapped:
+                    return None
             return None
         if u == InstrId.cpu_lui:
             return (ins.getProcessedImmediate() << 16) & _MASK
@@ -660,6 +719,20 @@ class Walker:
             return x if isinstance(x, int) else None
         if u == InstrId.cpu_mov_s:
             return env.get(ins.fs)
+        if u in _FLOAT:
+            x, y = env.get(ins.fs), env.get(ins.ft)
+            if isinstance(x, int) and isinstance(y, int):
+                try:
+                    return _float_bits(_FLOAT[u](_bits(x), _bits(y)))
+                except ArithmeticError:
+                    return None
+            return None
+        if u == InstrId.cpu_trunc_w_s:
+            x = env.get(ins.fs)
+            try:
+                return int(_bits(x)) & _MASK if isinstance(x, int) else None
+            except (ValueError, OverflowError):
+                return None
         return None
 
 

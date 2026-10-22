@@ -14,7 +14,8 @@ the carrier (`hub` when it names none), the steer and `after`. `tip` is the tail
 `{ joint, carrier }` pairs (`rig.Tip`), which `mhfu.em_tip` takes.
 
 `slots` is the one numbering of own moves: this module writes it, `mhfu_port.lua` registers by it
-and the brain splice's `enter OWN_MOVE_MAIN k 0` names it.
+and the brain splice's `enter OWN_MOVE_MAIN k 0` names it. The manifest it is given has the own
+moves `[brain.pairs]` derive from the donor (`brain.own.expand`), which `cli.build.modules` adds.
 """
 
 from __future__ import annotations
@@ -210,6 +211,8 @@ def _steer(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
         out["turn"] = s.turn
         if s.rate is not None:
             out["rate"] = s.rate
+        if s.window is not None:
+            out["window"] = list(s.window)
     elif s.turn == "fixed":
         out |= {"turn": "fixed", "total": s.angle, "frames": s.frames}
     elif (keys := curve(m, name, layout)) is not None:

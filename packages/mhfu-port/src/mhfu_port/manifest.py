@@ -216,6 +216,8 @@ class Steer:
     walls: bool = True
     dir: float = 0.0
     """Degrees of the travel against the facing, which walls count as ahead (180: backwards)."""
+    window: tuple[int, int] | None = None
+    """Clip frames `[from, to)` `hunter` and `away` turn in; None: the whole move."""
 
 
 @dataclass
@@ -398,6 +400,10 @@ class Brain:
     `moves.slots` slot."""
     when: dict[str, bool] = field(default_factory=dict)
     """The arm a donor test with no host counterpart takes, by its MHP3rd opcode name."""
+    attacks: dict[str, int] = field(default_factory=dict)
+    """The host attack record an own move derived from the donor plays for a donor record, keyed
+    by the donor's record id; it overrides the match by volumes. The port may define the host
+    record with `[[attack]]` and `[[hitbox]]`."""
 
     def target(self, pair: Pair) -> Pair | str | None:
         """What the donor's `pair` plays: a host pair or an own move's name (`OWN` resolved to
@@ -570,6 +576,9 @@ def _own_move(mv: Move, w: str) -> None:
     _need(s.frames is None or 1 <= s.frames <= 0x7FFF, f"{w}.steer", "frames is 1..32767")
     _need(s.angle is None or abs(s.angle) < 360, f"{w}.steer", "angle is under one turn")
     _need(s.rate is None or 1 <= s.rate <= 0xFFFF, f"{w}.steer", "rate is 1..65535")
+    if s.window is not None:
+        _need(s.turn in ("hunter", "away"), f"{w}.steer", "window goes with turn = hunter or away")
+        _need(0 <= s.window[0] < s.window[1], f"{w}.steer", "window is 0 <= from < to")
 
 
 def _brain(b: Brain) -> None:
@@ -582,6 +591,9 @@ def _brain(b: Brain) -> None:
         if isinstance(t, tuple):
             main, sub = t
             _need(main in MAIN_STATES and sub in BYTE, w, "a host pair is a main state and a sub")
+    for key, record in b.attacks.items():
+        _need(key.isdecimal(), f"brain.attacks.{key}", "is a donor record id")
+        _need(record >= 0, f"brain.attacks.{key}", "a host record id is 0 or more")
 
 
 def _validate(m: Manifest) -> None:

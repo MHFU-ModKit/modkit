@@ -111,6 +111,15 @@ def test_lua():
     ]
 
 
+def test_steer_window():
+    hunter = OWN.replace(
+        'turn = "hunter"\ndir = 180.0', 'turn = "hunter"\nrate = 546\nwindow = [10, 40]'
+    )
+    text = moves.lua(_m(hunter), LAYOUT, {6})
+    assert 'steer = { walls = true, turn = "hunter", rate = 546, window = { 10, 40 } }' in text
+    assert "window" not in moves.lua(_m(), LAYOUT, {6})
+
+
 def test_tip():
     tip = Tip(((46, 42), (47, 42), (48, 43)), (0.0, 0.0, -705.0))
     body = _body(moves.lua(_m(), LAYOUT, {6}, tip))
