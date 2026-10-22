@@ -35,7 +35,10 @@ SETTINGS = {
     "RemoteDebuggerOnStartup": "True",
     "PauseOnLostFocus": "False",
     "PauseWhenMinimized": "False",
+    "FileLogging": "False",
 }
+"""Set in a lane's ini on every start; a lane cloned from a debug-logging stick wrote GBs of
+`SYSTEM/DUMP/log.txt` per session."""
 
 
 @dataclass(frozen=True)
