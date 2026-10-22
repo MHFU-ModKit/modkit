@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 from mhfu import addresses
-from mhfu.em.script import brainfile, build, ir
+from mhfu.em.script import brainfile, build, draw, edit, ir
 from mhfu.em.script import vars as script_vars
 from mhfu.em.script.budget import LIMIT
 from mhfu_port import behaviour, manifest, moves
@@ -152,6 +152,38 @@ def test_zinogre_splices_into_em75(zinogre):
     folded = " ".join(f.text for f in s.findings if f.code == "P3_FOLDED")
     assert "switch_global_540 taken as answer 2" in folded
     assert "switch_query 2 taken as answer 0" in folded and "switch_query 0" not in folded
+
+
+def inner_of(arm: ir.Arm) -> ir.Block | None:
+    """The random an arm opens with."""
+    first = arm.body[0] if arm.body else None
+    return first if isinstance(first, ir.Block) and first.op.name == "random" else None
+
+
+def reached(outer: ir.Block) -> int:
+    """How many leaf arms of a split random some draw of the 32 takes."""
+    hit = set()
+    for v in range(draw.DRAW):
+        k = draw.take(draw.weights(outer) or [], v)
+        inner = inner_of(outer.arms[k])
+        hit.add((k, None if inner is None else draw.take(draw.weights(inner) or [], v)))
+    return len(hit)
+
+
+def test_zinogre_splits_reach_every_donor_arm(zinogre):
+    s, built = splice_of(zinogre, zinogre.m.brain)
+    nodes = [n for i in s.edits.inserts.values() for n in edit.everything(i.nodes)]
+    nodes += [n for r in s.edits.routines.values() for n in edit.everything(r)]
+    outers = [
+        n
+        for n in nodes
+        if isinstance(n, ir.Block) and n.op.name == "random" and any(map(inner_of, n.arms))
+    ]
+    live = sorted(int(f.text.split()[2]) for f in s.findings if f.code == "P3_SPLIT")
+    assert len(live) == len(outers) == 10
+    assert sorted(reached(o) for o in outers) == live
+    got = codes(built.findings)
+    assert built.ok and got["warning CORRELATED_DRAW"] == 15 and not got["warning ARM_UNREACHABLE"]
 
 
 def queries(built: build.Built) -> Counter[int]:

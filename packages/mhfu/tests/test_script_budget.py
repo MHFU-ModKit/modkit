@@ -474,6 +474,45 @@ def test_correlated_draw_in_a_repeat():
     assert [f.node for f in findings(p, "CORRELATED_DRAW")] == ["n11"]  # the second pass
 
 
+def pick(weights, inside=None, at=0):
+    """A pick of `weights`, branch `at` opening with `inside`."""
+    return edit.random([(w, [inside] if k == at and inside else []) for k, w in enumerate(weights)])
+
+
+def nested_pick(outer, inner, at=0):
+    """A pick of weights `outer` whose branch `at` opens with a pick of weights `inner`."""
+    p = world()
+    edit.put(p, "call_0", [pick(outer, pick(inner), at)])
+    return p
+
+
+def test_a_random_that_opens_a_branch_reads_its_parents_draw():
+    p = nested_pick([16, 16], [16, 16])
+    assert len(findings(p, "CORRELATED_DRAW")) == 1  # the pick, after the hub's; not its inner
+    q = world()
+    edit.put(q, "call_0", [pick([16, 16], pick([16, 16]))])
+    q.item("call_0").body[0].arms[0].body.insert(0, nop())
+    assert len(findings(q, "CORRELATED_DRAW")) == 2  # a nop in, it is a draw of its own
+    r = world()
+    edit.put(r, "call_0", [pick([16, 16], pick([16, 16])), pick([16, 16])])
+    assert len(findings(r, "CORRELATED_DRAW")) == 2  # a draw after a draw still is
+
+
+@pytest.mark.parametrize(
+    ("outer", "inner", "at", "unreachable"),
+    [
+        ([16, 16], [16, 16], 0, 1),  # the second branch starts past the outer's band
+        ([5, 27], [3, 29], 0, 0),  # laid out over the band 0..5
+        ([4, 4, 24], [5, 27], 1, 0),  # and over 4..8
+        ([4, 4, 24], [1, 31], 1, 1),  # not: the first branch is below 4
+        ([8, 24], [32, 0], 0, 0),  # a branch with no weight is WEIGHT_ZERO's
+    ],
+)
+def test_arm_unreachable(outer, inner, at, unreachable):
+    p = nested_pick(outer, inner, at)
+    assert [f.level for f in findings(p, "ARM_UNREACHABLE")] == ["warning"] * unreachable
+
+
 def test_a_restart_rerolls():
     p = world()
     edit.put(p, "base_0", [edit.random([(16, []), (16, [])])])

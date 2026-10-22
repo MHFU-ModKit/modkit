@@ -190,7 +190,8 @@ and the resume point behind each `enter`) is an upper bound. `check` turns it in
 | `END_KIND_CONTEXT` | error | An `end` kind the game acts on in no entry, or one for a list the routine does not run from (an `end return` in a routine only base lists run) |
 | `OPS_PER_RUN` | warning, error | A path through new code can dispatch more than 900 in a run; more than 999 |
 | `RESTART_LOOP` | error, warning | `base[0]` can restart with no yield: nothing on the path decides; or only when its conditions hold |
-| `CORRELATED_DRAW` | warning | A `random` that follows another draw in the run: a draw steps by 1, so its odds follow the first |
+| `CORRELATED_DRAW` | warning | A `random` that follows another draw in the run: the draw is a counter that a step adds 1 to, so its branch follows the earlier draw's even after a step; a `random` that opens a branch of a `random` reads its parent's draw and is not one |
+| `ARM_UNREACHABLE` | warning | A branch with a weight of a `random` that opens a branch of a `random`, which no draw of the parent's branch takes (its parent's draw is the same, within the branch's band) |
 | `DEAD_CODE` | warning | Code after an `end` or `goto` that never runs |
 | `WEIGHT_ZERO` | warning | A random branch that never runs |
 | `PAIR_UNKNOWN` | warning | An `enter` of a pair the species' intel has no record of, or measured never entered; unmeasured says nothing |

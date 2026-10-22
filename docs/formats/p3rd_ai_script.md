@@ -76,7 +76,7 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 | Donor | Host |
 |---|---|
 | `enter m s` | `enter M S 0`, the pair from `[brain.pairs]`; an own move there: `enter 16 k 0`; a list there: one `enter` per item |
-| `random` | `random`: each weight `w` becomes `w * 32 / 100` by largest remainder, at least 1; a zero arm goes. Too many live arms for MHFU's 13 branches (the padding one counts): an outer `random` over groups of at most 12, weighted by their sums, each group an inner `random` weighted within it (`P3_SPLIT`) |
+| `random` | `random`: each weight `w` becomes `w * 32 / 100` by largest remainder, at least 1; a zero arm goes. Too many live arms for MHFU's 13 branches (the padding one counts): an outer `random` over groups of at most 12 and an inner `random` per group, all reading one draw (`P3_SPLIT`, below) |
 | `switch_range` | `switch_range`: case `k` is bucket `k + 1`, the default the last, a missing case copies the default |
 | `switch_mode` | `if_mode2` for mode 1, the default as its else |
 | `if_enraged` | `if_enraged` |
@@ -101,7 +101,18 @@ call before it would be the newest (`P3_HISTORY` warns), and two reads in a row,
 the first's note, are an error.
 
 A random that can follow another draw in the same run gets an `rng_step2` first, as the host's
-own picks do (a split one's inner randoms do). Findings are errors (`P3_PAIR_UNMAPPED`, `P3_OWN_MISSING`, `P3_UNSUPPORTED`,
+own picks do. MHP3rd draws a fresh number per pick; MHFU's `random` reads the entity's counter and
+only a step moves it, by 1, so that pick reads the next value, not a fresh one (`CORRELATED_DRAW`
+says so; the draws after another draw stay, as in MHFU's own scripts).
+
+A split `random` is one draw read twice: the inner random is the first node of its outer arm, gets
+no step, and reads the outer's draw. The weights are rounded once over all the live arms, arm `k`
+owning the slots `c_k` to `c_k + s_k` of the 32. A group's outer weight is its arms' slot sum, so
+it owns the band `lo` to `hi`; its inner weights are its arms' `s_k`, the `lo` slots below the band
+added to the first arm and the `32 - hi` from its end to the last (they never occur). Every value
+then takes the arm one random over all of them would. A group of one arm is its body.
+
+Findings are errors (`P3_PAIR_UNMAPPED`, `P3_OWN_MISSING`, `P3_UNSUPPORTED`,
 `P3_HOST_OP`, `P3_UNDECIDED`, `P3_LATCH`, `P3_HISTORY`, `P3_WIDE`, `P3_ROUTINE`, `P3_FATIGUE_HOST`), which stop a
 build, warnings (`P3_FOLDED`, `P3_APPROX`, `P3_PAIR_UNUSED` (not for a pair the charge table names or whose
 move another pair plays), `P3_WHEN`, `P3_WHEN_IGNORED`, a
