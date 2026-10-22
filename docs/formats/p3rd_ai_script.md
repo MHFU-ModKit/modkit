@@ -227,6 +227,48 @@ hits cost nothing there.
 
 `mhfu-port splice` prints the table's size and findings with the splice's.
 
+### Charge
+
+MHP3rd's Zinogre fills a gauge by charge-ups, transforms at 100 and stays charged until hits wear
+its durability out; its script asks `switch_query` for "charged" and "the cooldown runs". `[brain]
+charge = true` has the framework's helper (`mhfu.em_charge`, armed by `mhfu_port.lua` from the
+moves module's `charge` table) keep that state and answer the two queries; the splice keeps those
+two `switch_query` args (`P3_FOLDED` for any other). The build reads the donor's overlay
+(`mhfu_port.p3charge`) and `mhfu_port.brain.charge` maps it onto the port's moves:
+
+- **Charge-ups**: the pairs whose handler calls the gauge's one writer. Each is run to its end
+  from an empty gauge at an HP ratio in each of the helper's bands (`Walk.settle`: the handler's
+  counter, the gauge and the float tests of the HP ratio against the species' constants answered
+  from the code), and the gauge left is the gain, by HP at or above 95 %, 75 %, 40 % and below. For
+  the Zinogre, (1,15) gives 25, 35, 40, 55 and (1,16) 40, 55, 65, 100: the repeats of one handler
+  add up, and a charge-up near full tops itself up to 100. The gains are for the normal spawn (the
+  variant byte clear). The helper adds a gain when the own move starts, the donor over the
+  handler's keyframes.
+- **The transform**: the pair whose handler sets the charged state, (1,4); the lowest of the
+  pairs sharing that handler.
+- **Chips**: a hit takes the row's step off the gauge while the monster is not charged and off the
+  durability while it is charged, by rank; the lowest rank's row (5, with a cap of 10 per burst of
+  hits, both tables). The helper chips each hit and has no cap; the donor chips in its
+  flinch handler.
+- **Cooldowns** are the constants the handlers store: 420 frames after a charge-up, 900 after a
+  discharge.
+- **Discharge**: em75's knockout reaction pairs (the class `brain.fatigue` sorts, where a trap's
+  REACTION_CHECK code enters the pair), as MHP3rd's knockout and trap handler zeroes the charge.
+
+A donor pair becomes the own move `[brain.pairs]` plays for it (the last item of a list). A
+charge-up pair the map lacks is a warning, the transform's an error; a pair mapped for the table
+that the script never enters is not reported unused. Two charge-ups on one move take the larger
+gain in each band. The moves module's `charge = { ups = { name = { g95, g75, g40, glow } },
+transform = name, chip_gauge, chip_durability, cooldown_up, cooldown_out, discharge = {{m, s}} }`
+is written with the module (`mhfu-port build`, `inject`, the studio's deploy).
+
+| Finding | Level | What |
+|---|---|---|
+| `P3_CHARGE_DONOR`, `P3_CHARGE_PAIRS`, `P3_CHARGE_UPS` | error | the species has no charge state or one the build cannot read; more discharge pairs or charge-up moves than the helper holds |
+| `P3_CHARGE_UNMAPPED`, `P3_CHARGE_MOVE` | error for the transform, warning for a charge-up | no own move for the donor pair: no `[brain.pairs]` entry, a host pair, or a name `[moves]` lacks |
+| `P3_CHARGE_REACTIONS` | warning | no reaction table for the host: nothing discharges |
+| `P3_CHARGE_SHARED` | info | the larger gain of two charge-ups on one move |
+
 ## Checking
 
 `mhfu-port brain --check` lifts every id and slot and compares each routine with its bytes. It

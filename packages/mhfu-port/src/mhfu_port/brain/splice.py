@@ -29,7 +29,7 @@ tired), become the host's `if_gauge_a_low`, which the framework's fatigue helper
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -843,6 +843,7 @@ def splice(
     survey: Mapping[int, script_vars.Var] | None = None,
     slots: Mapping[str, int] | None = None,
     overlay: Overlay | None = None,
+    named: Collection[Pair] = (),
 ) -> Spliced:
     """The host's `spec.splice` routine with the donor's `spec.entry` in its place, as edits to
     `host`; `findings` say what could not carry over, an error that it cannot be built. `survey`
@@ -877,7 +878,7 @@ def splice(
         es.notes[key] = _origin(donor, spec.entry)
     _steps(host, es)
     own = {n: t.slots[n] for _, n in t.uses if isinstance(n, str)}
-    found = [*t.findings, *_unused(spec, t), *_gauge_a(host, spec, overlay)]
+    found = [*t.findings, *_unused(spec, t, named), *_gauge_a(host, spec, overlay)]
     return Spliced(es, found, dict(t.sources), dict(t.uses), own)
 
 
@@ -885,9 +886,10 @@ def _failed(es: EditSet, spec: manifest.Brain, text: str) -> Spliced:
     return Spliced(es, [Finding("error", "P3_ROUTINE", text, None, spec.splice)], {})
 
 
-def _unused(spec: manifest.Brain, t: Translator) -> list[Finding]:
-    """Manifest entries that match nothing in the donor's code."""
-    met = {f"{m},{s}" for m, s in t.entered}
+def _unused(spec: manifest.Brain, t: Translator, named: Collection[Pair] = ()) -> list[Finding]:
+    """Manifest entries that match nothing in the donor's code and that the charge table does not
+    name."""
+    met = {f"{m},{s}" for m, s in [*t.entered, *named]}
     out = [
         Finding("warning", "P3_PAIR_UNUSED", f"{k} is mapped but the donor code never enters it")
         for k in spec.pairs

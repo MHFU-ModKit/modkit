@@ -29,6 +29,7 @@ def decode(word, op, va=VA, **regs):
         (asm.lhu("v0", 0xBC, "a0"), Id.cpu_lhu, {"rs": Gpr.a0, "rt": Gpr.v0}, 0xBC),
         (asm.sw("v0", -4, "sp"), Id.cpu_sw, {"rs": Gpr.sp, "rt": Gpr.v0}, -4),
         (asm.sb("a1", 0x280, "s0"), Id.cpu_sb, {"rs": Gpr.s0, "rt": Gpr.a1}, 0x280),
+        (asm.sh("v1", 0xFF4, "a0"), Id.cpu_sh, {"rs": Gpr.a0, "rt": Gpr.v1}, 0xFF4),
     ],
 )
 def test_immediate(word, op, regs, imm):
@@ -68,6 +69,15 @@ def test_jump(encode, op):
 )
 def test_register(word, op, regs):
     decode(word, op, **regs)
+
+
+def test_float_compare_and_branch():
+    lt, le = decode(asm.c_lt_s(0, 20), Id.cpu_c_lt_s), decode(asm.c_le_s(0, 20), Id.cpu_c_le_s)
+    assert (lt.fs.value, lt.ft.value) == (le.fs.value, le.ft.value) == (0, 20)
+    at = VA + 8
+    for encode, op in ((asm.bc1t, Id.cpu_bc1t), (asm.bc1f, Id.cpu_bc1f)):
+        assert decode(encode(VA + 0x40, at), op, at).getBranchVramGeneric() == VA + 0x40
+        assert decode(encode(VA - 0x40, at), op, at).getBranchVramGeneric() == VA - 0x40
 
 
 def test_shift_cop1_nop():

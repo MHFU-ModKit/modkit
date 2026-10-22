@@ -15,6 +15,8 @@ the carrier (`hub` when it names none), the steer and `after`. `tip` is the tail
 
 `fatigue` is the stamina table `mhfu.em_fatigue` takes (`brain.fatigue`), given when the manifest's
 `[brain] fatigue` is set; `mhfu_port.lua` arms it with the port, an own move keyed by name.
+`charge` is the same for the charge helper (`mhfu.em_charge`, `brain.charge`, `[brain] charge`):
+the charge-up moves' gains and the transform move, by name.
 
 `slots` is the one numbering of own moves: this module writes it, `mhfu_port.lua` registers by it
 and the brain splice's `enter OWN_MOVE_MAIN k 0` names it. The manifest it is given has the own
@@ -314,6 +316,7 @@ def lua(
     known: Collection[int] | None = None,
     tip: Tip | None = None,
     fatigue: Mapping[str, Any] | None = None,
+    charge: Mapping[str, Any] | None = None,
 ) -> str:
     """The module; `check`s first."""
     check(m, layout, known)
@@ -343,6 +346,8 @@ def lua(
         out.append(f"  tip = {lua_value(tip.pairs)},")
     if fatigue is not None:
         out.append(f"  fatigue = {lua_value(fatigue)},")
+    if charge is not None:
+        out.append(f"  charge = {lua_value(charge)},")
     out += ["}", ""]
     text = "\n".join(out)
     build = zlib.crc32(text.encode("utf-8")) & 0x7FFF_FFFF or 1

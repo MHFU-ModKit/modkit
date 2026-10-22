@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import struct
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -45,6 +45,18 @@ class Asm:
     def call(self, target: int) -> None:
         self.words += [asm.jal(target), asm.NOP]
 
+    def float_branch(self, kind: str, label: str) -> None:
+        """A branch on the float compare just made."""
+        fn = {"t": asm.bc1t, "f": asm.bc1f}[kind]
+        self.words += [lambda labels, at: fn(labels[label], at), asm.NOP]
+
+    def load_float(self, freg: int, label: str) -> None:
+        """`freg` from the float at `label`, by the pool's lui and lwc1 pair."""
+        self.words += [
+            lambda labels, at: asm.lui("v0", asm.hi(labels[label])),
+            lambda labels, at: asm.lwc1(freg, asm.lo(labels[label]), "v0"),
+        ]
+
     def code(self) -> Code:
         done = [
             w(self.labels, BASE + 4 * i) if callable(w) else w for i, w in enumerate(self.words)
@@ -74,8 +86,13 @@ F0, F40, F60 = 0, 0x4220, 0x4270
 """The high halves of 0.0, 40.0 and 60.0 as floats."""
 
 
-def species(phase_one: Callable[[Asm], None], phase_zero: Callable[[Asm], None]) -> Code:
-    """A tick that runs `phase_zero`, then `phase_one` until it returns or ends the pair."""
+def species(
+    phase_one: Callable[[Asm], None],
+    phase_zero: Callable[[Asm], None],
+    pool: Mapping[str, float] | None = None,
+) -> Code:
+    """A tick that runs `phase_zero`, then `phase_one` until it returns or ends the pair; `pool`
+    are floats the code can load by label."""
     a = Asm()
     a(STACK, asm.sw("s0", 4, "sp"), asm.sw("ra", 8, "sp"), asm.addu("s0", "a0", "zero"))
     a(asm.lbu("v1", p3hits.PHASE, "s0"))
@@ -91,6 +108,9 @@ def species(phase_one: Callable[[Asm], None], phase_zero: Callable[[Asm], None])
     a.label("phase1")
     phase_one(a)
     a.jump("done")
+    for name, value in (pool or {}).items():
+        a.label(name)
+        a(struct.unpack("<I", struct.pack("<f", value))[0])
     return a.code()
 
 
@@ -124,7 +144,7 @@ HITS = Hits(RECORDS, ())
 LENGTHS = {61: Length(100.0)}
 
 
-def walk(code: Code, lengths=LENGTHS) -> Walk:
+def walk(code: Code, lengths=LENGTHS, **options) -> Walk:
     tick = BASE
     ms = SimpleNamespace(
         code=code,
@@ -134,7 +154,7 @@ def walk(code: Code, lengths=LENGTHS) -> Walk:
         translator={},
         table_ids=lambda site, entry: None,
     )
-    return Walk(ms, HITS, lengths)  # type: ignore[arg-type]
+    return Walk(ms, HITS, lengths, **options)  # type: ignore[arg-type]
 
 
 def pair() -> p3.Pair:
@@ -225,6 +245,90 @@ def test_a_wait_on_something_unknown_lasts_until_the_clip_ends():
 def test_a_clip_the_donor_lacks_ends_the_walk():
     plan = walk(species(straight, first_phase), {}).plan(pair())
     assert not plan.complete and plan.steps == () and plan.notes[0].code == "unresolved"
+
+
+COUNTER, GAUGE = 0xF64, 0xFF4
+
+
+def counts_down(a: Asm) -> None:
+    """Until a counter the first phase set runs out: one off it and ten on a gauge a frame."""
+    a(asm.lbu("v0", COUNTER, "s0"))
+    a.branch("beq", "v0", "zero", "out")
+    a(asm.addiu("v0", "v0", -1), asm.sb("v0", COUNTER, "s0"))
+    a(asm.lhu("v1", GAUGE, "s0"), asm.addiu("v1", "v1", 10), asm.sh("v1", GAUGE, "s0"))
+    a.jump("done")
+    a.label("out")
+    a.call(LEAVE)
+
+
+def sets_counter(a: Asm) -> None:
+    play(a, 61)
+    a(asm.li("v0", 3), asm.sb("v0", COUNTER, "s0"))
+
+
+def test_tracked_cells_carry_from_frame_to_frame():
+    cells = {"track": [(COUNTER, 1), (GAUGE, 2)], "facts": {(GAUGE, 2): 5}}
+    got = walk(species(counts_down, sets_counter), **cells).settle(pair())
+    assert got.left and got.cells == {(COUNTER, 1): 0, (GAUGE, 2): 35} and got.ticks == 4
+    assert not got.undecided
+
+
+def test_a_branch_on_an_untracked_cell_is_not_decided():
+    got = walk(species(counts_down, sets_counter)).settle(pair())
+    assert not got.left and got.cells == {} and got.undecided
+
+
+def test_facts_start_a_run_and_are_not_shared_between_runs():
+    w = walk(species(counts_down, sets_counter), track=[(COUNTER, 1)], facts={(GAUGE, 2): 7})
+    first, second = w.settle(pair()), w.settle(pair())
+    assert first.cells == second.cells == {(COUNTER, 1): 0, (GAUGE, 2): 7}
+
+
+def over_three_quarters(a: Asm) -> None:
+    """Thirty on the gauge above 0.75 of the HP, ten else, then the pair's end."""
+    a.load_float(0, "limit")
+    a(asm.c_lt_s(0, 20), asm.NOP)
+    a.float_branch("t", "big")
+    a(asm.li("v1", 10))
+    a.jump("add")
+    a.label("big")
+    a(asm.li("v1", 30))
+    a.label("add")
+    a(asm.sh("v1", GAUGE, "s0"))
+    a.call(LEAVE)
+
+
+def test_the_hp_ratio_answers_a_float_test_against_a_constant():
+    code = species(over_three_quarters, lambda a: play(a, 61), {"limit": 0.75})
+    w = walk(code, track=[(GAUGE, 2)])
+    assert w.settle(pair(), 0.9).cells == {(GAUGE, 2): 30}
+    assert w.settle(pair(), 0.5).cells == {(GAUGE, 2): 10}
+    assert w.settle(pair(), 0.75).cells == {(GAUGE, 2): 10}  # c.lt.s: 0.75 < 0.75 does not hold
+    assert not w.settle(pair(), 0.9).undecided
+
+
+def test_without_an_hp_ratio_the_float_test_falls_through():
+    code = species(over_three_quarters, lambda a: play(a, 61), {"limit": 0.75})
+    got = walk(code, track=[(GAUGE, 2)]).settle(pair())
+    assert got.cells == {(GAUGE, 2): 10} and len(got.undecided) == 1
+
+
+def test_the_false_branch_of_a_float_test():
+    def below(a: Asm) -> None:
+        a.load_float(0, "limit")
+        a(asm.c_le_s(0, 20), asm.NOP)
+        a.float_branch("f", "small")
+        a(asm.li("v1", 30))
+        a.jump("add")
+        a.label("small")
+        a(asm.li("v1", 10))
+        a.label("add")
+        a(asm.sh("v1", GAUGE, "s0"))
+        a.call(LEAVE)
+
+    w = walk(species(below, lambda a: play(a, 61), {"limit": 0.75}), track=[(GAUGE, 2)])
+    assert w.settle(pair(), 0.75).cells == {(GAUGE, 2): 30}  # 0.75 <= 0.75 holds
+    assert w.settle(pair(), 0.6).cells == {(GAUGE, 2): 10}
 
 
 BRUTE, BRUTE_MODEL = 23, 5248

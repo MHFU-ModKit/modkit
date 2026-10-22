@@ -1166,6 +1166,15 @@ def test_splice_flags_manifest_entries_nothing_reads():
     assert not [f for f in s.findings if "2,3" in f.text]
 
 
+def test_a_pair_the_charge_table_names_is_not_unused():
+    sp = spec(pairs=PAIRS | {"5,5": (1, 5), "1,4": (1, 5)})
+    s = splice.splice(donor(base_0=enter(2, 3)), host(), sp, named=[(1, 4)])
+    unused = [f.text.split()[0] for f in s.findings if f.code == "P3_PAIR_UNUSED"]
+    assert "5,5" in unused and "1,4" not in unused
+    plain = splice.splice(donor(base_0=enter(2, 3)), host(), sp)
+    assert "1,4" in [f.text.split()[0] for f in plain.findings if f.code == "P3_PAIR_UNUSED"]
+
+
 def test_a_draw_after_a_draw_is_stepped():
     pick = blk("random", arms=[case(50, ""), case(50, enter(2, 3))])
     both = f"{pick} {blk('random', arms=[case(50, enter(2, 4)), case(50, enter(2, 3))])}"
