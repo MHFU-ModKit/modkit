@@ -19,7 +19,7 @@ that says what each MHP3rd opcode becomes. The code lands as follows:
 
 A donor pair that `[brain.pairs]` maps to an own move becomes `enter OWN_MOVE_MAIN k 0`, `k` the
 move's slot in `slots` (`moves.slots`, the one numbering the moves module and `mhfu_port.lua`
-use); em_vhook plays that move in place of a host pair.
+use); em_vhook plays that move in place of a host pair. A list there enters each item in turn.
 
 With `[brain] fatigue` the donor's `if_tired`, and `if_stamina_low` at 0 (stamina 0 only precedes
 tired), become the host's `if_gauge_a_low`, which the framework's fatigue helper drives
@@ -49,12 +49,24 @@ TOTAL = 32
 """What an MHFU random's weights add up to; MHP3rd's add up to 100."""
 ARMS = 13
 """Branches of an MHFU random, the padding one included."""
+GROUP = ARMS - 1
+"""Live arms of an inner random of a split one: the padding branch makes it ARMS."""
 BUCKETS = 5
 """Buckets of an MHFU switch_range."""
 MODES: Mapping[int, str] = {1: "if_mode2"}
 """MHP3rd's mode byte to the MHFU test that holds in that mode."""
 WHEN = ("if_target_state", "if_tired", "if_stamina_low", "if_target_set")
 """The tests the manifest answers, in `[brain.when]`: MHFU has no state for them."""
+SIDE = (0, 127)
+"""The arc `if_target_in_arc` tests for `if_target_side`: the target's bearing minus the facing in
+0 to 127/256 of a turn, MHP3rd's bit 15 clear (its upper bound is the byte below the half)."""
+GLOBAL_540 = 2
+"""The one value of the word `switch_global_540` reads that the donors' scripts test for."""
+HP_SHIFT = 1
+"""MHP3rd's `switch_hp` case matches an HP percent at or below it, MHFU's below it (both compare
+the truncated integer percent), so each case moves up by one."""
+QUERIES = (int(addresses.CHARGE_QUERY_CHARGED), int(addresses.CHARGE_QUERY_COOLDOWN))
+"""The `switch_query` args the framework answers for a port with `[brain] charge`."""
 GAUGE = "if_gauge_a_low"
 """The host test the fatigue helper answers."""
 GAUGE_A_OPS = (GAUGE, "refill_gauge_a")
@@ -113,18 +125,19 @@ class Where:
     """The routine it lands in, for findings."""
     tail: bool
     """Nothing runs after the node in its routine."""
-    entered: int | None
-    """The call index, when the node opens the body of a called routine."""
+    call: int | None
+    """The call index of the routine the node is in; None while pasting."""
     body: Body
 
 
-def shares(weights: Sequence[int]) -> tuple[list[int], list[int]]:
-    """MHFU weights for MHP3rd's: each `w * 32 / 100` by largest remainder, a non-zero one at least
-    1, the total at most 32; and the positions that were raised to 1."""
+def shares(weights: Sequence[int], whole: int = 100) -> tuple[list[int], list[int]]:
+    """MHFU weights for MHP3rd's, which add up to `whole` or less: each `w * 32 / whole` by
+    largest remainder, a non-zero one at least 1, the total at most 32; and the positions that
+    were raised to 1."""
     exact = [w * TOTAL for w in weights]
-    out = [e // 100 for e in exact]
-    spare = max(0, min(TOTAL, (sum(exact) + 50) // 100) - sum(out))
-    for i in sorted(range(len(out)), key=lambda j: (-(exact[j] % 100), j))[:spare]:
+    out = [e // whole for e in exact]
+    spare = max(0, min(TOTAL, (sum(exact) + whole // 2) // whole) - sum(out))
+    for i in sorted(range(len(out)), key=lambda j: (-(exact[j] % whole), j))[:spare]:
         out[i] += 1
     raised = [i for i, (w, s) in enumerate(zip(weights, out, strict=True)) if w and not s]
     for i in raised:
@@ -147,10 +160,6 @@ def _is_end(n: p3.Node) -> bool:
 def _branches(n: p3.Block) -> tuple[list[p3.Node], list[p3.Node]]:
     """An if's then and else bodies."""
     return n.head, next((a.body for a in n.arms if a.sub == p3ops.ELSE), [])
-
-
-def _first(nodes: Sequence[p3.Node], name: str) -> bool:
-    return bool(nodes) and isinstance(nodes[0], p3.Block) and nodes[0].op.name == name
 
 
 class Translator:
@@ -181,6 +190,9 @@ class Translator:
         self.var: int | None = None
         """The history variable, once the region is known to read the call before."""
         self._stack: list[str] = []
+        self._placed: dict[int, ir.Located] = {}
+        """The history reads whose routine has noted its call, by `id` (held, so no other node
+        takes it): a routine that inlines one sees a call there, no read of its own."""
 
     def add(self, w: Where | str, level: str, code: str, text: str) -> None:
         item = w if isinstance(w, str) else w.item
@@ -276,11 +288,63 @@ class Translator:
         return label
 
     def callee(self, name: str, index: int, level: int, item: str) -> list[ir.Node]:
-        """A called routine's body, which first notes the call in the history variable."""
-        nodes = self.donor.routines[name].body
-        out = self.run(nodes, level, item, True, index)
-        if self.var is not None and not _first(nodes, "switch_prev_call"):
-            out.insert(0, edit.insn("set_var", self.var, index))
+        """A called routine's body, which notes the call in the history variable."""
+        out = self.run(self.donor.routines[name].body, level, item, True, index)
+        return out if self.var is None else self.noted(out, index, item)
+
+    def noted(self, nodes: list[ir.Node], index: int, item: str) -> list[ir.Node]:
+        """`nodes`, a routine's body, with `set_var H index` first on every path, but after a read
+        of the history (an `if_var` on H, from `_prev`), whose arms follow it: the variable holds
+        the call before the newest until then. Right while no call precedes the read in the
+        routine, which a call would make the newest (`P3_HISTORY` warns); two reads in a row
+        break it too, the second seeing the first's note (an error). A routine inlined into this
+        one is a call, whatever it reads."""
+        var = self.var
+        assert var is not None
+
+        def note() -> ir.Node:
+            return edit.insn("set_var", var, index)
+
+        def is_read(x: ir.Located) -> bool:
+            return isinstance(x, ir.Block) and x.op.name == "if_var" and x.args.get("var") == var
+
+        def reads(ns: Sequence[ir.Node]) -> bool:
+            return any(is_read(x) and id(x) not in self._placed for x in ir.walk(ns))
+
+        def calls(ns: Sequence[ir.Node]) -> bool:
+            return any(
+                isinstance(x, ir.Insn)
+                and (x.op.name == "call" or (x.op.name == "set_var" and x.args.get("var") == var))
+                for x in ir.walk(ns)
+            )
+
+        def place(ns: list[ir.Node]) -> list[ir.Node]:
+            at = next((i for i, x in enumerate(ns) if reads([x])), None)
+            if at is None:
+                return [note(), *ns]
+            if calls(ns[:at]):
+                text = "a call runs before switch_prev_call: it reads that call, MHP3rd this one"
+                self.add(item, "warning", "P3_HISTORY", text)
+            if reads(ns[at + 1 :]):
+                text = "switch_prev_call twice in a row: the second would read the first's note"
+                self.add(item, "error", "P3_HISTORY", text)
+            return [*ns[:at], sink(ns[at]), *ns[at + 1 :]]
+
+        def sink(n: ir.Node) -> ir.Node:
+            """The note on each path through the block that does not read."""
+            assert isinstance(n, ir.Block)
+            if n.op.shape is Shape.IF:
+                n.head = place(n.head)
+                if not n.arms:
+                    n.arms.append(ir.Arm(1, {}, []))
+            for a in n.arms:
+                a.body = place(a.body)
+            if n.op.shape is Shape.SWITCH and not any(a.sub == 2 for a in n.arms):
+                n.arms.append(ir.Arm(2, {}, [note()]))
+            return n
+
+        out = place(nodes)
+        self._placed |= {id(x): x for x in ir.walk(out) if is_read(x)}
         return out
 
     # ---- nodes
@@ -291,17 +355,17 @@ class Translator:
         level: int,
         item: str,
         tail: bool,
-        entered: int | None = None,
+        call: int | None = None,
     ) -> list[ir.Node]:
         b = Body()
         for i, n in enumerate(nodes):
             last = tail and all(_is_end(x) for x in nodes[i + 1 :])
-            b.out += self.node(n, Where(level, item, last, entered if i == 0 else None, b))
+            b.out += self.node(n, Where(level, item, last, call, b))
         return b.out
 
     def sub(self, nodes: Sequence[p3.Node], w: Where) -> list[ir.Node]:
         """A block's body, where its own node was."""
-        return self.run(nodes, w.level, w.item, w.tail)
+        return self.run(nodes, w.level, w.item, w.tail, w.call)
 
     def node(self, n: p3.Node, w: Where) -> list[ir.Node]:
         if isinstance(n, p3.Leave):
@@ -366,22 +430,24 @@ class Translator:
     # ---- ops
 
     def _enter(self, n: p3.Insn, w: Where) -> list[ir.Node]:
+        """One `enter` per target of the pair, in order."""
         pair = (n.args["main"], n.args["sub"])
-        target = self.spec.target(pair)
-        if target is None:
+        targets = self.spec.targets(pair)
+        if not targets:
             self.add(w, "error", "P3_PAIR_UNMAPPED", f"enter {pair[0]},{pair[1]} has no host pair")
-            return []
-        if isinstance(target, str):
-            slot = self.slots.get(target)
-            if slot is None:
-                text = f"enter {pair[0]},{pair[1]} plays own move {target}, which has no slot"
-                self.add(w, "error", "P3_OWN_MISSING", text)
-                return []
-            enter = edit.insn("enter", addresses.OWN_MOVE_MAIN, slot, 0)
-        else:
-            enter = edit.insn("enter", *target, 0)
-        self.uses[pair, target] += 1
-        return [enter]
+        out: list[ir.Node] = []
+        for target in targets:
+            if isinstance(target, str):
+                slot = self.slots.get(target)
+                if slot is None:
+                    text = f"enter {pair[0]},{pair[1]} plays own move {target}, which has no slot"
+                    self.add(w, "error", "P3_OWN_MISSING", text)
+                    continue
+                out.append(edit.insn("enter", addresses.OWN_MOVE_MAIN, slot, 0))
+            else:
+                out.append(edit.insn("enter", *target, 0))
+            self.uses[pair, target] += 1
+        return out
 
     def _end(self, n: p3.Insn, w: Where) -> list[ir.Node]:
         if not w.tail:
@@ -415,21 +481,64 @@ class Translator:
             return []
         return self.pasted(name, w.item)
 
+    def _raised(self, w: Where, values: Sequence[int], raised: Sequence[int], what: str) -> None:
+        for i in raised:
+            text = f"{what} weight {values[i]} is raised to 1 of {TOTAL}"
+            self.add(w, "info", "P3_WEIGHT", text)
+
     def _random(self, n: p3.Block, w: Where) -> list[ir.Node]:
         live = [a for a in n.arms if a.value]
-        weights, raised = shares([a.value or 0 for a in live])
+        values = [a.value or 0 for a in live]
+        weights, raised = shares(values)
         if len(live) + (sum(weights) < TOTAL) > ARMS:
-            self.add(w, "error", "P3_WIDE", f"random has {len(live)} live arms, MHFU takes {ARMS}")
-            return []
-        for i in raised:
-            self.add(
-                w, "info", "P3_WEIGHT", f"random weight {live[i].value} is raised to 1 of {TOTAL}"
-            )
+            return self._split(live, w)
+        self._raised(w, values, raised, "random")
         bodies = [self.sub(a.body, w) for a in live]
         if not any(bodies):
             self.add(w, "info", "P3_DROPPED", "random: every arm is empty")
             return []
         return [edit.random(list(zip(weights, bodies, strict=True)))]
+
+    def _split(self, live: Sequence[p3.Arm], w: Where) -> list[ir.Node]:
+        """A random with more live arms than MHFU's takes: an outer random over groups of at most
+        `GROUP`, weighted by their shares, each group an inner random weighted within it. Each
+        level rounds its own weights, so the sums the donor draws survive."""
+        count = -(-len(live) // GROUP)
+        size = -(-len(live) // count)
+        groups = [live[i : i + size] for i in range(0, len(live), size)]
+        sums = [sum(a.value or 0 for a in g) for g in groups]
+        outer, raised = shares(sums)
+        if len(groups) + (sum(outer) < TOTAL) > ARMS:
+            text = (
+                f"random has {len(live)} live arms, a split over {len(groups)} groups is too wide"
+            )
+            self.add(w, "error", "P3_WIDE", text)
+            return []
+        self._raised(w, sums, raised, "random group")
+        branches: list[tuple[int, list[ir.Node]]] = []
+        for group, whole, weight in zip(groups, sums, outer, strict=True):
+            values = [a.value or 0 for a in group]
+            inner, raised = shares(values, whole)
+            self._raised(w, values, raised, "random")
+            bodies = [self.sub(a.body, w) for a in group]
+            pick: list[ir.Node] = []
+            if any(bodies):
+                pick.append(edit.random(list(zip(inner, bodies, strict=True))))
+            branches.append((weight, pick))
+        if not any(pick for _, pick in branches):
+            self.add(w, "info", "P3_DROPPED", "random: every arm is empty")
+            return []
+        text = f"random with {len(live)} live arms is split into {len(groups)} inner randoms"
+        self.add(w, "info", "P3_SPLIT", text)
+        return [edit.random(branches)]
+
+    def _clone(self, nodes: list[ir.Node]) -> list[ir.Node]:
+        """Copies of translated `nodes`, the history reads among them still noted."""
+        out = edit.clone(nodes)
+        for a, b in zip(ir.walk(nodes), ir.walk(out), strict=True):
+            if id(a) in self._placed:
+                self._placed[id(b)] = b
+        return out
 
     def _range(self, n: p3.Block, w: Where) -> list[ir.Node]:
         cases: dict[int, list[ir.Node]] = {}
@@ -458,12 +567,87 @@ class Translator:
                     "P3_DROPPED",
                     f"switch_range has no case {k}: it takes the default's body",
                 )
-            buckets.append(cases[k] if k in cases else edit.clone(default))
+            buckets.append(cases[k] if k in cases else self._clone(default))
         buckets.append(default)
         if not any(buckets):
             self.add(w, "info", "P3_DROPPED", "switch_range: every arm is empty")
             return []
         return [edit.switch("switch_range", cases=[(b,) for b in buckets])]
+
+    def _cases(
+        self, n: p3.Block, w: Where, bound: bool, shift: int = 0
+    ) -> tuple[list[tuple[int, list[ir.Node]]], list[ir.Node]]:
+        """A switch's cases, translated and ascending, and its default. A case no value reaches is
+        dropped before it is translated: with `bound` (the first limit above the value wins) one
+        at or under an earlier case, else one that repeats a value. `shift` moves each value up."""
+        cases: dict[int, list[ir.Node]] = {}
+        default: list[ir.Node] = []
+        top = -1
+        for a in n.arms:
+            if a.sub != p3ops.CASE or a.value is None:
+                default = self.sub(a.body, w)
+                continue
+            value = min(a.value + shift, 0xFF)
+            if value <= top if bound else value in cases:
+                self.add(w, "info", "P3_DROPPED", f"{n.op.name} case {a.value} is never reached")
+                continue
+            cases[value] = self.sub(a.body, w)
+            top = max(top, value)
+        return sorted(cases.items()), default
+
+    def _switch(
+        self, n: p3.Block, w: Where, *args: int, bound: bool = True, shift: int = 0
+    ) -> list[ir.Node]:
+        """A switch of the same name on the host, its cases kept in step."""
+        cases, default = self._cases(n, w, bound, shift)
+        if not default and not any(body for _, body in cases):
+            self.add(w, "info", "P3_DROPPED", f"{n.op.name}: every arm is empty")
+            return []
+        return [edit.switch(n.op.name, *args, cases=cases, default=default or None)]
+
+    def _answer(
+        self, n: p3.Block, w: Where, value: int, why: str, say: bool = False
+    ) -> list[ir.Node]:
+        """A switch whose value is taken as `value`: the case with it, else the default, in its
+        place; the arms with code that go are named (a note even when none does, with `say`)."""
+        arms = [a for a in n.arms if a.sub == p3ops.CASE and a.value == value]
+        keep = next(iter(arms or [a for a in n.arms if a.sub != p3ops.CASE]), None)
+        gone = [a for a in n.arms if a is not keep and a.body]
+        if gone:
+            names = ", ".join(
+                f"{f'case {a.value}' if a.sub == p3ops.CASE else 'default'} "
+                f"({p3.count(a.body)} instructions, first {_text(a.body[0])})"
+                for a in gone
+            )
+            text = f"{_text(n)} taken as answer {value} ({why}): arms dropped: {names}"
+            self.add(w, "warning", "P3_FOLDED", text)
+        elif say:
+            self.add(w, "info", "P3_FOLDED", f"{_text(n)} taken as answer {value} ({why})")
+        return self.sub(keep.body, w) if keep else []
+
+    def _query(self, n: p3.Block, w: Where) -> list[ir.Node]:
+        """The host's `switch_query` on an arg the charge helper answers; any other is taken as
+        answer 0, as is every one without `[brain] charge`."""
+        arg = n.args["arg"]
+        if self.spec.charge and arg in QUERIES:
+            return self._switch(n, w, arg, bound=False)
+        why = "no charge helper" if not self.spec.charge else "the helper does not answer it"
+        return self._answer(n, w, 0, why)
+
+    def _dist(self, n: p3.Block, w: Where) -> list[ir.Node]:
+        return self._switch(n, w)
+
+    def _hp(self, n: p3.Block, w: Where) -> list[ir.Node]:
+        return self._switch(n, w, shift=HP_SHIFT)
+
+    def _side(self, n: p3.Block, w: Where) -> list[ir.Node]:
+        then, other = _branches(n)
+        return self.if_(
+            w, n.op.name, "if_target_in_arc", SIDE, self.sub(then, w), self.sub(other, w)
+        )
+
+    def _global_540(self, n: p3.Block, w: Where) -> list[ir.Node]:
+        return self._answer(n, w, GLOBAL_540, "the host has no such word", say=True)
 
     def _mode(self, n: p3.Block, w: Where) -> list[ir.Node]:
         cases: list[tuple[int, list[ir.Node]]] = []
@@ -552,19 +736,12 @@ class Translator:
         return self.sub(arms[0].body if arms else [], w)
 
     def _prev(self, n: p3.Block, w: Where) -> list[ir.Node]:
-        """`if_var` on the history, each arm noting the call after it has read it."""
-        if w.entered is None:
-            self.add(
-                w, "error", "P3_HISTORY", "switch_prev_call is only read at the start of a call"
-            )
+        """`if_var` on the history, case by case; `noted` puts each arm's note first."""
+        if w.call is None:
+            self.add(w, "error", "P3_HISTORY", "switch_prev_call is only read in a called routine")
             return []
         if self.var is None:
             return []
-        var, index = self.var, w.entered
-
-        def note() -> ir.Node:
-            return edit.insn("set_var", var, index)
-
         cases: list[tuple[int, list[ir.Node]]] = []
         out: list[ir.Node] = []
         for a in n.arms:
@@ -573,9 +750,8 @@ class Translator:
                 cases.append((a.value, body))
             else:
                 out = body
-        out = [note(), *out]
         for value, then in reversed(cases):
-            out = [edit.if_("if_var", var, value, then=[note(), *then], else_=out)]
+            out = [edit.if_("if_var", self.var, value, then=then, else_=out)]
         return out
 
     def _host(self, n: p3.Insn | p3.Block, w: Where) -> list[ir.Node]:
@@ -594,6 +770,11 @@ OPS: Mapping[str, Callable[..., list[ir.Node]]] = {
     "switch_mode": Translator._mode,
     "if_enraged": Translator._enraged,
     "if_facing": Translator._facing,
+    "if_target_side": Translator._side,
+    "switch_query": Translator._query,
+    "switch_dist": Translator._dist,
+    "switch_hp": Translator._hp,
+    "switch_global_540": Translator._global_540,
     "if_object_near": Translator._near,
     "set_target": Translator._target,
     "set_latch": Translator._set_latch,

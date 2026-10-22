@@ -43,6 +43,7 @@ from ..manifest import (
     Move,
     Steer,
     own_name,
+    targets_of,
 )
 from ..p3hits import Plan, Step, Walk
 
@@ -347,7 +348,7 @@ def pairs(b: Brain) -> list[Pair]:
     found = []
     for key, target in b.pairs.items():
         main, _, sub = key.partition(",")
-        if target == OWN:
+        if OWN in targets_of(target):
             found.append((int(main), int(sub)))
     return sorted(found)
 

@@ -374,6 +374,10 @@ class Effect:
 
 
 Pair = tuple[int, int]
+Target = Pair | str
+"""What a donor pair plays: a host pair, or an own move's name (`OWN` for the derived one)."""
+Plays = Target | list[Target]
+"""A `[brain.pairs]` value: one target, or several played in order."""
 _PAIR = re.compile(r"(\d+),(\d+)")
 
 
@@ -394,9 +398,10 @@ class Brain:
     history: int | None = None
     """The script variable that keeps the last call, for `switch_prev_call`. None: the host's
     first free variable (`mhfu.em.script.vars`)."""
-    pairs: dict[str, Pair | str] = field(default_factory=dict)
+    pairs: dict[str, Plays] = field(default_factory=dict)
     """What each donor pair, keyed `"main,sub"`, plays: a host pair, the name of an own move in
-    `[moves]`, or `OWN`. The splice enters an own move as `enter OWN_MOVE_MAIN k 0`, `k` its
+    `[moves]`, or `OWN`; or a list of those, each entered in turn (`[[1, 2], "own"]`: the host's
+    turn, then the move). The splice enters an own move as `enter OWN_MOVE_MAIN k 0`, `k` its
     `moves.slots` slot."""
     when: dict[str, bool] = field(default_factory=dict)
     """The arm a donor test with no host counterpart takes, by its MHP3rd opcode name."""
@@ -409,17 +414,35 @@ class Brain:
     table from the donor into the moves module (`brain.fatigue`), and the splice turns the
     donor's `if_tired` (and `if_stamina_low` 0) into the host's `if_gauge_a_low` instead of
     asking `[brain.when]`. The host must leave gauge A alone (`P3_FATIGUE_HOST`)."""
+    charge: bool = False
+    """The donor's charged state runs in the game (the framework's charge helper): the splice keeps
+    the donor's `switch_query` on the two args the helper answers (`CHARGE_QUERY_CHARGED`,
+    `CHARGE_QUERY_COOLDOWN`); without it every `switch_query` is taken as answer 0 (never
+    charged)."""
 
-    def target(self, pair: Pair) -> Pair | str | None:
-        """What the donor's `pair` plays: a host pair or an own move's name (`OWN` resolved to
-        `own_name(pair)`); None when the map has nothing."""
+    def targets(self, pair: Pair) -> list[Target]:
+        """What the donor's `pair` plays, in order: host pairs and own moves' names (`OWN`
+        resolved to `own_name(pair)`); empty when the map has nothing."""
         t = self.pairs.get(f"{pair[0]},{pair[1]}")
-        return own_name(pair) if t == OWN else t
+        return [own_name(pair) if x == OWN else x for x in targets_of(t)]
+
+    def target(self, pair: Pair) -> Target | None:
+        """What the donor's `pair` comes to: its one target, or the last of a list (the move the
+        turn before it leads to); None when the map has nothing."""
+        found = self.targets(pair)
+        return found[-1] if found else None
 
     def host_pair(self, pair: Pair) -> Pair | None:
         """The host pair the donor's `pair` enters; None when the map has none or an own move."""
         t = self.target(pair)
         return t if isinstance(t, tuple) else None
+
+
+def targets_of(plays: Plays | None) -> list[Target]:
+    """The targets of a `[brain.pairs]` value, as written."""
+    if plays is None:
+        return []
+    return list(plays) if isinstance(plays, list) else [plays]
 
 
 OWN = "own"
@@ -499,9 +522,14 @@ def _value(tp: Any, v: object, where: str) -> Any:
     args = typing.get_args(tp)
     if origin in (typing.Union, types.UnionType):
         opts = [a for a in args if a is not type(None)]
-        if len(opts) > 1:  # str or one other type: a string reads as str
-            return _value(str if isinstance(v, str) else opts[0], v, where)
-        return _value(opts[0], v, where)
+        if len(opts) > 1 and str in opts:
+            opts = [str] if isinstance(v, str) else [a for a in opts if a is not str]
+        for a in opts[:-1]:  # the first type that reads it, a tuple before a list
+            try:
+                return _value(a, v, where)
+            except ManifestError:
+                pass
+        return _value(opts[-1], v, where)
     if tp is Claim:
         v = _claim_shorthand(v)
     if isinstance(tp, type) and dataclasses.is_dataclass(tp):
@@ -589,13 +617,17 @@ def _own_move(mv: Move, w: str) -> None:
 def _brain(b: Brain) -> None:
     _need(b.donor > 0 and b.slot >= 0, "brain", "donor is a monster id and slot 0 or more")
     _need(b.history in (None, *script_vars.BYTE), "brain.history", "is a script variable, 1 to 4")
-    for key, t in b.pairs.items():
+    for key, plays in b.pairs.items():
         m = _PAIR.fullmatch(key)
         w = f"brain.pairs.{key}"
         _need(m is not None and all(int(x) in BYTE for x in m.groups()), w, "is main,sub")
-        if isinstance(t, tuple):
-            main, sub = t
-            _need(main in MAIN_STATES and sub in BYTE, w, "a host pair is a main state and a sub")
+        _need(not isinstance(plays, list) or bool(plays), w, "a list needs a target")
+        for t in targets_of(plays):
+            if isinstance(t, tuple):
+                main, sub = t
+                _need(
+                    main in MAIN_STATES and sub in BYTE, w, "a host pair is a main state and a sub"
+                )
     for key, record in b.attacks.items():
         _need(key.isdecimal(), f"brain.attacks.{key}", "is a donor record id")
         _need(record >= 0, f"brain.attacks.{key}", "a host record id is 0 or more")
@@ -648,14 +680,15 @@ def _validate(m: Manifest) -> None:
                 _need(key not in claimed, w, f"claims main {k} as moves.{claimed.get(key)} does")
                 claimed[key] = name
     if m.brain is not None:
-        for donor, t in m.brain.pairs.items():
-            if isinstance(t, str) and t != OWN:
-                target = m.moves.get(t)
-                _need(
-                    target is not None and target.own,
-                    f"brain.pairs.{donor}",
-                    f"{t!r} is no own move",
-                )
+        for donor, plays in m.brain.pairs.items():
+            for t in targets_of(plays):
+                if isinstance(t, str) and t != OWN:
+                    target = m.moves.get(t)
+                    _need(
+                        target is not None and target.own,
+                        f"brain.pairs.{donor}",
+                        f"{t!r} is no own move",
+                    )
     for name, p in m.parts.items():
         _need(p.index in PARTS, f"parts.{name}", f"index {p.index} is not a part")
         _need(p.hitzone_row in (None, *ROWS), f"parts.{name}", "hitzone_row is not a row")

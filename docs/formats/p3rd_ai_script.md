@@ -75,24 +75,37 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 
 | Donor | Host |
 |---|---|
-| `enter m s` | `enter M S 0`, the pair from `[brain.pairs]`; an own move there: `enter 16 k 0` |
-| `random` | `random`: each weight `w` becomes `w * 32 / 100` by largest remainder, at least 1; a zero arm goes |
+| `enter m s` | `enter M S 0`, the pair from `[brain.pairs]`; an own move there: `enter 16 k 0`; a list there: one `enter` per item |
+| `random` | `random`: each weight `w` becomes `w * 32 / 100` by largest remainder, at least 1; a zero arm goes. Too many live arms for MHFU's 13 branches (the padding one counts): an outer `random` over groups of at most 12, weighted by their sums, each group an inner `random` weighted within it (`P3_SPLIT`) |
 | `switch_range` | `switch_range`: case `k` is bucket `k + 1`, the default the last, a missing case copies the default |
 | `switch_mode` | `if_mode2` for mode 1, the default as its else |
 | `if_enraged` | `if_enraged` |
 | `if_facing ang` | `if_pursuit_off_facing` at `ang * 360 / 256` degrees with the arms swapped; past 127, `if_off_facing` |
+| `switch_query arg` | `[brain] charge`: args 0 (charged) and 6 (cooldown running) stay a `switch_query`, which the framework answers, cases ascending and repeats dropped; any other arg, or no `charge`, is answer 0: the case 0 arm or else the default, the rest dropped (`P3_FOLDED`, naming them) |
+| `switch_dist` | `switch_dist`: the cases are hundreds in both; a case at or under an earlier one, which no distance reaches, goes |
+| `switch_hp` | `switch_hp` with each case one higher: MHP3rd's matches the integer HP percent at or below it, MHFU's below it |
+| `if_target_side` | `if_target_in_arc 0 127`: the target's bearing minus the facing in the first half turn (bit 15 clear), arms as they are |
+| `switch_global_540` | its case 2, the only value the scripts test (the default without one): the host has no such word |
 | `if_target_state`, `if_tired`, `if_stamina_low`, `if_target_set` | no host state: `[brain.when]` picks the arm; with `[brain] fatigue`, `if_tired` and `if_stamina_low 0` are `if_gauge_a_low` ([Fatigue](#fatigue)) |
 | `if_object_near` | false |
 | `set_target 0 0 0` | dropped: the host picked its target before |
 | `set_latch`, `switch_latch` | folded: case 0 when something between them yields, else the default |
-| `switch_prev_call` | `if_var` on `[brain] history` (unset: the host's first free variable, `mhfu script N --vars`), which each called routine sets first |
+| `switch_prev_call` | `if_var` on `[brain] history` (unset: the host's first free variable, `mhfu script N --vars`), which each called routine sets to its own index on every path, after the read where it reads |
 | map and area ops | none: the host's roaming owns them |
 
+The history is one variable, MHP3rd's two ids: the variable holds the newest call, and a read before
+the routine's own note sees the call before it. The note goes first on each path, but the read's
+arms follow the read, wherever it is (after code, in a branch, in its own default). That is right
+while no call precedes the read in the routine, as at every site of the Zinogre's script: a
+call before it would be the newest (`P3_HISTORY` warns), and two reads in a row, the second seeing
+the first's note, are an error.
+
 A random that can follow another draw in the same run gets an `rng_step2` first, as the host's
-own picks do. Findings are errors (`P3_PAIR_UNMAPPED`, `P3_OWN_MISSING`, `P3_UNSUPPORTED`,
+own picks do (a split one's inner randoms do). Findings are errors (`P3_PAIR_UNMAPPED`, `P3_OWN_MISSING`, `P3_UNSUPPORTED`,
 `P3_HOST_OP`, `P3_UNDECIDED`, `P3_LATCH`, `P3_HISTORY`, `P3_WIDE`, `P3_ROUTINE`, `P3_FATIGUE_HOST`), which stop a
-build, warnings (`P3_FOLDED`, `P3_APPROX`, `P3_PAIR_UNUSED`, `P3_WHEN`, `P3_WHEN_IGNORED`) and notes
-(`P3_DROPPED`, `P3_WEIGHT`).
+build, warnings (`P3_FOLDED`, `P3_APPROX`, `P3_PAIR_UNUSED`, `P3_WHEN`, `P3_WHEN_IGNORED`, a
+`P3_HISTORY` for a call before the read) and notes (`P3_DROPPED`, `P3_WEIGHT`, `P3_SPLIT`, an `info`
+`P3_FOLDED`).
 
 ### Own moves
 
@@ -101,6 +114,10 @@ a host pair; `"own"` stands for the move the build derives from the donor (below
 donor's `enter 7 13` becomes `enter 16 k 0`: main 16 is
 `OWN_MOVE_MAIN`, which no species uses, and `k` the move's registry slot. em_vhook plays move `k`
 in place of the pair and the script goes on after the `enter` when it ends, as for a host pair.
+
+A value may be a list, played in order, each item one `enter` that yields: `"7,23" = [[1, 2], "own"]`
+is the host's turn (1, 2), then the move. An item is a host pair, an own move's name or `"own"`; the
+build charges the donor pair's stamina to the last item.
 
 The slots are `mhfu_port.moves.slots`: the own moves by sorted name, numbered from 0, at most
 `EM_MOVES.MOVES.count`. The moves module `mhfu-port` writes carries each one as `slot = k` and

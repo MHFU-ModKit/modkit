@@ -121,6 +121,14 @@ def test_shares(weights, want):
     assert splice.shares(weights)[0] == want
 
 
+@pytest.mark.parametrize(
+    ("weights", "whole", "want"),
+    [([1, 2, 3, 4], 10, [3, 6, 10, 13]), ([5, 5], 10, [16, 16]), ([1, 29], 30, [1, 31])],
+)
+def test_shares_within_a_whole(weights, whole, want):
+    assert splice.shares(weights, whole)[0] == want
+
+
 def test_shares_name_what_is_raised():
     assert splice.shares([1, 99])[1] == [0]
 
@@ -137,10 +145,99 @@ def test_random_pads_when_weights_fall_short():
     assert got == ["random", "branch 16", "  enter 1 2 0", "branch 16"]
 
 
+def picks(nodes: Sequence[ir.Node], p: float = 1.0) -> dict[int, float]:
+    """The chance of each `enter 1 k` the nodes make, by k, through nested randoms."""
+    out: dict[int, float] = {}
+    for n in nodes:
+        if isinstance(n, ir.Insn) and n.op.name == "enter":
+            out[n.args["sub"]] = out.get(n.args["sub"], 0) + p
+        elif isinstance(n, ir.Block) and n.op.name == "random":
+            for arm in n.arms:
+                for k, q in picks(arm.body, p * arm.args["weight"] / splice.TOTAL).items():
+                    out[k] = out.get(k, 0) + q
+    return out
+
+
+def wide(weights: Sequence[int], **kw: object) -> tuple[list[ir.Node], splice.Translator]:
+    arms = [case(w, enter(2, k)) for k, w in enumerate(weights)]
+    sp = spec(pairs={f"2,{k}": (1, k) for k in range(len(weights))}, **kw)
+    t = splice.Translator(donor(base_0=blk("random", arms=arms)), sp)
+    return t.paste("base_0", "base_3"), t
+
+
 def test_random_too_wide():
-    arms = [case(1, enter(2, 3)) for _ in range(splice.ARMS + 1)]
+    arms = [case(1, enter(2, 3)) for _ in range(splice.ARMS * splice.GROUP + 1)]
     got, t = translate(base_0=blk("random", arms=arms))
     assert got == [] and found(t) == [("error", "P3_WIDE")]
+
+
+def test_random_with_thirteen_arms_and_no_padding_fits():
+    nodes, t = wide([8, 8, 8, 8, 8, 8, 8, 8, 7, 7, 7, 7, 8])
+    assert [n.op.name for n in nodes] == ["random"] and len(nodes[0].arms) == splice.ARMS
+    assert not t.findings
+
+
+def test_random_with_thirteen_arms_and_padding_is_split():
+    nodes, t = wide([6] * 13)
+    assert found(t) == [("info", "P3_SPLIT")]
+    (outer,) = nodes
+    assert [a.body[0].op.name for a in outer.arms[:2]] == ["random", "random"]
+    assert [sum(a.args["weight"] for a in outer.arms)] == [splice.TOTAL]
+    assert [len(a.body[0].arms) for a in outer.arms[:2]] == [7, 6]
+
+
+def test_a_wide_random_keeps_what_it_draws():
+    weights = [10, 10, 10, 10, 10, 10, 10, 10, 5, 5, 5, 5, 3, 2]
+    nodes, t = wide(weights)
+    assert found(t) == [("info", "P3_SPLIT")] and "14 live arms" in t.findings[0].text
+    got = picks(nodes)
+    assert sorted(got) == list(range(14))
+    assert all(abs(got[k] - w / 100) < 0.02 for k, w in enumerate(weights))
+    assert abs(sum(got.values()) - 1) < 0.01
+    for n in nodes[0].arms:
+        assert len(n.body[0].arms) <= splice.ARMS
+
+
+def test_a_wide_random_keeps_the_arms_in_order():
+    nodes, _ = wide([4] * 16 + [9] * 4)
+    order = [
+        b.body[0].args["sub"]
+        for outer in nodes[0].arms
+        if outer.body
+        for b in outer.body[0].arms
+        if b.body
+    ]
+    assert order == list(range(20))
+
+
+def test_a_wide_random_that_falls_short_keeps_its_pad():
+    weights = [4] * 14
+    nodes, _ = wide(weights)
+    got = picks(nodes)
+    assert abs(sum(got.values()) - 0.56) < 0.02
+    assert nodes[0].arms[-1].body == [] and nodes[0].arms[-1].args["weight"] >= 13
+
+
+def test_a_wide_random_names_what_it_raises():
+    nodes, t = wide([1] * 3 + [29] * 3 + [1] * 8 + [3])
+    assert ("info", "P3_WEIGHT") in found(t) and ("info", "P3_SPLIT") in found(t)
+    assert picks(nodes)
+
+
+def test_a_wide_random_of_nothing_is_dropped():
+    nothing = op("set_target", 0, 0, 0)
+    got, t = translate(base_0=blk("random", arms=[case(7, nothing) for _ in range(14)]))
+    assert got == [] and ("info", "P3_SPLIT") not in found(t)
+    assert found(t).count(("info", "P3_DROPPED")) == 15
+
+
+def test_a_group_with_nothing_to_do_stays_a_wait():
+    nothing = op("set_target", 0, 0, 0)
+    arms = [case(5, nothing) for _ in range(7)] + [case(5, enter(2, k)) for k in range(7)]
+    sp = spec(pairs={f"2,{k}": (1, k) for k in range(7)})
+    t = splice.Translator(donor(base_0=blk("random", arms=arms)), sp)
+    (outer,) = t.paste("base_0", "base_3")
+    assert [bool(a.body) for a in outer.arms[:2]] == [False, True]
 
 
 # ---- buckets, modes, facing
@@ -198,6 +295,161 @@ def test_facing_swaps_arms_and_scales(ang, name, deg):
     got, t = translate(base_0=blk("if_facing", ang, head=enter(2, 3), arms=arms))
     assert got == [f"{name} {deg}", "  enter 1 3 0", "else", "  enter 1 2 0"]
     assert found(t) == ([("warning", "P3_APPROX")] if name == "if_off_facing" else [])
+
+
+# ---- distance, side, HP, the global word
+
+
+def test_dist_cases_keep_their_hundreds_and_the_default():
+    arms = [case(5, enter(2, 3)), case(10, ""), other(enter(2, 4))]
+    got, t = translate(base_0=blk("switch_dist", arms=arms))
+    assert got == ["switch_dist", "case 5", "  enter 1 2 0", "case 10", "default", "  enter 1 3 0"]
+    assert not t.findings
+
+
+def test_dist_without_a_default_adds_none():
+    got, _ = translate(base_0=blk("switch_dist", arms=[case(5, enter(2, 3))]))
+    assert got == ["switch_dist", "case 5", "  enter 1 2 0"]
+
+
+def test_a_case_nothing_reaches_goes_before_it_is_translated():
+    arms = [case(10, enter(2, 3)), case(10, op("call", 1)), case(4, enter(2, 4))]
+    got, t = translate(base_0=blk("switch_dist", arms=arms), call_1=enter(2, 4))
+    assert got == ["switch_dist", "case 10", "  enter 1 2 0"]
+    assert found(t) == [("info", "P3_DROPPED")] * 2 and not t.routines
+
+
+def test_dist_with_nothing_to_do():
+    arms = [case(5, ""), other("")]
+    got, t = translate(base_0=blk("switch_dist", arms=arms))
+    assert got == [] and found(t) == [("info", "P3_DROPPED")]
+
+
+def test_hp_cases_are_one_percent_up():
+    arms = [case(25, enter(2, 3)), case(70, enter(2, 4)), other(enter(7, 5))]
+    got, t = translate(base_0=blk("switch_hp", arms=arms))
+    assert got == [
+        "switch_hp",
+        "case 26",
+        "  enter 1 2 0",
+        "case 71",
+        "  enter 1 3 0",
+        "default",
+        "  enter 1 4 0",
+    ]
+    assert not t.findings
+
+
+def test_hp_cases_stop_at_a_byte():
+    arms = [case(254, enter(2, 3)), case(255, enter(2, 4))]
+    got, t = translate(base_0=blk("switch_hp", arms=arms))
+    assert got == ["switch_hp", "case 255", "  enter 1 2 0"] and found(t) == [
+        ("info", "P3_DROPPED")
+    ]
+
+
+def test_side_is_an_arc_with_the_arms_as_they_are():
+    got, t = translate(base_0=blk("if_target_side", head=enter(2, 3), arms=[other(enter(2, 4))]))
+    assert got == ["if_target_in_arc 0 127", "  enter 1 2 0", "else", "  enter 1 3 0"]
+    assert not t.findings
+
+
+def test_global_540_is_case_2():
+    got, t = translate(base_0=blk("switch_global_540", arms=[case(2, enter(2, 3))]))
+    assert got == ["enter 1 2 0"] and found(t) == [("info", "P3_FOLDED")]
+
+
+def test_global_540_names_the_arms_it_drops():
+    arms = [case(1, enter(2, 4)), case(2, enter(2, 3)), other(enter(7, 5))]
+    got, t = translate(base_0=blk("switch_global_540", arms=arms))
+    assert got == ["enter 1 2 0"] and found(t) == [("warning", "P3_FOLDED")]
+    assert "case 1 (1 instructions" in t.findings[0].text and "default" in t.findings[0].text
+
+
+def test_global_540_without_case_2_takes_the_default():
+    arms = [case(1, enter(2, 4)), other(enter(2, 3))]
+    got, t = translate(base_0=blk("switch_global_540", arms=arms))
+    assert got == ["enter 1 2 0"] and found(t) == [("warning", "P3_FOLDED")]
+
+
+# ---- the species query
+
+CHARGED = [case(1, enter(2, 3)), other(enter(2, 4))]
+
+
+def test_the_queries_are_the_charge_helpers():
+    assert splice.QUERIES == (addresses.CHARGE_QUERY_CHARGED, addresses.CHARGE_QUERY_COOLDOWN)
+    assert splice.QUERIES == (0, 6)
+
+
+@pytest.mark.parametrize("arg", splice.QUERIES)
+def test_an_answered_query_stays_a_switch(arg):
+    got, t = translate(spec(charge=True), base_0=blk("switch_query", arg, arms=CHARGED))
+    want = [f"switch_query {arg}", "case 1", "  enter 1 2 0", "default", "  enter 1 3 0"]
+    assert got == want and not t.findings
+
+
+def test_query_cases_ascend_and_repeats_go():
+    arms = [case(3, enter(2, 3)), case(1, enter(2, 4)), case(3, enter(7, 5)), other("")]
+    got, t = translate(spec(charge=True), base_0=blk("switch_query", 0, arms=arms))
+    assert got == ["switch_query 0", "case 1", "  enter 1 3 0", "case 3", "  enter 1 2 0"]
+    assert found(t) == [("info", "P3_DROPPED")]
+
+
+def test_an_empty_case_still_shields_the_default():
+    arms = [case(1, ""), other(enter(2, 3))]
+    got, _ = translate(spec(charge=True), base_0=blk("switch_query", 0, arms=arms))
+    assert got == ["switch_query 0", "case 1", "default", "  enter 1 2 0"]
+
+
+def test_a_query_with_nothing_to_do():
+    got, t = translate(spec(charge=True), base_0=blk("switch_query", 0, arms=[case(1, "")]))
+    assert got == [] and found(t) == [("info", "P3_DROPPED")]
+
+
+@pytest.mark.parametrize(
+    ("arg", "charge"), [(2, True), (3, True), (7, True), (0, False), (6, False)]
+)
+def test_any_other_query_is_answer_0(arg, charge):
+    arms = [case(0, enter(2, 3)), case(1, enter(2, 4)), other(enter(7, 5))]
+    got, t = translate(spec(charge=charge), base_0=blk("switch_query", arg, arms=arms))
+    assert got == ["enter 1 2 0"] and found(t) == [("warning", "P3_FOLDED")]
+    text = t.findings[0].text
+    assert f"switch_query {arg} taken as answer 0" in text
+    assert "case 1 (1 instructions, first enter 2 4), default (1 instructions" in text
+    assert "case 0" not in text
+
+
+def test_answer_0_without_a_case_0_is_the_default():
+    got, t = translate(
+        base_0=blk("switch_query", 2, arms=[case(1, enter(2, 4)), other(enter(2, 3))])
+    )
+    assert got == ["enter 1 2 0"] and found(t) == [("warning", "P3_FOLDED")]
+    got, t = translate(base_0=blk("switch_query", 2, arms=[case(1, enter(2, 4))]))
+    assert got == [] and found(t) == [("warning", "P3_FOLDED")]
+
+
+def test_a_fold_that_drops_no_code_is_quiet():
+    arms = [case(0, enter(2, 3)), case(1, ""), other("")]
+    got, t = translate(base_0=blk("switch_query", 2, arms=arms))
+    assert got == ["enter 1 2 0"] and not t.findings
+
+
+def test_a_folded_arm_makes_no_routine():
+    arms = [case(0, enter(2, 3)), case(1, op("call", 1))]
+    _, t = translate(base_0=blk("switch_query", 2, arms=arms), call_1=enter(2, 4))
+    assert not t.routines
+
+
+def test_the_splice_builds_a_query():
+    sp = spec(charge=True, pairs=TWO)
+    h = host()
+    s = splice.splice(donor(base_0=blk("switch_query", 0, arms=CHARGED)), h, sp)
+    assert not s.findings
+    built = build.Built.of(h, s.edits)
+    assert built.ok, built.findings
+    base_3 = next(r for r in built.program.routines() if r.name == "base_3")
+    assert lines(base_3.body)[1:3] == ["switch_query 0", "case 1"]
 
 
 # ---- tests without a host state
@@ -431,6 +683,36 @@ def test_the_splice_without_slots_fails_an_own_pair():
     assert [f.code for f in s.findings] == ["P3_OWN_MISSING"] and s.slots == {}
 
 
+def test_a_list_enters_its_targets_in_order():
+    sp = spec(pairs={"7,13": [(1, 2), "slam"], "2,3": [(1, 2), (1, 3)]})
+    got, t = translate(sp, slots={"slam": 5}, base_0=f"{enter(7, 13)} {enter(2, 3)}")
+    assert got == ["enter 1 2 0", f"enter {OWN} 5 0", "enter 1 2 0", "enter 1 3 0"]
+    assert not t.findings
+    assert dict(t.uses) == {
+        ((7, 13), (1, 2)): 1,
+        ((7, 13), "slam"): 1,
+        ((2, 3), (1, 2)): 1,
+        ((2, 3), (1, 3)): 1,
+    }
+
+
+def test_a_list_names_a_derived_move():
+    sp = spec(pairs={"7,13": [(1, 2), manifest.OWN]})
+    got, _ = translate(sp, slots={"p3_7_13": 2}, base_0=enter(7, 13))
+    assert got == ["enter 1 2 0", f"enter {OWN} 2 0"]
+
+
+def test_a_list_with_a_move_that_has_no_slot_keeps_the_rest():
+    got, t = translate(spec(pairs={"7,13": [(1, 2), "slam"]}), base_0=enter(7, 13))
+    assert got == ["enter 1 2 0"] and found(t) == [("error", "P3_OWN_MISSING")]
+
+
+def test_every_enter_of_a_list_yields_for_the_latch():
+    sp = spec(pairs=TWO | {"7,13": [(1, 2), "slam"]})
+    got, t = translate(sp, slots={"slam": 5}, base_0=latched(enter(7, 13)))
+    assert got == ["enter 1 2 0", f"enter {OWN} 5 0", "enter 1 2 0"] and not t.findings
+
+
 # ---- the call history
 
 
@@ -472,9 +754,190 @@ def test_history_unused_notes_nothing():
     assert lines(t.routines["p3_call_1"]) == ["enter 1 2 0", "end return"]
 
 
-def test_history_read_late():
-    _, t = translate(spec(history=2), base_0=op("call", 1), call_1=f"{enter(2, 3)} {prev('', '')}")
-    assert ("error", "P3_HISTORY") in found(t)
+def routine(**routines: str) -> list[str]:
+    """The lines of `p3_call_1`, translated with the history in variable 2."""
+    _, t = translate(spec(history=2), base_0=op("call", 1), **routines)
+    return lines(t.routines["p3_call_1"])
+
+
+def history_found(**routines: str) -> list[tuple[str, str]]:
+    return found(translate(spec(history=2), base_0=op("call", 1), **routines)[1])
+
+
+READ = prev(enter(2, 3), enter(2, 4))
+IF_READ = [
+    "if_var 2 1",
+    "  set_var 2 1",
+    "  enter 1 2 0",
+    "else",
+    "  set_var 2 1",
+    "  enter 1 3 0",
+]
+
+
+def test_history_read_late_notes_in_the_arms_after_it():
+    got = routine(call_1=f"{enter(2, 3)} {prev(enter(2, 3), '')}")
+    assert got == [
+        "enter 1 2 0",
+        "if_var 2 1",
+        "  set_var 2 1",
+        "  enter 1 2 0",
+        "else",
+        "  set_var 2 1",
+        "end return",
+    ]
+    assert not history_found(call_1=f"{enter(2, 3)} {prev(enter(2, 3), '')}")
+
+
+def test_history_read_in_a_branch_notes_the_other_path_first():
+    code = blk("if_enraged", head=f"{enter(2, 3)} {READ}", arms=[other(enter(2, 4))])
+    want = ["if_enraged", "  enter 1 2 0", *(f"  {x}" for x in IF_READ)]
+    assert routine(call_1=code) == [*want, "else", "  set_var 2 1", "  enter 1 3 0", "end return"]
+    assert not history_found(call_1=code)
+
+
+def test_history_read_in_a_branch_with_no_else_adds_one():
+    got = routine(call_1=blk("if_enraged", head=READ))
+    assert got == [
+        "if_enraged",
+        *(f"  {x}" for x in IF_READ),
+        "else",
+        "  set_var 2 1",
+        "end return",
+    ]
+
+
+def indented(nodes: list[str]) -> list[str]:
+    return [f"  {x}" for x in nodes]
+
+
+def test_history_read_in_a_pick_notes_the_other_arms():
+    random = blk("random", arms=[case(50, READ), case(50, enter(2, 3))])
+    assert routine(call_1=random) == [
+        "random",
+        "branch 16",
+        *indented(IF_READ),
+        "branch 16",
+        "  set_var 2 1",
+        "  enter 1 2 0",
+        "end return",
+    ]
+    ranges = blk("switch_range", arms=[case(0, READ), other(enter(2, 3))])
+    assert routine(call_1=ranges) == [
+        "switch_range",
+        "bucket",
+        *indented(IF_READ),
+        "bucket",
+        "  set_var 2 1",
+        "  enter 1 2 0",
+        "end return",
+    ]
+    assert not history_found(call_1=random) and not history_found(call_1=ranges)
+
+
+def test_history_read_in_a_switch_without_a_default_adds_one():
+    code = blk("switch_dist", arms=[case(5, READ)])
+    want = ["switch_dist", "case 5", *indented(IF_READ), "default", "  set_var 2 1", "end return"]
+    assert routine(call_1=code) == want and not history_found(call_1=code)
+
+
+def test_history_read_nested_in_its_own_default():
+    again = blk("switch_prev_call", arms=[case(2, enter(2, 4)), other(enter(7, 5))])
+    code = blk("switch_prev_call", arms=[case(1, enter(2, 3)), other(again)])
+    assert routine(call_1=code) == [
+        "if_var 2 1",
+        "  set_var 2 1",
+        "  enter 1 2 0",
+        "else",
+        "  if_var 2 2",
+        "    set_var 2 1",
+        "    enter 1 3 0",
+        "  else",
+        "    set_var 2 1",
+        "    enter 1 4 0",
+        "end return",
+    ]
+    assert not history_found(call_1=code)
+
+
+def test_history_read_after_code_in_its_own_default():
+    again = blk("switch_prev_call", arms=[case(2, enter(2, 4)), other("")])
+    code = blk("switch_prev_call", arms=[case(1, enter(2, 3)), other(f"{enter(7, 5)} {again}")])
+    assert routine(call_1=code) == [
+        "if_var 2 1",
+        "  set_var 2 1",
+        "  enter 1 2 0",
+        "else",
+        "  enter 1 4 0",
+        "  if_var 2 2",
+        "    set_var 2 1",
+        "    enter 1 3 0",
+        "  else",
+        "    set_var 2 1",
+        "end return",
+    ]
+    assert not history_found(call_1=code)
+
+
+def test_history_read_after_a_call_warns():
+    call = f"{op('call', 2)} {READ}"
+    got = routine(call_1=call, call_2=enter(2, 3))
+    assert got[:2] == ["set_var 2 2", "enter 1 2 0"]
+    assert history_found(call_1=call, call_2=enter(2, 3)) == [("warning", "P3_HISTORY")]
+
+
+def test_history_read_twice_in_a_row_is_an_error():
+    assert history_found(call_1=f"{READ} {READ}") == [("error", "P3_HISTORY")]
+
+
+def test_history_of_an_inlined_read_is_the_calls_not_the_callers():
+    call = f"{op('call', 2)} {enter(2, 3)}"
+    assert routine(call_1=call, call_2=READ) == [
+        "set_var 2 1",
+        "if_var 2 1",
+        "  set_var 2 2",
+        "  enter 1 2 0",
+        "else",
+        "  set_var 2 2",
+        "  enter 1 3 0",
+        "enter 1 2 0",
+        "end return",
+    ]
+    assert not history_found(call_1=call, call_2=READ)
+
+
+def test_history_reads_copied_into_buckets_stay_noted():
+    ranges = blk("switch_range", arms=[case(1, enter(2, 3)), other(op("call", 2))])
+    inlined = [
+        "if_var 2 1",
+        "  set_var 2 2",
+        "  enter 1 2 0",
+        "else",
+        "  set_var 2 2",
+        "  enter 1 3 0",
+    ]
+    assert routine(call_1=ranges, call_2=READ) == [
+        "set_var 2 1",
+        "switch_range",
+        "bucket",
+        *indented(inlined),
+        "bucket",
+        "  enter 1 2 0",
+        "bucket",
+        *indented(inlined),
+        "end return",
+    ]
+
+
+def test_a_late_read_builds():
+    h = host()
+    code = donor(base_0=op("call", 1), call_1=f"{enter(2, 3)} {READ}")
+    s = splice.splice(code, h, spec(pairs=TWO, history=2))
+    assert not s.findings
+    built = build.Built.of(h, s.edits)
+    assert built.ok, built.findings
+    mine = next(r for r in built.program.routines() if r.name == "p3_call_1")
+    assert lines(mine.body)[:2] == ["enter 1 2 0", "if_var 2 1"]
 
 
 def test_history_read_in_a_pasted_routine():
@@ -708,6 +1171,15 @@ def test_a_draw_after_a_draw_is_stepped():
     both = f"{pick} {blk('random', arms=[case(50, enter(2, 4)), case(50, enter(2, 3))])}"
     s = splice.splice(donor(base_0=both), host(), spec(pairs=TWO))
     assert [n.op.name for n in s.edits.inserts["u1"].nodes] == ["random", "rng_step2", "random"]
+
+
+def test_the_inner_draws_of_a_split_random_are_stepped():
+    arms = [case(7, enter(2, 3)) for _ in range(14)]
+    s = splice.splice(donor(base_0=blk("random", arms=arms)), host(), spec(pairs=TWO))
+    (outer,) = s.edits.inserts["u1"].nodes
+    inner = [a.body for a in outer.arms if a.body]
+    assert inner and all([n.op.name for n in b] == ["rng_step2", "random"] for b in inner)
+    assert build.Built.of(host(), s.edits).ok
 
 
 def test_a_draw_after_a_yield_is_not_stepped():

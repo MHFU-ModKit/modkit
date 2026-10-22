@@ -393,7 +393,7 @@ def carriers(m: Manifest) -> set[Pair]:
     hub = moves.hub(species)
     uses = any(mv.own and mv.carrier is None for mv in m.moves.values()) or (
         m.brain is not None
-        and any(isinstance(m.brain.target(_pair(k)), str) for k in m.brain.pairs)
+        and any(isinstance(t, str) for k in m.brain.pairs for t in m.brain.targets(_pair(k)))
     )
     if uses and hub is not None:
         out.add(hub)

@@ -219,6 +219,13 @@ def test_brain():
     assert M.loads(M.dumps(m)) == m and "slot" not in M.dumps(m)
 
 
+def test_brain_charge():
+    m = M.loads(_with(BRAIN + "charge = true\n"))
+    assert m.brain is not None and m.brain.charge and "charge = true" in M.dumps(m)
+    assert not M.loads(_with(BRAIN)).brain.charge  # type: ignore[union-attr]
+    assert M.loads(M.dumps(m)) == m
+
+
 def test_brain_own_moves():
     own = "[moves.slam]\nanim = 40\n" + BRAIN
     text = own + "[brain.pairs]\n'7,13' = 'own'\n'7,14' = 'slam'\n'2,3' = [1, 2]\n"
@@ -228,6 +235,37 @@ def test_brain_own_moves():
     assert m.brain.target((2, 3)) == (1, 2) and M.loads(M.dumps(m)) == m
     with pytest.raises(M.ManifestError, match="no own move"):
         M.loads(_with(own + "[brain.pairs]\n'7,14' = 'bite'\n"))
+
+
+def test_brain_pairs_may_be_lists():
+    own = "[moves.slam]\nanim = 40\n" + BRAIN
+    text = (
+        own
+        + "[brain.pairs]\n'7,13' = [[1, 2], 'own']\n'7,14' = [[1, 2], 'slam']\n'2,3' = [[1, 2]]\n"
+    )
+    m = M.loads(_with(text))
+    b = m.brain
+    assert b is not None
+    assert b.pairs["7,13"] == [(1, 2), "own"] and b.pairs["2,3"] == [(1, 2)]
+    assert b.targets((7, 13)) == [(1, 2), "p3_7_13"] and b.targets((7, 14)) == [(1, 2), "slam"]
+    assert b.target((7, 13)) == "p3_7_13" and b.target((2, 3)) == (1, 2)
+    assert b.host_pair((2, 3)) == (1, 2) and b.host_pair((7, 14)) is None
+    assert b.targets((9, 9)) == [] and b.target((9, 9)) is None
+    assert M.loads(M.dumps(m)) == m
+
+
+@pytest.mark.parametrize(
+    ("pairs", "why"),
+    [
+        ("[]", "needs a target"),
+        ("[[1, 2], 'bite']", "no own move"),
+        ("[[8, 2], 'own']", "a host pair"),
+        ("[[1, 2], [3]]", "2 values"),
+    ],
+)
+def test_brain_pair_lists_are_checked(pairs, why):
+    with pytest.raises(ManifestError, match=why):
+        M.loads(_with(BRAIN + f"[brain.pairs]\n'7,13' = {pairs}\n"))
 
 
 def test_minimal():
