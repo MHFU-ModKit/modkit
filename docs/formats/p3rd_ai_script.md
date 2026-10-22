@@ -119,6 +119,12 @@ move another pair plays), `P3_WHEN`, `P3_WHEN_IGNORED`, a
 `P3_HISTORY` for a call before the read) and notes (`P3_DROPPED`, `P3_WEIGHT`, `P3_SPLIT`, an `info`
 `P3_FOLDED`).
 
+A host pair needs what the host's own script does around it. em75 enters (1, 0) only after a
+destination is set (`set_target kind=2`, a `walk_next` step) and, mostly, a turn (1, 2) toward it;
+(1, 0) then walks there. Entered without one, it waits for good, and the script with it. So map a
+donor pair to a host pair only where the host enters that pair the same way (`mhfu script <row>`
+shows each site); a donor walk is derived (`"own"`).
+
 ### Own moves
 
 A `[brain.pairs]` value may name an own move of the port's `[moves]` (`"7,13" = "slam"`) instead of

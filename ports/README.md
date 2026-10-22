@@ -208,8 +208,8 @@ A donor pair plays a host pair (a turn), the authored move that is the donor's
 (`charge_up`, `dash`, `dash_stop`, `break_howl`) or an own move derived from the donor
 (`"own"`); a pair that only turns, then enters another, turns on em75's (1, 2) and plays the
 move of the pair it leads to; pairs whose derived moves come out identical (twins) share the
-first one's. The donor's walks are derived moves on their own walk clips, not em75's (1, 0),
-which parked for good live. His 89 own moves, the 14 authored and the 75 derived, take 4642 of
+first one's. The donor's walks are derived moves on their own walk clips: em75's (1, 0) walks to a
+destination its own script sets first (docs/formats/p3rd_ai_script.md). His 89 own moves, the 14 authored and the 75 derived, take 4642 of
 the registry's 5632 turn keys and 89 of its 96 slots.
 
 What stays of the hand-built rules, after the brain's own picks (2 plays nothing and so runs
