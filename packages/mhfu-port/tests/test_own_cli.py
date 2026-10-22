@@ -28,11 +28,7 @@ entry = "base_12"
 
 
 def brute() -> manifest.Manifest:
-    m = manifest.load(PORTS / "brute_tigrex.toml")
-    assert m.brain is not None
-    for key in ("7,13", "7,14", "7,15", "1,15", "2,19", "2,20", "2,23"):
-        m.brain.pairs[key] = manifest.OWN
-    return m
+    return manifest.load(PORTS / "brute_tigrex.toml")
 
 
 def test_the_cli_needs_an_own_pair(tmp_path, capsys):
@@ -42,13 +38,11 @@ def test_the_cli_needs_an_own_pair(tmp_path, capsys):
     assert "no [brain.pairs] entry" in capsys.readouterr().err
 
 
-def test_the_cli_lists_the_moves(data, capsys, tmp_path):
-    text = (PORTS / "brute_tigrex.toml").read_text()
-    path = tmp_path / "brute.toml"
-    path.write_text(text.replace('"7,13" = [\n    2,\n    8,\n]', '"7,13" = "own"'))
+def test_the_cli_lists_the_moves(data, capsys):
+    path = PORTS / "brute_tigrex.toml"
     code = main(["own", str(path), "--data", str(data.fu.root), "--p3rd-data", str(data.p3rd.root)])
     out = capsys.readouterr().out
-    assert code == 0 and "p3_7_13 (slot 0)  clip 61 charge" in out
+    assert code == 0 and "p3_7_13 (slot 6)  clip 61 charge" in out
     assert "donor 21 -> host record 7, frames 135-165" in out
 
 
@@ -66,12 +60,8 @@ def test_the_moves_module_carries_the_derived_moves(data, tmp_path):
     assert 'after = "p3_7_14_2"' in text and any(f.code == "P3_OWN_ATTACK" for f in seen)
 
 
-def test_the_splice_enters_the_derived_moves(data, tmp_path, capsys):
-    text = (PORTS / "brute_tigrex.toml").read_text()
-    path = tmp_path / "brute.toml"
-    own_pairs = text.replace('"7,13" = [\n    2,\n    8,\n]', '"7,13" = "own"')
-    path.write_text(own_pairs.replace('"7,14" = [\n    1,\n    9,\n]', '"7,14" = "own"'))
+def test_the_splice_enters_the_derived_moves(data, capsys):
     args = ["--data", str(data.fu.root), "--p3rd-data", str(data.p3rd.root)]
-    assert main(["splice", str(path), *args]) == 0
+    assert main(["splice", str(PORTS / "brute_tigrex.toml"), *args]) == 0
     out = capsys.readouterr().out
-    assert "pair 7,13 -> own p3_7_13 (slot 0)" in out and "pair 7,14 -> own p3_7_14 (slot 1)" in out
+    assert "pair 7,13 -> own p3_7_13 (slot 6)" in out and "pair 7,14 -> own p3_7_14 (slot 7)" in out

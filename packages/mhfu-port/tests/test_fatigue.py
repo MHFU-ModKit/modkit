@@ -355,8 +355,7 @@ def test_a_host_without_reactions_says_so(data):
 
 def test_the_moves_module_carries_the_table(data, tmp_path, capsys):
     path = tmp_path / "m.toml"
-    text = (PORTS / "brute_tigrex.toml").read_text()
-    path.write_text(text.replace("\n[brain]\n", "\n[brain]\nfatigue = true\n", 1))
+    path.write_text((PORTS / "brute_tigrex.toml").read_text())
     games = ["--data", str(data.fu.root), "--p3rd-data", str(data.p3rd.root)]
     assert main(["build", str(path), "-o", str(tmp_path / "out.bin"), *games]) == 0
     module = (tmp_path / moves.module_name(manifest.load(path))).read_text()

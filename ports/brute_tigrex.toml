@@ -265,15 +265,11 @@ source = 117
 slot = 98
 source = 118
 
-[moves.charge]
-main = 2
-sub = 8
-clip = "charge"
-
 [brain]
 donor = 23
 splice = "base_3"
 entry = "base_12"
+fatigue = true
 
 [brain.pairs]
 "1,1" = [
@@ -288,10 +284,7 @@ entry = "base_12"
     0,
     21,
 ]
-"1,15" = [
-    0,
-    27,
-]
+"1,15" = "own"
 "2,3" = [
     1,
     2,
@@ -312,22 +305,13 @@ entry = "base_12"
     1,
     5,
 ]
-"2,19" = [
-    2,
-    4,
-]
-"2,20" = [
-    1,
-    10,
-]
+"2,19" = "own"
+"2,20" = "own"
 "2,22" = [
     1,
     4,
 ]
-"2,23" = [
-    2,
-    19,
-]
+"2,23" = "own"
 "3,2" = [
     2,
     1,
@@ -368,19 +352,9 @@ entry = "base_12"
     3,
     36,
 ]
-"7,13" = [
-    2,
-    8,
-]
-"7,14" = [
-    1,
-    9,
-]
-"7,15" = [
-    3,
-    37,
-]
+"7,13" = "own"
+"7,14" = "own"
+"7,15" = "own"
 
 [brain.when]
 if_target_state = true
-if_tired = false

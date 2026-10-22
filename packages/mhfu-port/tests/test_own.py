@@ -94,7 +94,7 @@ def test_a_step_is_a_move():
         AttackWindow(7, 135, 165, label="donor 21"),
         AttackWindow(8, 138, 148, label="donor 28"),
     ]
-    assert mv.steer == Steer(turn="hunter", rate=546, window=(10, 40))
+    assert mv.steer == Steer(turn="hunter", rate=546, walls=False, window=(10, 40))
     assert "p3_61" not in m.clips and codes(found) == ["P3_OWN_ACTIVE", "P3_OWN_GROUP"]
     manifest.check(m)
 
@@ -238,7 +238,7 @@ def test_brute_charge(derived):
     m, _ = derived
     charge = m.moves["p3_7_13"]
     assert charge.clip == "charge" and windows(m, "p3_7_13") == [(7, 135, 165), (8, 138, 148)]
-    assert charge.steer == Steer(turn="hunter", rate=546, window=(10, 40))
+    assert charge.steer == Steer(turn="hunter", rate=546, walls=False, window=(10, 40))
 
 
 def test_brute_rush_and_leap(derived):
@@ -247,8 +247,9 @@ def test_brute_rush_and_leap(derived):
     assert windows(m, "p3_7_14") == [(15, 85, 144)]
     assert windows(m, "p3_7_14_2") == [(15, 0, 14), (7, 94, 124), (8, 96, 106)]
     assert m.moves["p3_7_14"].steer.rate == 364 and m.moves["p3_7_14"].length == 72
+    assert m.moves["p3_7_14"].steer.walls and not m.moves["p3_7_14_2"].steer.walls
     assert windows(m, "p3_7_15") == [(4, 75, 100)]
-    assert m.moves["p3_7_15"].steer == Steer(turn="hunter", rate=273, window=(0, 20))
+    assert m.moves["p3_7_15"].steer == Steer(turn="hunter", rate=273, walls=False, window=(0, 20))
     left_out = [f for f in found if f.code == "P3_OWN_ATTACK"]
     assert left_out and all("record 26" in f.text for f in left_out)
     assert {f.item for f in found if f.code == "P3_OWN_BRANCH"} >= {"p3_7_14"}

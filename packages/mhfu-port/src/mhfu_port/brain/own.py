@@ -267,7 +267,7 @@ class Derivation:
         return Move(
             clip=self._clip(step.clip),
             attacks=self._attacks(step, until if length.loop else min(until, length.frames)),
-            steer=self._steer(step),
+            steer=self._steer(step, walls=length.loop),
             length=max(1, step.ticks) if cut else None,
             after=after,
             label=f"MHP3rd {self.pair[0]},{self.pair[1]}",
@@ -321,9 +321,11 @@ class Derivation:
             out = out[:MOVE_ATTACKS]
         return out
 
-    def _steer(self, step: Step) -> Steer:
+    def _steer(self, step: Step, walls: bool) -> Steer:
+        """The donor's turn; a wall ends only a step on a looping clip, a run (the donor ends no
+        move at a wall: a one-shot stop or blow plays out where it stands)."""
         if not step.turns:
-            return Steer()
+            return Steer(walls=walls)
         turn = max(step.turns, key=lambda t: t.window[1] - t.window[0])
         if len(step.turns) > 1:
             self.find(
@@ -336,7 +338,8 @@ class Derivation:
             self.find("info", "P3_OWN_MOTION", f"turn rate {rate} is out of range: the host's")
             rate = None
         lo = round(turn.window[0])
-        return Steer(turn="hunter", rate=rate, window=(lo, max(lo + 1, round(turn.window[1]))))
+        window = (lo, max(lo + 1, round(turn.window[1])))
+        return Steer(turn="hunter", rate=rate, walls=walls, window=window)
 
 
 def pairs(b: Brain) -> list[Pair]:
