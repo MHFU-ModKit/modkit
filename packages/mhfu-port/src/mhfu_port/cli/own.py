@@ -41,7 +41,12 @@ def run(args: argparse.Namespace) -> int:
     games = data.from_arguments(args)
     out, findings = own.expand(m, games)
     slots = moves.slots(out)
-    print(f"own {m.port.name}: MHP3rd {m.brain.donor}, {len(own.pairs(m.brain))} pairs")
+    total = sum(mv.own for mv in out.moves.values())
+    print(
+        f"own {m.port.name}: MHP3rd {m.brain.donor}, {len(own.pairs(m.brain))} pairs, "
+        f"{total} own moves of {manifest.OWN_MOVES}"
+    )
+    listed: dict[str, str] = {}  # each move listed so far, with the head that listed it
     for pair in own.pairs(m.brain):
         head = manifest.own_name(pair)
         print(f"{pair[0]},{pair[1]}", end="")
@@ -50,16 +55,21 @@ def run(args: argparse.Namespace) -> int:
             continue
         steps = sequence.chain(out, head)
         print(f"  {head}" + (f" + {len(steps) - 1} more" if len(steps) > 1 else ""))
+        joined = False
         for name in steps:
-            print(describe(out, name, slots.get(name)))
+            earlier = None if joined else listed.get(name)
+            joined = joined or earlier is not None
+            print(describe(out, name, slots.get(name), earlier))
+            listed.setdefault(name, head)
     errors = [f for f in findings if f.level == "error"]
     for f in findings:
         print(finding_line(f))
     return 1 if errors else 0
 
 
-def describe(m: manifest.Manifest, name: str, slot: int | None) -> str:
-    """One derived move: its slot, clip, frames, length and steer, then its attacks."""
+def describe(m: manifest.Manifest, name: str, slot: int | None, shared: str | None = None) -> str:
+    """One derived move: its slot, clip, frames, length and steer, the pair it comes from, then its
+    attacks. `shared` is the head of an earlier chain that already holds it."""
     mv = m.moves[name]
     clip = m.clips[mv.clip] if mv.clip is not None else None
     head = f"  {name} (slot {slot})  clip {clip.id if clip else mv.anim} {mv.clip}"
@@ -71,6 +81,10 @@ def describe(m: manifest.Manifest, name: str, slot: int | None) -> str:
     if s.turn == "hunter":
         window = "" if s.window is None else f" in frames {s.window[0]}-{s.window[1]}"
         head += f"  turns to the hunter at {s.rate or 'the host charge'}{window}"
+    if mv.label:
+        head += f"  ({mv.label})"
+    if shared is not None:
+        head += f"  shared with {shared}"
     lines = [head]
     spare = {a.id for a in m.attacks}
     for a in mv.attacks:
