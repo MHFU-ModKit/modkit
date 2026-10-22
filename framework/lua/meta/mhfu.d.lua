@@ -11,7 +11,7 @@ mhfu = {}
 
 ---The API's version, raised whenever a declaration here changes; a mod that needs something added
 ---in version N checks `mhfu.api_version >= N`.
-mhfu.api_version = 7
+mhfu.api_version = 8
 
 -- log, memory and world state (bind_memory.cpp) ----------------------------------------------
 
@@ -667,6 +667,7 @@ function mhfu.move_block() end
 ---@field curve? string YAW while the clip plays: the entry's string in `<port>_turns.lua`
 ---@field turn? "still"|"hunter"|"away"|"fixed" also: toward or away from the hunter at `rate`, or `total` over `frames`
 ---@field rate? integer YAW units an AI frame toward or away, default 64 (the Tigrex charge's)
+---@field window? integer[] { from, to }: clip frames, 0 <= from < to, in which "hunter" and "away" turn (the donor turns inside a window); default the whole move
 ---@field total? number degrees for "fixed", positive the way YAW grows
 ---@field frames? integer AI frames "fixed" spreads `total` over
 ---@field walls? boolean a wall ahead ends the move; a class-2 one enters `stuck`

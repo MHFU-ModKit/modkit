@@ -138,6 +138,12 @@ port's generated `<name>_moves.lua`: `port:move("stamp")` (`ports/README.md` "Mo
 behaviour"). Its `tip` goes to `mhfu.em_tip`: each tip joint takes its carrier's pose after the
 species brain, so the tail stays whole until it drops.
 
+An own move's `steer` (`mhfu.MoveSteer`) sets how YAW follows its clip: a turn curve, a turn
+toward or away from the hunter at `rate` units a frame, a fixed turn, walls that end the move. The
+hunter and away turns apply on every frame of the move unless the steer has a `window = { from,
+to }`: then only while the clip frame (part 0's cursor) is in `[from, to)`, as the donor turns in
+a cursor window.
+
 An AI script plays own move k with `enter 16 k 0` (`mhfu.addr.OWN_MOVE_MAIN`): the enter-action
 stub enters the slot's carrier (the hub `(0,2)` for an empty or out-of-range slot, the game never
 sees main 16), files a forced play, and the brain starts the move at the next AI step; the script

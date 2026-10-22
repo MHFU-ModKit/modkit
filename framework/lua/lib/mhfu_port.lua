@@ -241,7 +241,9 @@ P.is_own = is_own
 --           attack rides the host's whole attack timing. A move with `entry` and no `main` is
 --           an own move (port:move) and takes the registry slot of its `slot` (the manifest's
 --           module numbers its own moves, which the brain splice's `enter` names), else the
---           first free one by name. Default: the manifest's (P.behaviour)
+--           first free one by name. Its `steer` goes to the move player as it is (mhfu.MoveSteer:
+--           turn, rate, `window = { from, to }` the clip frames a hunter or away turn keeps to).
+--           Default: the manifest's (P.behaviour)
 --   rules   port:rule{} specs installed with the port; default: the manifest's
 --   vars, signals  name -> index of the board's counters and signals (port:var, port:fire); default:
 --           the manifest's

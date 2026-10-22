@@ -47,6 +47,12 @@ INLINE int32_t share(int32_t total, uint16_t frames, uint16_t frame)
     return total * (frame + 1) / frames - total * frame / frames;
 }
 
+/* clip frame `at` is in the window [from, to); both 0 is the whole move */
+INLINE int in_window(uint16_t from, uint16_t to, float at)
+{
+    return (!from && !to) || (at >= (float)from && at < (float)to);
+}
+
 INLINE uint32_t ahead(uint16_t dir)
 {
     uint32_t s = dir >> SECTOR_SHIFT;
@@ -108,10 +114,12 @@ int mhfu_steer_step(void *entity, const mhfu_vec3_t *hunter, const mhfu_steer_t 
     }
     volatile uint16_t *yaw = (volatile uint16_t *)(e + MHFU_ENTITY_YAW);
     if (p->turn == MHFU_STEER_HUNTER || p->turn == MHFU_STEER_AWAY) {
-        volatile float *pos = (volatile float *)(e + MHFU_ENTITY_POSITION);
-        uint16_t want = bearing(hunter->x - pos[0], hunter->z - pos[2]);
-        if (p->turn == MHFU_STEER_AWAY) want = (uint16_t)(want + MHFU_STEER_TURN / 2);
-        *yaw = toward(*yaw, want, p->rate);
+        if (in_window(p->win_from, p->win_to, (float)frame)) {
+            volatile float *pos = (volatile float *)(e + MHFU_ENTITY_POSITION);
+            uint16_t want = bearing(hunter->x - pos[0], hunter->z - pos[2]);
+            if (p->turn == MHFU_STEER_AWAY) want = (uint16_t)(want + MHFU_STEER_TURN / 2);
+            *yaw = toward(*yaw, want, p->rate);
+        }
     } else if (p->turn == MHFU_STEER_FIXED) {
         *yaw = (uint16_t)(*yaw + share(p->total, p->frames, frame));
     }
@@ -158,7 +166,8 @@ int mhfu_steer_move(void *entity, const mhfu_vec3_t *hunter, volatile mhfu_steer
     }
     st->cursor = cursor;
     uint8_t mode = sp->steer.turn;
-    if ((mode == MHFU_STEER_HUNTER || mode == MHFU_STEER_AWAY) && hunter) {
+    if ((mode == MHFU_STEER_HUNTER || mode == MHFU_STEER_AWAY) && hunter
+        && in_window(sp->steer.win_from, sp->steer.win_to, cursor)) {
         volatile float *pos = (volatile float *)(e + MHFU_ENTITY_POSITION);
         uint16_t want = bearing(hunter->x - pos[0], hunter->z - pos[2]);
         if (mode == MHFU_STEER_AWAY) want = (uint16_t)(want + MHFU_STEER_TURN / 2);

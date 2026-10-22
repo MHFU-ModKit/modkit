@@ -183,13 +183,27 @@ class Game:
             struct.unpack_from("<I", ctypes.string_at(base + getattr(a.EM_MOVES, field), 4))[0]
         )
 
-    def own(self, slot: int, entry: int, after: int = NO, keys: int = 0, **kw: int) -> int:
+    def own(
+        self,
+        slot: int,
+        entry: int,
+        after: int = NO,
+        keys: int = 0,
+        *,
+        turn: int = 0,
+        window: tuple[int, int] = (0, 0),
+        **kw: int,
+    ) -> int:
+        """Own move `slot`; `turn` and `window` are its steer's (a hunter turn at rate 64)."""
         mv = Move(entry=entry, carrier_main=0, carrier_sub=2, back_main=NO)
         for k, v in kw.items():
             setattr(mv, k, v)
         spec = ctypes.create_string_buffer(a.STEER_SPEC.size)
         self.lib.mhfu_steer_init_spec(spec)
         struct.pack_into("<H", spec, a.STEER_SPEC.KEY_COUNT, keys)
+        p = a.STEER_SPEC.STEER
+        struct.pack_into("<BBH", spec, p + a.STEER_PARAMS.TURN, turn, 0, 64)
+        struct.pack_into("<HH", spec, p + a.STEER_PARAMS.WIN_FROM, *window)
         return int(self.lib.mhfu_em_move(slot, ctypes.byref(mv), spec, after))
 
     def flinch(self, parts: int, sub: int = 1) -> None:
@@ -406,6 +420,32 @@ def test_receding_and_cooldown(g: Game) -> None:
         g.hunter_at(x, 0.0)
         g.frame()
     assert g.entered() == []  # cooling down
+
+
+def yaws(g: Game, frames: int) -> list[tuple[float, int]]:
+    """(the move player's clip cursor, YAW change) of each of `frames` AI frames."""
+    base = int(g.lib.mhfu_move_state()) + a.MOVE_STATE.STEER
+    out = []
+    for _ in range(frames):
+        before = int(g.peek(a.ENTITY.YAW, "H")[0])
+        g.frame()
+        (cursor,) = struct.unpack_from("<f", ctypes.string_at(base + a.STEER_STATE.CURSOR, 4))
+        out.append((cursor, int(g.peek(a.ENTITY.YAW, "H")[0]) - before))
+    return out
+
+
+@pytest.mark.parametrize(("window", "turning"), [((6, 12), range(6, 12)), ((0, 0), range(0, 99))])
+def test_an_own_moves_hunter_turn_keeps_to_its_steer_window(
+    g: Game, window: tuple[int, int], turning: range
+) -> None:
+    """The registry carries the window to the move player: it turns toward the hunter, 64 a frame,
+    only on the frames whose clip cursor is in [from, to); no window turns on all of them."""
+    struct.pack_into("<fff", g.hunter, a.ENTITY.POSITION, 500.0, 0.0, 0.0)  # the steer reads this
+    assert g.own(0, 46, turn=1, window=window) and g.lib.mhfu_em_play(ENT, 0, 1)
+    seen = [(c, d) for c, d in yaws(g, 2 + int(CLIP_END / SPEED)) if c > 0]
+    assert len(seen) >= 8
+    assert [d for c, d in seen] == [64 if c in turning else 0 for c, _ in seen]
+    assert any(d for _, d in seen)
 
 
 def test_keys_have_room(g: Game) -> None:

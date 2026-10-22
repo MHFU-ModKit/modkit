@@ -38,6 +38,8 @@ typedef struct {
     int32_t  total;  /* FIXED: YAW units over the move, under one turn either way */
     uint16_t frames; /* FIXED: frames to spread `total` over, 1..0x7FFF */
     uint16_t dir;    /* direction of travel against YAW, YAW units: 0 forward, 0x8000 back */
+    uint16_t win_from, win_to; /* HUNTER, AWAY: turn only while the clip frame is in
+                                * [win_from, win_to); both 0: the whole move */
 } mhfu_steer_t;
 
 /* atan2(dx, dz) in YAW units, within one unit. */
@@ -52,7 +54,8 @@ uint32_t mhfu_steer_ahead(uint16_t dir);
 int mhfu_steer_wall(uint32_t sectors, uint8_t stuck, uint16_t dir);
 
 /* One AI frame of a move on `entity` (its ENTITY fields), `frame` frames in: the wall result of
- * the frame before, and, while it is MHFU_STEER_GO, YAW turned as `p` says toward `hunter`. */
+ * the frame before, and, while it is MHFU_STEER_GO, YAW turned as `p` says toward `hunter`. The
+ * window is read against `frame`, the clip frame there. */
 int mhfu_steer_step(void *entity, const mhfu_vec3_t *hunter, const mhfu_steer_t *p,
                     uint16_t frame);
 #ifndef MHFU_HOST
@@ -93,7 +96,8 @@ void mhfu_steer_init_spec(mhfu_steer_spec_t *s);
 uint16_t mhfu_steer_curve(const volatile mhfu_steer_spec_t *s, float cursor);
 /* One AI frame of a move (move.cpp's seam), `frame` its playing frames from 1: frame 1 takes
  * NEXT; a cursor that went back (a loop) carries the curve's turn over; YAW = base + curve, the
- * base turned by the spec's mode. Returns the wall result of the frame before, from frame 2. */
+ * base turned by the spec's mode (HUNTER and AWAY only while `cursor`, the clip frame, is in
+ * the window). Returns the wall result of the frame before, from frame 2. */
 int mhfu_steer_move(void *entity, const mhfu_vec3_t *hunter, volatile mhfu_steer_state_t *st,
                     uint32_t frame, float cursor, float loop_start, float end);
 
