@@ -21,7 +21,367 @@ frames = 382
 loop = false
 label = "crazy forward charge"
 
+[clips.p3_1]
+slot = 1
+source = 1
+
+[clips.p3_2]
+slot = 2
+source = 2
+
+[clips.p3_3]
+slot = 3
+source = 3
+
+[clips.p3_4]
+slot = 5
+source = 4
+
+[clips.p3_5]
+slot = 6
+source = 5
+
+[clips.p3_6]
+slot = 7
+source = 6
+
+[clips.p3_7]
+slot = 8
+source = 7
+
+[clips.p3_8]
+slot = 10
+source = 8
+
+[clips.p3_9]
+slot = 17
+source = 9
+
+[clips.p3_10]
+slot = 9
+source = 10
+
+[clips.p3_11]
+slot = 4
+source = 11
+
+[clips.p3_12]
+slot = 12
+source = 12
+
+[clips.p3_13]
+slot = 13
+source = 13
+
+[clips.p3_14]
+slot = 20
+source = 14
+
+[clips.p3_15]
+slot = 21
+source = 15
+
+[clips.p3_16]
+slot = 31
+source = 16
+
+[clips.p3_17]
+slot = 32
+source = 17
+
+[clips.p3_20]
+slot = 34
+source = 20
+
+[clips.p3_21]
+slot = 37
+source = 21
+
+[clips.p3_22]
+slot = 38
+source = 22
+
+[clips.p3_23]
+slot = 58
+source = 23
+
+[clips.p3_24]
+slot = 59
+source = 24
+
+[clips.p3_25]
+slot = 51
+source = 25
+
+[clips.p3_26]
+slot = 54
+source = 26
+
+[clips.p3_27]
+slot = 52
+source = 27
+
+[clips.p3_28]
+slot = 57
+source = 28
+
+[clips.p3_29]
+slot = 80
+source = 29
+
+[clips.p3_41]
+slot = 19
+source = 41
+
+[clips.p3_42]
+slot = 11
+source = 42
+
+[clips.p3_43]
+slot = 23
+source = 43
+
+[clips.p3_44]
+slot = 14
+source = 44
+
+[clips.p3_45]
+slot = 30
+source = 45
+
+[clips.p3_46]
+slot = 15
+source = 46
+
+[clips.p3_47]
+slot = 90
+source = 47
+
+[clips.p3_50]
+slot = 40
+source = 50
+
+[clips.p3_51]
+slot = 41
+source = 51
+
+[clips.p3_52]
+slot = 42
+source = 52
+
+[clips.p3_53]
+slot = 43
+source = 53
+
+[clips.p3_54]
+slot = 45
+source = 54
+
+[clips.p3_55]
+slot = 46
+source = 55
+
+[clips.p3_56]
+slot = 47
+source = 56
+
+[clips.p3_57]
+slot = 48
+source = 57
+
+[clips.p3_100]
+slot = 60
+source = 100
+
+[clips.p3_101]
+slot = 61
+source = 101
+
+[clips.p3_102]
+slot = 62
+source = 102
+
+[clips.p3_103]
+slot = 65
+source = 103
+
+[clips.p3_104]
+slot = 83
+source = 104
+
+[clips.p3_105]
+slot = 68
+source = 105
+
+[clips.p3_106]
+slot = 69
+source = 106
+
+[clips.p3_107]
+slot = 70
+source = 107
+
+[clips.p3_108]
+slot = 71
+source = 108
+
+[clips.p3_109]
+slot = 74
+source = 109
+
+[clips.p3_110]
+slot = 75
+source = 110
+
+[clips.p3_111]
+slot = 72
+source = 111
+
+[clips.p3_112]
+slot = 76
+source = 112
+
+[clips.p3_113]
+slot = 77
+source = 113
+
+[clips.p3_114]
+slot = 78
+source = 114
+
+[clips.p3_115]
+slot = 95
+source = 115
+
+[clips.p3_116]
+slot = 96
+source = 116
+
+[clips.p3_117]
+slot = 97
+source = 117
+
+[clips.p3_118]
+slot = 98
+source = 118
+
 [moves.charge]
 main = 2
 sub = 8
 clip = "charge"
+
+[brain]
+donor = 23
+splice = "base_3"
+entry = "base_12"
+history = 2
+
+[brain.pairs]
+"1,1" = [
+    0,
+    2,
+]
+"1,5" = [
+    0,
+    5,
+]
+"1,12" = [
+    0,
+    21,
+]
+"1,15" = [
+    0,
+    27,
+]
+"2,3" = [
+    1,
+    2,
+]
+"2,4" = [
+    1,
+    7,
+]
+"2,5" = [
+    1,
+    8,
+]
+"2,9" = [
+    1,
+    4,
+]
+"2,10" = [
+    1,
+    5,
+]
+"2,19" = [
+    2,
+    4,
+]
+"2,20" = [
+    1,
+    10,
+]
+"2,22" = [
+    1,
+    4,
+]
+"2,23" = [
+    2,
+    19,
+]
+"3,2" = [
+    2,
+    1,
+]
+"7,0" = [
+    3,
+    0,
+]
+"7,1" = [
+    3,
+    3,
+]
+"7,2" = [
+    3,
+    4,
+]
+"7,3" = [
+    3,
+    5,
+]
+"7,4" = [
+    3,
+    6,
+]
+"7,5" = [
+    3,
+    11,
+]
+"7,6" = [
+    3,
+    27,
+]
+"7,7" = [
+    3,
+    34,
+]
+"7,9" = [
+    3,
+    36,
+]
+"7,13" = [
+    2,
+    8,
+]
+"7,14" = [
+    1,
+    9,
+]
+"7,15" = [
+    3,
+    37,
+]
+
+[brain.when]
+if_target_state = true
+if_tired = false

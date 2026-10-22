@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from mhfu.em.moveset import Moveset
 from mhfu.files import monster_pac
-from mhfu_port import motion, slots
+from mhfu_port import manifest, motion, slots
 from mhfu_port.cli import main, parser
 from mhfu_port.cli.slots import run_labels, run_slots
 from mhfu_port.layout import Layout
@@ -168,6 +168,6 @@ def test_cli(data, tmp_path, capsys):
     named = tmp_path / "named.csv"
     brute = str(PORTS / "brute_tigrex.toml")
     assert main(["slots", str(port), "--manifest", brute, *games, "-o", str(named)]) == 0
-    assert {r["clip"]: r["slot"] for r in csv.DictReader(named.open()) if r["clip"]} == {
-        "charge": "61"
-    }
+    pinned = {n: str(c.slot) for n, c in manifest.load(brute).clips.items() if c.slot is not None}
+    got = {r["clip"]: r["slot"] for r in csv.DictReader(named.open()) if r["clip"]}
+    assert got == pinned | {"charge": "101"}
