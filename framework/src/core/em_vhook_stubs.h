@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
 /*
- * em_vhook's three stubs, assembled word by word. Plain C with no PSP SDK (only
+ * em_vhook's four stubs, assembled word by word. Plain C with no PSP SDK (only
  * <stdint.h>, mhfu/mips.h and addresses.gen.h), so the same builders also compile
  * on the host, where a check disassembles the words and asserts:
  *   - no branch in either stub: every decision is a MOVN/MOVZ select, so the JIT
@@ -99,6 +99,7 @@
 #define STUB_AI_INSNS   480
 #define STUB_ACT_INSNS  272
 #define STUB_EVT_INSNS  16
+#define STUB_QRY_INSNS  24
 
 /* -------------------------------------------------------------------------- */
 /* register aliases used below */
@@ -540,6 +541,46 @@ static inline int emv_build_events_stub(uint32_t *out, int cap, uint32_t cfg,
     E(mips_lui(R_T6, (uint16_t)(ret_stub >> 16)));
     E(mips_ori(R_T6, R_T6, (uint16_t)ret_stub));
     E(mips_movn(R_T9, R_T6, R_T0));
+    E(mips_jr(R_T9));
+    E(MIPS_NOP);
+
+    if (overflow) *overflow = A.overflow;
+    return A.i;
+}
+
+/* --- the species' query (MONSTER_VTABLE.QUERY), what the AI script's switch_query asks:
+ * query(entity, arg). For the charge block's monster the answer is its table's entry (v0 =
+ * answers[arg], 0 past the table) and the ret stub returns it; any other entity, or no monster
+ * yet, runs the species' own query with a0 and a1 as they came. Frame-free and branchless: the
+ * table is read whatever the entity, and one jr goes to the original or to the ret stub. ---- */
+static_assert(MHFU_CHARGE_ANSWERS_COUNT == 8, "the stub masks the arg with 7");
+static inline int emv_build_query_stub(uint32_t *out, int cap, uint32_t chg, uint32_t original,
+                                       uint32_t ret_stub, int *overflow)
+{
+    emv_asm_t A = { out, 0, cap, 0 };
+    emv_asm_t *a = &A;
+
+    E(mips_lui(R_T7, (uint16_t)(chg >> 16)));
+    E(mips_ori(R_T7, R_T7, (uint16_t)chg));
+    E(mips_lw(R_T0, MHFU_CHARGE_ENTITY, R_T7));
+    E(mips_xor(R_T1, R_T0, R_A0));
+    E(mips_sltiu(R_T1, R_T1, 1));                      /* the entity is the block's */
+    E(mips_sltu(R_T0, R_ZERO, R_T0));                  /* the block has one */
+    E(mips_and(R_T1, R_T1, R_T0));                     /* t1 = answer it */
+    E(mips_sltiu(R_T2, R_A1, MHFU_CHARGE_ANSWERS_COUNT));   /* the arg is in the table */
+    E(mips_andi(R_T3, R_A1, MHFU_CHARGE_ANSWERS_COUNT - 1));
+    E(mips_sll(R_T3, R_T3, 2));
+    E(mips_addu(R_T3, R_T3, R_T7));
+    E(mips_lw(R_V0, MHFU_CHARGE_ANSWERS, R_T3));
+    E(mips_movz(R_V0, R_ZERO, R_T2));                  /* an arg past the table answers 0 */
+    E(mips_lw(R_T4, MHFU_CHARGE_ASKED, R_T7));
+    E(mips_addu(R_T4, R_T4, R_T1));
+    E(mips_sw(R_T4, MHFU_CHARGE_ASKED, R_T7));
+    E(mips_lui(R_T9, (uint16_t)(original >> 16)));
+    E(mips_ori(R_T9, R_T9, (uint16_t)original));
+    E(mips_lui(R_T6, (uint16_t)(ret_stub >> 16)));
+    E(mips_ori(R_T6, R_T6, (uint16_t)ret_stub));
+    E(mips_movn(R_T9, R_T6, R_T1));
     E(mips_jr(R_T9));
     E(MIPS_NOP);
 

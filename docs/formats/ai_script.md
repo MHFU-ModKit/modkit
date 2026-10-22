@@ -84,6 +84,11 @@ and `if_in_section` match a night area by its day twin, `switch_area` a night ma
   for an empty or out-of-range slot) and plays the move at the next AI step, forced past the
   notice. The run resumes after it when the move and its `after` chain end and the carrier hands
   back, as after a native pair. Without the framework the game has no table for main 16.
+- `switch_query a` (0x79) asks the species' own query, `MONSTER_VTABLE.QUERY(entity, a)`: em75's is
+  game_task's default, which answers 0. With the framework's charge helper armed (`mhfu.em_charge`)
+  its stub answers a port's monster 1 to `addresses.CHARGE_QUERY_CHARGED` (0) while the monster is
+  charged and to `CHARGE_QUERY_COOLDOWN` (6) while the charge cooldown runs, and 0 to every other
+  arg; any other monster gets the species' answer.
 - A raised interrupt bit in `SCRIPT_PENDING` switches the next run to the header's routine for it.
 
 ## Variables

@@ -130,10 +130,11 @@ the engine counts the flinch and applies the damage, then enters the move's carr
 
 ## Own moves from a manifest
 
-A port's own moves sit in a registry by slot (`mhfu.em_move`). The seam's brain, in C on the
-AI step, plays one through the move player when asked (`mhfu.em_play`), when the move before it
-ends on its clip, its length or a wall and names it as its `after`, or when a rule says
-(`play_move`, and `from_move` to fire while one plays). `mhfu_port.lua` does all of it from the
+A port's own moves sit in a registry by slot (`mhfu.em_move`): `mhfu.addr.EM_MOVES.MOVES_COUNT`
+(96) of them, and the turn keys they share (2048), in one 12.8 KB partition block. The seam's
+brain, in C on the AI step, plays one through the move player when asked (`mhfu.em_play`), when the
+move before it ends on its clip, its length or a wall and names it as its `after`, or when a rule
+says (`play_move`, and `from_move` to fire while one plays). `mhfu_port.lua` does all of it from the
 port's generated `<name>_moves.lua`: `port:move("stamp")` (`ports/README.md` "Moves and
 behaviour"). Its `tip` goes to `mhfu.em_tip`: each tip joint takes its carrier's pose after the
 species brain, so the tail stays whole until it drops.
@@ -203,6 +204,27 @@ the port (`own` keyed by move name there too); the quest's end, `mhfu.em_clear()
 `mhfu.em_fatigue(nil)` drop it, and `mhfu.em_fatigue_status()` reads the state. Do not arm it on a
 species whose AI step drains gauge A itself (those that call `GAUGE_A_LATCH`).
 
+## Charge
+
+MHP3rd's Zinogre charges a gauge, transforms at 100 and stays charged until hits wear it out; its
+AI script asks the species "charged?" (`mhfu.addr.CHARGE_QUERY_CHARGED`, 0) and "is the cooldown
+running?" (`CHARGE_QUERY_COOLDOWN`, 6) with `switch_query`, which em75 answers 0 to.
+`mhfu.em_charge{ ... }` (`include/mhfu/charge.h`) keeps that state in C for the wrapped species'
+monster and answers the two: em_vhook wraps the species' query slot (`MONSTER_VTABLE.QUERY`) with a
+frame-free, branchless stub that returns the helper's table for that monster, and the species' own
+answer for every other entity and arg.
+
+The gauge rises by `ups[slot] = { g95, g75, g40, glow }` (at 95, 75, 40 percent of the monster's HP,
+and below) when the move player starts that own move, whoever asked, and `cooldown_up` frames of
+cooldown start; they run down while it is not charged. A hit (an AI frame in which its HP fell)
+takes `chip_gauge` from the gauge, or `chip_durability` from the durability while charged. At 100,
+once the move player is idle and no chain is due, it plays the `transform` own move, forced: its
+start sets charged, durability 100, gauge 100. Durability 0 or a `discharge` pair (the knockout, the
+traps) discharges it: gauge 0, `cooldown_out` frames of cooldown. The state stays across areas; a new
+monster, the quest's end, `mhfu.em_clear()` and `mhfu.em_charge(nil)` reset or drop it, and
+`mhfu.em_charge_status()` reads it. A moves module's `charge` table does all of it with the port,
+its `ups` keys and `transform` by move name or slot.
+
 ## AI scripts from the stick
 
 `mhfu brain deploy EM [FILE]` writes a species' AI script as an `MHAI` stick container,
@@ -239,7 +261,7 @@ declared API; it needs a host `c++` (else those tests skip) and `lupa`, which `u
 
 ## Status
 
-Runs in PPSSPP and on a real PSP under PRO CFW, for MHFU EU only. The Lua API is version 6
+Runs in PPSSPP and on a real PSP under PRO CFW, for MHFU EU only. The Lua API is version 10
 (`mhfu.api_version`); `mhfu.clone_combat` is experimental and can crash the game.
 
 ## Licence

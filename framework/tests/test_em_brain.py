@@ -133,6 +133,19 @@ class FatStatus(ctypes.Structure):
     ]
 
 
+class ChgStatus(ctypes.Structure):
+    """mhfu_charge_status_t."""
+
+    _fields_ = [
+        ("armed", ctypes.c_uint32),
+        ("charged", ctypes.c_uint32),
+        ("gauge", ctypes.c_int32),
+        ("durability", ctypes.c_int32),
+        ("cooldown", ctypes.c_int32),
+        *[(k, ctypes.c_uint32) for k in ("up_starts", "transforms", "discharges", "hits", "asked")],
+    ]
+
+
 class Game:
     def __init__(self, lib: ctypes.CDLL) -> None:
         self.lib = lib
@@ -306,6 +319,50 @@ class Game:
             self.poke(a.ENTITY.GAUGE_A, "i", value)
         return int(self.peek(a.ENTITY.GAUGE_A, "i")[0])
 
+    def charge(
+        self,
+        *,
+        transform: int = 2,
+        ups: dict[int, tuple[int, int, int, int]] | None = None,
+        pairs: tuple[tuple[int, int], ...] = (),
+        chip_gauge: int = 0,
+        chip_durability: int = 0,
+        up: int = 420,
+        out: int = 900,
+    ) -> int:
+        """mhfu_em_charge with these settings (an up gains 100 at any HP unless told); what it
+        returned."""
+        ups = {0: (100, 100, 100, 100)} if ups is None else ups
+        c = a.CHARGE_CFG
+        buf = ctypes.create_string_buffer(int(c.size or 0))
+        struct.pack_into("<BBB", buf, c.TRANSFORM, transform, len(ups), len(pairs))
+        struct.pack_into("<hhHH", buf, c.CHIP_GAUGE, chip_gauge, chip_durability, up, out)
+        for k, (slot, gain) in enumerate(ups.items()):
+            struct.pack_into("<Bxhhhh", buf, int(c.UPS) + 10 * k, slot, *gain)
+        for k, (m, sub) in enumerate(pairs):
+            struct.pack_into("<BB", buf, int(c.PAIRS) + 2 * k, m, sub)
+        return int(self.lib.mhfu_em_charge(buf))
+
+    def chg(self) -> ChgStatus:
+        st = ChgStatus()
+        self.lib.mhfu_em_charge_status(ctypes.byref(st))
+        return st
+
+    def ask(self, arg: int, ent: int = ENT) -> int:
+        """The species' query as the stub answers it."""
+        return int(self.lib.mhfu_em_host_query(ent, arg))
+
+    def hp(self, hp: int) -> None:
+        self.poke(a.ENTITY.HP, "H", hp)
+
+    def until(self, done: Callable[[], bool], limit: int = 60) -> int:
+        """AI frames until done(); asserts it comes."""
+        for k in range(limit + 1):
+            if done():
+                return k
+            self.frame()
+        raise AssertionError(f"not in {limit} frames")
+
 
 @pytest.fixture(scope="module")
 def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
@@ -349,6 +406,10 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     lib.mhfu_host_enter.argtypes = [ctypes.c_uint32] * 4
     lib.mhfu_em_fatigue.argtypes = [ctypes.c_void_p]
     lib.mhfu_em_fatigue_status.argtypes = [ctypes.c_void_p]
+    lib.mhfu_em_charge.argtypes = [ctypes.c_void_p]
+    lib.mhfu_em_charge_status.argtypes = [ctypes.c_void_p]
+    lib.mhfu_em_host_query.restype = ctypes.c_uint32
+    lib.mhfu_em_host_query.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
     return lib
 
 
@@ -1843,3 +1904,305 @@ def test_the_gauge_is_never_0_through_a_fight(g: Game) -> None:
         assert g.gauge() >= 1
         assert (g.gauge() <= LOW) == bool(g.fat().tired)
     assert g.fat().spells >= 2
+
+
+# --- charge
+
+CHARGED_Q, COOLDOWN_Q = int(a.CHARGE_QUERY_CHARGED), int(a.CHARGE_QUERY_COOLDOWN)
+UP_A, UP_B, XFORM = 0, 1, 2  # own-move slots: two charge-ups and the transform
+XFORM_ENTRY = 59
+
+
+def charge_armed(g: Game, **kw: object) -> None:
+    """Three own moves, the helper armed on a monster at full HP, and its first AI step taken."""
+    g.own(UP_A, 46)
+    g.own(UP_B, 53)
+    g.own(XFORM, XFORM_ENTRY)
+    g.poke(a.ENTITY.MAX_HP, "H", 100)
+    g.hp(100)
+    assert g.charge(**kw)  # type: ignore[arg-type]
+    g.frame()
+
+
+def start(g: Game, slot: int) -> None:
+    """The move player takes own move `slot` in the next AI frame, as for the script's enter."""
+    assert g.lib.mhfu_em_play(ENT, slot, 1)
+    g.frame()
+
+
+def charged(g: Game, **kw: object) -> None:
+    """Armed and charged: one charge-up that fills the gauge, then the transform."""
+    charge_armed(g, **kw)
+    start(g, UP_A)
+    g.until(lambda: g.chg().charged == 1)
+    g.calls()
+
+
+def test_charge_answers_for_nobody_before_the_first_ai_step(g: Game) -> None:
+    g.own(UP_A, 46)
+    assert g.charge() == 1 and g.chg().armed == 1
+    assert [g.ask(k) for k in range(8)] == [0] * 8 and g.chg().asked == 0
+    g.frame()
+    assert g.chg().armed == 1 and g.ask(CHARGED_Q) == 0 and g.chg().asked == 1
+
+
+def test_a_charge_up_raises_the_gauge_by_hp_and_starts_the_cooldown(g: Game) -> None:
+    ups = {UP_A: (20, 15, 10, 5), UP_B: (40, 30, 25, 5)}
+    for hp, gain in ((100, 20), (95, 20), (94, 15), (75, 15), (74, 10), (40, 10), (39, 5), (1, 5)):
+        g.lib.mhfu_em_host_quest()
+        g.lib.mhfu_em_init()
+        g.lib.mhfu_em_host_spawn(ENT)
+        charge_armed(g, ups=ups)
+        g.hp(hp)
+        g.frame()  # a hit, which the gauge's chip (0) does not mind
+        start(g, UP_A)
+        st = g.chg()
+        assert (st.gauge, st.cooldown, st.up_starts) == (gain, 420, 1), hp
+        assert (g.ask(COOLDOWN_Q), g.ask(CHARGED_Q)) == (1, 0)
+
+
+def test_the_cooldown_runs_down_every_ai_frame(g: Game) -> None:
+    charge_armed(g, ups={UP_A: (10, 10, 10, 10)}, up=5)
+    assert g.ask(COOLDOWN_Q) == 0
+    start(g, UP_A)
+    seen = []
+    for _ in range(6):
+        seen.append((g.chg().cooldown, g.ask(COOLDOWN_Q)))
+        g.frame()
+    assert seen == [(5, 1), (4, 1), (3, 1), (2, 1), (1, 1), (0, 0)]
+
+
+def test_a_full_gauge_plays_the_transform_after_the_charge_up(g: Game) -> None:
+    charge_armed(g)
+    start(g, UP_A)
+    assert g.chg().gauge == 100 and g.lib.mhfu_em_playing() == UP_A
+    seen = []
+    for _ in range(40):
+        g.frame()
+        seen += g.calls()
+        if g.chg().charged:
+            break
+    played = [c[2] for c in seen if c[0] == "X"]
+    assert played[:1] == [46]  # the transform waited for the up to end
+    st = g.chg()
+    assert (st.charged, st.gauge, st.durability, st.transforms) == (1, 100, 100, 1)
+    assert (g.ask(CHARGED_Q), g.ask(COOLDOWN_Q)) == (1, 1)
+    seen = []
+    for _ in range(30):
+        g.frame()
+        seen += g.calls()
+    assert [c[2] for c in seen if c[0] == "X"] == [XFORM_ENTRY]  # asked once, and played
+    assert g.chg().transforms == 1 and g.lib.mhfu_em_playing() == -1
+
+
+def test_the_transform_waits_for_the_chain_of_the_move_before(g: Game) -> None:
+    charge_armed(g)
+    g.own(UP_A, 46, after=UP_B)
+    start(g, UP_A)
+    g.calls()
+    seen = []
+    for _ in range(80):
+        g.frame()
+        seen += g.calls()
+    assert [c[2] for c in seen if c[0] == "X"] == [46, 53, XFORM_ENTRY]  # the chain, then ours
+    assert g.chg().charged == 1
+
+
+def test_no_transform_slot_never_plays_one(g: Game) -> None:
+    charge_armed(g, transform=0xFF)
+    start(g, UP_A)
+    seen = []
+    for _ in range(40):
+        g.frame()
+        seen += g.calls()
+    assert (g.chg().gauge, g.chg().charged) == (100, 0)
+    assert XFORM_ENTRY not in [c[2] for c in seen if c[0] == "X"]
+
+
+def test_hits_wear_the_gauge_then_the_durability(g: Game) -> None:
+    charge_armed(g, ups={UP_A: (50, 50, 50, 50)}, chip_gauge=8, chip_durability=40)
+    start(g, UP_A)
+    assert g.chg().gauge == 50
+    g.hp(90)
+    g.frame()
+    assert (g.chg().gauge, g.chg().hits) == (42, 1)
+    g.hp(95)  # healing is no hit
+    g.frame()
+    g.frame()
+    assert (g.chg().gauge, g.chg().hits) == (42, 1)
+    g.hp(60)  # several hits in one AI frame count once
+    g.frame()
+    assert (g.chg().gauge, g.chg().hits) == (34, 2)
+
+
+def test_a_charged_monster_is_discharged_by_hits(g: Game) -> None:
+    charged(g, chip_gauge=8, chip_durability=40, out=700)
+    assert g.chg().durability == 100
+    for left, hp in ((60, 90), (20, 80)):
+        g.hp(hp)
+        g.frame()
+        st = g.chg()
+        assert (st.charged, st.durability, st.gauge) == (1, left, 100)
+    g.hp(70)
+    g.frame()
+    st = g.chg()
+    assert (st.charged, st.gauge, st.durability, st.cooldown) == (0, 0, 0, 700)
+    assert (st.discharges, st.hits) == (1, 3)
+    assert (g.ask(CHARGED_Q), g.ask(COOLDOWN_Q)) == (0, 1)
+    g.frames(700)
+    assert g.ask(COOLDOWN_Q) == 0
+
+
+def test_the_cooldown_stands_while_charged(g: Game) -> None:
+    charged(g, up=500)
+    c = g.chg().cooldown
+    g.frames(25)
+    assert g.chg().cooldown == c and g.ask(COOLDOWN_Q) == 1
+
+
+def test_a_discharge_pair_discharges_a_charged_monster_at_once(g: Game) -> None:
+    charged(g, pairs=((11, 0), (11, 1)))
+    g.go((2, 10))
+    assert g.chg().charged == 1
+    g.go((11, 1))
+    st = g.chg()
+    assert (st.charged, st.gauge, st.cooldown, st.discharges) == (0, 0, 900, 1)
+    assert g.ask(CHARGED_Q) == 0
+
+
+def test_the_transform_is_refused_in_a_discharge_pair(g: Game) -> None:
+    charge_armed(g, pairs=((11, 0),))
+    start(g, UP_A)
+    g.pair = (11, 0)  # the knockout: it ends the move, the helper must not transform
+    seen = []
+    for _ in range(40):
+        g.frame()
+        seen += g.calls()
+    assert g.chg().charged == 0 and XFORM_ENTRY not in [c[2] for c in seen if c[0] == "X"]
+    g.pair = (1, 3)
+    g.until(lambda: g.chg().charged == 1, 10)
+
+
+def test_the_state_stays_across_an_area_change(g: Game) -> None:
+    charged(g, chip_durability=30)
+    g.hp(95)
+    g.frame()
+    before = g.chg()
+    for section, pair in ((0x0102, (2, 10)), (0x0103, (1, 3)), (0x0104, (2, 11))):
+        g.poke(a.ENTITY.SECTION, "H", section)  # the monster moves to the player's next area
+        g.go(pair)
+        g.frames(3)
+        st = g.chg()
+        assert (st.charged, st.durability, st.gauge) == (1, before.durability, 100)
+        assert (g.ask(CHARGED_Q), g.ask(COOLDOWN_Q)) == (1, 1 if st.cooldown else 0)
+
+
+def test_a_new_monster_starts_afresh_and_keeps_the_settings(g: Game) -> None:
+    charged(g)
+    g.lib.mhfu_em_host_spawn(ENT2)
+    st = g.chg()
+    assert (st.armed, st.charged, st.gauge, st.up_starts, st.transforms) == (1, 0, 0, 0, 0)
+    assert g.ask(CHARGED_Q) == 0 and g.ask(CHARGED_Q, ENT2) == 0  # nobody owns it yet
+    struct.pack_into("<HH", g.mem, ENT2 - BASE + a.ENTITY.HP, 100, 0)
+    g.lib.mhfu_em_host_frame(ENT2)
+    assert g.chg().armed == 1 and g.chg().charged == 0
+
+
+def test_only_the_boards_monster_is_tracked_and_answered(g: Game) -> None:
+    charged(g, chip_durability=10)
+    struct.pack_into("<H", g.mem, ENT2 - BASE + a.ENTITY.HP, 100)
+    g.lib.mhfu_em_host_frame(ENT2)
+    struct.pack_into("<H", g.mem, ENT2 - BASE + a.ENTITY.HP, 10)
+    g.lib.mhfu_em_host_frame(ENT2)
+    assert (g.chg().hits, g.chg().durability) == (0, 100)
+    assert (g.ask(CHARGED_Q), g.ask(CHARGED_Q, ENT2), g.ask(COOLDOWN_Q, ENT2)) == (1, 0, 0)
+
+
+def test_the_query_answers_nothing_but_the_two(g: Game) -> None:
+    charged(g, chip_durability=10)
+    assert [g.ask(k) for k in range(12)] == [1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]
+
+
+def test_the_charge_ends_with_none_a_clear_or_the_quest(g: Game) -> None:
+    for end in (
+        lambda: g.lib.mhfu_em_charge(None),
+        g.lib.mhfu_em_clear,
+        g.lib.mhfu_em_host_quest,
+    ):
+        g.lib.mhfu_em_host_quest()
+        charged(g)
+        assert g.ask(CHARGED_Q) == 1
+        end()
+        st = g.chg()
+        assert (st.armed, st.charged, st.gauge) == (0, 0, 0)
+        assert g.ask(CHARGED_Q) == 0 and g.ask(COOLDOWN_Q) == 0
+        g.hp(10)
+        g.frames(2)
+        assert g.chg().hits == 0  # nothing counts
+
+
+def test_arming_again_with_the_same_settings_keeps_the_state(g: Game) -> None:
+    charged(g)
+    assert g.charge() == 1
+    assert (g.chg().charged, g.chg().transforms) == (1, 1)
+    assert g.charge(chip_gauge=1) == 1  # other settings start afresh
+    g.frame()
+    assert (g.chg().charged, g.chg().armed) == (0, 1)
+
+
+def test_a_refused_setting_arms_nothing_and_leaves_the_armed_ones(g: Game) -> None:
+    slots = a.EM_MOVES.MOVES.count or 0
+    assert g.charge(transform=slots) == 0 and g.charge(ups={slots: (1, 1, 1, 1)}) == 0
+    assert g.charge(ups={0: (1, 1, 1, 101)}) == 0 and g.charge(chip_gauge=-1) == 0
+    assert g.charge(chip_durability=101) == 0
+    assert g.chg().armed == 0
+    charge_armed(g)
+    assert g.charge(chip_gauge=-1) == 0 and g.chg().armed == 1
+
+
+def test_a_transform_started_from_anywhere_charges(g: Game) -> None:
+    charge_armed(g)
+    start(g, XFORM)  # the script, a rule or Lua plays it with the gauge low
+    st = g.chg()
+    assert (st.charged, st.gauge, st.durability, st.transforms) == (1, 100, 100, 1)
+
+
+def test_a_charge_up_a_rule_or_the_script_plays_counts(g: Game) -> None:
+    charge_armed(g, ups={UP_A: (30, 30, 30, 30), UP_B: (5, 5, 5, 5)})
+    g.rule(0, from_mask=1 << 1, min_frames=2, play_move=UP_B + 1, count=1)
+    g.frames(3)
+    assert g.chg().gauge == 5
+    g.until(lambda: g.lib.mhfu_em_playing() == -1, 40)
+    script_enters(g, UP_A)
+    script_frame(g)
+    assert (g.chg().gauge, g.chg().up_starts) == (35, 2)
+
+
+def test_a_charged_monster_gains_nothing_from_a_charge_up(g: Game) -> None:
+    charged(g)
+    c = g.chg().cooldown
+    start(g, UP_A)
+    st = g.chg()
+    assert (st.up_starts, st.cooldown) == (1, c)
+
+
+def test_a_dead_monster_does_not_transform(g: Game) -> None:
+    charge_armed(g)
+    start(g, UP_A)
+    g.hp(0)
+    g.frames(40)
+    assert (g.chg().charged, g.chg().gauge) == (0, 100)
+
+
+def test_the_transform_waits_for_the_tail_cut(g: Game) -> None:
+    charge_armed(g)
+    start(g, UP_A)
+    g.until(lambda: g.lib.mhfu_em_playing() == -1, 40)
+    cut(g)  # em75's tail cut, the drop to come
+    seen = []
+    for _ in range(3):
+        g.frame()
+        seen += g.calls()
+    assert g.chg().charged == 0 and XFORM_ENTRY not in [c[2] for c in seen if c[0] == "X"]
+    drop(g)
+    g.until(lambda: g.chg().charged == 1, 20)
