@@ -64,7 +64,7 @@ def test_the_manifest_carries_its_brain(zinogre):
     assert (b.donor, b.splice, b.entry, b.fatigue, b.charge) == (40, "base_3", "base_3", True, True)
     assert b.when == {"if_target_set": True, "if_target_state": True}
     assert manifest.loads(manifest.dumps(m)) == m
-    assert len(b.pairs) == 104 and len(b.derived()) == len(own.pairs(b)) == 34
+    assert len(b.pairs) == 104 and len(b.derived()) == len(own.pairs(b)) == 39
 
 
 def test_a_donor_pair_plays_the_authored_move_where_it_is_the_donors(zinogre):
@@ -87,6 +87,26 @@ def test_a_wrapper_turns_and_plays_the_move_of_the_pair_it_leads_to(zinogre):
     assert (7, 13) in b.shared() and b.targets((7, 84)) == [TURN, "p3_7_13"]
 
 
+WALKS = {
+    (2, 12): "p3_2_12",
+    (2, 13): "p3_2_12",
+    (2, 14): "p3_2_12",
+    (2, 16): "p3_2_16",
+    (2, 17): "p3_2_17",
+    (2, 21): "p3_2_21",
+    (2, 23): "p3_2_23",
+    (2, 24): "p3_2_23",
+    (2, 25): "p3_2_23",
+}
+"""The donor pairs that walk, with the move each plays (the host's (1, 0) parked live: D1)."""
+
+
+def test_the_walks_play_own_moves_not_the_host_pair_1_0(zinogre):
+    b = zinogre.m.brain
+    assert not [k for k in b.pairs if (1, 0) in b.targets(manifest.pair_of(k))]
+    assert {p: b.targets(p) for p in WALKS} == {p: [name] for p, name in WALKS.items()}
+
+
 def chain_of(m: manifest.Manifest, name: str) -> list[tuple[object, ...]]:
     """What a derived move plays, step by step: clip, attacks, steer, length."""
     out = []
@@ -106,7 +126,7 @@ def test_the_pairs_that_share_a_move_derive_the_same_one(zinogre, data):
     named = {k: v for k, v in b.pairs.items() if isinstance(v, str)}
     twins = {k: v for k, v in named.items() if v in b.derived()}
     twins |= {"7,71": "p3_7_13", "7,82": "p3_7_13", "7,119": "p3_7_13"}
-    assert len(twins) == 17
+    assert len(twins) == 21
     apart = manifest.load(PORT)
     apart.brain.pairs |= {k: manifest.OWN for k in twins}
     again, _ = own.expand(apart, data)
@@ -208,6 +228,20 @@ def test_zinogre_reads_tired_from_gauge_a(zinogre):
     ]
     assert any(n.op.name == "if_gauge_a_low" for n in tests)
     assert not any(n.op.name in ("if_tired", "if_stamina_low") for n in tests)
+
+
+def test_zinogre_walks_enter_their_own_moves(zinogre):
+    s, _ = splice_of(zinogre, zinogre.m.brain)
+    for pair, name in WALKS.items():
+        assert s.uses[pair, name] > 0 and not [t for (p, t) in s.uses if p == pair and t != name]
+    nodes = [n for i in s.edits.inserts.values() for n in edit.everything(i.nodes)]
+    nodes += [n for r in s.edits.routines.values() for n in edit.everything(r)]
+    pairs = {
+        (n.args["main"], n.args["sub"])
+        for n in nodes
+        if isinstance(n, ir.Insn) and n.op.name == "enter"
+    }
+    assert (1, 0) not in pairs and set(WALKS.values()) <= set(s.slots)
 
 
 def test_zinogre_enters_its_own_moves(zinogre):
@@ -331,7 +365,7 @@ def test_the_own_moves_fit_the_framework(zinogre, module_text):
     _, built = module_text
     names = [n for n, mv in zinogre.m.moves.items() if mv.own]
     keys = sum(len(moves.curve(zinogre.m, n, built.layout) or "") // 4 for n in names)
-    assert len(names) == 83 and keys == 4367
+    assert len(names) == 89 and keys == 4642
     assert len(names) <= moves.SLOTS and keys <= moves.POOL
     assert not moves.problems(zinogre.m, built.layout, moves.records(Data.find().fu, 75))
 
@@ -342,4 +376,5 @@ def test_the_cli_splices_the_port(data, capsys):
     out = capsys.readouterr().out
     assert "routines added" in out and "worst run" in out
     assert "  charge: charge_up 40/55/65/100, p3_1_15 25/35/40/55, " in out
+    assert "  pair 2,12 -> own p3_2_12 (slot " in out and "  pair 2,25 -> own p3_2_23 (slot " in out
     assert "  pair 7,23 -> 1,2  x" in out and "  pair 7,23 -> own p3_7_0 (slot " in out
