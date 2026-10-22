@@ -63,6 +63,12 @@ port.pac, port.summary.text()
 | `mhfu-port brain ID` | An MHP3rd monster's AI script as text (`mhfu_port.brain`; [format](../../docs/formats/p3rd_ai_script.md)) |
 | `mhfu-port brain --check` | Every monster's script lifted and encoded back to the game's bytes |
 | `mhfu-port p3moveset ID` | The monster's (main, sub) pairs, the clips each plays and the pairs it enters, as CSV (`p3moveset`) |
+| `mhfu-port splice M` | A manifest's `[brain]`: the donor's routine translated into the host's script, the findings on what did not carry over, the size and the longest run (`brain.splice`; `--source`, `-o FILE`) |
+
+`splice` writes an edit set for the host's row, which `mhfu brain push|deploy --doc FILE` sends on.
+`-o FILE` holds code translated from the game: keep it in the workspace, never in a repo. How a
+donor routine maps onto the host's brain is in the
+[format notes](../../docs/formats/p3rd_ai_script.md#onto-an-mhfu-brain).
 
 ## Status
 
