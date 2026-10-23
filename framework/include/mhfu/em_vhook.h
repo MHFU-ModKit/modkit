@@ -182,9 +182,8 @@ int  mhfu_em_tip(const uint8_t (*pairs)[2], int n);
  * pair: the wake the hub raises inside the run is cleared by the script's tick after it, and the
  * move player clears the one its own entry of the hub raises. mhfu_em_status_t.own_enters counts
  * these enters, own_last gives the slot of the last that played. */
-#define MHFU_EM_MOVES   MHFU_EM_MOVES_MOVES_COUNT
-#define MHFU_EM_KEYS    MHFU_EM_MOVES_KEYS_COUNT
-#define MHFU_EM_NO_MOVE 0xFFu
+#define MHFU_EM_MOVES   MHFU_OWN_MOVES
+#define MHFU_EM_NO_MOVE 0xFFu   /* MHFU_EM_KEYS, the keys' pool, is a const in addresses.toml */
 
 /* struct EM_OWN in addresses.toml */
 typedef struct {
@@ -194,7 +193,6 @@ typedef struct {
     uint8_t  stuck_main, stuck_sub, stuck_mode;
     uint8_t  after;                          /* slot played when this one ends; MHFU_EM_NO_MOVE */
     uint32_t valid;
-    uint32_t _pad;
 } mhfu_em_own_t;
 
 /* struct EM_MOVES in addresses.toml */

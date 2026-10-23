@@ -9,6 +9,7 @@
 
 #include <stdint.h>
 
+#include "addresses.gen.h"
 #include "mhfu/types.h"
 
 #ifdef __cplusplus
@@ -65,8 +66,8 @@ int mhfu_steer_frame(uint32_t entity, const mhfu_steer_t *p, uint16_t frame);
 
 /* --- a move's steering, as the move player runs it (move.cpp) ------------------------------- */
 
-#define MHFU_STEER_KEY_STEP 2  /* clip frames between turn keys: mhfu_port.travel.KEY_STEP */
-#define MHFU_STEER_KEYS 256
+/* MHFU_STEER_KEY_STEP, clip frames between turn keys, and MHFU_STEER_KEYS are consts in
+ * addresses.toml */
 
 /* struct STEER_SPEC in addresses.toml */
 typedef struct {
