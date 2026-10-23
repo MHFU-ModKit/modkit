@@ -61,6 +61,8 @@ OWN_MOVES: int = addresses.EM_MOVES.MOVES.count or 0
 """Own moves the framework holds per port."""
 MAX_FRAME = 0xFFFF
 """The clip frame a move's `start` or `stop` can name: the executor stores it in 16 bits."""
+LIFT_RANGE = 2048
+"""World units a clip's lift stays under: a joint's location is a 16-bit count of sixteenths."""
 ROWS = range(hitzone.MAX_ROW + 1)
 BYTE = range(0x100)
 JOINER, NODE_CAPSULE, NODE_SPHERE = hitzone.MARKER_BONES
@@ -754,6 +756,12 @@ def _validate(m: Manifest) -> None:
             _need(c.slot is not None and c.frames is not None, w, "start needs slot and frames")
             _need(c.start >= 0, w, "start is 0 or more")
             _need(c.frames is not None and c.frames >= 1, w, "frames is at least 1")
+        if c.lift is not None:
+            _need(c.start is not None, w, "lift goes with start: it is a copy of a cut")
+            n = None if c.frames is None else c.frames + 1
+            _need(len(c.lift) == n, w, "lift has one value per clip frame, 0 to frames")
+            _need(all(abs(v) < LIFT_RANGE for v in c.lift), w, f"lift is within {LIFT_RANGE} units")
+            continue  # a copy beside its source: it does not place the source
         held = sources.get(cid)
         cuts = held is not None and c.start is not None and m.clips[held].start is not None
         _need(held is None or cuts, w, f"clip {cid} is placed by clips.{held} too")
@@ -771,11 +779,22 @@ def _validate(m: Manifest) -> None:
             _own_move(mv, w)
         else:
             plain = Move(mv.main, mv.sub)
-            fields = ("attacks", "steer", "length", "start", "stop", "carrier", "host_attacks")
+            fields = (
+                "attacks",
+                "steer",
+                "length",
+                "start",
+                "stop",
+                "travel",
+                "lunge",
+                "carrier",
+                "host_attacks",
+            )
             _need(
                 all(getattr(mv, k) == getattr(plain, k) for k in fields),
                 w,
-                "attack, steer, length, start, stop, carrier and host_attacks are for an own move",
+                "attack, steer, length, start, stop, travel, lunge, carrier and host_attacks are "
+                "for an own move",
             )
         if mv.claim is not None:
             _need(bool(mv.claim.mains), w, "claim needs a main")

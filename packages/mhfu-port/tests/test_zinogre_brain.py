@@ -14,12 +14,17 @@ from mhfu import addresses
 from mhfu.em.script import brainfile, build, draw, edit, ir
 from mhfu.em.script import vars as script_vars
 from mhfu.em.script.budget import LIMIT
-from mhfu_port import behaviour, manifest, moves, sequence
+from mhfu_port import behaviour, fk, manifest, moves, sequence
+from mhfu_port import build as builds
 from mhfu_port.brain import charge, fatigue, own, p3, p3ops, splice
 from mhfu_port.build import build as build_port
 from mhfu_port.cli import main
 from mhfu_port.cli.build import modules
 from mhfu_port.data import Data
+from mhfu_port.model import ANIMATION, SKELETON
+from mhp_formats import fu
+from mhp_formats.pac import Pac
+from mhp_formats.skeleton import Skeleton
 
 PORT = Path(__file__).parents[3] / "ports" / "zinogre.toml"
 OWN = addresses.OWN_MOVE_MAIN
@@ -64,7 +69,7 @@ def test_the_manifest_carries_its_brain(zinogre):
     assert (b.donor, b.splice, b.entry, b.fatigue, b.charge) == (40, "base_3", "base_3", True, True)
     assert b.when == {"if_target_set": True, "if_target_state": True}
     assert manifest.loads(manifest.dumps(m)) == m
-    assert len(b.pairs) == 104 and len(b.derived()) == len(own.pairs(b)) == 39
+    assert len(b.pairs) == 107 and len(b.derived()) == len(own.pairs(b)) == 49
 
 
 def test_a_donor_pair_plays_the_authored_move_where_it_is_the_donors(zinogre):
@@ -84,7 +89,7 @@ def test_a_wrapper_turns_and_plays_the_move_of_the_pair_it_leads_to(zinogre):
     assert twins == [["p3_2_10"], ["p3_7_4"]]
     assert set(b.derived().values()) >= {(7, 0), (7, 109), (2, 10), (7, 4), (1, 4), (7, 13)}
     assert b.shared() <= set(b.derived().values()) and (7, 0) in b.shared()
-    assert (7, 13) in b.shared() and b.targets((7, 84)) == [TURN, "p3_7_13"]
+    assert (7, 13) in b.shared() and b.targets((7, 38)) == [TURN, "p3_7_13"]
 
 
 WALKS = {
@@ -135,8 +140,8 @@ def test_the_d2_steps_start_where_the_donor_did_and_stop_past_their_attack(zinog
 def test_every_derived_window_lies_inside_its_move_s_frames(zinogre, module_text):
     _, built = module_text
     made = {n: mv for n, mv in zinogre.m.moves.items() if n.startswith("p3_")}
-    assert sum(bool(mv.start) for mv in made.values()) == 14
-    assert sum(bool(mv.stop) for mv in made.values()) == 13
+    assert sum(bool(mv.start) for mv in made.values()) == 26
+    assert sum(bool(mv.stop) for mv in made.values()) == 26
     assert sum(mv.length is not None for mv in made.values()) == 16
     for name, mv in made.items():
         frames = built.layout.frames[moves.entry(zinogre.m, name, built.layout)]
@@ -144,6 +149,68 @@ def test_every_derived_window_lies_inside_its_move_s_frames(zinogre, module_text
         assert not (mv.stop and mv.length is not None), name
         for a in mv.attacks:
             assert mv.start <= a.frame < a.end <= (mv.stop or frames), name
+
+
+def air_clips(m: manifest.Manifest) -> dict[int, manifest.Clip]:
+    """The lifted copies of jumps, by the donor clip they copy."""
+    return {c.source: c for c in m.clips.values() if c.lift is not None and c.source is not None}
+
+
+def test_the_jumps_are_lifted_copies_in_entries_nothing_else_holds(zinogre, data):
+    m = zinogre.m
+    air = air_clips(m)
+    assert {s: max(c.lift) for s, c in air.items()} == pytest.approx({225: 644, 209: 300}, rel=0.01)
+    lay = builds.layout(m, builds.donor(m, data), builds.host(m, data))
+    assert not lay.unplaced
+    for source, c in air.items():
+        assert lay.entries[c.slot] == source and lay.cuts[c.slot] == c.cut
+        assert lay.lifts[c.slot] == tuple(c.lift) and c.slot not in lay.partial
+        assert lay.ids[source] != c.slot, "the whole clip keeps its own entry"
+    assert sum(mv.own for mv in m.moves.values()) <= manifest.OWN_MOVES
+
+
+def test_the_air_roll_flies_and_lunges_as_the_donor_does(zinogre):
+    m = zinogre.m
+    roll = m.moves["p3_7_22_2"]
+    assert (m.clips[roll.clip].source, roll.length, roll.start) == (225, 22, 0)
+    assert roll.travel[-1] == pytest.approx((120, 852), rel=0.01)
+    assert roll.lunge == manifest.Lunge((0, 32), 400.0, 1800.0, -700.0, 1800.0)
+    assert [m.moves[n].clip for n in sequence.chain(m, "p3_7_22")][1] == roll.clip
+
+
+def test_the_stamp_waits_16_or_39_frames_and_hops_for_18(zinogre):
+    m = zinogre.m
+    short, long = m.moves["p3_7_21"], m.moves[manifest.own_name((7, 86))]
+    assert (short.start, short.stop, long.start, long.stop) == (
+        46,
+        78,
+        0,
+        78,
+    )  # 16 and 39 AI frames
+    hop = m.moves[short.after]
+    assert (m.clips[hop.clip].source, hop.length) == (209, 18)
+    assert hop.travel[-1] == pytest.approx((83, 1401), rel=0.01, abs=1)
+
+
+def test_the_sidesteps_travel_across_their_window_and_turn_half_way(zinogre):
+    m = zinogre.m
+    left, right = m.moves["p3_2_16"], m.moves["p3_2_17"]
+    assert left.travel[-1] == (-257.0, -525.0) and right.travel[-1] == (192.0, -525.0)
+    assert left.steer == manifest.Steer(turn="fixed", angle=-180.0, walls=False, window=(40, 160))
+    assert right.steer.angle == 180.0 and left.length is None
+
+
+def test_the_built_clips_carry_the_jumps_height_on_joint_0(zinogre, module_text):
+    _, built = module_text
+    pac = Pac.from_bytes(built.pac)
+    anim = fu.Anim.from_bytes(pac.entries[ANIMATION])
+    skeleton = Skeleton.from_bytes(pac.entries[SKELETON])
+    for source, peak in {225: 644, 209: 300}.items():
+        c = air_clips(zinogre.m)[source]
+        clip = fk.rig_clip(anim, c.slot, skeleton)
+        assert clip is not None
+        (height,) = [ch for ch in clip.tracks[0].channels if ch.bit == 0x80]
+        assert max(k.value for k in height.keyframes) / 16 == pytest.approx(peak, rel=0.01)
 
 
 HANDS = {
@@ -187,41 +254,40 @@ def test_equal_tails_are_one_move(zinogre):
     assert all(f.item in m.moves for f in zinogre.derived if f.item and f.item.startswith("p3_"))
 
 
-ELSEWHERE = {"7,70", "7,71", "7,79", "7,80", "7,81", "7,82", "7,116", "7,117", "7,118", "7,119"}
-"""The twins whose handler hands over to another pair than their twin's: they play their twin's
-whole chain. Deriving them would take 125 own moves of 96."""
-
-
-def own_steps(m: manifest.Manifest, name: str) -> list[tuple[object, ...]]:
-    """The leading steps of `chain_of` that come from the pair `name` heads, up to its hand-over."""
-    out = []
-    for n, step in zip(sequence.chain(m, name), chain_of(m, name), strict=True):
-        if m.moves[n].label != m.moves[name].label:
-            break
-        out.append(step)
-    return out
+LEADS = {
+    "7,219": "p3_7_70",
+    "7,220": "p3_7_71",
+    "7,222": "p3_7_81",
+    "7,223": "p3_7_82",
+    "7,229": "p3_7_118",
+    "7,230": "p3_7_119",
+}
+"""The pairs the turn wrappers (7, 72), (7, 73), (7, 83), (7, 84), (7, 120), (7, 121) lead to, with
+the move each plays."""
 
 
 def test_the_pairs_that_share_a_move_derive_the_same_one(zinogre, data):
-    """A pair that names its twin's move would derive that very move itself, up to where it hands
-    over. (7, 71), (7, 82) and (7, 119) are not the script's: only wrappers lead to them, and play
-    (7, 13)'s move."""
+    """A pair that names its twin's move would derive that very move itself, and the wrappers play
+    the moves of twins of the pairs they lead to."""
     b = zinogre.m.brain
-    named = {k: v for k, v in b.pairs.items() if isinstance(v, str)}
-    twins = {k: v for k, v in named.items() if v in b.derived()}
-    twins |= {"7,71": "p3_7_13", "7,82": "p3_7_13", "7,119": "p3_7_13"}
-    assert len(twins) == 21
+    twins = {k: v for k, v in b.pairs.items() if isinstance(v, str) and v in b.derived()}
+    assert len(twins) == 11
+    twins |= LEADS
     apart = manifest.load(PORT)
     apart.brain.pairs |= {k: manifest.OWN for k in twins}
     again, _ = own.expand(apart, data)
-    differ = set()
     for key, first in twins.items():
         name = manifest.own_name(manifest.pair_of(key))
-        want = own_steps(again, first)
-        assert chain_of(again, name)[: len(want)] == want, key
-        if chain_of(again, name) != chain_of(again, first):
-            differ.add(key)
-    assert differ == ELSEWHERE
+        assert chain_of(again, name) == chain_of(again, first), key
+
+
+def test_the_wrappers_play_the_moves_of_the_twins_they_lead_to(zinogre):
+    b = zinogre.m.brain
+    wrappers = {72: 70, 73: 71, 83: 81, 84: 82, 120: 118, 121: 119}
+    assert {w: b.targets((7, w)) for w in wrappers} == {
+        w: [TURN, manifest.own_name((7, p))] for w, p in wrappers.items()
+    }
+    assert all(b.pairs[f"7,{p}"] == manifest.OWN for p in wrappers.values())
 
 
 def test_what_fought_the_brain_is_gone(zinogre):
@@ -430,7 +496,7 @@ def test_the_fatigue_table(zinogre, data):
 @pytest.fixture(scope="module")
 def module_text(zinogre, data, tmp_path_factory):
     where = tmp_path_factory.mktemp("zinogre")
-    m = manifest.load(PORT)
+    m = zinogre.m  # built as the CLI does: after its own moves are derived
     built = build_port(m, data)
     modules(m, built, where, data)
     return (where / moves.module_name(m)).read_text(), built
@@ -450,12 +516,12 @@ def test_the_moves_module_carries_fatigue_and_charge(module_text):
 
 
 def test_the_own_moves_fit_the_framework(zinogre, module_text):
-    """The slots and the turn keys the registry holds: the keys are what bounds the port."""
+    """The slots and the pools the registry holds: sharing equal runs is what fits the port."""
     _, built = module_text
     names = [n for n, mv in zinogre.m.moves.items() if mv.own]
-    keys = sum(len(moves.curve(zinogre.m, n, built.layout) or "") // 4 for n in names)
-    assert len(names) == 93 and keys == 4701
-    assert len(names) <= moves.SLOTS and keys <= moves.POOL
+    held = moves.pools(zinogre.m, built.layout)
+    assert len(names) == 125
+    assert (len(held.keys), len(held.samples), len(held.lunges)) == (2432, 1052, 10)
     assert not moves.problems(zinogre.m, built.layout, moves.records(Data.find().fu, 75))
 
 

@@ -51,6 +51,19 @@ def test_the_list_shows_the_frames_a_move_plays():
     )
 
 
+def test_the_list_shows_the_motion_a_move_makes_by_code():
+    m = manifest.loads(TEXT + "[moves.p3_7_13]\nclip = 'charge'\n")
+    mv = m.moves["p3_7_13"]
+    mv.travel = [(0.0, 0.0), (2.0, 5.5)]
+    mv.lunge = manifest.Lunge((0, 8), 1.0, 2.0, -3.0, 5.0)
+    mv.steer = manifest.Steer(turn="fixed", angle=-90.0, window=(2, 8))
+    line = describe(m, "p3_7_13", 3)
+    assert "turns -90 degrees in frames (2, 8)" in line and "travels 2, 5.5 over 2 samples" in line
+    assert "lunges -3 to 2" in line and "rises" not in line
+    m.clips["charge"].lift = [0.0, 3.0, -9.0]
+    assert "rises -9" in describe(m, "p3_7_13", 3)
+
+
 def test_the_list_names_the_pair_and_the_chain_a_step_is_shared_with():
     m = manifest.loads(TEXT + "[moves.p3_7_13]\nclip = 'charge'\nlabel = 'MHP3rd 7,13'\n")
     assert describe(m, "p3_7_13", 3).endswith("clip 61 charge  (MHP3rd 7,13)")
@@ -61,18 +74,19 @@ def test_the_cli_lists_the_chains_across_hand_overs(data, capsys):
     path = PORTS / "zinogre.toml"
     code = main(["own", str(path), "--data", str(data.fu.root), "--p3rd-data", str(data.p3rd.root)])
     out = capsys.readouterr().out
-    assert code == 0 and f"39 pairs, 93 own moves of {manifest.OWN_MOVES}" in out
+    assert code == 0 and f"49 pairs, 125 own moves of {manifest.OWN_MOVES}" in out
     lines = out.splitlines()
     head = lines.index("7,12  p3_7_12 + 3 more")
     chain = [line.split()[0] for line in lines[head + 1 :] if line.startswith("  p3_")][:4]
     assert chain == ["p3_7_12", "p3_7_12_2", "p3_7_12_3", "p3_7_156"]
     assert any("p3_7_156 (slot" in line and "(MHP3rd 7,156)" in line for line in lines)
     held = [line for line in lines if line.startswith("  p3_7_0 (slot")]
-    assert len(held) == 3, "its own chain, then (7, 14)'s and (7, 16)'s hand-overs"
+    assert len(held) == 5, "its own chain and the hand-overs of four pairs"
     assert not held[0].endswith("shared with p3_7_0") and held[1].endswith("shared with p3_7_0")
     again = [line for line in lines if line.startswith("  p3_7_14_2 (slot")]
     assert len(again) == 2 and again[1].endswith("shared with p3_7_14"), "marked once per chain"
     assert not held[2].endswith("shared with p3_7_0"), "(7, 16)'s tail was marked at its first step"
+    assert held[3].endswith("shared with p3_7_0") and not held[4].endswith("shared with p3_7_0")
 
 
 def test_the_cli_lists_the_moves(data, capsys):

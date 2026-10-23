@@ -38,8 +38,8 @@ def register(sub: Subparsers) -> None:
 
 
 def run_build(args: argparse.Namespace) -> int:
-    m = manifest.load(args.manifest)
     games = data.from_arguments(args)
+    m = own.expanded(manifest.load(args.manifest), games, say)  # its jumps' lifted clips are built
     built = build(m, games)
     out: Path = args.out or Path(m.port.pac)
     written = modules(m, built, out.parent, games, say)
@@ -49,8 +49,8 @@ def run_build(args: argparse.Namespace) -> int:
 
 
 def run_inject(args: argparse.Namespace) -> int:
-    m = manifest.load(args.manifest)
     games = data.from_arguments(args)
+    m = own.expanded(manifest.load(args.manifest), games, say)
     built = build(m, games)
     lib = args.lib or inject.memstick() / inject.MODS_SUBDIR / layout.LIB
     written = modules(m, built, lib, games, say)
@@ -74,10 +74,11 @@ def modules(
     report: own.Report | None = None,
 ) -> list[Path]:
     """Write the port's clips, turns and moves modules into `where`, each whole and only when it
-    changed, since the game re-runs a module that changed on disk; those written. The moves
-    module carries the own moves `[brain.pairs]` derive (`own.expand`) and, with `[brain] fatigue`
-    and `charge`, the stamina and charge tables (`fatigue.table`, `charge.table`), each finding of
-    which goes to `report`. Raises
+    changed, since the game re-runs a module that changed on disk; those written. `built` is of
+    `m` as `own.expanded` leaves it: a build of the manifest before it lacks the lifted copies of
+    jumps the moves play. The moves module carries the own moves `[brain.pairs]` derive (a no-op
+    on an expanded `m`) and, with `[brain] fatigue` and `charge`, the stamina and charge tables
+    (`fatigue.table`, `charge.table`), each finding of which goes to `report`. Raises
     `ManifestError` for a move the moves module cannot carry, before any is written."""
     m = own.expanded(m, games, report)
     stamina = fatigue.expanded(m, games, report)

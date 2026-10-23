@@ -215,13 +215,16 @@ A donor pair plays a host pair (a turn), the authored move that is the donor's
 (`charge_up`, `dash`, `dash_stop`, `break_howl`) or an own move derived from the donor
 (`"own"`); a pair that only turns, then enters another, turns on em75's (1, 2) and plays the
 move of the pair it leads to; pairs whose derived moves come out identical (twins) share the
-first one's, and ten of them, which the donor hands over elsewhere, play it with its hand-over
-(`ELSEWHERE` in `test_zinogre_brain.py`: their own would take 125 own moves of 96). A derived
+first one's, and the ten whose donor handler hands over elsewhere derive their own chains (a
+wrapper plays that of the twin of the pair it leads to). A derived
 move goes on into the pair the donor's handler hands over to (`p3_7_12` into `p3_7_156`), and
-equal tails are one move. The donor's walks are derived moves on their own walk clips: em75's
-(1, 0) walks to a destination its own script sets first (docs/formats/p3rd_ai_script.md). His 93
-own moves, the 14 authored and the 79 derived, take 4701 of the registry's 5632 turn keys and 93
-of its 96 slots.
+equal tails are one move. What a handler does by code, not by its clips, is derived with them: its
+travel, a lunge, a half turn, and a jump's height as a lifted copy of its clip in a free entry
+(`Move.travel`, `Move.lunge`, a fixed `steer`, `Clip.lift`; docs/formats/p3rd_ai_script.md). The
+donor's walks are derived moves on their own walk clips: em75's
+(1, 0) walks to a destination its own script sets first (docs/formats/p3rd_ai_script.md). His 125
+own moves take 2432 of the registry's 2944 turn keys (a run the registry holds twice is held
+once), 1052 of its 1280 travel samples, 10 of its 12 lunges and 125 of its 128 slots.
 
 What stays of the hand-built rules, after the brain's own picks (2 plays nothing and so runs
 first):
