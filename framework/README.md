@@ -136,9 +136,10 @@ the engine counts the flinch and applies the damage, then enters the move's carr
 
 ## Own moves from a manifest
 
-A port's own moves sit in a registry by slot (`mhfu.em_move`): `mhfu.addr.EM_MOVES.MOVES_COUNT`
-(96) of them, and the turn keys they share (`EM_MOVES.KEYS_COUNT`, 5632), in one 20.3 KB
-partition block. The seam's
+A port's own moves sit in a registry by slot (`mhfu.em_move`): `mhfu.addr.OWN_MOVES` (96) of
+them, and the turn keys (`EM_KEYS`, 5632), travel samples (`EM_SAMPLES`, 512) and lunges
+(`EM_LUNGES`, 16) they share, in one 23.6 KB partition block. These are consts in
+`addresses.toml`: raising one is that one line, every offset after it is laid out from it. The seam's
 brain, in C on the AI step, plays one through the move player when asked (`mhfu.em_play`), when the
 move before it ends on its clip, its length, its stop or a wall and names it as its `after`, or when a rule
 says (`play_move`, and `from_move` to fire while one plays). `mhfu_port.lua` does all of it from the
@@ -151,6 +152,22 @@ toward or away from the hunter at `rate` units a frame, a fixed turn, walls that
 hunter and away turns apply on every frame of the move unless the steer has a `window = { from,
 to }`: then only while the clip frame (part 0's cursor) is in `[from, to)`, as the donor turns in
 a cursor window.
+
+A move can travel by code, as MHP3rd's airborne steps do, where the clip carries nothing.
+`steer.travel` is the monster's own (x, z) every `mhfu.addr.STEER_KEY_STEP` clip frames from the
+move's `start`: cumulative, x toward its left and z forward in its frame when the move began, as
+16-bit samples of 1/`STEER_TRAVEL_SCALE` units (8 hex digits a sample in the moves module,
+`mhfu.steering`), at most `STEER_SAMPLES` a move. Each AI frame the move player adds the curve's
+change since the clip cursor's last frame (straight lines between samples, so any cursor rate
+and the blend's hold are right) to POSITION, turned by that YAW and scaled by the monster's size.
+It does so before the engine's root motion, wall push-out and floor in the same frame: walls
+undo it as they undo root motion, and the floor keeps the height. `steer.lunge = { window = {
+lo, hi }, near, span, base, range }` travels toward the hunter across the clip frames (lo, hi]: by
+the hunter's XZ distance `d` when the move began, nothing under `near`, else `base + range *
+min((d - near) / span, 1)` units along the bearing to the hunter then, in world axes and not
+scaled. A fixed turn with a `window` turns `total` across it by the cursor instead of over
+`frames` AI frames. All of it is data in the registry and in `mhfu.move_play`'s steer; a move
+without it writes what it always did.
 
 An AI script plays own move k with `enter 16 k 0` (`mhfu.addr.OWN_MOVE_MAIN`): the enter-action
 stub enters the slot's carrier (the hub `(0,2)` for an empty or out-of-range slot, the game never

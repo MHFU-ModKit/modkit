@@ -89,10 +89,22 @@ static_assert(sizeof(mhfu_steer_t) == MHFU_STEER_PARAMS_SIZE, "STEER_PARAMS layo
 static_assert(offsetof(mhfu_steer_t, dir) == MHFU_STEER_PARAMS_DIR, "STEER_PARAMS layout");
 static_assert(offsetof(mhfu_steer_t, win_from) == MHFU_STEER_PARAMS_WIN_FROM, "STEER_PARAMS layout");
 static_assert(offsetof(mhfu_steer_t, win_to) == MHFU_STEER_PARAMS_WIN_TO, "STEER_PARAMS layout");
+static_assert(sizeof(mhfu_travel_sample_t) == MHFU_TRAVEL_SAMPLE_SIZE, "TRAVEL_SAMPLE layout");
+static_assert(offsetof(mhfu_travel_sample_t, z) == MHFU_TRAVEL_SAMPLE_Z, "TRAVEL_SAMPLE layout");
+static_assert(sizeof(mhfu_steer_lunge_t) == MHFU_STEER_LUNGE_SIZE, "STEER_LUNGE layout");
+static_assert(offsetof(mhfu_steer_lunge_t, hi) == MHFU_STEER_LUNGE_HI, "STEER_LUNGE layout");
+static_assert(offsetof(mhfu_steer_lunge_t, near) == MHFU_STEER_LUNGE_NEAR, "STEER_LUNGE layout");
+static_assert(offsetof(mhfu_steer_lunge_t, span) == MHFU_STEER_LUNGE_SPAN, "STEER_LUNGE layout");
+static_assert(offsetof(mhfu_steer_lunge_t, base) == MHFU_STEER_LUNGE_BASE, "STEER_LUNGE layout");
+static_assert(offsetof(mhfu_steer_lunge_t, range) == MHFU_STEER_LUNGE_RANGE, "STEER_LUNGE layout");
 static_assert(sizeof(mhfu_steer_spec_t) == MHFU_STEER_SPEC_SIZE, "STEER_SPEC layout");
 static_assert(offsetof(mhfu_steer_spec_t, key_count) == MHFU_STEER_SPEC_KEY_COUNT, "STEER_SPEC layout");
 static_assert(offsetof(mhfu_steer_spec_t, stuck_main) == MHFU_STEER_SPEC_STUCK_MAIN, "STEER_SPEC layout");
 static_assert(offsetof(mhfu_steer_spec_t, keys) == MHFU_STEER_SPEC_KEYS, "STEER_SPEC layout");
+static_assert(offsetof(mhfu_steer_spec_t, sample_count) == MHFU_STEER_SPEC_SAMPLE_COUNT,
+              "STEER_SPEC layout");
+static_assert(offsetof(mhfu_steer_spec_t, lunge) == MHFU_STEER_SPEC_LUNGE, "STEER_SPEC layout");
+static_assert(offsetof(mhfu_steer_spec_t, samples) == MHFU_STEER_SPEC_SAMPLES, "STEER_SPEC layout");
 static_assert(sizeof(mhfu_steer_state_t) == MHFU_STEER_STATE_SIZE, "STEER_STATE layout");
 static_assert(offsetof(mhfu_steer_state_t, now) == MHFU_STEER_STATE_NOW, "STEER_STATE layout");
 static_assert(offsetof(mhfu_steer_state_t, base) == MHFU_STEER_STATE_BASE, "STEER_STATE layout");
@@ -100,6 +112,8 @@ static_assert(offsetof(mhfu_steer_state_t, yaw0) == MHFU_STEER_STATE_YAW0, "STEE
 static_assert(offsetof(mhfu_steer_state_t, wall) == MHFU_STEER_STATE_WALL, "STEER_STATE layout");
 static_assert(offsetof(mhfu_steer_state_t, cursor) == MHFU_STEER_STATE_CURSOR, "STEER_STATE layout");
 static_assert(offsetof(mhfu_steer_state_t, yaw) == MHFU_STEER_STATE_YAW, "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, lunge_x) == MHFU_STEER_STATE_LUNGE_X, "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, lunge_z) == MHFU_STEER_STATE_LUNGE_Z, "STEER_STATE layout");
 
 /* --- the engine ------------------------------------------------------------------------- */
 
@@ -160,8 +174,10 @@ static uint32_t carrier(void)
     return ((uint32_t)S->move.carrier_main << 8) | S->move.carrier_sub;
 }
 
-/* YAW along the clip's turn and the spec's mode; the wall result (mhfu/steer.h). Part 0 holds
- * the root, whose motion the turn's keys go with. */
+/* YAW along the clip's turn and the spec's mode, POSITION along its travel; the wall result
+ * (mhfu/steer.h). Part 0 holds the root, whose motion the turn's keys go with. This runs before
+ * ROOT_MOTION, WALL_COLLIDE and GROUND_QUERY in the same AI frame, so a position written here is
+ * pushed out of walls and set on the floor as the root motion is. */
 static int steer(uint32_t ent)
 {
     uint32_t b = clip_block(ent, 0);
@@ -169,7 +185,7 @@ static int steer(uint32_t ent)
     if (!e) return MHFU_STEER_GO;
     const mhfu_vec3_t *hunter =
         (const mhfu_vec3_t *)direct(MHFU_PLAYER_ENTITY + MHFU_ENTITY_POSITION);
-    return mhfu_steer_move(e, hunter, &S->steer, S->frames,
+    return mhfu_steer_move(e, hunter, &S->steer, S->frames, (float)S->move.start,
                            mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_PHASE),
                            mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_LOOP_START),
                            mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_END));

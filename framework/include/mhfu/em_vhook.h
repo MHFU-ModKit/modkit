@@ -183,15 +183,19 @@ int  mhfu_em_tip(const uint8_t (*pairs)[2], int n);
  * move player clears the one its own entry of the hub raises. mhfu_em_status_t.own_enters counts
  * these enters, own_last gives the slot of the last that played. */
 #define MHFU_EM_MOVES   MHFU_OWN_MOVES
-#define MHFU_EM_NO_MOVE 0xFFu   /* MHFU_EM_KEYS, the keys' pool, is a const in addresses.toml */
+#define MHFU_EM_NO_MOVE 0xFFu
+#define MHFU_EM_NO_LUNGE 0xFFu   /* mhfu_em_own_t.lunge_at: no lunge */
+/* The pools' sizes, MHFU_EM_KEYS, _SAMPLES and _LUNGES, are consts in addresses.toml. */
 
 /* struct EM_OWN in addresses.toml */
 typedef struct {
     mhfu_move_t  move;
     mhfu_steer_t steer;
     uint16_t key_at, key_count;              /* its turn keys in mhfu_em_moves_t.keys */
+    uint16_t sample_at, sample_count;        /* its travel samples in mhfu_em_moves_t.samples */
     uint8_t  stuck_main, stuck_sub, stuck_mode;
     uint8_t  after;                          /* slot played when this one ends; MHFU_EM_NO_MOVE */
+    uint8_t  lunge_at;                       /* its lunge in mhfu_em_moves_t.lunges, or NO_LUNGE */
     uint32_t valid;
 } mhfu_em_own_t;
 
@@ -201,17 +205,19 @@ typedef struct {
     uint32_t req_ent, req_slot;              /* a play asked for, taken at req_ent's AI step */
     uint32_t tag_slot, tag_started;          /* the slot of the move player's move, if ours */
     uint32_t plays, chained;
-    uint32_t key_top;
+    uint32_t key_top, sample_top, lunge_top; /* pool entries in use */
+    uint32_t req_force;                      /* REQ_SLOT starts while the notice runs */
     mhfu_em_own_t moves[MHFU_EM_MOVES];
     uint16_t keys[MHFU_EM_KEYS];
+    mhfu_travel_sample_t samples[MHFU_EM_SAMPLES];
+    mhfu_steer_lunge_t lunges[MHFU_EM_LUNGES];
     mhfu_steer_spec_t scratch;               /* the steering handed to the move player */
-    uint32_t req_force;                      /* REQ_SLOT starts while the notice runs */
 } mhfu_em_moves_t;
 
-/* Empties every slot and the turn keys. */
+/* Empties every slot and the pools: turn keys, travel samples, lunges. */
 void mhfu_em_moves_clear(void);
-/* Slot `slot` plays mv, steered by s (its keys copied); `after` is a slot or MHFU_EM_NO_MOVE.
- * 0 for a bad slot or no room left for the keys. */
+/* Slot `slot` plays mv, steered by s (its keys, travel samples and lunge copied); `after` is a
+ * slot or MHFU_EM_NO_MOVE. 0 for a bad slot or no room left in a pool. */
 int  mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_spec_t *s, uint8_t after);
 /* Plays slot on entity at its next AI step, forced past the notice wait (MOVE.FORCE) or not; 0
  * while nothing is wrapped or the slot is empty. */

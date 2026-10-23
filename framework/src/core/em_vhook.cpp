@@ -307,20 +307,31 @@ static_assert(sizeof(mhfu_em_own_t) == MHFU_EM_OWN_SIZE, "EM_OWN layout");
 static_assert(offsetof(mhfu_em_own_t, steer) == MHFU_EM_OWN_STEER, "EM_OWN layout");
 static_assert(offsetof(mhfu_em_own_t, key_at) == MHFU_EM_OWN_KEY_AT, "EM_OWN layout");
 static_assert(offsetof(mhfu_em_own_t, key_count) == MHFU_EM_OWN_KEY_COUNT, "EM_OWN layout");
+static_assert(offsetof(mhfu_em_own_t, sample_at) == MHFU_EM_OWN_SAMPLE_AT, "EM_OWN layout");
+static_assert(offsetof(mhfu_em_own_t, sample_count) == MHFU_EM_OWN_SAMPLE_COUNT, "EM_OWN layout");
 static_assert(offsetof(mhfu_em_own_t, stuck_main) == MHFU_EM_OWN_STUCK_MAIN, "EM_OWN layout");
 static_assert(offsetof(mhfu_em_own_t, after) == MHFU_EM_OWN_AFTER, "EM_OWN layout");
+static_assert(offsetof(mhfu_em_own_t, lunge_at) == MHFU_EM_OWN_LUNGE_AT, "EM_OWN layout");
 static_assert(offsetof(mhfu_em_own_t, valid) == MHFU_EM_OWN_VALID, "EM_OWN layout");
 static_assert(sizeof(mhfu_em_moves_t) == MHFU_EM_MOVES_SIZE, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, req_ent) == MHFU_EM_MOVES_REQ_ENT, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, tag_slot) == MHFU_EM_MOVES_TAG_SLOT, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, key_top) == MHFU_EM_MOVES_KEY_TOP, "EM_MOVES layout");
+static_assert(offsetof(mhfu_em_moves_t, sample_top) == MHFU_EM_MOVES_SAMPLE_TOP, "EM_MOVES layout");
+static_assert(offsetof(mhfu_em_moves_t, lunge_top) == MHFU_EM_MOVES_LUNGE_TOP, "EM_MOVES layout");
+static_assert(offsetof(mhfu_em_moves_t, req_force) == MHFU_EM_MOVES_REQ_FORCE, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, moves) == MHFU_EM_MOVES_MOVES, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, keys) == MHFU_EM_MOVES_KEYS, "EM_MOVES layout");
+static_assert(offsetof(mhfu_em_moves_t, samples) == MHFU_EM_MOVES_SAMPLES, "EM_MOVES layout");
+static_assert(offsetof(mhfu_em_moves_t, lunges) == MHFU_EM_MOVES_LUNGES, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, scratch) == MHFU_EM_MOVES_SCRATCH, "EM_MOVES layout");
-static_assert(offsetof(mhfu_em_moves_t, req_force) == MHFU_EM_MOVES_REQ_FORCE, "EM_MOVES layout");
 /* the act stub reaches them by 16-bit offsets from the registry and from a slot */
 static_assert(MHFU_EM_MOVES_REQ_FORCE < 0x8000 && MHFU_EM_MOVES_MOVES + MHFU_EM_OWN_VALID < 0x8000,
               "EM_MOVES offsets past a 16-bit immediate");
+/* a slot's pool indices are 16 bits, its lunge's 8 */
+static_assert(MHFU_EM_KEYS <= 0xFFFF && MHFU_EM_SAMPLES <= 0xFFFF && MHFU_EM_LUNGES < 0xFF,
+              "EM_MOVES pools past an index");
+static_assert(MHFU_OWN_MOVES < 0xFF, "EM_MOVES slots past a byte, 0xFF being none");
 
 static void cfg_reset_live(void)
 {
@@ -481,7 +492,7 @@ static int ours(const volatile mhfu_move_state_t *m)
     return (int)R->tag_slot;
 }
 
-/* slot's steering in the registry's scratch, keys and all */
+/* slot's steering in the registry's scratch, keys, travel samples and lunge and all */
 static const volatile mhfu_steer_spec_t *steer_of(const volatile mhfu_em_own_t *o)
 {
     volatile mhfu_steer_spec_t *sp = &R->scratch;
@@ -492,6 +503,12 @@ static const volatile mhfu_steer_spec_t *steer_of(const volatile mhfu_em_own_t *
     sp->stuck_mode = o->stuck_mode;
     for (unsigned k = 0; k < o->key_count && k < MHFU_STEER_KEYS; k++)
         sp->keys[k] = R->keys[o->key_at + k];
+    unsigned n = o->sample_count < MHFU_STEER_SAMPLES ? o->sample_count : MHFU_STEER_SAMPLES;
+    sp->sample_count = (uint16_t)n;
+    if (n) copy_words(sp->samples, &R->samples[o->sample_at], n * sizeof(mhfu_travel_sample_t));
+    sp->lunge.hi = 0;
+    if (o->lunge_at != MHFU_EM_NO_LUNGE)
+        copy_words(&sp->lunge, &R->lunges[o->lunge_at], sizeof(mhfu_steer_lunge_t));
     return sp;
 }
 
@@ -1518,22 +1535,36 @@ extern "C" void mhfu_em_moves_clear(void)
     if (!R) return;
     R->req_ent = 0;
     for (int i = 0; i < MHFU_EM_MOVES; i++) R->moves[i].valid = 0;
-    R->key_top = 0;
+    R->key_top = R->sample_top = R->lunge_top = 0;
 }
 
-/* A slot is rewritten off (VALID 0) and its keys appended: a brain that reads it meanwhile sees
- * it empty, and keys a rewrite leaves behind wait for mhfu_em_moves_clear. */
+/* A slot is rewritten off (VALID 0) and its keys and samples appended: a brain that reads it
+ * meanwhile sees it empty, and those a rewrite leaves behind wait for mhfu_em_moves_clear. A
+ * lunge keeps its place when the slot had one. */
 extern "C" int mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_spec_t *s,
                             uint8_t after)
 {
     if (!R || !mv || !s || slot < 0 || slot >= MHFU_EM_MOVES) return 0;
     uint32_t n = s->key_count > MHFU_STEER_KEYS ? MHFU_STEER_KEYS : s->key_count;
+    uint32_t m = s->sample_count > MHFU_STEER_SAMPLES ? MHFU_STEER_SAMPLES : s->sample_count;
+    volatile mhfu_em_own_t *o = &R->moves[slot];
+    const bool lunge = s->lunge.hi != 0;
+    const bool held = o->valid && o->lunge_at < R->lunge_top;
+    const uint8_t at = held ? o->lunge_at : (uint8_t)R->lunge_top;
     if (R->key_top + n > MHFU_EM_KEYS) {
         mhfu_log("[%s] own move %d: %u turn keys, %u left", OWNER, slot, (unsigned)n,
                  (unsigned)(MHFU_EM_KEYS - R->key_top));
         return 0;
     }
-    volatile mhfu_em_own_t *o = &R->moves[slot];
+    if (R->sample_top + m > MHFU_EM_SAMPLES) {
+        mhfu_log("[%s] own move %d: %u travel samples, %u left", OWNER, slot, (unsigned)m,
+                 (unsigned)(MHFU_EM_SAMPLES - R->sample_top));
+        return 0;
+    }
+    if (lunge && !held && R->lunge_top >= MHFU_EM_LUNGES) {
+        mhfu_log("[%s] own move %d: no room for a lunge (%d)", OWNER, slot, MHFU_EM_LUNGES);
+        return 0;
+    }
     o->valid = 0;
     copy_words(&o->move, mv, sizeof(*mv));
     /* the carrier again at the end, so AFTER follows before the host brain picks; the hub it
@@ -1549,6 +1580,15 @@ extern "C" int mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_sp
     o->key_count = (uint16_t)n;
     for (uint32_t k = 0; k < n; k++) R->keys[R->key_top + k] = s->keys[k];
     R->key_top += n;
+    o->sample_at = (uint16_t)R->sample_top;
+    o->sample_count = (uint16_t)m;
+    if (m) copy_words(&R->samples[R->sample_top], s->samples, m * sizeof(mhfu_travel_sample_t));
+    R->sample_top += m;
+    if (lunge) {
+        copy_words(&R->lunges[at], &s->lunge, sizeof(s->lunge));
+        if (!held) R->lunge_top++;
+    }
+    o->lunge_at = lunge ? at : MHFU_EM_NO_LUNGE;
     o->stuck_main = s->stuck_main;
     o->stuck_sub = s->stuck_sub;
     o->stuck_mode = s->stuck_mode;
