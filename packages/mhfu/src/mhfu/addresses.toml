@@ -1218,5 +1218,5 @@ EM_SAMPLES = { value = 1280, doc = "travel samples all own moves share in EM_MOV
 EM_LUNGES = { value = 12, doc = "lunges the registry holds, an equal one of two moves once: the Zinogre's hold 10" }
 STEER_KEYS = { value = 256, doc = "turn keys one move holds (STEER_SPEC.KEYS)" }
 STEER_KEY_STEP = { value = 2, doc = "clip frames between a move's turn keys and between its travel samples: the cursor's step at speed 2, so it lands on them" }
-STEER_SAMPLES = { value = 128, doc = "travel samples one move holds (STEER_SPEC.SAMPLES)" }
+STEER_SAMPLES = { value = 132, doc = "travel samples one move holds (STEER_SPEC.SAMPLES): 2 clip frames each, so a clip of 262 frames; the Brute's longest walk has 130" }
 STEER_TRAVEL_SCALE = { value = 4, doc = "a travel sample's units to a world unit: its x and z are 16-bit multiples of 1/STEER_TRAVEL_SCALE" }
