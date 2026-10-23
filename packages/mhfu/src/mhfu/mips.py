@@ -36,6 +36,16 @@ Fpr = rabbitizer.RegCop1O32
 Register = rabbitizer.Enum
 """A GPR (`Gpr.a1`) or an FPU register (`Fpr.fa0`, which is $f12)."""
 
+
+def _value_hash(self: rabbitizer.Enum) -> int:
+    return hash(self.value)
+
+
+# rabbitizer 1.16's Enum.__hash__ leaks an object a call, and the walkers hash registers and
+# instruction ids in every dict and set they touch (10+ GB in one port's derivation). Equal enums
+# have equal values, so this hash agrees with ==.
+rabbitizer.Enum.__hash__ = _value_hash  # type: ignore[method-assign]
+
 _MASK = 0xFFFFFFFF
 CALL_CLOBBERS = frozenset(
     [Gpr.at, Gpr.v0, Gpr.v1, Gpr.a0, Gpr.a1, Gpr.a2, Gpr.a3, Gpr.t8, Gpr.t9, Gpr.ra]
