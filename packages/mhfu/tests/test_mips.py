@@ -1,12 +1,18 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
+import gc
+import re
 import struct
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 from mhfu import files
 from mhfu.memory import Image, Unmapped
 from mhfu.mips import Code, Fpr, Gpr, decode, is_prologue, move_source, writes
 from modkit_testing import mips as asm
+from rabbitizer import InstrId, Instruction
 
 BASE = 0x0010_0000
 PROLOGUE = asm.addiu("sp", "sp", -0x10)
@@ -232,3 +238,37 @@ def test_game_code(game):
         }
         for s in code.switches.values():
             assert s.targets and all(t in code.function(s.jr) for t in s.targets)
+
+
+PACKAGES = Path(__file__).resolve().parents[2]
+
+
+def test_hashing_an_enum_keeps_no_memory():
+    keys = {Gpr.a0: 1}
+    gc.collect()
+    before = sys.getallocatedblocks()
+    for _ in range(10_000):
+        keys.get(Gpr.a1)
+        hash(InstrId.cpu_sb)
+    gc.collect()
+    assert sys.getallocatedblocks() - before < 100
+
+
+def test_an_operand_finds_its_register_key():
+    ins = Instruction(0x8FA40010)  # lw a0, 0x10(sp)
+    assert {Gpr.a0: 1}[ins.rt] == 1 and ins.uniqueId in {InstrId.cpu_lw}
+
+
+def test_every_module_that_imports_rabbitizer_loads_the_hash():
+    names = []
+    for f in sorted(PACKAGES.glob("*/src/**/*.py")):
+        if re.search(r"^(import|from) rabbitizer", f.read_text(encoding="utf-8"), re.M):
+            src = next(p for p in f.parents if p.name == "src")
+            names.append(
+                ".".join(x for x in f.relative_to(src).with_suffix("").parts if x != "__init__")
+            )
+    assert names
+    for n in names:  # each alone: once any has loaded mhfu.mips the rest would pass for free
+        check = f"import importlib, sys; importlib.import_module({n!r}); "
+        check += "assert 'mhfu.mips' in sys.modules"
+        subprocess.run([sys.executable, "-c", check], check=True)
