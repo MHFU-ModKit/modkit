@@ -20,10 +20,17 @@ A walk can also carry entity cells from one AI frame to the next (`track`, read 
 meets, a counter or a gauge a handler keeps), start them at known values (`facts`), and answer the
 float tests of the monster's HP ratio against a constant (`hp`); `Walk.settle` runs a pair so and
 returns the cells where it ends.
+
+It keeps a `p3motion.Motion` too, the cells a handler moves the monster by (position, velocity,
+acceleration, the floor), which the float loads, stores and helpers of the code act on, so the
+tests of the clip cursor and of the height come out as they do in the game. Each step carries what
+that motion came to in its own frame: `travel`, `lift`, `lunge` and `spreads`.
 """
 
 from __future__ import annotations
 
+import bisect
+import math
 import struct
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -33,14 +40,16 @@ import rabbitizer
 from mhfu.em.moveset import Cell, Decide, Site, Walker, known
 from mhfu.files import Extracted
 from mhfu.memory import Unmapped
-from mhfu.mips import Code, Fpr, Gpr, Register
+from mhfu.mips import Code, Register
 from mhfu.overlay import Overlay
 from rabbitizer import InstrId, Instruction
 
-from . import motion
+from . import motion, p3motion
 from . import p3moveset as p3
 from .brain.p3 import Species
+from .p3motion import Lunge, Motion, Pose, Spread
 from .p3moveset import Moveset, Pair, Pairs
+from .travel import KEY_STEP
 
 DESCRIPTOR_HITS = 0xA4
 """A species descriptor's pointer to its hit block."""
@@ -82,20 +91,19 @@ CLIP_ENDED = 0x09CA6730  # noaddr: (entity) 1 once the playing clip has run out
 CLIP_ID = 0x09CA699C  # noaddr: (entity) the clip playing now
 CURSOR_STEP = 0x09C9DF10  # noaddr: () $f0 the clip cursor's step this frame
 TURN = 0x09CA12F4  # noaddr: (entity, rate) turns toward the target by at most rate YAW units
-MOTION = (
-    0x09CA20EC,  # noaddr: velocity and acceleration
-    0x09CA1F34,  # noaddr: velocity in world axes
-    0x09CA19E0,  # noaddr: velocity to zero
-    0x0889F098,  # noaddr: a curve table read at the clip cursor
-)
+MOTION = (*sorted(p3motion.TARGETS), 0x0889F098)  # noaddr: a curve table read at the cursor
 """Calls that move the monster by code rather than by the clip."""
 STEP_FRAMES = 2.0
 """Clip frames the cursor advances in an AI frame at normal speed."""
+MIN_TRAVEL, MIN_LIFT = 0.5, 1.0
+"""World units under which a step's travel, or its height over rest, is not kept."""
 MAX_TICKS = 3000
 MAX_STEPS = 24
 MAX_RUNS = 32
-"""Bounds on one simulation (AI frames, clips played), and on the runs of a pair with their
-branches going the other way."""
+MAX_MOVED = 400
+"""Bounds on one simulation (AI frames, clips played), on the runs of a pair with their
+branches going the other way, and on the AI frames of a run that move the monster by code, which
+cannot be skipped over."""
 FALL, TAKEN, LOOPS, EXITS = 0, 1, 2, 3
 """How a branch the walk cannot decide goes: falls through, is taken, is taken until the clip ends
 and then falls through (a wait), or falls through until the clip ends and then is taken."""
@@ -104,8 +112,8 @@ BRANCHES = {
     LOOPS: "is taken until the clip ends",
     EXITS: "is taken once the clip ends",
 }
-ARGS = (Gpr.a1, Gpr.a2, Gpr.a3, Gpr.t0, Fpr.fa0, Fpr.fa0f)
-MODE, F12, F13 = 0, 4, 5
+ARGS = p3motion.ARGS
+MODE, F12, F13 = p3motion.A1, p3motion.F12, p3motion.F13
 """Where a cursor gate's mode and its two frames sit in `ARGS`."""
 WINDOWS = frozenset([3, 4, 5, 7])
 """The cursor gate modes that test a window of frames; the others test one frame."""
@@ -130,6 +138,10 @@ WATCH = {
 }
 """What the walk records, by call target; a kind that needs its target carries it after a colon."""
 SPAWNERS = {p3.ATTACK: "spawn", p3.ATTACK0: "spawn0", KILL: "kill"}
+HANDLED = frozenset([*p3motion.TARGETS, p3motion.CURSOR, p3motion.CLIP_END, p3motion.SCALE])
+"""The calls whose effect or answer the walk's motion supplies."""
+STARTERS = frozenset(["play", "record", "react"])
+"""The kinds of call that start a clip."""
 
 
 class Record(NamedTuple):
@@ -276,6 +288,15 @@ class Step:
     stop: float | None = None
     """The clip frame the cursor test that ended it was crossed at; None when its clip or the
     pair ended it, or no test of the cursor changed its answer on the tick."""
+    travel: tuple[tuple[float, float], ...] = ()
+    """The monster's travel by code, cumulative (x, z) at the clip frames `start`, `start + 2`,
+    ... in its frame at the first playing frame; the first is (0, 0). Empty: none."""
+    lift: tuple[float, ...] = ()
+    """Its height over rest at each whole clip frame from `start` to the step's last, one more
+    than the frames it covers; empty where it stays within `MIN_LIFT` of rest."""
+    lunge: Lunge | None = None
+    spreads: tuple[Spread, ...] = ()
+    """The turns of a fixed total it makes."""
 
 
 @dataclass(frozen=True)
@@ -343,6 +364,14 @@ class _Step:
     turns: list[tuple[int | None, float, float, tuple[float, float] | None]] = field(
         default_factory=list
     )
+    origin: Pose = Pose(0.0, 0.0, 0.0)
+    """Where the monster was when it began."""
+    elapsed: float = 0.0
+    """Clip frames it has played, a loop's wraps counted."""
+    trace: dict[float, Pose] = field(default_factory=dict)
+    """The position after each AI frame by `elapsed`, x and z from `origin`, y over rest."""
+    lunge: Lunge | None = None
+    spreads: list[Spread] = field(default_factory=list)
 
 
 @dataclass
@@ -351,6 +380,8 @@ class _Run:
 
     vector: dict[int, int]
     """How each branch the walk cannot decide goes: FALL, TAKEN, LOOPS or EXITS."""
+    kin: Motion
+    """The kinematic cells of the run."""
     trail: list[int] = field(default_factory=list)
     """Those branches, in the order the run met them."""
     steps: list[_Step] = field(default_factory=list)
@@ -380,6 +411,16 @@ class _Run:
     """The tracked entity cells, as the handler's stores left them."""
     hp: float | None = None
     """The HP ratio the float tests of it are answered for."""
+    moved: bool = False
+    moving: int = 0
+    """The AI frames so far that were."""
+    """A helper acted on, or a read of, the motion this tick: it cannot be skipped."""
+    plays: int = 0
+    """The clip starts this tick's code has made so far."""
+    marks: dict[int, Pose] = field(default_factory=dict)
+    """Where the monster was at each clip start of this tick, by call site."""
+    events: list[tuple[int, Lunge | Spread]] = field(default_factory=list)
+    """What the helpers asked for this tick, with the clip starts that came before it."""
 
     @property
     def current(self) -> _Step | None:
@@ -398,12 +439,14 @@ class Walk:
         *,
         track: Sequence[Cell] = (),
         facts: Mapping[Cell, int] | None = None,
+        rest: float = p3motion.REST,
     ) -> None:
         """`track` are entity cells (offset, width) whose value the walk carries from one AI frame
         to the next, read off the stores it meets; `facts` the values cells hold when a run starts,
-        a tracked one's start or a constant."""
+        a tracked one's start or a constant; `rest` the height over the floor the monster stands
+        at, which the landing tests of a jump are answered from."""
         self.ms, self.hits, self.lengths, self.step = ms, hits, lengths, step
-        self.facts = dict(facts or {})
+        self.facts, self.rest = dict(facts or {}), rest
         stores = {
             i.vram: i.rt
             for i in ms.code
@@ -499,28 +542,35 @@ class Walk:
     def _run(self, pair: Pair, vector: dict[int, int], hp: float | None = None) -> _Run:
         tick = self.ms.tick_entry
         assert tick is not None
-        run = _Run(dict(vector), cells=dict(self.facts), hp=hp)
+        run = _Run(dict(vector), Motion(self.ms.ovl, self.rest), cells=dict(self.facts), hp=hp)
         decide = self._decider(run)
         at = self._dispatched(pair)
         while run.ticks < MAX_TICKS:
-            run.ended = run.played = False
+            run.ended = run.played = run.moved = False
             run.crossed, run.windows, run.asked = [], [], []
+            run.plays, run.marks, run.events = 0, {}, []
+            self._begin(run)
             facts = {
                 **known({PHASE: run.phase, p3.MAIN: at[0], p3.SUB: at[1]}),
                 **run.cells,
             }
-            sites = self._walker.run(tick, None, facts, decide)
+            sites = self._walker.run(tick, None, facts, decide, run.kin.cells)
             if self._hook is not None and run.clip is not None:
                 sites += self._hook_walker.run(self._hook, None, None, decide)
             phase = run.phase
             self._apply(run, pair, sites)
+            self._sample(run)
             if run.finished:
+                break
+            run.moving += run.moved
+            if run.moving > MAX_MOVED:
+                run.notes.append(Note("limit", f"the handler moved the monster {MAX_MOVED} frames"))
                 break
             if run.current is None and not sites:
                 run.notes.append(Note("unresolved", "the handler plays no clip"))
                 break
             self._advance(run, 1)
-            if run.phase == phase and not run.played and _neutral(sites):
+            if run.phase == phase and not run.played and not run.moved and _neutral(sites):
                 self._skip(run, sites)
         else:
             run.notes.append(Note("limit", f"the handler ran {MAX_TICKS} frames without ending"))
@@ -535,18 +585,48 @@ class Walk:
     # --- the world the walk answers from ---
 
     def _decider(self, run: _Run) -> Decide:
-        def decide(pc: int, target: int | None, args: tuple[int | None, ...]) -> int | None:
+        def decide(pc: int, target: int | None, args: tuple[int | None, ...]) -> int | float | None:
             if target is None:
                 return self._branch(run, pc)
+            if target not in HANDLED and not self.ms.code.at(pc).doesLink():
+                return None  # a tail call: only the motion is told of those
             if target in CURSOR_GATES:
                 return self._gate(run, args)
             if target == CLIP_ENDED:
                 return self._ask(run, _Query(None))
             if target == CLIP_ID:
                 return run.clip if run.clip is not None else 0
+            if target in HANDLED:
+                return self._act(run, target, args)
+            kind = WATCH.get(target, "").partition(":")[0]
+            if kind in STARTERS:
+                run.marks[pc] = run.kin.before_hand_over()
+                run.plays += 1
+                if kind == "play":
+                    run.kin.turn_over()
             return None
 
         return decide
+
+    def _act(self, run: _Run, target: int, args: tuple[int | None, ...]) -> float | None:
+        """A helper the motion acts for, or a read of the clip it answers."""
+        run.moved = True
+        out = run.kin.call(target, args)
+        run.events += [(run.plays, e) for e in run.kin.events]
+        run.kin.events.clear()
+        return out
+
+    def _begin(self, run: _Run) -> None:
+        """The motion's view of the clip for the AI frame about to run."""
+        length = self.lengths.get(run.clip) if run.clip is not None else None
+        cursor = run.cursor if length is not None else None
+        run.kin.begin(cursor, None if length is None else float(length.frames), self.step)
+
+    def _sample(self, run: _Run) -> None:
+        """Where the AI frame left the monster, for the step it ended in."""
+        step = run.current
+        if step is not None:
+            step.trace[step.elapsed] = _relative(step, run.kin.now(), self.rest)
 
     def _branch(self, run: _Run, pc: int) -> int:
         if run.hp is not None and (said := self._test_hp(pc, run.hp)) is not None:
@@ -661,7 +741,23 @@ class Walk:
 
     # --- what the handler did in a tick ---
 
+    def _take(self, run: _Run, after: bool) -> None:
+        """What the helpers asked for, before the tick's first clip start or after it."""
+        step = run.current
+        for plays, event in run.events:
+            if step is None or (plays > 0) != after:
+                continue
+            if isinstance(event, Lunge):
+                step.lunge = step.lunge or event
+            elif event not in step.spreads:
+                step.spreads.append(event)
+
     def _apply(self, run: _Run, pair: Pair, sites: Sequence[Site]) -> None:
+        self._take(run, False)
+        self._apply_sites(run, pair, sites)
+        self._take(run, True)
+
+    def _apply_sites(self, run: _Run, pair: Pair, sites: Sequence[Site]) -> None:
         for s in sites:
             if run.finished:
                 return
@@ -704,7 +800,7 @@ class Walk:
             run.notes.append(Note("unresolved", f"the clip played at 0x{s.site:08X} is computed"))
             run.finished = True
             return
-        self._start(run, clip, s.args[1], s.args[2] or 0)
+        self._start(run, clip, s.args[1], s.args[2] or 0, s.site)
 
     def _play_first(self, run: _Run, ids: Sequence[int] | None, s: Site) -> None:
         """A helper that plays one of several clips it is given a record of: the first."""
@@ -716,9 +812,9 @@ class Walk:
             return
         if len(ids) > 1:
             run.notes.append(Note("record", f"clip {ids[0]} of {', '.join(map(str, ids))}"))
-        self._start(run, ids[0], None, 0)
+        self._start(run, ids[0], None, 0, s.site)
 
-    def _start(self, run: _Run, clip: int, blend: int | None, start: int) -> None:
+    def _start(self, run: _Run, clip: int, blend: int | None, start: int, site: int) -> None:
         if clip not in self.lengths:
             run.notes.append(Note("unresolved", f"the donor has no clip {clip}"))
             run.finished = True
@@ -727,6 +823,9 @@ class Walk:
             run.notes.append(Note("limit", f"the handler played {MAX_STEPS} clips without ending"))
             run.finished = True
             return
+        where = run.marks.get(site, run.kin.before_hand_over())
+        if run.current is not None:
+            run.current.trace[run.current.elapsed] = _relative(run.current, where, self.rest)
         self._close_step(run, "clip" if run.ended else "cursor", self._crossed(run))
         carried = {}
         for slot, node in run.nodes.items():
@@ -736,7 +835,7 @@ class Walk:
             hit = Hit(slot, node.hit.record, node.hit.flags, float(start), end, True)
             carried[slot] = _Node(hit, node.left)
         run.nodes = carried
-        step = _Step(clip, blend, float(start))
+        step = _Step(clip, blend, float(start), origin=where)
         step.hits.extend(n.hit for n in carried.values())
         run.steps.append(step)
         run.clip, run.cursor, run.played = clip, float(start), True
@@ -786,6 +885,7 @@ class Walk:
         if step is None or run.played:
             return
         step.ticks += n
+        step.elapsed += n * self.step
         length = self.lengths.get(step.clip)
         run.cursor += n * self.step
         for node in run.nodes.values():
@@ -821,16 +921,21 @@ class Walk:
             _ended(h, min(h.end, end)) if end is not None and h.end is not None else h
             for h in step.hits
         ]
+        ticks = step.ticks + 1
         run.done.append(
             Step(
                 step.clip,
                 step.blend,
                 step.start,
                 how,
-                step.ticks + 1,
+                ticks,
                 tuple(hits),
                 _turns(step),
                 stop,
+                _path(step.trace),
+                _height(step.trace, round(ticks * self.step)),
+                step.lunge,
+                tuple(step.spreads),
             )
         )
         run.steps.pop()
@@ -838,6 +943,8 @@ class Walk:
     def _close(self, run: _Run) -> None:
         how: How = "clip" if run.ended else "pair" if run.left else "cursor"
         self._close_step(run, how)
+        if run.kin.lost:
+            run.notes.append(Note("motion", f"its motion could not be followed: {run.kin.lost}"))
 
 
 def _spawns(run: _Run) -> int:
@@ -868,6 +975,53 @@ def _turns(step: _Step) -> tuple[Turn, ...]:
         one = gates.pop() if len(gates) == 1 else None
         out.append(Turn(rate, one or (min(a for a, _, _ in found), max(b for _, b, _ in found))))
     return tuple(out)
+
+
+def _relative(step: _Step, at: Pose, rest: float) -> Pose:
+    """`at` as a step's trace holds it: x and z from where the step began, y over `rest`."""
+    return Pose(at.x - step.origin.x, at.y - rest, at.z - step.origin.z)
+
+
+def _along(keys: Sequence[float], trace: Mapping[float, Pose], frame: float, axis: int) -> float:
+    """The trace's `axis` at clip frame `frame`: straight lines between its points (`keys`, in
+    order), held past them."""
+    if frame <= keys[0]:
+        return trace[keys[0]][axis]
+    if frame >= keys[-1]:
+        return trace[keys[-1]][axis]
+    hi = bisect.bisect_right(keys, frame)
+    a, b = keys[hi - 1], keys[hi]
+    return trace[a][axis] + (frame - a) / (b - a) * (trace[b][axis] - trace[a][axis])
+
+
+def _path(trace: Mapping[float, Pose]) -> tuple[tuple[float, float], ...]:
+    """The trace's (x, z) every KEY_STEP clip frames from the step's start. The first is the
+    origin, as the move player's first frame moves nothing: what the frames at the start did
+    shows from the second."""
+    if not trace:
+        return ()
+    keys = sorted(trace)
+    n = math.ceil(keys[-1] / KEY_STEP - 1e-9)
+    out = [(0.0, 0.0)] + [
+        (
+            round(_along(keys, trace, KEY_STEP * k, 0), 2),
+            round(_along(keys, trace, KEY_STEP * k, 2), 2),
+        )
+        for k in range(1, n + 1)
+    ]
+    return tuple(out) if max(max(abs(x), abs(z)) for x, z in out) >= MIN_TRAVEL else ()
+
+
+def _height(trace: Mapping[float, Pose], frames: int) -> tuple[float, ...]:
+    """The trace's height over rest at each whole clip frame from 0 to `frames`; empty where it
+    stays put (a monster that landed low and lies there has the engine's floor to stand on)."""
+    if not trace:
+        return ()
+    heights = [p.y for p in trace.values()]
+    if max(heights) - min(heights) < MIN_LIFT:
+        return ()
+    keys = sorted(trace)
+    return tuple(round(_along(keys, trace, f, 1), 2) for f in range(frames + 1))
 
 
 def _wrappers(code: Code) -> frozenset[int]:
