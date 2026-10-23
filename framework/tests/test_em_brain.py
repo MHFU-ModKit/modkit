@@ -15,6 +15,7 @@ import pytest
 from mhfu import addresses as a
 from mhfu import steering
 from mhfu.live.moves import Lunge
+from mhfu_port import layout, manifest, moves, travel
 from mhfu_port.moves import Pools
 
 BASE = 0x09000000  # em_host.cpp's memory; noaddr
@@ -666,9 +667,9 @@ def test_lunges_have_room_and_a_rewrite_adds_only_what_is_new(g: Game) -> None:
     assert g.moves("LUNGE_TOP") == 0 and g.own(a.EM_LUNGES, 46, lunge=lunge(0))
 
 
-def test_the_registry_holds_what_the_capacity_check_counts(g: Game) -> None:
+def test_the_registry_places_runs_where_pools_does(g: Game) -> None:
     """Slots with equal runs, a run inside another and equal lunges: the registry's tops and each
-    slot's offsets are `moves.Pools`' for the same moves in the same order."""
+    slot's offsets are `Pools`' for the same moves in the same order."""
     run = [(k, -k) for k in range(1, 9)]
     lunge = (0, 20, 100.0, 400.0, -300.0, 900.0)
     spec = [
@@ -694,6 +695,53 @@ def test_the_registry_holds_what_the_capacity_check_counts(g: Game) -> None:
     tops = (g.moves("KEY_TOP"), g.moves("SAMPLE_TOP"), g.moves("LUNGE_TOP"))
     assert tops == (len(pools.keys), len(pools.samples), len(pools.lunges))
     assert tops == (8, 13, 2)  # a run holds what is inside it; a longer one is not extended
+
+
+PORT = '[port]\nname = "z"\nhost_species = 75\npac = "z.bin"\n[source]\nmodel = 5339\n'
+
+
+def test_the_registry_holds_what_a_ports_capacity_check_counts(g: Game) -> None:
+    """A port whose own moves repeat turn keys, travel and lunges, registered slot by slot as
+    `mhfu_port.lua` does: the registry's tops are those of `moves.pools`, the check's count."""
+    keys = (1, 2, 3, 4, 5, 6)
+    lay = layout.Layout(
+        {},
+        turns={
+            9: travel.Turn(12, keys, 0, None),
+            10: travel.Turn(6, keys[2:5], 0, None),
+            11: travel.Turn(12, keys[::-1], 0, None),
+        },
+    )
+    path = [[0, 0], [1, 2], [3, 4]]
+    rows = [  # entry, travel, the lunge's range
+        (9, path, 900),
+        (9, path, 900),
+        (10, path[1:], 900),
+        (11, path + [[5, 6]], 901),
+        (10, [], None),
+    ]
+    text = PORT
+    for i, (entry, route, reach) in enumerate(rows):
+        text += f"[moves.m{i}]\nanim = {entry}\ncarrier = [0, 1]\ntravel = {route}\n"
+        if reach is not None:
+            text += f"[moves.m{i}.lunge]\nwindow = [0, 20]\nnear = 100\nspan = 400\nbase = -300\n"
+            text += f"range = {reach}\n"
+    m = manifest.loads(text)
+    assert moves.problems(m, lay) == []
+    held = moves.pools(m, lay)
+    for name, slot in moves.slots(m).items():
+        mv = m.moves[name]
+        lng = mv.lunge
+        assert g.own(
+            slot,
+            46,
+            keys=moves.keys_of(moves.curve(m, name, lay)),
+            samples=steering.samples(mv.travel or ()),
+            lunge=None if lng is None else (*lng.window, lng.near, lng.span, lng.base, lng.range),
+        )
+    tops = (g.moves("KEY_TOP"), g.moves("SAMPLE_TOP"), g.moves("LUNGE_TOP"))
+    assert tops == (len(held.keys), len(held.samples), len(held.lunges))
+    assert tops == (12, 7, 2)  # of 24 keys, 12 samples and 4 lunges, each run held once
 
 
 def test_a_rule_on_an_event_fires_in_the_frame_it_is_seen(g: Game) -> None:
