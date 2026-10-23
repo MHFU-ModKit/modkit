@@ -11,7 +11,9 @@ kinematic cells its helpers act on.
 A walk (`p3hits.Walk`) hands `cells` to the walker, which reads and writes them as the handler's
 float loads and stores go, and answers each helper call through `call`. The frame is the monster's
 at the first playing frame of a step (x toward its +x, its left; z forward), yaw counted from there;
-the cursor is the playing clip's, in clip frames, `step` of them to an AI frame.
+the cursor is the playing clip's, in clip frames, `step` of them to an AI frame. The donor's x is
+MHFU's: a clip that looks to the monster's right (the Zinogre's 40) has its head at -x in the
+port's model space and its code slides it toward -x.
 """
 
 from __future__ import annotations
@@ -65,7 +67,10 @@ X, Y, Z = 0x80, 0x84, 0x88
 VELOCITY, ACCELERATION, GROUND = 0xB0, 0xC0, 0xD8
 """Velocity (x, y, z), acceleration (x, y, z) and the floor height, in cells 4 bytes apart."""
 REST = 298.0
-"""The height over the floor a monster stands at: the value the donor's own landing snaps to."""
+"""The height over the floor a monster stands at: the value the donor's stamp snaps to when it
+lands, and the one its landing test reads (`Y - D8 <= 298`). Not read from a cell: MOVE_MODE(0)
+sets Y to D8 when the mode changes, which would make it 0, and a jump then comes down in 21 and
+10 AI frames, not 22 and 18."""
 TURN = 0x10000
 """YAW units in a full turn."""
 MAX_KEYS = 256
