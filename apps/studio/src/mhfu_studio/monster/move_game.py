@@ -25,8 +25,10 @@ def deploy(m: Manifest, games: Data, mods: Path) -> tuple[list[Path], int]:
     """`m` built as it is, its modules written into `mods/lib` where they changed, and
     `mhfu_port.lua` kept in step: what was written, and the build of the moves module now on the
     stick, the one the port must run. The game re-runs a changed module."""
+    from mhfu_port.brain import own
     from mhfu_port.cli.build import modules  # the writer `mhfu-port inject` uses
 
+    m = own.expanded(m, games)  # the lifted copies of its jumps are clips of the build
     out = modules(m, build.build(m, games), mods / layout.LIB, games)
     lib = runtime.sync_library(mods, runtime.library())
     text = (mods / layout.LIB / moves.module_name(m)).read_text(encoding="utf-8")

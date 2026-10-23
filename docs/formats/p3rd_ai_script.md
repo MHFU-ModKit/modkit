@@ -188,7 +188,22 @@ clip that hands to the next by `after`:
   "26" = 40` names the host record for donor record 26; the port may define it with `[[attack]]`
   and `[[hitbox]]`.
 - **Turn.** A `hunter` steer with the donor's rate and the cursor window it turned in
-  (`steer.window`). What the donor does by code, not by its clips (a slide, a curve), is not carried.
+  (`steer.window`); where the handler spreads a total over a window (`yaw_spread`) a `fixed` one
+  with that total as `angle` and the window, which wins over the other.
+- **Motion by code.** The walk keeps the cells a handler moves the monster by (position, velocity,
+  acceleration, the floor: `mhfu_port.p3motion`), which the handler's float loads and stores and
+  its helpers (`VEL_APPLY`, `VEL_ACC`, `VEL_WORLD`, `CURVE_DELTA`, `curve_move`, `LIFT`, ...) act
+  on, so the tests of the clip cursor and of the height come out as in the donor (an air roll
+  lasts 22 AI frames, the stamp's hop 18, its wind-up 16 or 39). Each step's motion, in the
+  monster's frame at the step's first frame, becomes `Move.travel` (cumulative x, z every 2 clip
+  frames, the first (0, 0): what the first frames did shows from the second), `Move.lunge` (the
+  handler's window and distances), and, for a jump, `Clip.lift`: a one-shot copy of the clip cut to
+  the frames the step plays, named `p3_<clip>_air`, in a free executor entry (`layout.spare`),
+  whose joint 0 `travel.raised` gives the height over rest at each frame. The engine puts the
+  monster's Y back on the floor every frame, so a height lives only in the pose. Windows count
+  from the move's first clip frame and are cut to the frames it plays, the total by the share
+  left. The rest height is `p3motion.REST`, 298, the value the donor's stamp snaps to; the
+  landing tests of a jump depend on it.
 
 | Finding | Level | What |
 |---|---|---|
@@ -196,7 +211,8 @@ clip that hands to the next by `after`:
 | `P3_OWN_ATTACK` | warning | a donor record with no host record and no spare, or more attacks on a clip than the move player holds: left out |
 | `P3_OWN_SPARE` | info | a donor record with no host record took a spare one: its id, set, volumes, power, kind, active frames |
 | `P3_OWN_PARTIAL` | warning | the walk gave up, or a clip it could not resolve |
-| `P3_OWN_BRANCH`, `P3_OWN_MOTION` | info | a branch taken one way; code movement |
+| `P3_OWN_BRANCH`, `P3_OWN_MOTION` | info | a branch taken one way; code movement the walk could not follow, or a window cut or left out |
+| `P3_OWN_AIR` | info, error | a jump's lifted copy of its clip and its entry (an error where no entry is free), or its height left out |
 | `P3_OWN_NEXT` | info | a hand-over not followed, and why |
 | `P3_OWN_SPLIT`, `P3_OWN_GROUP`, `P3_OWN_ACTIVE` | info | a node split per clip; records that land one hit between them in the donor; a window longer than the host record's life |
 

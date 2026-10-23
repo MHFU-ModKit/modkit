@@ -706,3 +706,48 @@ def test_part_events():
         else:
             with pytest.raises(ManifestError, match="unknown param"):
                 M.loads(text)
+
+
+LIFTED = (
+    MINIMAL + "[clips.air]\nslot = 60\nsource = 2\nstart = 0\nframes = 2\nlift = [0.0, 1.5, 3.0]\n"
+)
+
+
+def test_a_lifted_copy_sits_beside_its_source_and_round_trips():
+    m = M.loads(LIFTED + "[clips.whole]\nsource = 2\n")
+    assert m.clips["air"].lift == [0.0, 1.5, 3.0] and M.loads(M.dumps(m)) == m
+    with pytest.raises(ManifestError, match="clip 2 is placed by clips.whole too"):
+        M.loads(
+            MINIMAL
+            + "[clips.whole]\nsource = 2\n"
+            + "[clips.cut]\nslot = 4\nsource = 2\nstart = 0\nframes = 2\n"
+        )
+
+
+@pytest.mark.parametrize(
+    ("extra", "why"),
+    [
+        ("[clips.air]\nslot = 60\nsource = 2\nlift = [0.0]\n", "lift goes with start"),
+        (
+            "[clips.air]\nslot = 60\nsource = 2\nstart = 0\nframes = 2\nlift = [0.0, 1.0]\n",
+            "one value per clip frame",
+        ),
+        (
+            "[clips.air]\nslot = 60\nsource = 2\nstart = 0\nframes = 1\nlift = [0.0, 9999.0]\n",
+            "within 2048",
+        ),
+    ],
+)
+def test_a_lifted_copy_is_checked(extra, why):
+    with pytest.raises(ManifestError, match=why):
+        M.loads(MINIMAL + extra)
+
+
+def test_a_host_pair_move_has_no_travel_or_lunge():
+    pair = "[moves.m]\nmain = 1\nsub = 2\nanim = 4\n"
+    for extra in (
+        "travel = [[0.0, 0.0], [1.0, 2.0]]\n",
+        "lunge = { window = [0, 8], near = 1.0, span = 2.0, base = 3.0, range = 4.0 }\n",
+    ):
+        with pytest.raises(ManifestError, match="travel, lunge"):
+            M.loads(MINIMAL + pair + extra)

@@ -233,9 +233,9 @@ def animation(
     lift: float = 0.0,
 ) -> fu.Anim:
     """The donor's moveset on the rig's joints in the entries `placed` gives it, cut where it
-    cuts, its pelvis raised by `lift` world units, and on its own rig its travel and turns where
-    the engine takes them (`travel.carry`). Entries it leaves keep the host's clips on the
-    host's rig."""
+    cuts, its pelvis raised by `lift` world units, the entries `placed` lifts raised frame by frame
+    (`travel.raised`), and on its own rig its travel and turns where the engine takes them
+    (`travel.carry`). Entries it leaves keep the host's clips on the host's rig."""
     clips: Mapping[int, Clip] = d.clips
     if lift:
         bone_of_record = {r: bone for bone, r in record_of.items()}
@@ -248,6 +248,8 @@ def animation(
     keep = bind.mode == "retarget"
     played = layouts.clips(placed, clips)
     out = motion.build(played, {e: e for e in played}, h.anim, bind.rig.streams, track_of, keep)
+    if placed.lifts:
+        out = travel.raised(out, bind.rig.skeleton, placed.lifts)
     return out if keep else travel.carry(out, bind.rig.skeleton)
 
 

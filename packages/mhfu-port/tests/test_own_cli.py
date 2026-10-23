@@ -51,6 +51,19 @@ def test_the_list_shows_the_frames_a_move_plays():
     )
 
 
+def test_the_list_shows_the_motion_a_move_makes_by_code():
+    m = manifest.loads(TEXT + "[moves.p3_7_13]\nclip = 'charge'\n")
+    mv = m.moves["p3_7_13"]
+    mv.travel = [(0.0, 0.0), (2.0, 5.5)]
+    mv.lunge = manifest.Lunge((0, 8), 1.0, 2.0, -3.0, 5.0)
+    mv.steer = manifest.Steer(turn="fixed", angle=-90.0, window=(2, 8))
+    line = describe(m, "p3_7_13", 3)
+    assert "turns -90 degrees in frames (2, 8)" in line and "travels 2, 5.5 over 2 samples" in line
+    assert "lunges -3 to 2" in line and "rises" not in line
+    m.clips["charge"].lift = [0.0, 3.0, -9.0]
+    assert "rises -9" in describe(m, "p3_7_13", 3)
+
+
 def test_the_list_names_the_pair_and_the_chain_a_step_is_shared_with():
     m = manifest.loads(TEXT + "[moves.p3_7_13]\nclip = 'charge'\nlabel = 'MHP3rd 7,13'\n")
     assert describe(m, "p3_7_13", 3).endswith("clip 61 charge  (MHP3rd 7,13)")

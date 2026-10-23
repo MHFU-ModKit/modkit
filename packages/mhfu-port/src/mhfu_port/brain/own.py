@@ -3,7 +3,8 @@
 """The own moves a manifest's `[brain.pairs] "7,13" = "own"` stands for, derived at each build
 from both games' files: the clips the donor's handler plays, from the clip frame it starts them
 at to the one it ends them at, the attacks it spawns with their frames, matched to the host
-species' attack records, and how it turns.
+species' attack records, how it turns, and the motion it makes by code (`Move.travel`,
+`Move.lunge`, a fixed turn, and a jump's height as a lifted copy of the clip in a free entry).
 
     m, findings = own.expand(manifest, data)    # the manifest with `p3_7_13` and its clips
 
@@ -33,9 +34,10 @@ import numpy as np
 from mhfu import hitbox, hitzone
 from mhfu.em.script.check import Finding
 from mhfu.files import em_overlay
+from mhp_formats import fu
 from numpy.typing import NDArray
 
-from .. import build, fk, layout, moves, p3hits, p3moveset, sequence
+from .. import build, fk, layout, moves, p3hits, p3motion, p3moveset, sequence
 from ..data import Data
 from ..manifest import (
     MOVE_ATTACKS,
@@ -43,6 +45,7 @@ from ..manifest import (
     AttackWindow,
     Brain,
     Clip,
+    Lunge,
     Manifest,
     ManifestError,
     Move,
@@ -51,6 +54,7 @@ from ..manifest import (
     pair_of,
 )
 from ..p3hits import Plan, Step, Walk
+from ..travel import KEY_STEP
 from .spare import HOST_NO_DAMAGE, NO_DAMAGE, POWER_SCALE, Spare, Spares
 
 Pair = tuple[int, int]
@@ -217,8 +221,9 @@ class Derivation:
         matcher: Callable[[], Matcher],
         say: Report,
         pairs: Sequence[Pair] = (),
+        spare: Callable[[], list[int]] = list,
     ) -> None:
-        self.m, self.walk, self.matcher, self.say = m, walk, matcher, say
+        self.m, self.walk, self.matcher, self.say, self.spare = m, walk, matcher, say, spare
         self.pairs = list(pairs)
         """The pairs being derived; the pairs they hand over to are derived too, and with them
         feed the spare records' power scale, which reads all their matches."""
@@ -407,19 +412,109 @@ class Derivation:
         stop = round(step.stop) if step.stop is not None else 0
         stop = stop if start < stop <= frames else 0
         cut = length.loop or step.ended != "clip"
+        air = self._air(step, start, frames)
+        # a lifted copy is the source cut at `start`: the move counts its frames from there
+        off, size = (start, len(step.lift) - 1) if air else (0, frames)
+        played = (start - off, stop - off if stop else size)  # the clip frames it plays
         return Move(
-            clip=self._clip(step.clip),
-            attacks=self._attacks(step, start, stop or frames),
-            steer=self._steer(step, walls=length.loop),
+            clip=air or self._clip(step.clip),
+            attacks=self._attacks(step, start, stop or frames, off),
+            steer=self._steer(step, length.loop, off, played),
             length=max(1, step.ticks) if cut and not stop else None,
-            start=start,
-            stop=stop,
+            start=start - off,
+            stop=stop - off if stop else 0,
+            travel=self._travel(step, size, start - off),
+            lunge=self._lunge(step, off, played),
             after=after,
             label=f"MHP3rd {self.pair[0]},{self.pair[1]}",
         )
 
-    def _attacks(self, step: Step, start: int, until: int) -> list[AttackWindow]:
-        """The step's attack windows inside `[start, until]`."""
+    def _air(self, step: Step, start: int, frames: int) -> str | None:
+        """The name of the one-shot copy of the step's clip cut to the frames it plays, which
+        carries its height over rest (`Clip.lift`) in an entry of its own; None where it has no
+        height, or the copy cannot be made."""
+        if not step.lift:
+            return None
+        n = len(step.lift) - 1
+        if start + n > frames:
+            self.find(
+                "info",
+                "P3_OWN_AIR",
+                f"clip {step.clip} is {frames} frames and the step plays {n} from {start}: its "
+                "height is left out",
+            )
+            return None
+        lift = list(step.lift)
+        for name, c in self.m.clips.items():
+            if (c.source, c.start, c.frames, c.lift) == (step.clip, start, n, lift):
+                return name
+        taken = {c.slot for c in self.m.clips.values() if c.lift is not None}
+        free = [e for e in self.spare() if e not in taken]
+        if not free:
+            self.find(
+                "error",
+                "P3_OWN_AIR",
+                f"no free executor entry for the lifted copy of clip {step.clip}",
+            )
+            return None
+        name = f"p3_{step.clip}_air"
+        while name in self.m.clips:
+            name += "_"
+        self.m.clips[name] = Clip(slot=free[0], source=step.clip, start=start, frames=n, lift=lift)
+        peak = max(lift, key=abs)
+        self.find(
+            "info",
+            "P3_OWN_AIR",
+            f"clip {step.clip} frames {start} to {start + n} carry a height of {peak:+.0f} over "
+            f"rest, as clips.{name} in entry {free[0]}",
+        )
+        return name
+
+    def _travel(self, step: Step, frames: int, start: int) -> list[tuple[float, float]] | None:
+        """The step's travel by code as samples from the move's `start`, those past the clip's
+        `frames` and a held tail left off."""
+        found = list(step.travel)
+        room = (frames - start) // KEY_STEP + 1
+        if len(found) > room:
+            self.find(
+                "info", "P3_OWN_MOTION", f"its travel outruns its clip: kept to {room} samples"
+            )
+            found = found[:room]
+        while len(found) > 2 and found[-1] == found[-2]:
+            found.pop()
+        return found or None
+
+    def _inside(
+        self, what: str, window: tuple[float, float], off: int, played: tuple[int, int]
+    ) -> tuple[int, int, float] | None:
+        """`window` counted from clip frame `off`, cut to the frames `played`, and the share of
+        it that is left; None, said, where none is."""
+        lo, hi = round(window[0]) - off, round(window[1]) - off
+        a, b = max(lo, played[0]), min(hi, played[1])
+        if hi <= lo or b <= a:
+            self.find(
+                "info", "P3_OWN_MOTION", f"{what} falls outside the frames it plays: left out"
+            )
+            return None
+        if (a, b) != (lo, hi):
+            share = (b - a) / (hi - lo)
+            self.find(
+                "info", "P3_OWN_MOTION", f"{what} is cut to the frames it plays ({share:.0%})"
+            )
+        return a, b, (b - a) / (hi - lo)
+
+    def _lunge(self, step: Step, off: int, played: tuple[int, int]) -> Lunge | None:
+        """The step's lunge, its window counted from the move's first clip frame and cut to the
+        frames the move plays, its length by the share of it that is left."""
+        got = step.lunge
+        inside = None if got is None else self._inside("a lunge", got.window, off, played)
+        if got is None or inside is None:
+            return None
+        lo, hi, share = inside
+        return Lunge((lo, hi), got.near, got.span, got.base * share, got.range * share)
+
+    def _attacks(self, step: Step, start: int, until: int, off: int = 0) -> list[AttackWindow]:
+        """The step's attack windows inside `[start, until]`, counted from clip frame `off`."""
         out: list[AttackWindow] = []
         for h in sorted(step.hits, key=lambda h: (h.frame, h.slot)):
             frame = max(start, round(h.frame))
@@ -443,7 +538,7 @@ class Derivation:
                     "P3_OWN_ACTIVE",
                     f"record {h.record} is active {end - frame} frames, host record {host} {life}",
                 )
-            out.append(AttackWindow(host, frame, end, label=f"donor {h.record}"))
+            out.append(AttackWindow(host, frame - off, end - off, label=f"donor {h.record}"))
         opens = [h for h in step.hits if h.flags & p3hits.FLAG_OPENS]
         joins = [h for h in step.hits if h.flags & p3hits.FLAG_JOINS]
         if opens and joins:
@@ -501,9 +596,15 @@ class Derivation:
                 ratios.append(host.power / donor.power)
         return statistics.median(ratios) if ratios else POWER_SCALE
 
-    def _steer(self, step: Step, walls: bool) -> Steer:
-        """The donor's turn; a wall ends only a step on a looping clip, a run (the donor ends no
-        move at a wall: a one-shot stop or blow plays out where it stands)."""
+    def _steer(
+        self, step: Step, walls: bool, off: int = 0, played: tuple[int, int] = (0, 0xFFFF)
+    ) -> Steer:
+        """The donor's turn, its windows counted from clip frame `off`: a fixed one where the
+        handler spreads a total over a window, else the longest toward the hunter. A wall ends
+        only a step on a looping clip, a run (the donor ends no move at a wall: a one-shot stop or
+        blow plays out where it stands)."""
+        if step.spreads:
+            return self._spread(step, walls, off, played)
         if not step.turns:
             return Steer(walls=walls)
         turn = max(step.turns, key=lambda t: t.window[1] - t.window[0])
@@ -517,9 +618,27 @@ class Derivation:
         if rate is not None and not 1 <= rate <= MAX_RATE:
             self.find("info", "P3_OWN_MOTION", f"turn rate {rate} is out of range: the host's")
             rate = None
-        lo = round(turn.window[0])
-        window = (lo, max(lo + 1, round(turn.window[1])))
+        lo = max(round(turn.window[0]) - off, 0)
+        window = (lo, max(lo + 1, round(turn.window[1]) - off))
         return Steer(turn="hunter", rate=rate, walls=walls, window=window)
+
+    def _spread(self, step: Step, walls: bool, off: int, played: tuple[int, int]) -> Steer:
+        """The turn of a fixed total across a window: the longest of the step's, if it has more
+        than one."""
+        spread = max(step.spreads, key=lambda s: s.window[1] - s.window[0])
+        if len(step.spreads) > 1:
+            self.find("info", "P3_OWN_MOTION", f"{len(step.spreads)} fixed turns: kept the longest")
+        if step.turns:
+            self.find(
+                "info", "P3_OWN_MOTION", "a fixed turn and a turn toward the hunter: kept the fixed"
+            )
+        inside = self._inside("a fixed turn", spread.window, off, played)
+        if inside is None or not -p3motion.TURN < spread.total < p3motion.TURN:
+            if inside is not None:
+                self.find("info", "P3_OWN_MOTION", f"a turn of {spread.total} units is left out")
+            return Steer(walls=walls)
+        lo, hi, share = inside
+        return Steer(turn="fixed", angle=spread.degrees * share, walls=walls, window=(lo, hi))
 
 
 def pairs(b: Brain) -> list[Pair]:
@@ -601,7 +720,14 @@ def expand(m: Manifest, data: Data) -> tuple[Manifest, list[Finding]]:
             cache.append(Matcher(m, data, walk.hits))
         return cache[0]
 
-    derive = Derivation(out, walk, matcher, found.append, wanted)
+    hosted: list[fu.Anim] = []
+
+    def spare() -> list[int]:
+        if not hosted:
+            hosted.append(build.host(m, data).anim)
+        return layout.spare(out.clips, walk.lengths, hosted[0], m.port.host_species)
+
+    derive = Derivation(out, walk, matcher, found.append, wanted, spare)
     for pair in wanted:
         derive.run(pair)
     derive.finish()

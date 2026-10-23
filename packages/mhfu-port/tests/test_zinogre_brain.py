@@ -14,12 +14,17 @@ from mhfu import addresses
 from mhfu.em.script import brainfile, build, draw, edit, ir
 from mhfu.em.script import vars as script_vars
 from mhfu.em.script.budget import LIMIT
-from mhfu_port import behaviour, manifest, moves, sequence
+from mhfu_port import behaviour, fk, manifest, moves, sequence
+from mhfu_port import build as builds
 from mhfu_port.brain import charge, fatigue, own, p3, p3ops, splice
 from mhfu_port.build import build as build_port
 from mhfu_port.cli import main
 from mhfu_port.cli.build import modules
 from mhfu_port.data import Data
+from mhfu_port.model import ANIMATION, SKELETON
+from mhp_formats import fu
+from mhp_formats.pac import Pac
+from mhp_formats.skeleton import Skeleton
 
 PORT = Path(__file__).parents[3] / "ports" / "zinogre.toml"
 OWN = addresses.OWN_MOVE_MAIN
@@ -144,6 +149,68 @@ def test_every_derived_window_lies_inside_its_move_s_frames(zinogre, module_text
         assert not (mv.stop and mv.length is not None), name
         for a in mv.attacks:
             assert mv.start <= a.frame < a.end <= (mv.stop or frames), name
+
+
+def air_clips(m: manifest.Manifest) -> dict[int, manifest.Clip]:
+    """The lifted copies of jumps, by the donor clip they copy."""
+    return {c.source: c for c in m.clips.values() if c.lift is not None and c.source is not None}
+
+
+def test_the_jumps_are_lifted_copies_in_entries_nothing_else_holds(zinogre, data):
+    m = zinogre.m
+    air = air_clips(m)
+    assert {s: max(c.lift) for s, c in air.items()} == pytest.approx({225: 644, 209: 300}, rel=0.01)
+    lay = builds.layout(m, builds.donor(m, data), builds.host(m, data))
+    assert not lay.unplaced
+    for source, c in air.items():
+        assert lay.entries[c.slot] == source and lay.cuts[c.slot] == c.cut
+        assert lay.lifts[c.slot] == tuple(c.lift) and c.slot not in lay.partial
+        assert lay.ids[source] != c.slot, "the whole clip keeps its own entry"
+    assert sum(mv.own for mv in m.moves.values()) <= manifest.OWN_MOVES
+
+
+def test_the_air_roll_flies_and_lunges_as_the_donor_does(zinogre):
+    m = zinogre.m
+    roll = m.moves["p3_7_22_2"]
+    assert (m.clips[roll.clip].source, roll.length, roll.start) == (225, 22, 0)
+    assert roll.travel[-1] == pytest.approx((120, 852), rel=0.01)
+    assert roll.lunge == manifest.Lunge((0, 32), 400.0, 1800.0, -700.0, 1800.0)
+    assert [m.moves[n].clip for n in sequence.chain(m, "p3_7_22")][1] == roll.clip
+
+
+def test_the_stamp_waits_16_or_39_frames_and_hops_for_18(zinogre):
+    m = zinogre.m
+    short, long = m.moves["p3_7_21"], m.moves[manifest.own_name((7, 86))]
+    assert (short.start, short.stop, long.start, long.stop) == (
+        46,
+        78,
+        0,
+        78,
+    )  # 16 and 39 AI frames
+    hop = m.moves[short.after]
+    assert (m.clips[hop.clip].source, hop.length) == (209, 18)
+    assert hop.travel[-1] == pytest.approx((83, 1401), rel=0.01, abs=1)
+
+
+def test_the_sidesteps_travel_across_their_window_and_turn_half_way(zinogre):
+    m = zinogre.m
+    left, right = m.moves["p3_2_16"], m.moves["p3_2_17"]
+    assert left.travel[-1] == (-257.0, -525.0) and right.travel[-1] == (192.0, -525.0)
+    assert left.steer == manifest.Steer(turn="fixed", angle=-180.0, walls=False, window=(40, 160))
+    assert right.steer.angle == 180.0 and left.length is None
+
+
+def test_the_built_clips_carry_the_jumps_height_on_joint_0(zinogre, module_text):
+    _, built = module_text
+    pac = Pac.from_bytes(built.pac)
+    anim = fu.Anim.from_bytes(pac.entries[ANIMATION])
+    skeleton = Skeleton.from_bytes(pac.entries[SKELETON])
+    for source, peak in {225: 644, 209: 300}.items():
+        c = air_clips(zinogre.m)[source]
+        clip = fk.rig_clip(anim, c.slot, skeleton)
+        assert clip is not None
+        (height,) = [ch for ch in clip.tracks[0].channels if ch.bit == 0x80]
+        assert max(k.value for k in height.keyframes) / 16 == pytest.approx(peak, rel=0.01)
 
 
 HANDS = {
@@ -430,7 +497,7 @@ def test_the_fatigue_table(zinogre, data):
 @pytest.fixture(scope="module")
 def module_text(zinogre, data, tmp_path_factory):
     where = tmp_path_factory.mktemp("zinogre")
-    m = manifest.load(PORT)
+    m = zinogre.m  # built as the CLI does: after its own moves are derived
     built = build_port(m, data)
     modules(m, built, where, data)
     return (where / moves.module_name(m)).read_text(), built
