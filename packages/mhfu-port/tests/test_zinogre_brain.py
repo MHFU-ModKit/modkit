@@ -69,7 +69,7 @@ def test_the_manifest_carries_its_brain(zinogre):
     assert (b.donor, b.splice, b.entry, b.fatigue, b.charge) == (40, "base_3", "base_3", True, True)
     assert b.when == {"if_target_set": True, "if_target_state": True}
     assert manifest.loads(manifest.dumps(m)) == m
-    assert len(b.pairs) == 104 and len(b.derived()) == len(own.pairs(b)) == 39
+    assert len(b.pairs) == 107 and len(b.derived()) == len(own.pairs(b)) == 49
 
 
 def test_a_donor_pair_plays_the_authored_move_where_it_is_the_donors(zinogre):
@@ -89,7 +89,7 @@ def test_a_wrapper_turns_and_plays_the_move_of_the_pair_it_leads_to(zinogre):
     assert twins == [["p3_2_10"], ["p3_7_4"]]
     assert set(b.derived().values()) >= {(7, 0), (7, 109), (2, 10), (7, 4), (1, 4), (7, 13)}
     assert b.shared() <= set(b.derived().values()) and (7, 0) in b.shared()
-    assert (7, 13) in b.shared() and b.targets((7, 84)) == [TURN, "p3_7_13"]
+    assert (7, 13) in b.shared() and b.targets((7, 38)) == [TURN, "p3_7_13"]
 
 
 WALKS = {
@@ -140,8 +140,8 @@ def test_the_d2_steps_start_where_the_donor_did_and_stop_past_their_attack(zinog
 def test_every_derived_window_lies_inside_its_move_s_frames(zinogre, module_text):
     _, built = module_text
     made = {n: mv for n, mv in zinogre.m.moves.items() if n.startswith("p3_")}
-    assert sum(bool(mv.start) for mv in made.values()) == 14
-    assert sum(bool(mv.stop) for mv in made.values()) == 13
+    assert sum(bool(mv.start) for mv in made.values()) == 26
+    assert sum(bool(mv.stop) for mv in made.values()) == 26
     assert sum(mv.length is not None for mv in made.values()) == 16
     for name, mv in made.items():
         frames = built.layout.frames[moves.entry(zinogre.m, name, built.layout)]
@@ -254,41 +254,40 @@ def test_equal_tails_are_one_move(zinogre):
     assert all(f.item in m.moves for f in zinogre.derived if f.item and f.item.startswith("p3_"))
 
 
-ELSEWHERE = {"7,70", "7,71", "7,79", "7,80", "7,81", "7,82", "7,116", "7,117", "7,118", "7,119"}
-"""The twins whose handler hands over to another pair than their twin's: they play their twin's
-whole chain. Deriving them would take 125 own moves of 96."""
-
-
-def own_steps(m: manifest.Manifest, name: str) -> list[tuple[object, ...]]:
-    """The leading steps of `chain_of` that come from the pair `name` heads, up to its hand-over."""
-    out = []
-    for n, step in zip(sequence.chain(m, name), chain_of(m, name), strict=True):
-        if m.moves[n].label != m.moves[name].label:
-            break
-        out.append(step)
-    return out
+LEADS = {
+    "7,219": "p3_7_70",
+    "7,220": "p3_7_71",
+    "7,222": "p3_7_81",
+    "7,223": "p3_7_82",
+    "7,229": "p3_7_118",
+    "7,230": "p3_7_119",
+}
+"""The pairs the turn wrappers (7, 72), (7, 73), (7, 83), (7, 84), (7, 120), (7, 121) lead to, with
+the move each plays."""
 
 
 def test_the_pairs_that_share_a_move_derive_the_same_one(zinogre, data):
-    """A pair that names its twin's move would derive that very move itself, up to where it hands
-    over. (7, 71), (7, 82) and (7, 119) are not the script's: only wrappers lead to them, and play
-    (7, 13)'s move."""
+    """A pair that names its twin's move would derive that very move itself, and the wrappers play
+    the moves of twins of the pairs they lead to."""
     b = zinogre.m.brain
-    named = {k: v for k, v in b.pairs.items() if isinstance(v, str)}
-    twins = {k: v for k, v in named.items() if v in b.derived()}
-    twins |= {"7,71": "p3_7_13", "7,82": "p3_7_13", "7,119": "p3_7_13"}
-    assert len(twins) == 21
+    twins = {k: v for k, v in b.pairs.items() if isinstance(v, str) and v in b.derived()}
+    assert len(twins) == 11
+    twins |= LEADS
     apart = manifest.load(PORT)
     apart.brain.pairs |= {k: manifest.OWN for k in twins}
     again, _ = own.expand(apart, data)
-    differ = set()
     for key, first in twins.items():
         name = manifest.own_name(manifest.pair_of(key))
-        want = own_steps(again, first)
-        assert chain_of(again, name)[: len(want)] == want, key
-        if chain_of(again, name) != chain_of(again, first):
-            differ.add(key)
-    assert differ == ELSEWHERE
+        assert chain_of(again, name) == chain_of(again, first), key
+
+
+def test_the_wrappers_play_the_moves_of_the_twins_they_lead_to(zinogre):
+    b = zinogre.m.brain
+    wrappers = {72: 70, 73: 71, 83: 81, 84: 82, 120: 118, 121: 119}
+    assert {w: b.targets((7, w)) for w in wrappers} == {
+        w: [TURN, manifest.own_name((7, p))] for w, p in wrappers.items()
+    }
+    assert all(b.pairs[f"7,{p}"] == manifest.OWN for p in wrappers.values())
 
 
 def test_what_fought_the_brain_is_gone(zinogre):
@@ -517,12 +516,12 @@ def test_the_moves_module_carries_fatigue_and_charge(module_text):
 
 
 def test_the_own_moves_fit_the_framework(zinogre, module_text):
-    """The slots and the turn keys the registry holds: the keys are what bounds the port."""
+    """The slots and the pools the registry holds: sharing equal runs is what fits the port."""
     _, built = module_text
     names = [n for n, mv in zinogre.m.moves.items() if mv.own]
-    keys = sum(len(moves.curve(zinogre.m, n, built.layout) or "") // 4 for n in names)
-    assert len(names) == 93 and keys == 4701
-    assert len(names) <= moves.SLOTS and keys <= moves.POOL
+    held = moves.pools(zinogre.m, built.layout)
+    assert len(names) == 125
+    assert (len(held.keys), len(held.samples), len(held.lunges)) == (2432, 1052, 10)
     assert not moves.problems(zinogre.m, built.layout, moves.records(Data.find().fu, 75))
 
 

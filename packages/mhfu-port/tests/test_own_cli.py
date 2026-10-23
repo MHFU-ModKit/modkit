@@ -74,18 +74,19 @@ def test_the_cli_lists_the_chains_across_hand_overs(data, capsys):
     path = PORTS / "zinogre.toml"
     code = main(["own", str(path), "--data", str(data.fu.root), "--p3rd-data", str(data.p3rd.root)])
     out = capsys.readouterr().out
-    assert code == 0 and f"39 pairs, 93 own moves of {manifest.OWN_MOVES}" in out
+    assert code == 0 and f"49 pairs, 125 own moves of {manifest.OWN_MOVES}" in out
     lines = out.splitlines()
     head = lines.index("7,12  p3_7_12 + 3 more")
     chain = [line.split()[0] for line in lines[head + 1 :] if line.startswith("  p3_")][:4]
     assert chain == ["p3_7_12", "p3_7_12_2", "p3_7_12_3", "p3_7_156"]
     assert any("p3_7_156 (slot" in line and "(MHP3rd 7,156)" in line for line in lines)
     held = [line for line in lines if line.startswith("  p3_7_0 (slot")]
-    assert len(held) == 3, "its own chain, then (7, 14)'s and (7, 16)'s hand-overs"
+    assert len(held) == 5, "its own chain and the hand-overs of four pairs"
     assert not held[0].endswith("shared with p3_7_0") and held[1].endswith("shared with p3_7_0")
     again = [line for line in lines if line.startswith("  p3_7_14_2 (slot")]
     assert len(again) == 2 and again[1].endswith("shared with p3_7_14"), "marked once per chain"
     assert not held[2].endswith("shared with p3_7_0"), "(7, 16)'s tail was marked at its first step"
+    assert held[3].endswith("shared with p3_7_0") and not held[4].endswith("shared with p3_7_0")
 
 
 def test_the_cli_lists_the_moves(data, capsys):
