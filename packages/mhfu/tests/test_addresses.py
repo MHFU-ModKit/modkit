@@ -123,7 +123,8 @@ def test_python_matches_the_file():
         assert getattr(addresses, name).type == entry["type"]
     for sname, struct in RAW.get("struct", {}).items():
         for fname, entry in struct["fields"].items():
-            assert getattr(getattr(addresses, sname), fname) == entry["offset"]
+            if entry["offset"] != "next":
+                assert getattr(getattr(addresses, sname), fname) == entry["offset"]
 
 
 def test_c_header_matches_python(tmp_path):
@@ -314,3 +315,162 @@ def test_parse_rejects(data, problem):
 
 def test_parse_end_bound():
     assert addresses.parse({"address": {"END": entry(addresses.RAM.stop)}}).addresses["END"]
+
+
+def field(type, offset="next"):
+    return {"offset": offset, "type": type, "doc": "d"}
+
+
+LAID_OUT = {
+    "const": {"N": {"value": 3, "doc": "d"}},
+    "struct": {
+        "ROW": {"doc": "d", "size": "auto", "fields": {"A": field("u16", 0), "B": field("u8")}},
+        "HOLDER": {
+            "doc": "d",
+            "size": "auto",
+            "fields": {
+                "FLAG": field("u8", 0),
+                "WORD": field("u32"),
+                "HALVES": field("u16[N]"),
+                "ROW": field("ROW"),
+                "ROWS": field("ROW[N]"),
+                "AT": field("vec3"),
+                "LAST": field("u8"),
+            },
+        },
+    },
+}
+
+C_LAYOUT = """
+#include <stddef.h>
+#include <stdint.h>
+#include "addresses.gen.h"
+typedef struct { uint16_t a; uint8_t b; } row_t;
+typedef struct {
+    uint8_t flag; uint32_t word; uint16_t halves[3]; row_t row; row_t rows[3];
+    float at[3]; uint8_t last;
+} holder_t;
+#define SAME(t, f, name) _Static_assert(offsetof(t, f) == MHFU_##name, #name)
+SAME(row_t, b, ROW_B);
+_Static_assert(sizeof(row_t) == MHFU_ROW_SIZE, "ROW_SIZE");
+SAME(holder_t, word, HOLDER_WORD);
+SAME(holder_t, halves, HOLDER_HALVES);
+SAME(holder_t, row, HOLDER_ROW);
+SAME(holder_t, rows, HOLDER_ROWS);
+SAME(holder_t, at, HOLDER_AT);
+SAME(holder_t, last, HOLDER_LAST);
+_Static_assert(sizeof(holder_t) == MHFU_HOLDER_SIZE, "HOLDER_SIZE");
+int main(void) { return 0; }
+"""
+
+
+def test_next_and_auto_lay_a_struct_out_as_c_does(tmp_path):
+    cc = shutil.which("cc")
+    if cc is None:
+        pytest.skip("no C compiler")
+    t = addresses.parse(LAID_OUT)
+    h = t.structs["HOLDER"]
+    assert (h.WORD, h.HALVES, h.ROW, h.ROWS, h.AT, h.LAST, h.size) == (4, 8, 14, 18, 32, 44, 48)
+    assert h.HALVES.count == 3 and h.ROWS.type == "ROW[3]" and t.structs["ROW"].size == 4
+    (tmp_path / "addresses.gen.h").write_text(addresses.render_c(t))
+    (tmp_path / "main.c").write_text(C_LAYOUT)
+    subprocess.run([cc, "-std=c11", "-Wall", "-Werror", "-I", tmp_path, "-o", tmp_path / "m",
+                    tmp_path / "main.c"], check=True)  # fmt: skip
+
+
+def test_a_const_sizes_an_array_in_every_language(tmp_path):
+    t = addresses.parse(LAID_OUT)
+    assert t.structs["HOLDER"].HALVES.count == 3
+    for found in (in_c(t, tmp_path), in_c_table(t, tmp_path), in_lua(t)):
+        assert found["HOLDER_HALVES_COUNT"] == 3 and found["HOLDER_ROWS_COUNT"] == 3
+
+
+def test_a_const_changes_every_offset_after_it():
+    data = tomllib.loads(files("mhfu").joinpath("addresses.toml").read_text(encoding="utf-8"))
+    old = addresses.table()
+    data["const"]["OWN_MOVES"]["value"] = 160
+    t = addresses.parse(data)
+    more = 160 - addresses.OWN_MOVES
+    assert t.structs["EM_MOVES"].MOVES.count == t.structs["FATIGUE_CFG"].OWN.count == 160
+    assert (
+        t.structs["EM_MOVES"].size - old.structs["EM_MOVES"].size == more * t.structs["EM_OWN"].size
+    )
+    assert t.structs["FATIGUE_CFG"].size == old.structs["FATIGUE_CFG"].size + 2 * more
+    assert t.structs["EM_BLOCK"].size == old.structs["EM_BLOCK"].size + 2 * more
+    assert t.structs["EM_BLOCK"].CHARGE - old.structs["EM_BLOCK"].CHARGE == 2 * more
+    assert (
+        t.structs["EM_MOVES"].SCRATCH - old.structs["EM_MOVES"].SCRATCH
+        == more * t.structs["EM_OWN"].size
+    )
+
+
+@pytest.mark.parametrize(
+    ("data", "problem"),
+    [
+        (
+            {"struct": {"S": {"doc": "d", "fields": {"F": field("u8", "later")}}}},
+            "must be an integer",
+        ),
+        (
+            {"struct": {"S": {"doc": "d", "size": 0, "fields": {"F": field("u8", 0)}}}},
+            "positive integer",
+        ),
+        (
+            {"struct": {"S": {"doc": "d", "size": "big", "fields": {"F": field("u8", 0)}}}},
+            'or "auto"',
+        ),
+        (
+            {"struct": {"S": {"doc": "d", "fields": {"F": field("u8[N]", 0)}}}},
+            "not a const above zero",
+        ),
+        (
+            {
+                "const": {"N": {"value": 0, "doc": "d"}},
+                "struct": {"S": {"doc": "d", "fields": {"F": field("u8[N]", 0)}}},
+            },
+            "not a const above zero",
+        ),
+        (
+            {
+                "struct": {
+                    "S": {
+                        "doc": "d",
+                        "size": "auto",
+                        "fields": {"F": field("u8", 0), "G": field("S")},
+                    }
+                }
+            },
+            "contains itself",
+        ),
+        (
+            {
+                "struct": {
+                    "U": {"doc": "d", "fields": {"F": field("u8", 0)}},
+                    "S": {"doc": "d", "fields": {"G": field("U", 0), "H": field("u8")}},
+                }
+            },
+            "needs G to have one",
+        ),
+        (
+            {
+                "struct": {
+                    "U": {"doc": "d", "fields": {"F": field("u8", 0)}},
+                    "S": {"doc": "d", "fields": {"G": field("U")}},
+                }
+            },
+            "needs a type with a size",
+        ),
+        (
+            {
+                "struct": {
+                    "U": {"doc": "d", "fields": {"F": field("u8", 0)}},
+                    "S": {"doc": "d", "size": "auto", "fields": {"G": field("U", 0)}},
+                }
+            },
+            "needs a size for",
+        ),
+    ],
+)
+def test_layout_rejects(data, problem):
+    with pytest.raises(ValueError, match=problem):
+        addresses.parse(data)

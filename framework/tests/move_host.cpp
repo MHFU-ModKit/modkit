@@ -14,6 +14,7 @@
 #define SIZE 0x4000u
 
 static uint8_t g_mem[SIZE];
+static uint8_t g_player[0x300];  /* the hunter, at MHFU_PLAYER_ENTITY */
 static mhfu_em_step_fn g_step;
 static uint32_t g_calls[64][5];
 static int g_n;
@@ -28,6 +29,8 @@ static uint8_t *at(uint32_t a, uint32_t n)
 {
     if (a >= MHFU_BREAK_TABLE && a + n <= MHFU_BREAK_TABLE + sizeof(g_breaks))
         return g_breaks + (a - MHFU_BREAK_TABLE);
+    if (a >= MHFU_PLAYER_ENTITY && a + n <= MHFU_PLAYER_ENTITY + sizeof(g_player))
+        return g_player + (a - MHFU_PLAYER_ENTITY);
     return (a >= BASE && a + n <= BASE + SIZE) ? g_mem + (a - BASE) : 0;
 }
 
@@ -150,6 +153,7 @@ void host_break_row(int i, uint8_t species, uint8_t part, uint8_t count, uint16_
     memcpy(r + MHFU_BREAK_ROW_BREAK_ID, &id, 2);
 }
 uint8_t *host_mem(void) { return g_mem; }
+uint8_t *host_hunter(void) { return g_player; }
 void     host_set(int lands, float clip_end)
 {
     memset(g_breaks, 0, sizeof(g_breaks));

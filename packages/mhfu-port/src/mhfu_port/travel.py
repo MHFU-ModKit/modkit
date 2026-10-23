@@ -19,6 +19,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
 import numpy as np
+from mhfu import addresses
 from mhfu.entries import PART_STREAMS
 from mhp_formats import fu
 from mhp_formats.anim import CHANNEL_BITS, Channel, Clip, Keyframe, Kind, Track, dequantize
@@ -44,9 +45,9 @@ TURN_MIN = math.radians(2.0)
 FAST_TURN = math.radians(10.0)
 """A turn between two keys past which joint 0's sway is baked on every frame: turned back
 fast, it bends between keys."""
-KEY_STEP = 2
-"""Clip frames between the keys `carry` bakes and `Turn` holds: the engine's clip speed, so
-its cursor lands on them."""
+KEY_STEP = int(addresses.STEER_KEY_STEP)
+"""Clip frames between the keys `carry` bakes and `Turn` holds, and between travel samples: the
+engine's clip speed, so its cursor lands on them; the framework's constant."""
 _ROT_Y = next(bit for bit, kind in CHANNEL_BITS.items() if kind == ("rot", Y))
 
 Vec2 = tuple[float, float]

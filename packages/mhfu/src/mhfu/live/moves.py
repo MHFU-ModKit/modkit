@@ -23,8 +23,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from .. import addresses as a
+from .. import steering
 from ..entries import entry_clip
-from ..views import View, f32s, ptr, ptrs, u8, u8s, u16, u32, u32s
+from ..views import View, f32, f32s, ptr, ptrs, u8, u8s, u16, u32, u32s
 from .clips import Pack, bridge, monster
 from .session import Session
 from .shell_anim import STALLED, Bridge, Op
@@ -151,24 +152,58 @@ class Move:
 
 
 @dataclass(frozen=True)
+class Lunge:
+    """`mhfu_steer_lunge_t`: over the clip frames `window` (lo, hi] the monster travels
+    `base + range * min((d - near) / span, 1)` units along the bearing to the hunter, nothing
+    while the hunter's distance `d` at the move's first playing frame is under `near`."""
+
+    window: tuple[int, int]
+    near: float
+    span: float
+    base: float
+    range: float
+
+    def pack(self) -> bytes:
+        """struct STEER_LUNGE."""
+        f = a.STEER_LUNGE
+        assert f.size
+        out = bytearray(f.size)
+        struct.pack_into("<HH", out, f.LO, *self.window)
+        struct.pack_into("<ffff", out, f.NEAR, self.near, self.span, self.base, self.range)
+        return bytes(out)
+
+    @classmethod
+    def unpack(cls, raw: bytes) -> Lunge | None:
+        """struct STEER_LUNGE; None where it has no window (its HI is 0)."""
+        f = a.STEER_LUNGE
+        lo, hi = struct.unpack_from("<HH", raw, f.LO)
+        near, span, base, rng = struct.unpack_from("<ffff", raw, f.NEAR)
+        return cls((lo, hi), near, span, base, rng) if hi else None
+
+
+@dataclass(frozen=True)
 class Steer:
     """What `mhfu_steer_spec_t` holds: the clip's turn curve (`curve`, YAW every 2 clip frames:
-    a port's turns module, `turns_of`), a turn mode on top, and whether a wall ends the
-    move, a class-2 one into `stuck`."""
+    a port's turns module, `turns_of`), a turn mode on top, whether a wall ends the move, a
+    class-2 one into `stuck`, and the move's own travel: `travel`, the monster's (x, z) every
+    `steering.STEP` clip frames from the move's start, and a `lunge` toward the hunter."""
 
     curve: tuple[int, ...] = ()
     turn: str = "still"
     rate: int = 64
     """YAW units an AI frame toward or away from the hunter."""
     total: float = 0.0
-    """Degrees "fixed" turns over `frames`, the way YAW grows."""
+    """Degrees "fixed" turns over `frames`, or across `window`, the way YAW grows."""
     frames: int = 1
     walls: bool = False
     dir: float = 0.0
     """Degrees of the travel against YAW: which wall sectors count as ahead."""
     stuck: tuple[int, int, int] = (0, 6, 1)
     window: tuple[int, int] = (0, 0)
-    """Clip frames [from, to) the hunter and away turns apply in; 0, 0 the whole move."""
+    """Clip frames [from, to) the hunter and away turns apply in, a fixed turn spreads across;
+    0, 0 the whole move."""
+    travel: tuple[steering.Point, ...] = ()
+    lunge: Lunge | None = None
 
     def pack(self) -> bytes:
         """struct STEER_SPEC."""
@@ -176,7 +211,7 @@ class Steer:
         most = a.STEER_SPEC.KEYS.count or 0
         if len(self.curve) > most:
             raise ValueError(f"at most {most} curve keys")
-        assert f.size
+        assert f.size and a.TRAVEL_SAMPLE.size
         out = bytearray(f.size)
         total = round(self.total * FULL_TURN / 360)
         struct.pack_into(
@@ -186,7 +221,42 @@ class Steer:
         struct.pack_into("<HH", out, f.STEER + p.WIN_FROM, *self.window)
         struct.pack_into("<HBBB", out, f.KEY_COUNT, len(self.curve), *self.stuck)
         struct.pack_into(f"<{len(self.curve)}H", out, f.KEYS, *(k & 0xFFFF for k in self.curve))
+        held = steering.samples(self.travel)
+        struct.pack_into("<H", out, f.SAMPLE_COUNT, len(held))
+        for k, xz in enumerate(held):
+            struct.pack_into("<hh", out, f.SAMPLES + k * a.TRAVEL_SAMPLE.size, *xz)
+        if self.lunge:
+            raw = self.lunge.pack()
+            out[f.LUNGE : f.LUNGE + len(raw)] = raw
         return bytes(out)
+
+    @classmethod
+    def unpack(cls, raw: bytes) -> Steer:
+        """struct STEER_SPEC; `dir` comes back in [0, 360)."""
+        f, p = a.STEER_SPEC, a.STEER_PARAMS
+        assert a.TRAVEL_SAMPLE.size
+        turn, walls, rate = struct.unpack_from("<BBH", raw, f.STEER + p.TURN)
+        total, frames, dir_ = struct.unpack_from("<iHH", raw, f.STEER + p.TOTAL)
+        window = struct.unpack_from("<HH", raw, f.STEER + p.WIN_FROM)
+        n, *stuck = struct.unpack_from("<HBBB", raw, f.KEY_COUNT)
+        (count,) = struct.unpack_from("<H", raw, f.SAMPLE_COUNT)
+        held = [
+            struct.unpack_from("<hh", raw, f.SAMPLES + k * a.TRAVEL_SAMPLE.size)
+            for k in range(min(count, steering.MOST))
+        ]
+        return cls(
+            struct.unpack_from(f"<{n}H", raw, f.KEYS),
+            TURNS[turn],
+            rate,
+            total * 360 / FULL_TURN,
+            frames,
+            bool(walls),
+            dir_ * 360 / FULL_TURN,
+            (stuck[0], stuck[1], stuck[2]),
+            (window[0], window[1]),
+            steering.path_of(held),
+            Lunge.unpack(raw[f.LUNGE : f.LUNGE + (a.STEER_LUNGE.size or 0)]),
+        )
 
 
 def _yaw(degrees: float) -> int:
@@ -213,6 +283,8 @@ class SteerState(View):
     wall = u8(a.STEER_STATE.WALL)
     yaw0 = u16(a.STEER_STATE.YAW0)
     yaw = u16(a.STEER_STATE.YAW)
+    lunge_x = f32(a.STEER_STATE.LUNGE_X)
+    lunge_z = f32(a.STEER_STATE.LUNGE_Z)
 
 
 class MoveState(View):

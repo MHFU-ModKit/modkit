@@ -1,14 +1,16 @@
 /* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2026 sp00ktober */
-/* A big monster's own move, steered one AI frame at a time: its turn, and whether a wall ends it.
- * The engine carries the travel itself (the clip's root motion) and pushes the monster out of
- * walls (WALL_COLLIDE, after the AI step); this reads that frame's wall result and turns YAW.
- * Leaf functions: no engine or library call. */
+/* A big monster's own move, steered one AI frame at a time: its turn, whether a wall ends it, and
+ * travel the clip does not carry. The engine carries the clip's root motion itself and pushes the
+ * monster out of walls (WALL_COLLIDE, after the AI step); this reads that frame's wall result,
+ * turns YAW and moves POSITION, which that push-out then corrects as it does root motion.
+ * Leaf functions: no engine call. */
 #ifndef MHFU_STEER_H
 #define MHFU_STEER_H
 
 #include <stdint.h>
 
+#include "addresses.gen.h"
 #include "mhfu/types.h"
 
 #ifdef __cplusplus
@@ -22,7 +24,7 @@ enum {
     MHFU_STEER_STILL = 0,  /* no turn */
     MHFU_STEER_HUNTER = 1, /* toward the hunter, at most `rate` a frame (TURN_TOWARD's step) */
     MHFU_STEER_AWAY = 2,   /* away from the hunter, the same way */
-    MHFU_STEER_FIXED = 3,  /* `total` spread evenly over `frames` frames */
+    MHFU_STEER_FIXED = 3,  /* `total` spread evenly over `frames` frames, or across the window */
 };
 
 enum {
@@ -39,7 +41,9 @@ typedef struct {
     uint16_t frames; /* FIXED: frames to spread `total` over, 1..0x7FFF */
     uint16_t dir;    /* direction of travel against YAW, YAW units: 0 forward, 0x8000 back */
     uint16_t win_from, win_to; /* HUNTER, AWAY: turn only while the clip frame is in
-                                * [win_from, win_to); both 0: the whole move */
+                                * [win_from, win_to); both 0: the whole move. FIXED, in
+                                * mhfu_steer_move: `total` is spread across the window by the
+                                * clip cursor and `frames` is not read; win_to 0: over `frames` */
 } mhfu_steer_t;
 
 /* atan2(dx, dz) in YAW units, within one unit. */
@@ -65,8 +69,18 @@ int mhfu_steer_frame(uint32_t entity, const mhfu_steer_t *p, uint16_t frame);
 
 /* --- a move's steering, as the move player runs it (move.cpp) ------------------------------- */
 
-#define MHFU_STEER_KEY_STEP 2  /* clip frames between turn keys: mhfu_port.travel.KEY_STEP */
-#define MHFU_STEER_KEYS 256
+/* MHFU_STEER_KEY_STEP, _KEYS, _SAMPLES and _TRAVEL_SCALE are consts in addresses.toml */
+
+/* struct TRAVEL_SAMPLE in addresses.toml: x, z in 1/MHFU_STEER_TRAVEL_SCALE world units */
+typedef struct {
+    int16_t x, z;
+} mhfu_travel_sample_t;
+
+/* struct STEER_LUNGE in addresses.toml */
+typedef struct {
+    uint16_t lo, hi;  /* clip frames, the window (lo, hi]; hi 0: no lunge */
+    float near, span, base, range;
+} mhfu_steer_lunge_t;
 
 /* struct STEER_SPEC in addresses.toml */
 typedef struct {
@@ -76,6 +90,11 @@ typedef struct {
     uint8_t  _pad[3];
     uint16_t keys[MHFU_STEER_KEYS]; /* YAW every KEY_STEP clip frames, the last at the clip's end:
                                      * the port's turns module (mhfu_port.travel.Turn) */
+    uint16_t sample_count;          /* 0: no travel by code */
+    mhfu_steer_lunge_t lunge;
+    mhfu_travel_sample_t samples[MHFU_STEER_SAMPLES]; /* the monster's own (x, z) at clip frame
+                                     * start + k * KEY_STEP, cumulative, in its frame at the first
+                                     * playing frame (x its left, z forward); held past the last */
 } mhfu_steer_spec_t;
 
 /* struct STEER_STATE in addresses.toml */
@@ -84,9 +103,9 @@ typedef struct {
     mhfu_steer_spec_t now;
     uint16_t base;          /* YAW the curve adds to */
     uint8_t  wall;          /* the last frame's MHFU_STEER_* */
-    uint8_t  _pad;
     float    cursor;        /* the cursor the step saw last */
     uint16_t yaw0, yaw;     /* YAW on the first playing frame, and as the step left it */
+    float    lunge_x, lunge_z; /* the lunge's whole length, world axes, set on the first frame */
 } mhfu_steer_state_t;
 
 /* No turn, no walls; a class-2 wall ends into (0,6) mode 1, as the Tigrex charge does. */
@@ -94,12 +113,18 @@ void mhfu_steer_init_spec(mhfu_steer_spec_t *s);
 /* The curve's YAW at clip frame `cursor`, the keys joined by straight lines and held past the
  * last; 0 without keys. Exact on the keys, where the engine's cursor sits at speed 2. */
 uint16_t mhfu_steer_curve(const volatile mhfu_steer_spec_t *s, float cursor);
+/* sin and cos of YAW `yaw`, within 1e-6. */
+void mhfu_steer_sincos(uint16_t yaw, float *s, float *c);
 /* One AI frame of a move (move.cpp's seam), `frame` its playing frames from 1: frame 1 takes
  * NEXT; a cursor that went back (a loop) carries the curve's turn over; YAW = base + curve, the
  * base turned by the spec's mode (HUNTER and AWAY only while `cursor`, the clip frame, is in
- * the window). Returns the wall result of the frame before, from frame 2. */
+ * the window; FIXED with a window across it by the cursor). Then POSITION moves by the change
+ * of the travel curve and of the lunge between the cursor of the frame before (frame 1: `start`,
+ * the clip frame the move began at) and this one: the curve's turned by YAW on frame 1 and
+ * scaled by ENTITY.SIZE_SCALE, the lunge along the bearing to `hunter` on frame 1, unscaled.
+ * Returns the wall result of the frame before, from frame 2, and then moves nothing. */
 int mhfu_steer_move(void *entity, const mhfu_vec3_t *hunter, volatile mhfu_steer_state_t *st,
-                    uint32_t frame, float cursor, float loop_start, float end);
+                    uint32_t frame, float start, float cursor, float loop_start, float end);
 
 #ifdef __cplusplus
 } /* extern "C" */

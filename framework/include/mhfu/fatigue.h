@@ -40,7 +40,7 @@ extern "C" {
 #endif
 
 #define MHFU_FATIGUE_PAIRS MHFU_FATIGUE_CFG_PAIRS_COUNT        /* costs by pair */
-#define MHFU_FATIGUE_OWN   MHFU_EM_MOVES_MOVES_COUNT           /* costs by own-move slot */
+#define MHFU_FATIGUE_OWN   MHFU_OWN_MOVES                      /* costs by own-move slot */
 
 /* struct FATIGUE_PAIR in addresses.toml */
 typedef struct {
