@@ -11,8 +11,10 @@ A pair move goes as the runtime paints it on its host pair. An own move goes as 
 takes it (`mhfu.move_play`): its `slot` in the framework's registry (`slots`), its clip's executor
 entry and, for `turn = "clip"`, its turn keys, both from the build's layout; the attack windows,
 the carrier (`hub` when it names none), the steer and `after`, and `start` and `stop`, the clip
-frames it plays from and to, when it sets them (`length` counts AI frames instead). `tip` is the
-tail tip's `{ joint, carrier }` pairs (`rig.Tip`), which `mhfu.em_tip` takes.
+frames it plays from and to, when it sets them (`length` counts AI frames instead). The steer
+carries the move's own `travel` (`mhfu.steering.hex_of`) and `lunge` when the manifest has them,
+and a fixed turn's `window`. `tip` is the tail tip's `{ joint, carrier }` pairs (`rig.Tip`),
+which `mhfu.em_tip` takes.
 
 `fatigue` is the stamina table `mhfu.em_fatigue` takes (`brain.fatigue`), given when the manifest's
 `[brain] fatigue` is set; `mhfu_port.lua` arms it with the port, an own move keyed by name.
@@ -26,12 +28,13 @@ moves `[brain.pairs]` derive from the donor (`brain.own.expand`), which `cli.bui
 
 from __future__ import annotations
 
+import math
 import re
 import zlib
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from mhfu import addresses, hitbox, inject
+from mhfu import addresses, hitbox, inject, steering
 from mhfu.files import Extracted, em_overlay
 
 from . import behaviour
@@ -51,6 +54,12 @@ POOL: int = addresses.EM_MOVES.KEYS.count or 0
 """Turn keys the framework holds for all of a port's own moves."""
 SLOTS: int = OWN_MOVES
 """Own moves the framework's registry holds."""
+SAMPLES: int = steering.MOST
+"""Travel samples the move player holds for one move."""
+SAMPLE_POOL: int = addresses.EM_MOVES.SAMPLES.count or 0
+"""Travel samples the framework holds for all of a port's own moves."""
+LUNGES: int = addresses.EM_MOVES.LUNGES.count or 0
+"""Lunges the framework holds for a port's own moves."""
 
 
 def slots(m: Manifest) -> dict[str, int]:
@@ -124,14 +133,51 @@ def records(game: Extracted, species: int) -> frozenset[int]:
     return frozenset(r.index - off for r in ([] if t is None else t.attacks) if any(r.raw))
 
 
+def motion_problems(mv: Move, frames: int | None) -> list[tuple[str, str]]:
+    """What the move player cannot carry of an own move's travel, lunge and fixed turn window, as
+    (where under the move, text): travel samples past its capacity, its reach or the clip's
+    `frames`; a lunge or window outside `[start, stop]` (the clip's end for no stop) or with a
+    distance that is not a length."""
+    out: list[tuple[str, str]] = []
+    end = mv.stop or frames
+    try:
+        steering.samples(mv.travel or ())
+    except ValueError as err:
+        out.append((".travel", str(err)))
+    last = mv.start + steering.STEP * (len(mv.travel or ()) - 1)
+    if frames is not None and mv.travel and last > frames:
+        out.append(
+            (
+                ".travel",
+                f"its {len(mv.travel)} samples reach frame {last}, past the clip's {frames}",
+            )
+        )
+    if (lunge := mv.lunge) is not None:
+        lo, hi = lunge.window
+        if not 0 <= lo < hi <= 0xFFFF:
+            out.append((".lunge", f"window {lunge.window} is not 0 <= lo < hi"))
+        elif lo < mv.start or (end is not None and hi > end):
+            out.append((".lunge", f"window {lunge.window} is outside [{mv.start}, {end}]"))
+        values = (lunge.near, lunge.span, lunge.base, lunge.range)
+        if not all(math.isfinite(v) for v in values) or lunge.near < 0 or lunge.span <= 0:
+            out.append((".lunge", "near is 0 or more, span above 0, all of them finite"))
+    s = mv.steer
+    if s.turn == "fixed" and s.window is not None:
+        lo, hi = s.window
+        if lo < mv.start or (end is not None and hi > end):
+            out.append((".steer", f"fixed window {s.window} is outside [{mv.start}, {end}]"))
+    return out
+
+
 def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) -> list[str]:
     """Every own move or rule the module cannot carry: more own moves than slots, a clip with no
     entry, a start or stop past its clip or an attack outside them (`manifest.span_problems`), an
-    attack past its clip or with no record in `known` (the host's, when given), more turn keys
-    than the framework holds, no carrier; rules on the flinch whose moves ride different
-    carriers."""
+    attack past its clip or with no record in `known` (the host's, when given), more turn keys,
+    travel samples or lunges than the framework holds, travel past the clip, a lunge or fixed
+    turn window outside `[start, stop]`, no carrier; rules on the flinch whose moves ride
+    different carriers."""
     out: list[str] = []
-    pool = 0
+    pool = samples = lunges = 0
     if (n := sum(mv.own for mv in m.moves.values())) > SLOTS:
         out.append(f"moves: {n} own moves, the framework holds {SLOTS}")
     for name, mv in m.moves.items():
@@ -146,6 +192,9 @@ def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) 
             continue
         frames = layout.frames.get(e)
         out += [f"{w}{sub}: {text}" for sub, text in span_problems(mv, frames)]
+        out += [f"{w}{sub}: {text}" for sub, text in motion_problems(mv, frames)]
+        samples += len(mv.travel or ())
+        lunges += mv.lunge is not None
         for i, a in enumerate(mv.attacks):
             if known is not None and a.id not in known:
                 out.append(
@@ -160,6 +209,13 @@ def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) 
         pool += keys
     if pool > POOL:
         out.append(f"moves: the own moves' turns need {pool} keys, the framework holds {POOL}")
+    if samples > SAMPLE_POOL:
+        out.append(
+            f"moves: the own moves' travel needs {samples} samples, the framework holds "
+            f"{SAMPLE_POOL}"
+        )
+    if lunges > LUNGES:
+        out.append(f"moves: {lunges} lunges, the framework holds {LUNGES}")
     flinch = set()
     try:
         rules = behaviour.compile(m)
@@ -222,9 +278,21 @@ def _steer(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
         if s.window is not None:
             out["window"] = list(s.window)
     elif s.turn == "fixed":
-        out |= {"turn": "fixed", "total": s.angle, "frames": s.frames}
+        out |= {"turn": "fixed", "total": s.angle}
+        out |= {"window": list(s.window)} if s.window is not None else {"frames": s.frames}
     elif (keys := curve(m, name, layout)) is not None:
         out["curve"] = keys
+    mv = m.moves[name]
+    if mv.travel:
+        out["travel"] = steering.hex_of(mv.travel)
+    if (lunge := mv.lunge) is not None:
+        out["lunge"] = {
+            "window": list(lunge.window),
+            "near": lunge.near,
+            "span": lunge.span,
+            "base": lunge.base,
+            "range": lunge.range,
+        }
     return out
 
 

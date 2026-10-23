@@ -4,6 +4,7 @@
 
 import struct
 
+import pytest
 from mhfu import addresses as a
 from mhfu.cli import main
 from mhfu.cli import moves as cli
@@ -70,6 +71,51 @@ def test_steer_packs_as_the_spec():
     assert struct.unpack_from("<HH", b, a.STEER_SPEC.STEER + a.STEER_PARAMS.WIN_FROM) == (10, 40)
     assert struct.unpack_from("<HBBB", b, a.STEER_SPEC.KEY_COUNT) == (3, 0, 6, 1)
     assert struct.unpack_from("<3H", b, a.STEER_SPEC.KEYS) == (0, 0x2000, 0xFFFF)
+
+
+def test_travel_and_lunge_pack_as_the_spec():
+    lunge = moves.Lunge((0, 32), 400.0, 1800.0, -700.0, 1800.0)
+    b = moves.Steer(travel=((0, 0), (-2.5, 40.25), (3, 100)), lunge=lunge).pack()
+    assert len(b) == a.STEER_SPEC.size
+    assert struct.unpack_from("<H", b, a.STEER_SPEC.SAMPLE_COUNT) == (3,)
+    assert struct.unpack_from("<6h", b, a.STEER_SPEC.SAMPLES) == (0, 0, -10, 161, 12, 400)
+    assert b[a.STEER_SPEC.SAMPLES + 12 :].count(0) == len(b) - a.STEER_SPEC.SAMPLES - 12
+    assert struct.unpack_from("<HH", b, a.STEER_SPEC.LUNGE + a.STEER_LUNGE.LO) == (0, 32)
+    assert struct.unpack_from("<ffff", b, a.STEER_SPEC.LUNGE + a.STEER_LUNGE.NEAR) == (
+        400.0,
+        1800.0,
+        -700.0,
+        1800.0,
+    )
+    plain = moves.Steer().pack()
+    assert struct.unpack_from("<H", plain, a.STEER_SPEC.SAMPLE_COUNT) == (0,)
+    assert plain[a.STEER_SPEC.SAMPLE_COUNT :] == bytes(len(plain) - a.STEER_SPEC.SAMPLE_COUNT)
+
+
+def test_steer_unpacks_what_it_packs():
+    sp = moves.Steer(
+        (0, 0x2000, 0xFFFF),
+        "fixed",
+        64,
+        -90.0,
+        30,
+        True,
+        90.0,
+        (0, 6, 1),
+        (10, 40),
+        ((0, 0), (-2.5, 40.25), (3, 100)),
+        moves.Lunge((0, 32), 400.0, 1800.0, -700.0, 1800.0),
+    )
+    assert moves.Steer.unpack(sp.pack()) == sp
+    assert moves.Steer.unpack(moves.Steer().pack()) == moves.Steer()
+
+
+def test_travel_the_game_cannot_hold_is_refused():
+    most = a.STEER_SAMPLES
+    with pytest.raises(ValueError, match="a move holds"):
+        moves.Steer(travel=((0, 0),) * (most + 1)).pack()
+    with pytest.raises(ValueError, match="a travel sample holds"):
+        moves.Steer(travel=((0, 9000.0),)).pack()
 
 
 def test_turns_of_a_turns_module():
