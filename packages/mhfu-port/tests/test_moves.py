@@ -253,8 +253,10 @@ def test_hunter_windows_are_not_held_to_the_span():
 def test_pools_of_samples_and_lunges():
     lay = layout.Layout({}, frames={9: 400})
     k = moves.SAMPLE_POOL // moves.SAMPLES + 1
-    path = [[0, 0]] * moves.SAMPLES
-    many = "".join(f"[moves.t{i}]\nanim = 9\ncarrier = [0, 1]\ntravel = {path}\n" for i in range(k))
+    many = "".join(
+        f"[moves.t{i}]\nanim = 9\ncarrier = [0, 1]\ntravel = {[[i + 1, 0]] * moves.SAMPLES}\n"
+        for i in range(k)
+    )
     assert moves.problems(_m(many), lay, {6}) == [
         f"moves: the own moves' travel needs {moves.SAMPLES * k} samples, the framework holds "
         f"{moves.SAMPLE_POOL}"
@@ -262,12 +264,40 @@ def test_pools_of_samples_and_lunges():
     n = moves.LUNGES + 1
     lunging = "".join(
         f"[moves.l{i}]\nanim = 9\ncarrier = [0, 1]\n[moves.l{i}.lunge]\nwindow = [0, 9]\n"
-        "near = 1\nspan = 1\nbase = 0\nrange = 1\n"
+        f"near = {i + 1}\nspan = 1\nbase = 0\nrange = 1\n"
         for i in range(n)
     )
     assert moves.problems(_m(lunging), lay, {6}) == [
         f"moves: {n} lunges, the framework holds {moves.LUNGES}"
     ]
+
+
+def test_runs_the_registry_holds_twice_count_once():
+    lay = layout.Layout({}, frames={9: 400})
+    k = max(moves.SAMPLE_POOL // moves.SAMPLES, moves.LUNGES) + 1
+    same = "".join(
+        f"[moves.t{i}]\nanim = 9\ncarrier = [0, 1]\ntravel = {[[1, 2]] * moves.SAMPLES}\n"
+        f"[moves.t{i}.lunge]\nwindow = [0, 9]\nnear = 1\nspan = 1\nbase = 0\nrange = 1\n"
+        for i in range(k)
+    )
+    assert moves.problems(_m(same), lay, {6}) == []
+    held = moves.pools(_m(same), lay)
+    assert (len(held.samples), len(held.lunges)) == (moves.SAMPLES, 1)
+
+
+def test_pools_place_a_run_where_the_pool_holds_it():
+    p = moves.Pools()
+    assert p.add([1, 2, 3], [(0, 0), (1, 1)], b"a") == (0, 0, 0)
+    assert p.add([1, 2, 3], [(0, 0), (1, 1)], b"a") == (0, 0, 0)
+    assert p.add([2, 3], [(1, 1)], b"b") == (1, 1, 1)
+    assert p.add([3, 4], [(0, 0), (2, 2)]) == (3, 2, None)
+    assert p.add([3], [(2, 2)], b"a") == (2, 3, 0)
+    assert p.add([], []) == (0, 0, None)
+    assert (p.keys, p.samples, p.lunges) == (
+        [1, 2, 3, 3, 4],
+        [(0, 0), (1, 1), (0, 0), (2, 2)],
+        [b"a", b"b"],
+    )
 
 
 def test_tip():
@@ -421,13 +451,17 @@ def test_check(extra, lay, known, why):
 
 
 def test_pool():
-    lay = layout.Layout(LAYOUT.entries, turns={46: travel.Turn(500, (0,) * 251, 0, None)})
     n = moves.POOL // 251 + 1
-    many = "".join(f"[moves.s{i}]\nclip = 'stamp'\n" for i in range(n))
+    lay = layout.Layout(
+        {}, turns={100 + i: travel.Turn(500, (i,) * 251, 0, None) for i in range(n)}
+    )
+    many = "".join(f"[moves.s{i}]\nanim = {100 + i}\ncarrier = [0, 1]\n" for i in range(n))
     with pytest.raises(
         ManifestError, match=f"need {251 * n} keys, the framework holds {moves.POOL}"
     ):
         moves.check(_m(many), lay)
+    twice = "".join(f"[moves.s{i}]\nanim = 100\ncarrier = [0, 1]\n" for i in range(n))
+    moves.check(_m(twice), lay)  # one turn run, held once
 
 
 def test_manifest_limits():

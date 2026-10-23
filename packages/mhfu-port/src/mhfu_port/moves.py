@@ -28,22 +28,26 @@ moves `[brain.pairs]` derive from the donor (`brain.own.expand`), which `cli.bui
 
 from __future__ import annotations
 
-import math
 import re
+import struct
 import zlib
-from collections.abc import Collection, Mapping
-from typing import Any
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any, TypeVar
 
 from mhfu import addresses, hitbox, inject, steering
 from mhfu.files import Extracted, em_overlay
+from mhfu.live import moves as live
 
 from . import behaviour
 from .behaviour import Rule
 from .layout import Layout
-from .manifest import OWN_MOVES, Manifest, ManifestError, Move, span_problems
+from .manifest import OWN_MOVES, Lunge, Manifest, ManifestError, Move, span_problems
 from .rig import Tip
 
 Pair = tuple[int, int]
+T = TypeVar("T")
+FLOAT_MAX = 3.4e38
 
 HUBS: dict[int, Pair] = {75: (0, 2)}
 """Host species -> the pair an own move rides when it names no carrier: em75's alert hub, which
@@ -60,6 +64,47 @@ SAMPLE_POOL: int = addresses.EM_MOVES.SAMPLES.count or 0
 """Travel samples the framework holds for all of a port's own moves."""
 LUNGES: int = addresses.EM_MOVES.LUNGES.count or 0
 """Lunges the framework holds for a port's own moves."""
+
+
+def _place(pool: list[T], run: Sequence[T]) -> int:
+    """Where `pool` holds `run` whole (the first such place), else where `run` was appended; an
+    empty run is at 0."""
+    n = len(run)
+    if not n:
+        return 0
+    i = -1
+    while True:
+        try:
+            i = pool.index(run[0], i + 1)
+        except ValueError:
+            break
+        if pool[i : i + n] == list(run):
+            return i
+    at = len(pool)
+    pool.extend(run)
+    return at
+
+
+@dataclass
+class Pools:
+    """What the framework's registry holds of a port's own moves when `mhfu_em_move` fills it
+    slot by slot (em_vhook.cpp `find_run` is this rule): a move's turn keys, travel samples and
+    lunge record go where the pool already holds that run, anywhere in it, else at its end. The
+    capacity check counts these, so a module it passes fits."""
+
+    keys: list[int] = field(default_factory=list)
+    samples: list[tuple[int, int]] = field(default_factory=list)
+    lunges: list[bytes] = field(default_factory=list)
+
+    def add(
+        self,
+        keys: Sequence[int],
+        samples: Sequence[tuple[int, int]],
+        lunge: bytes | None = None,
+    ) -> tuple[int, int, int | None]:
+        """Register one move's runs; where each starts (the lunge's index, None for no lunge)."""
+        at = (_place(self.keys, keys), _place(self.samples, samples))
+        return *at, None if lunge is None else _place(self.lunges, [lunge])
 
 
 def slots(m: Manifest) -> dict[str, int]:
@@ -133,6 +178,33 @@ def records(game: Extracted, species: int) -> frozenset[int]:
     return frozenset(r.index - off for r in ([] if t is None else t.attacks) if any(r.raw))
 
 
+def lunge_record(lunge: Lunge) -> bytes:
+    """A lunge as the registry holds it (struct STEER_LUNGE)."""
+    return live.Lunge(lunge.window, lunge.near, lunge.span, lunge.base, lunge.range).pack()
+
+
+def keys_of(text: str | None) -> list[int]:
+    """The turn keys of a clips module's hex `text` (`curve`)."""
+    text = text or ""
+    return [int(text[i : i + 4], 16) for i in range(0, len(text), 4)]
+
+
+def pools(m: Manifest, layout: Layout) -> Pools:
+    """The registry's pools once the own moves are registered in slot order, as `mhfu_port.lua`
+    does; a move `problems` refuses adds nothing."""
+    out = Pools()
+    for name, mv in ((n, m.moves[n]) for n in slots(m)):
+        try:
+            entry(m, name, layout)
+            keys = keys_of(curve(m, name, layout))
+            samples = steering.samples(mv.travel or ())
+            record = None if mv.lunge is None else lunge_record(mv.lunge)
+        except (ManifestError, ValueError, OverflowError, struct.error):
+            continue
+        out.add(keys, samples, record)
+    return out
+
+
 def motion_problems(mv: Move, frames: int | None) -> list[tuple[str, str]]:
     """What the move player cannot carry of an own move's travel, lunge and fixed turn window, as
     (where under the move, text): travel samples past its capacity, its reach or the clip's
@@ -159,7 +231,7 @@ def motion_problems(mv: Move, frames: int | None) -> list[tuple[str, str]]:
         elif lo < mv.start or (end is not None and hi > end):
             out.append((".lunge", f"window {lunge.window} is outside [{mv.start}, {end}]"))
         values = (lunge.near, lunge.span, lunge.base, lunge.range)
-        if not all(math.isfinite(v) for v in values) or lunge.near < 0 or lunge.span <= 0:
+        if not all(abs(v) <= FLOAT_MAX for v in values) or lunge.near < 0 or lunge.span <= 0:
             out.append((".lunge", "near is 0 or more, span above 0, all of them finite"))
     s = mv.steer
     if s.turn == "fixed" and s.window is not None:
@@ -173,11 +245,10 @@ def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) 
     """Every own move or rule the module cannot carry: more own moves than slots, a clip with no
     entry, a start or stop past its clip or an attack outside them (`manifest.span_problems`), an
     attack past its clip or with no record in `known` (the host's, when given), more turn keys,
-    travel samples or lunges than the framework holds, travel past the clip, a lunge or fixed
-    turn window outside `[start, stop]`, no carrier; rules on the flinch whose moves ride
-    different carriers."""
+    travel samples or lunges than the framework holds (`Pools`: a run it holds twice is held
+    once), travel past the clip, a lunge or fixed turn window outside `[start, stop]`, no
+    carrier; rules on the flinch whose moves ride different carriers."""
     out: list[str] = []
-    pool = samples = lunges = 0
     if (n := sum(mv.own for mv in m.moves.values())) > SLOTS:
         out.append(f"moves: {n} own moves, the framework holds {SLOTS}")
     for name, mv in m.moves.items():
@@ -193,8 +264,6 @@ def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) 
         frames = layout.frames.get(e)
         out += [f"{w}{sub}: {text}" for sub, text in span_problems(mv, frames)]
         out += [f"{w}{sub}: {text}" for sub, text in motion_problems(mv, frames)]
-        samples += len(mv.travel or ())
-        lunges += mv.lunge is not None
         for i, a in enumerate(mv.attacks):
             if known is not None and a.id not in known:
                 out.append(
@@ -203,19 +272,21 @@ def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) 
                 )
             if frames is not None and a.frame >= frames:
                 out.append(f"{w}.attack[{i}]: frame {a.frame} is past the clip's {frames}")
-        keys = len(curve(m, name, layout) or "") // 4
+        keys = len(keys_of(curve(m, name, layout)))
         if keys > KEYS:
             out.append(f"{w}: the clip's turn has {keys} keys, a move holds {KEYS}")
-        pool += keys
-    if pool > POOL:
-        out.append(f"moves: the own moves' turns need {pool} keys, the framework holds {POOL}")
-    if samples > SAMPLE_POOL:
+    held = pools(m, layout)
+    if len(held.keys) > POOL:
         out.append(
-            f"moves: the own moves' travel needs {samples} samples, the framework holds "
-            f"{SAMPLE_POOL}"
+            f"moves: the own moves' turns need {len(held.keys)} keys, the framework holds {POOL}"
         )
-    if lunges > LUNGES:
-        out.append(f"moves: {lunges} lunges, the framework holds {LUNGES}")
+    if len(held.samples) > SAMPLE_POOL:
+        out.append(
+            f"moves: the own moves' travel needs {len(held.samples)} samples, the framework "
+            f"holds {SAMPLE_POOL}"
+        )
+    if len(held.lunges) > LUNGES:
+        out.append(f"moves: {len(held.lunges)} lunges, the framework holds {LUNGES}")
     flinch = set()
     try:
         rules = behaviour.compile(m)

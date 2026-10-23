@@ -216,8 +216,10 @@ typedef struct {
 
 /* Empties every slot and the pools: turn keys, travel samples, lunges. */
 void mhfu_em_moves_clear(void);
-/* Slot `slot` plays mv, steered by s (its keys, travel samples and lunge copied); `after` is a
- * slot or MHFU_EM_NO_MOVE. 0 for a bad slot or no room left in a pool. */
+/* Slot `slot` plays mv, steered by s; `after` is a slot or MHFU_EM_NO_MOVE. Its keys, travel
+ * samples and lunge are copied into the pools unless a pool holds that run already, anywhere,
+ * word for word (a lunge byte for byte): then the slot points there. 0 for a bad slot or no room
+ * left in a pool for what is new. */
 int  mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_spec_t *s, uint8_t after);
 /* Plays slot on entity at its next AI step, forced past the notice wait (MOVE.FORCE) or not; 0
  * while nothing is wrapped or the slot is empty. */

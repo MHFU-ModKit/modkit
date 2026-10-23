@@ -14,6 +14,8 @@ from collections.abc import Callable, Sequence
 import pytest
 from mhfu import addresses as a
 from mhfu import steering
+from mhfu.live.moves import Lunge
+from mhfu_port.moves import Pools
 
 BASE = 0x09000000  # em_host.cpp's memory; noaddr
 ENT = BASE + 0x1000
@@ -221,7 +223,7 @@ class Game:
         slot: int,
         entry: int,
         after: int = NO,
-        keys: int = 0,
+        keys: Sequence[int] = (),
         *,
         turn: int = 0,
         window: tuple[int, int] = (0, 0),
@@ -229,14 +231,16 @@ class Game:
         lunge: tuple[int, int, float, float, float, float] | None = None,
         **kw: int,
     ) -> int:
-        """Own move `slot`; `turn` and `window` are its steer's (a hunter turn at rate 64),
-        `samples` its travel in sample units and `lunge` (lo, hi, near, span, base, range)."""
+        """Own move `slot`; `keys` are its turn keys, `turn` and `window` its steer's (a hunter
+        turn at rate 64), `samples` its travel in sample units and `lunge` (lo, hi, near, span,
+        base, range)."""
         mv = Move(entry=entry, carrier_main=0, carrier_sub=2, back_main=NO)
         for k, v in kw.items():
             setattr(mv, k, v)
         spec = ctypes.create_string_buffer(a.STEER_SPEC.size)
         self.lib.mhfu_steer_init_spec(spec)
-        struct.pack_into("<H", spec, a.STEER_SPEC.KEY_COUNT, keys)
+        struct.pack_into("<H", spec, a.STEER_SPEC.KEY_COUNT, len(keys))
+        struct.pack_into(f"<{len(keys)}H", spec, a.STEER_SPEC.KEYS, *keys)
         p = a.STEER_SPEC.STEER
         struct.pack_into("<BBH", spec, p + a.STEER_PARAMS.TURN, turn, 0, 64)
         struct.pack_into("<HH", spec, p + a.STEER_PARAMS.WIN_FROM, *window)
@@ -599,10 +603,11 @@ def test_an_own_moves_hunter_turn_keeps_to_its_steer_window(
 def test_keys_have_room(g: Game) -> None:
     full = a.EM_MOVES.KEYS.count // 256
     for slot in range(full):
-        assert g.own(slot, 46, keys=256)
-    assert not g.own(full, 46, keys=1)
+        assert g.own(slot, 46, keys=[slot] * 256)
+    assert not g.own(full, 46, keys=[full]) and g.moves("KEY_TOP") == full * 256
+    assert g.own(full, 46, keys=[0] * 7)  # held already: no room needed
     g.lib.mhfu_em_moves_clear()
-    assert g.own(full, 46, keys=256) and g.moves("KEY_TOP") == 256
+    assert g.own(full, 46, keys=[full] * 256) and g.moves("KEY_TOP") == 256
 
 
 def played_to_the_end(g: Game, slot: int) -> tuple[float, float]:
@@ -621,37 +626,72 @@ def test_the_registry_hands_a_slots_travel_and_lunge_to_the_move_player(g: Game)
     g.hunter_at(0.0, 0.0)
     struct.pack_into("<fff", g.hunter, a.ENTITY.POSITION, 0.0, 0.0, 800.0)
     lunge = (0, 10, 400.0, 1000.0, 0.0, 500.0)
+    other = (0, 10, 400.0, 1000.0, 0.0, 600.0)
     assert g.own(0, 46, samples=steering.samples([(0, 0), (5, 20)]))
     assert g.own(1, 46, samples=steering.samples([(0, 0), (-7, 3), (-9, 9)]), lunge=lunge)
-    assert g.own(2, 46, lunge=lunge) and g.own(3, 46)
-    assert [g.slot(k, "SAMPLE_AT", "H") for k in range(4)] == [0, 2, 5, 5]
+    assert g.own(2, 46, lunge=other) and g.own(3, 46)
+    assert [g.slot(k, "SAMPLE_AT", "H") for k in range(4)] == [0, 2, 0, 0]
     assert [g.slot(k, "LUNGE_AT") for k in range(4)] == [NO, 0, 1, NO]
     assert played_to_the_end(g, 0) == pytest.approx((5.0, 20.0), abs=0.05)
     assert played_to_the_end(g, 1) == pytest.approx((-9.0, 9.0 + 200.0), abs=0.05)
-    assert played_to_the_end(g, 2) == pytest.approx((0.0, 200.0), abs=0.05)
+    assert played_to_the_end(g, 2) == pytest.approx((0.0, 240.0), abs=0.05)
     assert played_to_the_end(g, 3) == pytest.approx((0.0, 0.0), abs=1e-6)
 
 
 def test_samples_have_room(g: Game) -> None:
     full = a.EM_MOVES.SAMPLES.count // a.STEER_SPEC.SAMPLES.count
     for slot in range(full):
-        assert g.own(slot, 46, samples=[(k, k) for k in range(a.STEER_SPEC.SAMPLES.count)])
-    assert not g.own(full, 46, samples=[(0, 0)]) and g.own(full, 46)
+        assert g.own(slot, 46, samples=[(slot, k) for k in range(a.STEER_SPEC.SAMPLES.count)])
+    assert not g.own(full, 46, samples=[(full, 0)]) and g.own(full, 46)
+    assert g.own(full, 46, samples=[(0, 0), (0, 1)])  # a run held already
     g.lib.mhfu_em_moves_clear()
     assert g.moves("SAMPLE_TOP") == 0
     assert g.own(full, 46, samples=[(0, 0)] * 3) and g.moves("SAMPLE_TOP") == 3
 
 
-def test_lunges_have_room_and_a_rewrite_keeps_its_place(g: Game) -> None:
-    lunge = (0, 10, 400.0, 1000.0, 0.0, 500.0)
+def test_lunges_have_room_and_a_rewrite_adds_only_what_is_new(g: Game) -> None:
+    def lunge(k: int) -> tuple[int, int, float, float, float, float]:
+        return 0, 10, 400.0 + k, 1000.0, 0.0, 500.0
+
     for slot in range(a.EM_LUNGES):
-        assert g.own(slot, 46, lunge=lunge)
-    assert not g.own(a.EM_LUNGES, 46, lunge=lunge) and g.moves("LUNGE_TOP") == a.EM_LUNGES
-    assert g.own(3, 46, lunge=(0, 20, 1.0, 2.0, 3.0, 4.0))  # in place
-    assert g.moves("LUNGE_TOP") == a.EM_LUNGES and g.slot(3, "LUNGE_AT") == 3
+        assert g.own(slot, 46, lunge=lunge(slot))
+    assert not g.own(a.EM_LUNGES, 46, lunge=lunge(99)) and g.moves("LUNGE_TOP") == a.EM_LUNGES
+    assert g.own(a.EM_LUNGES, 46, lunge=lunge(5)) and g.slot(a.EM_LUNGES, "LUNGE_AT") == 5
+    assert g.own(3, 46, lunge=lunge(3)) and g.slot(3, "LUNGE_AT") == 3  # again: nothing new
+    assert not g.own(3, 46, lunge=(0, 20, 1.0, 2.0, 3.0, 4.0))  # a changed one is new
     assert g.own(3, 46) and g.slot(3, "LUNGE_AT") == NO
     g.lib.mhfu_em_moves_clear()
-    assert g.moves("LUNGE_TOP") == 0 and g.own(a.EM_LUNGES, 46, lunge=lunge)
+    assert g.moves("LUNGE_TOP") == 0 and g.own(a.EM_LUNGES, 46, lunge=lunge(0))
+
+
+def test_the_registry_holds_what_the_capacity_check_counts(g: Game) -> None:
+    """Slots with equal runs, a run inside another and equal lunges: the registry's tops and each
+    slot's offsets are `moves.Pools`' for the same moves in the same order."""
+    run = [(k, -k) for k in range(1, 9)]
+    lunge = (0, 20, 100.0, 400.0, -300.0, 900.0)
+    spec = [
+        ([1, 2, 3, 4, 5, 6], run[:5], None),
+        ([1, 2, 3, 4, 5, 6], run[:5], lunge),
+        ([3, 4, 5], run[2:5], lunge),
+        ([7, 7], [], (0, 20, 100.0, 400.0, -300.0, 901.0)),
+        ([6, 7], run, lunge),
+        ([], [], None),
+        ([1, 2, 3, 4, 5, 6, 7], run[:5], (0, 20, 100.0, 400.0, -300.0, 901.0)),
+    ]
+    pools = Pools()
+    for slot, (keys, samples, lunge_) in enumerate(spec):
+        record = None if lunge_ is None else Lunge((lunge_[0], lunge_[1]), *lunge_[2:]).pack()
+        want = pools.add(keys, samples, record)
+        assert g.own(slot, 46, keys=keys, samples=samples, lunge=lunge_)
+        got = (
+            g.slot(slot, "KEY_AT", "H"),
+            g.slot(slot, "SAMPLE_AT", "H"),
+            g.slot(slot, "LUNGE_AT"),
+        )
+        assert got == (want[0], want[1], NO if want[2] is None else want[2])
+    tops = (g.moves("KEY_TOP"), g.moves("SAMPLE_TOP"), g.moves("LUNGE_TOP"))
+    assert tops == (len(pools.keys), len(pools.samples), len(pools.lunges))
+    assert tops == (8, 13, 2)  # a run holds what is inside it; a longer one is not extended
 
 
 def test_a_rule_on_an_event_fires_in_the_frame_it_is_seen(g: Game) -> None:

@@ -1538,9 +1538,26 @@ extern "C" void mhfu_em_moves_clear(void)
     R->key_top = R->sample_top = R->lunge_top = 0;
 }
 
-/* A slot is rewritten off (VALID 0) and its keys and samples appended: a brain that reads it
- * meanwhile sees it empty, and those a rewrite leaves behind wait for mhfu_em_moves_clear. A
- * lunge keeps its place when the slot had one. */
+/* Where a pool of `top` units of `size` bytes holds the `n` units of `run` byte for byte, the
+ * first such place in the whole pool; `top` where it does not (a run of none is anywhere: 0).
+ * mhfu_port.moves.Pools is this rule on the Python side. */
+static uint32_t find_run(const volatile void *pool, uint32_t top, const void *run, uint32_t n,
+                         unsigned size)
+{
+    if (!n) return 0;
+    const volatile uint8_t *p = (const volatile uint8_t *)pool;
+    const uint8_t *r = (const uint8_t *)run;
+    for (uint32_t i = 0; i + n <= top; i++) {
+        uint32_t k = 0;
+        while (k < n * size && p[i * size + k] == r[k]) k++;
+        if (k == n * size) return i;
+    }
+    return top;
+}
+
+/* A slot is rewritten off (VALID 0) and what its keys, samples and lunge need appended, unless
+ * the pool holds that run already (a run is shared, never moved): a brain that reads the slot
+ * meanwhile sees it empty, and the runs a rewrite leaves behind wait for mhfu_em_moves_clear. */
 extern "C" int mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_spec_t *s,
                             uint8_t after)
 {
@@ -1549,19 +1566,25 @@ extern "C" int mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_sp
     uint32_t m = s->sample_count > MHFU_STEER_SAMPLES ? MHFU_STEER_SAMPLES : s->sample_count;
     volatile mhfu_em_own_t *o = &R->moves[slot];
     const bool lunge = s->lunge.hi != 0;
-    const bool held = o->valid && o->lunge_at < R->lunge_top;
-    const uint8_t at = held ? o->lunge_at : (uint8_t)R->lunge_top;
-    if (R->key_top + n > MHFU_EM_KEYS) {
+    const uint32_t key_at = find_run(R->keys, R->key_top, s->keys, n, sizeof(uint16_t));
+    const uint32_t sample_at =
+        find_run(R->samples, R->sample_top, s->samples, m, sizeof(mhfu_travel_sample_t));
+    const uint32_t lunge_at =
+        lunge ? find_run(R->lunges, R->lunge_top, &s->lunge, 1, sizeof(mhfu_steer_lunge_t)) : 0;
+    const bool key_new = key_at == R->key_top && n;
+    const bool sample_new = sample_at == R->sample_top && m;
+    const bool lunge_new = lunge && lunge_at == R->lunge_top;
+    if (key_new && R->key_top + n > MHFU_EM_KEYS) {
         mhfu_log("[%s] own move %d: %u turn keys, %u left", OWNER, slot, (unsigned)n,
                  (unsigned)(MHFU_EM_KEYS - R->key_top));
         return 0;
     }
-    if (R->sample_top + m > MHFU_EM_SAMPLES) {
+    if (sample_new && R->sample_top + m > MHFU_EM_SAMPLES) {
         mhfu_log("[%s] own move %d: %u travel samples, %u left", OWNER, slot, (unsigned)m,
                  (unsigned)(MHFU_EM_SAMPLES - R->sample_top));
         return 0;
     }
-    if (lunge && !held && R->lunge_top >= MHFU_EM_LUNGES) {
+    if (lunge_new && R->lunge_top >= MHFU_EM_LUNGES) {
         mhfu_log("[%s] own move %d: no room for a lunge (%d)", OWNER, slot, MHFU_EM_LUNGES);
         return 0;
     }
@@ -1576,19 +1599,23 @@ extern "C" int mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_sp
         o->move.back_mode = 0;
     }
     copy_words(&o->steer, &s->steer, sizeof(s->steer));
-    o->key_at = (uint16_t)R->key_top;
-    o->key_count = (uint16_t)n;
-    for (uint32_t k = 0; k < n; k++) R->keys[R->key_top + k] = s->keys[k];
-    R->key_top += n;
-    o->sample_at = (uint16_t)R->sample_top;
-    o->sample_count = (uint16_t)m;
-    if (m) copy_words(&R->samples[R->sample_top], s->samples, m * sizeof(mhfu_travel_sample_t));
-    R->sample_top += m;
-    if (lunge) {
-        copy_words(&R->lunges[at], &s->lunge, sizeof(s->lunge));
-        if (!held) R->lunge_top++;
+    if (key_new) {
+        for (uint32_t k = 0; k < n; k++) R->keys[key_at + k] = s->keys[k];
+        R->key_top += n;
     }
-    o->lunge_at = lunge ? at : MHFU_EM_NO_LUNGE;
+    o->key_at = (uint16_t)key_at;
+    o->key_count = (uint16_t)n;
+    if (sample_new) {
+        copy_words(&R->samples[sample_at], s->samples, m * sizeof(mhfu_travel_sample_t));
+        R->sample_top += m;
+    }
+    o->sample_at = (uint16_t)sample_at;
+    o->sample_count = (uint16_t)m;
+    if (lunge_new) {
+        copy_words(&R->lunges[lunge_at], &s->lunge, sizeof(s->lunge));
+        R->lunge_top++;
+    }
+    o->lunge_at = lunge ? (uint8_t)lunge_at : MHFU_EM_NO_LUNGE;
     o->stuck_main = s->stuck_main;
     o->stuck_sub = s->stuck_sub;
     o->stuck_mode = s->stuck_mode;
