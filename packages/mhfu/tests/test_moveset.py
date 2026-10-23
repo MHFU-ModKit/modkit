@@ -220,6 +220,112 @@ def test_decide_answers_a_call_and_a_branch():
     assert {s.args[0] for s in w.run(BASE)} == both  # a decided run leaves nothing behind
 
 
+def test_decide_answers_a_call_with_a_float():
+    getter, thing = 0x0020_0000, a.ACTION_EXECUTOR
+    c = code(
+        asm.jal(getter),
+        asm.NOP,
+        asm.mul_s(0, 0, 0),
+        asm.trunc_w_s(0, 0),
+        asm.mfc1("a1", 0),
+        asm.jal(thing),
+        asm.NOP,
+        asm.RET,
+        asm.NOP,
+    )
+    w = Walker(c, {thing: "anim"})
+    assert [s.args[0] for s in w.run(BASE, decide=lambda pc, t, args: 4.0)] == [16]
+    assert [s.args[0] for s in w.run(BASE, decide=lambda pc, t, args: 3)] == [None]
+
+
+def test_cells_are_read_and_written():
+    thing = a.ACTION_EXECUTOR
+    c = code(
+        asm.addu("s0", "a0", "zero"),  # a call takes $a0 away
+        asm.lwc1(1, 0xB0, "s0"),
+        asm.add_s(1, 1, 1),
+        asm.swc1(1, 0xB4, "s0"),
+        asm.lwc1(2, 0xB4, "s0"),
+        asm.trunc_w_s(0, 2),
+        asm.mfc1("a1", 0),
+        asm.jal(thing),
+        asm.NOP,
+        asm.lwc1(3, 0xC0, "s0"),  # a cell it holds no value of
+        asm.swc1(3, 0xB4, "s0"),
+        asm.RET,
+        asm.NOP,
+    )
+    w = Walker(c, {thing: "anim"})
+    cells = {0xB0: 3.0}
+    assert [s.args[0] for s in w.run(BASE, cells=cells)] == [6]
+    assert cells == {0xB0: 3.0}  # the unknown store took 0xB4 away again
+    assert [s.args[0] for s in w.run(BASE)] == [None]
+
+
+def float_branch(branch, compare=asm.c_lt_s) -> Code:
+    """Plays 1 where `$f1 < 10.0` fails and 2 where it holds (`branch` the bc1 flavour)."""
+    thing = a.ACTION_EXECUTOR
+    words = [
+        asm.lwc1(1, 0x84, "a0"),
+        asm.lui("v0", asm.hi(BASE + 0x80)),
+        asm.lwc1(2, asm.lo(BASE + 0x80), "v0"),
+        compare(1, 2),
+        asm.NOP,
+        branch(va(12), va(5)),
+        asm.NOP,
+        asm.li("a1", 1),
+        asm.jal(thing),
+        asm.NOP,
+        asm.RET,
+        asm.NOP,
+        asm.li("a1", 2),  # 12
+        asm.jal(thing),
+        asm.NOP,
+        asm.RET,
+        asm.NOP,
+    ]
+    pool = struct.unpack("<I", struct.pack("<f", 10.0))[0]
+    blob = (
+        struct.pack(f"<{len(words)}I", *words)
+        + bytes(0x80 - 4 * len(words))
+        + struct.pack("<I", pool)
+    )
+    return Code(Image(blob, BASE), range(BASE, va(len(words))))
+
+
+def test_a_float_compare_of_known_values_decides_its_branch():
+    w = Walker(float_branch(asm.bc1t), {a.ACTION_EXECUTOR: "anim"})
+
+    def played(cells):
+        return sorted(s.args[0] for s in w.run(BASE, cells=cells))
+
+    assert played({0x84: 5.0}) == [2]
+    assert played({0x84: 20.0}) == [1]
+    assert played({0x84: 10.0}) == [1]  # not less
+    assert played({}) == played(None) == [1, 2]  # an unknown operand forks as it always did
+
+
+def test_a_tail_call_is_told_to_decide_with_cells():
+    helper = 0x0020_0000
+    c = code(asm.li("a1", 5), asm.j(helper), asm.NOP)
+    heard: list[tuple[int | None, tuple[int | None, ...]]] = []
+
+    def decide(pc, target, args):
+        heard.append((target, args[:1]))
+
+    w = Walker(c, {}, args=(Gpr.a1,))
+    w.run(BASE, decide=decide)
+    assert heard == []  # told of calls that return, as before
+    w.run(BASE, decide=decide, cells={})
+    assert heard == [(helper, (5,))]
+
+
+def test_a_branch_on_the_compare_not_holding():
+    w = Walker(float_branch(asm.bc1f), {a.ACTION_EXECUTOR: "anim"})
+    assert [s.args[0] for s in w.run(BASE, cells={0x84: 5.0})] == [1]
+    assert [s.args[0] for s in w.run(BASE, cells={0x84: 20.0})] == [2]
+
+
 def test_game(game):
     for species in files.EM_SPECIES:
         ms = Moveset(game.em(species))

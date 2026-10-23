@@ -17,7 +17,7 @@ channel. `Walker` interprets a function path by path; `animations` and `mhfu.em.
 from __future__ import annotations
 
 import struct
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, MutableMapping
 from dataclasses import dataclass, field
 from functools import cached_property
 
@@ -260,7 +260,7 @@ class _Operand:
     jr: int
 
 
-Decide = Callable[[int, int | None, tuple[int | None, ...]], int | None]
+Decide = Callable[[int, int | None, tuple[int | None, ...]], int | float | None]
 """What a caller of `Walker.run` decides: see there."""
 _Env = dict["Register | _Operand", Value]
 _PASSED = (Gpr.a0, Gpr.a1, Gpr.a2, Gpr.a3, Fpr.fa0)
@@ -289,10 +289,18 @@ class _Path:
     guards: tuple[str, ...] = ()
     visited: frozenset[int] = frozenset()
     steps: int = 0
+    fcc: bool | None = None
+    """The last float compare's result, when both its operands were known."""
 
     def fork(self, pc: int, guards: tuple[str, ...] = ()) -> _Path:
         return _Path(
-            pc, dict(self.env), dict(self.facts), self.guards + guards, self.visited, self.steps
+            pc,
+            dict(self.env),
+            dict(self.facts),
+            self.guards + guards,
+            self.visited,
+            self.steps,
+            self.fcc,
         )
 
     def learn(self, cell: Cell, value: int, equal: bool) -> None:
@@ -312,6 +320,19 @@ def _float_bits(value: float) -> int:
     return int(struct.unpack("<I", struct.pack("<f", value))[0])
 
 
+_COMPARE: dict[rabbitizer.Enum, Callable[[float, float], bool]] = {
+    InstrId.cpu_c_lt_s: lambda x, y: x < y,
+    InstrId.cpu_c_le_s: lambda x, y: x <= y,
+    InstrId.cpu_c_eq_s: lambda x, y: x == y,
+}
+"""The float compares a walk with `cells` carries out."""
+_FCC: dict[rabbitizer.Enum, bool] = {
+    InstrId.cpu_bc1t: True,
+    InstrId.cpu_bc1tl: True,
+    InstrId.cpu_bc1f: False,
+    InstrId.cpu_bc1fl: False,
+}
+"""Branches on the last float compare: True when they branch on it holding."""
 _FLOAT: dict[rabbitizer.Enum, Callable[[float, float], float]] = {
     InstrId.cpu_add_s: lambda x, y: x + y,
     InstrId.cpu_sub_s: lambda x, y: x - y,
@@ -336,7 +357,9 @@ class Walker:
     with the values of `args` there, and the value of a `probes` instruction's register as it
     runs (a Site of kind "probe"). It reads constant-pool floats and does single-precision
     arithmetic on them; a call to a `returns` target leaves that float in $f0. A float register
-    is held as its bits, so `args` can name one (`Fpr.fa0`). A pc runs at most once per path;
+    is held as its bits, so `args` can name one (`Fpr.fa0`). With `cells` (see `run`) it also
+    reads and writes the entity's float cells and decides a branch on a float compare of two
+    values it knows. A pc runs at most once per path;
     `max_paths` path ends and `max_steps` per path bound a walk, and `truncated` names the
     functions that hit one.
     """
@@ -369,6 +392,7 @@ class Walker:
         self.truncated: set[int] = set()
         self._memo: dict[tuple[object, ...], tuple[Site, ...]] = {}
         self._decide: Decide | None = None
+        self._cells: MutableMapping[int, float] | None = None
         self._operands = {s.operand.vram: s.jr for s in code.switches.values() if s.operand}
         self._tables = {
             s.table + 4 * i: t for s in code.switches.values() for i, t in enumerate(s.targets)
@@ -380,25 +404,35 @@ class Walker:
         seed: Mapping[Register, Value] | None = None,
         facts: Facts | None = None,
         decide: Decide | None = None,
+        cells: MutableMapping[int, float] | None = None,
     ) -> list[Site]:
         """Every watched call some path from `fn` reaches, once per distinct Site.
 
         `decide(pc, target, args)` answers for the caller: the $v0 a call at `pc` to `target`
-        leaves (`args`: the walker's argument registers there) or the outcome of a branch at `pc`
-        the walk cannot decide (1 taken, 0 not; no target, `args` empty). None leaves it to the
-        walk, which forks. A run with `decide` is not memoised."""
+        leaves (`args`: the walker's argument registers there; a float answers $f0 instead) or
+        the outcome of a branch at `pc` the walk cannot decide (1 taken, 0 not; no target, `args`
+        empty). None leaves it to the walk, which forks. A run with `decide` or `cells` is not
+        memoised.
+
+        `cells` are the entity's float cells by offset: a load from the entity reads one it
+        holds, a store writes it (an unknown value removes it), and `decide` may change them
+        between calls. They are shared by every path and callee, in the order they are walked, so
+        they are exact for a walk `decide` keeps on one path. They also let a branch on a float
+        compare of two known values decide itself, and `decide` hear of a tail call, its answer
+        unused."""
         env: _Env = {r: v for r, v in (seed or {}).items()}
         before, self._decide = self._decide, decide
+        held, self._cells = self._cells, cells
         try:
             return list(self._run(fn, env, {**self.facts, **(facts or {})}, 0, ()))
         finally:
-            self._decide = before
+            self._decide, self._cells = before, held
 
     def _run(
         self, fn: int, seed: _Env, facts: dict[Cell, Known], depth: int, via: tuple[int, ...]
     ) -> tuple[Site, ...]:
         key = (fn, frozenset(seed.items()), frozenset(facts.items()), depth, via)
-        if self._decide is not None:
+        if self._decide is not None or self._cells is not None:
             return self._walk(_Path(fn, {Gpr.a0: ENTITY, **seed}, facts), depth, via)
         if key not in self._memo:
             start = _Path(fn, {Gpr.a0: ENTITY, **seed}, facts)
@@ -427,6 +461,7 @@ class Walker:
                     frozenset(p.env.items()),
                     frozenset(p.facts.items()),
                     p.guards if self.guards else (),
+                    p.fcc,
                 )
                 if state in states:
                     ends += 1
@@ -465,6 +500,8 @@ class Walker:
                 for s in self._call(target, p, depth, via, ins.doesLink()):
                     out.setdefault(s)
                 if not ins.doesLink():
+                    if self._cells is not None:  # a tail call is a call: `decide` hears of it
+                        self._tell(target, p)
                     ends += 1
                     break
                 self._after_call(target, p)
@@ -557,29 +594,38 @@ class Walker:
         found = self._run(target, seed, dict(p.facts), deeper, (*via, target))
         return [Site(s.site, s.kind, s.args, p.guards + s.guards, s.via, s.facts) for s in found]
 
+    def _tell(self, target: Value | None, p: _Path) -> int | float | None:
+        """What `decide` says of the call at `p.pc`; None without one."""
+        if self._decide is None:
+            return None
+        args = tuple(v if isinstance(v := p.env.get(r), int) else None for r in self.args)
+        return self._decide(p.pc, target if isinstance(target, int) else None, args)
+
     def _after_call(self, target: Value | None, p: _Path) -> None:
         frame = None
         if target in _FRAMED:
             bits = p.env.get(Fpr.fa0)
             frame = round(_bits(bits), 2) if isinstance(bits, int) else None
-        said = None
-        if self._decide is not None:
-            args = tuple(v if isinstance(v := p.env.get(r), int) else None for r in self.args)
-            said = self._decide(p.pc, target if isinstance(target, int) else None, args)
+        said = self._tell(target, p)
         for r in CALL_CLOBBERS:
             p.env.pop(r, None)
+        result = said if isinstance(said, int) else None
         p.env[Gpr.v0] = (
-            said
-            if said is not None
+            result
+            if result is not None
             else Tag("result", target if isinstance(target, int) else None, frame, site=p.pc)
         )
-        if isinstance(target, int) and target in self.returns:
+        if isinstance(said, float):
+            p.env[Fpr.fv0] = _float_bits(said)
+        elif isinstance(target, int) and target in self.returns:
             p.env[Fpr.fv0] = self.returns[target]
 
     # --- conditions ---
 
     def _cond(self, ins: Instruction, p: _Path) -> _Fork:
         u = ins.uniqueId
+        if u in _FCC:
+            return _Fork() if self._cells is None or p.fcc is None else _Fork(p.fcc == _FCC[u])
         if u in _TWO:
             x = _value(p.env, ins.rs)
             y = 0 if u in (InstrId.cpu_beqz, InstrId.cpu_bnez) else _value(p.env, ins.rt)
@@ -644,6 +690,13 @@ class Walker:
         if ins.doesStore():
             self._store(ins, u, p)
             return
+        if u in _COMPARE and self._cells is not None:
+            x, y = p.env.get(ins.fs), p.env.get(ins.ft)
+            if isinstance(x, int) and isinstance(y, int):
+                p.fcc = _COMPARE[u](_bits(x), _bits(y))
+            else:
+                p.fcc = None
+            return
         value = self._eval(ins, u, p)
         if ins.vram in self._operands:
             key = _Operand(self._operands[ins.vram])
@@ -657,14 +710,29 @@ class Walker:
             p.env[dests[0]] = value
 
     def _store(self, ins: Instruction, u: rabbitizer.Enum, p: _Path) -> None:
-        if _value(p.env, ins.rs) != ENTITY or u not in _WIDTH:
+        if _value(p.env, ins.rs) != ENTITY:
             return
-        off, width = ins.getProcessedImmediate(), _WIDTH[u]
+        off = ins.getProcessedImmediate()
+        if u == InstrId.cpu_swc1:
+            bits = p.env.get(ins.ft)
+            if self._cells is not None and isinstance(bits, int):
+                self._cells[off] = _bits(bits)
+            elif self._cells is not None:
+                self._cells.pop(off, None)
+            return
+        if u not in _WIDTH:
+            return
+        width = _WIDTH[u]
         for cell in [c for c in p.facts if c[0] < off + width and off < c[0] + c[1]]:
             del p.facts[cell]
         value = _value(p.env, ins.rt)
         if isinstance(value, int):
             p.facts[off, width] = value & ((1 << 8 * width) - 1)
+        if self._cells is not None and width == 4 and off in self._cells:
+            if isinstance(value, int):
+                self._cells[off] = _bits(value)
+            else:
+                del self._cells[off]
 
     def _eval(self, ins: Instruction, u: rabbitizer.Enum, p: _Path) -> Value | None:
         env = p.env
@@ -674,6 +742,8 @@ class Walker:
             if base == ENTITY:
                 if u == InstrId.cpu_lw and off == 0:
                     return VTABLE
+                if u == InstrId.cpu_lwc1 and self._cells is not None and off in self._cells:
+                    return _float_bits(self._cells[off])
                 width = _WIDTH.get(u, 0)
                 fact = p.facts.get((off, width))
                 if isinstance(fact, int):
