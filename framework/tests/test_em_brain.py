@@ -601,10 +601,11 @@ def test_an_own_moves_hunter_turn_keeps_to_its_steer_window(
 
 
 def test_keys_have_room(g: Game) -> None:
-    full = a.EM_MOVES.KEYS.count // 256
-    for slot in range(full):
-        assert g.own(slot, 46, keys=[slot] * 256)
-    assert not g.own(full, 46, keys=[full]) and g.moves("KEY_TOP") == full * 256
+    cap = a.EM_MOVES.KEYS.count
+    for slot, start in enumerate(range(0, cap, 256)):
+        assert g.own(slot, 46, keys=[slot] * min(256, cap - start))
+    full = slot + 1
+    assert g.moves("KEY_TOP") == cap and not g.own(full, 46, keys=[full])
     assert g.own(full, 46, keys=[0] * 7)  # held already: no room needed
     g.lib.mhfu_em_moves_clear()
     assert g.own(full, 46, keys=[full] * 256) and g.moves("KEY_TOP") == 256
@@ -639,11 +640,12 @@ def test_the_registry_hands_a_slots_travel_and_lunge_to_the_move_player(g: Game)
 
 
 def test_samples_have_room(g: Game) -> None:
-    full = a.EM_MOVES.SAMPLES.count // a.STEER_SPEC.SAMPLES.count
-    for slot in range(full):
-        assert g.own(slot, 46, samples=[(slot, k) for k in range(a.STEER_SPEC.SAMPLES.count)])
-    assert not g.own(full, 46, samples=[(full, 0)]) and g.own(full, 46)
-    assert g.own(full, 46, samples=[(0, 0), (0, 1)])  # a run held already
+    cap, most = a.EM_MOVES.SAMPLES.count, a.STEER_SPEC.SAMPLES.count
+    for slot, start in enumerate(range(0, cap, most)):
+        assert g.own(slot, 46, samples=[(slot, k) for k in range(min(most, cap - start))])
+    full = slot + 1
+    assert g.moves("SAMPLE_TOP") == cap and not g.own(full, 46, samples=[(full, 0)])
+    assert g.own(full, 46) and g.own(full, 46, samples=[(0, 0), (0, 1)])  # held already
     g.lib.mhfu_em_moves_clear()
     assert g.moves("SAMPLE_TOP") == 0
     assert g.own(full, 46, samples=[(0, 0)] * 3) and g.moves("SAMPLE_TOP") == 3
