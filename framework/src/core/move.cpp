@@ -9,6 +9,8 @@
  *   frame 2..:  attacks at their frames, the end checks, SKIP's choice
  *   end:        windowed attacks still live are ended; the step comes out once nothing is
  *               pending
+ *   chain:      an end with a successor on the same carrier (mhfu_em_chain) ends the attacks and
+ *               dispatches the successor's entry in that AI frame, the carrier not entered
  *
  * The step is in from the wrapped species' spawn: each AI frame it takes a reaction em_vhook
  * replaced (mhfu_em_react) by starting the registered move on the carrier the replacement
@@ -114,6 +116,9 @@ static_assert(offsetof(mhfu_steer_state_t, cursor) == MHFU_STEER_STATE_CURSOR, "
 static_assert(offsetof(mhfu_steer_state_t, yaw) == MHFU_STEER_STATE_YAW, "STEER_STATE layout");
 static_assert(offsetof(mhfu_steer_state_t, lunge_x) == MHFU_STEER_STATE_LUNGE_X, "STEER_STATE layout");
 static_assert(offsetof(mhfu_steer_state_t, lunge_z) == MHFU_STEER_STATE_LUNGE_Z, "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, keep) == MHFU_STEER_STATE_KEEP, "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, blend) == MHFU_STEER_STATE_BLEND, "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, ramp) == MHFU_STEER_STATE_RAMP, "STEER_STATE layout");
 
 /* --- the engine ------------------------------------------------------------------------- */
 
@@ -197,6 +202,7 @@ static int steer(uint32_t ent)
     clip.loop_start = mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_LOOP_START);
     clip.end = mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_END);
     clip.speed = mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_SPEED);
+    clip.blend = (int32_t)mhfu_mem_read_u32(b + MHFU_CLIP_BLOCK_BLEND);
     return mhfu_steer_move(e, target, &S->steer, S->frames, &clip);
 }
 
@@ -262,6 +268,7 @@ static int begin(uint32_t ent)
     S->frames = S->skipped = S->end_frame = 0;
     S->end = S->skipping = 0;
     S->end_pair = 0;
+    S->steer.keep = 0;
     for (int k = 0; k < MHFU_ENTITY_CLIP_BLOCKS_COUNT; k++) {
         S->node[k] = 0;
         S->clip_end[k] = S->peak[k] = -1.0f;
@@ -325,6 +332,8 @@ static void dispatch(uint32_t ent)
         S->node[k] = mhfu_mem_read_u32(clip_block(ent, k) + MHFU_CLIP_BLOCK_NODE);
         S->clip_end[k] = mhfu_mem_read_f32(clip_block(ent, k) + MHFU_CLIP_BLOCK_END);
     }
+    int32_t blend = (int32_t)mhfu_mem_read_u32(clip_block(ent, 0) + MHFU_CLIP_BLOCK_BLEND);
+    S->steer.blend = (uint16_t)(blend < 0 ? 0 : blend > 0xFFFF ? 0xFFFF : blend);
     S->state = MHFU_MOVE_PLAYING;
 }
 
@@ -349,6 +358,25 @@ static void attacks(uint32_t ent, float prev, float cursor)
         if (at->end && S->spawn_frame[i] != NEVER && crosses(prev, cursor, at->end))
             end_attack(i, ent);
     }
+}
+
+/* The step ended and em_vhook names a successor on the same carrier: it takes this AI frame, before
+ * the host step, so the carrier's handler never sees the clip end (the hub would dispatch its own
+ * clip) and is not entered again. The pair stays; the step's base is kept (steer.h). */
+static int chain(uint32_t ent)
+{
+    mhfu_move_t mv;
+    const mhfu_steer_spec_t *sp;
+    if (!mhfu_em_chain(ent, &mv, &sp)) return 0;
+    end_attacks(ent);
+    mhfu_em_mute_events(0);
+    copy_words(&S->move, &mv, sizeof(mv));
+    copy_words(&S->steer.next, sp, sizeof(*sp));
+    if (begin(ent)) {
+        S->steer.keep = 1;
+        dispatch(ent);
+    }
+    return 1;
 }
 
 /* 1 when the host step skips this frame */
@@ -387,6 +415,7 @@ static uint32_t play(uint32_t ent)
     int timed = (S->move.length && S->frames >= S->move.length)
              || (S->move.stop && cursor >= (float)S->move.stop);
     if (done || timed) {
+        if (chain(ent)) return 0;
         if (S->move.back_main != MHFU_MOVE_NO_PAIR || timed) {
             int back = S->move.back_main != MHFU_MOVE_NO_PAIR;
             enter(ent, back ? S->move.back_main : S->move.carrier_main,

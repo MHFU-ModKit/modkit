@@ -171,9 +171,10 @@ int  mhfu_em_tip(const uint8_t (*pairs)[2], int n);
  * A port's own moves, by slot, in partition memory. The brain, in C on the wrapped AI step, plays
  * one through the move player that same AI frame: one asked for (mhfu_em_play), else the AFTER of
  * one of ours that ended on its clip, its length, its stop or a wall (forced as that one was),
- * else a rule's. A slot with an AFTER ends into its carrier (its back pair) with the AI script's wake
- * cleared (MOVE.HOLD_SCRIPT), so the host brain does not cut in before the next. A slot's FORCE is
- * the call's, never the slot's.
+ * else a rule's. An AFTER on the same carrier plays in the AI frame its move ends, before the host
+ * step, the carrier not entered again (mhfu_em_chain). Otherwise a slot with an AFTER ends into its
+ * carrier (its back pair) with the AI script's wake cleared (MOVE.HOLD_SCRIPT), so the host brain
+ * does not cut in before the next. A slot's FORCE is the call's, never the slot's.
  *
  * An AI script plays a slot too: `enter MHFU_OWN_MOVE_MAIN k 0`. The slot-32 stub enters the slot's
  * carrier (em75's hub (0,2) for an empty or out-of-range slot) in place of the main the game
@@ -226,6 +227,12 @@ int  mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_spec_t *s, u
 int  mhfu_em_play(uint32_t entity, int slot, int force);
 /* The slot of the move the move player runs (entering or playing), if it came from here; -1. */
 int  mhfu_em_playing(void);
+/* The move player's step ended and asks for the successor in place: the playing slot's AFTER into
+ * *mv and *steer (the registry's scratch), taken and counted as a play, when it rides the same
+ * carrier and the move has no back pair of its own; else 0, and the old way follows (the carrier
+ * is entered, and the brain plays the AFTER once the move ends into it). The one place a
+ * successor is chosen. */
+int  mhfu_em_chain(uint32_t entity, mhfu_move_t *mv, const mhfu_steer_spec_t **steer);
 /* The registry, or 0 before the framework's init. */
 const volatile mhfu_em_moves_t *mhfu_em_moves(void);
 

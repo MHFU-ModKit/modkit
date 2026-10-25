@@ -27,6 +27,12 @@
  * clears the wake for a move on the hub or during the notice, and a move with HOLD_SCRIPT clears
  * it where it enters its back pair, so the script resumes only when the carrier hands back.
  *
+ * A move that ends with a successor on its carrier (em_vhook's AFTER, mhfu_em_chain) hands over in
+ * place: the end's attacks are ended and the successor's entry goes to the executor in the same AI
+ * frame, before the host step, so the carrier's handler (the hub's clip) never runs between the two.
+ * The steering carries over (steer.h): the successor keeps the entity's own YAW, and the turn the
+ * clips' facings make is blended out over the successor's blend.
+ *
  * A move asked for while the monster's notice runs (the player's ENTITY.AWARE bit set,
  * COMBAT_MODE still 0: the roar, the hub, the AI script's combat entry) waits for it, up to
  * MHFU_MOVE_WAIT AI frames, unless the call FORCEs it. One asked for while the tail cut waits for

@@ -101,11 +101,14 @@ typedef struct {
 typedef struct {
     mhfu_steer_spec_t next; /* taken on the move's first playing frame */
     mhfu_steer_spec_t now;
-    uint16_t base;          /* the entity's own YAW: the curve adds to it */
+    uint16_t base;          /* the entity's own YAW: the curve and the ramp add to it */
     uint8_t  wall;          /* the last frame's MHFU_STEER_* */
     float    cursor;        /* the cursor the step saw last */
     uint16_t yaw0, yaw;     /* YAW on the first playing frame, and as the step left it */
     float    lunge_x, lunge_z; /* the lunge's whole length, world axes, set on the first frame */
+    uint8_t  keep;          /* the step started in place: its first frame keeps `base` */
+    uint16_t blend;         /* part 0's CLIP_BLOCK.BLEND right after the dispatch */
+    int16_t  ramp;          /* the YAW jump at the switch, falling to 0 as the blend counts down */
 } mhfu_steer_state_t;
 
 /* Part 0's clip block as the move player reads it each AI frame. */
@@ -115,6 +118,7 @@ typedef struct {
     float   loop_start;
     float   end;
     float   speed;      /* CLIP_BLOCK.SPEED: clip frames an AI frame, 2.0 calm */
+    int32_t blend;      /* CLIP_BLOCK.BLEND now */
 } mhfu_steer_clip_t;
 
 /* No turn, no walls; a class-2 wall ends into (0,6) mode 1, as the Tigrex charge does. */
@@ -125,14 +129,16 @@ uint16_t mhfu_steer_curve(const volatile mhfu_steer_spec_t *s, float cursor);
 /* sin and cos of YAW `yaw`, within 1e-6. */
 void mhfu_steer_sincos(uint16_t yaw, float *s, float *c);
 /* One AI frame of a move (move.cpp's seam), `frame` its playing frames from 1: frame 1 takes
- * NEXT; a cursor that went back (a loop) carries the curve's turn over; YAW = base + curve, the
- * base turned by the spec's mode (HUNTER and AWAY toward `target`, at the rate times
+ * NEXT; a cursor that went back (a loop) carries the curve's turn over; YAW = base + curve + ramp,
+ * the base turned by the spec's mode (HUNTER and AWAY toward `target`, at the rate times
  * clip->speed / 2, only while the cursor, the clip frame, is in the window; FIXED with a window
- * across it by the cursor). Then POSITION moves by the change of the travel curve and of the
- * lunge between the cursor of the frame before (frame 1: clip->start) and this one: the curve
- * turned by YAW on frame 1, the lunge along the bearing to `target` on frame 1, both scaled by
- * ENTITY.SIZE_SCALE. Returns the wall result of the frame before, from frame 2, and then moves
- * nothing. */
+ * across it by the cursor). Frame 1 keeps `base` when the step started in place (st->keep), else
+ * sets it to YAW, and the ramp starts at the jump that keeps YAW continuous, falling to 0 as
+ * clip->blend counts down from st->blend. Then POSITION moves by the change of the travel curve
+ * and of the lunge between the cursor of the frame before (frame 1: clip->start) and this one:
+ * the curve turned by YAW on frame 1, the lunge along the bearing to `target` on frame 1, both
+ * scaled by ENTITY.SIZE_SCALE. Returns the wall result of the frame before, from frame 2, and
+ * then moves nothing. */
 int mhfu_steer_move(void *entity, const mhfu_vec3_t *target, volatile mhfu_steer_state_t *st,
                     uint32_t frame, const mhfu_steer_clip_t *clip);
 

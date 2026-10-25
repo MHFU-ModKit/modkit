@@ -56,6 +56,25 @@ static int g_cut;
 int  mhfu_em_cut_waits(uint32_t) { return g_cut; }
 void host_cut(int waits) { g_cut = waits; }
 void mhfu_em_step(mhfu_em_step_fn fn) { g_step = fn; }
+
+/* em_vhook's successor choke point: the test hands the move player `g_chains` successors */
+static mhfu_move_t g_chain_move;
+static mhfu_steer_spec_t g_chain_spec;
+static int g_chains;
+int mhfu_em_chain(uint32_t, mhfu_move_t *mv, const mhfu_steer_spec_t **steer)
+{
+    if (g_chains <= 0) return 0;
+    g_chains--;
+    *mv = g_chain_move;
+    *steer = &g_chain_spec;
+    return 1;
+}
+void host_chain(const mhfu_move_t *mv, const mhfu_steer_spec_t *spec, int times)
+{
+    g_chain_move = *mv;
+    g_chain_spec = *spec;
+    g_chains = times;
+}
 void mhfu_em_mute_events(uint32_t entity) { record('M', entity, 0, 0, 0); }
 
 /* em_vhook's reaction entry, as its slot-32 stub applies it (tests/test_em_vhook_stubs.py runs
@@ -159,7 +178,7 @@ void     host_set(int lands, float clip_end)
 {
     memset(g_breaks, 0, sizeof(g_breaks));
     g_lands = lands; g_clip_end = clip_end; g_n = 0; g_step = 0; g_nraised = 0; g_cut = 0;
-    g_blend = 0;
+    g_blend = 0; g_chains = 0;
     memset(g_react, 0, sizeof(g_react));
 }
 void     host_blend(int frames) { g_blend = frames; }

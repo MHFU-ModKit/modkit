@@ -170,7 +170,9 @@ min((d - near) / span, 1)` units along the bearing to the target then, in world 
 `span`, `base` and `range` times the monster's size. The target is what `ENTITY.TARGET` points at,
 the player when it is 0 or not RAM: the turn reads it every frame, the lunge at the move's first,
 the brain's distance and side gates too. A turn's `rate` is YAW units a frame at clip speed 1 (times
-the clip's speed / 2 in play) and turns the entity's own YAW, which the clip's turn rides on. A fixed turn with a `window` turns `total` across it by the cursor instead of over
+the clip's speed / 2 in play) and turns the entity's own YAW, which the clip's turn rides on. An
+`after` on the same carrier plays in the AI frame its move ends, the carrier not entered again; it
+keeps the entity's own YAW, and the jump in the clips' facing fades over its blend. A fixed turn with a `window` turns `total` across it by the cursor instead of over
 `frames` AI frames. All of it is data in the registry and in `mhfu.move_play`'s steer; a move
 without it writes what it always did.
 

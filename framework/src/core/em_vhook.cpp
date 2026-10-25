@@ -525,29 +525,62 @@ static void tag(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m
     chg_own(ent, slot);
 }
 
-static int play_slot(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m, int force)
+/* slot's move into mv and its steering (in the registry's scratch) into *steer, forced or not: how
+ * a slot goes to the move player, asked (play_slot) or told (mhfu_em_chain). 0 for an empty slot. */
+static int fill(uint32_t slot, int force, mhfu_move_t *mv, const mhfu_steer_spec_t **steer)
 {
     if (slot >= MHFU_EM_MOVES || !R->moves[slot].valid) return 0;
     const volatile mhfu_em_own_t *o = &R->moves[slot];
+    copy_words(mv, &o->move, sizeof(*mv));
+    mv->force = (uint8_t)(force != 0);
+    *steer = (const mhfu_steer_spec_t *)steer_of(o);
+    return 1;
+}
+
+static int play_slot(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m, int force)
+{
     mhfu_move_t mv;
-    copy_words(&mv, &o->move, sizeof(mv));
-    mv.force = (uint8_t)(force != 0);
-    mhfu_move_steer((const mhfu_steer_spec_t *)steer_of(o));
+    const mhfu_steer_spec_t *sp;
+    if (!fill(slot, force, &mv, &sp)) return 0;
+    mhfu_move_steer(sp);
     if (!mhfu_move_play(ent, &mv)) return 0;
     tag(ent, slot, m);
     return 1;
 }
 
-/* The move that just ended on its clip's end into its carrier or on a wall names an AFTER, which
+/* The slot that plays when slot k's move ends: its AFTER, MHFU_EM_NO_MOVE for none. */
+static uint32_t successor(int k) { return R->moves[k].after; }
+
+/* The move that just ended on its clip's end into its carrier or on a wall names a successor, which
  * plays this frame: that move's slot, else -1. */
 static int chain_due(uint32_t ent, const volatile mhfu_move_state_t *m)
 {
     const int k = ours(m);
     if (k < 0 || m->state != MHFU_MOVE_DONE || m->entity != ent
         || !(m->end == MHFU_MOVE_END_BACK || m->end == MHFU_MOVE_END_WALL)
-        || R->moves[k].after == MHFU_EM_NO_MOVE)
+        || successor(k) == MHFU_EM_NO_MOVE)
         return -1;
     return k;
+}
+
+/* The move player's step ended and asks for the successor in place, on its carrier: the playing
+ * slot's, taken and tagged as a play, or 0 (the old way: the carrier, then chain_due). A successor
+ * on another carrier, or a move that enters a back pair of its own, is left to that way. */
+extern "C" int mhfu_em_chain(uint32_t ent, mhfu_move_t *mv, const mhfu_steer_spec_t **steer)
+{
+    const volatile mhfu_move_state_t *m = mhfu_move_state();
+    const int k = R && m ? ours(m) : -1;
+    if (k < 0 || m->state != MHFU_MOVE_PLAYING || m->entity != ent) return 0;
+    const uint32_t slot = successor(k);
+    if (slot >= MHFU_EM_MOVES || !R->moves[slot].valid) return 0;
+    const volatile mhfu_move_t *to = &R->moves[slot].move, *was = &m->move;
+    if (to->carrier_main != was->carrier_main || to->carrier_sub != was->carrier_sub
+        || was->back_main != was->carrier_main || was->back_sub != was->carrier_sub)
+        return 0;
+    if (!fill(slot, was->force, mv, steer)) return 0;
+    tag(ent, slot, m);
+    R->chained++;
+    return 1;
 }
 
 /* rule r's pair or own move, dwell, distance and cooldown hold on ent this frame */
@@ -1109,7 +1142,7 @@ static int act(uint32_t ent, const volatile mhfu_move_state_t *m, const seen_t *
     } else if (react_take(ent, m, s)) {
         took = 1;
     } else if (due >= 0) {
-        if (play_slot(ent, R->moves[due].after, m, m->move.force)) R->chained++;
+        if (play_slot(ent, successor(due), m, m->move.force)) R->chained++;
         else R->tag_slot = MHFU_EM_NO_MOVE;   /* an empty AFTER: not again */
     } else {
         plays = 1;

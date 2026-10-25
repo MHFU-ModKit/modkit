@@ -941,13 +941,16 @@ size = "auto"
 [struct.STEER_STATE.fields]
 NEXT = { offset = 0x0, type = "STEER_SPEC", doc = "the steering the next move takes on its first playing frame" }
 NOW = { offset = "next", type = "STEER_SPEC", doc = "the steering of the move running" }
-BASE = { offset = "next", type = "u16", doc = "the entity's own YAW, without the clip's turn (YAW = BASE + the curve): YAW less the curve on the first playing frame, turned toward the target by the mode and by each loop" }
+BASE = { offset = "next", type = "u16", doc = "the entity's own YAW, without the clip's turn (YAW = BASE + the curve + the ramp): YAW on a chain head, kept by a step started in place, turned toward the target by the mode and by each loop" }
 WALL = { offset = "next", type = "u8", doc = "the last frame's wall result: 0 none, 1 a wall ahead, 2 a class-2 one" }
 CURSOR = { offset = "next", type = "f32", doc = "part 0's clip cursor the step saw last" }
 YAW0 = { offset = "next", type = "u16", doc = "YAW on the move's first playing frame" }
 YAW = { offset = "next", type = "u16", doc = "YAW as the move's last step left it" }
 LUNGE_X = { offset = "next", type = "f32", doc = "the lunge's whole length in world x, taken on the first playing frame; 0 without a lunge" }
 LUNGE_Z = { offset = "next", type = "f32", doc = "and in world z" }
+KEEP = { offset = "next", type = "u8", doc = "1: the step started in place (a chain), so its first playing frame keeps BASE; 0: it sets BASE to YAW" }
+BLEND = { offset = "next", type = "u16", doc = "part 0's CLIP_BLOCK.BLEND right after the dispatch: the frames the ramp falls over; 0: none" }
+RAMP = { offset = "next", type = "s16", doc = "YAW units the step's first playing frame adds on top of BASE and the curve so that YAW stays continuous (YAW before - BASE - the curve at START); it falls to 0 linearly as the part 0 BLEND counts down" }
 
 [struct.EM_OWN]
 doc = "one own move in em_vhook's registry (em_vhook.h mhfu_em_own_t), played by its slot when Lua, a rule or the move before it asks"
@@ -962,7 +965,7 @@ SAMPLE_COUNT = { offset = "next", type = "u16", doc = "its travel samples; 0: it
 STUCK_MAIN = { offset = "next", type = "u8", doc = "STEER_SPEC.STUCK_MAIN" }
 STUCK_SUB = { offset = "next", type = "u8", doc = "STEER_SPEC.STUCK_SUB" }
 STUCK_MODE = { offset = "next", type = "u8", doc = "STEER_SPEC.STUCK_MODE" }
-AFTER = { offset = "next", type = "u8", doc = "slot played when this move ends on its clip, its length, its stop or a wall; 0xFF none" }
+AFTER = { offset = "next", type = "u8", doc = "slot played when this move ends on its clip, its length, its stop or a wall; 0xFF none. On the same carrier it plays in that AI frame, the carrier not entered again" }
 LUNGE_AT = { offset = "next", type = "u8", doc = "its lunge in EM_MOVES.LUNGES; 0xFF none" }
 VALID = { offset = "next", type = "u32", doc = "1 once written; 0 while it is rewritten" }
 

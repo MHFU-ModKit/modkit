@@ -475,16 +475,39 @@ def test_a_slots_start_and_stop_reach_the_move(g: Game) -> None:
     assert g.move("END", "B") == BACK and g.move("END_FRAME") == 4  # (14 - 6) / SPEED
 
 
-def test_after_follows_through_the_carrier(g: Game) -> None:
-    """A slot with an AFTER ends into its carrier, and the next plays on the following frame."""
+def played(g: Game, frames: int) -> list[list[tuple[str, int, int, int, int]]]:
+    """The calls of each of `frames` AI frames."""
+    out = []
+    for _ in range(frames):
+        g.frame()
+        out.append(g.calls())
+    return out
+
+
+def test_after_on_the_same_carrier_plays_in_the_frame_the_move_ends(g: Game) -> None:
+    """The carrier is not entered again: the next entry goes to the executor in the AI frame the
+    clip ends, before the host step."""
     g.own(0, 46, after=1)
     g.own(1, 53)
     g.lib.mhfu_em_play(ENT, 0, 0)
+    frames = played(g, 2 + int(CLIP_END / SPEED))
+    flat = [c for f in frames for c in f]
+    assert [(c[2], c[3]) for c in flat if c[0] == "E"] == [(0, 2)]
+    assert [c[2] for c in flat if c[0] == "X"] == [46, 53] and ("X", ENT, 53, 0, 0) in frames[-1]
+    assert (g.moves("CHAINED"), g.moves("PLAYS"), g.lib.mhfu_em_playing()) == (1, 2, 1)
+    assert g.move("STATE", "B") == PLAYING and g.move("FRAMES") == 0
+
+
+def test_after_on_another_carrier_goes_through_the_carrier(g: Game) -> None:
+    """A successor on another carrier takes the old way: the first ends into its carrier, and the
+    next is entered on its own, a frame on."""
+    g.own(0, 46, after=1)
+    g.own(1, 53, carrier_sub=3)
+    g.lib.mhfu_em_play(ENT, 0, 0)
     g.frames(2 + int(CLIP_END / SPEED))
     assert g.move("END", "B") == BACK and g.entered() == [(0, 2), (0, 2)]
-    g.frame()
-    g.frame()
-    assert ("X", ENT, 53, 0, 0) in g.calls()
+    flat = [c for f in played(g, 2) for c in f]
+    assert [(c[2], c[3]) for c in flat if c[0] == "E"] == [(0, 3)] and ("X", ENT, 53, 0, 0) in flat
     assert (g.moves("CHAINED"), g.lib.mhfu_em_playing()) == (1, 1)
 
 
@@ -504,6 +527,18 @@ def test_a_back_pair_given_is_kept(g: Game) -> None:
     g.lib.mhfu_em_play(ENT, 0, 0)
     g.frames(2 + int(CLIP_END / SPEED))
     assert g.entered()[-1] == (0, 3)
+
+
+def test_an_after_chain_runs_through_in_place(g: Game) -> None:
+    """Three moves, each handing over in place: the entries in order, the carrier entered once."""
+    g.own(0, 46, after=1)
+    g.own(1, 53, after=2)
+    g.own(2, 59)
+    g.lib.mhfu_em_play(ENT, 0, 0)
+    flat = [c for f in played(g, 3 * (int(CLIP_END / SPEED) + 1) + 2) for c in f]
+    assert [c[2] for c in flat if c[0] == "X"] == [46, 53, 59]
+    assert [(c[2], c[3]) for c in flat if c[0] == "E"] == [(0, 2)]
+    assert g.moves("CHAINED") == 2
 
 
 def test_rule_from_a_pair_plays_an_own_move(g: Game) -> None:

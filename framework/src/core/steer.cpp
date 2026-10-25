@@ -214,7 +214,9 @@ int mhfu_steer_move(void *entity, const mhfu_vec3_t *target, volatile mhfu_steer
         volatile uint32_t *from = (volatile uint32_t *)&st->next;
         for (unsigned k = 0; k < sizeof(mhfu_steer_spec_t) / 4; k++) to[k] = from[k];
         st->yaw0 = *yaw;
-        st->base = (uint16_t)(*yaw - curve(sp, cursor, end));
+        if (!st->keep) st->base = *yaw;
+        st->keep = 0;
+        st->ramp = (int16_t)(uint16_t)(*yaw - st->base - curve(sp, start, end));
         st->wall = MHFU_STEER_GO;
         before = start;
         st->lunge_x = st->lunge_z = 0;
@@ -264,7 +266,11 @@ int mhfu_steer_move(void *entity, const mhfu_vec3_t *target, volatile mhfu_steer
         st->base = (uint16_t)(st->base + share(sp->steer.total, sp->steer.frames,
                                                (uint16_t)(frame - 1)));
     }
-    *yaw = (uint16_t)(st->base + curve(sp, cursor, end));
+    int32_t jump = 0;
+    if (st->blend && clip->blend > 0)
+        jump = round_to((float)st->ramp * (float)(clip->blend < st->blend ? clip->blend : st->blend)
+                        / (float)st->blend);
+    *yaw = (uint16_t)(st->base + curve(sp, cursor, end) + jump);
     st->yaw = *yaw;
 
     float mx = 0, mz = 0;

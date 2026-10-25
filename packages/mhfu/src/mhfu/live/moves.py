@@ -25,7 +25,7 @@ from dataclasses import dataclass, replace
 from .. import addresses as a
 from .. import steering
 from ..entries import entry_clip
-from ..views import View, f32, f32s, ptr, ptrs, u8, u8s, u16, u32, u32s
+from ..views import View, f32, f32s, ptr, ptrs, s16, u8, u8s, u16, u32, u32s
 from .clips import Pack, bridge, monster
 from .session import Session
 from .shell_anim import STALLED, Bridge, Op
@@ -287,6 +287,9 @@ class SteerState(View):
     yaw = u16(a.STEER_STATE.YAW)
     lunge_x = f32(a.STEER_STATE.LUNGE_X)
     lunge_z = f32(a.STEER_STATE.LUNGE_Z)
+    keep = u8(a.STEER_STATE.KEEP)
+    blend = u16(a.STEER_STATE.BLEND)
+    ramp = s16(a.STEER_STATE.RAMP)
 
 
 class MoveState(View):
