@@ -575,15 +575,16 @@ def test_only_the_play_of_a_combo_is_followed(g: Game) -> None:
     assert [c[2] for c in flat if c[0] == "X"] == [46] and g.moves("CHAINED") == 0
 
 
-def test_a_combos_then_takes_the_place_of_the_firsts_after(g: Game) -> None:
+def test_a_combos_then_follows_the_firsts_after_chain(g: Game) -> None:
     g.own(0, 46, after=2)
     g.own(1, 53)
     g.own(2, 59)
     assert g.lib.mhfu_em_combo(COMBO, 0, 1)
     assert g.lib.mhfu_em_play(ENT, COMBO, 1)
-    flat = [c for f in played(g, 2 + 3 * int(CLIP_END / SPEED)) for c in f]
-    assert [c[2] for c in flat if c[0] == "X"] == [46, 53]
-    assert g.lib.mhfu_em_play(ENT, 0, 1)  # played alone, its own after
+    flat = [c for f in played(g, 2 + 3 * (int(CLIP_END / SPEED) + 1)) for c in f]
+    assert [c[2] for c in flat if c[0] == "X"] == [46, 59, 53]
+    assert [(c[2], c[3]) for c in flat if c[0] == "E"] == [(0, 2)] and g.moves("CHAINED") == 2
+    assert g.lib.mhfu_em_play(ENT, 0, 1)  # played alone: its own after only
     flat = [c for f in played(g, 2 + 3 * int(CLIP_END / SPEED)) for c in f]
     assert [c[2] for c in flat if c[0] == "X"] == [46, 59]
 

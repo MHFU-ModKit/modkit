@@ -32,11 +32,11 @@
  *                 is entered as own move k's carrier (em75's hub for an empty slot) and files the
  *                 request mhfu_em_play files, forced; the brain plays the move at the next AI
  *                 step. A k from MHFU_EM_MOVES up is a combo's: the hub, the id filed, the brain
- *                 plays the combo's first move and its THEN follows in place. The script's wake
- *                 the hub raises inside the run is cleared by SCRIPT_TICK after it, and
- *                 move.cpp's start quiets the one the hub raises again, so the script's next pair
- *                 cannot cut the move; the carrier hands back once the move (and its AFTER chain)
- *                 ends, which wakes the script.
+ *                 plays the combo's first move, and its THEN follows that chain in place. The
+ *                 script's wake the hub raises inside the run is cleared by SCRIPT_TICK after
+ *                 it, and move.cpp's start quiets the one the hub raises again, so the script's
+ *                 next pair cannot cut the move; the carrier hands back once the move (and its
+ *                 AFTER chain) ends, which wakes the script.
  *   CUT           the brain: while the tail cut waits for its drop (cut_waits), the
  *                 request, the plays and the rules wait, and the move player's start
  *                 with them; the events seen meanwhile reach the rules after the drop.
@@ -569,8 +569,8 @@ static void follow(mhfu_move_t *mv)
     }
 }
 
-/* Plays slot on ent, forced or not; `then` (a slot, else MHFU_EM_NO_MOVE) follows it in place in
- * place of its AFTER: a combo's first move. */
+/* Plays slot on ent, forced or not; `then` (a slot, else MHFU_EM_NO_MOVE) follows in place once its
+ * AFTER chain ends: a combo's first move. */
 static int play_slot(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m, int force,
                      uint32_t then)
 {
@@ -602,11 +602,11 @@ static int play_request(uint32_t ent, uint32_t id, const volatile mhfu_move_stat
     return play_slot(ent, R->combos[id].first, m, force, R->combos[id].then);
 }
 
-/* The slot that plays when slot k's move ends: the THEN of the combo it began, else its AFTER,
- * MHFU_EM_NO_MOVE for none. The one place a successor is chosen. */
+/* The slot that plays when slot k's move ends: its AFTER, else the THEN of the combo whose chain it
+ * ends, MHFU_EM_NO_MOVE for none. The one place a successor is chosen. */
 static uint32_t successor(int k)
 {
-    return R->tag_then != MHFU_EM_NO_MOVE ? R->tag_then : R->moves[k].after;
+    return R->moves[k].after != MHFU_EM_NO_MOVE ? R->moves[k].after : R->tag_then;
 }
 
 /* The move that just ended on its clip's end into its carrier or on a wall names a successor, which
@@ -636,7 +636,12 @@ extern "C" int mhfu_em_chain(uint32_t ent, mhfu_move_t *mv, const mhfu_steer_spe
         || was->back_main != was->carrier_main || was->back_sub != was->carrier_sub)
         return 0;
     if (!fill(slot, was->force, mv, steer)) return 0;
+    const uint32_t then = R->tag_then;
     tag(ent, slot, m);
+    if (then != MHFU_EM_NO_MOVE && slot != then) {   /* still the first's chain: THEN waits */
+        R->tag_then = then;
+        follow(mv);
+    }
     R->chained++;
     return 1;
 }

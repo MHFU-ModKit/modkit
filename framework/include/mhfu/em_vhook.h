@@ -180,11 +180,12 @@ int  mhfu_em_tip(const uint8_t (*pairs)[2], int n);
  * carrier (em75's hub (0,2) for an empty slot) in place of the main the game has no table for, and
  * files the same forced request mhfu_em_play does; the brain plays the move at the next AI step.
  * An id from MHFU_EM_MOVES up names a combo (mhfu_em_combo): the stub enters the hub and files the
- * id, never reading a slot past the registry, and the brain plays the combo's first move, whose
- * THEN follows it in place. The script's next pair waits for the carrier's hand-back, as after a
- * native pair: the wake the hub raises inside the run is cleared by the script's tick after it, and
- * the move player clears the one its own entry of the hub raises. mhfu_em_status_t.own_enters
- * counts these enters, own_last gives the slot or id + 1 (a byte) of the last that was filed. */
+ * id, never reading a slot past the registry, and the brain plays the combo's first move; its THEN
+ * follows that move's chain in place. The script's next pair waits for the carrier's hand-back, as
+ * after a native pair: the wake the hub raises inside the run is cleared by the script's tick after
+ * it, and the move player clears the one its own entry of the hub raises.
+ * mhfu_em_status_t.own_enters counts these enters, own_last gives the slot or id + 1 (a byte) of
+ * the last that was filed. */
 #define MHFU_EM_MOVES   MHFU_OWN_MOVES
 #define MHFU_EM_NO_MOVE 0xFFu
 #define MHFU_EM_NO_LUNGE 0xFFu   /* mhfu_em_own_t.lunge_at: no lunge */
