@@ -40,13 +40,13 @@
  *                 with them; the events seen meanwhile reach the rules after the drop.
  *   TIP           OBJ_VTABLE.BRAIN post (wrap.h): the port's tip joints posed from
  *                 their carriers, after ATTACH and before the draw, until the drop.
- *   BRAIN         slot-29 pre, in C (brain()): the pair's dwell, the hunter's
+ *   BRAIN         slot-29 pre, in C (brain()): the pair's dwell, the target's
  *                 distance and the monster events (monster_events.cpp), then at most
  *                 one of: an own move asked for, the move of a rule on the flinch (or on
  *                 the break it made) whose reaction was replaced, the AFTER of one of
  *                 ours that ended, a rule
  *                 ("in pair P or own move M for N frames, or on event E or signal S,
- *                 player at [lo,hi), receding, every condition holding -> enter Q or play
+ *                 target at [lo,hi), receding, every condition holding -> enter Q or play
  *                 own move M', change counters", cooldown, budget); the rules that play
  *                 nothing run first, all of them, in every AI frame;
  *                 last, the rules on the flinch arm the reaction replacement for the
@@ -435,7 +435,7 @@ static int      g_qry_wrapped;       /* MONSTER_VTABLE.QUERY carries the charge 
 
 /* --- the brain: slot 29 calls it every AI frame, before the C step. ----
  *
- * It enters the pair mhfu_em_request asked for, keeps the pair's dwell, the hunter's distance and
+ * It enters the pair mhfu_em_request asked for, keeps the pair's dwell, the target's distance and
  * the monster events, then plays or enters at most one thing: an own move asked for
  * (mhfu_em_play), else the move of the rule on the flinch whose reaction the last host step
  * replaced, else the AFTER of the registry's move that just ended on its clip, its length, its
@@ -849,16 +849,15 @@ static void take_rage(uint32_t ent)
 #define ROW_FORWARD 8
 #define ROW_LEFT    0
 
-/* The 90 degree sector of the monster's frame the hunter stands in, as a SIDE_*: the hunter's
- * offset against the two rows with dot products, no trig. The rows may carry the monster's size,
+/* The 90 degree sector of the monster's frame the target stands in, as a SIDE_*: its offset
+ * against the two rows with dot products, no trig. The rows may carry the monster's size,
  * so each dot is taken over its row's length (squared, to avoid the root). */
 static unsigned side_of(uint32_t ent)
 {
     const uint32_t rot = ent + MHFU_ENTITY_ROTATION;
-    const float dx = mhfu_mem_read_f32(MHFU_PLAYER_ENTITY + MHFU_ENTITY_TRANSLATION)
-                   - mhfu_mem_read_f32(ent + MHFU_ENTITY_POSITION);
-    const float dz = mhfu_mem_read_f32(MHFU_PLAYER_ENTITY + MHFU_ENTITY_TRANSLATION + 8)
-                   - mhfu_mem_read_f32(ent + MHFU_ENTITY_POSITION + 8);
+    const uint32_t at = mhfu_move_target_pos(ent);
+    const float dx = mhfu_mem_read_f32(at) - mhfu_mem_read_f32(ent + MHFU_ENTITY_POSITION);
+    const float dz = mhfu_mem_read_f32(at + 8) - mhfu_mem_read_f32(ent + MHFU_ENTITY_POSITION + 8);
     const float fx = mhfu_mem_read_f32(rot + 4 * ROW_FORWARD);
     const float fz = mhfu_mem_read_f32(rot + 4 * (ROW_FORWARD + 2));
     const float lx = mhfu_mem_read_f32(rot + 4 * ROW_LEFT);
@@ -1187,10 +1186,9 @@ static uint32_t brain(uint32_t ent)
     else request(ent);
     uint32_t pair = pair_of(ent);
     c->frames = pair == c->prev_pair ? c->frames + 1 : 0;
-    float dx = mhfu_mem_read_f32(ent + MHFU_ENTITY_POSITION)
-             - mhfu_mem_read_f32(MHFU_PLAYER_ENTITY + MHFU_ENTITY_TRANSLATION);
-    float dz = mhfu_mem_read_f32(ent + MHFU_ENTITY_POSITION + 8)
-             - mhfu_mem_read_f32(MHFU_PLAYER_ENTITY + MHFU_ENTITY_TRANSLATION + 8);
+    const uint32_t at = mhfu_move_target_pos(ent);
+    float dx = mhfu_mem_read_f32(ent + MHFU_ENTITY_POSITION) - mhfu_mem_read_f32(at);
+    float dz = mhfu_mem_read_f32(ent + MHFU_ENTITY_POSITION + 8) - mhfu_mem_read_f32(at + 8);
     c->d2_prev = c->d2;
     c->d2 = f32_bits(dx * dx + dz * dz);
     fat_frame(ent, pair);

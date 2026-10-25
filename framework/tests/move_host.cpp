@@ -49,6 +49,7 @@ uint32_t mhfu_mem_read_u32(uint32_t a) { uint32_t v = 0; uint8_t *p = at(a, 4); 
 float    mhfu_mem_read_f32(uint32_t a) { float v = 0; uint8_t *p = at(a, 4); if (p) memcpy(&v, p, 4); return v; }
 void     mhfu_mem_write_u8(uint32_t a, uint8_t v) { uint8_t *p = at(a, 1); if (p) *p = v; }
 void    *mhfu_host_at(uint32_t a) { return at(a, 4); }
+int      mhfu_mem_valid(uint32_t a) { return at(a, 4) != 0; }   /* here: mapped */
 void mhfu_log(const char *, ...) {}
 int  mhfu_em_installed(void) { return 1; }
 static int g_cut;

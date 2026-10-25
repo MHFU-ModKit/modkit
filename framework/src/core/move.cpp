@@ -174,6 +174,13 @@ static uint32_t carrier(void)
     return ((uint32_t)S->move.carrier_main << 8) | S->move.carrier_sub;
 }
 
+extern "C" uint32_t mhfu_move_target_pos(uint32_t entity)
+{
+    uint32_t t = mhfu_mem_read_u32(entity + MHFU_ENTITY_TARGET);
+    if (!t || !mhfu_mem_valid(t)) t = MHFU_PLAYER_ENTITY;
+    return t + MHFU_ENTITY_POSITION;
+}
+
 /* YAW along the clip's turn and the spec's mode, POSITION along its travel; the wall result
  * (mhfu/steer.h). Part 0 holds the root, whose motion the turn's keys go with. This runs before
  * ROOT_MOTION, WALL_COLLIDE and GROUND_QUERY in the same AI frame, so a position written here is
@@ -183,12 +190,14 @@ static int steer(uint32_t ent)
     uint32_t b = clip_block(ent, 0);
     void *e = direct(ent);
     if (!e) return MHFU_STEER_GO;
-    const mhfu_vec3_t *hunter =
-        (const mhfu_vec3_t *)direct(MHFU_PLAYER_ENTITY + MHFU_ENTITY_POSITION);
-    return mhfu_steer_move(e, hunter, &S->steer, S->frames, (float)S->move.start,
-                           mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_PHASE),
-                           mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_LOOP_START),
-                           mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_END));
+    const mhfu_vec3_t *target = (const mhfu_vec3_t *)direct(mhfu_move_target_pos(ent));
+    mhfu_steer_clip_t clip;
+    clip.start = (float)S->move.start;
+    clip.cursor = mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_PHASE);
+    clip.loop_start = mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_LOOP_START);
+    clip.end = mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_END);
+    clip.speed = mhfu_mem_read_f32(b + MHFU_CLIP_BLOCK_SPEED);
+    return mhfu_steer_move(e, target, &S->steer, S->frames, &clip);
 }
 
 static uint32_t step(uint32_t ent);

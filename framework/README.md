@@ -164,10 +164,13 @@ change since the clip cursor's last frame (straight lines between samples, so an
 and the blend's hold are right) to POSITION, turned by that YAW and scaled by the monster's size.
 It does so before the engine's root motion, wall push-out and floor in the same frame: walls
 undo it as they undo root motion, and the floor keeps the height. `steer.lunge = { window = {
-lo, hi }, near, span, base, range }` travels toward the hunter across the clip frames (lo, hi]: by
-the hunter's XZ distance `d` when the move began, nothing under `near`, else `base + range *
-min((d - near) / span, 1)` units along the bearing to the hunter then, in world axes and not
-scaled. A fixed turn with a `window` turns `total` across it by the cursor instead of over
+lo, hi }, near, span, base, range }` travels toward the target across the clip frames (lo, hi]: by
+the target's XZ distance `d` when the move began, nothing under `near`, else `base + range *
+min((d - near) / span, 1)` units along the bearing to the target then, in world axes, with `near`,
+`span`, `base` and `range` times the monster's size. The target is what `ENTITY.TARGET` points at,
+the player when it is 0 or not RAM: the turn reads it every frame, the lunge at the move's first,
+the brain's distance and side gates too. A turn's `rate` is YAW units a frame at clip speed 1 (times
+the clip's speed / 2 in play) and turns the entity's own YAW, which the clip's turn rides on. A fixed turn with a `window` turns `total` across it by the cursor instead of over
 `frames` AI frames. All of it is data in the registry and in `mhfu.move_play`'s steer; a move
 without it writes what it always did.
 

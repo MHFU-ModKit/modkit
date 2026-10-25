@@ -9,7 +9,7 @@
  *   request       a pair entered on the game thread in the next AI frame, through
  *                 MHFU_ENTER_ACTION;
  *   rules         a 30 Hz brain in C: "in pair P (or own move M) for >= N frames, or on a
- *                 monster event or a Lua signal, player distance in [lo, hi), receding or
+ *                 monster event or a Lua signal, the target's distance in [lo, hi), receding or
  *                 closing, every condition holding -> enter (main, sub, mode) or play own move
  *                 M', and change counters", with cooldown and budget; a rule on the flinch plays
  *                 its move in place of the host's reaction;
@@ -81,7 +81,7 @@ typedef struct {
                             * 0: from the pair, which waits while any move plays */
     uint8_t  play_move;    /* own move slot + 1 played instead of entering (to_main, to_sub) */
     uint32_t min_frames;   /* the pair (or own move) must have stood this long */
-    float    dist_lo, dist_hi;   /* player XZ distance window [lo, hi) */
+    float    dist_lo, dist_hi;   /* the target's XZ distance window [lo, hi) (mhfu_move_target_pos) */
     uint32_t cooldown;     /* frames between two fires */
     uint32_t count;        /* fires allowed; MHFU_EM_UNLIMITED for a standing rule */
     uint8_t  on;           /* MHFU_MONSTER_*: fires in the AI frame the event is seen, from_* and
@@ -97,7 +97,7 @@ typedef struct {
 typedef struct {
     uint32_t installed;
     uint32_t ai_ticks, act_enters, last_pair, frames;
-    float    dist;               /* player XZ distance at the last measurement */
+    float    dist;               /* the target's XZ distance at the last measurement */
     uint32_t sub_hits, sub_landed, sub_last_in;
     uint32_t brain_fires;
     uint32_t req_pending, req_done, req_result;

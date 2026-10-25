@@ -83,6 +83,7 @@ class Game:
         skip = int(self.lib.host_frame(ENT))
         for k in range(3):
             b = self.block(k)
+            self.poke(b + a.CLIP_BLOCK.SPEED, "f", self.speed)  # MONSTER_STEP writes it every frame
             (phase,) = self.peek(b + a.CLIP_BLOCK.PHASE, "f")
             (end,) = self.peek(b + a.CLIP_BLOCK.END, "f")
             if self.peek(b + a.CLIP_BLOCK.FLAGS, "H")[0] & 1:
@@ -151,6 +152,8 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     lib.mhfu_steer_init_spec.argtypes = [ctypes.c_void_p]
     lib.mhfu_move_react.argtypes = [ctypes.c_int, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p]
     lib.host_react_enter.argtypes = [ctypes.c_uint32] * 3
+    lib.mhfu_move_target_pos.restype = ctypes.c_uint32
+    lib.mhfu_move_target_pos.argtypes = [ctypes.c_uint32]
     return lib
 
 
@@ -415,15 +418,15 @@ class Spec(ctypes.Structure):
 Point = steering.Point
 
 
-def steer(
+def spec_of(
     g: Game,
     keys: tuple[int, ...] = (),
     samples: tuple[Point, ...] = (),
     lunge: tuple[int, int, float, float, float, float] | None = None,
     **kw: int,
-) -> None:
-    """The spec the next move takes: turn `keys`, travel `samples` (world units), a `lunge` as
-    (lo, hi, near, span, base, range), and steer fields by name."""
+) -> Spec:
+    """A spec: turn `keys`, travel `samples` (world units), a `lunge` as (lo, hi, near, span, base,
+    range), and steer fields by name."""
     spec = Spec()
     g.lib.mhfu_steer_init_spec(ctypes.byref(spec))
     for k, v in kw.items():
@@ -436,7 +439,18 @@ def steer(
         spec.samples[i].x, spec.samples[i].z = steering.sample(x), steering.sample(z)
     if lunge:
         spec.lunge = Lunge(*lunge)
-    g.lib.mhfu_move_steer(ctypes.byref(spec))
+    return spec
+
+
+def steer(
+    g: Game,
+    keys: tuple[int, ...] = (),
+    samples: tuple[Point, ...] = (),
+    lunge: tuple[int, int, float, float, float, float] | None = None,
+    **kw: int,
+) -> None:
+    """The spec the next move takes (spec_of's arguments)."""
+    g.lib.mhfu_move_steer(ctypes.byref(spec_of(g, keys, samples, lunge, **kw)))
 
 
 def yaw(g: Game) -> int:
@@ -457,7 +471,7 @@ def test_steer_spec_layout() -> None:
 def test_yaw_follows_the_clip_turn(g: Game) -> None:
     """YAW reads its first-frame value plus the curve at the cursor, a loop's turn kept."""
     g.poke(a.ENTITY.YAW, "H", 0x1000)
-    steer(g, tuple(100 * k for k in range(int(CLIP_END) // 2 + 1)))
+    steer(g, keys=tuple(100 * k for k in range(int(CLIP_END) // 2 + 1)))
     g.play(46)
     g.frame()
     g.frame()  # the dispatch
@@ -749,18 +763,22 @@ LUNGE = (10, 40, 400.0, 1800.0, -700.0, 1800.0)
 """window (lo, hi], near, span, base, range: MHP3rd's stamp jump."""
 
 
-def lunge_total(d: float) -> float:
+def lunge_total(d: float, size: float = 1.0) -> float:
+    """The lunge's length at distance d: its four numbers are times the size."""
     lo, hi, near, span, base, rng = LUNGE
-    return 0.0 if d < near else base + rng * min((d - near) / span, 1)
+    near, span = near * size, span * size
+    return 0.0 if d < near else (base + rng * min((d - near) / span, 1)) * size
 
 
-@pytest.mark.parametrize("d", [300.0, 399.0, 400.0, 1300.0, 2200.0, 3500.0])
-@pytest.mark.parametrize(("bearing", "yaw0", "size"), [(0.4, 0, 1.0), (-2.5, 0x6000, 2.0)])
+@pytest.mark.parametrize("d", [150.0, 300.0, 399.0, 400.0, 1300.0, 2200.0, 3500.0])
+@pytest.mark.parametrize(
+    ("bearing", "yaw0", "size"), [(0.4, 0, 1.0), (-2.5, 0x6000, 2.0), (1.1, 0x2000, 0.5)]
+)
 def test_lunge_is_the_distances_length_along_the_bearing(
     g: Game, d: float, bearing: float, yaw0: int, size: float
 ) -> None:
     """Spread over its window by the cursor, along the bearing to the hunter at the first playing
-    frame in world axes: unscaled, whatever YAW and size are."""
+    frame in world axes, whatever YAW is; near, span, base and range times the size."""
     ex, ez = 10.0, -20.0
     ux, uz = math.sin(bearing), math.cos(bearing)
     g.poke(a.ENTITY.POSITION, "fff", ex, 0.0, ez)
@@ -770,7 +788,7 @@ def test_lunge_is_the_distances_length_along_the_bearing(
     steer(g, lunge=LUNGE)
     g.play(46)
     seen = settle(g, 2 + int(CLIP_END / SPEED))
-    total, (lo, hi, *_) = lunge_total(d), LUNGE
+    total, (lo, hi, *_) = lunge_total(d, size), LUNGE
     for cursor, (x, z) in seen:
         share = min(max((cursor - lo) / (hi - lo), 0.0), 1.0)
         assert (x, z) == pytest.approx((ex + ux * total * share, ez + uz * total * share), abs=0.02)
@@ -779,6 +797,7 @@ def test_lunge_is_the_distances_length_along_the_bearing(
 
 
 def test_lunge_takes_the_hunter_where_the_move_began(g: Game) -> None:
+    g.poke(a.ENTITY.SIZE_SCALE, "f", 1.0)
     g.poke(a.ENTITY.POSITION, "fff", 0.0, 0.0, 0.0)
     struct.pack_into("<fff", g.hunter, a.ENTITY.POSITION, 0.0, 0.0, 1000.0)
     steer(g, lunge=LUNGE)
@@ -799,7 +818,7 @@ def test_travel_and_lunge_add(g: Game, speed: float) -> None:
     g.play(46)
     settle(g, 2 + int(CLIP_END / speed))
     x, z = world(0, *CURVE[-1])
-    assert at(g) == pytest.approx((x * 2.0, z * 2.0 + lunge_total(1300.0)), abs=0.05)
+    assert at(g) == pytest.approx((x * 2.0, z * 2.0 + lunge_total(1300.0, 2.0)), abs=0.05)
 
 
 FIXED_WINDOW = (10, 40)
@@ -868,3 +887,117 @@ def test_a_move_without_travel_leaves_the_entity_as_it_was(g: Game) -> None:
         return bytes(g.mem[ENT - BASE : ENT - BASE + 0x800])
 
     assert run(False) == run(True)
+
+
+def test_the_lunge_halves_at_half_the_size(g: Game) -> None:
+    """Far past its span the length is base + range, in world units times the size."""
+
+    def lunged(size: float) -> float:
+        g.lib.host_set(1, ctypes.c_float(CLIP_END))
+        ctypes.memset(ctypes.addressof(g.mem), 0, 0x4000)
+        g.pair = (1, 3)
+        g.poke(a.ENTITY.SIZE_SCALE, "f", size)
+        struct.pack_into("<fff", g.hunter, a.ENTITY.POSITION, 0.0, 0.0, 9000.0)
+        steer(g, lunge=LUNGE)
+        g.play(46)
+        settle(g, 2 + int(CLIP_END / SPEED))
+        return at(g)[1]
+
+    full, half = lunged(1.0), lunged(0.5)
+    assert full == pytest.approx(1100.0, abs=0.05) and half == pytest.approx(full / 2, abs=0.05)
+
+
+# --- the target
+
+TARGET = BASE + 0x2000  # a second entity in move_host.cpp's memory: what the monster aims at
+HUNTER_POS = int(a.PLAYER_ENTITY) + int(a.ENTITY.POSITION)
+TARGET_POS = TARGET + int(a.ENTITY.POSITION)
+
+
+def aim_at(g: Game, x: float, z: float) -> None:
+    """ENTITY.TARGET points at an entity standing at (x, z)."""
+    struct.pack_into("<fff", g.mem, TARGET - BASE + a.ENTITY.POSITION, x, 0.0, z)
+    g.poke(a.ENTITY.TARGET, "I", TARGET)
+
+
+def hunter_at(g: Game, x: float, z: float) -> None:
+    struct.pack_into("<fff", g.hunter, a.ENTITY.POSITION, x, 0.0, z)
+
+
+def test_the_aim_is_the_target(g: Game) -> None:
+    aim_at(g, 5.0, 6.0)
+    assert g.lib.mhfu_move_target_pos(ENT) == TARGET_POS
+
+
+@pytest.mark.parametrize("pointer", [0, 0x1234, int(a.USER_RAM_END)])
+def test_the_aim_falls_back_to_the_hunter(g: Game, pointer: int) -> None:
+    """No target, or one that is not game memory."""
+    g.poke(a.ENTITY.TARGET, "I", pointer)
+    assert g.lib.mhfu_move_target_pos(ENT) == HUNTER_POS
+
+
+def test_the_turn_follows_the_target_every_frame(g: Game) -> None:
+    """The hunter is ahead; the target to the left, then to the right: it turns after whoever
+    ENTITY.TARGET holds that frame, the way the donor's turn refreshes its target."""
+    hunter_at(g, 0.0, 1000.0)
+    steer(g, turn=1, rate=0x400)
+    g.play(46)
+    aim_at(g, 1000.0, 0.0)
+    for _ in range(2 + 0x4000 // 0x400):
+        g.frame()
+    assert yaw(g) == 0x4000
+    aim_at(g, -1000.0, 0.0)
+    for _ in range(0x8000 // 0x400):
+        g.frame()
+    assert yaw(g) == 0xC000
+    g.poke(a.ENTITY.TARGET, "I", 0)  # the target is gone: the hunter, ahead
+    for _ in range(0x4000 // 0x400):
+        g.frame()
+    assert yaw(g) == 0
+
+
+def test_the_lunge_goes_to_the_target(g: Game) -> None:
+    g.poke(a.ENTITY.SIZE_SCALE, "f", 1.0)
+    hunter_at(g, 0.0, 3000.0)
+    aim_at(g, 3000.0, 0.0)
+    steer(g, lunge=LUNGE)
+    g.play(46)
+    settle(g, 3)
+    aim_at(g, 0.0, -3000.0)  # read at the first frame only
+    settle(g, 40)
+    assert at(g) == pytest.approx((lunge_total(3000.0), 0.0), abs=0.02)
+
+
+# --- the turn and its rate
+
+
+@pytest.mark.parametrize(("speed", "rate"), [(2.0, 1000), (2.8, 1400), (1.0, 500)])
+def test_the_turn_rate_is_the_donors_at_clip_speed_1(g: Game, speed: float, rate: int) -> None:
+    """A move's rate is its units a frame at speed 1; the move player times it by the clip's
+    speed / 2 (1.0 calm, 1.4 enraged)."""
+    g.speed = speed
+    hunter_at(g, 1000.0, 0.0)  # 0x4000 to the left
+    steer(g, turn=1, rate=1000)
+    g.play(46)
+    steps = []
+    last = 0
+    for _ in range(2 + 0x4000 // rate + 3):
+        g.frame()
+        steps.append(yaw(g) - last)
+        last = yaw(g)
+    turning = [d for d in steps if d]
+    assert turning[:-1] == [rate] * (len(turning) - 1) and 0 < turning[-1] <= rate
+    assert yaw(g) == 0x4000
+
+
+def test_the_hunter_turn_turns_base_and_the_curve_rides_on_top(g: Game) -> None:
+    """The entity's own YAW is what turns toward the target; the clip's facing is added to it, so
+    the body ends facing the target plus the clip's last key."""
+    keys = tuple(0x80 * k for k in range(int(CLIP_END) // 2 + 1))
+    hunter_at(g, 1000.0, 1000.0)  # 0x2000
+    steer(g, keys=keys, turn=1, rate=0x400)
+    g.play(46)
+    for _ in range(2 + int(CLIP_END / SPEED)):
+        g.frame()
+    assert g.steer_state("BASE", "H") == (0x2000,)
+    assert yaw(g) == 0x2000 + keys[-1]

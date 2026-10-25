@@ -667,8 +667,8 @@ function mhfu.move_block() end
 ---How a move turns and stops (mhfu/steer.h); every field is optional.
 ---@class mhfu.MoveSteer
 ---@field curve? string YAW while the clip plays: the entry's string in `<port>_turns.lua`
----@field turn? "still"|"hunter"|"away"|"fixed" also: toward or away from the hunter at `rate`, or `total` over `frames`
----@field rate? integer YAW units an AI frame toward or away, default 64 (the Tigrex charge's)
+---@field turn? "still"|"hunter"|"away"|"fixed" also: toward or away from the target (ENTITY.TARGET, the player without one) at `rate`, or `total` over `frames`
+---@field rate? integer YAW units an AI frame toward or away at clip speed 1, times the clip's speed / 2 in play; default 64 (the Tigrex charge's)
 ---@field window? integer[] { from, to }: clip frames, 0 <= from < to, in which "hunter" and "away" turn (the donor turns inside a window), or across which "fixed" spreads `total` by the clip cursor; default the whole move
 ---@field total? number degrees for "fixed", positive the way YAW grows
 ---@field frames? integer AI frames "fixed" spreads `total` over, without a `window`
@@ -676,14 +676,14 @@ function mhfu.move_block() end
 ---@field dir? number degrees of the travel against YAW, which sectors count as ahead; default 0
 ---@field stuck? integer[] { main, sub, mode } entered on a class-2 wall, default { 0, 6, 1 }
 ---@field travel? string the move's own travel by code, as the port's moves module writes it: 8 hex digits a sample, x then z as 16 bits each in 1/mhfu.addr.STEER_TRAVEL_SCALE world units, cumulative, every mhfu.addr.STEER_KEY_STEP clip frames from the move's `start`, at most mhfu.addr.STEER_SAMPLES; each AI frame moves the monster by the curve's change since the cursor's last frame, in its frame at the first playing frame (x its left, z forward), scaled by its size, held past the last sample
----@field lunge? mhfu.MoveLunge travel toward the hunter, by the hunter's distance when the move begins
+---@field lunge? mhfu.MoveLunge travel toward the target, by the target's distance when the move begins
 
----A move's lunge (mhfu.MoveSteer.lunge): over the clip frames `window` (lo, hi] the monster moves 0 units while the hunter's XZ distance `d` is under `near`, else `base + range * min((d - near) / span, 1)` along the bearing to the hunter at the first playing frame, in world axes, spread by the clip cursor and not scaled by the size.
+---A move's lunge (mhfu.MoveSteer.lunge): over the clip frames `window` (lo, hi] the monster moves 0 units while the target's XZ distance `d` is under `near`, else `base + range * min((d - near) / span, 1)` along the bearing to the target at the first playing frame, in world axes, spread by the clip cursor; `near`, `span`, `base` and `range` are times the monster's size.
 ---@class mhfu.MoveLunge
 ---@field window integer[] { lo, hi }: clip frames, 0 <= lo < hi
 ---@field near? number default 0
 ---@field span? number default 0, which counts as the whole range
----@field base? number default 0, negative away from the hunter
+---@field base? number default 0, negative away from the target
 ---@field range? number default 0
 
 ---What `mhfu.move_status()` returns.

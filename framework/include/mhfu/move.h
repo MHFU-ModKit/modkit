@@ -147,6 +147,11 @@ void mhfu_move_steer(const mhfu_steer_spec_t *s);
 /* The block, or 0 before the framework's init. */
 const volatile mhfu_move_state_t *mhfu_move_state(void);
 
+/* Where the monster aims: the address of ENTITY.POSITION of the object ENTITY.TARGET points at
+ * (the player or a comrade), the player's when that is 0 or not in RAM. The one place the target
+ * is resolved: the move's turn and lunge, and the brain's distance and side gates, read it. */
+uint32_t mhfu_move_target_pos(uint32_t entity);
+
 /* Replaces reaction `kind` of entity with mv (and steer, NULL for none) from the next one on, until
  * called again or a brain rule on the flinch is installed; mv NULL stops it. 0 while nothing is
  * wrapped. */

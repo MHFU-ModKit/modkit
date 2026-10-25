@@ -154,8 +154,9 @@ class Move:
 @dataclass(frozen=True)
 class Lunge:
     """`mhfu_steer_lunge_t`: over the clip frames `window` (lo, hi] the monster travels
-    `base + range * min((d - near) / span, 1)` units along the bearing to the hunter, nothing
-    while the hunter's distance `d` at the move's first playing frame is under `near`."""
+    `base + range * min((d - near) / span, 1)` units along the bearing to its target, nothing
+    while the target's distance `d` at the move's first playing frame is under `near`; `near`,
+    `span`, `base` and `range` are scaled by the monster's size."""
 
     window: tuple[int, int]
     near: float
@@ -186,12 +187,13 @@ class Steer:
     """What `mhfu_steer_spec_t` holds: the clip's turn curve (`curve`, YAW every 2 clip frames:
     a port's turns module, `turns_of`), a turn mode on top, whether a wall ends the move, a
     class-2 one into `stuck`, and the move's own travel: `travel`, the monster's (x, z) every
-    `steering.STEP` clip frames from the move's start, and a `lunge` toward the hunter."""
+    `steering.STEP` clip frames from the move's start, and a `lunge` toward the target."""
 
     curve: tuple[int, ...] = ()
     turn: str = "still"
     rate: int = 64
-    """YAW units an AI frame toward or away from the hunter."""
+    """YAW units an AI frame at clip speed 1 toward or away from the target (the move player
+    multiplies it by the clip's speed / 2)."""
     total: float = 0.0
     """Degrees "fixed" turns over `frames`, or across `window`, the way YAW grows."""
     frames: int = 1
@@ -200,7 +202,7 @@ class Steer:
     """Degrees of the travel against YAW: which wall sectors count as ahead."""
     stuck: tuple[int, int, int] = (0, 6, 1)
     window: tuple[int, int] = (0, 0)
-    """Clip frames [from, to) the hunter and away turns apply in, a fixed turn spreads across;
+    """Clip frames [from, to) the target and away turns apply in, a fixed turn spreads across;
     0, 0 the whole move."""
     travel: tuple[steering.Point, ...] = ()
     lunge: Lunge | None = None

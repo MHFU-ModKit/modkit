@@ -129,6 +129,15 @@ INLINE float ramp(uint16_t lo, uint16_t hi, float at)
 
 INLINE int32_t round_to(float v) { return (int32_t)(v < 0 ? v - 0.5f : v + 0.5f); }
 
+/* A turn rate at clip speed 1 as it is at `speed` (the donor's ent[0xAC4]): CLIP_BLOCK.SPEED is 2
+ * a frame calm, so the rate is times speed / 2. */
+INLINE uint16_t paced(uint16_t rate, float speed)
+{
+    if (!(speed > 0)) return 0;
+    float r = (float)rate * speed * 0.5f + 0.5f;
+    return r >= 65535.0f ? 0xFFFF : (uint16_t)r;
+}
+
 extern "C" {
 
 uint16_t mhfu_steer_bearing(float dx, float dz) { return bearing(dx, dz); }
@@ -188,13 +197,16 @@ uint16_t mhfu_steer_curve(const volatile mhfu_steer_spec_t *s, float cursor)
     return curve(s, cursor, (float)(MHFU_STEER_KEYS * MHFU_STEER_KEY_STEP));
 }
 
-int mhfu_steer_move(void *entity, const mhfu_vec3_t *hunter, volatile mhfu_steer_state_t *st,
-                    uint32_t frame, float start, float cursor, float loop_start, float end)
+int mhfu_steer_move(void *entity, const mhfu_vec3_t *target, volatile mhfu_steer_state_t *st,
+                    uint32_t frame, const mhfu_steer_clip_t *clip)
 {
     volatile uint8_t *e = (volatile uint8_t *)entity;
     volatile uint16_t *yaw = (volatile uint16_t *)(e + MHFU_ENTITY_YAW);
     volatile float *pos = (volatile float *)(e + MHFU_ENTITY_POSITION);
     volatile mhfu_steer_spec_t *sp = &st->now;
+    const float start = clip->start, cursor = clip->cursor;
+    const float loop_start = clip->loop_start, end = clip->end;
+    const float size = *(volatile float *)(e + MHFU_ENTITY_SIZE_SCALE);
     float before = st->cursor;
     bool loop = false;
     if (frame <= 1) {
@@ -206,12 +218,13 @@ int mhfu_steer_move(void *entity, const mhfu_vec3_t *hunter, volatile mhfu_steer
         st->wall = MHFU_STEER_GO;
         before = start;
         st->lunge_x = st->lunge_z = 0;
-        if (sp->lunge.hi && hunter) {
-            float dx = hunter->x - pos[0], dz = hunter->z - pos[2];
+        if (sp->lunge.hi && target) {
+            float dx = target->x - pos[0], dz = target->z - pos[2];
             float d = __builtin_sqrtf(dx * dx + dz * dz);
-            if (d > 0 && d >= sp->lunge.near) {
-                float t = sp->lunge.span > 0 ? (d - sp->lunge.near) / sp->lunge.span : 1;
-                float length = sp->lunge.base + sp->lunge.range * (t < 1 ? t : 1);
+            float near = sp->lunge.near * size, span = sp->lunge.span * size;
+            if (d > 0 && d >= near) {
+                float t = span > 0 ? (d - near) / span : 1;
+                float length = (sp->lunge.base + sp->lunge.range * (t < 1 ? t : 1)) * size;
                 st->lunge_x = length * dx / d;
                 st->lunge_z = length * dz / d;
             }
@@ -231,12 +244,11 @@ int mhfu_steer_move(void *entity, const mhfu_vec3_t *hunter, volatile mhfu_steer
     }
     st->cursor = cursor;
     uint8_t mode = sp->steer.turn;
-    if ((mode == MHFU_STEER_HUNTER || mode == MHFU_STEER_AWAY) && hunter
+    if ((mode == MHFU_STEER_HUNTER || mode == MHFU_STEER_AWAY) && target
         && in_window(sp->steer.win_from, sp->steer.win_to, cursor)) {
-        uint16_t want = bearing(hunter->x - pos[0], hunter->z - pos[2]);
+        uint16_t want = bearing(target->x - pos[0], target->z - pos[2]);
         if (mode == MHFU_STEER_AWAY) want = (uint16_t)(want + MHFU_STEER_TURN / 2);
-        uint16_t now = *yaw;
-        st->base = (uint16_t)(st->base + (uint16_t)(toward(now, want, sp->steer.rate) - now));
+        st->base = toward(st->base, want, paced(sp->steer.rate, clip->speed));
     } else if (mode == MHFU_STEER_FIXED && sp->steer.win_to) {
         uint16_t lo = sp->steer.win_from, hi = sp->steer.win_to;
         float total = (float)sp->steer.total;
@@ -268,7 +280,6 @@ int mhfu_steer_move(void *entity, const mhfu_vec3_t *hunter, volatile mhfu_steer
             lz += z1 - z0;
         }
         yaw_sincos(st->yaw0, &s, &c);
-        float size = *(volatile float *)(e + MHFU_ENTITY_SIZE_SCALE);
         mx = (lx * c + lz * s) * size;
         mz = (lz * c - lx * s) * size;
     }

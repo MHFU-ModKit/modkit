@@ -215,10 +215,12 @@ class Steer:
     """How an own move turns, and whether a wall ends it."""
 
     turn: Turn = "clip"
-    """`clip` follows the clip's turn, `hunter` and `away` turn at `rate`, `fixed` turns
+    """`clip` follows the clip's turn, `hunter` and `away` turn toward or away from the target
+    (what the monster aims at: its AI target, the player without one) at `rate`, `fixed` turns
     `angle` degrees over `frames` AI frames or across `window` by cursor, `still` not at all."""
     rate: int | None = None
-    """YAW units an AI frame for `hunter` and `away`; None: the host charge's."""
+    """YAW units an AI frame at clip speed 1 for `hunter` and `away`, times the speed / 2 in play;
+    None: the host charge's."""
     angle: float | None = None
     frames: int | None = None
     walls: bool = True
@@ -231,10 +233,10 @@ class Steer:
 
 @dataclass
 class Lunge:
-    """Travel toward the hunter across clip frames `window` (lo, hi]: none while the hunter is
+    """Travel toward the target across clip frames `window` (lo, hi]: none while the target is
     nearer than `near` at the move's first playing frame, else `base + range * min((d - near) /
-    span, 1)` units along the bearing to it then, spread over the window by cursor. In world
-    units, not scaled by the monster's size."""
+    span, 1)` units along the bearing to it then, spread over the window by cursor. `near`,
+    `span`, `base` and `range` are scaled by the monster's size."""
 
     window: tuple[int, int]
     near: float

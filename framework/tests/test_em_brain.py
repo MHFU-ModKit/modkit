@@ -177,7 +177,7 @@ class Game:
         self.poke(a.ENTITY.MAIN_STATE, "BB", *ms)
 
     def hunter_at(self, x: float, z: float) -> None:
-        struct.pack_into("<fff", self.hunter, a.ENTITY.TRANSLATION, x, 0.0, z)
+        struct.pack_into("<fff", self.hunter, a.ENTITY.POSITION, x, 0.0, z)
 
     def frame(self) -> None:
         """One AI frame: the brain and the step, then each playing clip advances."""
@@ -185,6 +185,7 @@ class Game:
         assert a.CLIP_BLOCK.size
         for k in range(3):
             b = int(a.ENTITY.CLIP_BLOCKS) + k * a.CLIP_BLOCK.size
+            self.poke(b + a.CLIP_BLOCK.SPEED, "f", SPEED)  # MONSTER_STEP writes it every frame
             (phase,) = self.peek(b + a.CLIP_BLOCK.PHASE, "f")
             (end,) = self.peek(b + a.CLIP_BLOCK.END, "f")
             if self.peek(b + a.CLIP_BLOCK.FLAGS, "H")[0] & 1:
@@ -599,6 +600,41 @@ def test_an_own_moves_hunter_turn_keeps_to_its_steer_window(
     assert len(seen) >= 8
     assert [d for c, d in seen] == [64 if c in turning else 0 for c, _ in seen]
     assert any(d for _, d in seen)
+
+
+TARGET = BASE + 0x2000  # a second entity in em_host.cpp's memory: what the monster aims at
+
+
+def aim_at(g: Game, x: float, z: float) -> None:
+    """ENTITY.TARGET points at an entity standing at (x, z)."""
+    struct.pack_into("<fff", g.mem, TARGET - BASE + a.ENTITY.POSITION, x, 0.0, z)
+    g.poke(a.ENTITY.TARGET, "I", TARGET)
+
+
+def test_the_distance_is_measured_to_the_target(g: Game) -> None:
+    """The hunter is 500 away; the target, a comrade, 300: the rules' window reads the target's."""
+    aim_at(g, 0.0, 300.0)
+    g.frame()
+    assert g.status().dist == pytest.approx(300.0)
+    g.rule(0, from_mask=1 << 1, dist_lo=250.0, dist_hi=350.0, to_main=3, to_sub=6)
+    assert g.go() == [(3, 6)]
+    g.poke(a.ENTITY.TARGET, "I", 0)  # without one it is the hunter's
+    g.frame()
+    assert g.status().dist == pytest.approx(500.0)
+    g.rule(0, from_mask=1 << 1, dist_lo=250.0, dist_hi=350.0, to_main=3, to_sub=6)
+    assert g.go() == []
+
+
+def test_the_side_is_the_targets(g: Game) -> None:
+    """The hunter stands to the monster's left, the target ahead."""
+    face(g, 0)
+    g.hunter_at(500.0, 0.0)
+    aim_at(g, 0.0, 500.0)
+    g.rule(0, from_mask=1 << 1, to_main=3, to_sub=6, conds=[cond("side", 1)])
+    assert g.go() == [(3, 6)]
+    g.poke(a.ENTITY.TARGET, "I", 0)
+    g.rule(0, from_mask=1 << 1, to_main=3, to_sub=6, conds=[cond("side", 1)])
+    assert g.go() == []
 
 
 def test_keys_have_room(g: Game) -> None:

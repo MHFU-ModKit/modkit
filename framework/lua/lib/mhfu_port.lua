@@ -243,7 +243,7 @@ P.is_own = is_own
 --           module numbers its own moves, which the brain splice's `enter` names), else the
 --           first free one by name. Its `steer` goes to the move player as it is (mhfu.MoveSteer:
 --           turn, rate, `window = { from, to }` the clip frames a turn keeps to or a fixed turn
---           spreads across, `travel` the move's own travel by code, `lunge` toward the hunter).
+--           spreads across, `travel` the move's own travel by code, `lunge` toward the target).
 --           Default: the manifest's (P.behaviour)
 --   rules   port:rule{} specs installed with the port; default: the manifest's
 --   vars, signals  name -> index of the board's counters and signals (port:var, port:fire); default:
@@ -511,7 +511,7 @@ end
 ---   port:rule{ from = "lunge",            -- a move name, or { main = 1, sub = 4 },
 ---              from_main = { 0, 1 },      -- ...or a set of main states (any sub)
 ---              min_frames = 15,           -- the pair (or own move) must have stood this long
----              dist = { 250, 1e9 },       -- player XZ distance window [lo, hi)
+---              dist = { 250, 1e9 },       -- the target's XZ distance window [lo, hi)
 ---              receding = true,           -- only while the gap is GROWING
 ---              closing = false,           -- only while it is SHRINKING
 ---              play = "lunge_stop",       -- the move: its pair entered, or an own move played
