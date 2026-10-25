@@ -61,6 +61,7 @@ static_assert(offsetof(mhfu_move_t, spawner) == MHFU_MOVE_SPAWNER, "MOVE layout"
 static_assert(offsetof(mhfu_move_t, host_attacks) == MHFU_MOVE_HOST_ATTACKS, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, force) == MHFU_MOVE_FORCE, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, hold_script) == MHFU_MOVE_HOLD_SCRIPT, "MOVE layout");
+static_assert(offsetof(mhfu_move_t, aim_out) == MHFU_MOVE_AIM_OUT, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, start) == MHFU_MOVE_START, "MOVE layout");
 static_assert(offsetof(mhfu_move_t, stop) == MHFU_MOVE_STOP, "MOVE layout");
 static_assert(MHFU_MOVE_ATTACKS_COUNT == MHFU_MOVE_MAX_ATTACKS, "MOVE layout");
@@ -107,6 +108,9 @@ static_assert(offsetof(mhfu_steer_spec_t, sample_count) == MHFU_STEER_SPEC_SAMPL
               "STEER_SPEC layout");
 static_assert(offsetof(mhfu_steer_spec_t, lunge) == MHFU_STEER_SPEC_LUNGE, "STEER_SPEC layout");
 static_assert(offsetof(mhfu_steer_spec_t, samples) == MHFU_STEER_SPEC_SAMPLES, "STEER_SPEC layout");
+static_assert(offsetof(mhfu_steer_spec_t, turn_count) == MHFU_STEER_SPEC_TURN_COUNT,
+              "STEER_SPEC layout");
+static_assert(offsetof(mhfu_steer_spec_t, turns) == MHFU_STEER_SPEC_TURNS, "STEER_SPEC layout");
 static_assert(sizeof(mhfu_steer_state_t) == MHFU_STEER_STATE_SIZE, "STEER_STATE layout");
 static_assert(offsetof(mhfu_steer_state_t, now) == MHFU_STEER_STATE_NOW, "STEER_STATE layout");
 static_assert(offsetof(mhfu_steer_state_t, base) == MHFU_STEER_STATE_BASE, "STEER_STATE layout");
@@ -119,6 +123,12 @@ static_assert(offsetof(mhfu_steer_state_t, lunge_z) == MHFU_STEER_STATE_LUNGE_Z,
 static_assert(offsetof(mhfu_steer_state_t, keep) == MHFU_STEER_STATE_KEEP, "STEER_STATE layout");
 static_assert(offsetof(mhfu_steer_state_t, blend) == MHFU_STEER_STATE_BLEND, "STEER_STATE layout");
 static_assert(offsetof(mhfu_steer_state_t, ramp) == MHFU_STEER_STATE_RAMP, "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, turn_scale) == MHFU_STEER_STATE_TURN_SCALE,
+              "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, out_total) == MHFU_STEER_STATE_OUT_TOTAL,
+              "STEER_STATE layout");
+static_assert(offsetof(mhfu_steer_state_t, out_frames) == MHFU_STEER_STATE_OUT_FRAMES,
+              "STEER_STATE layout");
 
 /* --- the engine ------------------------------------------------------------------------- */
 
@@ -269,6 +279,7 @@ static int begin(uint32_t ent)
     S->end = S->skipping = 0;
     S->end_pair = 0;
     S->steer.keep = 0;
+    S->steer.out_frames = 0;
     for (int k = 0; k < MHFU_ENTITY_CLIP_BLOCKS_COUNT; k++) {
         S->node[k] = 0;
         S->clip_end[k] = S->peak[k] = -1.0f;
@@ -362,18 +373,27 @@ static void attacks(uint32_t ent, float prev, float cursor)
 
 /* The step ended and em_vhook names a successor on the same carrier: it takes this AI frame, before
  * the host step, so the carrier's handler never sees the clip end (the hub would dispatch its own
- * clip) and is not entered again. The pair stays; the step's base is kept (steer.h). */
+ * clip) and is not entered again. The pair stays; the step's base is kept (steer.h), and the angle
+ * to the target it still leaves goes to the successor to spread when the move has AIM_OUT. */
 static int chain(uint32_t ent)
 {
     mhfu_move_t mv;
     const mhfu_steer_spec_t *sp;
     if (!mhfu_em_chain(ent, &mv, &sp)) return 0;
+    const uint8_t out = S->move.aim_out;
+    int16_t left = 0;
+    void *e = out ? direct(ent) : 0;
+    if (e)
+        left = mhfu_steer_aim(e, (const mhfu_vec3_t *)direct(mhfu_move_target_pos(ent)),
+                              S->steer.base);
     end_attacks(ent);
     mhfu_em_mute_events(0);
     copy_words(&S->move, &mv, sizeof(mv));
     copy_words(&S->steer.next, sp, sizeof(*sp));
     if (begin(ent)) {
         S->steer.keep = 1;
+        S->steer.out_total = left;
+        S->steer.out_frames = out;
         dispatch(ent);
     }
     return 1;

@@ -31,7 +31,9 @@
  * place: the end's attacks are ended and the successor's entry goes to the executor in the same AI
  * frame, before the host step, so the carrier's handler (the hub's clip) never runs between the two.
  * The steering carries over (steer.h): the successor keeps the entity's own YAW, and the turn the
- * clips' facings make is blended out over the successor's blend.
+ * clips' facings make is blended out over the successor's blend. A move with AIM_OUT also leaves the
+ * angle still to turn to the target at the switch, which the successor turns into its own YAW
+ * linearly over its first AIM_OUT AI frames, on top of its own steering.
  *
  * A move asked for while the monster's notice runs (the player's ENTITY.AWARE bit set,
  * COMBAT_MODE still 0: the roar, the hub, the AI script's combat entry) waits for it, up to
@@ -85,7 +87,9 @@ typedef struct {
     uint8_t  hold_script;                 /* 1: entering the back pair clears ENTITY.SCRIPT_WAKE, so the
                                            * AI script does not pick between this move and the one that
                                            * follows (em_vhook sets it for a move with an AFTER) */
-    uint8_t  _pad;
+    uint8_t  aim_out;                     /* AI frames; 0 none: a hand-over in place spreads the angle
+                                           * still to turn to the target over the successor's first
+                                           * aim_out AI frames (steer.h out_total) */
     uint16_t start;                       /* clip frame the clip starts at (the executor's a3); 0 = the
                                            * row's own, frame 0 on em75 */
     uint16_t stop;                        /* the move ends when part's cursor reaches this clip

@@ -116,7 +116,7 @@ typedef struct {
     uint32_t gate_refused;       /* tail cuts the gate refused */
     uint32_t natural_rage;       /* mhfu_em_natural_rage */
     uint32_t own_enters;         /* AI script enters of MHFU_OWN_MOVE_MAIN, whether the slot held a move or not */
-    uint32_t own_last;           /* slot + 1 of the last that played, 0 none */
+    uint32_t own_last;           /* slot or combo id + 1 of the last filed (a byte), 0 none */
 } mhfu_em_status_t;
 
 /* 1 while a big monster's vtable is wrapped (from its spawn to the next quest_beginning). */
@@ -177,16 +177,25 @@ int  mhfu_em_tip(const uint8_t (*pairs)[2], int n);
  * does not cut in before the next. A slot's FORCE is the call's, never the slot's.
  *
  * An AI script plays a slot too: `enter MHFU_OWN_MOVE_MAIN k 0`. The slot-32 stub enters the slot's
- * carrier (em75's hub (0,2) for an empty or out-of-range slot) in place of the main the game
- * has no table for, and files the same forced request mhfu_em_play does; the brain plays the move
- * at the next AI step. The script's next pair waits for the carrier's hand-back, as after a native
- * pair: the wake the hub raises inside the run is cleared by the script's tick after it, and the
- * move player clears the one its own entry of the hub raises. mhfu_em_status_t.own_enters counts
- * these enters, own_last gives the slot of the last that played. */
+ * carrier (em75's hub (0,2) for an empty slot) in place of the main the game has no table for, and
+ * files the same forced request mhfu_em_play does; the brain plays the move at the next AI step.
+ * An id from MHFU_EM_MOVES up names a combo (mhfu_em_combo): the stub enters the hub and files the
+ * id, never reading a slot past the registry, and the brain plays the combo's first move, whose
+ * THEN follows it in place. The script's next pair waits for the carrier's hand-back, as after a
+ * native pair: the wake the hub raises inside the run is cleared by the script's tick after it, and
+ * the move player clears the one its own entry of the hub raises. mhfu_em_status_t.own_enters
+ * counts these enters, own_last gives the slot or id + 1 (a byte) of the last that was filed. */
 #define MHFU_EM_MOVES   MHFU_OWN_MOVES
 #define MHFU_EM_NO_MOVE 0xFFu
 #define MHFU_EM_NO_LUNGE 0xFFu   /* mhfu_em_own_t.lunge_at: no lunge */
-/* The pools' sizes, MHFU_EM_KEYS, _SAMPLES and _LUNGES, are consts in addresses.toml. */
+/* The pools' sizes, MHFU_EM_KEYS, _SAMPLES, _TURNS and _LUNGES, are consts in addresses.toml. */
+
+/* struct EM_COMBO in addresses.toml: an enter id from MHFU_EM_MOVES up is a combo, the move
+ * `first` played on em75's hub and then `then` in place; 0xFF: none registered */
+typedef struct {
+    uint8_t first, then;
+} mhfu_em_combo_t;
+#define MHFU_EM_COMBO_IDS MHFU_EM_MOVES_COMBOS_COUNT   /* the ids of a byte: combos are from MHFU_EM_MOVES */
 
 /* struct EM_OWN in addresses.toml */
 typedef struct {
@@ -194,6 +203,7 @@ typedef struct {
     mhfu_steer_t steer;
     uint16_t key_at, key_count;              /* its turn keys in mhfu_em_moves_t.keys */
     uint16_t sample_at, sample_count;        /* its travel samples in mhfu_em_moves_t.samples */
+    uint16_t turn_at, turn_count;            /* its code turn in mhfu_em_moves_t.turns */
     uint8_t  stuck_main, stuck_sub, stuck_mode;
     uint8_t  after;                          /* slot played when this one ends; MHFU_EM_NO_MOVE */
     uint8_t  lunge_at;                       /* its lunge in mhfu_em_moves_t.lunges, or NO_LUNGE */
@@ -207,23 +217,34 @@ typedef struct {
     uint32_t tag_slot, tag_started;          /* the slot of the move player's move, if ours */
     uint32_t plays, chained;
     uint32_t key_top, sample_top, lunge_top; /* pool entries in use */
+    uint32_t turn_top;
+    uint32_t tag_then;                       /* the slot after the combo's first move, else NO_MOVE */
     uint32_t req_force;                      /* REQ_SLOT starts while the notice runs */
     mhfu_em_own_t moves[MHFU_EM_MOVES];
+    mhfu_em_combo_t combos[MHFU_EM_COMBO_IDS];  /* by enter id: only MHFU_EM_MOVES.. are read */
     uint16_t keys[MHFU_EM_KEYS];
     mhfu_travel_sample_t samples[MHFU_EM_SAMPLES];
     mhfu_steer_lunge_t lunges[MHFU_EM_LUNGES];
+    int16_t      turns[MHFU_EM_TURNS];
     mhfu_steer_spec_t scratch;               /* the steering handed to the move player */
 } mhfu_em_moves_t;
 
-/* Empties every slot and the pools: turn keys, travel samples, lunges. */
+/* Empties every slot and the pools: turn keys, travel samples, lunges, code turns. */
 void mhfu_em_moves_clear(void);
 /* Slot `slot` plays mv, steered by s; `after` is a slot or MHFU_EM_NO_MOVE. Its keys, travel
- * samples and lunge are copied into the pools unless a pool holds that run already, anywhere,
- * word for word (a lunge byte for byte): then the slot points there. 0 for a bad slot or no room
- * left in a pool for what is new. */
+ * samples, code turn and lunge are copied into the pools unless a pool holds that run already,
+ * anywhere, value for value (a lunge byte for byte): then the slot points there. 0 for a bad slot
+ * or no room left in a pool for what is new. */
 int  mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_spec_t *s, uint8_t after);
-/* Plays slot on entity at its next AI step, forced past the notice wait (MOVE.FORCE) or not; 0
- * while nothing is wrapped or the slot is empty. */
+/* Combo `id` (MHFU_EM_MOVES..255): an enter of it plays slot `first` on the hub, then `then` in
+ * place, as the AFTER of a move is (mhfu_em_chain), once `first` ends. 0 for an id that is no
+ * combo's, a slot with no move, or a `first` that does not ride the hub; the check is here, where
+ * a port registers, and the enter-action stub never trusts an id. Taken in place of `first`'s
+ * AFTER, if it has one, and only by this play: any other play, a reaction, a stop or a
+ * replacement of `first` drops it. Cleared by mhfu_em_moves_clear. */
+int  mhfu_em_combo(int id, int first, int then);
+/* Plays slot (or combo id) on entity at its next AI step, forced past the notice wait
+ * (MOVE.FORCE) or not; 0 while nothing is wrapped or the slot is empty or the combo none. */
 int  mhfu_em_play(uint32_t entity, int slot, int force);
 /* The slot of the move the move player runs (entering or playing), if it came from here; -1. */
 int  mhfu_em_playing(void);

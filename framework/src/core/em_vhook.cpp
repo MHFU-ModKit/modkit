@@ -29,12 +29,14 @@
  *                 thread in the next AI frame through the engine's dispatcher
  *                 (MHFU_ENTER_ACTION), so it is provisioned too.
  *   OWN ENTER     slot-32 pre, after the table: an AI script's `enter MHFU_OWN_MOVE_MAIN k`
- *                 is entered as own move k's carrier (em75's hub for an empty or out-of-range
- *                 slot) and files the request mhfu_em_play files, forced; the brain plays the
- *                 move at the next AI step. The script's wake the hub raises inside the run is
- *                 cleared by SCRIPT_TICK after it, and move.cpp's start quiets the one the hub
- *                 raises again, so the script's next pair cannot cut the move; the carrier hands
- *                 back once the move (and its AFTER chain) ends, which wakes the script.
+ *                 is entered as own move k's carrier (em75's hub for an empty slot) and files the
+ *                 request mhfu_em_play files, forced; the brain plays the move at the next AI
+ *                 step. A k from MHFU_EM_MOVES up is a combo's: the hub, the id filed, the brain
+ *                 plays the combo's first move and its THEN follows in place. The script's wake
+ *                 the hub raises inside the run is cleared by SCRIPT_TICK after it, and
+ *                 move.cpp's start quiets the one the hub raises again, so the script's next pair
+ *                 cannot cut the move; the carrier hands back once the move (and its AFTER chain)
+ *                 ends, which wakes the script.
  *   CUT           the brain: while the tail cut waits for its drop (cut_waits), the
  *                 request, the plays and the rules wait, and the move player's start
  *                 with them; the events seen meanwhile reach the rules after the drop.
@@ -309,6 +311,8 @@ static_assert(offsetof(mhfu_em_own_t, key_at) == MHFU_EM_OWN_KEY_AT, "EM_OWN lay
 static_assert(offsetof(mhfu_em_own_t, key_count) == MHFU_EM_OWN_KEY_COUNT, "EM_OWN layout");
 static_assert(offsetof(mhfu_em_own_t, sample_at) == MHFU_EM_OWN_SAMPLE_AT, "EM_OWN layout");
 static_assert(offsetof(mhfu_em_own_t, sample_count) == MHFU_EM_OWN_SAMPLE_COUNT, "EM_OWN layout");
+static_assert(offsetof(mhfu_em_own_t, turn_at) == MHFU_EM_OWN_TURN_AT, "EM_OWN layout");
+static_assert(offsetof(mhfu_em_own_t, turn_count) == MHFU_EM_OWN_TURN_COUNT, "EM_OWN layout");
 static_assert(offsetof(mhfu_em_own_t, stuck_main) == MHFU_EM_OWN_STUCK_MAIN, "EM_OWN layout");
 static_assert(offsetof(mhfu_em_own_t, after) == MHFU_EM_OWN_AFTER, "EM_OWN layout");
 static_assert(offsetof(mhfu_em_own_t, lunge_at) == MHFU_EM_OWN_LUNGE_AT, "EM_OWN layout");
@@ -319,18 +323,26 @@ static_assert(offsetof(mhfu_em_moves_t, tag_slot) == MHFU_EM_MOVES_TAG_SLOT, "EM
 static_assert(offsetof(mhfu_em_moves_t, key_top) == MHFU_EM_MOVES_KEY_TOP, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, sample_top) == MHFU_EM_MOVES_SAMPLE_TOP, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, lunge_top) == MHFU_EM_MOVES_LUNGE_TOP, "EM_MOVES layout");
+static_assert(offsetof(mhfu_em_moves_t, turn_top) == MHFU_EM_MOVES_TURN_TOP, "EM_MOVES layout");
+static_assert(offsetof(mhfu_em_moves_t, tag_then) == MHFU_EM_MOVES_TAG_THEN, "EM_MOVES layout");
+static_assert(offsetof(mhfu_em_moves_t, combos) == MHFU_EM_MOVES_COMBOS, "EM_MOVES layout");
+static_assert(sizeof(mhfu_em_combo_t) == MHFU_EM_COMBO_SIZE, "EM_COMBO layout");
+static_assert(offsetof(mhfu_em_combo_t, then) == MHFU_EM_COMBO_THEN, "EM_COMBO layout");
+static_assert(MHFU_EM_COMBO_IDS == 0x100 && MHFU_EM_MOVES < MHFU_EM_COMBO_IDS,
+              "an enter id is a byte, and combos are the ids past the slots");
 static_assert(offsetof(mhfu_em_moves_t, req_force) == MHFU_EM_MOVES_REQ_FORCE, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, moves) == MHFU_EM_MOVES_MOVES, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, keys) == MHFU_EM_MOVES_KEYS, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, samples) == MHFU_EM_MOVES_SAMPLES, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, lunges) == MHFU_EM_MOVES_LUNGES, "EM_MOVES layout");
+static_assert(offsetof(mhfu_em_moves_t, turns) == MHFU_EM_MOVES_TURNS, "EM_MOVES layout");
 static_assert(offsetof(mhfu_em_moves_t, scratch) == MHFU_EM_MOVES_SCRATCH, "EM_MOVES layout");
 /* the act stub reaches them by 16-bit offsets from the registry and from a slot */
 static_assert(MHFU_EM_MOVES_REQ_FORCE < 0x8000 && MHFU_EM_MOVES_MOVES + MHFU_EM_OWN_VALID < 0x8000,
               "EM_MOVES offsets past a 16-bit immediate");
 /* a slot's pool indices are 16 bits, its lunge's 8 */
-static_assert(MHFU_EM_KEYS <= 0xFFFF && MHFU_EM_SAMPLES <= 0xFFFF && MHFU_EM_LUNGES < 0xFF,
-              "EM_MOVES pools past an index");
+static_assert(MHFU_EM_KEYS <= 0xFFFF && MHFU_EM_SAMPLES <= 0xFFFF && MHFU_EM_TURNS <= 0xFFFF
+              && MHFU_EM_LUNGES < 0xFF, "EM_MOVES pools past an index");
 static_assert(MHFU_OWN_MOVES < 0xFF, "EM_MOVES slots past a byte, 0xFF being none");
 
 static void cfg_reset_live(void)
@@ -371,7 +383,9 @@ static void place_moves(void *at)
     R = (volatile mhfu_em_moves_t *)(((uintptr_t)at + 63) & ~(uintptr_t)63);
     volatile uint32_t *w = (volatile uint32_t *)R;
     for (unsigned k = 0; k < sizeof(mhfu_em_moves_t) / 4; k++) w[k] = 0;
-    R->tag_slot = MHFU_EM_NO_MOVE;
+    R->tag_slot = R->tag_then = MHFU_EM_NO_MOVE;
+    for (unsigned id = 0; id < MHFU_EM_COMBO_IDS; id++)
+        R->combos[id].first = R->combos[id].then = MHFU_EM_NO_MOVE;
     R->magic = MOVES_MAGIC;
 }
 
@@ -492,7 +506,7 @@ static int ours(const volatile mhfu_move_state_t *m)
     return (int)R->tag_slot;
 }
 
-/* slot's steering in the registry's scratch, keys, travel samples and lunge and all */
+/* slot's steering in the registry's scratch, keys, travel samples, code turn and lunge and all */
 static const volatile mhfu_steer_spec_t *steer_of(const volatile mhfu_em_own_t *o)
 {
     volatile mhfu_steer_spec_t *sp = &R->scratch;
@@ -506,6 +520,9 @@ static const volatile mhfu_steer_spec_t *steer_of(const volatile mhfu_em_own_t *
     unsigned n = o->sample_count < MHFU_STEER_SAMPLES ? o->sample_count : MHFU_STEER_SAMPLES;
     sp->sample_count = (uint16_t)n;
     if (n) copy_words(sp->samples, &R->samples[o->sample_at], n * sizeof(mhfu_travel_sample_t));
+    n = o->turn_count < MHFU_STEER_TURNS ? o->turn_count : MHFU_STEER_TURNS;
+    sp->turn_count = (uint16_t)n;
+    for (unsigned k = 0; k < n; k++) sp->turns[k] = R->turns[o->turn_at + k];
     sp->lunge.hi = 0;
     if (o->lunge_at != MHFU_EM_NO_LUNGE)
         copy_words(&sp->lunge, &R->lunges[o->lunge_at], sizeof(mhfu_steer_lunge_t));
@@ -520,6 +537,7 @@ static void tag(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m
 {
     R->tag_slot = slot;
     R->tag_started = m->started + 1;   /* the step starts it right after us */
+    R->tag_then = MHFU_EM_NO_MOVE;     /* a combo's first sets it again, after this */
     R->plays++;
     fat_own(ent, slot);
     chg_own(ent, slot);
@@ -537,19 +555,59 @@ static int fill(uint32_t slot, int force, mhfu_move_t *mv, const mhfu_steer_spec
     return 1;
 }
 
-static int play_slot(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m, int force)
+/* A move that is followed ends into its carrier with the AI script's wake cleared, so the host
+ * brain does not cut in before the move after it. The carrier again at the end, so a successor
+ * on another carrier follows; the hub it enters wakes the AI script, so the move player clears
+ * that wake. */
+static void follow(mhfu_move_t *mv)
+{
+    mv->hold_script = 1;
+    if (mv->back_main == MHFU_MOVE_NO_PAIR) {
+        mv->back_main = mv->carrier_main;
+        mv->back_sub = mv->carrier_sub;
+        mv->back_mode = 0;
+    }
+}
+
+/* Plays slot on ent, forced or not; `then` (a slot, else MHFU_EM_NO_MOVE) follows it in place in
+ * place of its AFTER: a combo's first move. */
+static int play_slot(uint32_t ent, uint32_t slot, const volatile mhfu_move_state_t *m, int force,
+                     uint32_t then)
 {
     mhfu_move_t mv;
     const mhfu_steer_spec_t *sp;
     if (!fill(slot, force, &mv, &sp)) return 0;
+    if (then != MHFU_EM_NO_MOVE) follow(&mv);
     mhfu_move_steer(sp);
     if (!mhfu_move_play(ent, &mv)) return 0;
     tag(ent, slot, m);
+    R->tag_then = then;
     return 1;
 }
 
-/* The slot that plays when slot k's move ends: its AFTER, MHFU_EM_NO_MOVE for none. */
-static uint32_t successor(int k) { return R->moves[k].after; }
+/* combo `id` is registered and both its moves are there */
+static bool combo_ready(uint32_t id)
+{
+    if (id < MHFU_EM_MOVES || id >= MHFU_EM_COMBO_IDS) return false;
+    const uint32_t first = R->combos[id].first, then = R->combos[id].then;
+    return first < MHFU_EM_MOVES && then < MHFU_EM_MOVES && R->moves[first].valid
+        && R->moves[then].valid;
+}
+
+/* what an enter id or a request names: a slot, or a combo's first move with its THEN to follow */
+static int play_request(uint32_t ent, uint32_t id, const volatile mhfu_move_state_t *m, int force)
+{
+    if (id < MHFU_EM_MOVES) return play_slot(ent, id, m, force, MHFU_EM_NO_MOVE);
+    if (!combo_ready(id)) return 0;
+    return play_slot(ent, R->combos[id].first, m, force, R->combos[id].then);
+}
+
+/* The slot that plays when slot k's move ends: the THEN of the combo it began, else its AFTER,
+ * MHFU_EM_NO_MOVE for none. The one place a successor is chosen. */
+static uint32_t successor(int k)
+{
+    return R->tag_then != MHFU_EM_NO_MOVE ? R->tag_then : R->moves[k].after;
+}
 
 /* The move that just ended on its clip's end into its carrier or on a wall names a successor, which
  * plays this frame: that move's slot, else -1. */
@@ -1020,7 +1078,7 @@ static int fire(cfg_rule_t *r, uint32_t ent, const volatile mhfu_move_state_t *m
 {
     if (!quiet(r)) {
         if (r->play_move) {
-            if (!play_slot(ent, r->play_move - 1u, m, r->force)) return 0;
+            if (!play_slot(ent, r->play_move - 1u, m, r->force, MHFU_EM_NO_MOVE)) return 0;
         } else {
             enter(ent, r->to_main, r->to_sub, r->mode);
         }
@@ -1138,11 +1196,11 @@ static int act(uint32_t ent, const volatile mhfu_move_state_t *m, const seen_t *
     const int due = chain_due(ent, m);
     if (R->req_ent == ent) {
         R->req_ent = 0;
-        play_slot(ent, R->req_slot, m, (int)R->req_force);
+        play_request(ent, R->req_slot, m, (int)R->req_force);
     } else if (react_take(ent, m, s)) {
         took = 1;
     } else if (due >= 0) {
-        if (play_slot(ent, successor(due), m, m->move.force)) R->chained++;
+        if (play_slot(ent, successor(due), m, m->move.force, MHFU_EM_NO_MOVE)) R->chained++;
         else R->tag_slot = MHFU_EM_NO_MOVE;   /* an empty AFTER: not again */
     } else {
         plays = 1;
@@ -1566,7 +1624,10 @@ extern "C" void mhfu_em_moves_clear(void)
     if (!R) return;
     R->req_ent = 0;
     for (int i = 0; i < MHFU_EM_MOVES; i++) R->moves[i].valid = 0;
-    R->key_top = R->sample_top = R->lunge_top = 0;
+    for (unsigned id = 0; id < MHFU_EM_COMBO_IDS; id++)
+        R->combos[id].first = R->combos[id].then = MHFU_EM_NO_MOVE;
+    R->tag_then = MHFU_EM_NO_MOVE;
+    R->key_top = R->sample_top = R->lunge_top = R->turn_top = 0;
 }
 
 /* Where a pool of `top` units of `size` bytes holds the `n` units of `run` byte for byte, the
@@ -1586,24 +1647,28 @@ static uint32_t find_run(const volatile void *pool, uint32_t top, const void *ru
     return top;
 }
 
-/* A slot is rewritten off (VALID 0) and what its keys, samples and lunge need appended, unless
- * the pool holds that run already (a run is shared, never moved): a brain that reads the slot
- * meanwhile sees it empty, and the runs a rewrite leaves behind wait for mhfu_em_moves_clear. */
+/* A slot is rewritten off (VALID 0) and what its keys, samples, code turn and lunge need appended,
+ * unless the pool holds that run already (a run is shared, never moved): a brain that reads the
+ * slot meanwhile sees it empty, and the runs a rewrite leaves behind wait for
+ * mhfu_em_moves_clear. */
 extern "C" int mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_spec_t *s,
                             uint8_t after)
 {
     if (!R || !mv || !s || slot < 0 || slot >= MHFU_EM_MOVES) return 0;
     uint32_t n = s->key_count > MHFU_STEER_KEYS ? MHFU_STEER_KEYS : s->key_count;
     uint32_t m = s->sample_count > MHFU_STEER_SAMPLES ? MHFU_STEER_SAMPLES : s->sample_count;
+    uint32_t t = s->turn_count > MHFU_STEER_TURNS ? MHFU_STEER_TURNS : s->turn_count;
     volatile mhfu_em_own_t *o = &R->moves[slot];
     const bool lunge = s->lunge.hi != 0;
     const uint32_t key_at = find_run(R->keys, R->key_top, s->keys, n, sizeof(uint16_t));
     const uint32_t sample_at =
         find_run(R->samples, R->sample_top, s->samples, m, sizeof(mhfu_travel_sample_t));
+    const uint32_t turn_at = find_run(R->turns, R->turn_top, s->turns, t, sizeof(int16_t));
     const uint32_t lunge_at =
         lunge ? find_run(R->lunges, R->lunge_top, &s->lunge, 1, sizeof(mhfu_steer_lunge_t)) : 0;
     const bool key_new = key_at == R->key_top && n;
     const bool sample_new = sample_at == R->sample_top && m;
+    const bool turn_new = turn_at == R->turn_top && t;
     const bool lunge_new = lunge && lunge_at == R->lunge_top;
     if (key_new && R->key_top + n > MHFU_EM_KEYS) {
         mhfu_log("[%s] own move %d: %u turn keys, %u left", OWNER, slot, (unsigned)n,
@@ -1615,20 +1680,21 @@ extern "C" int mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_sp
                  (unsigned)(MHFU_EM_SAMPLES - R->sample_top));
         return 0;
     }
+    if (turn_new && R->turn_top + t > MHFU_EM_TURNS) {
+        mhfu_log("[%s] own move %d: %u code-turn values, %u left", OWNER, slot, (unsigned)t,
+                 (unsigned)(MHFU_EM_TURNS - R->turn_top));
+        return 0;
+    }
     if (lunge_new && R->lunge_top >= MHFU_EM_LUNGES) {
         mhfu_log("[%s] own move %d: no room for a lunge (%d)", OWNER, slot, MHFU_EM_LUNGES);
         return 0;
     }
     o->valid = 0;
-    copy_words(&o->move, mv, sizeof(*mv));
-    /* the carrier again at the end, so AFTER follows before the host brain picks; the hub it
-     * enters wakes the AI script, so the move player clears that wake */
-    o->move.hold_script = after != MHFU_EM_NO_MOVE;
-    if (after != MHFU_EM_NO_MOVE && mv->back_main == MHFU_MOVE_NO_PAIR) {
-        o->move.back_main = mv->carrier_main;
-        o->move.back_sub = mv->carrier_sub;
-        o->move.back_mode = 0;
-    }
+    mhfu_move_t own;
+    copy_words(&own, mv, sizeof(own));
+    own.hold_script = 0;
+    if (after != MHFU_EM_NO_MOVE) follow(&own);   /* so AFTER plays before the host brain picks */
+    copy_words(&o->move, &own, sizeof(own));
     copy_words(&o->steer, &s->steer, sizeof(s->steer));
     if (key_new) {
         for (uint32_t k = 0; k < n; k++) R->keys[key_at + k] = s->keys[k];
@@ -1642,6 +1708,12 @@ extern "C" int mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_sp
     }
     o->sample_at = (uint16_t)sample_at;
     o->sample_count = (uint16_t)m;
+    if (turn_new) {
+        for (uint32_t k = 0; k < t; k++) R->turns[turn_at + k] = s->turns[k];
+        R->turn_top += t;
+    }
+    o->turn_at = (uint16_t)turn_at;
+    o->turn_count = (uint16_t)t;
     if (lunge_new) {
         copy_words(&R->lunges[lunge_at], &s->lunge, sizeof(s->lunge));
         R->lunge_top++;
@@ -1655,10 +1727,30 @@ extern "C" int mhfu_em_move(int slot, const mhfu_move_t *mv, const mhfu_steer_sp
     return 1;
 }
 
+extern "C" int mhfu_em_combo(int id, int first, int then)
+{
+    if (!R || id < MHFU_EM_MOVES || id >= (int)MHFU_EM_COMBO_IDS || first < 0 || then < 0
+        || first >= MHFU_EM_MOVES || then >= MHFU_EM_MOVES)
+        return 0;
+    if (!R->moves[first].valid || !R->moves[then].valid) {
+        mhfu_log("[%s] combo %d: slot %d or %d is empty", OWNER, id, first, then);
+        return 0;
+    }
+    const volatile mhfu_move_t *f = &R->moves[first].move;
+    if (f->carrier_main != MHFU_MOVE_HUB_MAIN || f->carrier_sub != MHFU_MOVE_HUB_SUB) {
+        mhfu_log("[%s] combo %d: slot %d rides (%d,%d), not the hub", OWNER, id, first,
+                 (int)f->carrier_main, (int)f->carrier_sub);
+        return 0;
+    }
+    R->combos[id].first = (uint8_t)first;
+    R->combos[id].then = (uint8_t)then;
+    return 1;
+}
+
 extern "C" int mhfu_em_play(uint32_t entity, int slot, int force)
 {
-    if (!R || !g_installed || !entity || slot < 0 || slot >= MHFU_EM_MOVES
-        || !R->moves[slot].valid)
+    if (!R || !g_installed || !entity || slot < 0 || slot >= (int)MHFU_EM_COMBO_IDS
+        || (slot < MHFU_EM_MOVES ? !R->moves[slot].valid : !combo_ready((uint32_t)slot)))
         return 0;
     R->req_ent = 0;
     R->req_slot = (uint32_t)slot;

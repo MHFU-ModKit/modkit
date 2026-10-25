@@ -248,6 +248,13 @@ int lb_em_moves_clear(lua_State *L)
     return 1;
 }
 
+int lb_em_combo(lua_State *L)
+{
+    lua_pushboolean(L, mhfu_em_combo((int)luaL_checkinteger(L, 1), (int)luaL_checkinteger(L, 2),
+                                     (int)luaL_checkinteger(L, 3)));
+    return 1;
+}
+
 int lb_em_play(lua_State *L)
 {
     lua_pushboolean(L, mhfu_em_play((uint32_t)luaL_checkinteger(L, 1),
@@ -276,6 +283,7 @@ int lb_em_moves_status(lua_State *L)
     SF_INT("chained", r->chained);
     SF_INT("keys", r->key_top);
     SF_INT("samples", r->sample_top);
+    SF_INT("turns", r->turn_top);
     SF_INT("lunges", r->lunge_top);
 #undef SF_INT
     return 1;

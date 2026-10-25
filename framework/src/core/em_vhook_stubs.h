@@ -324,11 +324,13 @@ static inline void emv_mul_const(emv_asm_t *a, int rd, int rs, int tmp, uint32_t
 
 /* An own-move enter, after the substitution table and the reaction replacement, with t0/t1 the
  * main and id as passed, t7 the config block and `moves` the registry's address (0: none). The id is
- * a registry slot. The game never sees main MHFU_OWN_MOVE_MAIN: a1/a2 become the slot's carrier
- * when the slot holds a move, else em75's hub; with a move, the play is filed as mhfu_em_play files
- * it (EM_MOVES REQ_SLOT, REQ_FORCE 1, REQ_ENT the entity: the brain starts it at the next AI step,
- * the AI script's wake quieted as for any move on the hub), and every store of a miss lands in the
- * sink. The slot is clamped before its address is formed, so an id past the registry reads slot 0.
+ * a registry slot, or from MHFU_EM_MOVES up a combo's. The game never sees main
+ * MHFU_OWN_MOVE_MAIN: a1/a2 become the slot's carrier when the slot holds a move, else em75's hub (a
+ * combo's first move rides it); with a move or a combo, the play is filed as mhfu_em_play files it
+ * (EM_MOVES REQ_SLOT the id, REQ_FORCE 1, REQ_ENT the entity: the brain starts it at the next AI
+ * step, the AI script's wake quieted as for any move on the hub, and refuses an id with no combo),
+ * and every store of a miss lands in the sink. The slot is clamped before its address is formed, so
+ * an id past the slots reads slot 0 and the registry is never read past.
  * Clobbers t0, t1, t5, t6, t9, v0, v1; keeps a0, a3, t3, t4, t7, t8. */
 static inline void emv_own_move(emv_asm_t *a, uint32_t moves)
 {
@@ -362,6 +364,10 @@ static inline void emv_own_move(emv_asm_t *a, uint32_t moves)
     if (!moves) return;
     E(mips_movn(R_A1, R_T6, R_T0));
     E(mips_movn(R_A2, R_T9, R_T0));
+    E(mips_sltiu(R_T6, R_T1, MHFU_EM_MOVES_MOVES_COUNT));
+    E(mips_xori(R_T6, R_T6, 1));                       /* t6 = the id is past the slots ... */
+    E(mips_and(R_T6, R_T6, R_T5));                     /* ... of an own enter: a combo's */
+    E(mips_or(R_T0, R_T0, R_T6));                      /* t0 = a play is filed */
     E(mips_lbu(R_V1, CFG_OWN_LAST, R_T7));
     E(mips_addiu(R_T6, R_T1, 1));
     E(mips_movn(R_V1, R_T6, R_T0));

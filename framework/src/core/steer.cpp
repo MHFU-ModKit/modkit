@@ -129,6 +129,42 @@ INLINE float ramp(uint16_t lo, uint16_t hi, float at)
 
 INLINE int32_t round_to(float v) { return (int32_t)(v < 0 ? v - 0.5f : v + 0.5f); }
 
+/* the code turn at clip frame `at`, `start` the frame of its first value: the values joined by
+ * straight lines, held outside them; 0 without any */
+INLINE float code_turn(const volatile mhfu_steer_spec_t *s, float start, float at)
+{
+    uint32_t n = s->turn_count < MHFU_STEER_TURNS ? s->turn_count : MHFU_STEER_TURNS;
+    if (!n) return 0;
+    float u = (at - start) / MHFU_STEER_KEY_STEP;
+    uint32_t i = 0;
+    float t = 0;
+    if (u >= (float)(n - 1)) {
+        i = n - 1;
+    } else if (u > 0) {
+        i = (uint32_t)u;
+        t = u - (float)i;
+    }
+    float v = s->turns[i];
+    if (t > 0) v += ((float)s->turns[i + 1] - v) * t;
+    return v;
+}
+
+/* what the code turn turns in all, from its first value to its last */
+INLINE float code_turn_total(const volatile mhfu_steer_spec_t *s)
+{
+    uint32_t n = s->turn_count < MHFU_STEER_TURNS ? s->turn_count : MHFU_STEER_TURNS;
+    return n ? (float)s->turns[n - 1] - (float)s->turns[0] : 0.0f;
+}
+
+/* the YAW units from `base` to the bearing of `target` from `pos`, the short way */
+INLINE int16_t aim_of(const volatile float *pos, const mhfu_vec3_t *target, uint16_t base)
+{
+    if (!target) return 0;
+    float dx = target->x - pos[0], dz = target->z - pos[2];
+    if (dx == 0 && dz == 0) return 0;
+    return (int16_t)(uint16_t)(bearing(dx, dz) - base);
+}
+
 /* A turn rate at clip speed 1 as it is at `speed` (the donor's ent[0xAC4]): CLIP_BLOCK.SPEED is 2
  * a frame calm, so the rate is times speed / 2. */
 INLINE uint16_t paced(uint16_t rate, float speed)
@@ -153,6 +189,12 @@ int32_t mhfu_steer_share(int32_t total, uint16_t frames, uint16_t frame)
 }
 
 uint32_t mhfu_steer_ahead(uint16_t dir) { return ahead(dir); }
+
+int16_t mhfu_steer_aim(const void *entity, const mhfu_vec3_t *target, uint16_t base)
+{
+    return aim_of((const volatile float *)((const volatile uint8_t *)entity + MHFU_ENTITY_POSITION),
+                  target, base);
+}
 
 void mhfu_steer_sincos(uint16_t yaw, float *s, float *c) { yaw_sincos(yaw, s, c); }
 
@@ -219,6 +261,11 @@ int mhfu_steer_move(void *entity, const mhfu_vec3_t *target, volatile mhfu_steer
         st->ramp = (int16_t)(uint16_t)(*yaw - st->base - curve(sp, start, end));
         st->wall = MHFU_STEER_GO;
         before = start;
+        st->turn_scale = 1;
+        if (sp->steer.turn == MHFU_STEER_AIM) {
+            float total = code_turn_total(sp);
+            st->turn_scale = total != 0 ? (float)aim_of(pos, target, st->base) / total : 0.0f;
+        }
         st->lunge_x = st->lunge_z = 0;
         if (sp->lunge.hi && target) {
             float dx = target->x - pos[0], dz = target->z - pos[2];
@@ -266,6 +313,17 @@ int mhfu_steer_move(void *entity, const mhfu_vec3_t *target, volatile mhfu_steer
         st->base = (uint16_t)(st->base + share(sp->steer.total, sp->steer.frames,
                                                (uint16_t)(frame - 1)));
     }
+    if (sp->turn_count) {
+        const float s = st->turn_scale;
+        int32_t turned = round_to(s * code_turn(sp, start, cursor))
+                       - round_to(s * code_turn(sp, start, before));
+        if (loop)
+            turned += round_to(s * code_turn(sp, start, end))
+                    - round_to(s * code_turn(sp, start, loop_start));
+        st->base = (uint16_t)(st->base + turned);
+    }
+    if (frame >= 1 && frame <= st->out_frames)
+        st->base = (uint16_t)(st->base + share(st->out_total, st->out_frames, (uint16_t)(frame - 1)));
     int32_t jump = 0;
     if (st->blend && clip->blend > 0)
         jump = round_to((float)st->ramp * (float)(clip->blend < st->blend ? clip->blend : st->blend)
