@@ -955,29 +955,31 @@ def test_the_registry_places_runs_where_pools_does(g: Game) -> None:
     slot's offsets are `Pools`' for the same moves in the same order."""
     run = [(k, -k) for k in range(1, 9)]
     lunge = (0, 20, 100.0, 400.0, -300.0, 900.0)
+    spin = [10, -20, 30, -40, 50]
     spec = [
-        ([1, 2, 3, 4, 5, 6], run[:5], None),
-        ([1, 2, 3, 4, 5, 6], run[:5], lunge),
-        ([3, 4, 5], run[2:5], lunge),
-        ([7, 7], [], (0, 20, 100.0, 400.0, -300.0, 901.0)),
-        ([6, 7], run, lunge),
-        ([], [], None),
-        ([1, 2, 3, 4, 5, 6, 7], run[:5], (0, 20, 100.0, 400.0, -300.0, 901.0)),
+        ([1, 2, 3, 4, 5, 6], run[:5], None, spin),
+        ([1, 2, 3, 4, 5, 6], run[:5], lunge, spin),
+        ([3, 4, 5], run[2:5], lunge, spin[1:4]),
+        ([7, 7], [], (0, 20, 100.0, 400.0, -300.0, 901.0), []),
+        ([6, 7], run, lunge, [-20, 30, 99]),
+        ([], [], None, []),
+        ([1, 2, 3, 4, 5, 6, 7], run[:5], (0, 20, 100.0, 400.0, -300.0, 901.0), spin + [60]),
     ]
     pools = Pools()
-    for slot, (keys, samples, lunge_) in enumerate(spec):
+    for slot, (keys, samples, lunge_, turns) in enumerate(spec):
         record = None if lunge_ is None else Lunge((lunge_[0], lunge_[1]), *lunge_[2:]).pack()
-        want = pools.add(keys, samples, record)
-        assert g.own(slot, 46, keys=keys, samples=samples, lunge=lunge_)
+        want = pools.add(keys, samples, record, turns)
+        assert g.own(slot, 46, keys=keys, samples=samples, lunge=lunge_, turns=turns)
         got = (
             g.slot(slot, "KEY_AT", "H"),
             g.slot(slot, "SAMPLE_AT", "H"),
             g.slot(slot, "LUNGE_AT"),
+            g.slot(slot, "TURN_AT", "H"),
         )
-        assert got == (want[0], want[1], NO if want[2] is None else want[2])
-    tops = (g.moves("KEY_TOP"), g.moves("SAMPLE_TOP"), g.moves("LUNGE_TOP"))
-    assert tops == (len(pools.keys), len(pools.samples), len(pools.lunges))
-    assert tops == (8, 13, 2)  # a run holds what is inside it; a longer one is not extended
+        assert got == (want[0], want[1], NO if want[2] is None else want[2], want[3])
+    tops = (g.moves("KEY_TOP"), g.moves("SAMPLE_TOP"), g.moves("LUNGE_TOP"), g.moves("TURN_TOP"))
+    assert tops == (len(pools.keys), len(pools.samples), len(pools.lunges), len(pools.turns))
+    assert tops == (8, 13, 2, 14)  # a run holds what is inside it; a longer one is not extended
 
 
 PORT = '[port]\nname = "z"\nhost_species = 75\npac = "z.bin"\n[source]\nmodel = 5339\n'
@@ -1025,6 +1027,38 @@ def test_the_registry_holds_what_a_ports_capacity_check_counts(g: Game) -> None:
     tops = (g.moves("KEY_TOP"), g.moves("SAMPLE_TOP"), g.moves("LUNGE_TOP"))
     assert tops == (len(held.keys), len(held.samples), len(held.lunges))
     assert tops == (12, 7, 2)  # of 24 keys, 12 samples and 4 lunges, each run held once
+
+
+def test_the_registry_holds_what_the_check_counts_for_shared_turns_and_combos(g: Game) -> None:
+    """A port whose own moves share code-turn runs (one inside another) and are paired into
+    combos, registered as `mhfu_port.lua` does: the tops are `moves.pools`', every combo is
+    accepted at the id `moves.combo_id` gives it, and playing one plays its two moves in order."""
+    lay = layout.Layout({}, frames={9: 100})
+    runs = {"a": [0, 100, 250], "b": [0, 100], "c": [0, 100, 250, 400], "d": [7, 8], "e": []}
+    text = PORT
+    for name, run in runs.items():
+        text += f"[moves.{name}]\nanim = 9\ncarrier = [0, 2]\n"
+        text += f"code_turn = {run}\n" if run else ""
+    text += "[brain]\ndonor = 23\nsplice = 'x'\nentry = 'y'\n[brain.pairs]\n"
+    text += "'7,1' = ['a', 'b']\n'7,2' = ['c', 'a']\n'7,3' = ['a', 'b']\n'7,4' = ['e', 'd']\n"
+    text += "'7,5' = [[1, 2], 'a']\n"
+    m = manifest.loads(text)
+    assert moves.problems(m, lay) == []
+    held = moves.pools(m, lay)
+    at = moves.slots(m)
+    for name, slot in at.items():
+        assert g.own(slot, 40 + slot, turns=m.moves[name].code_turn or ())
+    assert moves.combos(m) == [("a", "b"), ("c", "a"), ("e", "d")]
+    ids = [moves.combo_id(m, *c) for c in moves.combos(m)]
+    assert ids == [MOVES, MOVES + 1, MOVES + 2]
+    for (first, then), ident in zip(moves.combos(m), ids, strict=True):
+        assert ident is not None and g.lib.mhfu_em_combo(ident, at[first], at[then]) == 1
+    assert g.moves("TURN_TOP") == len(held.turns) == 9  # b inside a; c is not a's run extended
+    assert [g.slot(at[n], "TURN_AT", "H") for n in "abcde"] == [0, 0, 3, 7, 0]
+    ident = moves.combo_id(m, "c", "a")
+    assert ident is not None and g.lib.mhfu_em_play(ENT, ident, 1)
+    flat = [c for f in played(g, 2 + 2 * int(CLIP_END / SPEED)) for c in f]
+    assert [c[2] for c in flat if c[0] == "X"] == [40 + at["c"], 40 + at["a"]]
 
 
 def test_a_rule_on_an_event_fires_in_the_frame_it_is_seen(g: Game) -> None:

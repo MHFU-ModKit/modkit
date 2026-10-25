@@ -11,10 +11,11 @@ A pair move goes as the runtime paints it on its host pair. An own move goes as 
 takes it (`mhfu.move_play`): its `slot` in the framework's registry (`slots`), its clip's executor
 entry and, for `turn = "clip"`, its turn keys, both from the build's layout; the attack windows,
 the carrier (`hub` when it names none), the steer and `after`, and `start` and `stop`, the clip
-frames it plays from and to, when it sets them (`length` counts AI frames instead). The steer
-carries the move's own `travel` (`mhfu.steering.hex_of`) and `lunge` when the manifest has them,
-and a fixed turn's `window`. `tip` is the tail tip's `{ joint, carrier }` pairs (`rig.Tip`),
-which `mhfu.em_tip` takes.
+frames it plays from and to, when it sets them (`length` counts AI frames instead), and `aim_out`.
+The steer carries the move's own `travel` (`mhfu.steering.hex_of`), `lunge` and `code_turn`
+(`mhfu.steering.turns_hex`, with `turn = "aim"` where the manifest says so) when the manifest has
+them, and a fixed turn's `window`. `tip` is the tail tip's `{ joint, carrier }` pairs
+(`rig.Tip`), which `mhfu.em_tip` takes.
 
 `fatigue` is the stamina table `mhfu.em_fatigue` takes (`brain.fatigue`), given when the manifest's
 `[brain] fatigue` is set; `mhfu_port.lua` arms it with the port, an own move keyed by name.
@@ -22,8 +23,12 @@ which `mhfu.em_tip` takes.
 the charge-up moves' gains and the transform move, by name.
 
 `slots` is the one numbering of own moves: this module writes it, `mhfu_port.lua` registers by it
-and the brain splice's `enter OWN_MOVE_MAIN k 0` names it. The manifest it is given has the own
-moves `[brain.pairs]` derive from the donor (`brain.own.expand`), which `cli.build.modules` adds.
+and the brain splice's `enter OWN_MOVE_MAIN k 0` names it. `combos` is the same for the enter ids
+past the slots: each (first, then) pair of own moves a `[brain.pairs]` list names is one id
+(`combo_id`), written as `combos = { { id, "first", "then" } }`, which `mhfu_port.lua` registers
+(`mhfu.em_combo`) and the splice enters as `enter OWN_MOVE_MAIN id 0`. The manifest it is given
+has the own moves `[brain.pairs]` derive from the donor (`brain.own.expand`), which
+`cli.build.modules` adds.
 """
 
 from __future__ import annotations
@@ -42,7 +47,7 @@ from mhfu.live import moves as live
 from . import behaviour
 from .behaviour import Rule
 from .layout import Layout
-from .manifest import OWN_MOVES, Lunge, Manifest, ManifestError, Move, span_problems
+from .manifest import OWN_MOVES, Lunge, Manifest, ManifestError, Move, pair_of, span_problems
 from .rig import Tip
 
 Pair = tuple[int, int]
@@ -58,12 +63,22 @@ POOL: int = addresses.EM_MOVES.KEYS.count or 0
 """Turn keys the framework holds for all of a port's own moves."""
 SLOTS: int = OWN_MOVES
 """Own moves the framework's registry holds."""
+IDS: int = addresses.EM_MOVES.COMBOS.count or 0
+"""Enter ids, a byte's: the slots, then the combos."""
+COMBOS: int = IDS - SLOTS
+"""Combos the framework holds: the enter ids past the slots."""
 SAMPLES: int = steering.MOST
 """Travel samples the move player holds for one move."""
 SAMPLE_POOL: int = addresses.EM_MOVES.SAMPLES.count or 0
 """Travel samples the framework holds for all of a port's own moves."""
 LUNGES: int = addresses.EM_MOVES.LUNGES.count or 0
 """Lunges the framework holds for a port's own moves."""
+TURNS: int = steering.MOST_TURNS
+"""Code-turn values the move player holds for one move."""
+TURN_POOL: int = addresses.EM_MOVES.TURNS.count or 0
+"""Code-turn values the framework holds for all of a port's own moves."""
+COMBO_HUB: Pair = HUBS[75]
+"""The carrier a combo's first move rides: the enter stub enters it, em75's alert hub."""
 
 
 def _place(pool: list[T], run: Sequence[T]) -> int:
@@ -88,23 +103,27 @@ def _place(pool: list[T], run: Sequence[T]) -> int:
 @dataclass
 class Pools:
     """What the framework's registry holds of a port's own moves when `mhfu_em_move` fills it
-    slot by slot (em_vhook.cpp `find_run` is this rule): a move's turn keys, travel samples and
-    lunge record go where the pool already holds that run, anywhere in it, else at its end. The
-    capacity check counts these, so a module it passes fits."""
+    slot by slot (em_vhook.cpp `find_run` is this rule): a move's turn keys, travel samples, lunge
+    record and code turn go where the pool already holds that run, anywhere in it, else at its
+    end. The capacity check counts these, so a module it passes fits."""
 
     keys: list[int] = field(default_factory=list)
     samples: list[tuple[int, int]] = field(default_factory=list)
     lunges: list[bytes] = field(default_factory=list)
+    turns: list[int] = field(default_factory=list)
 
     def add(
         self,
         keys: Sequence[int],
         samples: Sequence[tuple[int, int]],
         lunge: bytes | None = None,
-    ) -> tuple[int, int, int | None]:
-        """Register one move's runs; where each starts (the lunge's index, None for no lunge)."""
+        turns: Sequence[int] = (),
+    ) -> tuple[int, int, int | None, int]:
+        """Register one move's runs; where each starts: keys, samples, the lunge's index (None for
+        no lunge), code turn."""
         at = (_place(self.keys, keys), _place(self.samples, samples))
-        return *at, None if lunge is None else _place(self.lunges, [lunge])
+        lunge_at = None if lunge is None else _place(self.lunges, [lunge])
+        return *at, lunge_at, _place(self.turns, turns)
 
 
 def slots(m: Manifest) -> dict[str, int]:
@@ -112,6 +131,32 @@ def slots(m: Manifest) -> dict[str, int]:
     names the rest)."""
     own = sorted(name for name, mv in m.moves.items() if mv.own)
     return {name: k for k, name in enumerate(own[:SLOTS])}
+
+
+def combos(m: Manifest) -> list[tuple[str, str]]:
+    """The (first, then) own-move pairs a manifest's combos are: every `[brain.pairs]` list value
+    `[x, y]` whose x and y are both own moves with a slot, each pair once, in sorted order. The
+    framework holds `COMBOS` (`problems` names the rest); a pair's place here is its enter id."""
+    if m.brain is None:
+        return []
+    own = slots(m)
+    found: set[tuple[str, str]] = set()
+    for key in m.brain.pairs:
+        names = m.brain.targets(pair_of(key))
+        if len(names) == 2 and isinstance(names[0], str) and isinstance(names[1], str):
+            if names[0] in own and names[1] in own:
+                found.add((names[0], names[1]))
+    return sorted(found)
+
+
+def combo_id(m: Manifest, first: str, then: str) -> int | None:
+    """The enter id of the combo (first, then): `SLOTS` plus its place in `combos`, what the
+    splice enters (`enter OWN_MOVE_MAIN id 0`); None for a pair that is none or past the
+    framework's table."""
+    try:
+        return SLOTS + combos(m)[:COMBOS].index((first, then))
+    except ValueError:
+        return None
 
 
 def hub(species: int) -> Pair | None:
@@ -198,17 +243,19 @@ def pools(m: Manifest, layout: Layout) -> Pools:
             entry(m, name, layout)
             keys = keys_of(curve(m, name, layout))
             samples = steering.samples(mv.travel or ())
+            turns = steering.turn_values(mv.code_turn or ())
             record = None if mv.lunge is None else lunge_record(mv.lunge)
         except (ManifestError, ValueError, OverflowError, struct.error):
             continue
-        out.add(keys, samples, record)
+        out.add(keys, samples, record, turns)
     return out
 
 
 def motion_problems(mv: Move, frames: int | None) -> list[tuple[str, str]]:
-    """What the move player cannot carry of an own move's travel, lunge and fixed turn window, as
-    (where under the move, text): travel samples past its capacity, its reach or the clip's
-    `frames`; a lunge or window outside `[start, stop]` (the clip's end for no stop) or with a
+    """What the move player cannot carry of an own move's travel, code turn, lunge, aim and fixed
+    turn window, as (where under the move, text): travel samples or code-turn values past its
+    capacity, its reach or the clip's `frames`; an aim with no code turn or an `aim_out` that is
+    not a byte; a lunge or window outside `[start, stop]` (the clip's end for no stop) or with a
     distance that is not a length."""
     out: list[tuple[str, str]] = []
     end = mv.stop or frames
@@ -224,6 +271,22 @@ def motion_problems(mv: Move, frames: int | None) -> list[tuple[str, str]]:
                 f"its {len(mv.travel)} samples reach frame {last}, past the clip's {frames}",
             )
         )
+    try:
+        steering.turn_values(mv.code_turn or ())
+    except ValueError as err:
+        out.append((".code_turn", str(err)))
+    last = mv.start + steering.STEP * (len(mv.code_turn or ()) - 1)
+    if frames is not None and mv.code_turn and last > frames:
+        out.append(
+            (
+                ".code_turn",
+                f"its {len(mv.code_turn)} values reach frame {last}, past the clip's {frames}",
+            )
+        )
+    if mv.steer.turn == "aim" and not mv.code_turn:
+        out.append((".steer", "turn = aim needs a code_turn"))
+    if not 0 <= mv.aim_out <= 0xFF:
+        out.append((".aim_out", f"{mv.aim_out} is not 0 to 255 AI frames"))
     if (lunge := mv.lunge) is not None:
         lo, hi = lunge.window
         if not 0 <= lo < hi <= 0xFFFF:
@@ -245,9 +308,11 @@ def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) 
     """Every own move or rule the module cannot carry: more own moves than slots, a clip with no
     entry, a start or stop past its clip or an attack outside them (`manifest.span_problems`), an
     attack past its clip or with no record in `known` (the host's, when given), more turn keys,
-    travel samples or lunges than the framework holds (`Pools`: a run it holds twice is held
-    once), travel past the clip, a lunge or fixed turn window outside `[start, stop]`, no
-    carrier; rules on the flinch whose moves ride different carriers."""
+    travel samples, code-turn values or lunges than the framework holds (`Pools`: a run it holds
+    twice is held once), travel or a code turn past the clip, an aim without a code turn, a lunge
+    or fixed turn window outside `[start, stop]`, no carrier; more combos than the framework
+    holds, a combo whose first move does not ride the hub; rules on the flinch whose moves ride
+    different carriers."""
     out: list[str] = []
     if (n := sum(mv.own for mv in m.moves.values())) > SLOTS:
         out.append(f"moves: {n} own moves, the framework holds {SLOTS}")
@@ -285,8 +350,26 @@ def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) 
             f"moves: the own moves' travel needs {len(held.samples)} samples, the framework "
             f"holds {SAMPLE_POOL}"
         )
+    if len(held.turns) > TURN_POOL:
+        out.append(
+            f"moves: the own moves' code turns need {len(held.turns)} values, the framework "
+            f"holds {TURN_POOL}"
+        )
     if len(held.lunges) > LUNGES:
         out.append(f"moves: {len(held.lunges)} lunges, the framework holds {LUNGES}")
+    pairs = combos(m)
+    if len(pairs) > COMBOS:
+        out.append(f"moves: {len(pairs)} combos, the framework holds {COMBOS}")
+    for first, then in pairs:
+        try:
+            ride = carrier(m, first)
+        except ManifestError:
+            continue  # its move's own problem, above
+        if ride != COMBO_HUB:
+            out.append(
+                f"moves.{first}: the first of combo ({first}, {then}) rides {ride}, a combo's "
+                f"first rides the hub {COMBO_HUB}"
+            )
     flinch = set()
     try:
         rules = behaviour.compile(m)
@@ -351,11 +434,15 @@ def _steer(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
     elif s.turn == "fixed":
         out |= {"turn": "fixed", "total": s.angle}
         out |= {"window": list(s.window)} if s.window is not None else {"frames": s.frames}
+    elif s.turn == "aim":
+        out["turn"] = "aim"
     elif (keys := curve(m, name, layout)) is not None:
         out["curve"] = keys
     mv = m.moves[name]
     if mv.travel:
         out["travel"] = steering.hex_of(mv.travel)
+    if mv.code_turn:
+        out["code_turn"] = steering.turns_hex(mv.code_turn)
     if (lunge := mv.lunge) is not None:
         out["lunge"] = {
             "window": list(lunge.window),
@@ -383,6 +470,8 @@ def _own_move(m: Manifest, name: str, layout: Layout, slot: int) -> dict[str, An
         out["start"] = mv.start
     if mv.stop:
         out["stop"] = mv.stop
+    if mv.aim_out:
+        out["aim_out"] = mv.aim_out
     if mv.host_attacks:
         out["host_attacks"] = True
     out["steer"] = _steer(m, name, layout)
@@ -478,7 +567,11 @@ def lua(
     for name, mv in m.moves.items():
         body = _own_move(m, name, layout, at[name]) if mv.own else pair_move(mv)
         out.append(f"    {lua_key(name)} = {lua_value(body)},")
-    out += ["  },", "  rules = {"]
+    out += ["  },"]
+    if pairs := combos(m)[:COMBOS]:
+        listed = [[SLOTS + k, first, then] for k, (first, then) in enumerate(pairs)]
+        out.append(f"  combos = {lua_value(listed)},")
+    out += ["  rules = {"]
     out += [f"    {lua_value(_rule(r))}," for r in behaviour.compile(m)]
     out += ["  },"]
     for k, names in (("vars", behaviour.vars(m)), ("signals", behaviour.signals(m))):

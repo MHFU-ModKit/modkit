@@ -47,7 +47,7 @@ WORDS = {
 """How a MOVE_END name reads, where its name alone does not say it."""
 ENDS: dict[int, str] = {a.MOVE_END.number(n): WORDS.get(n, n) for n in a.MOVE_END.names}
 """MOVE_STATE.END in words."""
-TURNS = ("still", "hunter", "away", "fixed")
+TURNS = ("still", "hunter", "away", "fixed", "aim")
 """STEER_PARAMS.TURN by name."""
 FULL_TURN = 0x10000
 """ENTITY.YAW units in a turn."""
@@ -97,6 +97,9 @@ class Move:
     stop: int = 0
     """Clip frame `part`'s cursor ends the move at, whatever the blend and the rate (MOVE.STOP);
     0: none."""
+    aim_out: int = 0
+    """AI frames (MOVE.AIM_OUT): a hand-over in place spreads the angle still to turn to the target
+    over the successor's first that many AI frames; 0: none."""
 
     @classmethod
     def unpack(cls, raw: bytes) -> Move:
@@ -127,6 +130,7 @@ class Move:
             bool(raw[f.FORCE]),
             start,
             stop,
+            raw[f.AIM_OUT],
         )
 
     def pack(self) -> bytes:
@@ -148,6 +152,7 @@ class Move:
         struct.pack_into("<I", out, f.SPAWNER, self.spawner)
         struct.pack_into("<BB", out, f.HOST_ATTACKS, int(self.host_attacks), int(self.force))
         struct.pack_into("<HH", out, f.START, self.start, self.stop)
+        struct.pack_into("<B", out, f.AIM_OUT, self.aim_out)
         return bytes(out)
 
 
@@ -187,7 +192,9 @@ class Steer:
     """What `mhfu_steer_spec_t` holds: the clip's turn curve (`curve`, YAW every 2 clip frames:
     a port's turns module, `turns_of`), a turn mode on top, whether a wall ends the move, a
     class-2 one into `stuck`, and the move's own travel: `travel`, the monster's (x, z) every
-    `steering.STEP` clip frames from the move's start, and a `lunge` toward the target."""
+    `steering.STEP` clip frames from the move's start, a `lunge` toward the target, and its code
+    turn: `code_turn`, the entity's own yaw every `steering.STEP` clip frames, cumulative (turn
+    "aim" scales it to the angle to the target)."""
 
     curve: tuple[int, ...] = ()
     turn: str = "still"
@@ -206,6 +213,7 @@ class Steer:
     0, 0 the whole move."""
     travel: tuple[steering.Point, ...] = ()
     lunge: Lunge | None = None
+    code_turn: tuple[int, ...] = ()
 
     def pack(self) -> bytes:
         """struct STEER_SPEC."""
@@ -230,6 +238,9 @@ class Steer:
         if self.lunge:
             raw = self.lunge.pack()
             out[f.LUNGE : f.LUNGE + len(raw)] = raw
+        turns = steering.turn_values(self.code_turn)
+        struct.pack_into("<H", out, f.TURN_COUNT, len(turns))
+        struct.pack_into(f"<{len(turns)}h", out, f.TURNS, *turns)
         return bytes(out)
 
     @classmethod
@@ -242,6 +253,7 @@ class Steer:
         window = struct.unpack_from("<HH", raw, f.STEER + p.WIN_FROM)
         n, *stuck = struct.unpack_from("<HBBB", raw, f.KEY_COUNT)
         (count,) = struct.unpack_from("<H", raw, f.SAMPLE_COUNT)
+        (n_turns,) = struct.unpack_from("<H", raw, f.TURN_COUNT)
         held = [
             struct.unpack_from("<hh", raw, f.SAMPLES + k * a.TRAVEL_SAMPLE.size)
             for k in range(min(count, steering.MOST))
@@ -258,6 +270,7 @@ class Steer:
             (window[0], window[1]),
             steering.path_of(held),
             Lunge.unpack(raw[f.LUNGE : f.LUNGE + (a.STEER_LUNGE.size or 0)]),
+            struct.unpack_from(f"<{min(n_turns, steering.MOST_TURNS)}h", raw, f.TURNS),
         )
 
 
@@ -290,6 +303,9 @@ class SteerState(View):
     keep = u8(a.STEER_STATE.KEEP)
     blend = u16(a.STEER_STATE.BLEND)
     ramp = s16(a.STEER_STATE.RAMP)
+    turn_scale = f32(a.STEER_STATE.TURN_SCALE)
+    out_total = s16(a.STEER_STATE.OUT_TOTAL)
+    out_frames = u16(a.STEER_STATE.OUT_FRAMES)
 
 
 class MoveState(View):

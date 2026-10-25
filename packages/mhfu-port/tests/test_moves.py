@@ -287,17 +287,178 @@ def test_runs_the_registry_holds_twice_count_once():
 
 def test_pools_place_a_run_where_the_pool_holds_it():
     p = moves.Pools()
-    assert p.add([1, 2, 3], [(0, 0), (1, 1)], b"a") == (0, 0, 0)
-    assert p.add([1, 2, 3], [(0, 0), (1, 1)], b"a") == (0, 0, 0)
-    assert p.add([2, 3], [(1, 1)], b"b") == (1, 1, 1)
-    assert p.add([3, 4], [(0, 0), (2, 2)]) == (3, 2, None)
-    assert p.add([3], [(2, 2)], b"a") == (2, 3, 0)
-    assert p.add([], []) == (0, 0, None)
-    assert (p.keys, p.samples, p.lunges) == (
+    assert p.add([1, 2, 3], [(0, 0), (1, 1)], b"a", [5, 6, 7]) == (0, 0, 0, 0)
+    assert p.add([1, 2, 3], [(0, 0), (1, 1)], b"a", [5, 6, 7]) == (0, 0, 0, 0)
+    assert p.add([2, 3], [(1, 1)], b"b", [6, 7]) == (1, 1, 1, 1)
+    assert p.add([3, 4], [(0, 0), (2, 2)], None, [7, 8]) == (3, 2, None, 3)
+    assert p.add([3], [(2, 2)], b"a") == (2, 3, 0, 0)
+    assert p.add([], []) == (0, 0, None, 0)
+    assert (p.keys, p.samples, p.lunges, p.turns) == (
         [1, 2, 3, 3, 4],
         [(0, 0), (1, 1), (0, 0), (2, 2)],
         [b"a", b"b"],
+        [5, 6, 7, 7, 8],
     )
+
+
+AIMED = (
+    OWN
+    + """
+[moves.turn]
+anim = 9
+carrier = [0, 2]
+aim_out = 6
+code_turn = [0, 3000, -2, 32767, -32768]
+[moves.turn.steer]
+turn = "aim"
+"""
+)
+
+
+def test_code_turn_aim_and_aim_out_reach_the_module():
+    text = moves.lua(_m(AIMED), LAYOUT, {6})
+    assert (
+        "turn = { entry = 9, slot = 3, carrier = { 0, 2 }, aim_out = 6, steer = { walls = true, "
+        'turn = "aim", code_turn = "00000bb8fffe7fff8000" } },' in text
+    )
+    plain = moves.lua(_m(), LAYOUT, {6})
+    assert "code_turn" not in plain and "aim_out" not in plain and '"aim"' not in plain
+
+
+def test_aim_needs_a_code_turn():
+    with pytest.raises(ManifestError, match="moves.turn.steer: turn = aim needs a code_turn"):
+        _m(AIMED.replace("code_turn = [0, 3000, -2, 32767, -32768]\n", ""))
+    m = _m(AIMED)
+    m.moves["turn"].code_turn = None  # a derived move never went through the load
+    assert moves.problems(m, LAYOUT, {6}) == ["moves.turn.steer: turn = aim needs a code_turn"]
+
+
+def test_code_turn_values_and_aim_out_are_bytes_and_shorts():
+    with pytest.raises(ManifestError, match="code_turn values are signed 16 bits"):
+        _m(AIMED.replace("32767", "40000"))
+    with pytest.raises(ManifestError, match="aim_out is 0 to 255"):
+        _m(AIMED.replace("aim_out = 6", "aim_out = 256"))
+    m = _m(AIMED)
+    m.moves["turn"].aim_out = -1
+    m.moves["turn"].code_turn = [0, 40000]
+    assert moves.problems(m, LAYOUT, {6}) == [
+        "moves.turn.code_turn: 40000 is past the +-32768 YAW units a code-turn value holds",
+        "moves.turn.aim_out: -1 is not 0 to 255 AI frames",
+    ]
+
+
+def test_a_pair_move_has_no_code_turn_or_aim_out():
+    plain = HEAD + OWN
+    for extra in ("code_turn = [0, 1]", "aim_out = 3"):
+        with pytest.raises(ManifestError, match="code_turn, aim_out, carrier and host_attacks"):
+            manifest.loads(plain.replace("hold_max = 12\n", f"hold_max = 12\n{extra}\n", 1))
+
+
+def test_code_turn_past_the_clip_or_the_move_player_is_refused():
+    m = _m(AIMED)
+    mv = m.moves["turn"]
+    mv.code_turn = [0] * 51  # frames 0, 2 .. 100: the clip's last
+    assert moves.problems(m, LAYOUT, {6}) == []
+    mv.code_turn = [0] * 52
+    assert moves.problems(m, LAYOUT, {6}) == [
+        "moves.turn.code_turn: its 52 values reach frame 102, past the clip's 100"
+    ]
+    mv.start = 24
+    mv.code_turn = [0] * 40
+    assert "its 40 values reach frame 102, past the clip's 100" in moves.problems(m, LAYOUT, {6})[0]
+    mv.start, mv.code_turn = 0, [0] * (moves.TURNS + 1)
+    found = moves.problems(m, LAYOUT, {6})
+    assert f"moves.turn.code_turn: {moves.TURNS + 1} code-turn values, a move holds" in found[0]
+
+
+def test_pool_of_code_turns():
+    lay = layout.Layout({}, frames={9: 400})
+    k = moves.TURN_POOL // moves.TURNS + 1
+    many = "".join(
+        f"[moves.t{i}]\nanim = 9\ncarrier = [0, 1]\ncode_turn = {[i + 1] * moves.TURNS}\n"
+        for i in range(k)
+    )
+    assert moves.problems(_m(many), lay, {6}) == [
+        f"moves: the own moves' code turns need {moves.TURNS * k} values, the framework holds "
+        f"{moves.TURN_POOL}"
+    ]
+    same = "".join(
+        f"[moves.t{i}]\nanim = 9\ncarrier = [0, 1]\ncode_turn = {[7] * moves.TURNS}\n"
+        for i in range(k)
+    )
+    assert moves.problems(_m(same), lay, {6}) == []
+    assert len(moves.pools(_m(same), lay).turns) == moves.TURNS
+
+
+PAIRS = """
+[brain]
+donor = 23
+splice = 'base_3'
+entry = 'base_12'
+[brain.pairs]
+'7,13' = ['stamp', 'spin']
+'7,15' = ['dash', 'stamp']
+'7,16' = ['stamp', 'spin']
+'7,17' = [[1, 2], 'stamp']
+'7,18' = ['dash', [1, 4]]
+'7,19' = 'stamp'
+'7,20' = ['dash', 'stamp', 'spin']
+"""
+
+
+def test_combos_are_the_pairs_lists_of_two_own_moves():
+    """Both moves own and with a slot: a host pair or a list of three is none, a pair listed twice
+    is one combo; sorted, the enter id is the place past the slots."""
+    m = _m(OWN + PAIRS)
+    assert moves.combos(m) == [("dash", "stamp"), ("stamp", "spin")]
+    assert moves.combo_id(m, "dash", "stamp") == moves.SLOTS
+    assert moves.combo_id(m, "stamp", "spin") == moves.SLOTS + 1
+    assert [moves.combo_id(m, *c) for c in (("spin", "stamp"), ("dash", "lunge"), ("a", "b"))] == [
+        None
+    ] * 3
+    assert moves.problems(m, LAYOUT, {6}) == []
+    text = moves.lua(m, LAYOUT, {6})
+    ids = f'{{ {moves.SLOTS}, "dash", "stamp" }}, {{ {moves.SLOTS + 1}, "stamp", "spin" }}'
+    assert f"  combos = {{ {ids} }},\n  rules = {{" in text
+    assert "combos" not in moves.lua(_m(), LAYOUT, {6}) and moves.combos(_m()) == []
+
+
+def test_a_derived_move_is_a_combos_member():
+    """`own` stands for the move the build derives from the pair, here p3_7_21: an own move of the
+    manifest the module is written from."""
+    text = OWN + "[moves.p3_7_21]\nanim = 9\n" + PAIRS + "'7,21' = ['own', 'stamp']\n"
+    assert ("p3_7_21", "stamp") in moves.combos(_m(text))
+
+
+def test_a_combos_first_rides_the_hub():
+    m = _m(OWN + PAIRS)
+    m.brain.pairs["7,13"] = ["spin", "stamp"]  # type: ignore[union-attr]  # spin rides (0, 1)
+    assert ("spin", "stamp") in moves.combos(m)
+    assert moves.problems(m, LAYOUT, {6}) == [
+        "moves.spin: the first of combo (spin, stamp) rides (0, 1), a combo's first rides the hub "
+        "(0, 2)"
+    ]
+
+
+def test_more_combos_than_the_table_holds_are_refused():
+    names = [f"m{i:02}" for i in range(14)]
+    own = "".join(f"[moves.{n}]\nanim = 9\ncarrier = [0, 2]\n" for n in names)
+    every = [(a, b) for a in names for b in names if a != b][: moves.COMBOS + 1]
+    pairs = "".join(f"'7,{k}' = ['{a}', '{b}']\n" for k, (a, b) in enumerate(every))
+    m = manifest.loads(HEAD + own + PAIRS.split("[brain.pairs]")[0] + "[brain.pairs]\n" + pairs)
+    lay = layout.Layout({}, frames={9: 400})
+    assert len(moves.combos(m)) == moves.COMBOS + 1
+    assert moves.problems(m, lay, {6}) == [
+        f"moves: {moves.COMBOS + 1} combos, the framework holds {moves.COMBOS}"
+    ]
+    last = moves.combos(m)[-1]
+    assert (
+        moves.combo_id(m, *last) is None and moves.combo_id(m, *moves.combos(m)[0]) == moves.SLOTS
+    )
+
+
+def test_the_ids_are_a_byte():
+    assert moves.IDS == 256 and moves.COMBOS == 256 - moves.SLOTS
 
 
 def test_tip():

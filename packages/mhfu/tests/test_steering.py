@@ -41,3 +41,25 @@ def test_the_curve_is_straight_lines_held_outside() -> None:
     assert steering.at(p, 3) == (10, 40) and steering.at(p, 99) == (10, 60)
     assert steering.at(p, 25, start=24) == (5, 10)
     assert steering.at((), 5) == (0, 0)
+
+
+def test_turns_round_trip() -> None:
+    values = [0, 3000, -2, 32767, -32768]
+    text = steering.turns_hex(values)
+    assert text == "00000bb8fffe7fff8000"
+    assert steering.parse_turns(text) == tuple(values) and steering.parse_turns("") == ()
+
+
+@pytest.mark.parametrize("bad", ["0", "000", "0000000", "000g"])
+def test_parse_turns_refuses(bad: str) -> None:
+    with pytest.raises(ValueError, match="4 hex digits"):
+        steering.parse_turns(bad)
+
+
+def test_the_most_and_the_reach_of_a_code_turn_are_refused() -> None:
+    assert steering.turns_hex([0] * steering.MOST_TURNS)
+    with pytest.raises(ValueError, match=f"a move holds {steering.MOST_TURNS}"):
+        steering.turn_values([0] * (steering.MOST_TURNS + 1))
+    for v in (32768, -32769):
+        with pytest.raises(ValueError, match="a code-turn value holds"):
+            steering.turn_values([v])

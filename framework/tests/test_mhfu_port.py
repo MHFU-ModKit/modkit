@@ -650,6 +650,91 @@ def test_steer_travel_reaches_the_registry(lua: Any) -> None:
     lua.execute(STEER_TRAVEL)
 
 
+STEER_AIM = """
+local SEAM = { moves = {} }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) SEAM.moves[slot] = t; return true end
+function mhfu.em_moves_clear() SEAM.moves = {}; return true end
+local P = require("mhfu_port")
+
+-- a moves module's code turn, aim and aim_out reach the registry as they are
+package.loaded.z_moves = {
+  moves = {
+    wheel = { entry = 9, slot = 0, aim_out = 6,
+              steer = { turn = "aim", code_turn = "00000bb8fffe7fff8000" } },
+  },
+  rules = {},
+}
+local z = P.define{ name = "z", species = 75 }
+z.ent = ENT
+ticks(1)
+local w = SEAM.moves[0]
+assert(w.aim_out == 6 and w.steer.turn == "aim" and w.steer.code_turn == "00000bb8fffe7fff8000")
+"""
+
+
+def test_code_turn_and_aim_reach_the_registry(lua: Any) -> None:
+    memory(lua)
+    lua.execute(STEER_AIM)
+
+
+COMBOS = """
+local SEAM = { moves = {}, combos = {}, clears = 0 }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) SEAM.moves[slot] = t; return true end
+function mhfu.em_moves_clear()
+  SEAM.moves, SEAM.combos, SEAM.clears = {}, {}, SEAM.clears + 1
+  return true
+end
+function mhfu.em_combo(id, first, after)
+  if id < mhfu.addr.OWN_MOVES then return false end   -- the registry's refusal of a slot's id
+  SEAM.combos[id] = { first, after }
+  return true
+end
+local P = require("mhfu_port")
+local OWN = mhfu.addr.OWN_MOVES
+
+-- a moves module's combos are registered by slot, after the moves; one that names a move the port
+-- does not have, or that the registry refuses, is dropped and said once
+package.loaded.z_moves = {
+  moves = { stamp = { entry = 46, slot = 0 }, spin = { entry = 9, slot = 1 },
+            dash = { entry = 20, slot = 3 }, lunge = { main = 1, sub = 4 } },
+  combos = { { OWN, "stamp", "spin" }, { OWN + 1, "spin", "ghost" }, { OWN + 2, "dash", "stamp" },
+             { OWN + 3, "lunge", "spin" }, { 3, "stamp", "spin" } },
+  rules = {},
+}
+local z = P.define{ name = "z", species = 75 }
+z.ent = ENT
+ticks(1)
+assert(SEAM.combos[OWN][1] == 0 and SEAM.combos[OWN][2] == 1)
+assert(SEAM.combos[OWN + 2][1] == 3 and SEAM.combos[OWN + 2][2] == 0)
+assert(SEAM.combos[OWN + 1] == nil and SEAM.combos[OWN + 3] == nil and SEAM.combos[3] == nil)
+assert(count("3 combo%(s%) registered") == 0 and count("2 combo%(s%) registered") == 1)
+assert(count("combo %d+ %('spin', 'ghost'%) not registered") == 1)
+assert(count("combo %d+ %('lunge', 'spin'%) not registered") == 1)
+assert(count("combo 3 %('stamp', 'spin'%) not registered") == 1)
+
+-- a redefine (hot reload) clears the registry and registers again
+z = P.define{ name = "z", species = 75 }
+z.ent = ENT
+ticks(1)
+assert(SEAM.clears == 2 and SEAM.combos[OWN] ~= nil and SEAM.combos[OWN + 2] ~= nil)
+
+-- a framework without combos, and a module without any, register none
+mhfu.em_combo = nil
+package.loaded.z_moves = { moves = { stamp = { entry = 46, slot = 0 } }, rules = {} }
+z = P.define{ name = "z", species = 75 }
+z.ent = ENT
+ticks(1)
+assert(next(SEAM.combos) == nil)
+"""
+
+
+def test_combos_are_registered_after_the_moves(lua: Any) -> None:
+    memory(lua)
+    lua.execute(COMBOS)
+
+
 FATIGUE = """
 local SEAM = { moves = {}, fatigue = "unset", calls = 0 }
 function mhfu.em_installed() return true end
