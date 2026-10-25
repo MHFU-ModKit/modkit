@@ -386,7 +386,7 @@ class Played:
     """The emulated clock at the ask, in microseconds cut to 32 bits: the zero of every `t`."""
     steer: Steer = NO_STEER
     yaw0: int = 0
-    """YAW on the move's first playing frame."""
+    """The entity's own yaw (BASE) on the move's first playing frame."""
     yaw: int = 0
     """YAW as the move's last step left it."""
 

@@ -944,7 +944,7 @@ NOW = { offset = "next", type = "STEER_SPEC", doc = "the steering of the move ru
 BASE = { offset = "next", type = "u16", doc = "the entity's own YAW, without the clip's turn (YAW = BASE + the curve + the ramp): YAW on a chain head, kept by a step started in place, turned toward the target by the mode and by each loop" }
 WALL = { offset = "next", type = "u8", doc = "the last frame's wall result: 0 none, 1 a wall ahead, 2 a class-2 one" }
 CURSOR = { offset = "next", type = "f32", doc = "part 0's clip cursor the step saw last" }
-YAW0 = { offset = "next", type = "u16", doc = "YAW on the move's first playing frame" }
+YAW0 = { offset = "next", type = "u16", doc = "BASE on the move's first playing frame, after the first frame chose it (kept or YAW): the entity's own yaw the travel curve is turned by" }
 YAW = { offset = "next", type = "u16", doc = "YAW as the move's last step left it" }
 LUNGE_X = { offset = "next", type = "f32", doc = "the lunge's whole length in world x, taken on the first playing frame; 0 without a lunge" }
 LUNGE_Z = { offset = "next", type = "f32", doc = "and in world z" }

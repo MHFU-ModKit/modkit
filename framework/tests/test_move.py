@@ -1016,7 +1016,7 @@ def chained(g: Game, entry: int = 53, times: int = 1, **kw: int) -> None:
         if k in ("keys", "samples", "lunge"):
             continue
         setattr(mv, k, v)
-    spec = spec_of(g, kw.get("keys", ()), (), None)  # type: ignore[arg-type]
+    spec = spec_of(g, kw.get("keys", ()), kw.get("samples", ()), None)  # type: ignore[arg-type]
     g.lib.host_chain(ctypes.byref(mv), ctypes.byref(spec), times)
 
 
@@ -1186,3 +1186,22 @@ def test_the_hunter_turn_carries_over_a_chain_through_base(g: Game) -> None:
     (base,) = g.steer_state("BASE", "H")
     g.frame()
     assert 0 < base < 0x2000 and g.steer_state("BASE", "H") == (base,)
+
+
+def test_a_chained_steps_travel_goes_along_base_not_the_drawn_yaw(g: Game) -> None:
+    """The first clip ends with a facing key, so the drawn YAW is off base when the second step
+    starts; its travel is in the entity's own frame, the base."""
+    g.poke(a.ENTITY.SIZE_SCALE, "f", 1.0)
+    g.poke(a.ENTITY.YAW, "H", 0x1000)
+    steer(g, keys=K1)
+    g.play(46, stop=40)
+    chained(g, 53, keys=K2, samples=((0, 0), (0, 100)))
+    while g.state("STARTED")[0] != 2:
+        g.frame()
+    start = at(g)
+    g.frame()
+    assert abs(signed(yaw(g) - 0x1000)) > 0x400  # drawn well off base
+    for _ in range(int(CLIP_END / SPEED)):
+        g.frame()
+    dx, dz = world(0x1000, 0, 100)
+    assert at(g) == pytest.approx((start[0] + dx, start[1] + dz), abs=0.02)

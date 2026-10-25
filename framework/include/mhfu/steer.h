@@ -104,7 +104,8 @@ typedef struct {
     uint16_t base;          /* the entity's own YAW: the curve and the ramp add to it */
     uint8_t  wall;          /* the last frame's MHFU_STEER_* */
     float    cursor;        /* the cursor the step saw last */
-    uint16_t yaw0, yaw;     /* YAW on the first playing frame, and as the step left it */
+    uint16_t yaw0, yaw;     /* BASE on the first playing frame (travel's frame), and YAW as the step
+                             * left it */
     float    lunge_x, lunge_z; /* the lunge's whole length, world axes, set on the first frame */
     uint8_t  keep;          /* the step started in place: its first frame keeps `base` */
     uint16_t blend;         /* part 0's CLIP_BLOCK.BLEND right after the dispatch */
@@ -136,8 +137,8 @@ void mhfu_steer_sincos(uint16_t yaw, float *s, float *c);
  * sets it to YAW, and the ramp starts at the jump that keeps YAW continuous, falling to 0 as
  * clip->blend counts down from st->blend. Then POSITION moves by the change of the travel curve
  * and of the lunge between the cursor of the frame before (frame 1: clip->start) and this one:
- * the curve turned by YAW on frame 1, the lunge along the bearing to `target` on frame 1, both
- * scaled by ENTITY.SIZE_SCALE. Returns the wall result of the frame before, from frame 2, and
+ * the curve turned by the entity's own yaw (`base`) on frame 1, the lunge along the bearing to
+ * `target` on frame 1, both scaled by ENTITY.SIZE_SCALE. Returns the wall result of the frame before, from frame 2, and
  * then moves nothing. */
 int mhfu_steer_move(void *entity, const mhfu_vec3_t *target, volatile mhfu_steer_state_t *st,
                     uint32_t frame, const mhfu_steer_clip_t *clip);

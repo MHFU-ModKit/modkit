@@ -213,8 +213,8 @@ int mhfu_steer_move(void *entity, const mhfu_vec3_t *target, volatile mhfu_steer
         volatile uint32_t *to = (volatile uint32_t *)&st->now;
         volatile uint32_t *from = (volatile uint32_t *)&st->next;
         for (unsigned k = 0; k < sizeof(mhfu_steer_spec_t) / 4; k++) to[k] = from[k];
-        st->yaw0 = *yaw;
         if (!st->keep) st->base = *yaw;
+        st->yaw0 = st->base;   /* travel is in the entity's own frame, not the drawn one */
         st->keep = 0;
         st->ramp = (int16_t)(uint16_t)(*yaw - st->base - curve(sp, start, end));
         st->wall = MHFU_STEER_GO;

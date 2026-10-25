@@ -161,7 +161,9 @@ move's `start`: cumulative, x toward its left and z forward in its frame when th
 16-bit samples of 1/`STEER_TRAVEL_SCALE` units (8 hex digits a sample in the moves module,
 `mhfu.steering`), at most `STEER_SAMPLES` a move. Each AI frame the move player adds the curve's
 change since the clip cursor's last frame (straight lines between samples, so any cursor rate
-and the blend's hold are right) to POSITION, turned by that YAW and scaled by the monster's size.
+and the blend's hold are right) to POSITION, turned by the entity's own YAW when the move began
+(the base the clips' facing rides on, as the donor's travel is in the start yaw) and scaled by the
+monster's size.
 It does so before the engine's root motion, wall push-out and floor in the same frame: walls
 undo it as they undo root motion, and the floor keeps the height. `steer.lunge = { window = {
 lo, hi }, near, span, base, range }` travels toward the target across the clip frames (lo, hi]: by
