@@ -1219,7 +1219,7 @@ def _aimed(plan: Plan, span: tuple[int, int], at: int, alt: int, other: _Run) ->
 
     - a turn by code that comes to the bearing itself at both is one that goes by the bearing:
       `Step.code` is the curve scaled to the angle `span` ends at, and `aim` is set; one that comes
-      to the same at both is a curve that stands as it is;
+      to the same at both is a curve that stands as it is; any other is dropped, with a note;
     - a fixed turn (`spreads`) the other run does not make too depends on the bearing: it is
       dropped, with a note, for the plan to carry the same turn wherever the target is."""
     d1, d2 = _bearing_of(at), _bearing_of(alt)
@@ -1237,10 +1237,16 @@ def _aimed(plan: Plan, span: tuple[int, int], at: int, alt: int, other: _Run) ->
             notes.append(Note("motion", text))
         if step.code:
             t1, t2 = step.code[-1], twin.code[-1] if twin.code else 0
-            if not _near(t1, t2) and _near(t1, d1) and _near(t2, d2):
+            if _near(t1, t2):
+                pass
+            elif _near(t1, d1) and _near(t2, d2):
                 size = min(_outer(span), 0x7FFF) * (1 if t1 > 0 else -1)
                 code = tuple(max(-0x7FFF, min(0x7FFF, round(c * size / t1))) for c in step.code)
                 step = replace(step, code=code, aim=True)
+            else:
+                step = replace(step, code=())
+                text = f"clip {step.clip}: a turn by code depends on the bearing, not as an aim"
+                notes.append(Note("motion", text))
         steps.append(step)
     return replace(plan, steps=tuple(steps), notes=tuple(notes))
 

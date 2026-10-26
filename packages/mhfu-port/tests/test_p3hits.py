@@ -538,13 +538,13 @@ def test_a_handler_that_plays_one_clip_at_every_bearing_has_one_arm_and_its_plai
     assert arm.arcs == ((0, 255),) and arm.plan == w.plan(pair()) and arm.plan.reads
 
 
-def adds_to_the_yaw(a: Asm, per_tick: str) -> None:
-    """Each tick adds to the yaw: 100 units, or an eighth of the angle of the target off it that
-    the first tick kept at 0xF40."""
-    if per_tick == "fixed":
+def adds_to_the_yaw(a: Asm, shift: int | None) -> None:
+    """Each tick adds to the yaw: 100 units, or the angle of the target off it, which the first
+    tick kept at 0xF40, over 2 to the `shift` (8 ticks: a shift of 3 turns exactly it)."""
+    if shift is None:
         a(asm.li("v0", 100))
     else:
-        a(asm.lw("v0", 0xF40, "s0"), sra("v0", "v0", 3))
+        a(asm.lw("v0", 0xF40, "s0"), sra("v0", "v0", shift))
     a(asm.lw("v1", 0x74, "s0"), asm.addu("v1", "v1", "v0"), asm.sw("v1", 0x74, "s0"))
     wait_for_the_clip(a)
 
@@ -556,9 +556,9 @@ def keeps_the_angle(a: Asm) -> None:
 
 
 def test_a_turn_that_comes_to_the_angle_of_the_target_is_an_aim_turn_on_its_curve():
-    left, right = walk(
-        species(lambda a: adds_to_the_yaw(a, "eighth"), keeps_the_angle), EIGHT
-    ).arms(pair())
+    left, right = walk(species(lambda a: adds_to_the_yaw(a, 3), keeps_the_angle), EIGHT).arms(
+        pair()
+    )
     for arm, size in ((left, 0x7FFF), (right, -0x7FFF)):
         (step,) = arm.plan.steps
         assert step.aim and step.code[0] == 0 and step.code[-1] == size
@@ -567,10 +567,19 @@ def test_a_turn_that_comes_to_the_angle_of_the_target_is_an_aim_turn_on_its_curv
 
 
 def test_a_turn_that_is_the_same_at_every_bearing_is_a_curve_that_stands():
-    left, right = walk(species(lambda a: adds_to_the_yaw(a, "fixed"), sides), EIGHT).arms(pair())
+    left, right = walk(species(lambda a: adds_to_the_yaw(a, None), sides), EIGHT).arms(pair())
     for arm in (left, right):
         (step,) = arm.plan.steps
         assert not step.aim and step.code[-1] == 800
+
+
+def test_a_turn_that_goes_by_the_bearing_in_any_other_way_is_left_out_and_said():
+    w = walk(species(lambda a: adds_to_the_yaw(a, 4), keeps_the_angle), EIGHT)  # half the angle
+    for arm in w.arms(pair()):
+        (step,) = arm.plan.steps
+        assert step.code == () and not step.aim
+        assert [n.code for n in arm.plan.notes] == ["motion"]
+        assert "depends on the bearing" in arm.plan.notes[0].text
 
 
 def test_the_blend_a_handler_hands_over_with_is_the_last_step_s():
