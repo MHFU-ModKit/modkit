@@ -27,9 +27,11 @@ the charge-up moves' gains and the transform move, by name.
 and the brain splice's `enter OWN_MOVE_MAIN k 0` names it. `combos` is the same for the enter ids
 past the slots: each (first, then) pair of own moves a `[brain.pairs]` list names is one id
 (`combo_id`), written as `combos = { { id, "first", "then" } }`, which `mhfu_port.lua` registers
-(`mhfu.em_combo`) and the splice enters as `enter OWN_MOVE_MAIN id 0`. The manifest it is given
-has the own moves `[brain.pairs]` derive from the donor (`brain.own.expand`), which
-`cli.build.modules` adds.
+(`mhfu.em_combo`) and the splice enters as `enter OWN_MOVE_MAIN id 0`. A picker (`Move.pick`) has
+no slot and is not in the module: the splice picks its variants by the target's bearing, and a list
+that names a picker and an own move is one combo per variant (`picks`, `combo_ids`: what the splice
+takes). The manifest it is given has the own moves `[brain.pairs]` derive from the donor
+(`brain.own.expand`), which `cli.build.modules` adds.
 """
 
 from __future__ import annotations
@@ -130,23 +132,33 @@ class Pools:
 def slots(m: Manifest) -> dict[str, int]:
     """Each own move's registry slot: sorted by name, numbered from 0, at most `SLOTS` (`problems`
     names the rest)."""
-    own = sorted(name for name, mv in m.moves.items() if mv.own)
+    own = sorted(name for name, mv in m.moves.items() if mv.played)
     return {name: k for k, name in enumerate(own[:SLOTS])}
+
+
+def picks(m: Manifest) -> dict[str, list[tuple[int, int, str]]]:
+    """Each picker's arcs, `(lo, hi, variant)` in order: what the splice compiles a pick to."""
+    return {n: sorted(mv.pick) for n, mv in m.moves.items() if mv.pick is not None}
 
 
 def combos(m: Manifest) -> list[tuple[str, str]]:
     """The (first, then) own-move pairs a manifest's combos are: every `[brain.pairs]` list value
-    `[x, y]` whose x and y are both own moves with a slot, each pair once, in sorted order. The
-    framework holds `COMBOS` (`problems` names the rest); a pair's place here is its enter id."""
+    `[x, y]` whose y is an own move with a slot and whose x is one too, or a picker, whose variants
+    are each the first of one (the list names a turn that picks by bearing, then the move). Each
+    pair once, in sorted order. The framework holds `COMBOS` (`problems` names the rest); a pair's
+    place here is its enter id."""
     if m.brain is None:
         return []
-    own = slots(m)
-    found: set[tuple[str, str]] = set()
+    own, found = slots(m), set[tuple[str, str]]()
     for key in m.brain.pairs:
         names = m.brain.targets(pair_of(key))
-        if len(names) == 2 and isinstance(names[0], str) and isinstance(names[1], str):
-            if names[0] in own and names[1] in own:
-                found.add((names[0], names[1]))
+        if len(names) != 2 or not isinstance(names[0], str) or not isinstance(names[1], str):
+            continue
+        first, then = names
+        pick = m.moves[first].pick if first in m.moves else None
+        for one in {v for _, _, v in pick} if pick is not None else [first]:
+            if one in own and then in own:
+                found.add((one, then))
     return sorted(found)
 
 
@@ -158,6 +170,11 @@ def combo_id(m: Manifest, first: str, then: str) -> int | None:
         return SLOTS + combos(m)[:COMBOS].index((first, then))
     except ValueError:
         return None
+
+
+def combo_ids(m: Manifest) -> dict[tuple[str, str], int]:
+    """Every combo with its enter id (`combo_id`)."""
+    return {pair: SLOTS + k for k, pair in enumerate(combos(m)[:COMBOS])}
 
 
 def hub(species: int) -> Pair | None:
@@ -313,10 +330,10 @@ def problems(m: Manifest, layout: Layout, known: Collection[int] | None = None) 
     holds, a combo whose first move does not ride the hub; rules on the flinch whose moves ride
     different carriers."""
     out: list[str] = []
-    if (n := sum(mv.own for mv in m.moves.values())) > SLOTS:
+    if (n := sum(mv.played for mv in m.moves.values())) > SLOTS:
         out.append(f"moves: {n} own moves, the framework holds {SLOTS}")
     for name, mv in m.moves.items():
-        if not mv.own:
+        if not mv.played:
             continue
         w = f"moves.{name}"
         try:
@@ -564,6 +581,8 @@ def lua(
     ]
     at = slots(m)
     for name, mv in m.moves.items():
+        if mv.picker:
+            continue
         body = _own_move(m, name, layout, at[name]) if mv.own else pair_move(mv)
         out.append(f"    {lua_key(name)} = {lua_value(body)},")
     out += ["  },"]

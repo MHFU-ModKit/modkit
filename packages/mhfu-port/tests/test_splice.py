@@ -75,9 +75,11 @@ def translate(
     sp: manifest.Brain | None = None,
     survey: dict[int, script_vars.Var] | None = None,
     slots: dict[str, int] | None = None,
+    picks: dict[str, list[tuple[int, int, str]]] | None = None,
+    combos: dict[tuple[str, str], int] | None = None,
     **routines: str,
 ) -> tuple[list[str], splice.Translator]:
-    t = splice.Translator(donor(**routines), sp or spec(), survey, slots)
+    t = splice.Translator(donor(**routines), sp or spec(), survey, slots, picks, combos)
     return lines(t.paste("base_0", "base_3")), t
 
 
@@ -732,6 +734,78 @@ def test_every_enter_of_a_list_yields_for_the_latch():
     sp = spec(pairs=TWO | {"7,13": [(1, 2), "slam"]})
     got, t = translate(sp, slots={"slam": 5}, base_0=latched(enter(7, 13)))
     assert got == ["enter 1 2 0", f"enter {OWN} 5 0", "enter 1 2 0"] and not t.findings
+
+
+# ---- pickers
+
+TURN = {"turn": [(0, 63, "a"), (64, 127, "b"), (128, 255, "c")]}
+VARIANTS = {"a": 1, "b": 2, "c": 3, "slam": 5}
+
+
+def test_a_picker_is_nested_arcs_that_enter_a_variant_each():
+    got, t = translate(
+        spec(pairs={"7,13": "turn"}), slots=VARIANTS, picks=TURN, base_0=enter(7, 13)
+    )
+    assert got == [
+        "if_target_in_arc 0 63",
+        f"  enter {OWN} 1 0",
+        "else",
+        "  if_target_in_arc 64 127",
+        f"    enter {OWN} 2 0",
+        "  else",
+        f"    enter {OWN} 3 0",
+    ]
+    assert not t.findings
+    assert dict(t.uses) == {((7, 13), "a"): 1, ((7, 13), "b"): 1, ((7, 13), "c"): 1}
+
+
+def test_an_own_move_after_a_picker_is_a_combo_with_each_variant():
+    ids = {("a", "slam"): 160, ("b", "slam"): 161, ("c", "slam"): 162}
+    got, t = translate(
+        spec(pairs={"7,13": ["turn", "slam"]}),
+        slots=VARIANTS,
+        picks=TURN,
+        combos=ids,
+        base_0=enter(7, 13),
+    )
+    assert [g.strip() for g in got if "enter" in g] == [
+        f"enter {OWN} {i} 0" for i in (160, 161, 162)
+    ]
+    assert sum(g.startswith("if_target_in_arc") or "if_target_in_arc" in g for g in got) == 2
+    assert not t.findings
+    assert dict(t.uses) == {
+        ((7, 13), "a"): 1,
+        ((7, 13), "b"): 1,
+        ((7, 13), "c"): 1,
+        ((7, 13), "slam"): 3,
+    }
+
+
+def test_what_follows_a_picker_with_no_combo_is_a_second_enter():
+    ids = {("a", "slam"): 160}  # not every variant: no combo
+    sp = spec(pairs={"7,13": ["turn", "slam"], "2,3": ["turn", (1, 3)]})
+    got, t = translate(
+        sp, slots=VARIANTS, picks=TURN, combos=ids, base_0=f"{enter(7, 13)} {enter(2, 3)}"
+    )
+    enters = [g.strip() for g in got if "enter" in g]
+    assert enters == [
+        f"enter {OWN} 1 0",
+        f"enter {OWN} 2 0",
+        f"enter {OWN} 3 0",
+        f"enter {OWN} 5 0",
+        f"enter {OWN} 1 0",
+        f"enter {OWN} 2 0",
+        f"enter {OWN} 3 0",
+        "enter 1 3 0",
+    ]
+    assert not t.findings
+
+
+def test_a_picker_with_a_variant_that_has_no_slot_is_an_error():
+    got, t = translate(
+        spec(pairs={"7,13": "turn"}), slots={"a": 1, "b": 2}, picks=TURN, base_0=enter(7, 13)
+    )
+    assert found(t) == [("error", "P3_OWN_MISSING")] and "c" in t.findings[0].text
 
 
 # ---- the call history
