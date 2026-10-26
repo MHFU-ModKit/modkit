@@ -651,9 +651,9 @@ class Walk:
         seen = tuple((tuple(probe(k).done), probe(k).left) for k in samples)
         if len({sig(k) for k in samples}) == 1:
             return (Arm(whole, base),)
-        for earlier, arms in self._armed.get(pair.handler, []):
+        for earlier, held in self._armed.get(pair.handler, []):
             if earlier == seen:
-                return tuple(_rehanded(arm, pair, probe, samples) for arm in arms)
+                return tuple(_rehanded(arm, pair, probe, samples) for arm in held)
         edges = [0]
         for a, b in zip(samples, samples[1:], strict=False):
             if sig(a) == sig(b):
@@ -1177,8 +1177,7 @@ def _turns(step: _Step) -> tuple[Turn, ...]:
 
 def _bearing_of(bucket: int) -> int:
     """The bearing, YAW units to the left of the facing, a bucket is judged at: one unit past its
-    lower edge, so that a test at a whole fraction of a turn falls on the side it has the bucket
-    after it."""
+    lower edge, so that a compare at a whole fraction of a turn judges it by the bearings above."""
     d = bucket * 256 + 1
     return d - 0x10000 if d >= HALF else d
 
@@ -1271,7 +1270,7 @@ def _interp(keys: Sequence[float], series: Mapping[float, int], frame: float) ->
 
 def _code(turns: Mapping[float, int]) -> tuple[int, ...]:
     """The code turn: the cumulative yaw every KEY_STEP clip frames from the step's start, the
-    first 0 and none past a half turn; empty where it comes to nothing."""
+    first 0, each held within a signed 16 bits; empty where it comes to nothing."""
     if not turns:
         return ()
     keys = sorted(turns)

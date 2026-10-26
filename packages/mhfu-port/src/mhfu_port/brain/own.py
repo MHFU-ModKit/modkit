@@ -16,16 +16,19 @@ instead; nothing derived is stored.
 A pair with several clips is a chain, `p3_7_14`, `p3_7_14_2`, ..., each step handing to the next
 through `after`; a step carries the donor's attacks that are active on its clip. The last step
 hands to the pair the handler hands over to (`P3_OWN_NEXT`: where it cannot); equal tails are one
-move (`share`). A handler that plays other plans by the target's bearing (`Walk.arms`) is a
-picker, `p3_2_26`, with one chain per arm, `p3_2_26_a0`, ... (its variants), which hand over like
-any chain, except where the pair's `[brain.pairs]` list names the move that follows: then the
-list does and the variants end where the donor hands over, the residual angle slid into that
-move (`Move.aim_out`). A pair another chain hands over to is one move, not a picker. A turn by
-code is the step's `code_turn`, an `aim` one where it goes by the bearing. A donor record becomes
-the host record whose volumes overlap it most on the port's
-rig (`[brain.attacks]` names one instead), and the node plays with the host record's power and
-life. A record nothing matches gets a spare host record (`brain.spare`), added to the returned
-manifest as `[[attack]]` and `[[hitbox]]`; the studio's hit tables write it into the game.
+move (`share`).
+
+A handler that plays other plans by the target's bearing (`Walk.arms`) is a picker, `p3_2_26`,
+over one chain per arm, `p3_2_26_a0`, ... (its variants). A variant hands over like any chain,
+except where the pair's `[brain.pairs]` list names the move that follows: then the list does, and
+the variant ends where the donor hands over, the residual angle slid into that move
+(`Move.aim_out`). A pair another chain hands over to is one move, not a picker. A turn by code is
+the step's `code_turn`, an `aim` one where it goes by the bearing.
+
+A donor record becomes the host record whose volumes overlap it most on the port's rig
+(`[brain.attacks]` names one instead), and the node plays with the host record's power and life. A
+record nothing matches gets a spare host record (`brain.spare`), added to the returned manifest as
+`[[attack]]` and `[[hitbox]]`; the studio's hit tables write it into the game.
 """
 
 from __future__ import annotations

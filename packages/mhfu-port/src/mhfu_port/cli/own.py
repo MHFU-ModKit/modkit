@@ -54,13 +54,12 @@ def run(args: argparse.Namespace) -> int:
             print(f"  {head}: the manifest's own move")
             continue
         picker = out.moves[head].pick if head in out.moves else None
-        steps = sequence.chain(out, head)
         if picker is not None:
             arcs = ", ".join(f"{lo}-{hi} {name}" for lo, hi, name in picker)
             print(f"  {head}: picks by the target's bearing, in 256ths of a turn: {arcs}")
-            steps = [n for n in dict.fromkeys(v for _, _, v in picker)]
-            heads = steps
+            heads = list(dict.fromkeys(v for _, _, v in picker))
         else:
+            steps = sequence.chain(out, head)
             print(f"  {head}" + (f" + {len(steps) - 1} more" if len(steps) > 1 else ""))
             heads = [head]
         for first in heads:
