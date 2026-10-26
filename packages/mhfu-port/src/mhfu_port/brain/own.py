@@ -16,7 +16,13 @@ instead; nothing derived is stored.
 A pair with several clips is a chain, `p3_7_14`, `p3_7_14_2`, ..., each step handing to the next
 through `after`; a step carries the donor's attacks that are active on its clip. The last step
 hands to the pair the handler hands over to (`P3_OWN_NEXT`: where it cannot); equal tails are one
-move (`share`). A donor record becomes the host record whose volumes overlap it most on the port's
+move (`share`). A handler that plays other plans by the target's bearing (`Walk.arms`) is a
+picker, `p3_2_26`, with one chain per arm, `p3_2_26_a0`, ... (its variants), which hand over like
+any chain, except where the pair's `[brain.pairs]` list names the move that follows: then the
+list does and the variants end where the donor hands over, the residual angle slid into that
+move (`Move.aim_out`). A pair another chain hands over to is one move, not a picker. A turn by
+code is the step's `code_turn`, an `aim` one where it goes by the bearing. A donor record becomes
+the host record whose volumes overlap it most on the port's
 rig (`[brain.attacks]` names one instead), and the node plays with the host record's power and
 life. A record nothing matches gets a spare host record (`brain.spare`), added to the returned
 manifest as `[[attack]]` and `[[hitbox]]`; the studio's hit tables write it into the game.
@@ -53,7 +59,7 @@ from ..manifest import (
     own_name,
     pair_of,
 )
-from ..p3hits import Plan, Step, Walk
+from ..p3hits import Arm, Plan, Step, Walk
 from ..travel import KEY_STEP
 from .spare import HOST_NO_DAMAGE, NO_DAMAGE, POWER_SCALE, Spare, Spares
 
@@ -235,6 +241,7 @@ class Derivation:
         self._authored = frozenset(m.moves)
         self._done: set[Pair] = set()
         self._plans: dict[Pair, Plan] = {}
+        self._into: set[Pair] | None = None
         self._spares: Spares | None = None
         self._near: dict[int, tuple[str, str]] = {}
         """Spare donor record -> what it came closest to, and the move that first needed it."""
@@ -261,10 +268,22 @@ class Derivation:
         if plan is None:
             self.find("error", "P3_OWN_NOCLIPS", "the donor has no such pair")
             return
+        arms: tuple[Arm, ...] = (Arm(((0, 255),), plan),)
+        if pair not in self._handed():
+            donor = self.walk.ms.pairs[pair]
+            arms = self.walk.arms(donor, plan)
+        if len(arms) > 1:
+            self._pick(pair, head, arms)
+        elif (last := self._chain(head, plan)) is not None:
+            self._follow(pair, plan, last)
+
+    def _chain(self, head: str, plan: Plan, variant: bool = False) -> str | None:
+        """The moves of `plan`'s steps, `head`, `head_2`, ...; the name of the last where it was
+        made, else None."""
         self._notes(plan)
         if not plan.steps:
             self.find("error", "P3_OWN_NOCLIPS", "its handler plays no clip")
-            return
+            return None
         names = [head, *(f"{head}_{k}" for k in range(2, len(plan.steps) + 1))]
         made = []
         for k, step in enumerate(plan.steps):
@@ -272,11 +291,30 @@ class Derivation:
                 continue
             self.item = names[k]
             after = names[k + 1] if k + 1 < len(names) else None
-            self.m.moves[names[k]] = self._move(step, after)
+            self.m.moves[names[k]] = self._move(step, after, variant)
             made.append(names[k])
         self.made += made
-        if names[-1] in made:
-            self._follow(pair, plan, names[-1])
+        return names[-1] if names[-1] in made else None
+
+    def _pick(self, pair: Pair, head: str, arms: Sequence[Arm]) -> None:
+        """A picker `head` over a variant per arm. Each variant hands over as any chain does,
+        unless the pair's list names the move after it: that is the combo the splice enters."""
+        brain = self.m.brain
+        listed = brain is not None and len(brain.targets(pair)) > 1
+        picks = []
+        for k, arm in enumerate(arms):
+            name = f"{head}_a{k}"
+            self.item = name
+            if (last := self._chain(name, arm.plan, listed)) is None:
+                self.item = head
+                self.find("error", "P3_OWN_NOCLIPS", f"its handler plays no clip at arc {arm.arcs}")
+                return
+            if not listed:
+                self._follow(pair, arm.plan, last)
+            picks += [(lo, hi, name) for lo, hi in arm.arcs]
+        self.pair, self.item = pair, head
+        self.m.moves[head] = Move(pick=sorted(picks), label=f"MHP3rd {pair[0]},{pair[1]}")
+        self.made.append(head)
 
     def _follow(self, pair: Pair, plan: Plan, last: str) -> None:
         """Hand `last` over to the move of the pair the handler ends into. Linked before that
@@ -289,6 +327,8 @@ class Derivation:
             target = self.m.moves.get(name)
             if target is not None and not target.own:
                 text = f"{self._lead(plan)}: moves.{name} is no own move"
+            elif target is not None and target.picker:
+                text = f"{self._lead(plan)}: moves.{name} picks by the target's bearing"
             elif last in sequence.chain(self.m, name):
                 text = f"{self._lead(plan)}: following it would close a ring"
         if name is None or text:
@@ -297,6 +337,7 @@ class Derivation:
             return
         self.m.moves[last].after = name
         if hand.make is not None:
+            self._handed().add(hand.make)
             self.run(hand.make)
 
     @staticmethod
@@ -347,15 +388,29 @@ class Derivation:
 
     def _reach(self, start: Sequence[Pair]) -> list[Pair]:
         """`start` and the pairs derived to follow them, in order."""
+        return self._links(start)[0]
+
+    def _links(self, start: Sequence[Pair]) -> tuple[list[Pair], set[Pair]]:
+        """`start` and the pairs derived to follow them, in order; and the pairs some chain hands
+        over to."""
         out = list(dict.fromkeys(start))
+        into: set[Pair] = set()
         todo = list(out)
         while todo:
             plan = self._plan(todo.pop(0))
             hand = None if plan is None else self._hand(plan)
-            if hand is not None and hand.make is not None and hand.make not in out:
-                out.append(hand.make)
-                todo.append(hand.make)
-        return out
+            if hand is not None and hand.make is not None:
+                into.add(hand.make)
+                if hand.make not in out:
+                    out.append(hand.make)
+                    todo.append(hand.make)
+        return out, into
+
+    def _handed(self) -> set[Pair]:
+        """The pairs a chain hands over to: each is the `after` of a step, so one move."""
+        if self._into is None:
+            self._into = self._links(self.pairs)[1]
+        return self._into
 
     def finish(self) -> None:
         """One `P3_OWN_SPARE` per spare record taken, once every pair has had its say: the
@@ -403,12 +458,17 @@ class Derivation:
         self.m.clips[name] = Clip(source=cid)
         return name
 
-    def _move(self, step: Step, after: str | None) -> Move:
+    def _move(self, step: Step, after: str | None, variant: bool = False) -> Move:
         """The step as a move, from the clip frame the donor started it at to the one it ended
-        at (`_stop`); `length`, in AI frames, only for a step on a looping clip."""
+        at (`_stop`); `length`, in AI frames, only for a step on a looping clip. A `variant` of a
+        picker that a list follows also carries the angle it still has to turn at the end
+        (`aim_out`: the blend the donor hands over with)."""
         length = self.walk.lengths[step.clip]
         frames, start = round(length.frames), round(step.start)
         air = self._air(step, start, frames)
+        code = self._code(step) if not air else None
+        if step.aim and code is None:
+            step = dataclasses.replace(step, aim=False)
         # a lifted copy is the source cut at `start`: the move counts its frames from there
         off, size = (start, len(step.lift) - 1) if air else (0, frames)
         stop = self._stop(step, length.loop and not air, start, frames, off if air else None)
@@ -422,9 +482,19 @@ class Derivation:
             stop=stop - off if stop else 0,
             travel=self._travel(step, size, start - off),
             lunge=self._lunge(step, off, played),
+            code_turn=code,
+            aim_out=min(step.hand or 0, 0xFF) if variant else 0,
             after=after,
             label=f"MHP3rd {self.pair[0]},{self.pair[1]}",
         )
+
+    def _code(self, step: Step) -> list[int] | None:
+        """The step's code turn, if a move holds it."""
+        if len(step.code) > moves.TURNS:
+            text = f"its code turn has {len(step.code)} values, a move holds {moves.TURNS}"
+            self.find("info", "P3_OWN_MOTION", f"{text}: left out")
+            return None
+        return list(step.code) or None
 
     def _stop(self, step: Step, loop: bool, start: int, frames: int, lifted: int | None) -> int:
         """The clip frame a step ends at, 0 for its clip's end: where the handler's test of the
@@ -488,11 +558,10 @@ class Derivation:
         """The step's travel by code as samples from the move's `start`, those past the clip's
         `frames` and a held tail left off."""
         found = list(step.travel)
-        room = (frames - start) // KEY_STEP + 1
+        room = min((frames - start) // KEY_STEP + 1, moves.SAMPLES)
         if len(found) > room:
-            self.find(
-                "info", "P3_OWN_MOTION", f"its travel outruns its clip: kept to {room} samples"
-            )
+            text = f"its travel outruns its clip or what a move holds: kept to {room} samples"
+            self.find("info", "P3_OWN_MOTION", text)
             found = found[:room]
         while len(found) > 2 and found[-1] == found[-2]:
             found.pop()
@@ -617,6 +686,8 @@ class Derivation:
         handler spreads a total over a window, else the longest toward the target. A wall ends
         only a step on a looping clip that is no jump, a run (the donor ends no move at a wall: a
         one-shot stop, blow or leap plays out where it stands)."""
+        if step.aim:
+            return Steer(turn="aim", walls=walls)
         if step.spreads:
             return self._spread(step, walls, off, played)
         if not step.turns:
@@ -677,6 +748,19 @@ def anchored(m: Manifest, derived: Collection[str]) -> set[str]:
     return named & set(derived)
 
 
+def _picks(mv: Move, now: Callable[[str], str]) -> list[tuple[int, int, str]] | None:
+    """A picker's arcs with each variant named as `now` has it, neighbours on one variant joined."""
+    if mv.pick is None:
+        return None
+    out: list[tuple[int, int, str]] = []
+    for lo, hi, name in sorted(mv.pick):
+        if out and out[-1][2] == now(name) and out[-1][1] + 1 == lo:
+            out[-1] = (out[-1][0], hi, out[-1][2])
+        else:
+            out.append((lo, hi, now(name)))
+    return out
+
+
 def share(m: Manifest, derived: Iterable[str]) -> dict[str, str]:
     """Merge the derived moves equal in every field but `label` (their `after` compared as this
     pass renames it) until none are: equal tails make their predecessors equal. The one kept is an
@@ -695,7 +779,9 @@ def share(m: Manifest, derived: Iterable[str]) -> dict[str, str]:
         groups: list[tuple[Move, list[str]]] = []
         for n in (n for n in names if n not in gone):
             mv = m.moves[n]
-            key = dataclasses.replace(mv, label="", after=mv.after and now(mv.after))
+            key = dataclasses.replace(
+                mv, label="", after=mv.after and now(mv.after), pick=_picks(mv, now)
+            )
             for first, same in groups:
                 if first == key:
                     same.append(n)
@@ -711,9 +797,19 @@ def share(m: Manifest, derived: Iterable[str]) -> dict[str, str]:
                     merged = True
         if not merged:
             break
+    for n in names:
+        # a picker whose variants all came to one is that move
+        pick = None if n in gone else m.moves[n].pick
+        only = {now(v) for _, _, v in pick or ()}
+        if len(only) == 1 and (v := next(iter(only))) not in keep:
+            others = (o for k, o in m.moves.items() if k != n and o.pick)
+            if not any(now(x) == v for o in others for _, _, x in o.pick or ()):
+                m.moves[n] = dataclasses.replace(m.moves[v], label=m.moves[n].label)
+                gone[v] = n
     for mv in m.moves.values():
         if mv.after in gone:
             mv.after = now(mv.after)
+        mv.pick = _picks(mv, now)
     for n in gone:
         del m.moves[n]
     return {n: now(n) for n in gone}
@@ -753,13 +849,13 @@ def expand(m: Manifest, data: Data) -> tuple[Manifest, list[Finding]]:
     )
     species = m.port.host_species
     if (
-        any(mv.own and mv.carrier is None for mv in out.moves.values())
+        any(mv.played and mv.carrier is None for mv in out.moves.values())
         and moves.hub(species) is None
     ):
         found.append(
             Finding("error", "P3_OWN_CARRIER", f"no carrier is known for host species {species}")
         )
-    if (n := sum(mv.own for mv in out.moves.values())) > OWN_MOVES:
+    if (n := sum(mv.played for mv in out.moves.values())) > OWN_MOVES:
         found.append(
             Finding("error", "P3_OWN_SLOTS", f"{n} own moves, the framework holds {OWN_MOVES}")
         )

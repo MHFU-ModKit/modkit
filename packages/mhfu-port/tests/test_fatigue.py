@@ -368,4 +368,7 @@ def test_the_moves_module_carries_the_table(data, tmp_path, capsys):
     module = (tmp_path / moves.module_name(manifest.load(path))).read_text()
     assert "  fatigue = { max = 1000, starts = { 400, 600 }, tired = 2250, refill = 500," in module
     assert "low_hp = 15, calm = true, pairs = { { 1, 4, 15 }" in module
+    assert "p3_7_14_a0 = 15, p3_7_14_a1 = 15, p3_7_14_a2 = 15" in module, (
+        "a picker is charged by its variants"
+    )
     assert "P3_FATIGUE_SHARED" in capsys.readouterr().err

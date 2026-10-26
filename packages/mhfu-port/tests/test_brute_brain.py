@@ -34,7 +34,10 @@ def spliced(data):
     host = build.lift_row(data.fu, m.port.host_species, m.port.host_species)
     survey = script_vars.survey(host, data.fu.em(m.port.host_species))
     donor = p3.lift(data.p3rd, m.brain.donor, m.brain.slot)
-    return m, derived, host, splice.splice(donor, host, m.brain, survey, moves.slots(m))
+    s = splice.splice(
+        donor, host, m.brain, survey, moves.slots(m), None, (), moves.picks(m), moves.combo_ids(m)
+    )
+    return m, derived, host, s
 
 
 def test_pins_land(data):
@@ -54,8 +57,12 @@ def test_brain_splices_into_its_host(data):
     found = [*derived, *s.findings]
     assert not [f for f in found if f.level == "error" or f.code == "P3_PAIR_UNUSED"]
     assert build.Built.of(host, s.edits).ok
-    names = {own.own_name(p) for p in OWN}
-    assert names <= set(s.slots) and {n for _, n in s.uses if isinstance(n, str)} == names
+    heads = {own.own_name(p) for p in OWN}
+    pickers = {n for n, mv in m.moves.items() if mv.picker}
+    assert pickers == {"p3_2_19", "p3_7_14"}, "the handlers that play other clips by the bearing"
+    variants = {v for n in pickers for _, _, v in m.moves[n].pick}
+    assert (heads - pickers) | variants <= set(s.slots)
+    assert {n for _, n in s.uses if isinstance(n, str)} == (heads - pickers) | variants
 
 
 def test_brain_has_no_split_and_one_draw_after_a_draw(data):
