@@ -118,6 +118,14 @@ def test_a_step_is_a_move():
     manifest.check(m)
 
 
+@pytest.mark.parametrize(("rate", "said"), [(None, "not known"), (0x10000, "out of range")])
+def test_a_turn_rate_the_walk_lacks_is_the_hosts_and_said(rate, said):
+    m, found = derive(plan(step(61, turns=[Turn(rate, (10.0, 40.0))])))
+    assert m.moves["p3_7_13"].steer.rate is None
+    (f,) = [f for f in found if f.code == "P3_OWN_MOTION"]
+    assert f.level == "info" and said in f.text and "the host's" in f.text
+
+
 def test_a_chain_hands_on_and_a_loop_is_cut():
     carried = Hit(0, 19, 3, 0.0, 14.0, carried=True)
     p = plan(

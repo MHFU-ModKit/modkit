@@ -629,7 +629,9 @@ class Derivation:
                 f"{len(step.turns)} turn rates on one clip: kept the longest",
             )
         rate = turn.rate
-        if rate is not None and not 1 <= rate <= MAX_RATE:
+        if rate is None:
+            self.find("info", "P3_OWN_MOTION", "its turn rate is not known: the host's")
+        elif not 1 <= rate <= MAX_RATE:
             self.find("info", "P3_OWN_MOTION", f"turn rate {rate} is out of range: the host's")
             rate = None
         lo = max(round(turn.window[0]) - off, 0)
