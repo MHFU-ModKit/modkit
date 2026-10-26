@@ -136,10 +136,10 @@ the engine counts the flinch and applies the damage, then enters the move's carr
 
 ## Own moves from a manifest
 
-A port's own moves sit in a registry by slot (`mhfu.em_move`): `mhfu.addr.OWN_MOVES` (160) of
-them, and the turn keys (`EM_KEYS`, 2944), travel samples (`EM_SAMPLES`, 1280), code-turn values
-(`EM_TURNS`, 1024) and lunges (`EM_LUNGES`, 12) they share, in one partition block. These are consts in
-`addresses.toml`: raising one is that one line, every offset after it is laid out from it. A run
+A port's own moves sit in a registry by slot (`mhfu.em_move`): `mhfu.addr.OWN_MOVES` of them, and
+the turn keys (`EM_KEYS`), travel samples (`EM_SAMPLES`), code-turn values (`EM_TURNS`) and lunges
+(`EM_LUNGES`) they share, in one partition block. These are consts in `addresses.toml`, sized there:
+raising one is that one line, every offset after it is laid out from it. A run
 a pool holds already, anywhere in it, word for word (a lunge byte for byte), is shared, not
 appended: `mhfu_port.moves.Pools` counts the same way, so a module its check passes fits. The seam's
 brain, in C on the AI step, plays one through the move player when asked (`mhfu.em_play`), when the
