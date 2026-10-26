@@ -41,7 +41,7 @@ def run(args: argparse.Namespace) -> int:
     games = data.from_arguments(args)
     out, findings = own.expand(m, games)
     slots = moves.slots(out)
-    total = sum(mv.own for mv in out.moves.values())
+    total = sum(mv.played for mv in out.moves.values())
     print(
         f"own {m.port.name}: MHP3rd {m.brain.donor}, {len(own.pairs(m.brain))} pairs, "
         f"{total} own moves of {manifest.OWN_MOVES}"
@@ -53,14 +53,22 @@ def run(args: argparse.Namespace) -> int:
         if head in m.moves:
             print(f"  {head}: the manifest's own move")
             continue
-        steps = sequence.chain(out, head)
-        print(f"  {head}" + (f" + {len(steps) - 1} more" if len(steps) > 1 else ""))
-        joined = False
-        for name in steps:
-            earlier = None if joined else listed.get(name)
-            joined = joined or earlier is not None
-            print(describe(out, name, slots.get(name), earlier))
-            listed.setdefault(name, head)
+        picker = out.moves[head].pick if head in out.moves else None
+        if picker is not None:
+            arcs = ", ".join(f"{lo}-{hi} {name}" for lo, hi, name in picker)
+            print(f"  {head}: picks by the target's bearing, in 256ths of a turn: {arcs}")
+            heads = list(dict.fromkeys(v for _, _, v in picker))
+        else:
+            steps = sequence.chain(out, head)
+            print(f"  {head}" + (f" + {len(steps) - 1} more" if len(steps) > 1 else ""))
+            heads = [head]
+        for first in heads:
+            joined = False
+            for name in sequence.chain(out, first):
+                earlier = None if joined else listed.get(name)
+                joined = joined or earlier is not None
+                print(describe(out, name, slots.get(name), earlier))
+                listed.setdefault(name, head)
     errors = [f for f in findings if f.level == "error"]
     for f in findings:
         print(finding_line(f))
@@ -83,6 +91,12 @@ def describe(m: manifest.Manifest, name: str, slot: int | None, shared: str | No
         head += f"  turns to the target at {s.rate or 'the host charge'}{window}"
     if s.turn == "fixed":
         head += f"  turns {s.angle:g} degrees" + (f" in frames {s.window}" if s.window else "")
+    if s.turn == "aim":
+        head += "  turns to the target along its code turn"
+    if mv.code_turn:
+        head += f"  code turn {mv.code_turn[-1] * 360 / 65536:+.0f} degrees"
+    if mv.aim_out:
+        head += f"  slides the rest of the angle over {mv.aim_out} AI frames after"
     if mv.travel:
         x, z = mv.travel[-1]
         head += f"  travels {x:g}, {z:g} over {len(mv.travel)} samples"

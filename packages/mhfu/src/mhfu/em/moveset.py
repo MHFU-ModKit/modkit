@@ -201,9 +201,10 @@ class Tag:
     """A value the walker knows by origin, not by number."""
 
     kind: str
-    """entity, vtable, method (a vtable slot), cell (a load from the entity), result."""
+    """entity, vtable, method (a vtable slot), cell (a load from the entity), result, global (a
+    pointer the walker was told of)."""
     n: int | None = None
-    """The slot, the cell's offset, or the callee a result came from."""
+    """The slot, the cell's offset, the callee a result came from, or the global's address."""
     frame: float | None = None
     """For a clip predicate's result, the frame it tested."""
     size: int = 0
@@ -214,6 +215,8 @@ class Tag:
 
 Value = int | Tag
 ENTITY = Tag("entity")
+Pointers = Mapping[int, Mapping[int, int]]
+"""Global pointers by the address they sit at: the words a load off the pointer reads, by offset."""
 VTABLE = Tag("vtable")
 Cell = tuple[int, int]
 """An entity cell: (offset, width in bytes)."""
@@ -359,8 +362,9 @@ class Walker:
     arithmetic on them; a call to a `returns` target leaves that float in $f0. A float register
     is held as its bits, so `args` can name one (`Fpr.fa0`). With `cells` (see `run`) it also
     reads and writes the entity's float cells and decides a branch on a float compare of two
-    values it knows. A pc runs at most once per path;
-    `max_paths` path ends and `max_steps` per path bound a walk, and `truncated` names the
+    values it knows. With `pointers` a load of a word at a listed address is that pointer, and a
+    word loaded off it is the one listed (an unlisted one is unknown). A pc runs at most once per
+    path; `max_paths` path ends and `max_steps` per path bound a walk, and `truncated` names the
     functions that hit one.
     """
 
@@ -373,6 +377,7 @@ class Walker:
         follow: Collection[int] | None = None,
         depth: int = 1,
         facts: Facts | None = None,
+        pointers: Pointers | None = None,
         names: Mapping[int, str] | None = None,
         args: tuple[Register, ...] = (Gpr.a1, Gpr.a2, Gpr.a3),
         probes: Mapping[int, Register] | None = None,
@@ -385,6 +390,7 @@ class Walker:
         self.methods = dict(methods or {})
         self.follow = follow
         self.depth, self.facts, self.names = depth, dict(facts or {}), dict(names or {})
+        self.pointers = {at: dict(words) for at, words in (pointers or {}).items()}
         self.args, self.probes = args, dict(probes or {})
         self.returns = {target: _float_bits(v) for target, v in (returns or {}).items()}
         self._found: list[tuple[dict[Site, None], tuple[int, ...]]] = []
@@ -393,6 +399,7 @@ class Walker:
         self._memo: dict[tuple[object, ...], tuple[Site, ...]] = {}
         self._decide: Decide | None = None
         self._cells: MutableMapping[int, float] | None = None
+        self._persist = False
         self._operands = {s.operand.vram: s.jr for s in code.switches.values() if s.operand}
         self._tables = {
             s.table + 4 * i: t for s in code.switches.values() for i, t in enumerate(s.targets)
@@ -405,34 +412,40 @@ class Walker:
         facts: Facts | None = None,
         decide: Decide | None = None,
         cells: MutableMapping[int, float] | None = None,
+        persist: bool = False,
     ) -> list[Site]:
         """Every watched call some path from `fn` reaches, once per distinct Site.
 
         `decide(pc, target, args)` answers for the caller: the $v0 a call at `pc` to `target`
         leaves (`args`: the walker's argument registers there; a float answers $f0 instead) or
         the outcome of a branch at `pc` the walk cannot decide (1 taken, 0 not; no target, `args`
-        empty). None leaves it to the walk, which forks. A run with `decide` or `cells` is not
-        memoised.
+        empty). None leaves it to the walk, which forks. A run with `decide`, `cells` or
+        `persist` is not memoised.
 
         `cells` are the entity's float cells by offset: a load from the entity reads one it
         holds, a store writes it (an unknown value removes it), and `decide` may change them
         between calls. They are shared by every path and callee, in the order they are walked, so
         they are exact for a walk `decide` keeps on one path. They also let a branch on a float
         compare of two known values decide itself, and `decide` hear of a tail call, its answer
-        unused."""
+        unused.
+
+        With `persist`, every store of a byte, half or word to the entity is also a Site of kind
+        "store", `args` (offset, width, value): what a caller that carries cells from one run to
+        the next (as `facts`) reads off it; the value is None where it is not known."""
         env: _Env = {r: v for r, v in (seed or {}).items()}
         before, self._decide = self._decide, decide
         held, self._cells = self._cells, cells
+        kept, self._persist = self._persist, persist
         try:
             return list(self._run(fn, env, {**self.facts, **(facts or {})}, 0, ()))
         finally:
-            self._decide, self._cells = before, held
+            self._decide, self._cells, self._persist = before, held, kept
 
     def _run(
         self, fn: int, seed: _Env, facts: dict[Cell, Known], depth: int, via: tuple[int, ...]
     ) -> tuple[Site, ...]:
         key = (fn, frozenset(seed.items()), frozenset(facts.items()), depth, via)
-        if self._decide is not None or self._cells is not None:
+        if self._decide is not None or self._cells is not None or self._persist:
             return self._walk(_Path(fn, {Gpr.a0: ENTITY, **seed}, facts), depth, via)
         if key not in self._memo:
             start = _Path(fn, {Gpr.a0: ENTITY, **seed}, facts)
@@ -728,6 +741,10 @@ class Walker:
         value = _value(p.env, ins.rt)
         if isinstance(value, int):
             p.facts[off, width] = value & ((1 << 8 * width) - 1)
+        if self._persist:
+            out, via = self._found[-1]
+            got = value & ((1 << 8 * width) - 1) if isinstance(value, int) else None
+            out.setdefault(Site(ins.vram, "store", (off, width, got), p.guards, via))
         if self._cells is not None and width == 4 and off in self._cells:
             if isinstance(value, int):
                 self._cells[off] = _bits(value)
@@ -744,6 +761,8 @@ class Walker:
                     return VTABLE
                 if u == InstrId.cpu_lwc1 and self._cells is not None and off in self._cells:
                     return _float_bits(self._cells[off])
+                if u == InstrId.cpu_lwc1 and isinstance(word := p.facts.get((off, 4)), int):
+                    return word  # the bits of a word the path stored
                 width = _WIDTH.get(u, 0)
                 fact = p.facts.get((off, width))
                 if isinstance(fact, int):
@@ -752,8 +771,11 @@ class Walker:
                 return Tag("cell", off, size=width)
             if base == VTABLE and u == InstrId.cpu_lw:
                 return Tag("method", off)
+            if isinstance(base, Tag) and base.kind == "global" and u == InstrId.cpu_lw:
+                return self.pointers.get(base.n or 0, {}).get(off)
             if isinstance(base, int) and u == InstrId.cpu_lw:
-                return self._tables.get((base + off) & _MASK)
+                at = (base + off) & _MASK
+                return Tag("global", at) if at in self.pointers else self._tables.get(at)
             if isinstance(base, int) and u == InstrId.cpu_lwc1:
                 try:
                     return self.code.mem.u32((base + off) & _MASK)
@@ -779,6 +801,14 @@ class Walker:
         if u in _EXTEND:
             x = _value(env, ins.rt)
             return _extend(x, _EXTEND[u]) & _MASK if isinstance(x, int) else x
+        if u in (InstrId.cpu_negu, InstrId.cpu_neg):
+            x = _value(env, ins.rt)
+            return -x & _MASK if isinstance(x, int) else None
+        if u in _MINMAX:
+            x, y = _value(env, ins.rs), _value(env, ins.rt)
+            if isinstance(x, int) and isinstance(y, int):
+                return _MINMAX[u](_signed(x & _MASK), _signed(y & _MASK)) & _MASK
+            return None
         if u == InstrId.cpu_move:
             return _value(env, ins.rs)
         if u == InstrId.cpu_mtc1:
@@ -797,6 +827,9 @@ class Walker:
                 except ArithmeticError:
                     return None
             return None
+        if u == InstrId.cpu_cvt_s_w:
+            x = env.get(ins.fs)
+            return _float_bits(float(_signed(x & _MASK))) if isinstance(x, int) else None
         if u == InstrId.cpu_trunc_w_s:
             x = env.get(ins.fs)
             try:
@@ -875,6 +908,10 @@ _SHIFT: dict[rabbitizer.Enum, _Op2] = {
     InstrId.cpu_sll: lambda x, s: x << s,
     InstrId.cpu_srl: lambda x, s: (x & _MASK) >> s,
     InstrId.cpu_sra: lambda x, s: _signed(x & _MASK) >> s,
+}
+_MINMAX: dict[rabbitizer.Enum, Callable[[int, int], int]] = {
+    InstrId.r4000allegrex_max: max,
+    InstrId.r4000allegrex_min: min,
 }
 _EXTEND: dict[rabbitizer.Enum, int] = {InstrId.r4000allegrex_seb: 1, InstrId.r4000allegrex_seh: 2}
 _TWO: dict[rabbitizer.Enum, bool] = {

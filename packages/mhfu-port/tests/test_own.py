@@ -59,9 +59,16 @@ def test_overlap():
 class Fake:
     """A walk that plans what it is given, and a matcher with fixed answers."""
 
-    def __init__(self, plan: Plan | Sequence[Plan], hosts=HOSTS, active=10) -> None:
+    def __init__(
+        self,
+        plan: Plan | Sequence[Plan],
+        hosts=HOSTS,
+        active=10,
+        arms: dict[Pair, tuple[p3hits.Arm, ...]] | None = None,
+    ) -> None:
         plans = [plan] if isinstance(plan, Plan) else list(plan)
-        self.lengths = LENGTHS
+        self.armed = arms or {}
+        self.lengths, self.step = LENGTHS, p3hits.STEP_FRAMES
         self.plans = {p.pair: p for p in plans}
         self.ms = SimpleNamespace(pairs={p: p for p in self.plans})
         self.hosts, self.active = hosts, active
@@ -72,6 +79,9 @@ class Fake:
 
     def plan(self, pair: Pair) -> Plan:
         return self.plans[pair]
+
+    def arms(self, pair: Pair, base: Plan) -> tuple[p3hits.Arm, ...]:
+        return self.armed.get(pair) or (p3hits.Arm(((0, 255),), base),)
 
     def match(self, record: int) -> own.Match:
         host = self.hosts.get(record)
@@ -116,6 +126,14 @@ def test_a_step_is_a_move():
     assert mv.steer == Steer(turn="hunter", rate=546, walls=False, window=(10, 40))
     assert "p3_61" not in m.clips and codes(found) == ["P3_OWN_ACTIVE", "P3_OWN_GROUP"]
     manifest.check(m)
+
+
+@pytest.mark.parametrize(("rate", "said"), [(None, "not known"), (0x10000, "out of range")])
+def test_a_turn_rate_the_walk_lacks_is_the_hosts_and_said(rate, said):
+    m, found = derive(plan(step(61, turns=[Turn(rate, (10.0, 40.0))])))
+    assert m.moves["p3_7_13"].steer.rate is None
+    (f,) = [f for f in found if f.code == "P3_OWN_MOTION"]
+    assert f.level == "info" and said in f.text and "the host's" in f.text
 
 
 def test_a_chain_hands_on_and_a_loop_is_cut():
@@ -163,9 +181,19 @@ def test_a_start_is_carried_and_the_clip_plays_on_to_its_end():
 @pytest.mark.parametrize(
     ("ended", "stop"), [("cursor", None), ("pair", None), ("cursor", 500.0), ("cursor", 24.0)]
 )
-def test_a_step_with_no_frame_to_stop_on_keeps_its_length(ended, stop):
-    """No frame, or one outside the clip or not after the start."""
+def test_a_step_with_no_frame_to_stop_on_stops_where_the_walks_cursor_was(ended, stop):
+    """No frame, or one outside the clip or not after the start: 55 AI frames from 24."""
     m, _ = derive(plan(step(61, ended=ended, ticks=55, start=24.0, stop=stop)))
+    assert spans(m) == (24, 134, None)
+
+
+def test_a_cursor_past_the_clip_stops_at_its_end():
+    m, _ = derive(plan(step(62, ended="pair", ticks=80, start=24.0)))
+    assert spans(m) == (24, 100, None)
+
+
+def test_a_loop_is_cut_by_length_not_by_a_cursor_it_wraps():
+    m, _ = derive(plan(step(59, ended="pair", ticks=55, start=24.0)))
     assert spans(m) == (24, 0, 55)
 
 
@@ -197,7 +225,7 @@ def test_a_jump_plays_a_lifted_copy_of_its_clip_in_a_free_entry():
         plan(dataclasses.replace(moving(lift=JUMP), hits=tuple(hits))), spare=[90, 91]
     )
     mv = m.moves["p3_7_13"]
-    assert (mv.clip, mv.start, mv.stop, mv.length) == ("p3_61_air", 0, 0, 22)
+    assert (mv.clip, mv.start, mv.stop, mv.length) == ("p3_61_air", 0, 44, None)
     assert m.clips["p3_61_air"] == manifest.Clip(
         slot=90, source=61, start=0, frames=44, lift=list(JUMP)
     )
@@ -206,6 +234,25 @@ def test_a_jump_plays_a_lifted_copy_of_its_clip_in_a_free_entry():
     (f,) = [f for f in found if f.code == "P3_OWN_AIR"]
     assert f.level == "info" and "+44" in f.text and "entry 90" in f.text
     manifest.check(m)
+
+
+def test_a_jump_stops_at_its_last_frame_at_rest_or_above_so_the_landing_takes_the_fall():
+    sunk = (*JUMP[:40], -5.0, -9.0, -9.0, -9.0, -9.0)
+    m, _ = derive(plan(moving(lift=sunk)), spare=[90])
+    mv = m.moves["p3_7_13"]
+    assert (mv.clip, mv.start, mv.stop, mv.length) == ("p3_61_air", 0, 39, None)
+    cut = moving(start=100.0, lift=sunk)
+    m, _ = derive(plan(cut), spare=[90])
+    assert (m.moves["p3_7_13"].start, m.moves["p3_7_13"].stop) == (0, 39)  # counted from the copy
+    manifest.check(m)
+
+
+def test_a_jump_ends_by_no_wall_and_a_run_does():
+    m, _ = derive(plan(moving(clip=59, lift=JUMP)), spare=[90])
+    mv = m.moves["p3_7_13"]
+    assert (mv.clip, mv.steer.walls, mv.length) == ("p3_59_air", False, None)
+    m, _ = derive(plan(moving(clip=59, ticks=40)))
+    assert (m.moves["p3_7_13"].steer.walls, m.moves["p3_7_13"].length) == (True, 40)
 
 
 def test_a_copy_counts_its_frames_from_where_the_step_starts():
@@ -276,7 +323,7 @@ def test_travel_past_the_clips_end_is_cut_there():
 def test_a_window_is_cut_to_the_frames_the_move_plays_and_its_total_by_the_share_left():
     lunge = p3motion.Lunge((0.0, 30.0), 400.0, 1800.0, -800.0, 1000.0)
     spread = p3motion.Spread(0x4000, (0.0, 60.0))
-    m, found = derive(plan(moving(start=6.0, lunge=lunge, spreads=(spread,))))
+    m, found = derive(plan(moving(start=6.0, ticks=100, lunge=lunge, spreads=(spread,))))
     mv = m.moves["p3_7_13"]
     assert mv.lunge == Lunge((6, 30), 400.0, 1800.0, -640.0, 800.0)  # 24 frames of the 30
     assert (mv.steer.window, mv.steer.angle) == ((6, 60), 81.0)  # 54 of 60 frames of 90 degrees
@@ -296,13 +343,13 @@ def test_a_window_the_move_never_plays_is_left_out():
 
 def test_a_fixed_turn_is_the_steps_and_beats_a_turn_toward_the_hunter():
     spread = p3motion.Spread(0x2666, (60.0, 98.0))
-    m, found = derive(plan(moving(spreads=(spread,), turns=(Turn(546, (10.0, 40.0)),))))
+    m, found = derive(plan(moving(ticks=60, spreads=(spread,), turns=(Turn(546, (10.0, 40.0)),))))
     s = m.moves["p3_7_13"].steer
     assert (s.turn, s.window, round(s.angle or 0)) == ("fixed", (60, 98), 54)
     assert any("kept the fixed" in f.text for f in found)
     manifest.check(m)
     whole = p3motion.Spread(0x10000, (0.0, 10.0))  # a whole turn is no turn the player can make
-    m, found = derive(plan(moving(spreads=(whole,))))
+    m, found = derive(plan(moving(ticks=60, spreads=(whole,))))
     assert m.moves["p3_7_13"].steer.turn == "clip" and any("left out" in f.text for f in found)
 
 
@@ -359,11 +406,11 @@ def hand(pair: Pair, *steps: Step, to: Pair = (0, 0), complete: bool = True) -> 
     return Plan(pair, steps, (to,), complete)
 
 
-def chained(plans: Sequence[Plan], pairs: str = "", heads=((7, 13),), tables: str = ""):
+def chained(plans: Sequence[Plan], pairs: str = "", heads=((7, 13),), tables: str = "", arms=None):
     """The heads derived from a fake walk over `plans`; `pairs` and `tables` are added to TEXT."""
     m = manifest.loads(TEXT + pairs + tables)
     found: list = []
-    fake = Fake(plans)
+    fake = Fake(plans, arms=arms)
     d = own.Derivation(m, fake, lambda: fake, found.append, heads)  # type: ignore[arg-type]
     for h in heads:
         d.run(h)
@@ -489,6 +536,80 @@ def test_each_pair_is_derived_once():
         assert m.moves["p3_7_13"].after == "p3_7_14"
 
 
+# --- arms ---
+
+
+def arm(lo: int, hi: int, *steps: Step, pair: Pair = (7, 13), to: Pair = (0, 0)) -> p3hits.Arm:
+    return p3hits.Arm(((lo, hi),), hand(pair, *steps, to=to))
+
+
+def two_arms(*first: Step, pair: Pair = (7, 13), then: Sequence[Step] = (), **kw) -> dict:
+    """Arms of `pair`, left and right: the first's steps, then the others'."""
+    left = arm(0, 127, *first, pair=pair, to=kw.get("left", (0, 0)))
+    right = arm(128, 255, *(then or first), pair=pair, to=kw.get("right", (0, 0)))
+    return {pair: (left, right)}
+
+
+def test_a_pair_with_arms_is_a_picker_over_a_chain_per_arm():
+    arms = two_arms(step(61), step(62), then=[step(63)])
+    m, found, d = chained([hand((7, 13), step(61))], arms=arms)
+    pick = m.moves["p3_7_13"]
+    assert pick.picker and pick.pick == [(0, 127, "p3_7_13_a0"), (128, 255, "p3_7_13_a1")]
+    assert sequence.chain(m, "p3_7_13_a0") == ["p3_7_13_a0", "p3_7_13_a0_2"]
+    assert m.moves["p3_7_13_a1"].clip == "p3_63" and not m.moves["p3_7_13_a1"].after
+    assert d.made == ["p3_7_13_a0", "p3_7_13_a0_2", "p3_7_13_a1", "p3_7_13"]
+    manifest.check(m)
+
+
+def test_an_arm_that_turns_by_the_bearing_is_an_aim_move_and_one_that_does_not_is_not():
+    aimed = dataclasses.replace(step(61), code=(0, 10, 30, 60), aim=True)
+    fixed = dataclasses.replace(step(62), code=(0, -5, -20))
+    arms = {(7, 13): (arm(0, 127, aimed), arm(128, 255, fixed))}
+    m, _, _ = chained([hand((7, 13), step(61))], arms=arms)
+    left, right = m.moves["p3_7_13_a0"], m.moves["p3_7_13_a1"]
+    assert left.steer == Steer(turn="aim", walls=False) and left.code_turn == [0, 10, 30, 60]
+    assert right.steer == Steer(walls=False) and right.code_turn == [0, -5, -20]
+    manifest.check(m)
+
+
+def test_a_variant_a_list_follows_ends_where_the_donor_hands_over_and_slides_the_blend():
+    last = dataclasses.replace(step(61, ended="pair", ticks=26), hand=6)
+    arms = {
+        (7, 14): (
+            arm(0, 127, last, pair=(7, 14), to=(7, 20)),
+            arm(128, 255, step(62), pair=(7, 14)),
+        )
+    }
+    plans = [hand((7, 14), last, to=(7, 20)), hand((7, 20), step(59))]
+    m, found, _ = chained(
+        plans, '"7,14" = ["own", "stamp"]\n', [(7, 14)], "[moves.stamp]\nanim = 9\n", arms
+    )
+    first, second = m.moves["p3_7_14_a0"], m.moves["p3_7_14_a1"]
+    assert first.after is None and first.aim_out == 6 and second.aim_out == 0
+    assert "p3_7_20" not in m.moves and not next_findings(found)
+    assert first.stop == 52  # where the donor handed over, not a wall or a count of frames
+    assert moves.combos(m) == [("p3_7_14_a0", "stamp"), ("p3_7_14_a1", "stamp")]
+    manifest.check(m)
+
+
+def test_the_variants_of_a_picker_nothing_lists_hand_over_as_a_chain_does():
+    arms = two_arms(step(61), pair=(7, 13), then=[step(62)], left=(7, 14), right=(7, 15))
+    plans = [hand((7, 13), step(61), to=(7, 14)), hand((7, 14), step(59)), hand((7, 15), step(60))]
+    m, found, _ = chained(plans, arms=arms)
+    assert m.moves["p3_7_13_a0"].after == "p3_7_14" and m.moves["p3_7_13_a1"].after == "p3_7_15"
+    assert m.moves["p3_7_14"].clip == "p3_59" and m.moves["p3_7_15"].clip == "p3_60"
+    assert m.moves["p3_7_13_a0"].aim_out == 0 and not next_findings(found)
+
+
+def test_a_pair_a_chain_hands_over_to_is_one_move_and_no_picker():
+    plans = [hand((7, 13), step(61), to=(7, 14)), hand((7, 14), step(59))]
+    m, _, d = chained(
+        plans, '"7,14" = "own"\n', [(7, 13), (7, 14)], arms=two_arms(step(59), pair=(7, 14))
+    )
+    assert not m.moves["p3_7_14"].picker and m.moves["p3_7_13"].after == "p3_7_14"
+    assert "p3_7_14_a0" not in m.moves and sorted(d.made) == ["p3_7_13", "p3_7_14"]
+
+
 # --- sharing ---
 
 
@@ -537,6 +658,33 @@ def test_two_anchored_moves_stay_apart():
     m = own_moves(a1="b", a2="b", b=None, x="a1", y="a2", a3="b")
     assert own.share(m, ["a1", "a2", "b", "a3"]) == {"a3": "a1"}
     assert set(m.moves) == {"a1", "a2", "b", "x", "y"}
+
+
+def pickers(*picks: str, **after: str | None) -> manifest.Manifest:
+    """Own moves as `own_moves`, and a picker `p` over the arcs `0-127 a0` and `128-255 b0`."""
+    m = own_moves(**after)
+    assert m.brain is not None
+    for name in picks:
+        m.moves[name] = manifest.Move(pick=[(0, 127, f"a{name}"), (128, 255, f"b{name}")])
+        m.brain.pairs[f"7,{ord(name)}"] = name
+    return m
+
+
+def test_pickers_share_the_variants_they_have_alike_and_keep_their_own_names():
+    m = pickers("p", "q", ap=None, bp=None, aq=None, bq=None)
+    m.moves["bp"].start = m.moves["bq"].start = 5
+    dropped = own.share(m, ["ap", "bp", "aq", "bq", "p", "q"])
+    assert dropped == {"aq": "ap", "bq": "bp"} and set(m.moves) == {"ap", "bp", "p", "q"}
+    assert m.moves["q"].pick == m.moves["p"].pick == [(0, 127, "ap"), (128, 255, "bp")]
+    manifest.check(m)
+
+
+def test_a_picker_whose_variants_came_to_one_is_that_move():
+    m = pickers("p", ap=None, bp=None)
+    dropped = own.share(m, ["ap", "bp", "p"])
+    assert set(m.moves) == {"p"} and not m.moves["p"].picker and m.moves["p"].clip == "charge"
+    assert dropped == {"ap": "p", "bp": "p"}
+    manifest.check(m)
 
 
 @pytest.mark.parametrize("how", ["pairs", "play", "node", "effect", "after"])
@@ -588,32 +736,56 @@ def test_brute_derives_its_seven_pairs(derived):
     m, found = derived
     assert not [f for f in found if f.level == "error"]
     manifest.check(m)
-    own_moves = sorted(n for n, mv in m.moves.items() if mv.own and n.startswith("p3_"))
+    own_moves = sorted(n for n, mv in m.moves.items() if mv.played and n.startswith("p3_"))
     assert own_moves == [
         "p3_1_15",
-        "p3_2_19",
-        "p3_2_19_2",
-        "p3_2_19_3",
+        "p3_2_19_a0",
+        "p3_2_19_a0_2",
+        "p3_2_19_a0_3",
+        "p3_2_19_a1",
+        "p3_2_19_a1_2",
+        "p3_2_19_a1_3",
         "p3_2_20",
         "p3_2_23",
         "p3_7_13",
-        "p3_7_14",
-        "p3_7_14_2",
+        "p3_7_14_a0",
+        "p3_7_14_a0_2",
+        "p3_7_14_a1",
+        "p3_7_14_a1_2",
+        "p3_7_14_a2",
         "p3_7_15",
     ]
-    assert sequence.chain(m, "p3_7_14") == ["p3_7_14", "p3_7_14_2"]
+    assert sequence.chain(m, "p3_7_14_a0") == ["p3_7_14_a0", "p3_7_14_a0_2"]
+    assert sequence.chain(m, "p3_7_14_a2") == ["p3_7_14_a2", "p3_7_14_a1_2", "p3_7_14_a0_2"]
     assert not [f for f in found if f.code == "P3_OWN_NEXT"], "every handler ends at rest"
+
+
+def test_brute_picks_by_the_bearing_where_its_handlers_do(derived):
+    """(2,19) by side, (7,14) by how far round the target is: the arcs the walk found."""
+    m, _ = derived
+    assert m.moves["p3_2_19"].pick == [(0, 63, "p3_2_19_a0"), (64, 255, "p3_2_19_a1")]
+    assert m.moves["p3_7_14"].pick == [
+        (0, 63, "p3_7_14_a0"),
+        (64, 127, "p3_7_14_a1"),
+        (128, 191, "p3_7_14_a2"),
+        (192, 255, "p3_7_14_a0"),
+    ]
+    assert [n for n, mv in m.moves.items() if mv.picker] == ["p3_2_19", "p3_7_14"]
 
 
 def test_brute_windows_lie_inside_their_spans(derived, data):
     m, _ = derived
     made = {n: mv for n, mv in m.moves.items() if n.startswith("p3_")}
     assert {n: (mv.start, mv.stop, mv.length) for n, mv in made.items() if mv.start or mv.stop} == {
-        "p3_2_19_3": (6, 0, None)
+        "p3_2_19_a0_3": (6, 0, None),
+        "p3_2_19_a1_3": (6, 0, None),
+        "p3_7_14_a1_2": (76, 0, 34),
     }
     assert {n: mv.length for n, mv in made.items() if mv.length is not None} == {
-        "p3_2_19_2": 39,
-        "p3_7_14": 72,
+        "p3_2_19_a0_2": 39,
+        "p3_2_19_a1_2": 39,
+        "p3_7_14_a0": 72,
+        "p3_7_14_a1_2": 34,
     }
     for name, mv in made.items():
         for a in mv.attacks:
@@ -648,15 +820,14 @@ def test_brute_charge(derived):
 def test_brute_rush_and_leap(derived):
     m, found = derived
     feet = m.attacks[0].id  # donor record 26 plays its spare record
-    assert [m.moves[n].clip for n in ("p3_7_14", "p3_7_14_2")] == ["p3_59", "p3_60"]
-    assert windows(m, "p3_7_14") == [(15, 85, 144), (feet, 85, 144)]
-    assert windows(m, "p3_7_14_2") == [(15, 0, 14), (feet, 0, 14), (7, 94, 124), (8, 96, 106)]
-    assert m.moves["p3_7_14"].steer.rate == 364 and m.moves["p3_7_14"].length == 72
-    assert m.moves["p3_7_14"].steer.walls and not m.moves["p3_7_14_2"].steer.walls
+    assert [m.moves[n].clip for n in ("p3_7_14_a0", "p3_7_14_a0_2")] == ["p3_59", "p3_60"]
+    assert windows(m, "p3_7_14_a0") == [(15, 85, 144), (feet, 85, 144)]
+    assert windows(m, "p3_7_14_a0_2") == [(15, 0, 14), (feet, 0, 14), (7, 94, 124), (8, 96, 106)]
+    assert m.moves["p3_7_14_a0"].steer.rate == 364 and m.moves["p3_7_14_a0"].length == 72
+    assert m.moves["p3_7_14_a0"].steer.walls and not m.moves["p3_7_14_a0_2"].steer.walls
     assert windows(m, "p3_7_15") == [(4, 75, 100)]
     assert m.moves["p3_7_15"].steer == Steer(turn="hunter", rate=273, walls=False, window=(0, 20))
     assert not [f for f in found if f.code == "P3_OWN_ATTACK"]
-    assert {f.item for f in found if f.code == "P3_OWN_BRANCH"} >= {"p3_7_14"}
 
 
 def host_table(data):
@@ -672,7 +843,7 @@ def test_brute_hind_feet_get_a_spare_record(derived, data):
     assert sorted(h.bone for h in feet) == [24, 29], "the donor's two volumes, on the port's joints"
     assert {(h.radius, h.shape) for h in feet} == {(130.0, "sphere")}
     # power 25 scaled by the median of 1.0, 0.8, 0.67 and 0.42, the matched records' ratios
-    assert a.power == 18 and a.active == 59, "its node is held from frame 85 to the clip's end"
+    assert a.power == 18 and a.active == 68, "its node is held from frame 76 to the clip's end"
     (note,) = [f for f in found if f.code == "P3_OWN_SPARE"]
     assert "donor record 26" in note.text and f"spare record {a.id}" in note.text
     t = host_table(data)
@@ -682,12 +853,17 @@ def test_brute_hind_feet_get_a_spare_record(derived, data):
 
 def test_brute_pairs_without_attacks(derived):
     m, _ = derived
-    for name in ("p3_1_15", "p3_2_20", "p3_2_23", "p3_2_19", "p3_2_19_2", "p3_2_19_3"):
+    for name in ("p3_1_15", "p3_2_20", "p3_2_23", "p3_2_19_a0", "p3_2_19_a1_2", "p3_2_19_a1_3"):
         assert m.moves[name].attacks == []
-    assert [m.moves[n].clip for n in ("p3_2_19", "p3_2_19_2", "p3_2_19_3")] == [
+    assert [m.moves[n].clip for n in ("p3_2_19_a1", "p3_2_19_a1_2", "p3_2_19_a1_3")] == [
         "p3_32",
         "p3_107",
         "p3_108",
+    ]
+    assert [m.moves[n].clip for n in ("p3_2_19_a0", "p3_2_19_a0_2", "p3_2_19_a0_3")] == [
+        "p3_31",
+        "p3_110",
+        "p3_111",
     ]
 
 
@@ -696,7 +872,7 @@ def test_an_attacks_override_beats_the_match(data):
     assert m.brain is not None
     m.brain.attacks["26"] = 25
     out, found = own.expand(m, data)
-    assert [a.id for a in out.moves["p3_7_14"].attacks] == [15, 25]
+    assert [a.id for a in out.moves["p3_7_14_a0"].attacks] == [15, 25]
     assert not [f for f in found if f.code in ("P3_OWN_ATTACK", "P3_OWN_SPARE")]
     assert out.attacks == [] and out.hitboxes == [], "a chosen record needs no spare"
 
@@ -704,7 +880,7 @@ def test_an_attacks_override_beats_the_match(data):
 def test_slots_follow_the_expanded_manifest(derived):
     m, _ = derived
     slots = moves.slots(m)
-    assert len(slots) == len([n for n, mv in m.moves.items() if mv.own])
+    assert len(slots) == len([n for n, mv in m.moves.items() if mv.played])
     assert slots["p3_7_13"] == sorted(slots).index("p3_7_13")
 
 

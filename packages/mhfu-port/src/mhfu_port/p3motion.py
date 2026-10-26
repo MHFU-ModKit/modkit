@@ -58,6 +58,7 @@ LIFT = 0x09C9E8D4  # noaddr: (entity, $f12) height += $f12
 ROT_Y = 0x08875BD8  # noaddr: (vector, $f12 radians) turns x and z about y
 YAW_SPREAD = 0x09CA15AC  # noaddr: (entity, total, $f12 lo, $f13 hi) yaw += total over (lo, hi]
 CURVE_DELTA = 0x09DB3FB4  # noaddr: (entity, curve, $f12 t) $f0 the curve's change over a step
+CURVE_DELTA_RAW = 0x09DB3EAC  # noaddr: the same unscaled by the monster's size: the yaw curves'
 LUNGE = 0x09DB44F0  # noaddr: (entity, bearing, $f12..$f18) travel toward the target
 CURVE_MOVE = 0x09DB4030  # noaddr: (entity, x, y, z, yaw curves, bias) a curve walk
 CURVE_MOVE_INIT = 0x09DB3FFC  # noaddr: (entity) zero the velocity, keep the yaw
@@ -66,6 +67,8 @@ X, Y, Z = 0x80, 0x84, 0x88
 """The entity's position cells."""
 VELOCITY, ACCELERATION, GROUND = 0xB0, 0xC0, 0xD8
 """Velocity (x, y, z), acceleration (x, y, z) and the floor height, in cells 4 bytes apart."""
+SPEED = 0xAC4
+"""The cell of the clip's speed, the factor a handler's turn rates go by: 1.0 in a walk."""
 REST = 298.0
 """The height over the floor a monster stands at: the value the donor's stamp snaps to when it
 lands, and the one its landing test reads (`Y - D8 <= 298`). Not read from a cell: MOVE_MODE(0)
@@ -214,6 +217,7 @@ class Motion:
             self.cells.update({base: 0.0, base + 4: 0.0, base + 8: 0.0})
         self.cells[Y] = self.rest
         self.cells[GROUND] = 0.0
+        self.cells[SPEED] = 1.0
 
     # --- a step and an AI frame ---
 
@@ -392,6 +396,7 @@ _HELPERS: dict[int, Callable[[Motion, Args], float | None]] = {
     ROT_Y: Motion._rot_y,
     YAW_SPREAD: Motion._yaw_spread,
     CURVE_DELTA: Motion._curve_delta,
+    CURVE_DELTA_RAW: Motion._curve_delta,
     LUNGE: Motion._lunge,
     CURVE_MOVE: Motion._curve_move,
     CURVE_MOVE_INIT: Motion._curve_move_init,

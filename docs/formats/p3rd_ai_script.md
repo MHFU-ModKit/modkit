@@ -75,7 +75,7 @@ keeps everything else: its roaming, sections, target pick and interrupts.
 
 | Donor | Host |
 |---|---|
-| `enter m s` | `enter M S 0`, the pair from `[brain.pairs]`; an own move there: `enter 16 k 0`; a list there: one `enter` per item |
+| `enter m s` | `enter M S 0`, the pair from `[brain.pairs]`; an own move there: `enter 16 k 0`; a list there: one `enter` per item; a picker (below): nested `if_target_in_arc`, one `enter` (or combo) per variant |
 | `random` | `random`: each weight `w` becomes `w * 32 / 100` by largest remainder, at least 1; a zero arm goes. Too many live arms for MHFU's 13 branches (the padding one counts): an outer `random` over groups of at most 12 and an inner `random` per group, all reading one draw (`P3_SPLIT`, below) |
 | `switch_range` | `switch_range`: case `k` is bucket `k + 1`, the default the last, a missing case copies the default |
 | `switch_mode` | `if_mode2` for mode 1, the default as its else |
@@ -133,16 +133,19 @@ donor's `enter 7 13` becomes `enter 16 k 0`: main 16 is
 `OWN_MOVE_MAIN`, which no species uses, and `k` the move's registry slot. em_vhook plays move `k`
 in place of the pair and the script goes on after the `enter` when it ends, as for a host pair.
 
-A value may be a list, played in order, each item one `enter` that yields: `"7,23" = [[1, 2], "own"]`
+A value may be a list, played in order, each item one `enter` that yields: `"7,5" = [[1, 2], "own"]`
 is the host's turn (1, 2), then the move. An item is a host pair, an own move's name or `"own"`; the
 build charges the donor pair's stamina to the last item.
 
-A pair can also name the move another pair derives, `"7,23" = [[1, 2], "p3_7_0"]` where `"7,0" =
+A pair can also name the move another pair derives, `"7,23" = ["own", "p3_7_0"]` where `"7,0" =
 "own"`: a turn wrapper (a donor pair that turns toward the target, then enters another pair)
-plays the move of the pair it leads to rather than a duplicate of its own handler, and twin pairs
-(same clips, attacks and steer) share one move, which saves slots and turn keys. The name must be
-`own_name` of a pair mapped to `"own"` (`Brain.derived`), and that pair is not reported unused
-while another pair plays its move (`Brain.shared`).
+turns by its own derived move, then plays the move of the pair it leads to rather than a duplicate
+of its own handler, and twin pairs (same clips, attacks and steer) share one move, which saves
+slots and turn keys. The name must be `own_name` of a pair mapped to `"own"` (`Brain.derived`), and
+that pair is not reported unused while another pair plays its move (`Brain.shared`). A wrapper's
+own move plays other turns by the bearing of the target, so it is a picker (below): the script
+enters one combo of a variant and the move after it for each arc, `enter 16 id 0` with an id from
+the framework's `OWN_MOVES` up.
 
 The slots are `mhfu_port.moves.slots`: the own moves by sorted name, numbered from 0, at most
 `EM_MOVES.MOVES.count`. The moves module `mhfu-port` writes carries each one as `slot = k` and
@@ -161,9 +164,10 @@ The donor's handler for the pair is run an AI frame at a time on the clip cursor
 ask about (`mhfu_port.p3hits`), which gives a chain of steps, `p3_7_14`, `p3_7_14_2`, ..., each a
 clip that hands to the next by `after`:
 
-- **Clips.** The default path. A branch on something the build cannot know (a bearing, a counter,
-  a wait) is tried each way and the path that spawns most attacks and plays fewest clips is taken;
-  the others are named in `P3_OWN_BRANCH`. A clip the donor starts past its first frame gets that
+- **Clips.** The default path. A branch on something the build cannot know (a counter, a wait) is
+  tried each way and the path that spawns most attacks and plays fewest clips is taken; the others
+  are named in `P3_OWN_BRANCH`. A branch on the bearing of the target (the side rule, a compare of
+  the angle to it) is not tried: see Arms. A clip the donor starts past its first frame gets that
   `start`; one the handler leaves at a frame it tests gets that frame as `stop`. Both are clip
   frames, so they hold at any blend and cursor rate (a blend holds the cursor 2 to 5 AI frames,
   enraged it runs 2.8 a frame). Only a step that ended on no frame of its clip (a pair, a loop,
@@ -187,9 +191,33 @@ clip that hands to the next by `after`:
   0.25 there is no match and the record takes a spare host record (below). `[brain.attacks]
   "26" = 40` names the host record for donor record 26; the port may define it with `[[attack]]`
   and `[[hitbox]]`.
-- **Turn.** A `hunter` steer with the donor's rate and the cursor window it turned in
-  (`steer.window`); where the handler spreads a total over a window (`yaw_spread`) a `fixed` one
-  with that total as `angle` and the window, which wins over the other.
+- **Turn.** A `hunter` steer toward the target (the AI target's position, as `TURN` aims at the
+  target it refreshes each frame) with the donor's rate (`ent[0xAC4]` 1.0 in the walk; the move
+  player scales it by the clip speed) and the cursor window it turned in (`steer.window`), the
+  longest of them if the handler turns more than once; where the handler spreads a total over a
+  window (`yaw_spread`) a `fixed` one with that total as `angle` and the window, which wins over
+  the other. A handler that adds to its yaw along a curve (`yaw += F * d(curve)` each AI frame) has
+  the sum as `Move.code_turn`: with F = |D| / 90 or / 180 degrees for the angle D to the target
+  (the donor's turn that turns exactly D) a `turn = "aim"` steer and the curve at 90 or 180
+  degrees; with F = 1 the curve as it is, and the steer stays. A turn that depends on the bearing
+  in any other way is left out (`P3_OWN_MOTION`).
+- **Arms.** A handler that asks for the bearing of the target (`ANGLE`, and the side rule built on
+  it) is walked with the target at bearings D from the facing, every 45 degrees, each change of
+  plan found to 1/256 of a turn (the script's arc resolution, a bucket judged at its first bearing
+  plus one unit). The runs of buckets that play one plan, compared by their clips, where they start
+  and stop and where they hand over to, are its arms; one arm is the handler's plain plan, as
+  without this. With more, the pair's move is a picker (`Move.pick`) over a variant per arm,
+  `p3_2_26_a0`, ..., each a chain as above; the zinogre's (2,26) has four (clips 9, 38, 37, 8 at
+  arcs 0-63, 64-127, 128-191, 192-255, each an aim turn), (1,1) two (11 and 39, a fixed 20 degrees),
+  and the wrappers four (arcs 0-85, 86-127, 128-170, 171-255, the curve as it is). A variant hands
+  over as any chain does, except that where the pair's list names the move that follows, the list
+  does: the variant stops where the donor hands over (clip frame 52 for a turn under 120 degrees,
+  62 for more), with `aim_out` the blend the donor hands over with (6 and 10 AI frames). Pairs of
+  one handler that differ only in what they hand over to share one set of variants. A pair another
+  chain hands over to is one move, not a picker: `after` cannot pick.
+- **Blend.** The test that a clip is blending in is answered true for the AI frames the donor
+  played the clip with, not all clip long: a clip played with a blend of 4 turns at the blend-in
+  rate for its first 4 AI frames.
 - **Motion by code.** The walk keeps the cells a handler moves the monster by (position, velocity,
   acceleration, the floor: `mhfu_port.p3motion`), which the handler's float loads and stores and
   its helpers (`VEL_APPLY`, `VEL_ACC`, `VEL_WORLD`, `CURVE_DELTA`, `curve_move`, `LIFT`, ...) act

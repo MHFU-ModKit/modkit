@@ -789,3 +789,56 @@ def test_aim_is_derived_not_picked():
 def test_a_code_turn_and_aim_out_are_checked(old, new, why):
     with pytest.raises(ManifestError, match=why):
         M.loads(MINIMAL + AIMED.replace(old, new))
+
+
+PICKED = """
+[moves.left]
+anim = 9
+[moves.right]
+anim = 8
+[moves.turn]
+pick = [[0, 127, "left"], [128, 255, "right"]]
+"""
+
+
+def test_a_picker_round_trips_and_is_no_move_of_its_own():
+    m = M.loads(MINIMAL + PICKED)
+    turn = m.moves["turn"]
+    assert turn.pick == [(0, 127, "left"), (128, 255, "right")]
+    assert turn.picker and turn.own and not turn.played and m.moves["left"].played
+    assert M.loads(M.dumps(m)) == m
+    assert M.loads(M.dumps(m)).moves["left"].pick is None
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "why"),
+    [
+        ('[0, 127, "left"], ', '[0, 100, "left"], [102, 127, "left"], ', "gap or overlap at 102"),
+        ("[128, 255", "[120, 255", "gap or overlap at 120"),
+        ('255, "right"]', '256, "right"]', "is not within 0 to 255"),
+        ('[0, 127, "left"], ', "", "gap or overlap at 128"),
+        ('127, "left"', '127, "turn"', "'turn' is no own move"),
+        ('127, "left"', '127, "gone"', "'gone' is no own move"),
+        ('pick = [[0, 127, "left"], [128, 255, "right"]]', "pick = []", "needs an arc"),
+        ("pick = [", "anim = 4\npick = [", "a picker has only pick"),
+        ('[128, 255, "right"]', '[128, 254, "right"]', "end at 254, not 255"),
+    ],
+)
+def test_a_picker_is_checked(old, new, why):
+    with pytest.raises(ManifestError, match=why):
+        M.loads(MINIMAL + PICKED.replace(old, new))
+
+
+def test_a_picker_does_not_count_among_the_own_moves():
+    text = "".join(f"[moves.m{k}]\nanim = 9\n" for k in range(M.OWN_MOVES)) + PICKED
+    with pytest.raises(ManifestError, match="own moves, the framework holds"):
+        M.loads(MINIMAL + text)
+    few = "".join(f"[moves.m{k}]\nanim = 9\n" for k in range(M.OWN_MOVES - 2))
+    assert len(M.loads(MINIMAL + few + PICKED).moves) == M.OWN_MOVES + 1
+
+
+def test_a_host_pair_move_has_no_pick():
+    with pytest.raises(ManifestError, match="a picker is an own move"):
+        M.loads(
+            MINIMAL + PICKED + '[moves.p]\nmain = 1\nsub = 2\nanim = 4\npick = [[0, 255, "left"]]\n'
+        )

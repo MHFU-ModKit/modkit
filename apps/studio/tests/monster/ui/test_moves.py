@@ -89,6 +89,27 @@ def test_steer(panel: MovesPanel, workspace: MonsterWorkspace) -> None:
     assert workspace.own_move().steer.rate == 64  # type: ignore[union-attr]
 
 
+def test_an_aim_move_shows_and_round_trips(panel: MovesPanel, workspace: MonsterWorkspace) -> None:
+    panel.new.click()
+    aim = panel.turn.buttons["aim"]
+    assert not aim.isEnabled(), "no code turn: the game would refuse it"
+    assert "target" in panel.turn.buttons["hunter"].toolTip() and "target" in aim.toolTip()
+    name, turn = workspace.move, [0, 2048, 4096]  # a derivation gives the move its code turn
+    assert name is not None and workspace.doc is not None
+    workspace.doc.edit(lambda m: setattr(m.moves[name], "code_turn", list(turn)))
+    workspace.set_steer(turn="aim")
+    panel.sync()
+    assert panel.turn.value == "aim" and aim.isChecked() and aim.isEnabled()
+    assert not panel.rate.isVisible() and not panel.angle.isVisible()
+    panel.turn.buttons["hunter"].click()
+    mv = workspace.own_move()
+    assert mv is not None and mv.steer.turn == "hunter" and not aim.isChecked()
+    aim.click()
+    mv = workspace.own_move()
+    assert mv is not None and (mv.steer.turn, mv.steer.rate, mv.code_turn) == ("aim", None, turn)
+    assert panel.turn.value == "aim" and kit.missing_tips(panel) == []
+
+
 def test_rename_and_delete(panel: MovesPanel, workspace: MonsterWorkspace) -> None:
     panel.new.click()
     panel.name.setText("stomp")

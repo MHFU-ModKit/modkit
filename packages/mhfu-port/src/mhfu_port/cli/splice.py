@@ -60,7 +60,9 @@ def run(args: argparse.Namespace) -> int:
     stamina, helper = fatigue.table(m, games)
     charging, powered = charge.table(m, games)
     named = charging.named if charging is not None else ()
-    spliced = splice.splice(donor, host, b, survey, moves.slots(m), overlay, named)
+    spliced = splice.splice(
+        donor, host, b, survey, moves.slots(m), overlay, named, moves.picks(m), moves.combo_ids(m)
+    )
     built = Built.of(host, spliced.edits)
     findings = [*derived, *helper, *powered, *spliced.findings, *built.findings]
     print(f"splice {m.port.name}: MHP3rd {b.donor} {b.entry} into em{row} {b.splice}")

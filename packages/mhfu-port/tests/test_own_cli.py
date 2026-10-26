@@ -74,7 +74,7 @@ def test_the_cli_lists_the_chains_across_hand_overs(data, capsys):
     path = PORTS / "zinogre.toml"
     code = main(["own", str(path), "--data", str(data.fu.root), "--p3rd-data", str(data.p3rd.root)])
     out = capsys.readouterr().out
-    assert code == 0 and f"49 pairs, 125 own moves of {manifest.OWN_MOVES}" in out
+    assert code == 0 and f"91 pairs, 137 own moves of {manifest.OWN_MOVES}" in out
     lines = out.splitlines()
     head = lines.index("7,12  p3_7_12 + 3 more")
     chain = [line.split()[0] for line in lines[head + 1 :] if line.startswith("  p3_")][:4]
@@ -93,7 +93,10 @@ def test_the_cli_lists_the_moves(data, capsys):
     path = PORTS / "brute_tigrex.toml"
     code = main(["own", str(path), "--data", str(data.fu.root), "--p3rd-data", str(data.p3rd.root)])
     out = capsys.readouterr().out
-    assert code == 0 and "p3_7_13 (slot 6)  clip 61 charge" in out
+    assert code == 0 and "p3_7_13 (slot 9)  clip 61 charge" in out
+    assert (
+        "2,19  p3_2_19: picks by the target's bearing" in out and "0-63 p3_2_19_a0, 64-255" in out
+    )
     assert "donor 21 -> host record 7, frames 135-165" in out
     assert "donor 26 -> host record 34 (spare), frames 85-144" in out
 
@@ -106,17 +109,19 @@ def test_the_moves_module_carries_the_derived_moves(data, tmp_path):
     modules(m, SimpleNamespace(layout=placed, tip=None), tmp_path, data, seen.append)  # type: ignore[arg-type]
     text = (tmp_path / moves.module_name(m)).read_text()
     entry = placed.ids[59]
-    assert f'p3_7_14 = {{ entry = {entry}, slot = 7, clip = "p3_59"' in text
+    assert f'p3_7_14_a0 = {{ entry = {entry}, slot = 10, clip = "p3_59"' in text
+    assert "p3_7_14 = " not in text, "a picker has no slot, and no cost: its variants do"
     assert "attacks = { { 135, 7, 165 }, { 138, 8, 148 } }" in text
     assert 'turn = "hunter", rate = 546, window = { 10, 40 }' in text
-    assert 'after = "p3_7_14_2"' in text and any(f.code == "P3_OWN_SPARE" for f in seen)
+    assert 'after = "p3_7_14_a0_2"' in text and any(f.code == "P3_OWN_SPARE" for f in seen)
 
 
 def test_the_splice_enters_the_derived_moves(data, capsys):
     args = ["--data", str(data.fu.root), "--p3rd-data", str(data.p3rd.root)]
     assert main(["splice", str(PORTS / "brute_tigrex.toml"), *args]) == 0
     out = capsys.readouterr().out
-    assert "pair 7,13 -> own p3_7_13 (slot 6)" in out and "pair 7,14 -> own p3_7_14 (slot 7)" in out
+    assert "pair 7,13 -> own p3_7_13 (slot 9)" in out
+    assert "pair 7,14 -> own p3_7_14_a0 (slot 10)" in out and "p3_7_14_a2 (slot 14)" in out
 
 
 def test_the_summary_sorts_a_pair_that_turns_then_plays_a_move():
