@@ -162,19 +162,16 @@ def combos(m: Manifest) -> list[tuple[str, str]]:
     return sorted(found)
 
 
-def combo_id(m: Manifest, first: str, then: str) -> int | None:
-    """The enter id of the combo (first, then): `SLOTS` plus its place in `combos`, what the
-    splice enters (`enter OWN_MOVE_MAIN id 0`); None for a pair that is none or past the
-    framework's table."""
-    try:
-        return SLOTS + combos(m)[:COMBOS].index((first, then))
-    except ValueError:
-        return None
-
-
 def combo_ids(m: Manifest) -> dict[tuple[str, str], int]:
-    """Every combo with its enter id (`combo_id`)."""
+    """Every combo with its enter id: `SLOTS` plus its place in `combos`, what the splice enters
+    (`enter OWN_MOVE_MAIN id 0`); the framework's table holds no more than `COMBOS`."""
     return {pair: SLOTS + k for k, pair in enumerate(combos(m)[:COMBOS])}
+
+
+def combo_id(m: Manifest, first: str, then: str) -> int | None:
+    """The enter id of the combo (first, then); None for a pair that is none or past the
+    framework's table."""
+    return combo_ids(m).get((first, then))
 
 
 def hub(species: int) -> Pair | None:
