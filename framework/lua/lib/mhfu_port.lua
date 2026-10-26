@@ -207,9 +207,9 @@ function P.layout(name)
 end
 
 --- A port's moves and rules from mods/lib/<name>_moves.lua, which `mhfu-port inject` generates
---- from the manifest with the clips module: { moves = {...}, rules = {...}, vars = {name = index},
---- signals = {name = index}, sever_below = pct, natural_rage = false, fatigue = {...},
---- charge = {...} }. Empty, logged once, without it.
+--- from the manifest with the clips module: { moves = {...}, combos = { {id, first, then}, ... },
+--- rules = {...}, vars = {name = index}, signals = {name = index}, sever_below = pct,
+--- natural_rage = false, fatigue = {...}, charge = {...} }. Empty, logged once, without it.
 function P.behaviour(name)
   local ok, t = pcall(require, name .. "_moves")
   if ok and type(t) == "table" then return t end
@@ -243,8 +243,12 @@ P.is_own = is_own
 --           module numbers its own moves, which the brain splice's `enter` names), else the
 --           first free one by name. Its `steer` goes to the move player as it is (mhfu.MoveSteer:
 --           turn, rate, `window = { from, to }` the clip frames a turn keeps to or a fixed turn
---           spreads across, `travel` the move's own travel by code, `lunge` toward the hunter).
---           Default: the manifest's (P.behaviour)
+--           spreads across, `travel` the move's own travel by code, `code_turn` its own yaw's
+--           curve, `lunge` toward the target); its `aim_out` spreads the angle left to the target
+--           over the next move's first AI frames. Default: the manifest's (P.behaviour)
+--   combos  { {id, first, then}, ... }: enter id `id` (mhfu.addr.OWN_MOVES..255, the brain
+--           splice's `enter 16 id 0`) plays own move `first` on the hub, then `then` in place
+--           (mhfu.em_combo); moves by name, registered after the moves; default: the manifest's
 --   rules   port:rule{} specs installed with the port; default: the manifest's
 --   vars, signals  name -> index of the board's counters and signals (port:var, port:fire); default:
 --           the manifest's
@@ -270,6 +274,7 @@ function P.define(spec)
     species = spec.species,
     clips   = spec.clips or P.layout(spec.name),
     moves   = spec.moves or made.moves or {},
+    combos  = spec.combos or made.combos or {},
     tip     = spec.tip or made.tip,
     fatigue = spec.fatigue or made.fatigue,
     charge  = spec.charge or made.charge,
@@ -511,7 +516,7 @@ end
 ---   port:rule{ from = "lunge",            -- a move name, or { main = 1, sub = 4 },
 ---              from_main = { 0, 1 },      -- ...or a set of main states (any sub)
 ---              min_frames = 15,           -- the pair (or own move) must have stood this long
----              dist = { 250, 1e9 },       -- player XZ distance window [lo, hi)
+---              dist = { 250, 1e9 },       -- the target's XZ distance window [lo, hi)
 ---              receding = true,           -- only while the gap is GROWING
 ---              closing = false,           -- only while it is SHRINKING
 ---              play = "lunge_stop",       -- the move: its pair entered, or an own move played
@@ -754,6 +759,19 @@ function Port:_arm_native()
       end
     end
     if made > 0 then log("[port:%s] %d own move(s) registered", self.name, made) end
+    local combos = 0
+    for _, c in ipairs(self.combos) do
+      local first, after = self._slot[c[2]], self._slot[c[3]]
+      if first ~= nil and after ~= nil and mhfu.em_combo ~= nil
+         and mhfu.em_combo(c[1], first, after) then
+        combos = combos + 1
+      else
+        log("[port:%s] combo %s ('%s', '%s') not registered: no such own move, a first off the "
+            .. "hub, an id past the table, or a framework without combos",
+            self.name, tostring(c[1]), tostring(c[2]), tostring(c[3]))
+      end
+    end
+    if combos > 0 then log("[port:%s] %d combo(s) registered", self.name, combos) end
   end
   for i = 1, MAX_RULES do
     local r = self._rules[i]

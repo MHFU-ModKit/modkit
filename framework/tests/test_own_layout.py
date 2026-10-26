@@ -25,8 +25,10 @@ SOURCES = ("em_vhook.cpp", "move.cpp", "steer.cpp")
         ("EM_KEYS", 8000),
         ("EM_SAMPLES", 901),
         ("EM_LUNGES", 33),
+        ("EM_TURNS", 2001),
         ("STEER_KEYS", 301),
         ("STEER_SAMPLES", 201),
+        ("STEER_TURNS", 201),
     ],
 )
 def test_a_raised_capacity_agrees_with_the_c_structs(

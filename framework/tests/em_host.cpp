@@ -52,6 +52,7 @@ void     mhfu_mem_write_u8(uint32_t a, uint8_t v) { uint8_t *p = at(a, 1); if (p
 void     mhfu_mem_write_u16(uint32_t a, uint16_t v) { uint8_t *p = at(a, 2); if (p) memcpy(p, &v, 2); }
 void     mhfu_mem_write_u32(uint32_t a, uint32_t v) { uint8_t *p = at(a, 4); if (p) memcpy(p, &v, 4); }
 void    *mhfu_host_at(uint32_t a) { return at(a, 4); }
+int      mhfu_mem_valid(uint32_t a) { return at(a, 4) != 0; }   /* here: mapped */
 void mhfu_log(const char *, ...) {}
 uint32_t mhfu_host_usec(void) { return 0; }
 void mhfu_event_fire(mhfu_event_id_t, const void *) {}

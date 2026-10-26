@@ -61,7 +61,7 @@ BOARD_VARS: int = addresses.EM_BOARD.VARS.count or 0
 BOARD_SIGNALS: int = addresses.EM_BOARD.SIGNALS.count or 0
 """Counters and flags, and signals, one monster's board holds."""
 SIDES = ("front", "left", "right", "behind")
-"""The hunter's sectors of the monster's facing; bit k of a side mask is `SIDES[k]`."""
+"""The target's sectors of the monster's facing; bit k of a side mask is `SIDES[k]`."""
 S16 = (-0x8000, 0x7FFF)
 """A counter's range."""
 UNLIMITED_DIST = 1.0e9
@@ -246,17 +246,17 @@ KINDS: dict[str, Kind] = {
             "condition",
             "Hunter distance",
             (
-                Param("lo", "float", "Nearest", 0.0, lo=0, tip="The nearest the hunter may be"),
+                Param("lo", "float", "Nearest", 0.0, lo=0, tip="The nearest the target may be"),
                 Param(
                     "hi",
                     "float",
                     "Farthest",
                     optional=True,
                     lo=0,
-                    tip="The farthest the hunter may be; else any distance",
+                    tip="The farthest the target may be; else any distance",
                 ),
             ),
-            "The hunter is this far from the monster, in world units",
+            "The monster's target is this far from it, in world units",
             summary=lambda v: _span(v["lo"], v.get("hi")),
         ),
         Kind(
@@ -272,7 +272,7 @@ KINDS: dict[str, Kind] = {
                     tip="Away from the monster, or closer to it",
                 ),
             ),
-            "The hunter is moving away from the monster or closer to it",
+            "The monster's target is moving away from it or closer to it",
             summary=lambda v: f"moving {v['way']}",
         ),
         Kind(
@@ -386,7 +386,7 @@ KINDS: dict[str, Kind] = {
                     tip="Any of these sides of the monster; its left is its own",
                 ),
             ),
-            "The hunter is on one of these sides of the monster",
+            "The monster's target is on one of these sides of it",
             summary=lambda v: ", ".join(v["sides"]),
         ),
         Kind(
@@ -523,7 +523,8 @@ Op = tuple[str, int, int]
 class Rule:
     """A trigger the native seam evaluates every frame: when the live pair is `from_move`'s or in
     `from_main` and has stood `min_frames` (or own move `from_move` has played that long), the
-    hunter is within `dist` and receding or closing as asked, and every one of `conds` holds,
+    target (what the monster aims at: its AI target, the player without one) is within `dist`
+    and receding or closing as asked, and every one of `conds` holds,
     play `play`, a pair or an own move, and apply `effects`; then wait `cooldown` frames, at most
     `count` times (None: unlimited). A pair rule waits while an own move plays. With no `play`
     the rule only applies its effects and the scan goes on.

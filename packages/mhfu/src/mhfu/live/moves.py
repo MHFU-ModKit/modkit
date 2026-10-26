@@ -25,7 +25,7 @@ from dataclasses import dataclass, replace
 from .. import addresses as a
 from .. import steering
 from ..entries import entry_clip
-from ..views import View, f32, f32s, ptr, ptrs, u8, u8s, u16, u32, u32s
+from ..views import View, f32, f32s, ptr, ptrs, s16, u8, u8s, u16, u32, u32s
 from .clips import Pack, bridge, monster
 from .session import Session
 from .shell_anim import STALLED, Bridge, Op
@@ -47,7 +47,7 @@ WORDS = {
 """How a MOVE_END name reads, where its name alone does not say it."""
 ENDS: dict[int, str] = {a.MOVE_END.number(n): WORDS.get(n, n) for n in a.MOVE_END.names}
 """MOVE_STATE.END in words."""
-TURNS = ("still", "hunter", "away", "fixed")
+TURNS = ("still", "hunter", "away", "fixed", "aim")
 """STEER_PARAMS.TURN by name."""
 FULL_TURN = 0x10000
 """ENTITY.YAW units in a turn."""
@@ -97,6 +97,9 @@ class Move:
     stop: int = 0
     """Clip frame `part`'s cursor ends the move at, whatever the blend and the rate (MOVE.STOP);
     0: none."""
+    aim_out: int = 0
+    """AI frames (MOVE.AIM_OUT): a hand-over in place spreads the angle still to turn to the target
+    over the successor's first that many AI frames; 0: none."""
 
     @classmethod
     def unpack(cls, raw: bytes) -> Move:
@@ -127,6 +130,7 @@ class Move:
             bool(raw[f.FORCE]),
             start,
             stop,
+            raw[f.AIM_OUT],
         )
 
     def pack(self) -> bytes:
@@ -148,14 +152,16 @@ class Move:
         struct.pack_into("<I", out, f.SPAWNER, self.spawner)
         struct.pack_into("<BB", out, f.HOST_ATTACKS, int(self.host_attacks), int(self.force))
         struct.pack_into("<HH", out, f.START, self.start, self.stop)
+        struct.pack_into("<B", out, f.AIM_OUT, self.aim_out)
         return bytes(out)
 
 
 @dataclass(frozen=True)
 class Lunge:
     """`mhfu_steer_lunge_t`: over the clip frames `window` (lo, hi] the monster travels
-    `base + range * min((d - near) / span, 1)` units along the bearing to the hunter, nothing
-    while the hunter's distance `d` at the move's first playing frame is under `near`."""
+    `base + range * min((d - near) / span, 1)` units along the bearing to its target, nothing
+    while the target's distance `d` at the move's first playing frame is under `near`; `near`,
+    `span`, `base` and `range` are scaled by the monster's size."""
 
     window: tuple[int, int]
     near: float
@@ -186,12 +192,15 @@ class Steer:
     """What `mhfu_steer_spec_t` holds: the clip's turn curve (`curve`, YAW every 2 clip frames:
     a port's turns module, `turns_of`), a turn mode on top, whether a wall ends the move, a
     class-2 one into `stuck`, and the move's own travel: `travel`, the monster's (x, z) every
-    `steering.STEP` clip frames from the move's start, and a `lunge` toward the hunter."""
+    `steering.STEP` clip frames from the move's start, a `lunge` toward the target, and its code
+    turn: `code_turn`, the entity's own yaw every `steering.STEP` clip frames, cumulative (turn
+    "aim" scales it to the angle to the target)."""
 
     curve: tuple[int, ...] = ()
     turn: str = "still"
     rate: int = 64
-    """YAW units an AI frame toward or away from the hunter."""
+    """YAW units an AI frame at clip speed 1 toward or away from the target (the move player
+    multiplies it by the clip's speed / 2)."""
     total: float = 0.0
     """Degrees "fixed" turns over `frames`, or across `window`, the way YAW grows."""
     frames: int = 1
@@ -200,10 +209,11 @@ class Steer:
     """Degrees of the travel against YAW: which wall sectors count as ahead."""
     stuck: tuple[int, int, int] = (0, 6, 1)
     window: tuple[int, int] = (0, 0)
-    """Clip frames [from, to) the hunter and away turns apply in, a fixed turn spreads across;
+    """Clip frames [from, to) the target and away turns apply in, a fixed turn spreads across;
     0, 0 the whole move."""
     travel: tuple[steering.Point, ...] = ()
     lunge: Lunge | None = None
+    code_turn: tuple[int, ...] = ()
 
     def pack(self) -> bytes:
         """struct STEER_SPEC."""
@@ -228,6 +238,9 @@ class Steer:
         if self.lunge:
             raw = self.lunge.pack()
             out[f.LUNGE : f.LUNGE + len(raw)] = raw
+        turns = steering.turn_values(self.code_turn)
+        struct.pack_into("<H", out, f.TURN_COUNT, len(turns))
+        struct.pack_into(f"<{len(turns)}h", out, f.TURNS, *turns)
         return bytes(out)
 
     @classmethod
@@ -240,6 +253,7 @@ class Steer:
         window = struct.unpack_from("<HH", raw, f.STEER + p.WIN_FROM)
         n, *stuck = struct.unpack_from("<HBBB", raw, f.KEY_COUNT)
         (count,) = struct.unpack_from("<H", raw, f.SAMPLE_COUNT)
+        (n_turns,) = struct.unpack_from("<H", raw, f.TURN_COUNT)
         held = [
             struct.unpack_from("<hh", raw, f.SAMPLES + k * a.TRAVEL_SAMPLE.size)
             for k in range(min(count, steering.MOST))
@@ -256,6 +270,7 @@ class Steer:
             (window[0], window[1]),
             steering.path_of(held),
             Lunge.unpack(raw[f.LUNGE : f.LUNGE + (a.STEER_LUNGE.size or 0)]),
+            struct.unpack_from(f"<{min(n_turns, steering.MOST_TURNS)}h", raw, f.TURNS),
         )
 
 
@@ -285,6 +300,12 @@ class SteerState(View):
     yaw = u16(a.STEER_STATE.YAW)
     lunge_x = f32(a.STEER_STATE.LUNGE_X)
     lunge_z = f32(a.STEER_STATE.LUNGE_Z)
+    keep = u8(a.STEER_STATE.KEEP)
+    blend = u16(a.STEER_STATE.BLEND)
+    ramp = s16(a.STEER_STATE.RAMP)
+    turn_scale = f32(a.STEER_STATE.TURN_SCALE)
+    out_total = s16(a.STEER_STATE.OUT_TOTAL)
+    out_frames = u16(a.STEER_STATE.OUT_FRAMES)
 
 
 class MoveState(View):
@@ -381,7 +402,7 @@ class Played:
     """The emulated clock at the ask, in microseconds cut to 32 bits: the zero of every `t`."""
     steer: Steer = NO_STEER
     yaw0: int = 0
-    """YAW on the move's first playing frame."""
+    """The entity's own yaw (BASE) on the move's first playing frame."""
     yaw: int = 0
     """YAW as the move's last step left it."""
 

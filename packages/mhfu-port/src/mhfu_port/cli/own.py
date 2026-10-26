@@ -80,7 +80,7 @@ def describe(m: manifest.Manifest, name: str, slot: int | None, shared: str | No
     s = mv.steer
     if s.turn == "hunter":
         window = "" if s.window is None else f" in frames {s.window[0]}-{s.window[1]}"
-        head += f"  turns to the hunter at {s.rate or 'the host charge'}{window}"
+        head += f"  turns to the target at {s.rate or 'the host charge'}{window}"
     if s.turn == "fixed":
         head += f"  turns {s.angle:g} degrees" + (f" in frames {s.window}" if s.window else "")
     if mv.travel:

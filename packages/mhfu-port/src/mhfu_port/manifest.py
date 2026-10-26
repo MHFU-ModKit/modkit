@@ -40,8 +40,11 @@ Skin = Literal["auto", "transfer", "source"]
 SKINS: tuple[Skin, ...] = typing.get_args(Skin)
 Shape = Literal["sphere", "capsule"]
 SHAPES: tuple[Shape, ...] = typing.get_args(Shape)
-Turn = Literal["clip", "still", "hunter", "away", "fixed"]
-TURNS: tuple[Turn, ...] = typing.get_args(Turn)
+Turn = Literal["clip", "still", "hunter", "away", "fixed", "aim"]
+DERIVED_TURNS: tuple[Turn, ...] = ("aim",)
+"""Turn modes only a derivation makes: they need a `code_turn`, so an editor does not offer them."""
+TURNS: tuple[Turn, ...] = tuple(t for t in typing.get_args(Turn) if t not in DERIVED_TURNS)
+"""The turn modes a person picks."""
 
 # shared with the behaviour graph, which sits under this module and defines them
 ManifestError = behaviour.ManifestError
@@ -215,10 +218,14 @@ class Steer:
     """How an own move turns, and whether a wall ends it."""
 
     turn: Turn = "clip"
-    """`clip` follows the clip's turn, `hunter` and `away` turn at `rate`, `fixed` turns
-    `angle` degrees over `frames` AI frames or across `window` by cursor, `still` not at all."""
+    """`clip` follows the clip's turn, `hunter` and `away` turn toward or away from the target
+    (what the monster aims at: its AI target, the player without one) at `rate`, `fixed` turns
+    `angle` degrees over `frames` AI frames or across `window` by cursor, `still` not at all.
+    `aim` scales the move's `code_turn` to turn exactly the angle to the target at its first
+    playing frame, and needs one."""
     rate: int | None = None
-    """YAW units an AI frame for `hunter` and `away`; None: the host charge's."""
+    """YAW units an AI frame at clip speed 1 for `hunter` and `away`, times the speed / 2 in play;
+    None: the host charge's."""
     angle: float | None = None
     frames: int | None = None
     walls: bool = True
@@ -231,10 +238,10 @@ class Steer:
 
 @dataclass
 class Lunge:
-    """Travel toward the hunter across clip frames `window` (lo, hi]: none while the hunter is
+    """Travel toward the target across clip frames `window` (lo, hi]: none while the target is
     nearer than `near` at the move's first playing frame, else `base + range * min((d - near) /
-    span, 1)` units along the bearing to it then, spread over the window by cursor. In world
-    units, not scaled by the monster's size."""
+    span, 1)` units along the bearing to it then, spread over the window by cursor. `near`,
+    `span`, `base` and `range` are scaled by the monster's size."""
 
     window: tuple[int, int]
     near: float
@@ -286,6 +293,14 @@ class Move:
     moves by the curve's change since the last cursor, turned by YAW then and scaled by its size;
     walls and the floor apply as to root motion."""
     lunge: Lunge | None = None
+    code_turn: list[int] | None = None
+    """An own move's code turn, the donor's entity-yaw curve: cumulative YAW units (a signed 16
+    bits each) every 2 clip frames from `start`. Each AI frame the entity's own yaw moves by the
+    curve's change since the last cursor, as `travel` moves it, the clip's facing riding on top;
+    `steer.turn = "aim"` scales it to the angle to the target."""
+    aim_out: int = 0
+    """AI frames: when this move hands over to its `after` in place, the angle still to turn to the
+    target at the switch is spread over the successor's first `aim_out` AI frames; 0: none."""
     carrier: tuple[int, int] | None = None
     host_attacks: bool = False
     label: str = ""
@@ -712,6 +727,13 @@ def _own_move(mv: Move, w: str) -> None:
     _need(s.frames is None or 1 <= s.frames <= 0x7FFF, f"{w}.steer", "frames is 1..32767")
     _need(s.angle is None or abs(s.angle) < 360, f"{w}.steer", "angle is under one turn")
     _need(s.rate is None or 1 <= s.rate <= 0xFFFF, f"{w}.steer", "rate is 1..65535")
+    _need(s.turn != "aim" or bool(mv.code_turn), f"{w}.steer", "turn = aim needs a code_turn")
+    _need(
+        mv.code_turn is None or all(-0x8000 <= v < 0x8000 for v in mv.code_turn),
+        w,
+        "code_turn values are signed 16 bits",
+    )
+    _need(0 <= mv.aim_out <= 0xFF, w, "aim_out is 0 to 255 AI frames")
     if s.window is not None:
         _need(
             s.turn in ("hunter", "away", "fixed"),
@@ -787,14 +809,16 @@ def _validate(m: Manifest) -> None:
                 "stop",
                 "travel",
                 "lunge",
+                "code_turn",
+                "aim_out",
                 "carrier",
                 "host_attacks",
             )
             _need(
                 all(getattr(mv, k) == getattr(plain, k) for k in fields),
                 w,
-                "attack, steer, length, start, stop, travel, lunge, carrier and host_attacks are "
-                "for an own move",
+                "attack, steer, length, start, stop, travel, lunge, code_turn, aim_out, carrier "
+                "and host_attacks are for an own move",
             )
         if mv.claim is not None:
             _need(bool(mv.claim.mains), w, "claim needs a main")

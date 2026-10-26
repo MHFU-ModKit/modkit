@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
+import typing
 from pathlib import Path
 
 import pytest
@@ -751,3 +752,40 @@ def test_a_host_pair_move_has_no_travel_or_lunge():
     ):
         with pytest.raises(ManifestError, match="travel, lunge"):
             M.loads(MINIMAL + pair + extra)
+
+
+AIMED = (
+    "[moves.t]\nanim = 9\naim_out = 6\ncode_turn = [0, 3000, -2]\n[moves.t.steer]\nturn = 'aim'\n"
+)
+
+
+def test_code_turn_aim_and_aim_out_round_trip():
+    m = M.loads(MINIMAL + AIMED)
+    mv = m.moves["t"]
+    assert (mv.code_turn, mv.aim_out, mv.steer.turn) == ([0, 3000, -2], 6, "aim")
+    assert M.loads(M.dumps(m)) == m
+    plain = M.loads(MINIMAL + "[moves.t]\nanim = 9\n").moves["t"]
+    assert (plain.code_turn, plain.aim_out) == (None, 0)
+
+
+def test_aim_is_derived_not_picked():
+    """An editor offers TURNS; aim needs a code turn only a derivation has."""
+    every = set(typing.get_args(M.Turn))
+    assert "aim" in every and "aim" not in M.TURNS and M.DERIVED_TURNS == ("aim",)
+    assert set(M.TURNS) | set(M.DERIVED_TURNS) == every
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "why"),
+    [
+        ("code_turn = [0, 3000, -2]\n", "", "turn = aim needs a code_turn"),
+        ("code_turn = [0, 3000, -2]\n", "code_turn = []\n", "turn = aim needs a code_turn"),
+        ("-2]", "32768]", "code_turn values are signed 16 bits"),
+        ("-2]", "-32769]", "code_turn values are signed 16 bits"),
+        ("aim_out = 6", "aim_out = 256", "aim_out is 0 to 255"),
+        ("aim_out = 6", "aim_out = -1", "aim_out is 0 to 255"),
+    ],
+)
+def test_a_code_turn_and_aim_out_are_checked(old, new, why):
+    with pytest.raises(ManifestError, match=why):
+        M.loads(MINIMAL + AIMED.replace(old, new))

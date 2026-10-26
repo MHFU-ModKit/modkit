@@ -136,9 +136,9 @@ the engine counts the flinch and applies the damage, then enters the move's carr
 
 ## Own moves from a manifest
 
-A port's own moves sit in a registry by slot (`mhfu.em_move`): `mhfu.addr.OWN_MOVES` (128) of
-them, and the turn keys (`EM_KEYS`, 2944), travel samples (`EM_SAMPLES`, 1280) and lunges
-(`EM_LUNGES`, 12) they share, in one 24 KB partition block. These are consts in
+A port's own moves sit in a registry by slot (`mhfu.em_move`): `mhfu.addr.OWN_MOVES` (160) of
+them, and the turn keys (`EM_KEYS`, 2944), travel samples (`EM_SAMPLES`, 1280), code-turn values
+(`EM_TURNS`, 1024) and lunges (`EM_LUNGES`, 12) they share, in one partition block. These are consts in
 `addresses.toml`: raising one is that one line, every offset after it is laid out from it. A run
 a pool holds already, anywhere in it, word for word (a lunge byte for byte), is shared, not
 appended: `mhfu_port.moves.Pools` counts the same way, so a module its check passes fits. The seam's
@@ -161,21 +161,46 @@ move's `start`: cumulative, x toward its left and z forward in its frame when th
 16-bit samples of 1/`STEER_TRAVEL_SCALE` units (8 hex digits a sample in the moves module,
 `mhfu.steering`), at most `STEER_SAMPLES` a move. Each AI frame the move player adds the curve's
 change since the clip cursor's last frame (straight lines between samples, so any cursor rate
-and the blend's hold are right) to POSITION, turned by that YAW and scaled by the monster's size.
+and the blend's hold are right) to POSITION, turned by the entity's own YAW when the move began
+(the base the clips' facing rides on, as the donor's travel is in the start yaw) and scaled by the
+monster's size.
 It does so before the engine's root motion, wall push-out and floor in the same frame: walls
 undo it as they undo root motion, and the floor keeps the height. `steer.lunge = { window = {
-lo, hi }, near, span, base, range }` travels toward the hunter across the clip frames (lo, hi]: by
-the hunter's XZ distance `d` when the move began, nothing under `near`, else `base + range *
-min((d - near) / span, 1)` units along the bearing to the hunter then, in world axes and not
-scaled. A fixed turn with a `window` turns `total` across it by the cursor instead of over
-`frames` AI frames. All of it is data in the registry and in `mhfu.move_play`'s steer; a move
-without it writes what it always did.
+lo, hi }, near, span, base, range }` travels toward the target across the clip frames (lo, hi]: by
+the target's XZ distance `d` when the move began, nothing under `near`, else `base + range *
+min((d - near) / span, 1)` units along the bearing to the target then, in world axes, with `near`,
+`span`, `base` and `range` times the monster's size. The target is what `ENTITY.TARGET` points at,
+the player when it is 0 or not RAM: the turn reads it every frame, the lunge at the move's first,
+the brain's distance and side gates too. A turn's `rate` is YAW units a frame at clip speed 1 (times
+the clip's speed / 2 in play) and turns the entity's own YAW, which the clip's turn rides on. An
+`after` on the same carrier plays in the AI frame its move ends, the carrier not entered again; it
+keeps the entity's own YAW, and the jump in the clips' facing fades over its blend. A fixed turn
+with a `window` turns `total` across it by the cursor instead of over `frames` AI frames. All of it
+is data in the registry and in `mhfu.move_play`'s steer; a move without it writes what it always
+did.
+
+A move's own yaw can follow a code turn, MHP3rd's entity-yaw curves. `steer.code_turn` is the YAW
+units turned since the move's `start`, cumulative, every `STEER_KEY_STEP` clip frames (4 hex digits
+a value, signed 16 bits, at most `STEER_TURNS` a move; `mhfu.steering`). Each AI frame the entity's
+own YAW (the base the clips' facing rides on) moves by the curve's change since the cursor's last
+frame, as travel does, a loop included. `turn = "aim"` scales it by the angle to the target on the
+move's first playing frame over the curve's total, so the move turns exactly that angle along the
+curve's shape. A move's `aim_out` (AI frames) makes a hand-over in place carry what is still to
+turn to the target at the switch into the successor's own YAW, linearly over its first `aim_out`
+AI frames, on top of its own steering.
 
 An AI script plays own move k with `enter 16 k 0` (`mhfu.addr.OWN_MOVE_MAIN`): the enter-action
-stub enters the slot's carrier (the hub `(0,2)` for an empty or out-of-range slot, the game never
-sees main 16), files a forced play, and the brain starts the move at the next AI step; the script
-carries on after its `enter` once the move and its `after` chain end and the carrier hands back.
-`mhfu.em_status()` has `own_enters` and `own_last`, and the ring shows `(16, k)`.
+stub enters the slot's carrier (the hub `(0,2)` for an empty slot, the game never sees main 16),
+files a forced play, and the brain starts the move at the next AI step; the script carries on after
+its `enter` once the move and its `after` chain end and the carrier hands back. `mhfu.em_status()`
+has `own_enters` and `own_last`, and the ring shows `(16, k)`.
+
+An id k from `OWN_MOVES` to 255 is a combo, registered with `mhfu.em_combo(k, first, then)` once
+the moves are: the stub enters the hub and files the id (it reads no slot past the registry), and
+the brain plays slot `first`, which must ride the hub, with slot `then` following in place in the
+AI frame it ends, as an `after` does and instead of `first`'s own. Only that play follows: any
+other play of `first`, a reaction, a stop or a replacement drops the `then`. It is how one shared
+move hands over to a different attack for each caller without a slot per pair.
 
 ## Rules on monster events
 
