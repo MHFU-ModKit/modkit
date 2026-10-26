@@ -66,6 +66,8 @@ X, Y, Z = 0x80, 0x84, 0x88
 """The entity's position cells."""
 VELOCITY, ACCELERATION, GROUND = 0xB0, 0xC0, 0xD8
 """Velocity (x, y, z), acceleration (x, y, z) and the floor height, in cells 4 bytes apart."""
+SPEED = 0xAC4
+"""The cell of the clip's speed, the factor a handler's turn rates go by: 1.0 in a walk."""
 REST = 298.0
 """The height over the floor a monster stands at: the value the donor's stamp snaps to when it
 lands, and the one its landing test reads (`Y - D8 <= 298`). Not read from a cell: MOVE_MODE(0)
@@ -214,6 +216,7 @@ class Motion:
             self.cells.update({base: 0.0, base + 4: 0.0, base + 8: 0.0})
         self.cells[Y] = self.rest
         self.cells[GROUND] = 0.0
+        self.cells[SPEED] = 1.0
 
     # --- a step and an AI frame ---
 

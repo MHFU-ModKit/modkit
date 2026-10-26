@@ -320,6 +320,37 @@ def test_a_tail_call_is_told_to_decide_with_cells():
     assert heard == [(helper, (5,))]
 
 
+GLOBAL = 0x0090_9600  # a word the code does not own, where a global pointer sits
+
+
+def global_word() -> Code:
+    """Plays 54 where the word at +0x540 off the pointer at GLOBAL is 2, else 46."""
+    return code(
+        asm.lui("v0", asm.hi(GLOBAL)),
+        asm.lw("v1", asm.lo(GLOBAL), "v0"),
+        asm.lw("t0", 0x540, "v1"),
+        asm.li("v0", 2),
+        asm.bne("t0", "v0", va(7), va(4)),
+        asm.li("a1", 46),  # the delay slot runs either way
+        asm.li("a1", 54),
+        asm.jal(a.ACTION_EXECUTOR),  # 7
+        asm.NOP,
+        asm.RET,
+        asm.NOP,
+    )
+
+
+def test_a_word_off_a_global_pointer_is_the_one_told():
+    def played(**kw):
+        w = Walker(global_word(), {a.ACTION_EXECUTOR: "anim"}, **kw)
+        return sorted(s.args[0] for s in w.run(BASE))
+
+    assert played() == [46, 54]  # unknown: it forks
+    assert played(pointers={GLOBAL: {0x540: 2}}) == [54]
+    assert played(pointers={GLOBAL: {0x540: 3}}) == [46]
+    assert played(pointers={GLOBAL: {0x544: 2}}) == [46, 54]  # another word is not told
+
+
 def test_a_branch_on_the_compare_not_holding():
     w = Walker(float_branch(asm.bc1f), {a.ACTION_EXECUTOR: "anim"})
     assert [s.args[0] for s in w.run(BASE, cells={0x84: 5.0})] == [1]

@@ -599,6 +599,23 @@ def test_zinogre_tumbles_turn_by_the_donors_totals(plans):
     assert roll.travel[-1] == pytest.approx((52, 232), abs=0.5)
 
 
+@pytest.mark.parametrize(
+    ("pair_", "clip", "rate"),
+    [
+        ((7, 12), 203, 546),
+        ((7, 86), 213, 728),
+        ((7, 89), 247, 1365),
+        ((7, 99), 231, 637),
+        ((7, 16), 30, 182),
+        ((7, 150), 200, 1001),  # the word at +0x540 reads 2: 5.5 degrees, not 4
+        ((7, 17), 253, 1001),
+    ],
+)
+def test_zinogre_turn_rates_are_the_donors_at_clip_speed_one(plans, pair_, clip, rate):
+    """`trunc(deg * ent[0xAC4] * 65536 / 360 + 0.5)`, every site resolved."""
+    assert step_of(plans(*pair_), clip).turns[0].rate == rate
+
+
 def test_a_step_without_code_motion_carries_none(plans):
     for s in plans(7, 22).steps[:1]:
         assert (s.travel, s.lift, s.lunge, s.spreads) == ((), (), None, ())

@@ -201,9 +201,10 @@ class Tag:
     """A value the walker knows by origin, not by number."""
 
     kind: str
-    """entity, vtable, method (a vtable slot), cell (a load from the entity), result."""
+    """entity, vtable, method (a vtable slot), cell (a load from the entity), result, global (a
+    pointer the walker was told of)."""
     n: int | None = None
-    """The slot, the cell's offset, or the callee a result came from."""
+    """The slot, the cell's offset, the callee a result came from, or the global's address."""
     frame: float | None = None
     """For a clip predicate's result, the frame it tested."""
     size: int = 0
@@ -214,6 +215,8 @@ class Tag:
 
 Value = int | Tag
 ENTITY = Tag("entity")
+Pointers = Mapping[int, Mapping[int, int]]
+"""Global pointers by the address they sit at: the words a load off the pointer reads, by offset."""
 VTABLE = Tag("vtable")
 Cell = tuple[int, int]
 """An entity cell: (offset, width in bytes)."""
@@ -359,8 +362,9 @@ class Walker:
     arithmetic on them; a call to a `returns` target leaves that float in $f0. A float register
     is held as its bits, so `args` can name one (`Fpr.fa0`). With `cells` (see `run`) it also
     reads and writes the entity's float cells and decides a branch on a float compare of two
-    values it knows. A pc runs at most once per path;
-    `max_paths` path ends and `max_steps` per path bound a walk, and `truncated` names the
+    values it knows. With `pointers` a load of a word at a listed address is that pointer, and a
+    word loaded off it is the one listed (an unlisted one is unknown). A pc runs at most once per
+    path; `max_paths` path ends and `max_steps` per path bound a walk, and `truncated` names the
     functions that hit one.
     """
 
@@ -373,6 +377,7 @@ class Walker:
         follow: Collection[int] | None = None,
         depth: int = 1,
         facts: Facts | None = None,
+        pointers: Pointers | None = None,
         names: Mapping[int, str] | None = None,
         args: tuple[Register, ...] = (Gpr.a1, Gpr.a2, Gpr.a3),
         probes: Mapping[int, Register] | None = None,
@@ -385,6 +390,7 @@ class Walker:
         self.methods = dict(methods or {})
         self.follow = follow
         self.depth, self.facts, self.names = depth, dict(facts or {}), dict(names or {})
+        self.pointers = {at: dict(words) for at, words in (pointers or {}).items()}
         self.args, self.probes = args, dict(probes or {})
         self.returns = {target: _float_bits(v) for target, v in (returns or {}).items()}
         self._found: list[tuple[dict[Site, None], tuple[int, ...]]] = []
@@ -752,8 +758,11 @@ class Walker:
                 return Tag("cell", off, size=width)
             if base == VTABLE and u == InstrId.cpu_lw:
                 return Tag("method", off)
+            if isinstance(base, Tag) and base.kind == "global" and u == InstrId.cpu_lw:
+                return self.pointers.get(base.n or 0, {}).get(off)
             if isinstance(base, int) and u == InstrId.cpu_lw:
-                return self._tables.get((base + off) & _MASK)
+                at = (base + off) & _MASK
+                return Tag("global", at) if at in self.pointers else self._tables.get(at)
             if isinstance(base, int) and u == InstrId.cpu_lwc1:
                 try:
                     return self.code.mem.u32((base + off) & _MASK)

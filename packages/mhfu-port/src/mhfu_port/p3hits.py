@@ -47,6 +47,7 @@ from rabbitizer import InstrId, Instruction
 from . import motion, p3motion
 from . import p3moveset as p3
 from .brain.p3 import Species
+from .brain.splice import GLOBAL_540
 from .p3motion import Lunge, Motion, Pose, Spread
 from .p3moveset import Moveset, Pair, Pairs
 from .travel import KEY_STEP
@@ -93,6 +94,9 @@ CURSOR_STEP = 0x09C9DF10  # noaddr: () $f0 the clip cursor's step this frame
 TURN = 0x09CA12F4  # noaddr: (entity, rate) turns toward the target by at most rate YAW units
 MOTION = (*sorted(p3motion.TARGETS), 0x0889F098)  # noaddr: a curve table read at the cursor
 """Calls that move the monster by code rather than by the clip."""
+GLOBALS = 0x09DA9600  # noaddr: a pointer to the global object a handler tests a word of
+GLOBAL_WORD = 0x540
+"""That word's offset: the handlers compare it with `GLOBAL_540` as the script does."""
 STEP_FRAMES = 2.0
 """Clip frames the cursor advances in an AI frame at normal speed."""
 MIN_TRAVEL, MIN_LIFT = 0.5, 1.0
@@ -463,6 +467,7 @@ class Walk:
             depth=3,
             guards=False,
             args=ARGS,
+            pointers={GLOBALS: {GLOBAL_WORD: GLOBAL_540}},
             probes=stores,
             returns={CURSOR_STEP: step},
             max_paths=512,

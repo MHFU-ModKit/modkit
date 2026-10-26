@@ -192,6 +192,21 @@ def test_the_stamp_waits_16_or_39_frames_and_hops_for_18(zinogre):
     assert hop.travel[-1] == pytest.approx((83, 1401), rel=0.01, abs=1)
 
 
+def test_every_hunter_turn_has_the_donors_rate(zinogre):
+    hunters = {
+        n: mv.steer.rate
+        for n, mv in zinogre.m.moves.items()
+        if n.startswith("p3_") and mv.steer.turn == "hunter"
+    }
+    assert hunters and None not in hunters.values()
+    assert [hunters[n] for n in ("p3_7_12", "p3_7_86", "p3_7_89", "p3_7_150")] == [
+        546,
+        728,
+        1365,
+        1001,
+    ]
+
+
 def test_the_sidesteps_travel_across_their_window_and_turn_half_way(zinogre):
     m = zinogre.m
     left, right = m.moves["p3_2_16"], m.moves["p3_2_17"]
