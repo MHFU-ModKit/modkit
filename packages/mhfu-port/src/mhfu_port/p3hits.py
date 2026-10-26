@@ -25,6 +25,14 @@ It keeps a `p3motion.Motion` too, the cells a handler moves the monster by (posi
 acceleration, the floor), which the float loads, stores and helpers of the code act on, so the
 tests of the clip cursor and of the height come out as they do in the game. Each step carries what
 that motion came to in its own frame: `travel`, `lift`, `lunge` and `spreads`.
+
+A handler that reads the bearing of its target (`ANGLE`, the side rule `SIDE`) has the walk answer
+it for a bearing `D` (a `plan` with `bearing`): the target stands D YAW units to the left of the
+monster's facing. The walk then also carries every entity cell the handler stores from one AI
+frame to the next, so its phases, flags and yaw come out as they do in the game, and records the
+yaw the handler's code adds (`Step.code`). `arms` walks such a handler at 45 degree steps of D,
+finds each change of plan to 1/256 of a turn (the script's arc resolution) and gives the arcs
+that play one plan alike: `Arm`.
 """
 
 from __future__ import annotations
@@ -32,8 +40,8 @@ from __future__ import annotations
 import bisect
 import math
 import struct
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, NamedTuple
 
 import rabbitizer
@@ -97,6 +105,20 @@ MOTION = (*sorted(p3motion.TARGETS), 0x0889F098)  # noaddr: a curve table read a
 GLOBALS = 0x09DA9600  # noaddr: a pointer to the global object a handler tests a word of
 GLOBAL_WORD = 0x540
 """That word's offset: the handlers compare it with `GLOBAL_540` as the script does."""
+ANGLE = 0x08876E84  # noaddr: (from, to) the bearing of a point from another, in YAW units
+SIDE = 0x09DB41B8  # noaddr: (entity) 1 when the target's bearing minus the yaw is 0 to a half turn
+CARRY = 0x09DB426C  # noaddr: (entity, main, sub, blend) hands over to a pair, the blend carried
+BLEND_IN = 0x09CA67D8  # noaddr: (entity) 1 while the playing clip is blending in
+YAW = (0x74, 4)
+"""The entity's yaw, as a cell."""
+HALF = 0x8000
+"""YAW units in half a turn; bit 15 of a bearing minus the yaw is the side."""
+BUCKETS = 256
+"""The script's arc resolution: a turn in 256ths. Bucket `k` is judged at bearing `256 k + 1`."""
+SAMPLE = 32
+"""Buckets between the bearings a handler is first walked at: 45 degrees."""
+MIN_CODE = 16
+"""YAW units a code turn comes to under which it is left out."""
 STEP_FRAMES = 2.0
 """Clip frames the cursor advances in an AI frame at normal speed."""
 MIN_TRAVEL, MIN_LIFT = 0.5, 1.0
@@ -138,6 +160,8 @@ WATCH = {
     p3.ATTACK0: "spawn0",
     KILL: "kill",
     TURN: "turn",
+    SIDE: "side",
+    CARRY: "carry",
     **dict.fromkeys(MOTION, "motion"),
 }
 """What the walk records, by call target; a kind that needs its target carries it after a colon."""
@@ -301,6 +325,15 @@ class Step:
     lunge: Lunge | None = None
     spreads: tuple[Spread, ...] = ()
     """The turns of a fixed total it makes."""
+    code: tuple[int, ...] = ()
+    """The yaw its code adds, cumulative YAW units at the clip frames `start`, `start + 2`, ...
+    (the first is 0): walked at a bearing only. Empty: none."""
+    aim: bool = False
+    """`code` is the curve for an `aim` turn: its total is the angle its arm ends at, and the
+    handler turns exactly the bearing."""
+    hand: int | None = None
+    """The blend, in AI frames, the pair hands over with, when this is its last step and the
+    handler says it."""
 
 
 @dataclass(frozen=True)
@@ -324,6 +357,19 @@ class Plan:
     notes: tuple[Note, ...] = ()
     alternatives: tuple[tuple[int, ...], ...] = ()
     """The clips of the other paths its branches could take."""
+    reads: bool = False
+    """A run asked for the bearing of the target (`ANGLE`, `SIDE`)."""
+    bearing: int | None = None
+    """The bearing it was walked at; None: not at one."""
+
+
+class Arm(NamedTuple):
+    """The bearings a handler plays one plan at."""
+
+    arcs: tuple[tuple[int, int], ...]
+    """Runs of buckets (lo, hi), 256ths of a turn to the left of the facing, both ends in."""
+    plan: Plan
+    """The plan, walked at `plan.bearing`."""
 
 
 @dataclass(frozen=True)
@@ -376,6 +422,12 @@ class _Step:
     """The position after each AI frame by `elapsed`, x and z from `origin`, y over rest."""
     lunge: Lunge | None = None
     spreads: list[Spread] = field(default_factory=list)
+    yaw: int | None = None
+    """The yaw cell as the last AI frame left it; None: not followed."""
+    turned: int = 0
+    """The YAW units the code added since the step began."""
+    yaws: dict[float, int] = field(default_factory=dict)
+    """`turned` after each AI frame by `elapsed`."""
 
 
 @dataclass
@@ -425,6 +477,15 @@ class _Run:
     """Where the monster was at each clip start of this tick, by call site."""
     events: list[tuple[int, Lunge | Spread]] = field(default_factory=list)
     """What the helpers asked for this tick, with the clip starts that came before it."""
+    bearing: int | None = None
+    """Where the target is, YAW units to the left of the facing the run began with; None: not
+    known."""
+    read: bool = False
+    """The handler asked for the bearing."""
+    blend_in: int = 0
+    """AI frames of the playing clip's blend that are left."""
+    hand: int | None = None
+    """The blend the pair handed over with."""
 
     @property
     def current(self) -> _Step | None:
@@ -472,6 +533,7 @@ class Walk:
             returns={CURSOR_STEP: step},
             max_paths=512,
         )
+        self._armed: dict[int | None, list[tuple[tuple[object, ...], tuple[Arm, ...]]]] = {}
         self._hook = self._hook_function()
         self._hook_walker = Walker(
             ms.code,
@@ -507,19 +569,22 @@ class Walk:
 
     # --- the plan ---
 
-    def plan(self, pair: Pair) -> Plan:
+    def plan(self, pair: Pair, bearing: int | None = None) -> Plan:
         """The default path through `pair`'s handler. Every branch the walk cannot decide falls
         through; then each is tried alone another way (`BRANCHES`). The outcome that spawns the
-        most attacks wins, then the one that plays the fewest clips, then the first tried."""
+        most attacks wins, then the one that plays the fewest clips, then the first tried.
+
+        With a `bearing` (YAW units, the target to the left of the facing) the handler's reads of
+        the target's bearing are answered, and what it stores carried from frame to frame."""
         at = (pair.main, pair.sub)
         if pair.handler is None or self.ms.tick_entry is None:
             return Plan(at, (), (), False, (Note("unresolved", "it has no handler of its own"),))
-        first = self._run(pair, {})
+        first = self._run(pair, {}, bearing=bearing)
         runs = [first]
         for how in BRANCHES:
             for pc in first.trail:
                 if len(runs) < MAX_RUNS:
-                    runs.append(self._run(pair, {**first.vector, pc: how}))
+                    runs.append(self._run(pair, {**first.vector, pc: how}, bearing=bearing))
         best = min(runs, key=lambda r: (not r.left, -_spawns(r), len(r.done)))
         chain = tuple(s.clip for s in best.done)
         others: list[tuple[int, ...]] = []
@@ -535,7 +600,17 @@ class Walk:
         ]
         if len(first.trail) * len(BRANCHES) >= MAX_RUNS:
             notes.append(Note("limit", f"only {len(runs) - 1} runs of its branches were tried"))
-        return Plan(at, tuple(best.done), best.leaves, best.left, tuple(notes), tuple(others))
+        reads = any(r.read for r in runs)
+        return Plan(
+            at,
+            tuple(best.done),
+            best.leaves,
+            best.left,
+            tuple(notes),
+            tuple(others),
+            reads,
+            bearing,
+        )
 
     def settle(self, pair: Pair, hp: float | None = None) -> Settled:
         """`pair`'s handler run to its end on the default path, with the float tests of the HP
@@ -544,10 +619,90 @@ class Walk:
         run = self._run(pair, {}, hp)
         return Settled(dict(run.cells), run.left, run.ticks, tuple(run.trail))
 
-    def _run(self, pair: Pair, vector: dict[int, int], hp: float | None = None) -> _Run:
+    # --- the arms ---
+
+    def arms(self, pair: Pair, base: Plan | None = None) -> tuple[Arm, ...]:
+        """The plans `pair`'s handler plays by the target's bearing: where it asks for it, the
+        handler is walked with the target at every 45 degrees, each change of plan found to a
+        bucket (1/256 of a turn, `BUCKETS`) by bisection, and the runs of buckets that play one
+        plan are an arm. Plans are compared by their clips, where they start and stop, and where
+        they hand over to. A handler that plays one plan everywhere has one arm, its plan walked
+        with no bearing (`base`, if the caller has it). An arm's plan is walked at the middle of
+        its widest run; where it turns by code, a second bearing in the run tells a turn that goes
+        by the bearing (the curve scaled to it) from one that does not.
+
+        Pairs of one handler that differ in what they hand over to alone (the wrappers of a turn,
+        each leading to another pair) walk alike at every bearing sampled: they share the arms."""
+        base = base if base is not None else self.plan(pair)
+        whole = ((0, BUCKETS - 1),)
+        if not base.reads or pair.handler is None or self.ms.tick_entry is None:
+            return (Arm(whole, base),)
+        runs: dict[int, _Run] = {}
+
+        def probe(k: int) -> _Run:
+            if k not in runs:
+                runs[k] = self._run(pair, {}, bearing=_bearing_of(k))
+            return runs[k]
+
+        def sig(k: int) -> tuple[object, ...]:
+            return _signature(probe(k))
+
+        samples = [*range(0, BUCKETS, SAMPLE), BUCKETS - 1]
+        seen = tuple((tuple(probe(k).done), probe(k).left) for k in samples)
+        if len({sig(k) for k in samples}) == 1:
+            return (Arm(whole, base),)
+        for earlier, arms in self._armed.get(pair.handler, []):
+            if earlier == seen:
+                return tuple(_rehanded(arm, pair, probe, samples) for arm in arms)
+        edges = [0]
+        for a, b in zip(samples, samples[1:], strict=False):
+            if sig(a) == sig(b):
+                continue
+            lo, hi = a, b
+            while hi - lo > 1:
+                mid = (lo + hi) // 2
+                lo, hi = (mid, hi) if sig(mid) == sig(lo) else (lo, mid)
+            edges.append(hi)
+        spans = [(lo, hi - 1) for lo, hi in zip(edges, [*edges[1:], BUCKETS], strict=True)]
+        groups: dict[tuple[object, ...], list[tuple[int, int]]] = {}
+        for span in spans:
+            groups.setdefault(sig(span[0]), []).append(span)
+        planned: dict[tuple[object, ...], Arm] = {}
+        for arcs in groups.values():
+            lo, hi = max(arcs, key=lambda a: a[1] - a[0])
+            at = (lo + hi) // 2
+            alt = lo if at - lo >= hi - at else hi
+            plan = self.plan(pair, _bearing_of(at))
+            aimed = _aimed(plan, (lo, hi), at, alt, probe(alt))
+            same = planned.get(_plan_signature(aimed))
+            joined = (*(same.arcs if same else ()), *arcs)
+            planned[_plan_signature(aimed)] = Arm(
+                tuple(sorted(joined)), same.plan if same else aimed
+            )
+        out = tuple(planned.values())
+        if len(out) == 1:
+            out = (Arm(whole, base),)
+        self._armed.setdefault(pair.handler, []).append((seen, out))
+        return out
+
+    def _run(
+        self,
+        pair: Pair,
+        vector: dict[int, int],
+        hp: float | None = None,
+        bearing: int | None = None,
+    ) -> _Run:
         tick = self.ms.tick_entry
         assert tick is not None
-        run = _Run(dict(vector), Motion(self.ms.ovl, self.rest), cells=dict(self.facts), hp=hp)
+        run = _Run(
+            dict(vector),
+            Motion(self.ms.ovl, self.rest),
+            cells=dict(self.facts),
+            hp=hp,
+            bearing=bearing,
+        )
+        if bearing is not None:
+            run.cells[YAW] = 0
         decide = self._decider(run)
         at = self._dispatched(pair)
         while run.ticks < MAX_TICKS:
@@ -559,7 +714,9 @@ class Walk:
                 **known({PHASE: run.phase, p3.MAIN: at[0], p3.SUB: at[1]}),
                 **run.cells,
             }
-            sites = self._walker.run(tick, None, facts, decide, run.kin.cells)
+            sites = self._walker.run(
+                tick, None, facts, decide, run.kin.cells, persist=bearing is not None
+            )
             if self._hook is not None and run.clip is not None:
                 sites += self._hook_walker.run(self._hook, None, None, decide)
             phase = run.phase
@@ -597,6 +754,11 @@ class Walk:
                 return None  # a tail call: only the motion is told of those
             if target in CURSOR_GATES:
                 return self._gate(run, args)
+            if target in (ANGLE, SIDE):
+                return self._bearing(run, target)
+            if target == BLEND_IN:
+                run.moved = run.moved or run.blend_in > 0  # the answer changes: no skipping
+                return int(run.blend_in > 0)
             if target == CLIP_ENDED:
                 return self._ask(run, _Query(None))
             if target == CLIP_ID:
@@ -612,6 +774,16 @@ class Walk:
             return None
 
         return decide
+
+    def _bearing(self, run: _Run, target: int) -> int | None:
+        """The bearing of the target (`ANGLE`: the world's, as it stood when the run began) or its
+        side of the yaw (`SIDE`), for the bearing the run is at; None where it is at none."""
+        run.read = True
+        if run.bearing is None:
+            return None
+        if target == ANGLE:
+            return run.bearing & 0xFFFF
+        return int(not (run.bearing - run.cells.get(YAW, 0)) & HALF)
 
     def _act(self, run: _Run, target: int, args: tuple[int | None, ...]) -> float | None:
         """A helper the motion acts for, or a read of the clip it answers."""
@@ -632,6 +804,11 @@ class Walk:
         step = run.current
         if step is not None:
             step.trace[step.elapsed] = _relative(step, run.kin.now(), self.rest)
+            if (yaw := run.cells.get(YAW)) is not None:
+                if step.yaw is not None:
+                    step.turned += _signed16(yaw - step.yaw)
+                step.yaw = yaw
+                step.yaws[step.elapsed] = step.turned
 
     def _branch(self, run: _Run, pc: int) -> int:
         if run.hp is not None and (said := self._test_hp(pc, run.hp)) is not None:
@@ -778,6 +955,13 @@ class Walk:
                 self._spawn(run, s, kind == "spawn")
             elif kind == "kill":
                 self._kill(run, s.args[0])
+            elif kind == "store":
+                off, width, value = s.args
+                assert off is not None and width is not None
+                for cell in [c for c in run.cells if c[0] < off + width and off < c[0] + c[1]]:
+                    del run.cells[cell]
+                if value is not None:
+                    run.cells[off, width] = value
             elif kind == "probe" and s.site in self._cells:
                 cell = self._cells[s.site]
                 if s.args[0] is not None:
@@ -792,9 +976,11 @@ class Walk:
                     run.notes.append(Note("motion", "the handler moves the monster by code"))
             elif kind == "end":
                 self._leave(run, p3.END[int(target, 16)])
-            elif kind == "enter":
+            elif kind in ("enter", "carry"):
                 a = s.args
                 self._leave(run, ((a[0], a[1]),) if a[0] is not None and a[1] is not None else ())
+                if kind == "carry":
+                    run.hand = a[2]
 
     def _play(self, run: _Run, pair: Pair, s: Site) -> None:
         clip = s.args[0]
@@ -840,10 +1026,11 @@ class Walk:
             hit = Hit(slot, node.hit.record, node.hit.flags, float(start), end, True)
             carried[slot] = _Node(hit, node.left)
         run.nodes = carried
-        step = _Step(clip, blend, float(start), origin=where)
+        step = _Step(clip, blend, float(start), origin=where, yaw=run.cells.get(YAW))
         step.hits.extend(n.hit for n in carried.values())
         run.steps.append(step)
         run.clip, run.cursor, run.played = clip, float(start), True
+        run.blend_in = blend or 0
 
     def _at(self, run: _Run) -> float:
         """The clip frame an event of this tick happens at: the frame of the crossing that let it
@@ -891,6 +1078,7 @@ class Walk:
             return
         step.ticks += n
         step.elapsed += n * self.step
+        run.blend_in = max(0, run.blend_in - n)
         length = self.lengths.get(step.clip)
         run.cursor += n * self.step
         for node in run.nodes.values():
@@ -916,7 +1104,9 @@ class Walk:
                 return q.hi if was and q.mode in WINDOWS else q.lo
         return None
 
-    def _close_step(self, run: _Run, how: How, stop: float | None = None) -> None:
+    def _close_step(
+        self, run: _Run, how: How, stop: float | None = None, hand: int | None = None
+    ) -> None:
         step = run.current
         if step is None:
             return
@@ -941,13 +1131,16 @@ class Walk:
                 _height(step.trace, round(ticks * self.step)),
                 step.lunge,
                 tuple(step.spreads),
+                _code(step.yaws),
+                False,
+                hand,
             )
         )
         run.steps.pop()
 
     def _close(self, run: _Run) -> None:
         how: How = "clip" if run.ended else "pair" if run.left else "cursor"
-        self._close_step(run, how)
+        self._close_step(run, how, hand=run.hand if run.left else None)
         if run.kin.lost:
             run.notes.append(Note("motion", f"its motion could not be followed: {run.kin.lost}"))
 
@@ -980,6 +1173,106 @@ def _turns(step: _Step) -> tuple[Turn, ...]:
         one = gates.pop() if len(gates) == 1 else None
         out.append(Turn(rate, one or (min(a for a, _, _ in found), max(b for _, b, _ in found))))
     return tuple(out)
+
+
+def _bearing_of(bucket: int) -> int:
+    """The bearing, YAW units to the left of the facing, a bucket is judged at: one unit past its
+    lower edge, so that a test at a whole fraction of a turn falls on the side it has the bucket
+    after it."""
+    d = bucket * 256 + 1
+    return d - 0x10000 if d >= HALF else d
+
+
+def _signature(run: _Run) -> tuple[object, ...]:
+    """What makes two runs one plan: the clips, from where to where, and what they hand over to."""
+    return tuple((s.clip, s.start, s.stop) for s in run.done), run.leaves, run.left
+
+
+def _plan_signature(plan: Plan) -> tuple[object, ...]:
+    """What makes two plans one arm: their clips, from where to where, and where they lead."""
+    return tuple((s.clip, s.start, s.stop) for s in plan.steps), plan.leaves, plan.complete
+
+
+def _rehanded(arm: Arm, pair: Pair, probe: Callable[[int], _Run], samples: Sequence[int]) -> Arm:
+    """`arm` of another pair of the handler, with what `pair` hands over to at a bearing in it."""
+    k = next(k for k in samples if any(lo <= k <= hi for lo, hi in arm.arcs))
+    plan = replace(arm.plan, pair=(pair.main, pair.sub), leaves=probe(k).leaves)
+    return Arm(arm.arcs, plan)
+
+
+def _outer(span: tuple[int, int]) -> int:
+    """The largest angle, in YAW units, a bearing of the buckets `span` is off the facing."""
+    lo, hi = span
+    if hi < BUCKETS // 2:
+        return (hi + 1) * 256
+    return (BUCKETS - lo) * 256 if lo >= BUCKETS // 2 else HALF
+
+
+def _near(t: int, d: int) -> bool:
+    """`t` is `d` YAW units, within what rounding along a curve costs."""
+    return abs(t - d) <= 64 + abs(d) // 32
+
+
+def _aimed(plan: Plan, span: tuple[int, int], at: int, alt: int, other: _Run) -> Plan:
+    """`plan`, walked at bucket `at`, with each step's turns told by the bearing, from a run
+    (`other`) at bucket `alt` of the same arm:
+
+    - a turn by code that comes to the bearing itself at both is one that goes by the bearing:
+      `Step.code` is the curve scaled to the angle `span` ends at, and `aim` is set; one that comes
+      to the same at both is a curve that stands as it is;
+    - a fixed turn (`spreads`) the other run does not make too depends on the bearing: it is
+      dropped, with a note, for the plan to carry the same turn wherever the target is."""
+    d1, d2 = _bearing_of(at), _bearing_of(alt)
+    steps, notes = [], list(plan.notes)
+    for i, step in enumerate(plan.steps):
+        twin = other.done[i] if i < len(other.done) and other.done[i].clip == step.clip else None
+        if twin is None or abs(d1 - d2) < 512:
+            steps.append(step)
+            continue
+        if gone := [sp for sp in step.spreads if sp not in twin.spreads]:
+            step = replace(step, spreads=tuple(sp for sp in step.spreads if sp not in gone))
+            text = (
+                f"clip {step.clip}: a turn of {gone[0].degrees:.0f} degrees depends on the bearing"
+            )
+            notes.append(Note("motion", text))
+        if step.code:
+            t1, t2 = step.code[-1], twin.code[-1] if twin.code else 0
+            if not _near(t1, t2) and _near(t1, d1) and _near(t2, d2):
+                size = min(_outer(span), 0x7FFF) * (1 if t1 > 0 else -1)
+                code = tuple(max(-0x7FFF, min(0x7FFF, round(c * size / t1))) for c in step.code)
+                step = replace(step, code=code, aim=True)
+        steps.append(step)
+    return replace(plan, steps=tuple(steps), notes=tuple(notes))
+
+
+def _signed16(x: int) -> int:
+    """The low 16 bits of `x` as a signed YAW difference."""
+    x &= 0xFFFF
+    return x - 0x10000 if x >= HALF else x
+
+
+def _interp(keys: Sequence[float], series: Mapping[float, int], frame: float) -> float:
+    """The series at clip frame `frame`: straight lines between its points (`keys`, in order),
+    held past them."""
+    if frame <= keys[0]:
+        return series[keys[0]]
+    if frame >= keys[-1]:
+        return series[keys[-1]]
+    hi = bisect.bisect_right(keys, frame)
+    a, b = keys[hi - 1], keys[hi]
+    return series[a] + (frame - a) / (b - a) * (series[b] - series[a])
+
+
+def _code(turns: Mapping[float, int]) -> tuple[int, ...]:
+    """The code turn: the cumulative yaw every KEY_STEP clip frames from the step's start, the
+    first 0 and none past a half turn; empty where it comes to nothing."""
+    if not turns:
+        return ()
+    keys = sorted(turns)
+    n = math.ceil(keys[-1] / KEY_STEP - 1e-9)
+    out = [0] + [round(_interp(keys, turns, KEY_STEP * k)) for k in range(1, n + 1)]
+    out = [max(-0x7FFF, min(0x7FFF, v)) for v in out]
+    return tuple(out) if max(abs(v) for v in out) >= MIN_CODE else ()
 
 
 def _relative(step: _Step, at: Pose, rest: float) -> Pose:

@@ -58,6 +58,7 @@ LIFT = 0x09C9E8D4  # noaddr: (entity, $f12) height += $f12
 ROT_Y = 0x08875BD8  # noaddr: (vector, $f12 radians) turns x and z about y
 YAW_SPREAD = 0x09CA15AC  # noaddr: (entity, total, $f12 lo, $f13 hi) yaw += total over (lo, hi]
 CURVE_DELTA = 0x09DB3FB4  # noaddr: (entity, curve, $f12 t) $f0 the curve's change over a step
+CURVE_DELTA_RAW = 0x09DB3EAC  # noaddr: the same unscaled by the monster's size: the yaw curves'
 LUNGE = 0x09DB44F0  # noaddr: (entity, bearing, $f12..$f18) travel toward the target
 CURVE_MOVE = 0x09DB4030  # noaddr: (entity, x, y, z, yaw curves, bias) a curve walk
 CURVE_MOVE_INIT = 0x09DB3FFC  # noaddr: (entity) zero the velocity, keep the yaw
@@ -395,6 +396,7 @@ _HELPERS: dict[int, Callable[[Motion, Args], float | None]] = {
     ROT_Y: Motion._rot_y,
     YAW_SPREAD: Motion._yaw_spread,
     CURVE_DELTA: Motion._curve_delta,
+    CURVE_DELTA_RAW: Motion._curve_delta,
     LUNGE: Motion._lunge,
     CURVE_MOVE: Motion._curve_move,
     CURVE_MOVE_INIT: Motion._curve_move_init,

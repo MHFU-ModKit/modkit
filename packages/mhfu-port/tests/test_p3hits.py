@@ -436,6 +436,168 @@ def test_a_jump_starts_from_the_rest_height_it_is_given():
     assert first.ticks > 7  # the landing test reads the height over the floor: a longer fall
 
 
+def _r(funct: int, rd: str, rs: str, rt: str) -> int:
+    return asm.gpr(rs) << 21 | asm.gpr(rt) << 16 | asm.gpr(rd) << 11 | funct
+
+
+def subu(rd: str, rs: str, rt: str) -> int:
+    return _r(0x23, rd, rs, rt)
+
+
+def negu(rd: str, rt: str) -> int:
+    return _r(0x23, rd, "zero", rt)
+
+
+def max_(rd: str, rs: str, rt: str) -> int:
+    return _r(0x2C, rd, rs, rt)
+
+
+def seh(rd: str, rt: str) -> int:
+    return 0x1F << 26 | asm.gpr(rt) << 16 | asm.gpr(rd) << 11 | 0x18 << 6 | 0x20
+
+
+def sra(rd: str, rt: str, sa: int) -> int:
+    return asm.gpr(rt) << 16 | asm.gpr(rd) << 11 | sa << 6 | 0x03
+
+
+def slti(rt: str, rs: str, imm: int) -> int:
+    return 0x0A << 26 | asm.gpr(rs) << 21 | asm.gpr(rt) << 16 | imm & 0xFFFF
+
+
+SIDES = {61: Length(100.0), 62: Length(100.0)}
+"""Two clips of 100 frames: fifty AI frames."""
+EIGHT = {61: Length(16.0), 62: Length(16.0)}
+"""Two clips of 16 frames: eight AI frames."""
+
+
+def wait_for_the_clip(a: Asm) -> None:
+    """Until the clip ends, then the pair's end."""
+    a(asm.addu("a0", "s0", "zero"))
+    a.call(p3hits.CLIP_ENDED)
+    a.branch("beq", "v0", "zero", "done")
+    a.call(LEAVE)
+
+
+def sides(a: Asm) -> None:
+    """Clip 61 where the side rule says left, else 62."""
+    a(asm.addu("a0", "s0", "zero"))
+    a.call(p3hits.SIDE)
+    a.branch("beq", "v0", "zero", "right")
+    play(a, 61)
+    a.jump("played")
+    a.label("right")
+    play(a, 62)
+    a.label("played")
+
+
+def bearing_off(a: Asm) -> None:
+    """The angle of the target off the yaw, a half turn either way, in v1, and its size in v0."""
+    a(asm.addu("a0", "zero", "zero"), asm.addu("a1", "zero", "zero"))
+    a.call(p3hits.ANGLE)
+    a(asm.lw("v1", 0x74, "s0"), subu("v1", "v0", "v1"), seh("v1", "v1"))
+    a(negu("v0", "v1"), max_("v0", "v1", "v0"), seh("v0", "v0"))
+
+
+def test_a_handler_that_asks_for_no_bearing_has_one_arm_and_its_plain_plan():
+    w = walk(species(wait_for_the_clip, lambda a: play(a, 61)))
+    (arm,) = w.arms(pair())
+    assert arm.arcs == ((0, 255),) and arm.plan == w.plan(pair()) and not arm.plan.reads
+
+
+def test_the_side_rule_gives_a_clip_to_each_half_turn():
+    left, right = walk(species(wait_for_the_clip, sides), SIDES).arms(pair())
+    assert (left.arcs, right.arcs) == (((0, 127),), ((128, 255),))
+    assert [s.clip for s in left.plan.steps] == [61] and [s.clip for s in right.plan.steps] == [62]
+    assert (left.plan.bearing, right.plan.bearing) == (63 * 256 + 1, 191 * 256 + 1 - 0x10000)
+    assert left.plan.reads and right.plan.complete
+
+
+def test_a_compare_on_the_angle_splits_where_it_is_made_to_a_256th_of_a_turn():
+    def quarter(a: Asm) -> None:
+        bearing_off(a)
+        a(slti("v1", "v0", 0x4000))
+        a.branch("beq", "v1", "zero", "far")
+        play(a, 61)
+        a.jump("played")
+        a.label("far")
+        play(a, 62)
+        a.label("played")
+
+    near, far = walk(species(wait_for_the_clip, quarter), SIDES).arms(pair())
+    assert near.arcs == ((0, 63), (192, 255)) and far.arcs == ((64, 191),)
+    assert [s.clip for s in near.plan.steps] == [61] and [s.clip for s in far.plan.steps] == [62]
+
+
+def test_a_handler_that_plays_one_clip_at_every_bearing_has_one_arm_and_its_plain_plan():
+    def same(a: Asm) -> None:
+        bearing_off(a)
+        play(a, 61)
+
+    w = walk(species(wait_for_the_clip, same), SIDES)
+    (arm,) = w.arms(pair())
+    assert arm.arcs == ((0, 255),) and arm.plan == w.plan(pair()) and arm.plan.reads
+
+
+def adds_to_the_yaw(a: Asm, per_tick: str) -> None:
+    """Each tick adds to the yaw: 100 units, or an eighth of the angle of the target off it that
+    the first tick kept at 0xF40."""
+    if per_tick == "fixed":
+        a(asm.li("v0", 100))
+    else:
+        a(asm.lw("v0", 0xF40, "s0"), sra("v0", "v0", 3))
+    a(asm.lw("v1", 0x74, "s0"), asm.addu("v1", "v1", "v0"), asm.sw("v1", 0x74, "s0"))
+    wait_for_the_clip(a)
+
+
+def keeps_the_angle(a: Asm) -> None:
+    sides(a)
+    bearing_off(a)
+    a(asm.sw("v1", 0xF40, "s0"))
+
+
+def test_a_turn_that_comes_to_the_angle_of_the_target_is_an_aim_turn_on_its_curve():
+    left, right = walk(
+        species(lambda a: adds_to_the_yaw(a, "eighth"), keeps_the_angle), EIGHT
+    ).arms(pair())
+    for arm, size in ((left, 0x7FFF), (right, -0x7FFF)):
+        (step,) = arm.plan.steps
+        assert step.aim and step.code[0] == 0 and step.code[-1] == size
+        # the first tick's turn is in the second value, as a step's travel is
+        assert list(step.code) == pytest.approx([0, *(k * size / 8 for k in range(2, 9))], abs=2)
+
+
+def test_a_turn_that_is_the_same_at_every_bearing_is_a_curve_that_stands():
+    left, right = walk(species(lambda a: adds_to_the_yaw(a, "fixed"), sides), EIGHT).arms(pair())
+    for arm in (left, right):
+        (step,) = arm.plan.steps
+        assert not step.aim and step.code[-1] == 800
+
+
+def test_the_blend_a_handler_hands_over_with_is_the_last_step_s():
+    def hands_over(a: Asm) -> None:
+        a(asm.li("a1", 7), asm.li("a2", 203), asm.li("a3", 6), asm.addu("a0", "s0", "zero"))
+        a.call(p3hits.CARRY)
+
+    plan = walk(species(hands_over, sides), SIDES).arms(pair())[0].plan
+    assert plan.leaves == ((7, 203),) and plan.complete
+    assert [s.hand for s in plan.steps] == [6]
+
+
+def test_a_clip_blends_in_for_the_frames_it_was_played_with():
+    def turns_while_blending(a: Asm) -> None:
+        a(asm.addu("a0", "s0", "zero"))
+        a.call(p3hits.BLEND_IN)
+        a.branch("beq", "v0", "zero", "settled")
+        a(asm.li("a1", 100), asm.addu("a0", "s0", "zero"))
+        a.call(p3hits.TURN)
+        a.label("settled")
+        wait_for_the_clip(a)
+
+    plan = walk(species(turns_while_blending, lambda a: play(a, 61))).plan(pair())
+    (step,) = plan.steps
+    assert step.blend == 4 and step.turns == (p3hits.Turn(100, (0.0, 8.0)),)
+
+
 BRUTE, BRUTE_MODEL = 23, 5248
 ZINOGRE, ZINOGRE_MODEL = 40, 5339
 
@@ -619,3 +781,77 @@ def test_zinogre_turn_rates_are_the_donors_at_clip_speed_one(plans, pair_, clip,
 def test_a_step_without_code_motion_carries_none(plans):
     for s in plans(7, 22).steps[:1]:
         assert (s.travel, s.lift, s.lunge, s.spreads) == ((), (), None, ())
+
+
+def _d(degrees: float) -> int:
+    """Degrees to the left of the facing as the YAW units the walk takes."""
+    d = round(degrees / 360 * 0x10000)
+    return d - 0x10000 if d >= 0x8000 else d
+
+
+def arms_of(zinogre, main: int, sub: int) -> tuple[p3hits.Arm, ...]:
+    w, ms = zinogre
+    return w.arms(ms.pairs[main, sub])
+
+
+def test_zinogre_turns_in_place_by_the_bearing_of_the_target_with_the_clips_9_8_38_37(zinogre):
+    w, ms = zinogre
+    pair_ = ms.pairs[2, 26]
+    for degrees, clip in [(45, 9), (-45, 8), (150, 38), (-150, 37)]:
+        plan = w.plan(pair_, _d(degrees))
+        assert [s.clip for s in plan.steps] == [clip], degrees
+    arms = arms_of(zinogre, 2, 26)
+    assert [a.arcs for a in arms] == [((0, 63),), ((64, 127),), ((128, 191),), ((192, 255),)]
+    assert [a.plan.steps[0].clip for a in arms] == [9, 38, 37, 8]
+
+
+def test_zinogre_turns_in_place_turn_exactly_the_angle_along_the_curves_of_90_and_180(zinogre):
+    arms = arms_of(zinogre, 2, 26)
+    steps = [a.plan.steps[0] for a in arms]
+    assert all(s.aim for s in steps)
+    assert [s.code[-1] for s in steps] == [0x4000, 0x7FFF, -0x7FFF, -0x4000]
+    assert all(s.turns == () and s.spreads == () for s in steps)
+
+
+def test_zinogre_wrappers_split_at_85_86_and_170_171_and_hand_over_with_the_blend(zinogre):
+    arms = arms_of(zinogre, 7, 23)
+    assert [a.arcs for a in arms] == [((0, 85),), ((86, 127),), ((128, 170),), ((171, 255),)]
+    assert [(a.plan.steps[0].clip, a.plan.steps[0].hand) for a in arms] == [
+        (9, 6),
+        (38, 10),
+        (37, 10),
+        (8, 6),
+    ]
+    assert all(a.plan.leaves == ((7, 203),) and not a.plan.steps[0].aim for a in arms)
+    assert [a.plan.steps[0].ticks * 2 for a in arms] == [52, 62, 62, 52]  # where it hands over
+
+
+def test_zinogre_wrappers_of_one_handler_share_their_arms(zinogre):
+    first, other = arms_of(zinogre, 7, 23), arms_of(zinogre, 7, 38)
+    assert [a.arcs for a in first] == [a.arcs for a in other]
+    assert [a.plan.steps for a in first] == [a.plan.steps for a in other]
+    assert other[0].plan.leaves == ((7, 207),) and first[0].plan.leaves == ((7, 203),)
+
+
+def test_zinogre_turns_by_the_side_rule_between_two_clips_of_a_fixed_twenty_degrees(zinogre):
+    left, right = arms_of(zinogre, 1, 1)
+    assert (left.arcs, right.arcs) == (((0, 127),), ((128, 255),))
+    assert [s.plan.steps[0].clip for s in (left, right)] == [11, 39]
+    assert [s.plan.steps[0].spreads for s in (left, right)] == [
+        (p3motion.Spread(0xE39, (0.0, 164.0)),),
+        (p3motion.Spread(-0xE39, (0.0, 164.0)),),
+    ]
+    assert not any(s.plan.steps[0].aim for s in (left, right))
+
+
+def test_zinogre_handlers_that_ignore_the_bearing_have_one_arm(zinogre):
+    for key in [(7, 0), (7, 22), (7, 12)]:
+        (arm,) = arms_of(zinogre, *key)
+        assert arm.arcs == ((0, 255),) and arm.plan.bearing is None
+
+
+def test_zinogre_blends_in_for_the_frames_it_plays_a_clip_with(plans):
+    for key in [(7, 0), (7, 236)]:
+        first = plans(*key).steps[0]
+        assert first.blend == 4
+        assert [(t.rate, t.window) for t in first.turns] == [(1092, (0, 24)), (455, (26, 38))]
