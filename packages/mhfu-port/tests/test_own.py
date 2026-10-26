@@ -61,7 +61,7 @@ class Fake:
 
     def __init__(self, plan: Plan | Sequence[Plan], hosts=HOSTS, active=10) -> None:
         plans = [plan] if isinstance(plan, Plan) else list(plan)
-        self.lengths = LENGTHS
+        self.lengths, self.step = LENGTHS, p3hits.STEP_FRAMES
         self.plans = {p.pair: p for p in plans}
         self.ms = SimpleNamespace(pairs={p: p for p in self.plans})
         self.hosts, self.active = hosts, active
@@ -163,9 +163,19 @@ def test_a_start_is_carried_and_the_clip_plays_on_to_its_end():
 @pytest.mark.parametrize(
     ("ended", "stop"), [("cursor", None), ("pair", None), ("cursor", 500.0), ("cursor", 24.0)]
 )
-def test_a_step_with_no_frame_to_stop_on_keeps_its_length(ended, stop):
-    """No frame, or one outside the clip or not after the start."""
+def test_a_step_with_no_frame_to_stop_on_stops_where_the_walks_cursor_was(ended, stop):
+    """No frame, or one outside the clip or not after the start: 55 AI frames from 24."""
     m, _ = derive(plan(step(61, ended=ended, ticks=55, start=24.0, stop=stop)))
+    assert spans(m) == (24, 134, None)
+
+
+def test_a_cursor_past_the_clip_stops_at_its_end():
+    m, _ = derive(plan(step(62, ended="pair", ticks=80, start=24.0)))
+    assert spans(m) == (24, 100, None)
+
+
+def test_a_loop_is_cut_by_length_not_by_a_cursor_it_wraps():
+    m, _ = derive(plan(step(59, ended="pair", ticks=55, start=24.0)))
     assert spans(m) == (24, 0, 55)
 
 
@@ -197,7 +207,7 @@ def test_a_jump_plays_a_lifted_copy_of_its_clip_in_a_free_entry():
         plan(dataclasses.replace(moving(lift=JUMP), hits=tuple(hits))), spare=[90, 91]
     )
     mv = m.moves["p3_7_13"]
-    assert (mv.clip, mv.start, mv.stop, mv.length) == ("p3_61_air", 0, 0, 22)
+    assert (mv.clip, mv.start, mv.stop, mv.length) == ("p3_61_air", 0, 44, None)
     assert m.clips["p3_61_air"] == manifest.Clip(
         slot=90, source=61, start=0, frames=44, lift=list(JUMP)
     )
@@ -206,6 +216,25 @@ def test_a_jump_plays_a_lifted_copy_of_its_clip_in_a_free_entry():
     (f,) = [f for f in found if f.code == "P3_OWN_AIR"]
     assert f.level == "info" and "+44" in f.text and "entry 90" in f.text
     manifest.check(m)
+
+
+def test_a_jump_stops_at_its_last_frame_at_rest_or_above_so_the_landing_takes_the_fall():
+    sunk = (*JUMP[:40], -5.0, -9.0, -9.0, -9.0, -9.0)
+    m, _ = derive(plan(moving(lift=sunk)), spare=[90])
+    mv = m.moves["p3_7_13"]
+    assert (mv.clip, mv.start, mv.stop, mv.length) == ("p3_61_air", 0, 39, None)
+    cut = moving(start=100.0, lift=sunk)
+    m, _ = derive(plan(cut), spare=[90])
+    assert (m.moves["p3_7_13"].start, m.moves["p3_7_13"].stop) == (0, 39)  # counted from the copy
+    manifest.check(m)
+
+
+def test_a_jump_ends_by_no_wall_and_a_run_does():
+    m, _ = derive(plan(moving(clip=59, lift=JUMP)), spare=[90])
+    mv = m.moves["p3_7_13"]
+    assert (mv.clip, mv.steer.walls, mv.length) == ("p3_59_air", False, None)
+    m, _ = derive(plan(moving(clip=59, ticks=40)))
+    assert (m.moves["p3_7_13"].steer.walls, m.moves["p3_7_13"].length) == (True, 40)
 
 
 def test_a_copy_counts_its_frames_from_where_the_step_starts():
@@ -276,7 +305,7 @@ def test_travel_past_the_clips_end_is_cut_there():
 def test_a_window_is_cut_to_the_frames_the_move_plays_and_its_total_by_the_share_left():
     lunge = p3motion.Lunge((0.0, 30.0), 400.0, 1800.0, -800.0, 1000.0)
     spread = p3motion.Spread(0x4000, (0.0, 60.0))
-    m, found = derive(plan(moving(start=6.0, lunge=lunge, spreads=(spread,))))
+    m, found = derive(plan(moving(start=6.0, ticks=100, lunge=lunge, spreads=(spread,))))
     mv = m.moves["p3_7_13"]
     assert mv.lunge == Lunge((6, 30), 400.0, 1800.0, -640.0, 800.0)  # 24 frames of the 30
     assert (mv.steer.window, mv.steer.angle) == ((6, 60), 81.0)  # 54 of 60 frames of 90 degrees
@@ -296,13 +325,13 @@ def test_a_window_the_move_never_plays_is_left_out():
 
 def test_a_fixed_turn_is_the_steps_and_beats_a_turn_toward_the_hunter():
     spread = p3motion.Spread(0x2666, (60.0, 98.0))
-    m, found = derive(plan(moving(spreads=(spread,), turns=(Turn(546, (10.0, 40.0)),))))
+    m, found = derive(plan(moving(ticks=60, spreads=(spread,), turns=(Turn(546, (10.0, 40.0)),))))
     s = m.moves["p3_7_13"].steer
     assert (s.turn, s.window, round(s.angle or 0)) == ("fixed", (60, 98), 54)
     assert any("kept the fixed" in f.text for f in found)
     manifest.check(m)
     whole = p3motion.Spread(0x10000, (0.0, 10.0))  # a whole turn is no turn the player can make
-    m, found = derive(plan(moving(spreads=(whole,))))
+    m, found = derive(plan(moving(ticks=60, spreads=(whole,))))
     assert m.moves["p3_7_13"].steer.turn == "clip" and any("left out" in f.text for f in found)
 
 

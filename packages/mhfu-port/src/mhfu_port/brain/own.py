@@ -404,23 +404,20 @@ class Derivation:
         return name
 
     def _move(self, step: Step, after: str | None) -> Move:
-        """The step as a move, from the clip frame the donor started it at to the one its handler
-        tested when it ended it (`Step.stop`); `length`, in AI frames, only for a step that ended
-        on no frame of its clip: a pair, a loop, a test the cursor never changed."""
+        """The step as a move, from the clip frame the donor started it at to the one it ended
+        at (`_stop`); `length`, in AI frames, only for a step on a looping clip."""
         length = self.walk.lengths[step.clip]
         frames, start = round(length.frames), round(step.start)
-        stop = round(step.stop) if step.stop is not None else 0
-        stop = stop if start < stop <= frames else 0
-        cut = length.loop or step.ended != "clip"
         air = self._air(step, start, frames)
         # a lifted copy is the source cut at `start`: the move counts its frames from there
         off, size = (start, len(step.lift) - 1) if air else (0, frames)
+        stop = self._stop(step, length.loop and not air, start, frames, off if air else None)
         played = (start - off, stop - off if stop else size)  # the clip frames it plays
         return Move(
             clip=air or self._clip(step.clip),
             attacks=self._attacks(step, start, stop or frames, off),
-            steer=self._steer(step, length.loop, off, played),
-            length=max(1, step.ticks) if cut and not stop else None,
+            steer=self._steer(step, length.loop and not step.lift, off, played),
+            length=max(1, step.ticks) if length.loop and not air and not stop else None,
             start=start - off,
             stop=stop - off if stop else 0,
             travel=self._travel(step, size, start - off),
@@ -428,6 +425,23 @@ class Derivation:
             after=after,
             label=f"MHP3rd {self.pair[0]},{self.pair[1]}",
         )
+
+    def _stop(self, step: Step, loop: bool, start: int, frames: int, lifted: int | None) -> int:
+        """The clip frame a step ends at, 0 for its clip's end: where the handler's test of the
+        cursor was crossed, else where the walk's cursor stood when it handed over (the engine
+        holds the cursor through a blend, so AI frames would end it early). A lifted copy
+        (`lifted`: its first clip frame) also ends where its height last is at rest or above, so
+        the landing clip takes the fall. A loop has none: it ends by `length`."""
+        stop = round(step.stop) if step.stop is not None else 0
+        if not start < stop <= frames:
+            stop = 0
+        if not stop and not loop and step.ended != "clip":
+            stop = min(round(start + step.ticks * self.walk.step), frames)
+        if lifted is not None:
+            last = max((i for i, h in enumerate(step.lift) if h >= 0), default=len(step.lift) - 1)
+            if last < len(step.lift) - 1:
+                stop = min(stop or frames, lifted + last)
+        return stop if start < stop else 0
 
     def _air(self, step: Step, start: int, frames: int) -> str | None:
         """The name of the one-shot copy of the step's clip cut to the frames it plays, which
@@ -600,9 +614,9 @@ class Derivation:
         self, step: Step, walls: bool, off: int = 0, played: tuple[int, int] = (0, 0xFFFF)
     ) -> Steer:
         """The donor's turn, its windows counted from clip frame `off`: a fixed one where the
-        handler spreads a total over a window, else the longest toward the hunter. A wall ends
-        only a step on a looping clip, a run (the donor ends no move at a wall: a one-shot stop or
-        blow plays out where it stands)."""
+        handler spreads a total over a window, else the longest toward the target. A wall ends
+        only a step on a looping clip that is no jump, a run (the donor ends no move at a wall: a
+        one-shot stop, blow or leap plays out where it stands)."""
         if step.spreads:
             return self._spread(step, walls, off, played)
         if not step.turns:

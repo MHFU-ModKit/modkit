@@ -141,8 +141,8 @@ def test_every_derived_window_lies_inside_its_move_s_frames(zinogre, module_text
     _, built = module_text
     made = {n: mv for n, mv in zinogre.m.moves.items() if n.startswith("p3_")}
     assert sum(bool(mv.start) for mv in made.values()) == 26
-    assert sum(bool(mv.stop) for mv in made.values()) == 26
-    assert sum(mv.length is not None for mv in made.values()) == 16
+    assert sum(bool(mv.stop) for mv in made.values()) == 40
+    assert sum(mv.length is not None for mv in made.values()) == 2
     for name, mv in made.items():
         frames = built.layout.frames[moves.entry(zinogre.m, name, built.layout)]
         assert mv.start < frames and mv.stop <= frames, name
@@ -172,7 +172,8 @@ def test_the_jumps_are_lifted_copies_in_entries_nothing_else_holds(zinogre, data
 def test_the_air_roll_flies_and_lunges_as_the_donor_does(zinogre):
     m = zinogre.m
     roll = m.moves["p3_7_22_2"]
-    assert (m.clips[roll.clip].source, roll.length, roll.start) == (225, 22, 0)
+    assert (m.clips[roll.clip].source, roll.length, roll.start) == (225, None, 0)
+    assert (roll.stop, roll.steer.walls) == (39, False), "the fall past rest is the landing's"
     assert roll.travel[-1] == pytest.approx((120, 852), rel=0.01)
     assert roll.lunge == manifest.Lunge((0, 32), 400.0, 1800.0, -700.0, 1800.0)
     assert [m.moves[n].clip for n in sequence.chain(m, "p3_7_22")][1] == roll.clip
@@ -188,8 +189,23 @@ def test_the_stamp_waits_16_or_39_frames_and_hops_for_18(zinogre):
         78,
     )  # 16 and 39 AI frames
     hop = m.moves[short.after]
-    assert (m.clips[hop.clip].source, hop.length) == (209, 18)
+    assert (m.clips[hop.clip].source, hop.length, hop.stop) == (209, None, 36)
+    assert not hop.steer.walls
     assert hop.travel[-1] == pytest.approx((83, 1401), rel=0.01, abs=1)
+
+
+def test_a_step_no_test_ended_stops_where_the_walks_cursor_was(zinogre):
+    """Clip 25 has 118 frames; the donor leaves it at 60. 30 AI frames stopped it at 54 live,
+    the blend having held the cursor."""
+    m = zinogre.m
+    back = m.moves["p3_7_33"]
+    assert (m.clips[back.clip].source, back.start, back.stop, back.length) == (25, 0, 60, None)
+
+
+def test_only_a_loop_is_cut_by_length(zinogre, data):
+    d = builds.donor(zinogre.m, data)
+    cut = [n for n, mv in zinogre.m.moves.items() if n.startswith("p3_") and mv.length is not None]
+    assert cut and all(d.clips[zinogre.m.clips[zinogre.m.moves[n].clip].source].loop for n in cut)
 
 
 def test_every_hunter_turn_has_the_donors_rate(zinogre):
