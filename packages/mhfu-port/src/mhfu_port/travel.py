@@ -57,6 +57,11 @@ fast, it bends between keys."""
 KEY_STEP = int(addresses.STEER_KEY_STEP)
 """Clip frames between the keys `carry` bakes and `Turn` holds, and between travel samples: the
 engine's clip speed, so its cursor lands on them; the framework's constant."""
+FLIP = 0.7
+"""The length of the children's summed (w, y), per child, under which `body_turn` takes the body
+for near upside down (tipped past vertical is 1/sqrt 2) and its twist about y for ill-defined.
+Clip 225's somersault is under it from frame 32 to the end, where the twist runs on from 12 to
+171 degrees."""
 _ROT_Y = next(bit for bit, kind in CHANNEL_BITS.items() if kind == ("rot", Y))
 
 Vec2 = tuple[float, float]
@@ -227,7 +232,9 @@ def body_turn(rig: fk.Rig, clip: Clip, skeleton: Skeleton, frames: ArrayLike) ->
     """Radians the body (the root's rotating children, averaged) faces off the model's forward
     about y at each of `frames` (whole clip frames, one apart, for the unwrap): the twist of
     its rotation, from within half a turn at the first, ending within half a turn of the
-    turn between its first and last pose."""
+    turn between its first and last pose. Where the body is near upside down (`FLIP`) its twist
+    is ill-defined: those frames take the facing interpolated between the nearest frames that
+    are not, held beyond the first and last; a clip with no such frame keeps its raw twist."""
     f = np.asarray(frames, dtype=np.float64)
     r = root(skeleton)
     kids = [
@@ -242,9 +249,21 @@ def body_turn(rig: fk.Rig, clip: Clip, skeleton: Skeleton, frames: ArrayLike) ->
     flip = np.cumprod(np.where(np.einsum("tkq,tkq->tk", q[1:], q[:-1]) < 0, -1.0, 1.0), axis=0)
     q[1:] *= flip[..., None]
     w, y = q[..., 0].sum(axis=1), q[..., 2].sum(axis=1)
-    twist = np.unwrap(_wrap(2 * np.arctan2(y, w)))
+    twist = _twist(w, y, len(kids))
     net = _wrap(twist[-1] - twist[0])
     out: fk.Floats = twist - (twist[-1] - twist[0] - net) * (f - f[0]) / (f[-1] - f[0])
+    return out
+
+
+def _twist(w: fk.Floats, y: fk.Floats, kids: int) -> fk.Floats:
+    """`2 atan2(y, w)` unwrapped, the frames where `hypot(w, y)` is under `FLIP` per child
+    interpolated from those where it is not."""
+    raw = 2 * np.arctan2(y, w)
+    sure = np.flatnonzero(np.hypot(w, y) >= FLIP * kids)
+    if not len(sure) or len(sure) == len(raw):
+        out: fk.Floats = np.unwrap(_wrap(raw))
+        return out
+    out = np.interp(np.arange(len(raw)), sure, np.unwrap(_wrap(raw[sure])))
     return out
 
 

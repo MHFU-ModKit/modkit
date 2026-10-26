@@ -9,9 +9,10 @@ percent) and `natural_rage = false` appear only when the manifest sets them.
 
 A pair move goes as the runtime paints it on its host pair. An own move goes as the move player
 takes it (`mhfu.move_play`): its `slot` in the framework's registry (`slots`), its clip's executor
-entry and, for `turn = "clip"`, its turn keys, both from the build's layout; the attack windows,
-the carrier (`hub` when it names none), the steer and `after`, and `start` and `stop`, the clip
-frames it plays from and to, when it sets them (`length` counts AI frames instead), and `aim_out`.
+entry and its turn keys (the clip's facing, in every turn mode), both from the build's layout; the
+attack windows, the carrier (`hub` when it names none), the steer and `after`, and `start` and
+`stop`, the clip frames it plays from and to, when it sets them (`length` counts AI frames
+instead), and `aim_out`.
 The steer carries the move's own `travel` (`mhfu.steering.hex_of`), `lunge` and `code_turn`
 (`mhfu.steering.turns_hex`, with `turn = "aim"` where the manifest says so) when the manifest has
 them, and a fixed turn's `window`. `tip` is the tail tip's `{ joint, carrier }` pairs
@@ -208,10 +209,8 @@ def entry(m: Manifest, name: str, layout: Layout) -> int:
 
 
 def curve(m: Manifest, name: str, layout: Layout) -> str | None:
-    """The turn keys YAW follows, for `turn = "clip"` on a clip that turns."""
-    mv = m.moves[name]
-    if mv.steer.turn != "clip":
-        return None
+    """The turn keys YAW follows, for a clip that turns: the clip's facing, which `carry` took
+    out of its pose, whatever the move's own turn is."""
     t = layout.turns.get(entry(m, name, layout))
     return None if t is None else t.lua()
 
@@ -436,7 +435,7 @@ def _steer(m: Manifest, name: str, layout: Layout) -> dict[str, Any]:
         out |= {"window": list(s.window)} if s.window is not None else {"frames": s.frames}
     elif s.turn == "aim":
         out["turn"] = "aim"
-    elif (keys := curve(m, name, layout)) is not None:
+    if (keys := curve(m, name, layout)) is not None:
         out["curve"] = keys
     mv = m.moves[name]
     if mv.travel:

@@ -521,7 +521,7 @@ def test_the_own_moves_fit_the_framework(zinogre, module_text):
     names = [n for n, mv in zinogre.m.moves.items() if mv.own]
     held = moves.pools(zinogre.m, built.layout)
     assert len(names) == 125
-    assert (len(held.keys), len(held.samples), len(held.lunges)) == (2432, 1052, 10)
+    assert (len(held.keys), len(held.samples), len(held.lunges)) == (4218, 1052, 10)
     assert not moves.problems(zinogre.m, built.layout, moves.records(Data.find().fu, 75))
 
 

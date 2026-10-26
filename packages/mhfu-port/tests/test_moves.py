@@ -531,7 +531,20 @@ def test_curve_is_the_turns_module_entry():
     """The keys an own move turns by are the turns module's for its entry."""
     turns = layout.turns_lua(_m(), LAYOUT)
     assert f'[46] = "{moves.curve(_m(), "stamp", LAYOUT)}"' in turns
-    assert moves.curve(_m(), "dash", LAYOUT) is None  # turns toward the hunter instead
+    assert moves.curve(_m(), "dash", LAYOUT) is None  # its entry does not turn
+
+
+@pytest.mark.parametrize("turn", ["clip", "still", "hunter", "away", "fixed"])
+def test_a_move_plays_its_clips_facing_whatever_its_turn_is(turn):
+    """The clip's facing was taken out of its pose, so YAW has to play it in every mode."""
+    m = _m()
+    m.moves["stamp"].steer = manifest.Steer(
+        turn=turn, angle=90.0 if turn == "fixed" else None, frames=20 if turn == "fixed" else None
+    )
+    (line,) = [x for x in _body(moves.lua(m, LAYOUT, {6})) if x.startswith("stamp = ")]
+    assert f'curve = "{TURN.lua()}"' in line and (
+        turn in ("clip", "still") or f'turn = "{turn}"' in line
+    )
 
 
 def test_slots_are_the_sorted_names():
