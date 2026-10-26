@@ -399,6 +399,7 @@ class Walker:
         self._memo: dict[tuple[object, ...], tuple[Site, ...]] = {}
         self._decide: Decide | None = None
         self._cells: MutableMapping[int, float] | None = None
+        self._persist = False
         self._operands = {s.operand.vram: s.jr for s in code.switches.values() if s.operand}
         self._tables = {
             s.table + 4 * i: t for s in code.switches.values() for i, t in enumerate(s.targets)
@@ -411,34 +412,40 @@ class Walker:
         facts: Facts | None = None,
         decide: Decide | None = None,
         cells: MutableMapping[int, float] | None = None,
+        persist: bool = False,
     ) -> list[Site]:
         """Every watched call some path from `fn` reaches, once per distinct Site.
 
         `decide(pc, target, args)` answers for the caller: the $v0 a call at `pc` to `target`
         leaves (`args`: the walker's argument registers there; a float answers $f0 instead) or
         the outcome of a branch at `pc` the walk cannot decide (1 taken, 0 not; no target, `args`
-        empty). None leaves it to the walk, which forks. A run with `decide` or `cells` is not
-        memoised.
+        empty). None leaves it to the walk, which forks. A run with `decide`, `cells` or
+        `persist` is not memoised.
 
         `cells` are the entity's float cells by offset: a load from the entity reads one it
         holds, a store writes it (an unknown value removes it), and `decide` may change them
         between calls. They are shared by every path and callee, in the order they are walked, so
         they are exact for a walk `decide` keeps on one path. They also let a branch on a float
         compare of two known values decide itself, and `decide` hear of a tail call, its answer
-        unused."""
+        unused.
+
+        With `persist`, every store of a byte, half or word to the entity is also a Site of kind
+        "store", `args` (offset, width, value): what a caller that carries cells from one run to
+        the next (as `facts`) reads off it; the value is None where it is not known."""
         env: _Env = {r: v for r, v in (seed or {}).items()}
         before, self._decide = self._decide, decide
         held, self._cells = self._cells, cells
+        kept, self._persist = self._persist, persist
         try:
             return list(self._run(fn, env, {**self.facts, **(facts or {})}, 0, ()))
         finally:
-            self._decide, self._cells = before, held
+            self._decide, self._cells, self._persist = before, held, kept
 
     def _run(
         self, fn: int, seed: _Env, facts: dict[Cell, Known], depth: int, via: tuple[int, ...]
     ) -> tuple[Site, ...]:
         key = (fn, frozenset(seed.items()), frozenset(facts.items()), depth, via)
-        if self._decide is not None or self._cells is not None:
+        if self._decide is not None or self._cells is not None or self._persist:
             return self._walk(_Path(fn, {Gpr.a0: ENTITY, **seed}, facts), depth, via)
         if key not in self._memo:
             start = _Path(fn, {Gpr.a0: ENTITY, **seed}, facts)
@@ -734,6 +741,10 @@ class Walker:
         value = _value(p.env, ins.rt)
         if isinstance(value, int):
             p.facts[off, width] = value & ((1 << 8 * width) - 1)
+        if self._persist:
+            out, via = self._found[-1]
+            got = value & ((1 << 8 * width) - 1) if isinstance(value, int) else None
+            out.setdefault(Site(ins.vram, "store", (off, width, got), p.guards, via))
         if self._cells is not None and width == 4 and off in self._cells:
             if isinstance(value, int):
                 self._cells[off] = _bits(value)
@@ -750,6 +761,8 @@ class Walker:
                     return VTABLE
                 if u == InstrId.cpu_lwc1 and self._cells is not None and off in self._cells:
                     return _float_bits(self._cells[off])
+                if u == InstrId.cpu_lwc1 and isinstance(word := p.facts.get((off, 4)), int):
+                    return word  # the bits of a word the path stored
                 width = _WIDTH.get(u, 0)
                 fact = p.facts.get((off, width))
                 if isinstance(fact, int):
@@ -788,6 +801,14 @@ class Walker:
         if u in _EXTEND:
             x = _value(env, ins.rt)
             return _extend(x, _EXTEND[u]) & _MASK if isinstance(x, int) else x
+        if u in (InstrId.cpu_negu, InstrId.cpu_neg):
+            x = _value(env, ins.rt)
+            return -x & _MASK if isinstance(x, int) else None
+        if u in _MINMAX:
+            x, y = _value(env, ins.rs), _value(env, ins.rt)
+            if isinstance(x, int) and isinstance(y, int):
+                return _MINMAX[u](_signed(x & _MASK), _signed(y & _MASK)) & _MASK
+            return None
         if u == InstrId.cpu_move:
             return _value(env, ins.rs)
         if u == InstrId.cpu_mtc1:
@@ -806,6 +827,9 @@ class Walker:
                 except ArithmeticError:
                     return None
             return None
+        if u == InstrId.cpu_cvt_s_w:
+            x = env.get(ins.fs)
+            return _float_bits(float(_signed(x & _MASK))) if isinstance(x, int) else None
         if u == InstrId.cpu_trunc_w_s:
             x = env.get(ins.fs)
             try:
@@ -884,6 +908,10 @@ _SHIFT: dict[rabbitizer.Enum, _Op2] = {
     InstrId.cpu_sll: lambda x, s: x << s,
     InstrId.cpu_srl: lambda x, s: (x & _MASK) >> s,
     InstrId.cpu_sra: lambda x, s: _signed(x & _MASK) >> s,
+}
+_MINMAX: dict[rabbitizer.Enum, Callable[[int, int], int]] = {
+    InstrId.r4000allegrex_max: max,
+    InstrId.r4000allegrex_min: min,
 }
 _EXTEND: dict[rabbitizer.Enum, int] = {InstrId.r4000allegrex_seb: 1, InstrId.r4000allegrex_seh: 2}
 _TWO: dict[rabbitizer.Enum, bool] = {
