@@ -20,6 +20,7 @@ from mhfu_port.brain import charge, fatigue, own, p3, p3ops, splice
 from mhfu_port.build import build as build_port
 from mhfu_port.cli import main
 from mhfu_port.cli.build import modules
+from mhfu_port.cli.splice import routines
 from mhfu_port.data import Data
 from mhfu_port.model import ANIMATION, SKELETON
 from mhp_formats import fu
@@ -28,7 +29,6 @@ from mhp_formats.skeleton import Skeleton
 
 PORT = Path(__file__).parents[3] / "ports" / "zinogre.toml"
 OWN = addresses.OWN_MOVE_MAIN
-TURN = (1, 2)
 KEPT = {f"b{i}" for i in [*range(1, 7), *range(12, 22), 36]}
 """The hand-built rules that stay: the lunge's skids, the notice, the combat flag, the part breaks
 and the roar signal."""
@@ -55,7 +55,8 @@ def zinogre(data: Data) -> SimpleNamespace:
 
 def splice_of(z: SimpleNamespace, b: manifest.Brain):
     named = z.charge.named if z.charge is not None else ()
-    s = splice.splice(z.donor, z.host, b, z.survey, z.slots, z.overlay, named)
+    picks, combos = moves.picks(z.m), moves.combo_ids(z.m)
+    s = splice.splice(z.donor, z.host, b, z.survey, z.slots, z.overlay, named, picks, combos)
     return s, build.Built.of(z.host, s.edits)
 
 
@@ -69,7 +70,7 @@ def test_the_manifest_carries_its_brain(zinogre):
     assert (b.donor, b.splice, b.entry, b.fatigue, b.charge) == (40, "base_3", "base_3", True, True)
     assert b.when == {"if_target_set": True, "if_target_state": True}
     assert manifest.loads(manifest.dumps(m)) == m
-    assert len(b.pairs) == 107 and len(b.derived()) == len(own.pairs(b)) == 49
+    assert len(b.pairs) == 107 and len(b.derived()) == len(own.pairs(b)) == 91
 
 
 def test_a_donor_pair_plays_the_authored_move_where_it_is_the_donors(zinogre):
@@ -77,19 +78,19 @@ def test_a_donor_pair_plays_the_authored_move_where_it_is_the_donors(zinogre):
     assert b.targets((1, 16)) == ["charge_up"] and b.targets((1, 15)) == ["p3_1_15"]
     assert b.targets((1, 2)) == ["break_howl"]
     assert [b.targets(p) for p in [(2, 3), (2, 4)]] == [["dash_stop"], ["dash"]]
-    assert b.targets((7, 29)) == b.targets((7, 30)) == [TURN, "dash"]
+    assert [b.targets((7, 29)), b.targets((7, 30))] == [["p3_7_29", "dash"], ["p3_7_30", "dash"]]
     assert zinogre.m.moves["dash"].after is None
 
 
 def test_a_wrapper_turns_and_plays_the_move_of_the_pair_it_leads_to(zinogre):
     b = zinogre.m.brain
-    assert b.targets((7, 23)) == [TURN, "p3_7_0"] and b.targets((7, 0)) == ["p3_7_0"]
-    assert b.targets((7, 110)) == [TURN, "p3_7_109"] and b.targets((7, 109)) == ["p3_7_109"]
+    assert b.targets((7, 23)) == ["p3_7_23", "p3_7_0"] and b.targets((7, 0)) == ["p3_7_0"]
+    assert b.targets((7, 110)) == ["p3_7_110", "p3_7_109"] and b.targets((7, 109)) == ["p3_7_109"]
     twins = [b.targets((2, 11)), b.targets((7, 5))]
     assert twins == [["p3_2_10"], ["p3_7_4"]]
     assert set(b.derived().values()) >= {(7, 0), (7, 109), (2, 10), (7, 4), (1, 4), (7, 13)}
     assert b.shared() <= set(b.derived().values()) and (7, 0) in b.shared()
-    assert (7, 13) in b.shared() and b.targets((7, 38)) == [TURN, "p3_7_13"]
+    assert (7, 13) in b.shared() and b.targets((7, 38)) == ["p3_7_38", "p3_7_13"]
 
 
 WALKS = {
@@ -139,9 +140,9 @@ def test_the_d2_steps_start_where_the_donor_did_and_stop_past_their_attack(zinog
 
 def test_every_derived_window_lies_inside_its_move_s_frames(zinogre, module_text):
     _, built = module_text
-    made = {n: mv for n, mv in zinogre.m.moves.items() if n.startswith("p3_")}
+    made = {n: mv for n, mv in zinogre.m.moves.items() if n.startswith("p3_") and mv.played}
     assert sum(bool(mv.start) for mv in made.values()) == 26
-    assert sum(bool(mv.stop) for mv in made.values()) == 40
+    assert sum(bool(mv.stop) for mv in made.values()) == 44
     assert sum(mv.length is not None for mv in made.values()) == 2
     for name, mv in made.items():
         frames = built.layout.frames[moves.entry(zinogre.m, name, built.layout)]
@@ -166,7 +167,7 @@ def test_the_jumps_are_lifted_copies_in_entries_nothing_else_holds(zinogre, data
         assert lay.entries[c.slot] == source and lay.cuts[c.slot] == c.cut
         assert lay.lifts[c.slot] == tuple(c.lift) and c.slot not in lay.partial
         assert lay.ids[source] != c.slot, "the whole clip keeps its own entry"
-    assert sum(mv.own for mv in m.moves.values()) <= manifest.OWN_MOVES
+    assert sum(mv.played for mv in m.moves.values()) <= manifest.OWN_MOVES
 
 
 def test_the_air_roll_flies_and_lunges_as_the_donor_does(zinogre):
@@ -309,6 +310,9 @@ def test_the_pairs_that_share_a_move_derive_the_same_one(zinogre, data):
     again, _ = own.expand(apart, data)
     for key, first in twins.items():
         name = manifest.own_name(manifest.pair_of(key))
+        if again.moves[first].picker:  # a pair a chain hands over to is one move: no picker
+            assert not again.moves[name].picker, key
+            continue
         assert chain_of(again, name) == chain_of(again, first), key
 
 
@@ -316,7 +320,7 @@ def test_the_wrappers_play_the_moves_of_the_twins_they_lead_to(zinogre):
     b = zinogre.m.brain
     wrappers = {72: 70, 73: 71, 83: 81, 84: 82, 120: 118, 121: 119}
     assert {w: b.targets((7, w)) for w in wrappers} == {
-        w: [TURN, manifest.own_name((7, p))] for w, p in wrappers.items()
+        w: [manifest.own_name((7, w)), manifest.own_name((7, p))] for w, p in wrappers.items()
     }
     assert all(b.pairs[f"7,{p}"] == manifest.OWN for p in wrappers.values())
 
@@ -346,7 +350,7 @@ def test_zinogre_splices_into_em75(zinogre):
     assert built.ok, built.findings
     assert built.budget.worst is not None and built.budget.worst.count <= min(LIMIT, 150)
     grown = len(built.image.data) - (built.lift.end - built.lift.base)
-    assert 8000 < grown < 14000 and 50 <= len(s.routines) <= 65
+    assert 8000 < grown < 17000 and 50 <= len(s.routines) <= 65
     got = codes(s.findings)
     assert got["info P3_SPLIT"] == 10 and got["warning P3_FOLDED"] == 3
     assert got["info P3_HISTORY"] == 1 and got["warning P3_APPROX"] == 1
@@ -438,7 +442,10 @@ def test_zinogre_enters_its_own_moves(zinogre):
         for n in ir.walk(r.body)
         if isinstance(n, ir.Insn) and n.op.name == "enter" and n.args["main"] == OWN
     }
-    assert own_enters == {zinogre.slots[n] for _, n in s.uses if isinstance(n, str)}
+    ids = set(moves.combo_ids(zinogre.m).values())
+    assert own_enters & ids, "the wrappers enter combos"
+    assert own_enters - ids <= {zinogre.slots[n] for _, n in s.uses if isinstance(n, str)}
+    assert {n for _, n in s.uses if isinstance(n, str)} <= set(zinogre.slots)
     assert {"p3_7_0", "p3_7_12", "p3_1_19", "charge_up", "dash", "break_howl"} <= set(s.slots)
 
 
@@ -471,14 +478,43 @@ def expanded(brain_: p3.Brain, nodes: Sequence[p3.Node]) -> list[tuple[int, int]
     return out
 
 
+def enters_of(z: SimpleNamespace, targets: Sequence[manifest.Target]) -> list[tuple[int, int]]:
+    """The enters a pair's targets come to: a host pair as it is, an own move by its slot, a
+    picker one a variant, or one of the combo of the variant and the own move that follows it."""
+    ids = moves.combo_ids(z.m)
+    out: list[tuple[int, int]] = []
+    k = 0
+    while k < len(targets):
+        t = targets[k]
+        if isinstance(t, tuple):
+            out.append(t)
+        elif z.m.moves[t].picker:
+            variants = [v for _, _, v in z.m.moves[t].pick]
+            then = targets[k + 1] if k + 1 < len(targets) else None
+            if isinstance(then, str) and all((v, then) in ids for v in variants):
+                out += [(OWN, ids[v, then]) for v in variants]
+                k += 1
+            else:
+                out += [(OWN, z.slots[v]) for v in variants]
+        else:
+            out.append((OWN, z.slots[t]))
+        k += 1
+    return out
+
+
 def test_zinogre_turns_then_moves(zinogre):
     b = zinogre.m.brain
     s, _ = splice_of(zinogre, b)
     turned = [manifest.pair_of(k) for k in b.pairs if len(b.targets(manifest.pair_of(k))) == 2]
     assert len(turned) == 38
+    shared = {v for _, _, v in zinogre.m.moves["p3_7_23"].pick}
+    assert len(shared) == 4 and shared <= set(zinogre.slots)
     for pair in turned:
-        move = b.targets(pair)[-1]
-        assert s.uses[pair, TURN] > 0 and s.uses[pair, move] == s.uses[pair, TURN]
+        picker, move = b.targets(pair)
+        assert picker == manifest.own_name(pair) and zinogre.m.moves[picker].picker
+        assert {v for _, _, v in zinogre.m.moves[picker].pick} == shared
+        assert s.uses[pair, move] > 0 and s.uses[pair, move] % 4 == 0
+        assert {s.uses[pair, v] for v in shared} == {s.uses[pair, move] // 4}
     for label, name in s.routines.items():
         got = Counter(
             (n.args["main"], n.args["sub"])
@@ -487,9 +523,83 @@ def test_zinogre_turns_then_moves(zinogre):
         )
         want: Counter[tuple[int, int]] = Counter()
         for pair in expanded(zinogre.donor, zinogre.donor.routines[name].body):
-            for t in b.targets(pair):
-                want[(OWN, zinogre.slots[t]) if isinstance(t, str) else t] += 1
+            for sub in enters_of(zinogre, b.targets(pair)):
+                want[sub] += 1
         assert got == want, label
+
+
+def test_the_turns_in_place_aim_along_the_curves_of_90_and_180_degrees(zinogre):
+    m = zinogre.m
+    names = [f"p3_2_26_a{k}" for k in range(4)]
+    assert [m.moves["p3_2_26"].pick[k][2] for k in range(4)] == names
+    assert [m.clips[m.moves[n].clip].source for n in names] == [9, 38, 37, 8]
+    assert [m.moves[n].steer.turn for n in names] == ["aim"] * 4
+    assert [m.moves[n].code_turn[-1] for n in names] == [0x4000, 0x7FFF, -0x7FFF, -0x4000]
+    assert [(lo, hi) for lo, hi, _ in m.moves["p3_2_26"].pick] == [
+        (0, 63),
+        (64, 127),
+        (128, 191),
+        (192, 255),
+    ]
+    sides = [m.moves[n] for n in ("p3_1_1_a0", "p3_1_1_a1")]
+    assert [m.clips[mv.clip].source for mv in sides] == [11, 39]
+    assert [(mv.steer.turn, round(mv.steer.angle or 0)) for mv in sides] == [
+        ("fixed", 20),
+        ("fixed", -20),
+    ]
+    sidestep = [m.moves[n] for n in ("p3_2_5", "p3_2_6")]
+    assert [mv.steer.angle for mv in sidestep] == [-90.0, 90.0]
+    assert all(mv.steer.window == (30, 100) and mv.travel for mv in sidestep)
+
+
+def test_the_wrappers_share_four_variants_that_stop_where_the_donor_hands_over(zinogre):
+    m = zinogre.m
+    arcs = [(lo, hi) for lo, hi, _ in m.moves["p3_7_23"].pick]
+    assert arcs == [(0, 85), (86, 127), (128, 170), (171, 255)]
+    first = [v for _, _, v in m.moves["p3_7_23"].pick]
+    assert first == [f"p3_7_23_a{k}" for k in range(4)]
+    assert all(m.moves[p].pick == m.moves["p3_7_23"].pick for p in ("p3_7_24", "p3_7_120"))
+    assert [m.clips[m.moves[v].clip].source for v in first] == [9, 38, 37, 8]
+    assert [(m.moves[v].stop, m.moves[v].aim_out) for v in first] == [
+        (52, 6),
+        (62, 10),
+        (62, 10),
+        (52, 6),
+    ]
+    assert all(m.moves[v].steer.turn == "clip" and m.moves[v].after is None for v in first)
+    assert not [n for n in m.moves if n.startswith("p3_7_24_a")], "twins are the kept variants"
+
+
+def test_the_spliced_wrapper_branches_on_the_arc_and_enters_a_combo_of_each_variant(zinogre):
+    m = zinogre.m
+    _, built = splice_of(zinogre, m.brain)
+    text = "\n".join(routines(built))
+    ids = [moves.combo_id(m, f"p3_7_23_a{k}", "p3_7_0") for k in range(4)]
+    assert all(i is not None and i >= moves.SLOTS for i in ids) and len(set(ids)) == 4
+    for lo, hi in [(0, 85), (86, 127), (128, 170)]:
+        assert f"if_target_in_arc {lo} {hi}" in text, (lo, hi)
+    for i in ids:
+        assert f"enter {OWN} {i} 0" in text, i
+    assert "enter 1 2 0" not in text, "the host's turn is no longer entered"
+
+
+def test_the_module_the_check_and_the_ids_agree_on_the_variants_and_combos(zinogre, module_text):
+    text, built = module_text
+    m = zinogre.m
+    assert not moves.problems(m, built.layout, moves.records(Data.find().fu, 75))
+    slotted = moves.slots(m)
+    assert len(slotted) == 137 and "p3_7_23" not in slotted and "p3_7_23_a0" in slotted
+    assert "    p3_7_23 = " not in text and "    p3_7_23_a0 = " in text
+    combos = [line for line in text.splitlines() if line.startswith("  combos = ")]
+    (line,) = combos
+    ids = line.count("{ ") - 1
+    assert ids == len(moves.combos(m)) == 88 <= moves.COMBOS
+    assert moves.combo_ids(m) == {c: moves.combo_id(m, *c) for c in moves.combos(m)}
+    first = moves.combos(m)[0]
+    assert f'{{ {moves.SLOTS}, "{first[0]}", "{first[1]}" }}' in line
+    held = moves.pools(m, built.layout)
+    assert len(held.keys) <= moves.POOL and len(held.samples) <= moves.SAMPLE_POOL
+    assert len(held.turns) <= moves.TURN_POOL and len(held.lunges) <= moves.LUNGES
 
 
 def test_zinogre_brain_file_round_trip(zinogre, data, tmp_path):
@@ -549,10 +659,15 @@ def test_the_moves_module_carries_fatigue_and_charge(module_text):
 def test_the_own_moves_fit_the_framework(zinogre, module_text):
     """The slots and the pools the registry holds: sharing equal runs is what fits the port."""
     _, built = module_text
-    names = [n for n, mv in zinogre.m.moves.items() if mv.own]
+    names = [n for n, mv in zinogre.m.moves.items() if mv.played]
     held = moves.pools(zinogre.m, built.layout)
-    assert len(names) == 125
-    assert (len(held.keys), len(held.samples), len(held.lunges)) == (4218, 1052, 10)
+    assert len(names) == 137 and len(moves.combos(zinogre.m)) == 88
+    assert (len(held.keys), len(held.samples), len(held.turns), len(held.lunges)) == (
+        4711,
+        1447,
+        322,
+        10,
+    )
     assert not moves.problems(zinogre.m, built.layout, moves.records(Data.find().fu, 75))
 
 
@@ -563,4 +678,10 @@ def test_the_cli_splices_the_port(data, capsys):
     assert "routines added" in out and "worst run" in out
     assert "  charge: charge_up 40/55/65/100, p3_1_15 25/35/40/55, " in out
     assert "  pair 2,12 -> own p3_2_12 (slot " in out and "  pair 2,25 -> own p3_2_23 (slot " in out
-    assert "  pair 7,23 -> 1,2  x" in out and "  pair 7,23 -> own p3_7_0 (slot " in out
+    assert (
+        "  pair 7,23 -> own p3_7_23_a0 (slot " in out and "  pair 7,23 -> own p3_7_0 (slot " in out
+    )
+    assert (
+        "  pair 1,1 -> own p3_1_1_a0 (slot " in out
+        and "  pair 2,26 -> own p3_2_26_a3 (slot " in out
+    )
