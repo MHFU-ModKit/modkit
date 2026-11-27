@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
+name: Qt
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qt-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  STUDIO_IMAGE: mhfu-studio-gl
+  STUDIO_SKIP_BUILD: "1"
+
+jobs:
+  qt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - id: affected
+        uses: ./.github/actions/affected
+      - id: run
+        if: steps.affected.outputs.all == 'true' || contains(fromJSON(steps.affected.outputs.modules), 'studio')
+        run: echo "go=true" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+        if: steps.run.outputs.go
+      - name: Studio image
+        if: steps.run.outputs.go
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/studio/docker
+          platforms: linux/amd64
+          tags: ${{ env.STUDIO_IMAGE }}
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Studio tests in the image
+        if: steps.run.outputs.go
+        env:
+          MHFU_UI_DISPLAY: "1"
+        run: apps/studio/docker/run.sh uv run modkit-ci test studio --cov
