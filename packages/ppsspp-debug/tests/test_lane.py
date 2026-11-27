@@ -14,7 +14,8 @@ def stick(tmp_path):
     src = tmp_path / "stick"
     (src / "SYSTEM").mkdir(parents=True)
     (src / "SYSTEM/ppsspp.ini").write_text(
-        "[General]\nRemoteISOPort = 62517\nPauseOnLostFocus = True\n[Graphics]\nFrameSkip = 0\n"
+        "[General]\nRemoteISOPort = 62517\nPauseOnLostFocus = True\nFileLogging = True\n"
+        "[Graphics]\nFrameSkip = 0\n"
     )
     (src / "SAVEDATA/ULES01213").mkdir(parents=True)
     (src / "SAVEDATA/ULES01213/DATA.BIN").write_bytes(b"save")
@@ -34,6 +35,7 @@ def test_prepare_clones_and_owns_the_port(tmp_path, stick):
     assert "RemoteISOPort = 45103" in ini
     assert "PauseOnLostFocus = False" in ini
     assert "RemoteDebuggerOnStartup = True" in ini
+    assert "FileLogging = False" in ini
     assert "FrameSkip = 0" in ini
     assert (lane.stick / "SAVEDATA/ULES01213/DATA.BIN").read_bytes() == b"save"
     assert lane.game.read_bytes() == b"iso"
