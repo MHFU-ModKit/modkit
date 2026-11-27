@@ -1,0 +1,1042 @@
+[
+ {
+  "DOC": "",
+  "defines": [],
+  "fields": [],
+  "name": "LuaLS",
+  "type": "luals.config"
+ },
+ {
+  "defines": [
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "The fixture API.",
+    "file": "meta/fx.d.lua",
+    "finish": [
+     5,
+     12
+    ],
+    "rawdesc": "The fixture API.",
+    "start": [
+     5,
+     10
+    ],
+    "type": "doc.class",
+    "view": "fx",
+    "visible": "public"
+   }
+  ],
+  "desc": "The fixture API.",
+  "fields": [
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "The item limit.",
+    "extends": {
+     "finish": [
+      14,
+      10
+     ],
+     "start": [
+      14,
+      9
+     ],
+     "type": "integer",
+     "view": "integer"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     14,
+     6
+    ],
+    "name": "MAX",
+    "rawdesc": "The item limit.",
+    "start": [
+     14,
+     0
+    ],
+    "type": "setfield",
+    "view": "integer",
+    "visible": "public"
+   },
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "The modes.",
+    "extends": {
+     "finish": [
+      20,
+      1
+     ],
+     "start": [
+      17,
+      10
+     ],
+     "type": "table",
+     "view": "table"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     17,
+     7
+    ],
+    "name": "MODE",
+    "rawdesc": "The modes.",
+    "start": [
+     17,
+     0
+    ],
+    "type": "setfield",
+    "view": "table",
+    "visible": "public"
+   },
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "Adds a to b.\n\n```lua\nlocal n = fx.add(1)\n```\n\n@*param* `a` \u2014 first operand\n\n@*param* `b` \u2014 second operand\n\n@*return* `sum` \u2014 the sum",
+    "extends": {
+     "args": [
+      {
+       "desc": "first operand",
+       "finish": [
+        30,
+        17
+       ],
+       "name": "a",
+       "rawdesc": "first operand",
+       "start": [
+        30,
+        16
+       ],
+       "type": "local",
+       "view": "integer"
+      },
+      {
+       "desc": "second operand",
+       "finish": [
+        30,
+        20
+       ],
+       "name": "b",
+       "rawdesc": "second operand",
+       "start": [
+        30,
+        19
+       ],
+       "type": "local",
+       "view": "integer?"
+      }
+     ],
+     "desc": "Adds a to b.\n\n```lua\nlocal n = fx.add(1)\n```\n\n@*param* `a` \u2014 first operand\n\n@*param* `b` \u2014 second operand\n\n@*return* `sum` \u2014 the sum",
+     "finish": [
+      30,
+      25
+     ],
+     "rawdesc": "Adds a to b.\n\n```lua\nlocal n = fx.add(1)\n```",
+     "returns": [
+      {
+       "desc": "the sum",
+       "name": "sum",
+       "rawdesc": "the sum",
+       "type": "function.return",
+       "view": "integer"
+      }
+     ],
+     "start": [
+      30,
+      0
+     ],
+     "type": "function",
+     "view": "function fx.add(a: integer, b?: integer)\n  -> sum: integer"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     30,
+     15
+    ],
+    "name": "add",
+    "rawdesc": "Adds a to b.\n\n```lua\nlocal n = fx.add(1)\n```",
+    "start": [
+     30,
+     9
+    ],
+    "type": "setfield",
+    "view": "function",
+    "visible": "public"
+   },
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "The version.",
+    "extends": {
+     "finish": [
+      11,
+      18
+     ],
+     "start": [
+      11,
+      17
+     ],
+     "type": "integer",
+     "view": "integer"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     11,
+     14
+    ],
+    "name": "api_version",
+    "rawdesc": "The version.",
+    "start": [
+     11,
+     0
+    ],
+    "type": "setfield",
+    "view": "integer",
+    "visible": "public"
+   },
+   {
+    "async": false,
+    "deprecated": false,
+    "extends": {
+     "args": [
+      {
+       "finish": [
+        37,
+        18
+       ],
+       "name": "v",
+       "start": [
+        37,
+        17
+       ],
+       "type": "local",
+       "view": "any"
+      }
+     ],
+     "finish": [
+      37,
+      23
+     ],
+     "start": [
+      37,
+      0
+     ],
+     "type": "function",
+     "view": "function fx.bare(v: any)"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     37,
+     16
+    ],
+    "name": "bare",
+    "start": [
+     37,
+     9
+    ],
+    "type": "setfield",
+    "view": "function",
+    "visible": "public"
+   },
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "how many",
+    "extends": {
+     "finish": [
+      6,
+      23
+     ],
+     "start": [
+      6,
+      16
+     ],
+     "type": "doc.type",
+     "types": [
+      {
+       "finish": [
+        6,
+        23
+       ],
+       "start": [
+        6,
+        16
+       ],
+       "type": "doc.type.name",
+       "view": "integer"
+      }
+     ],
+     "view": "integer"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     6,
+     23
+    ],
+    "name": "count",
+    "rawdesc": "how many",
+    "start": [
+     6,
+     10
+    ],
+    "type": "doc.field",
+    "view": "integer",
+    "visible": "public"
+   },
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "True when the text is empty.",
+    "extends": {
+     "args": [
+      {
+       "finish": [
+        6,
+        20
+       ],
+       "name": "x",
+       "start": [
+        6,
+        19
+       ],
+       "type": "local",
+       "view": "string"
+      }
+     ],
+     "desc": "True when the text is empty.",
+     "finish": [
+      8,
+      3
+     ],
+     "rawdesc": "True when the text is empty.",
+     "returns": [
+      {
+       "type": "function.return",
+       "view": "boolean"
+      }
+     ],
+     "start": [
+      6,
+      0
+     ],
+     "type": "function",
+     "view": "function fx.helper(x: string)\n  -> boolean"
+    },
+    "file": "lib/helper.lua",
+    "finish": [
+     6,
+     18
+    ],
+    "name": "helper",
+    "rawdesc": "True when the text is empty.",
+    "start": [
+     6,
+     9
+    ],
+    "type": "setfield",
+    "view": "function",
+    "visible": "public"
+   },
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "optional label",
+    "extends": {
+     "finish": [
+      7,
+      23
+     ],
+     "start": [
+      7,
+      17
+     ],
+     "type": "doc.type",
+     "types": [
+      {
+       "finish": [
+        7,
+        23
+       ],
+       "start": [
+        7,
+        17
+       ],
+       "type": "doc.type.name",
+       "view": "string"
+      }
+     ],
+     "view": "string?"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     7,
+     23
+    ],
+    "name": "label",
+    "rawdesc": "optional label",
+    "start": [
+     7,
+     10
+    ],
+    "type": "doc.field",
+    "view": "string?",
+    "visible": "public"
+   },
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "Defined outside the declared dirs.",
+    "extends": {
+     "args": [],
+     "desc": "Defined outside the declared dirs.",
+     "finish": [
+      5,
+      34
+     ],
+     "rawdesc": "Defined outside the declared dirs.",
+     "returns": [
+      {
+       "type": "function.return",
+       "view": "integer"
+      }
+     ],
+     "start": [
+      5,
+      0
+     ],
+     "type": "function",
+     "view": "function fx.outside()\n  -> integer"
+    },
+    "file": "other/outside.lua",
+    "finish": [
+     5,
+     19
+    ],
+    "name": "outside",
+    "rawdesc": "Defined outside the declared dirs.",
+    "start": [
+     5,
+     9
+    ],
+    "type": "setfield",
+    "view": "function",
+    "visible": "public"
+   },
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "Both coordinates.",
+    "extends": {
+     "args": [],
+     "desc": "Both coordinates.",
+     "finish": [
+      35,
+      22
+     ],
+     "rawdesc": "Both coordinates.",
+     "returns": [
+      {
+       "name": "x",
+       "type": "function.return",
+       "view": "integer"
+      },
+      {
+       "name": "y",
+       "type": "function.return",
+       "view": "integer"
+      }
+     ],
+     "start": [
+      35,
+      0
+     ],
+     "type": "function",
+     "view": "function fx.pair()\n  -> x: integer\n  2. y: integer"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     35,
+     16
+    ],
+    "name": "pair",
+    "rawdesc": "Both coordinates.",
+    "start": [
+     35,
+     9
+    ],
+    "type": "setfield",
+    "view": "function",
+    "visible": "public"
+   }
+  ],
+  "name": "fx",
+  "rawdesc": "The fixture API.",
+  "type": "type",
+  "view": "fx"
+ },
+ {
+  "defines": [
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "The fixture API.",
+    "extends": {
+     "desc": "The fixture API.",
+     "finish": [
+      8,
+      7
+     ],
+     "rawdesc": "The fixture API.",
+     "start": [
+      8,
+      5
+     ],
+     "type": "table",
+     "view": "fx"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     8,
+     2
+    ],
+    "rawdesc": "The fixture API.",
+    "start": [
+     8,
+     0
+    ],
+    "type": "setglobal",
+    "view": "fx",
+    "visible": "public"
+   }
+  ],
+  "name": "fx",
+  "type": "variable",
+  "view": "unknown"
+ },
+ {
+  "defines": [
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "The item limit.",
+    "extends": {
+     "finish": [
+      14,
+      10
+     ],
+     "start": [
+      14,
+      9
+     ],
+     "type": "integer",
+     "view": "integer"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     14,
+     6
+    ],
+    "name": "MAX",
+    "rawdesc": "The item limit.",
+    "start": [
+     14,
+     0
+    ],
+    "type": "setfield",
+    "view": "integer",
+    "visible": "public"
+   }
+  ],
+  "name": "fx.MAX",
+  "type": "variable",
+  "view": "unknown"
+ },
+ {
+  "defines": [
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "The modes.",
+    "extends": {
+     "finish": [
+      20,
+      1
+     ],
+     "start": [
+      17,
+      10
+     ],
+     "type": "table",
+     "view": "table"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     17,
+     7
+    ],
+    "name": "MODE",
+    "rawdesc": "The modes.",
+    "start": [
+     17,
+     0
+    ],
+    "type": "setfield",
+    "view": "table",
+    "visible": "public"
+   }
+  ],
+  "name": "fx.MODE",
+  "type": "variable",
+  "view": "unknown"
+ },
+ {
+  "defines": [
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "Options of a call.",
+    "file": "meta/fx.d.lua",
+    "finish": [
+     40,
+     17
+    ],
+    "rawdesc": "Options of a call.",
+    "start": [
+     40,
+     10
+    ],
+    "type": "doc.class",
+    "view": "fx.Opts",
+    "visible": "public"
+   }
+  ],
+  "desc": "Options of a call.",
+  "fields": [
+   {
+    "async": false,
+    "deprecated": false,
+    "extends": {
+     "finish": [
+      41,
+      19
+     ],
+     "start": [
+      41,
+      12
+     ],
+     "type": "doc.type",
+     "types": [
+      {
+       "finish": [
+        41,
+        19
+       ],
+       "start": [
+        41,
+        12
+       ],
+       "type": "doc.type.name",
+       "view": "integer"
+      }
+     ],
+     "view": "integer"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     41,
+     19
+    ],
+    "name": "n",
+    "start": [
+     41,
+     10
+    ],
+    "type": "doc.field",
+    "view": "integer",
+    "visible": "public"
+   },
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "the name",
+    "extends": {
+     "finish": [
+      42,
+      22
+     ],
+     "start": [
+      42,
+      16
+     ],
+     "type": "doc.type",
+     "types": [
+      {
+       "finish": [
+        42,
+        22
+       ],
+       "start": [
+        42,
+        16
+       ],
+       "type": "doc.type.name",
+       "view": "string"
+      }
+     ],
+     "view": "string?"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     42,
+     22
+    ],
+    "name": "name",
+    "rawdesc": "the name",
+    "start": [
+     42,
+     10
+    ],
+    "type": "doc.field",
+    "view": "string?",
+    "visible": "public"
+   }
+  ],
+  "name": "fx.Opts",
+  "rawdesc": "Options of a call.",
+  "type": "type",
+  "view": "fx.Opts"
+ },
+ {
+  "defines": [
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "Adds a to b.\n\n```lua\nlocal n = fx.add(1)\n```\n\n@*param* `a` \u2014 first operand\n\n@*param* `b` \u2014 second operand\n\n@*return* `sum` \u2014 the sum",
+    "extends": {
+     "args": [
+      {
+       "desc": "first operand",
+       "finish": [
+        30,
+        17
+       ],
+       "name": "a",
+       "rawdesc": "first operand",
+       "start": [
+        30,
+        16
+       ],
+       "type": "local",
+       "view": "integer"
+      },
+      {
+       "desc": "second operand",
+       "finish": [
+        30,
+        20
+       ],
+       "name": "b",
+       "rawdesc": "second operand",
+       "start": [
+        30,
+        19
+       ],
+       "type": "local",
+       "view": "integer?"
+      }
+     ],
+     "desc": "Adds a to b.\n\n```lua\nlocal n = fx.add(1)\n```\n\n@*param* `a` \u2014 first operand\n\n@*param* `b` \u2014 second operand\n\n@*return* `sum` \u2014 the sum",
+     "finish": [
+      30,
+      25
+     ],
+     "rawdesc": "Adds a to b.\n\n```lua\nlocal n = fx.add(1)\n```",
+     "returns": [
+      {
+       "desc": "the sum",
+       "name": "sum",
+       "rawdesc": "the sum",
+       "type": "function.return",
+       "view": "integer"
+      }
+     ],
+     "start": [
+      30,
+      0
+     ],
+     "type": "function",
+     "view": "function fx.add(a: integer, b?: integer)\n  -> sum: integer"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     30,
+     15
+    ],
+    "name": "add",
+    "rawdesc": "Adds a to b.\n\n```lua\nlocal n = fx.add(1)\n```",
+    "start": [
+     30,
+     9
+    ],
+    "type": "setfield",
+    "view": "function",
+    "visible": "public"
+   }
+  ],
+  "name": "fx.add",
+  "type": "variable",
+  "view": "unknown"
+ },
+ {
+  "defines": [
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "The version.",
+    "extends": {
+     "finish": [
+      11,
+      18
+     ],
+     "start": [
+      11,
+      17
+     ],
+     "type": "integer",
+     "view": "integer"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     11,
+     14
+    ],
+    "name": "api_version",
+    "rawdesc": "The version.",
+    "start": [
+     11,
+     0
+    ],
+    "type": "setfield",
+    "view": "integer",
+    "visible": "public"
+   }
+  ],
+  "name": "fx.api_version",
+  "type": "variable",
+  "view": "unknown"
+ },
+ {
+  "defines": [
+   {
+    "async": false,
+    "deprecated": false,
+    "extends": {
+     "args": [
+      {
+       "finish": [
+        37,
+        18
+       ],
+       "name": "v",
+       "start": [
+        37,
+        17
+       ],
+       "type": "local",
+       "view": "any"
+      }
+     ],
+     "finish": [
+      37,
+      23
+     ],
+     "start": [
+      37,
+      0
+     ],
+     "type": "function",
+     "view": "function fx.bare(v: any)"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     37,
+     16
+    ],
+    "name": "bare",
+    "start": [
+     37,
+     9
+    ],
+    "type": "setfield",
+    "view": "function",
+    "visible": "public"
+   }
+  ],
+  "name": "fx.bare",
+  "type": "variable",
+  "view": "unknown"
+ },
+ {
+  "defines": [
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "True when the text is empty.",
+    "extends": {
+     "args": [
+      {
+       "finish": [
+        6,
+        20
+       ],
+       "name": "x",
+       "start": [
+        6,
+        19
+       ],
+       "type": "local",
+       "view": "string"
+      }
+     ],
+     "desc": "True when the text is empty.",
+     "finish": [
+      8,
+      3
+     ],
+     "rawdesc": "True when the text is empty.",
+     "returns": [
+      {
+       "type": "function.return",
+       "view": "boolean"
+      }
+     ],
+     "start": [
+      6,
+      0
+     ],
+     "type": "function",
+     "view": "function fx.helper(x: string)\n  -> boolean"
+    },
+    "file": "lib/helper.lua",
+    "finish": [
+     6,
+     18
+    ],
+    "name": "helper",
+    "rawdesc": "True when the text is empty.",
+    "start": [
+     6,
+     9
+    ],
+    "type": "setfield",
+    "view": "function",
+    "visible": "public"
+   }
+  ],
+  "name": "fx.helper",
+  "type": "variable",
+  "view": "unknown"
+ },
+ {
+  "defines": [
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "Defined outside the declared dirs.",
+    "extends": {
+     "args": [],
+     "desc": "Defined outside the declared dirs.",
+     "finish": [
+      5,
+      34
+     ],
+     "rawdesc": "Defined outside the declared dirs.",
+     "returns": [
+      {
+       "type": "function.return",
+       "view": "integer"
+      }
+     ],
+     "start": [
+      5,
+      0
+     ],
+     "type": "function",
+     "view": "function fx.outside()\n  -> integer"
+    },
+    "file": "other/outside.lua",
+    "finish": [
+     5,
+     19
+    ],
+    "name": "outside",
+    "rawdesc": "Defined outside the declared dirs.",
+    "start": [
+     5,
+     9
+    ],
+    "type": "setfield",
+    "view": "function",
+    "visible": "public"
+   }
+  ],
+  "name": "fx.outside",
+  "type": "variable",
+  "view": "unknown"
+ },
+ {
+  "defines": [
+   {
+    "async": false,
+    "deprecated": false,
+    "desc": "Both coordinates.",
+    "extends": {
+     "args": [],
+     "desc": "Both coordinates.",
+     "finish": [
+      35,
+      22
+     ],
+     "rawdesc": "Both coordinates.",
+     "returns": [
+      {
+       "name": "x",
+       "type": "function.return",
+       "view": "integer"
+      },
+      {
+       "name": "y",
+       "type": "function.return",
+       "view": "integer"
+      }
+     ],
+     "start": [
+      35,
+      0
+     ],
+     "type": "function",
+     "view": "function fx.pair()\n  -> x: integer\n  2. y: integer"
+    },
+    "file": "meta/fx.d.lua",
+    "finish": [
+     35,
+     16
+    ],
+    "name": "pair",
+    "rawdesc": "Both coordinates.",
+    "start": [
+     35,
+     9
+    ],
+    "type": "setfield",
+    "view": "function",
+    "visible": "public"
+   }
+  ],
+  "name": "fx.pair",
+  "type": "variable",
+  "view": "unknown"
+ }
+]
