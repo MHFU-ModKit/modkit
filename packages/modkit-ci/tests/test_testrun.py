@@ -92,3 +92,13 @@ def test_cli_passthrough(
     monkeypatch.chdir(reg.root)
     assert main(["test", "alpha", "--no-qt", "--", "-k", "x"]) == 0
     assert calls[0][-2:] == ["-k", "x"]
+
+
+def test_cli_options_after_units(
+    reg: registry.Registry, calls: list[list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(reg.root)
+    assert main(["test", "alpha", "--cov", "--no-qt", "--", "-x"]) == 0
+    assert "--cov=alpha" not in calls[0]  # no packages in the fixture
+    assert calls[0][-1] == "-x"
+    assert main(["test", "alpha", "-x"]) == 2

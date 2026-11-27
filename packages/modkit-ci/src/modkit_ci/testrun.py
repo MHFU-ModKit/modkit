@@ -54,9 +54,23 @@ def run(
     return 1 if failed else 0
 
 
+def _partition(rest: list[str]) -> tuple[list[str], str, list[str]]:
+    if "--" not in rest:
+        return rest, "", []
+    i = rest.index("--")
+    return rest[:i], "--", rest[i + 1 :]
+
+
 def _cmd(args: argparse.Namespace) -> int:
-    extra = args.pytest_args[1:] if args.pytest_args[:1] == ["--"] else args.pytest_args
-    return run(load(), args.units, cov=args.cov, no_qt=args.no_qt, extra=extra)
+    # REMAINDER swallows the options written after the units: take ours back out
+    rest: list[str] = args.pytest_args
+    head, _, tail = _partition(rest)
+    cov, no_qt = args.cov or "--cov" in head, args.no_qt or "--no-qt" in head
+    unknown = [a for a in head if a not in ("--cov", "--no-qt")]
+    if unknown:
+        print(f"test: unexpected {' '.join(unknown)} (pytest options go after --)", file=sys.stderr)
+        return 2
+    return run(load(), args.units, cov=cov, no_qt=no_qt, extra=tail)
 
 
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
