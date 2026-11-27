@@ -13,18 +13,20 @@ result: the moves module (`mhfu-port build`, `inject`, the studio's deploy) and 
 instead; nothing derived is stored.
 
 A pair with several clips is a chain, `p3_7_14`, `p3_7_14_2`, ..., each step handing to the next
-through `after`; a step carries the donor's attacks that are active on its clip. A donor record
-becomes the host record whose volumes overlap it most on the port's rig (`[brain.attacks]` names
-one instead), and the node plays with the host record's power and life. A record nothing matches
-gets a spare host record (`brain.spare`), added to the returned manifest as `[[attack]]` and
-`[[hitbox]]`; the studio's hit tables write it into the game.
+through `after`; a step carries the donor's attacks that are active on its clip. The last step
+hands to the pair the handler hands over to (`P3_OWN_NEXT`: where it cannot); equal tails are one
+move (`share`). A donor record becomes the host record whose volumes overlap it most on the port's
+rig (`[brain.attacks]` names one instead), and the node plays with the host record's power and
+life. A record nothing matches gets a spare host record (`brain.spare`), added to the returned
+manifest as `[[attack]]` and `[[hitbox]]`; the studio's hit tables write it into the game.
 """
 
 from __future__ import annotations
 
 import copy
+import dataclasses
 import statistics
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from typing import NamedTuple
 
 import numpy as np
@@ -33,7 +35,7 @@ from mhfu.em.script.check import Finding
 from mhfu.files import em_overlay
 from numpy.typing import NDArray
 
-from .. import build, fk, layout, moves, p3hits, p3moveset
+from .. import build, fk, layout, moves, p3hits, p3moveset, sequence
 from ..data import Data
 from ..manifest import (
     MOVE_ATTACKS,
@@ -46,6 +48,7 @@ from ..manifest import (
     Move,
     Steer,
     own_name,
+    pair_of,
 )
 from ..p3hits import Plan, Step, Walk
 from .spare import HOST_NO_DAMAGE, NO_DAMAGE, POWER_SCALE, Spare, Spares
@@ -61,6 +64,8 @@ FLOOR = 0.25
 SAMPLES = 100_000
 """Points the overlap of two volume sets is sampled at."""
 MAX_RATE = 0xFFFF
+REST = frozenset(p for ps in p3moveset.END.values() for p in ps)
+"""The pairs a move ends in, to rest: no hand-over."""
 
 Report = Callable[[Finding], None]
 
@@ -191,6 +196,17 @@ def overlap(a: Sequence[Prim], b: Sequence[Prim]) -> float:
 # --- the moves ---
 
 
+class Hand(NamedTuple):
+    """Where a complete handler hands over to, outside the rest pairs."""
+
+    name: str | None = None
+    """The own move that pair plays; None: not followed."""
+    make: Pair | None = None
+    """The donor pair whose derivation makes `name`; None for a move the manifest authors."""
+    text: str = ""
+    """The finding when it is not followed."""
+
+
 class Derivation:
     """One pair's plan turned into moves and findings."""
 
@@ -204,10 +220,15 @@ class Derivation:
     ) -> None:
         self.m, self.walk, self.matcher, self.say = m, walk, matcher, say
         self.pairs = list(pairs)
-        """Every pair being derived: the spare records' power scale reads all their matches."""
+        """The pairs being derived; the pairs they hand over to are derived too, and with them
+        feed the spare records' power scale, which reads all their matches."""
         self.pair: Pair = (0, 0)
         self.item = ""
         """The move findings are about."""
+        self.made: list[str] = []
+        """The moves derived, in order."""
+        self._authored = frozenset(m.moves)
+        self._done: set[Pair] = set()
         self._plans: dict[Pair, Plan] = {}
         self._spares: Spares | None = None
         self._near: dict[int, tuple[str, str]] = {}
@@ -225,6 +246,10 @@ class Derivation:
         return self._plans[pair]
 
     def run(self, pair: Pair) -> None:
+        """Derive `pair`'s moves, and those of the pairs its handler hands over to; once each."""
+        if pair in self._done:
+            return
+        self._done.add(pair)
         head = own_name(pair)
         self.pair, self.item = pair, head
         plan = self._plan(pair)
@@ -236,12 +261,96 @@ class Derivation:
             self.find("error", "P3_OWN_NOCLIPS", "its handler plays no clip")
             return
         names = [head, *(f"{head}_{k}" for k in range(2, len(plan.steps) + 1))]
+        made = []
         for k, step in enumerate(plan.steps):
             if names[k] in self.m.moves:
                 continue
             self.item = names[k]
             after = names[k + 1] if k + 1 < len(names) else None
             self.m.moves[names[k]] = self._move(step, after)
+            made.append(names[k])
+        self.made += made
+        if names[-1] in made:
+            self._follow(pair, plan, names[-1])
+
+    def _follow(self, pair: Pair, plan: Plan, last: str) -> None:
+        """Hand `last` over to the move of the pair the handler ends into. Linked before that
+        pair is derived, so a pair that leads back sees the ring and is the one cut."""
+        hand = self._hand(plan)
+        if hand is None:
+            return
+        name, text = hand.name, hand.text
+        if name is not None:
+            target = self.m.moves.get(name)
+            if target is not None and not target.own:
+                text = f"{self._lead(plan)}: moves.{name} is no own move"
+            elif last in sequence.chain(self.m, name):
+                text = f"{self._lead(plan)}: following it would close a ring"
+        if name is None or text:
+            self.pair, self.item = pair, own_name(pair)
+            self.find("info", "P3_OWN_NEXT", text)
+            return
+        self.m.moves[last].after = name
+        if hand.make is not None:
+            self.run(hand.make)
+
+    @staticmethod
+    def _lead(plan: Plan) -> str:
+        over = [f"{a},{b}" for a, b in plan.leaves if (a, b) not in REST]
+        return f"it hands over to pair{'s' if len(over) > 1 else ''} {', '.join(over)}"
+
+    def _hand(self, plan: Plan) -> Hand | None:
+        """What a complete plan hands over to; None when it ends at rest or did not end."""
+        over = [p for p in plan.leaves if p not in REST]
+        if not plan.complete or not over:
+            return None
+        if len(plan.leaves) > 1:
+            ends = ", ".join(f"{a},{b}" for a, b in plan.leaves)
+            return Hand(text=f"it hands over to one of pairs {ends}, as the run goes: not followed")
+        lead = self._lead(plan)
+        (to,) = over
+        brain = self.m.brain
+        plays = [] if brain is None else brain.targets(to)
+        if plays and not (len(plays) == 1 and isinstance(plays[0], str)):
+            what = f"host pair {plays[0][0]},{plays[0][1]}" if len(plays) == 1 else "several moves"
+            return Hand(text=f"{lead}, which [brain.pairs] plays as {what}: not followed")
+        name = plays[0] if plays else own_name(to)
+        assert isinstance(name, str)
+        if name in self._authored:
+            return Hand(name)
+        make = brain.derived().get(name) if brain is not None else None
+        make = make or (to if name == own_name(to) else None)
+        if make is None:
+            return Hand(text=f"{lead}, which the port does not play: no pair derives {name}")
+        if why := self._unplayable(make):
+            return Hand(text=f"{lead}, which the port does not play: {why}")
+        return Hand(name, make)
+
+    def _unplayable(self, pair: Pair) -> str:
+        """Why `pair` yields no moves a hand-over can go on into; empty when it does."""
+        plan = self._plan(pair)
+        if plan is None:
+            return "the donor has no such pair"
+        if not plan.steps:
+            return "its handler plays no clip"
+        if lacking := [s.clip for s in plan.steps if s.clip not in self.walk.lengths]:
+            return f"it plays clip {lacking[0]}, which the donor lacks"
+        if plan.complete:
+            return ""
+        why = next((n.text for n in plan.notes if n.code == "unresolved"), "")
+        return "the walk gave up before its handler ended" + (f" ({why})" if why else "")
+
+    def _reach(self, start: Sequence[Pair]) -> list[Pair]:
+        """`start` and the pairs derived to follow them, in order."""
+        out = list(dict.fromkeys(start))
+        todo = list(out)
+        while todo:
+            plan = self._plan(todo.pop(0))
+            hand = None if plan is None else self._hand(plan)
+            if hand is not None and hand.make is not None and hand.make not in out:
+                out.append(hand.make)
+                todo.append(hand.make)
+        return out
 
     def finish(self) -> None:
         """One `P3_OWN_SPARE` per spare record taken, once every pair has had its say: the
@@ -278,10 +387,6 @@ class Derivation:
             )
         if not plan.complete and plan.steps:
             self.find("warning", "P3_OWN_PARTIAL", "the walk gave up before the handler ended")
-        rest = {p for ps in p3moveset.END.values() for p in ps}
-        if plan.complete and (over := [p for p in plan.leaves if p not in rest]):
-            to = ", ".join(f"{a},{b}" for a, b in over)
-            self.find("info", "P3_OWN_NEXT", f"it hands over to pair {to}, which the script enters")
 
     def _clip(self, cid: int) -> str:
         held = layout.holder(self.m, cid)
@@ -385,7 +490,7 @@ class Derivation:
         """Host power over donor power for a spare record: the median over the records of this
         port's pairs that matched (the ones `[brain.attacks]` chose left out)."""
         mt = self.matcher()
-        plans = (self._plan(p) for p in dict.fromkeys([*self.pairs, self.pair]))
+        plans = (self._plan(p) for p in self._reach([*self.pairs, self.pair]))
         used = {h.record for plan in plans if plan for s in plan.steps for h in s.hits}
         ratios = []
         for r in sorted(used):
@@ -422,6 +527,63 @@ def pairs(b: Brain) -> list[Pair]:
     return sorted(b.derived().values())
 
 
+def anchored(m: Manifest, derived: Collection[str]) -> set[str]:
+    """The derived moves something outside the derived set names: `[brain.pairs]`, the behaviour
+    graph, an effect, or the `after` of a move that is not derived."""
+    named: set[str] = set()
+    if m.brain is not None:
+        for key in m.brain.pairs:
+            named.update(t for t in m.brain.targets(pair_of(key)) if isinstance(t, str))
+    for blk in m.behaviour.blocks.values():
+        named.update(blk.play)
+    named.update(m.behaviour.moves)
+    named.update(e.move for e in m.effects)
+    named.update(mv.after for n, mv in m.moves.items() if mv.after and n not in derived)
+    return named & set(derived)
+
+
+def share(m: Manifest, derived: Iterable[str]) -> dict[str, str]:
+    """Merge the derived moves equal in every field but `label` (their `after` compared as this
+    pass renames it) until none are: equal tails make their predecessors equal. The one kept is an
+    anchored move, else the first derived; two anchored moves stay apart. Every `after` that
+    named a dropped move names the kept one. Returns each dropped move's kept one."""
+    names = list(dict.fromkeys(derived))
+    keep = anchored(m, names)
+    gone: dict[str, str] = {}
+
+    def now(name: str) -> str:
+        while name in gone:
+            name = gone[name]
+        return name
+
+    while True:
+        groups: list[tuple[Move, list[str]]] = []
+        for n in (n for n in names if n not in gone):
+            mv = m.moves[n]
+            key = dataclasses.replace(mv, label="", after=mv.after and now(mv.after))
+            for first, same in groups:
+                if first == key:
+                    same.append(n)
+                    break
+            else:
+                groups.append((key, [n]))
+        merged = False
+        for _, same in groups:
+            kept = next((n for n in same if n in keep), same[0])
+            for n in same:
+                if n != kept and n not in keep:
+                    gone[n] = kept
+                    merged = True
+        if not merged:
+            break
+    for mv in m.moves.values():
+        if mv.after in gone:
+            mv.after = now(mv.after)
+    for n in gone:
+        del m.moves[n]
+    return {n: now(n) for n in gone}
+
+
 def expand(m: Manifest, data: Data) -> tuple[Manifest, list[Finding]]:
     """`m` with the own moves its `[brain.pairs]` derive and the clips they play; `m` itself
     where it derives none. A move already in `m.moves` under a derived name is kept."""
@@ -443,6 +605,10 @@ def expand(m: Manifest, data: Data) -> tuple[Manifest, list[Finding]]:
     for pair in wanted:
         derive.run(pair)
     derive.finish()
+    dropped = share(out, derive.made)
+    found[:] = dict.fromkeys(
+        dataclasses.replace(f, item=dropped.get(f.item or "", f.item)) for f in found
+    )
     species = m.port.host_species
     if (
         any(mv.own and mv.carrier is None for mv in out.moves.values())

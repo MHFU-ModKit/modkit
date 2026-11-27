@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,11 +9,13 @@ import pytest
 from mhfu import hitbox
 from mhfu.files import em_overlay
 from mhfu_port import manifest, moves, p3hits, sequence
+from mhfu_port.behaviour import Block, MoveNode
 from mhfu_port.brain import own, spare
-from mhfu_port.manifest import AttackWindow, Steer
+from mhfu_port.manifest import AttackWindow, Effect, Steer
 from mhfu_port.p3hits import Hit, Length, Note, Plan, Step, Turn
 
 PORTS = Path(__file__).parents[3] / "ports"
+Pair = tuple[int, int]
 TEXT = """
 schema = 2
 [port]
@@ -30,7 +33,13 @@ entry = "base_12"
 [brain.pairs]
 "7,13" = "own"
 """
-LENGTHS = {61: Length(382.0), 59: Length(144.0, True), 60: Length(252.0)}
+LENGTHS = {
+    61: Length(382.0),
+    59: Length(144.0, True),
+    60: Length(252.0),
+    62: Length(100.0),
+    63: Length(100.0),
+}
 HOSTS = {21: 7, 28: 8, 19: 15, 20: 7}
 
 
@@ -49,17 +58,19 @@ def test_overlap():
 class Fake:
     """A walk that plans what it is given, and a matcher with fixed answers."""
 
-    def __init__(self, plan: Plan, hosts=HOSTS, active=10) -> None:
+    def __init__(self, plan: Plan | Sequence[Plan], hosts=HOSTS, active=10) -> None:
+        plans = [plan] if isinstance(plan, Plan) else list(plan)
         self.lengths = LENGTHS
-        self.ms = SimpleNamespace(pairs={plan.pair: object()})
-        self.hosts, self.active, self._plan = hosts, active, plan
+        self.plans = {p.pair: p for p in plans}
+        self.ms = SimpleNamespace(pairs={p: p for p in self.plans})
+        self.hosts, self.active = hosts, active
         self.hits = SimpleNamespace(records=[])
         self.table = None  # no spare records to hand out
         self.binding = SimpleNamespace(joint_of={})
         self.bind = np.zeros((0, 3))
 
-    def plan(self, pair: object) -> Plan:
-        return self._plan
+    def plan(self, pair: Pair) -> Plan:
+        return self.plans[pair]
 
     def match(self, record: int) -> own.Match:
         host = self.hosts.get(record)
@@ -218,6 +229,218 @@ def test_pairs_sees_own_in_a_list():
     assert m.brain is not None and own.pairs(m.brain) == [(7, 13), (7, 14)]
 
 
+# --- hand-overs ---
+
+
+def hand(pair: Pair, *steps: Step, to: Pair = (0, 0), complete: bool = True) -> Plan:
+    return Plan(pair, steps, (to,), complete)
+
+
+def chained(plans: Sequence[Plan], pairs: str = "", heads=((7, 13),), tables: str = ""):
+    """The heads derived from a fake walk over `plans`; `pairs` and `tables` are added to TEXT."""
+    m = manifest.loads(TEXT + pairs + tables)
+    found: list = []
+    fake = Fake(plans)
+    d = own.Derivation(m, fake, lambda: fake, found.append, heads)  # type: ignore[arg-type]
+    for h in heads:
+        d.run(h)
+    d.finish()
+    return m, found, d
+
+
+def next_findings(found) -> list:
+    return [f for f in found if f.code == "P3_OWN_NEXT"]
+
+
+def test_a_handler_hands_over_to_its_pairs_move():
+    m, found, _ = chained([hand((7, 13), step(61), to=(7, 14)), hand((7, 14), step(59))])
+    assert sequence.chain(m, "p3_7_13") == ["p3_7_13", "p3_7_14"]
+    assert m.moves["p3_7_14"].clip == "p3_59" and m.moves["p3_7_14"].after is None
+    assert not next_findings(found)
+    manifest.check(m)
+
+
+def test_a_hand_over_goes_on_through_a_third_pair():
+    plans = [
+        hand((7, 13), step(61), to=(7, 14)),
+        hand((7, 14), step(62), step(63), to=(7, 15)),
+        hand((7, 15), step(59)),
+    ]
+    m, found, _ = chained(plans)
+    chain = sequence.chain(m, "p3_7_13")
+    assert chain == ["p3_7_13", "p3_7_14", "p3_7_14_2", "p3_7_15"]
+    assert [m.moves[n].clip for n in chain] == ["charge", "p3_62", "p3_63", "p3_59"]
+    assert not next_findings(found)
+
+
+def test_a_follow_up_the_manifest_names_is_that_move():
+    plans = [hand((7, 13), step(61), to=(7, 14)), hand((7, 20), step(62))]
+    m, found, d = chained(plans, '"7,14" = "p3_7_20"\n"7,20" = "own"\n', [(7, 13), (7, 20)])
+    assert sequence.chain(m, "p3_7_13") == ["p3_7_13", "p3_7_20"] and "p3_7_14" not in m.moves
+    assert d.made == ["p3_7_13", "p3_7_20"] and not next_findings(found)
+    m, _, _ = chained(plans[:1], '"7,14" = "dash"\n', tables='[moves.dash]\nclip = "charge"\n')
+    assert m.moves["p3_7_13"].after == "dash" and "p3_7_14" not in m.moves
+
+
+def test_a_follow_up_that_is_mapped_to_own_or_authored_is_derived_or_used():
+    plans = [hand((7, 13), step(61), to=(7, 14)), hand((7, 14), step(59), to=(7, 15))]
+    plans += [hand((7, 15), step(62))]
+    m, _, _ = chained(plans, '"7,14" = "own"\n')
+    assert sequence.chain(m, "p3_7_13") == ["p3_7_13", "p3_7_14", "p3_7_15"]
+    m, found, _ = chained(plans, '"7,14" = "own"\n', tables="[moves.p3_7_14]\nclip = 'charge'\n")
+    assert sequence.chain(m, "p3_7_13") == ["p3_7_13", "p3_7_14"], "the authored move is used"
+    assert "p3_7_15" not in m.moves and not next_findings(found)
+
+
+@pytest.mark.parametrize(
+    ("value", "what"), [("[1, 2]", "host pair 1,2"), ('[[1, 2], "own"]', "several moves")]
+)
+def test_a_hand_over_the_manifest_plays_as_a_host_pair_is_not_followed(value, what):
+    plans = [hand((7, 13), step(61), to=(7, 14)), hand((7, 14), step(59))]
+    m, found, _ = chained(plans, f'"7,14" = {value}\n')
+    assert m.moves["p3_7_13"].after is None and "p3_7_14" not in m.moves
+    (f,) = next_findings(found)
+    assert f.level == "info" and f.item == "p3_7_13" and what in f.text and "7,14" in f.text
+
+
+@pytest.mark.parametrize(
+    ("follow", "why"),
+    [
+        (hand((7, 14), step(59), complete=False), "the walk gave up before its handler ended"),
+        (hand((7, 14)), "its handler plays no clip"),
+        (hand((7, 14), step(999)), "it plays clip 999, which the donor lacks"),
+        (None, "the donor has no such pair"),
+    ],
+)
+def test_a_follow_up_the_port_cannot_play_is_not_followed(follow, why):
+    m, found, _ = chained([hand((7, 13), step(61), to=(7, 14)), *([follow] if follow else [])])
+    assert m.moves["p3_7_13"].after is None and "p3_7_14" not in m.moves
+    (f,) = next_findings(found)
+    assert f"pair 7,14, which the port does not play: {why}" in f.text and f.item == "p3_7_13"
+    assert not [f for f in found if f.level == "error"], "the follow-up is not an error"
+
+
+def test_a_follow_up_with_a_move_that_is_no_own_move_is_not_followed():
+    plans = [hand((7, 13), step(61), to=(7, 14))]
+    tables = "[moves.p3_7_14]\nmain = 1\nsub = 2\nclip = 'charge'\n"
+    m, found, _ = chained(plans, '"7,14" = "own"\n', tables=tables)
+    assert m.moves["p3_7_13"].after is None
+    assert "moves.p3_7_14 is no own move" in next_findings(found)[0].text
+
+
+def test_a_handler_that_ends_in_several_pairs_is_not_followed():
+    p = Plan((7, 13), (step(61),), ((7, 14), (7, 15)), True)
+    m, found, _ = chained([p])
+    assert m.moves["p3_7_13"].after is None
+    assert "one of pairs 7,14, 7,15" in next_findings(found)[0].text
+
+
+def test_a_ring_is_cut_where_it_closes():
+    plans = [hand((7, 13), step(61), to=(7, 14)), hand((7, 14), step(59), to=(7, 13))]
+    m, found, _ = chained(plans)
+    assert sequence.chain(m, "p3_7_13") == ["p3_7_13", "p3_7_14"]
+    assert m.moves["p3_7_14"].after is None
+    (f,) = next_findings(found)
+    assert f.item == "p3_7_14" and "pair 7,13: following it would close a ring" in f.text
+    m, found, _ = chained([hand((7, 13), step(61), to=(7, 13))])
+    assert m.moves["p3_7_13"].after is None and "close a ring" in next_findings(found)[0].text
+    manifest.check(m)
+
+
+def test_a_ring_through_three_pairs_is_cut_at_the_last_link():
+    plans = [
+        hand((7, 13), step(61), to=(7, 14)),
+        hand((7, 14), step(59), to=(7, 15)),
+        hand((7, 15), step(62), to=(7, 14)),
+    ]
+    m, found, _ = chained(plans)
+    assert sequence.chain(m, "p3_7_13") == ["p3_7_13", "p3_7_14", "p3_7_15"]
+    assert m.moves["p3_7_15"].after is None and "close a ring" in next_findings(found)[0].text
+
+
+def test_each_pair_is_derived_once():
+    plans = [hand((7, 13), step(61), to=(7, 14)), hand((7, 14), step(59))]
+    for heads in ([(7, 13), (7, 14)], [(7, 14), (7, 13)]):
+        m, _, d = chained(plans, '"7,14" = "own"\n', heads)
+        assert sorted(d.made) == ["p3_7_13", "p3_7_14"]
+        assert m.moves["p3_7_13"].after == "p3_7_14"
+
+
+# --- sharing ---
+
+
+def own_moves(extra: str = "", **after: str | None) -> manifest.Manifest:
+    """Own moves on the same clip, by name with the move each hands to."""
+    body = "".join(
+        f'[moves.{n}]\nclip = "charge"\n' + (f'after = "{a}"\n' if a else "")
+        for n, a in after.items()
+    )
+    return manifest.loads(TEXT + body + extra)
+
+
+def test_equal_tails_make_equal_predecessors_one_move():
+    m = own_moves(a1="b1", b1=None, a2="b2", b2=None)
+    dropped = own.share(m, ["a1", "b1", "a2", "b2"])
+    assert dropped == {"a2": "a1", "b2": "b1"} and set(m.moves) == {"a1", "b1"}
+    assert m.moves["a1"].after == "b1"
+    manifest.check(m)
+
+
+def test_moves_that_differ_in_any_field_but_the_label_stay_apart():
+    m = own_moves(a="c", b="c", c=None, d="c", e="c2", c2=None)
+    m.moves["a"].label, m.moves["b"].label = "MHP3rd 7,1", "MHP3rd 7,2"
+    m.moves["d"].start = 5
+    m.moves["c2"].length = 3
+    dropped = own.share(m, ["a", "b", "c", "d", "e", "c2"])
+    assert dropped == {"b": "a"} and set(m.moves) == {"a", "c", "d", "e", "c2"}
+    assert m.moves["a"].label == "MHP3rd 7,1", "the first derived is kept"
+
+
+def test_a_chain_of_equal_steps_merges_to_a_fixed_point():
+    names = {f"{h}{k}": (f"{h}{k + 1}" if k < 4 else None) for h in "xy" for k in range(1, 5)}
+    m = own_moves(**names)
+    dropped = own.share(m, list(names))
+    assert dropped == {f"y{k}": f"x{k}" for k in range(1, 5)} and len(m.moves) == 4
+
+
+def test_an_anchored_move_is_the_one_kept():
+    m = own_moves(a1="b1", b1=None, a2="b2", b2=None, x="a2")
+    assert own.share(m, ["a1", "b1", "a2", "b2"]) == {"a1": "a2", "b2": "b1"}
+    assert m.moves["x"].after == "a2" and set(m.moves) == {"a2", "b1", "x"}
+    assert m.moves["a2"].after == "b1", "its `after` follows the tail's merge"
+
+
+def test_two_anchored_moves_stay_apart():
+    m = own_moves(a1="b", a2="b", b=None, x="a1", y="a2", a3="b")
+    assert own.share(m, ["a1", "a2", "b", "a3"]) == {"a3": "a1"}
+    assert set(m.moves) == {"a1", "a2", "b", "x", "y"}
+
+
+@pytest.mark.parametrize("how", ["pairs", "play", "node", "effect", "after"])
+def test_what_names_a_move_from_outside_anchors_it(how):
+    m = own_moves(a="c", b="c", c=None, outside="b")
+    assert m.brain is not None
+    if how == "pairs":
+        m.brain.pairs["7,14"] = "b"
+    elif how == "play":
+        m.behaviour.blocks["k"] = Block("any_time", (0.0, 0.0), play=["b"])
+    elif how == "node":
+        m.behaviour.moves["b"] = MoveNode((0.0, 0.0))
+    elif how == "effect":
+        m.effects.append(Effect("b", 1, 2, 3))
+    if how != "after":
+        m.moves["outside"].after = None
+    assert own.anchored(m, ["a", "b", "c"]) == {"b"}
+    assert own.share(m, ["a", "b", "c"]) == {"a": "b"}
+
+
+def test_a_ring_of_equal_moves_terminates():
+    m = own_moves(a="b", b="a")
+    assert own.share(m, ["a", "b"]) == {} and set(m.moves) == {"a", "b"}
+    m = own_moves(a="b", b="c", c="a", d="e", e="f", f="d")
+    assert own.share(m, list("abcdef")) == {} and len(m.moves) == 6
+
+
 # --- with the games ---
 
 
@@ -256,6 +479,7 @@ def test_brute_derives_its_seven_pairs(derived):
         "p3_7_15",
     ]
     assert sequence.chain(m, "p3_7_14") == ["p3_7_14", "p3_7_14_2"]
+    assert not [f for f in found if f.code == "P3_OWN_NEXT"], "every handler ends at rest"
 
 
 def test_brute_windows_lie_inside_their_spans(derived, data):

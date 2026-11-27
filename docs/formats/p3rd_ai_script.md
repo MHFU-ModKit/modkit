@@ -168,6 +168,19 @@ clip that hands to the next by `after`:
   frames, so they hold at any blend and cursor rate (a blend holds the cursor 2 to 5 AI frames,
   enraged it runs 2.8 a frame). Only a step that ended on no frame of its clip (a pair, a loop,
   a test the cursor never changed) gets the `length`, in AI frames, the donor played it for.
+- **Hand-over.** A handler that ends by entering another pair (not a rest pair) hands over to it,
+  as MHP3rd does: the chain goes on into that pair's moves, `p3_7_12` into `p3_7_156`. The pair
+  plays the `[brain.pairs]` move that names it (`"7,5" = "p3_7_4"`), else the one `own_name`
+  gives it, derived the same way and so following its own hand-over; an authored move of that
+  name is used as it is. Each pair is derived once, and a hand-over that would close a ring is cut
+  where it closes. A hand-over to a pair the manifest plays as a host pair or a list, or the port
+  cannot play (no clip, a clip the donor lacks, a walk that gave up), is not followed:
+  `P3_OWN_NEXT`.
+- **Sharing.** After every pair is derived, moves equal in every field but `label` become one
+  (their `after` compared as the merge renames it, so equal tails make their predecessors equal):
+  `p3_7_237`, which the donor dispatches as `(7, 0)`, is `p3_7_0`. The one kept is the one
+  `[brain.pairs]`, the behaviour graph, an effect or an authored move's `after` names, else the
+  first derived; two named moves stay apart.
 - **Attacks.** A record's START and LEN against the cursor at the spawn give the frames; a node
   that outlives a clip change is split per clip. The record's volume set is matched to the host
   record whose volumes overlap it most on the port's rig (the same kind first, then power); below
@@ -183,7 +196,8 @@ clip that hands to the next by `after`:
 | `P3_OWN_ATTACK` | warning | a donor record with no host record and no spare, or more attacks on a clip than the move player holds: left out |
 | `P3_OWN_SPARE` | info | a donor record with no host record took a spare one: its id, set, volumes, power, kind, active frames |
 | `P3_OWN_PARTIAL` | warning | the walk gave up, or a clip it could not resolve |
-| `P3_OWN_BRANCH`, `P3_OWN_MOTION`, `P3_OWN_NEXT` | info | a branch taken one way; code movement; a pair the handler hands over to |
+| `P3_OWN_BRANCH`, `P3_OWN_MOTION` | info | a branch taken one way; code movement |
+| `P3_OWN_NEXT` | info | a hand-over not followed, and why |
 | `P3_OWN_SPLIT`, `P3_OWN_GROUP`, `P3_OWN_ACTIVE` | info | a node split per clip; records that land one hit between them in the donor; a window longer than the host record's life |
 
 ### Spare attack records
