@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
+name: setup
+description: uv with its cache, and the locked workspace
+
+inputs:
+  python-version:
+    description: Python for the environment ("" keeps the repo's pin)
+    default: ""
+  sync-args:
+    description: Extra arguments to uv sync
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v10.2.0
+      with:
+        python-version: ${{ inputs.python-version }}
+        enable-cache: true
+    - run: uv sync --locked ${{ inputs.sync-args }}
+      shell: bash
