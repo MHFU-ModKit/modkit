@@ -531,7 +531,20 @@ def test_curve_is_the_turns_module_entry():
     """The keys an own move turns by are the turns module's for its entry."""
     turns = layout.turns_lua(_m(), LAYOUT)
     assert f'[46] = "{moves.curve(_m(), "stamp", LAYOUT)}"' in turns
-    assert moves.curve(_m(), "dash", LAYOUT) is None  # turns toward the hunter instead
+    assert moves.curve(_m(), "dash", LAYOUT) is None  # its entry does not turn
+
+
+@pytest.mark.parametrize("turn", ["clip", "still", "hunter", "away", "fixed"])
+def test_a_move_plays_its_clips_facing_whatever_its_turn_is(turn):
+    """The clip's facing was taken out of its pose, so YAW has to play it in every mode."""
+    m = _m()
+    m.moves["stamp"].steer = manifest.Steer(
+        turn=turn, angle=90.0 if turn == "fixed" else None, frames=20 if turn == "fixed" else None
+    )
+    (line,) = [x for x in _body(moves.lua(m, LAYOUT, {6})) if x.startswith("stamp = ")]
+    assert f'curve = "{TURN.lua()}"' in line and (
+        turn in ("clip", "still") or f'turn = "{turn}"' in line
+    )
 
 
 def test_slots_are_the_sorted_names():
@@ -773,3 +786,53 @@ def test_problems_lists_every_one():
     found = moves.problems(_m(bad), LAYOUT, {7})
     assert [p.split(":")[0] for p in found] == ["moves.stamp.attack[0]"] * 2
     assert moves.problems(_m(), LAYOUT, {6}) == []
+
+
+def _picked() -> manifest.Manifest:
+    text = (
+        OWN
+        + PAIRS
+        + """
+[moves.turn_left]
+anim = 9
+[moves.turn_right]
+anim = 8
+[moves.turn]
+pick = [[0, 127, "turn_left"], [128, 255, "turn_right"]]
+"""
+    )
+    m = _m(text)
+    m.brain.pairs["7,23"] = ["turn", "stamp"]  # type: ignore[union-attr]
+    m.brain.pairs["7,24"] = ["turn", "dash"]  # type: ignore[union-attr]
+    return m
+
+
+def test_a_picker_has_no_slot_and_is_no_part_of_the_module():
+    m = _picked()
+    assert "turn" not in moves.slots(m) and {"turn_left", "turn_right"} <= set(moves.slots(m))
+    assert moves.picks(m) == {"turn": [(0, 127, "turn_left"), (128, 255, "turn_right")]}
+    lay = layout.Layout(
+        {20: 20, 21: 21, 46: 200, 9: 9, 8: 8},
+        turns={46: TURN},
+        frames={8: 100, 9: 100, 46: 228, 20: 82, 21: 66},
+    )
+    assert moves.problems(m, lay, {6}) == []
+    text = moves.lua(m, lay, {6})
+    assert "turn_left = " in text and "turn_right = " in text and "    turn = " not in text
+    assert "pick" not in text
+
+
+def test_a_list_of_a_picker_and_an_own_move_is_a_combo_of_each_variant():
+    m = _picked()
+    assert [c for c in moves.combos(m) if "stamp" in c or "dash" in c] == [
+        ("dash", "stamp"),
+        ("stamp", "spin"),
+        ("turn_left", "dash"),
+        ("turn_left", "stamp"),
+        ("turn_right", "dash"),
+        ("turn_right", "stamp"),
+    ]
+    ids = moves.combo_ids(m)
+    assert ids == {c: moves.combo_id(m, *c) for c in moves.combos(m)}
+    assert ids["turn_left", "stamp"] < ids["turn_right", "dash"]
+    assert min(ids.values()) == moves.SLOTS

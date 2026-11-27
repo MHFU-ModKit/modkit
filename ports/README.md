@@ -95,6 +95,31 @@ frames from the dispatch, which the blend and the rate change. An attack must li
 `[start, stop]`. A move derived from a donor pair gets its `start` and `stop` from the donor's own
 clip frames (`mhfu-port own` lists them).
 
+What the donor's code does besides its clip is the move's too: `travel` (cumulative x, z every 2
+clip frames from `start`), `lunge` (toward the target), and `code_turn`, the yaw its code adds:
+cumulative YAW units (65536 a turn), a value every 2 clip frames from `start`. Each AI frame the
+move's own yaw moves by the curve's change since the cursor's last frame, the clip's facing riding
+on top. With `steer.turn = "aim"` (derived moves only) the curve is scaled to turn exactly the angle
+to the target at the move's first frame. `aim_out = N` says that when the move hands over in place
+(to its `after`, or as the first of a combo) the angle still to turn at the switch is slid into the
+next move's first N AI frames, as the donor's turn wrappers blend it.
+
+A picker, `pick`, is a move with no clip and no slot of its own:
+
+```toml
+[moves.p3_2_26]
+pick = [[0, 63, "p3_2_26_a0"], [64, 127, "p3_2_26_a1"], [128, 191, "p3_2_26_a2"], [192, 255, "p3_2_26_a3"]]
+```
+
+Each entry is an arc of the target's bearing to the left of the move's facing, in 256ths of a turn
+(0 to 127 the left half, as `if_target_in_arc`), and the own move, a variant, played in it; the arcs
+cover 0 to 255 once. A donor pair that `[brain.pairs]` maps to a picker is entered as nested
+`if_target_in_arc` over its variants. A list that names a picker and an own move,
+`"7,23" = ["own", "p3_7_0"]`, enters one combo per variant: `enter 16 id 0` with an id from 160 up
+(`mhfu_port.moves.combos`, written as the module's `combos`), which plays the variant, then the move
+in place. The build makes a picker where a donor handler plays other plans by the bearing of the
+target (`p3_7_23_a0` ... are its variants).
+
 `[behaviour]` decides when a move plays, as a graph. A block is `[behaviour.blocks.<id>]`: its
 `kind`, the kind's params flat beside it, `at` (canvas x, y), `next` (the blocks it feeds), `play`
 (the moves a path that gets here plays) and `label`. A move on the canvas is
@@ -213,18 +238,20 @@ picker `base_6` and its normal one `base_5`) into em75's brain, so what he picks
 up (the helper's gauge, `[brain] charge`) and when he is tired (`[brain] fatigue`) is the donor's.
 A donor pair plays a host pair (a turn), the authored move that is the donor's
 (`charge_up`, `dash`, `dash_stop`, `break_howl`) or an own move derived from the donor
-(`"own"`); a pair that only turns, then enters another, turns on em75's (1, 2) and plays the
-move of the pair it leads to; pairs whose derived moves come out identical (twins) share the
-first one's, and the ten whose donor handler hands over elsewhere derive their own chains (a
-wrapper plays that of the twin of the pair it leads to). A derived
+(`"own"`); a pair that only turns, then enters another (a wrapper), turns by its own picker, four
+variants the donor's wrappers share (`p3_7_23_a0` to `a3`: the clips 9, 38, 37 and 8 by the side and
+how far round the target is), and plays the move of the pair it leads to, as a combo of the two;
+pairs whose derived moves come out identical (twins) share the first one's, and the ten whose donor
+handler hands over elsewhere derive their own chains. A derived
 move goes on into the pair the donor's handler hands over to (`p3_7_12` into `p3_7_156`), and
 equal tails are one move. What a handler does by code, not by its clips, is derived with them: its
 travel, a lunge, a half turn, and a jump's height as a lifted copy of its clip in a free entry
-(`Move.travel`, `Move.lunge`, a fixed `steer`, `Clip.lift`; docs/formats/p3rd_ai_script.md). The
-donor's walks are derived moves on their own walk clips: em75's
-(1, 0) walks to a destination its own script sets first (docs/formats/p3rd_ai_script.md). His 125
-own moves take 2432 of the registry's 2944 turn keys (a run the registry holds twice is held
-once), 1052 of its 1280 travel samples, 10 of its 12 lunges and 125 of its 128 slots.
+(`Move.travel`, `Move.lunge`, a fixed `steer`, `Move.code_turn` and `aim`, `Clip.lift`;
+docs/formats/p3rd_ai_script.md). The donor's walks are derived moves on their own walk clips: em75's
+(1, 0) walks to a destination its own script sets first (docs/formats/p3rd_ai_script.md). His 137
+own moves take 4711 of the registry's 5696 turn keys (a run the registry holds twice is held
+once), 1447 of its 1792 travel samples, 322 of its 448 code-turn values, 10 of its 12 lunges, 137 of
+its 160 slots and 88 of its 96 combos.
 
 What stays of the hand-built rules, after the brain's own picks (2 plays nothing and so runs
 first):

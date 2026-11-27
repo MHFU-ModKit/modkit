@@ -131,7 +131,7 @@ def test_a_fixed_steer_is_dragged(carried: MonsterWorkspace) -> None:
 
 @pytest.mark.parametrize(
     ("turn", "end", "text"),
-    [("still", 0.0, "still"), ("hunter", None, "toward the hunter"), ("away", None, "away")],
+    [("still", 0.0, "still"), ("hunter", None, "toward the target"), ("away", None, "away")],
 )
 def test_other_steers_show_and_refuse(
     carried: MonsterWorkspace, turn: str, end: float | None, text: str
@@ -148,6 +148,18 @@ def test_other_steers_show_and_refuse(
     if end is not None:
         drag_to(ws, 40.0)
         assert "nothing to drag" in ws.message
+
+
+def test_an_aim_steer_is_labelled_as_one(carried: MonsterWorkspace) -> None:
+    ws = carried
+    ws.play_slot(1)
+    ws.new_move("stamp")
+    mv = ws.own_move()
+    assert mv is not None
+    mv.steer, mv.code_turn = Steer("aim"), [0, 4096, 8192]
+    t = ws.turn.target()
+    assert t is not None and t.end is None and t.writes is None
+    assert "aim" in t.text and "target" in t.text and "away" not in t.text
 
 
 def test_t_hides_it(carried: MonsterWorkspace) -> None:

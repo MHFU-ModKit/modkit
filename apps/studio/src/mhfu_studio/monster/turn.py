@@ -84,9 +84,11 @@ class TurnGizmo:
             return Target(s.angle or 0.0, "steer", f"fixed: over {s.frames} AI frames")
         if s.turn == "still":
             return Target(0.0, None, "still: no turn")
+        if s.turn == "aim":
+            return Target(None, None, "aim: turns exactly the angle to the target by its code turn")
         rate = "the charge's rate" if s.rate is None else f"{s.rate} a frame"
         way = "toward" if s.turn == "hunter" else "away from"
-        return Target(None, None, f"turns {way} the hunter at {rate}")
+        return Target(None, None, f"turns {way} the target at {rate}")
 
     # drawing
 

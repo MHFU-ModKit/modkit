@@ -320,10 +320,140 @@ def test_a_tail_call_is_told_to_decide_with_cells():
     assert heard == [(helper, (5,))]
 
 
+GLOBAL = 0x0090_9600  # a word the code does not own, where a global pointer sits
+
+
+def global_word() -> Code:
+    """Plays 54 where the word at +0x540 off the pointer at GLOBAL is 2, else 46."""
+    return code(
+        asm.lui("v0", asm.hi(GLOBAL)),
+        asm.lw("v1", asm.lo(GLOBAL), "v0"),
+        asm.lw("t0", 0x540, "v1"),
+        asm.li("v0", 2),
+        asm.bne("t0", "v0", va(7), va(4)),
+        asm.li("a1", 46),  # the delay slot runs either way
+        asm.li("a1", 54),
+        asm.jal(a.ACTION_EXECUTOR),  # 7
+        asm.NOP,
+        asm.RET,
+        asm.NOP,
+    )
+
+
+def test_a_word_off_a_global_pointer_is_the_one_told():
+    def played(**kw):
+        w = Walker(global_word(), {a.ACTION_EXECUTOR: "anim"}, **kw)
+        return sorted(s.args[0] for s in w.run(BASE))
+
+    assert played() == [46, 54]  # unknown: it forks
+    assert played(pointers={GLOBAL: {0x540: 2}}) == [54]
+    assert played(pointers={GLOBAL: {0x540: 3}}) == [46]
+    assert played(pointers={GLOBAL: {0x544: 2}}) == [46, 54]  # another word is not told
+
+
 def test_a_branch_on_the_compare_not_holding():
     w = Walker(float_branch(asm.bc1f), {a.ACTION_EXECUTOR: "anim"})
     assert [s.args[0] for s in w.run(BASE, cells={0x84: 5.0})] == [1]
     assert [s.args[0] for s in w.run(BASE, cells={0x84: 20.0})] == [2]
+
+
+def _r(funct, rd, rs, rt):
+    return asm.gpr(rs) << 21 | asm.gpr(rt) << 16 | asm.gpr(rd) << 11 | funct
+
+
+def negu(rd, rt):
+    return _r(0x23, rd, 0, rt)
+
+
+def max_(rd, rs, rt):
+    return _r(0x2C, rd, rs, rt)
+
+
+def min_(rd, rs, rt):
+    return _r(0x2D, rd, rs, rt)
+
+
+def cvt_s_w(fd, fs):
+    return 0x11 << 26 | 0x14 << 21 | fs << 11 | fd << 6 | 0x20
+
+
+def test_negate_maximum_and_minimum_of_known_values():
+    thing = a.ACTION_EXECUTOR
+    c = code(
+        asm.li("v0", -5),
+        negu("v1", "v0"),  # 5
+        max_("a1", "v0", "v1"),
+        asm.jal(thing),
+        asm.NOP,
+        asm.li("v0", -5),
+        negu("v1", "v0"),
+        min_("a1", "v0", "v1"),
+        asm.jal(thing),
+        asm.NOP,
+        asm.RET,
+        asm.NOP,
+    )
+    sites = Walker(c, {thing: "anim"}).run(BASE)
+    assert [s.args[0] for s in sites] == [5, 0xFFFF_FFFB]
+
+
+def test_an_integer_converts_to_a_float():
+    thing = a.ACTION_EXECUTOR
+    c = code(
+        asm.li("v0", 3),
+        asm.mtc1("v0", 1),
+        cvt_s_w(2, 1),
+        asm.add_s(2, 2, 2),
+        asm.trunc_w_s(0, 2),
+        asm.mfc1("a1", 0),
+        asm.jal(thing),
+        asm.NOP,
+        asm.RET,
+        asm.NOP,
+    )
+    assert [s.args[0] for s in Walker(c, {thing: "anim"}).run(BASE)] == [6]
+
+
+def test_a_float_load_reads_the_word_the_path_stored_before():
+    thing = a.ACTION_EXECUTOR
+    c = code(
+        asm.addu("s0", "a0", "zero"),
+        asm.lui("v0", 0x4040),  # 3.0
+        asm.sw("v0", 0xB0, "s0"),
+        asm.lwc1(1, 0xB0, "s0"),
+        asm.add_s(1, 1, 1),
+        asm.trunc_w_s(0, 1),
+        asm.mfc1("a1", 0),
+        asm.jal(thing),
+        asm.NOP,
+        asm.RET,
+        asm.NOP,
+    )
+    w = Walker(c, {thing: "anim"})
+    assert [s.args[0] for s in w.run(BASE, cells={})] == [6]
+    assert [s.args[0] for s in w.run(BASE)] == [6]
+
+
+def test_persist_reports_the_stores_to_the_entity():
+    c = code(
+        asm.addu("s0", "a0", "zero"),
+        asm.li("v0", 7),
+        asm.sb("v0", 0x5E, "s0"),
+        asm.sw("v0", 0xFC0, "s0"),
+        asm.lbu("v1", 0xB0, "s0"),  # a cell it holds no value of
+        asm.sh("v1", 0xFC8, "s0"),
+        asm.sw("v0", 0x10, "sp"),  # not the entity
+        asm.RET,
+        asm.NOP,
+    )
+    w = Walker(c, {})
+    assert w.run(BASE) == []
+    stores = [(s.kind, s.args) for s in w.run(BASE, persist=True)]
+    assert stores == [
+        ("store", (0x5E, 1, 7)),
+        ("store", (0xFC0, 4, 7)),
+        ("store", (0xFC8, 2, None)),
+    ]
 
 
 def test_game(game):

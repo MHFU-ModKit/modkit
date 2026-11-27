@@ -1235,10 +1235,10 @@ OWN_MOVE_MAIN = { value = 16, doc = "an AI script `enter` main no species has (t
 CHARGE_QUERY_CHARGED = { value = 0, doc = "the AI script `switch_query` arg that asks whether a port with `[brain] charge` is charged (MHP3rd's own numbering of the query): the framework answers 1 or 0" }
 CHARGE_QUERY_COOLDOWN = { value = 6, doc = "the `switch_query` arg that asks whether the charge cooldown runs (MHP3rd's numbering): the framework answers 1 or 0" }
 OWN_MOVES = { value = 160, doc = "own moves the framework's registry holds, EM_MOVES slots 0..OWN_MOVES-1: every table keyed by slot, and the offsets after one, follow it; the enter ids from OWN_MOVES to 255 name combos (EM_MOVES.COMBOS)" }
-EM_KEYS = { value = 2944, doc = "turn keys all own moves share in EM_MOVES.KEYS, a run held twice once: the Zinogre's 125 moves hold 2432" }
-EM_SAMPLES = { value = 1280, doc = "travel samples all own moves share in EM_MOVES.SAMPLES, a run held twice once: the Zinogre's hold 1052" }
-EM_TURNS = { value = 1024, doc = "code-turn values all own moves share in EM_MOVES.TURNS, a run held twice once (provisional: the port derivation sizes it)" }
-EM_LUNGES = { value = 12, doc = "lunges the registry holds, an equal one of two moves once: the Zinogre's hold 10" }
+EM_KEYS = { value = 5696, doc = "turn keys all own moves share in EM_MOVES.KEYS, a run held twice once: the Zinogre's 137 moves hold 4711, and this is that and a fifth, up to a multiple of 64" }
+EM_SAMPLES = { value = 1792, doc = "travel samples all own moves share in EM_MOVES.SAMPLES, a run held twice once: the Zinogre's hold 1447, and this is that and a fifth, up to a multiple of 64" }
+EM_TURNS = { value = 448, doc = "code-turn values all own moves share in EM_MOVES.TURNS, a run held twice once: the Zinogre's hold 322, and this is that and a fifth, up to a multiple of 64" }
+EM_LUNGES = { value = 12, doc = "lunges the registry holds, an equal one of two moves once: the Zinogre's hold 10, and this is that and a fifth, up to a multiple of 4" }
 STEER_KEYS = { value = 256, doc = "turn keys one move holds (STEER_SPEC.KEYS)" }
 STEER_KEY_STEP = { value = 2, doc = "clip frames between a move's turn keys and between its travel samples: the cursor's step at speed 2, so it lands on them" }
 STEER_TURNS = { value = 132, doc = "code-turn values one move holds (STEER_SPEC.TURNS): one every STEER_KEY_STEP clip frames, as STEER_SAMPLES" }

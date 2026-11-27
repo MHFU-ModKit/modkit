@@ -235,6 +235,49 @@ def test_port_carries_its_turns_exactly(data, monkeypatch, name, between):
         assert np.abs(moved - (src[1:] - src[0])).max() < 0.2, e
 
 
+def test_a_twist_through_a_flip_is_interpolated_between_the_frames_that_hold_one():
+    facing = np.radians([0.0, 10, 20, 30, 170, -170, 160, 50, 60])  # the middle is noise
+    length = np.array([1.0, 1, 1, 0.9, 0.2, 0.1, 0.2, 0.9, 1])  # per child, of (w, y)
+    w, y = length * np.cos(facing / 2), length * np.sin(facing / 2)
+    got = np.degrees(travel._twist(w, y, 1))
+    assert got == pytest.approx([0, 10, 20, 30, 35, 40, 45, 50, 60], abs=0.01)
+    kids = np.degrees(travel._twist(2 * w, 2 * y, 2))  # the length is of each child
+    assert kids == pytest.approx(got)
+
+
+def test_a_twist_is_held_beyond_the_first_and_last_frame_that_holds_one():
+    facing = np.radians([-120.0, 130, 20, 30, 40, 90, -150])
+    length = np.array([0.1, 0.2, 1, 1, 1, 0.3, 0.1])
+    w, y = length * np.cos(facing / 2), length * np.sin(facing / 2)
+    got = np.degrees(travel._twist(w, y, 1))
+    assert got == pytest.approx([20, 20, 20, 30, 40, 40, 40], abs=0.01)
+
+
+def test_a_clip_with_no_frame_that_holds_a_twist_keeps_its_raw_one():
+    facing = np.radians([-120.0, 130, 100])
+    w, y = 0.1 * np.cos(facing / 2), 0.1 * np.sin(facing / 2)
+    raw = np.unwrap(travel._wrap(2 * np.arctan2(y, w)))
+    assert travel._twist(w, y, 1) == pytest.approx(raw)
+
+
+def test_the_zinogres_somersault_keeps_its_facing_through_the_flip(data):
+    """Clip 225 rolls upside down for good from frame 32: its body's twist reads -69 degrees,
+    then +171, which landed the monster facing backwards. Now it turns 16 degrees a key at most
+    and ends within 30 of where it began."""
+    m = manifest.load(PORTS / "zinogre.toml")
+    d, h = build.donor(m, data), build.host(m, data)
+    rec = build.record_map(d, m.build)
+    bind = build.binding(m.build, d, h, build.animated(m.build, rec, len(d.skeleton.bones)))
+    placed = build.layout(m, d, h)
+    anim = build.animation(d, h, bind, rec, placed, m.build.ground_lift)
+    roll = next(c for c in m.clips.values() if c.source == 225 and c.lift is None)
+    entry = placed.entry(roll)
+    assert entry is not None
+    keys = np.array(travel.turns(anim, bind.rig.skeleton)[entry].keys) / travel.TURN * 360
+    assert np.abs(np.diff(keys)).max() < 16.0
+    assert keys.max() - keys.min() < 60.0 and abs(keys[-1] - keys[0]) < 30.0
+
+
 def test_carry_is_idempotent():
     anim = pack(dash([loc(2, (0, 0), (40, 1000))], [HIP, loc(0, (0, -30), (40, 5))], 45.0))
     once = travel.carry(anim, rig())

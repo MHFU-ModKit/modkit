@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from mhfu_port import sequence
 from mhfu_port.behaviour import KINDS
-from mhfu_port.manifest import MOVE_ATTACKS, TURNS, Move
+from mhfu_port.manifest import DERIVED_TURNS, MOVE_ATTACKS, TURNS, Move
 from PySide6.QtWidgets import QAbstractSpinBox, QSpinBox, QVBoxLayout, QWidget
 
 from mhfu_studio.monster import validate as V
@@ -31,10 +31,13 @@ ROWS = 8
 TURN_WORDS = {
     "clip": ("Clip's", "Turns as the clip does: its turn in Clips, or the ring in the view"),
     "still": ("Still", "Does not turn"),
-    "hunter": ("Hunter", "Turns toward the hunter, at most Rate a frame"),
-    "away": ("Away", "Turns away from the hunter, at most Rate a frame"),
+    "hunter": ("Hunter", "Turns toward the target, at most Rate a frame"),
+    "away": ("Away", "Turns away from the target, at most Rate a frame"),
     "fixed": ("Fixed", "Turns Angle degrees, spread evenly over Frames AI frames"),
+    "aim": ("Aim", "Turns exactly onto the target along the donor's code turn; derived moves"),
 }
+SHOWN = (*TURNS, *DERIVED_TURNS)
+"""The turn modes the row shows: the ones a person picks, then the derived ones."""
 GAME_NOTE = (
     "Own moves reach the game from the moves module mhfu-port generates from this file with the"
     " port, not through Copy Lua; a mod or the behaviour graph plays them by name."
@@ -159,9 +162,9 @@ class MovesPanel(kit.Panel):
 
         steer = kit.Form()
         self.turn = kit.Segmented(
-            [(t, TURN_WORDS[t][0]) for t in TURNS],
+            [(t, TURN_WORDS[t][0]) for t in SHOWN],
             tip="How the move turns the monster",
-            tips={t: TURN_WORDS[t][1] for t in TURNS},
+            tips={t: TURN_WORDS[t][1] for t in SHOWN},
             on=lambda t: act("turn", lambda: ws.set_steer(turn=t))(),
         )
         steer.row("Turn", self.turn)
@@ -498,6 +501,8 @@ class MovesPanel(kit.Panel):
         kit.refill(self.after, [("", "the brain picks"), *others], mv.after or "")
         s = mv.steer
         kit.put(self.turn, s.turn)
+        for derived in DERIVED_TURNS:  # one the move has no code turn for would be refused
+            self.turn.buttons[derived].setEnabled(bool(mv.code_turn))
         steers = s.turn in ("hunter", "away")
         self.rate.setVisible(steers)
         self.rate_label.setVisible(steers)

@@ -19,7 +19,10 @@ that says what each MHP3rd opcode becomes. The code lands as follows:
 
 A donor pair that `[brain.pairs]` maps to an own move becomes `enter OWN_MOVE_MAIN k 0`, `k` the
 move's slot in `slots` (`moves.slots`, the one numbering the moves module and `mhfu_port.lua`
-use); em_vhook plays that move in place of a host pair. A list there enters each item in turn.
+use); em_vhook plays that move in place of a host pair. A list there enters each item in turn. A
+picker (`Move.pick`, `moves.picks`) becomes nested `if_target_in_arc lo hi`, one enter per
+variant; with an own move after it in the list, each enter is the combo of the variant and that
+move (`moves.combo_ids`: `enter OWN_MOVE_MAIN id 0`, the id past the slots).
 
 A donor `random` of more live arms than MHFU's 13 branches is split: an outer `random` over groups
 of arms and an inner one per group. MHFU's `random` reads the entity's counter without advancing it
@@ -195,10 +198,16 @@ class Translator:
         spec: manifest.Brain,
         survey: Mapping[int, script_vars.Var] | None = None,
         slots: Mapping[str, int] | None = None,
+        picks: Mapping[str, Sequence[tuple[int, int, str]]] | None = None,
+        combos: Mapping[tuple[str, str], int] | None = None,
     ) -> None:
         self.donor, self.spec, self.survey = donor, spec, survey
         self.slots: Mapping[str, int] = slots or {}
         """The registry slot of each own move, by name."""
+        self.picks: Mapping[str, Sequence[tuple[int, int, str]]] = picks or {}
+        """The arcs of each picker, `(lo, hi, variant)`, by name."""
+        self.combos: Mapping[tuple[str, str], int] = combos or {}
+        """The enter id of each combo of two own moves."""
         self.findings: list[Finding] = []
         self.routines: dict[str, list[ir.Node]] = {}
         """The new routines, by name."""
@@ -454,24 +463,60 @@ class Translator:
     # ---- ops
 
     def _enter(self, n: p3.Insn, w: Where) -> list[ir.Node]:
-        """One `enter` per target of the pair, in order."""
+        """One `enter` per target of the pair, in order; a picker is the arcs of its variants, and
+        takes the own move after it in the list along as the combo of each."""
         pair = (n.args["main"], n.args["sub"])
         targets = self.spec.targets(pair)
         if not targets:
             self.add(w, "error", "P3_PAIR_UNMAPPED", f"enter {pair[0]},{pair[1]} has no host pair")
         out: list[ir.Node] = []
-        for target in targets:
-            if isinstance(target, str):
-                slot = self.slots.get(target)
-                if slot is None:
-                    text = f"enter {pair[0]},{pair[1]} plays own move {target}, which has no slot"
-                    self.add(w, "error", "P3_OWN_MISSING", text)
-                    continue
-                out.append(edit.insn("enter", addresses.OWN_MOVE_MAIN, slot, 0))
+        k = 0
+        while k < len(targets):
+            target = targets[k]
+            if isinstance(target, str) and target in self.picks:
+                then = targets[k + 1] if k + 1 < len(targets) else None
+                nodes, took = self._pick(pair, target, then, w)
+                out += nodes
+                k += 1 + took
             else:
-                out.append(edit.insn("enter", *target, 0))
-            self.uses[pair, target] += 1
+                out += self._play(pair, target, w)
+                k += 1
         return out
+
+    def _play(self, pair: Pair, target: Pair | str, w: Where) -> list[ir.Node]:
+        """The `enter` of a host pair or an own move."""
+        if isinstance(target, str):
+            slot = self.slots.get(target)
+            if slot is None:
+                text = f"enter {pair[0]},{pair[1]} plays own move {target}, which has no slot"
+                self.add(w, "error", "P3_OWN_MISSING", text)
+                return []
+            self.uses[pair, target] += 1
+            return [edit.insn("enter", addresses.OWN_MOVE_MAIN, slot, 0)]
+        self.uses[pair, target] += 1
+        return [edit.insn("enter", *target, 0)]
+
+    def _pick(
+        self, pair: Pair, picker: str, then: Pair | str | None, w: Where
+    ) -> tuple[list[ir.Node], int]:
+        """A picker as nested arcs, each entering its variant, and how many targets after it that
+        took in: one where every variant has a combo with `then`, else none."""
+        arcs = sorted(self.picks[picker])
+        ids = {v: self.combos.get((v, then)) for _, _, v in arcs} if isinstance(then, str) else {}
+        together = bool(ids) and all(i is not None for i in ids.values())
+
+        def enter(variant: str) -> list[ir.Node]:
+            if not together:
+                return self._play(pair, variant, w)
+            assert isinstance(then, str) and (ident := ids[variant]) is not None
+            self.uses[pair, variant] += 1
+            self.uses[pair, then] += 1
+            return [edit.insn("enter", addresses.OWN_MOVE_MAIN, ident, 0)]
+
+        nodes = enter(arcs[-1][2])
+        for lo, hi, variant in reversed(arcs[:-1]):
+            nodes = self.if_(w, "enter", "if_target_in_arc", (lo, hi), enter(variant), nodes)
+        return nodes, int(together)
 
     def _end(self, n: p3.Insn, w: Where) -> list[ir.Node]:
         if not w.tail:
@@ -868,11 +913,14 @@ def splice(
     slots: Mapping[str, int] | None = None,
     overlay: Overlay | None = None,
     named: Collection[Pair] = (),
+    picks: Mapping[str, Sequence[tuple[int, int, str]]] | None = None,
+    combos: Mapping[tuple[str, str], int] | None = None,
 ) -> Spliced:
     """The host's `spec.splice` routine with the donor's `spec.entry` in its place, as edits to
     `host`; `findings` say what could not carry over, an error that it cannot be built. `survey`
     (`vars.survey` of the host) picks the call history's variable when `spec.history` is None;
-    `slots` (`moves.slots`) numbers the own moves that `spec.pairs` plays; `overlay` (the host's
+    `slots` (`moves.slots`) numbers the own moves that `spec.pairs` plays, `picks` and `combos`
+    (`moves.picks`, `moves.combo_ids`) the pickers and the combos of them; `overlay` (the host's
     species overlay) lets `spec.fatigue` see whether its code drains gauge A."""
     es = EditSet.of(host)
     target = next((r for r in host.routines() if r.name == spec.splice), None)
@@ -888,7 +936,7 @@ def splice(
         keep += 1
     for n in target.body[keep:-1]:
         es.node(n.id).delete = True
-    t = Translator(donor, spec, survey, slots)
+    t = Translator(donor, spec, survey, slots, picks, combos)
     nodes = t.paste(spec.entry, spec.splice)
     for label, body in t.routines.items():
         es.routines[label] = body

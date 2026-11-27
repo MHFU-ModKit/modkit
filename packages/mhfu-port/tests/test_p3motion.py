@@ -77,6 +77,10 @@ def at(m: Motion, off: int) -> float:
     return m.cells[off]
 
 
+def test_the_clip_speed_cell_starts_at_one():
+    assert at(motion(), p3motion.SPEED) == 1.0
+
+
 def test_velocity_moves_and_then_accelerates():
     m = motion()
     m.cells.update({VELOCITY + 4: 10.0, ACCELERATION + 4: -3.0})

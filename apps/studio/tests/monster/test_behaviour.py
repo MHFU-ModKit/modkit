@@ -410,7 +410,7 @@ def test_renaming_a_move_the_brain_plays_follows_its_pairs(ports: Path) -> None:
     clips.rename_move(z, "dash", "rush")
     assert z.manifest.brain is not None
     assert z.manifest.brain.targets((2, 4)) == ["rush"]
-    assert z.manifest.brain.targets((7, 29)) == [(1, 2), "rush"]
+    assert z.manifest.brain.targets((7, 29)) == ["p3_7_29", "rush"]
     assert clips.move_users(z.manifest, "rush") == [
         "brain.pairs.2,4",
         "brain.pairs.7,29",

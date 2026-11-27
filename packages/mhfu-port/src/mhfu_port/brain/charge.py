@@ -171,7 +171,7 @@ def table(m: Manifest, data: Data) -> tuple[Charge | None, list[Finding]]:
             f"no reaction table is known for host species {species}: a knockout does not discharge"
         )
         found.append(Finding("warning", "P3_CHARGE_REACTIONS", text, None, "charge"))
-    ch, more = derive(donor, hosts, b, {n: mv.own for n, mv in m.moves.items()})
+    ch, more = derive(donor, hosts, b, {n: mv.played for n, mv in m.moves.items()})
     return ch, [*found, *more]
 
 

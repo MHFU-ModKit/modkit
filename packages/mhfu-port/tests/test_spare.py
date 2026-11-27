@@ -6,7 +6,7 @@ import numpy as np
 from mhfu_port import manifest
 from mhfu_port.brain import own, spare
 from mhfu_port.manifest import AttackWindow
-from mhfu_port.p3hits import Hit, Hits, Length, Plan, Record, Step, Volume
+from mhfu_port.p3hits import Arm, Hit, Hits, Length, Plan, Record, Step, Volume
 
 TEXT = """
 schema = 2
@@ -249,6 +249,9 @@ class Stub:
 
     def plan(self, pair: object) -> Plan:
         return self._plan
+
+    def arms(self, pair: object, base: Plan) -> tuple[Arm, ...]:
+        return (Arm(((0, 255),), base),)
 
     def match(self, record: int) -> own.Match:
         host = self.hosts.get(record)

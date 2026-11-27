@@ -322,10 +322,12 @@ def derive(
     reactions: Mapping[Pair, str],
     b: Brain,
     hold: Collection[Pair] = (),
+    pickers: Mapping[str, Collection[str]] | None = None,
 ) -> tuple[Fatigue, list[Finding]]:
     """The helper's table from the donor's row: each `[brain.pairs]` donor pair's cost on what it
     plays, each host reaction pair's class cost. Two sources with different costs on one target:
-    the larger. `hold` are pairs that carry own moves, which cost nothing."""
+    the larger. `hold` are pairs that carry own moves, which cost nothing; a picker (`pickers`
+    names its variants) is charged on each of them."""
     found: list[Finding] = []
 
     def say(level: str, code: str, text: str) -> None:
@@ -357,7 +359,8 @@ def derive(
         if not top:
             continue
         if isinstance(target, str):
-            own[target] = top
+            for name in (pickers or {}).get(target, [target]):
+                own[name] = max(own.get(name, 0), top)
         elif target in hold:
             say(
                 "warning",
@@ -389,9 +392,9 @@ def carriers(m: Manifest) -> set[Pair]:
     """The pairs own moves ride: the hub for a move that names none, and `[brain.pairs]` playing an
     own move at all rides it."""
     species = m.port.host_species
-    out = {p for mv in m.moves.values() if mv.own and (p := mv.carrier) is not None}
+    out = {p for mv in m.moves.values() if mv.played and (p := mv.carrier) is not None}
     hub = moves.hub(species)
-    uses = any(mv.own and mv.carrier is None for mv in m.moves.values()) or (
+    uses = any(mv.played and mv.carrier is None for mv in m.moves.values()) or (
         m.brain is not None
         and any(isinstance(t, str) for k in m.brain.pairs for t in m.brain.targets(_pair(k)))
     )
@@ -420,7 +423,8 @@ def table(m: Manifest, data: Data) -> tuple[Fatigue | None, list[Finding]]:
     if not hosts:
         text = f"no reaction table is known for host species {species}: hits cost nothing"
         found.append(Finding("warning", "P3_FATIGUE_REACTIONS", text, None, "fatigue"))
-    fat, more = derive(donor, hosts, b, carriers(m))
+    picks = {n: {v for _, _, v in mv.pick} for n, mv in m.moves.items() if mv.pick is not None}
+    fat, more = derive(donor, hosts, b, carriers(m), picks)
     return fat, [*found, *more]
 
 

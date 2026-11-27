@@ -451,7 +451,7 @@ def own_moves(
     """What the moves module refuses (`mhfu_port.moves.check` against the layout `sources` and
     the PAC's clips): one finding per own move, then the rest of the manifest once those pass;
     and a window that ends past its clip."""
-    mine = sorted((n, mv) for n, mv in m.moves.items() if mv.own)
+    mine = sorted((n, mv) for n, mv in m.moves.items() if mv.played)
     try:
         table = clips.pac_clip_table(pac) if pac is not None else {}
     except ValueError:

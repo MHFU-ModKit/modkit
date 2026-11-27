@@ -221,8 +221,8 @@ class Steer:
     """`clip` follows the clip's turn, `hunter` and `away` turn toward or away from the target
     (what the monster aims at: its AI target, the player without one) at `rate`, `fixed` turns
     `angle` degrees over `frames` AI frames or across `window` by cursor, `still` not at all.
-    `aim` scales the move's `code_turn` to turn exactly the angle to the target at its first
-    playing frame, and needs one."""
+    `aim` scales the move's `code_turn` to turn exactly the angle to the target (the AI target's, as
+    for `hunter`) at its first playing frame, and needs one."""
     rate: int | None = None
     """YAW units an AI frame at clip speed 1 for `hunter` and `away`, times the speed / 2 in play;
     None: the host charge's."""
@@ -301,6 +301,11 @@ class Move:
     aim_out: int = 0
     """AI frames: when this move hands over to its `after` in place, the angle still to turn to the
     target at the switch is spread over the successor's first `aim_out` AI frames; 0: none."""
+    pick: list[tuple[int, int, str]] | None = None
+    """A picker: no clip, no slot and no play of its own. Where the target stands to the left of the
+    move's facing, `(lo, hi, name)` in 256ths of a turn (0 to 127 the left half, as
+    `if_target_in_arc`), the AI script enters the own move `name`, a variant. The arcs cover 0 to
+    255 once; a variant is an own move that is no picker."""
     carrier: tuple[int, int] | None = None
     host_attacks: bool = False
     label: str = ""
@@ -309,6 +314,16 @@ class Move:
     def own(self) -> bool:
         """Played by the move player, not on a host pair."""
         return self.main is None
+
+    @property
+    def picker(self) -> bool:
+        """Picks among own moves by the target's bearing: no play of its own."""
+        return self.pick is not None
+
+    @property
+    def played(self) -> bool:
+        """An own move with a clip: it has a registry slot."""
+        return self.main is None and self.pick is None
 
     @property
     def pair(self) -> tuple[int, int] | None:
@@ -456,8 +471,11 @@ class Brain:
     pairs: dict[str, Plays] = field(default_factory=dict)
     """What each donor pair, keyed `"main,sub"`, plays: a host pair, the name of an own move in
     `[moves]`, or `OWN`, or the name `OWN` gives another pair (`derived`); or a list of those, each
-    entered in turn (`[[1, 2], "own"]`: the host's turn, then the move). The splice enters an own
-    move as `enter OWN_MOVE_MAIN k 0`, `k` its `moves.slots` slot."""
+    entered in turn (`["own", "p3_7_0"]`: the pair's own move, here a picker of turns by the
+    target's bearing, then the move). The splice enters an own move as `enter OWN_MOVE_MAIN k 0`,
+    `k` its `moves.slots` slot; a picker as `if_target_in_arc` over its variants, with an own move
+    after it in the list as one combo per variant (`moves.combos`); a host pair as `enter main sub
+    0`."""
     when: dict[str, bool] = field(default_factory=dict)
     """The arm a donor test with no host counterpart takes, by its MHP3rd opcode name."""
     attacks: dict[str, int] = field(default_factory=dict)
@@ -505,9 +523,9 @@ class Brain:
                 self.pairs[key] = renamed if isinstance(plays, list) else renamed[0]
 
     def derived(self) -> dict[str, Pair]:
-        """The own moves `OWN` stands for, by name, each with the donor pair it comes from. Another
-        pair plays one by naming it: `"7,23" = [[1, 2], "p3_7_0"]` turns, then plays pair (7, 0)'s
-        move."""
+        """The own moves `OWN` stands for, by name, each with the donor pair it comes from (a picker
+        or the head of a chain). Another pair plays one by naming it: `"7,23" = ["own", "p3_7_0"]`
+        turns by its own picker, then plays pair (7, 0)'s move."""
         pairs = {pair_of(key): plays for key, plays in self.pairs.items()}
         return {own_name(p): p for p, plays in pairs.items() if OWN in targets_of(plays)}
 
@@ -743,6 +761,24 @@ def _own_move(mv: Move, w: str) -> None:
         _need(0 <= s.window[0] < s.window[1], f"{w}.steer", "window is 0 <= from < to")
 
 
+def _picker(m: Manifest, mv: Move, w: str) -> None:
+    """A picker's arcs cover 0 to 255 once and name own moves that are no pickers; it has nothing
+    else a move has."""
+    assert mv.pick is not None
+    bare = Move()
+    others = (f.name for f in dataclasses.fields(Move) if f.name not in ("pick", "label"))
+    _need(all(getattr(mv, k) == getattr(bare, k) for k in others), w, "a picker has only pick")
+    _need(bool(mv.pick), f"{w}.pick", "needs an arc")
+    at = 0
+    for lo, hi, name in sorted(mv.pick):
+        _need(0 <= lo <= hi < 256, f"{w}.pick", f"arc {lo}-{hi} is not within 0 to 255")
+        _need(lo == at, f"{w}.pick", f"the arcs leave a gap or overlap at {lo}")
+        at = hi + 1
+        target = m.moves.get(name)
+        _need(target is not None and target.played, f"{w}.pick", f"{name!r} is no own move")
+    _need(at == 256, f"{w}.pick", f"the arcs end at {at - 1}, not 255")
+
+
 def _brain(b: Brain) -> None:
     _need(b.donor > 0 and b.slot >= 0, "brain", "donor is a monster id and slot 0 or more")
     _need(b.history in (None, *script_vars.BYTE), "brain.history", "is a script variable, 1 to 4")
@@ -791,13 +827,15 @@ def _validate(m: Manifest) -> None:
     claimed: dict[tuple[int, int | None], str] = {}
     for name, mv in m.moves.items():
         w = f"moves.{name}"
-        _need(mv.clip is not None or mv.anim is not None, w, "needs clip or anim")
+        _need(mv.picker or mv.clip is not None or mv.anim is not None, w, "needs clip or anim")
         _need(mv.clip is None or mv.clip in m.clips, w, f"clip {mv.clip!r} is not in clips")
         _need(mv.after is None or mv.after in m.moves, w, f"after {mv.after!r} is not in moves")
         _need(mv.after != name, w, "after names the move itself")
         _need(mv.hold_max is None or mv.hold_max >= 1, w, "hold_max is at least 1 tick")
         _need((mv.main is None) == (mv.sub is None), w, "needs both main and sub, or neither")
-        if mv.own:
+        if mv.picker:
+            _need(mv.main is None and mv.sub is None, w, "a picker is an own move")
+        elif mv.own:
             _own_move(mv, w)
         else:
             plain = Move(mv.main, mv.sub)
@@ -875,7 +913,10 @@ def _validate(m: Manifest) -> None:
             _need(lever in (None, *BYTE), w, f"{lever} is not a byte")
     for i, e in enumerate(m.effects):
         _need(e.move in m.moves, f"effect[{i}]", f"move {e.move!r} is not in moves")
-    own = sum(mv.own for mv in m.moves.values())
+    for name, mv in m.moves.items():
+        if mv.picker:  # after the loop above: a variant may come later
+            _picker(m, mv, f"moves.{name}")
+    own = sum(mv.played for mv in m.moves.values())
     _need(own <= OWN_MOVES, "moves", f"{own} own moves, the framework holds {OWN_MOVES}")
     validate(m)
 
