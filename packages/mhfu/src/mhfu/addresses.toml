@@ -847,6 +847,7 @@ SPAWNER = { offset = 0x2C, type = "ptr", doc = "the species' attack spawner; 0 =
 HOST_ATTACKS = { offset = 0x30, type = "u8", doc = "1 keeps the host entry's animation events (MONSTER_VTABLE.ANIM_EVENTS) while the move plays; 0 skips them" }
 FORCE = { offset = 0x31, type = "u8", doc = "1 starts while the monster's notice runs (the player's ENTITY.AWARE bit, COMBAT_MODE 0); 0 waits up to 450 AI frames for its roar and combat entry; per call, not per move" }
 HOLD_SCRIPT = { offset = 0x32, type = "u8", doc = "1: entering the back pair clears ENTITY.SCRIPT_WAKE, which the hub raises there, so the AI script does not pick a pair between this move and the one that follows (an own move with an AFTER)" }
+AIM_OUT = { offset = 0x33, type = "u8", doc = "AI frames; 0 none. When this move hands over in place (a chain), the angle still to turn to the target at the switch is spread linearly into the entity's own yaw over the successor's first AIM_OUT AI frames, on top of its own steering" }
 START = { offset = 0x34, type = "u16", doc = "clip frame the clip starts at: the executor's a3 on the dispatch (ENTITY.ANIM_MODE); 0 = the row's own, frame 0 on em75. An attack before it never spawns" }
 STOP = { offset = 0x36, type = "u16", doc = "the move ends when PART's clip cursor reaches this clip frame, whatever the blend and the cursor's rate; 0 = none" }
 
@@ -894,9 +895,9 @@ EVENTS = { offset = "next", type = "ptr", doc = "the monster-event block (struct
 doc = "how a move turns and stops (steer.h mhfu_steer_t)"
 size = 0x10
 [struct.STEER_PARAMS.fields]
-TURN = { offset = 0x0, type = "u8", doc = "0 still, 1 toward the hunter, 2 away, 3 TOTAL over FRAMES" }
+TURN = { offset = 0x0, type = "u8", doc = "0 still, 1 toward the target, 2 away from it, 3 TOTAL over FRAMES, 4 aim: the code turn scaled to turn exactly the angle to the target at the move's first playing frame" }
 WALLS = { offset = 0x1, type = "u8", doc = "1: a wall ahead ends the move" }
-RATE = { offset = 0x2, type = "u16", doc = "toward or away: most YAW units an AI frame (TURN_TOWARD's step; the charge steers 64)" }
+RATE = { offset = 0x2, type = "u16", doc = "toward or away: most YAW units an AI frame at clip speed 1 (TURN_TOWARD's step; the charge steers 64); the move player multiplies it by part 0's CLIP_BLOCK.SPEED / 2" }
 TOTAL = { offset = 0x4, type = "s32", doc = "fixed: YAW units over the move or the window, under one turn either way" }
 FRAMES = { offset = 0x8, type = "u16", doc = "fixed without a window: AI frames TOTAL is spread over" }
 DIR = { offset = 0xA, type = "u16", doc = "direction of travel against YAW, YAW units: 0 forward; picks the wall sectors that count as ahead" }
@@ -911,15 +912,15 @@ X = { offset = 0x0, type = "s16", doc = "toward the monster's +x, its left, at t
 Z = { offset = "next", type = "s16", doc = "forward, the same way" }
 
 [struct.STEER_LUNGE]
-doc = "a move's lunge (steer.h mhfu_steer_lunge_t): travel toward the hunter whose length the hunter's distance at the move's first playing frame sets"
+doc = "a move's lunge (steer.h mhfu_steer_lunge_t): travel toward the target whose length the target's distance at the move's first playing frame sets; NEAR, SPAN, BASE and RANGE are scaled by ENTITY.SIZE_SCALE then"
 size = "auto"
 [struct.STEER_LUNGE.fields]
 LO = { offset = 0x0, type = "u16", doc = "clip frame the window (LO, HI] opens after" }
 HI = { offset = "next", type = "u16", doc = "clip frame it closes at; 0: no lunge" }
-NEAR = { offset = "next", type = "f32", doc = "no lunge while the hunter's XZ distance is under this" }
-SPAN = { offset = "next", type = "f32", doc = "distance past NEAR over which the length grows to BASE + RANGE" }
-BASE = { offset = "next", type = "f32", doc = "world units along the bearing to the hunter at NEAR, negative away from it" }
-RANGE = { offset = "next", type = "f32", doc = "units added by the time the distance is NEAR + SPAN" }
+NEAR = { offset = "next", type = "f32", doc = "no lunge while the target's XZ distance is under this, times the size" }
+SPAN = { offset = "next", type = "f32", doc = "distance past NEAR over which the length grows to BASE + RANGE, times the size" }
+BASE = { offset = "next", type = "f32", doc = "world units along the bearing to the target at NEAR, negative away from it, times the size" }
+RANGE = { offset = "next", type = "f32", doc = "units added by the time the distance is NEAR + SPAN, times the size" }
 
 [struct.STEER_SPEC]
 doc = "a move's steering as the move player takes it (steer.h mhfu_steer_spec_t)"
@@ -934,6 +935,8 @@ KEYS = { offset = 0x18, type = "u16[STEER_KEYS]", doc = "YAW every STEER_KEY_STE
 SAMPLE_COUNT = { offset = "next", type = "u16", doc = "SAMPLES in use; 0: the move does not travel by code" }
 LUNGE = { offset = "next", type = "STEER_LUNGE", doc = "the lunge; its HI 0: none" }
 SAMPLES = { offset = "next", type = "TRAVEL_SAMPLE[STEER_SAMPLES]", doc = "the move's own travel by code: sample k is at clip frame START + k * STEER_KEY_STEP; each AI frame moves the monster by the curve's change since the cursor's last frame, held past the last" }
+TURN_COUNT = { offset = "next", type = "u16", doc = "TURNS in use; 0: the move has no code turn" }
+TURNS = { offset = "next", type = "s16[STEER_TURNS]", doc = "the move's code turn, the donor's entity-yaw curve: value k is the YAW units turned since the move's START at clip frame START + k * STEER_KEY_STEP, cumulative; each AI frame the entity's own yaw moves by the curve's change since the cursor's last frame, times the scale (1; for aim, the angle to the target over the curve's total), held past the last; the clip's facing is KEYS, which ride on top" }
 
 [struct.STEER_STATE]
 doc = "the move player's steering (steer.h mhfu_steer_state_t), in MOVE_STATE"
@@ -941,13 +944,19 @@ size = "auto"
 [struct.STEER_STATE.fields]
 NEXT = { offset = 0x0, type = "STEER_SPEC", doc = "the steering the next move takes on its first playing frame" }
 NOW = { offset = "next", type = "STEER_SPEC", doc = "the steering of the move running" }
-BASE = { offset = "next", type = "u16", doc = "YAW the turn curve adds to: YAW on the first playing frame, turned by the mode and each loop" }
+BASE = { offset = "next", type = "u16", doc = "the entity's own YAW, without the clip's turn (YAW = BASE + the curve + the ramp): YAW on a chain head, kept by a step started in place, turned toward the target by the mode and by each loop" }
 WALL = { offset = "next", type = "u8", doc = "the last frame's wall result: 0 none, 1 a wall ahead, 2 a class-2 one" }
 CURSOR = { offset = "next", type = "f32", doc = "part 0's clip cursor the step saw last" }
-YAW0 = { offset = "next", type = "u16", doc = "YAW on the move's first playing frame" }
+YAW0 = { offset = "next", type = "u16", doc = "BASE on the move's first playing frame, after the first frame chose it (kept or YAW): the entity's own yaw the travel curve is turned by" }
 YAW = { offset = "next", type = "u16", doc = "YAW as the move's last step left it" }
 LUNGE_X = { offset = "next", type = "f32", doc = "the lunge's whole length in world x, taken on the first playing frame; 0 without a lunge" }
 LUNGE_Z = { offset = "next", type = "f32", doc = "and in world z" }
+KEEP = { offset = "next", type = "u8", doc = "1: the step started in place (a chain), so its first playing frame keeps BASE; 0: it sets BASE to YAW" }
+BLEND = { offset = "next", type = "u16", doc = "part 0's CLIP_BLOCK.BLEND right after the dispatch: the frames the ramp falls over; 0: none" }
+RAMP = { offset = "next", type = "s16", doc = "YAW units the step's first playing frame adds on top of BASE and the curve so that YAW stays continuous (YAW before - BASE - the curve at START); it falls to 0 linearly as the part 0 BLEND counts down" }
+TURN_SCALE = { offset = "next", type = "f32", doc = "the code turn's factor, set on the first playing frame: 1, or for aim the angle to the target over the curve's total (0 for a total of 0)" }
+OUT_TOTAL = { offset = "next", type = "s16", doc = "the angle to the target left at a hand-over from a move with AIM_OUT, to spread into BASE" }
+OUT_FRAMES = { offset = "next", type = "u16", doc = "AI frames OUT_TOTAL is spread over, from the step's first playing frame; 0: none" }
 
 [struct.EM_OWN]
 doc = "one own move in em_vhook's registry (em_vhook.h mhfu_em_own_t), played by its slot when Lua, a rule or the move before it asks"
@@ -959,12 +968,21 @@ KEY_AT = { offset = "next", type = "u16", doc = "its first turn key in EM_MOVES.
 KEY_COUNT = { offset = "next", type = "u16", doc = "its turn keys; 0: the clip does not turn YAW" }
 SAMPLE_AT = { offset = "next", type = "u16", doc = "its first travel sample in EM_MOVES.SAMPLES" }
 SAMPLE_COUNT = { offset = "next", type = "u16", doc = "its travel samples; 0: it does not travel by code" }
+TURN_AT = { offset = "next", type = "u16", doc = "its first code-turn value in EM_MOVES.TURNS" }
+TURN_COUNT = { offset = "next", type = "u16", doc = "its code-turn values; 0: it has no code turn" }
 STUCK_MAIN = { offset = "next", type = "u8", doc = "STEER_SPEC.STUCK_MAIN" }
 STUCK_SUB = { offset = "next", type = "u8", doc = "STEER_SPEC.STUCK_SUB" }
 STUCK_MODE = { offset = "next", type = "u8", doc = "STEER_SPEC.STUCK_MODE" }
-AFTER = { offset = "next", type = "u8", doc = "slot played when this move ends on its clip, its length, its stop or a wall; 0xFF none" }
+AFTER = { offset = "next", type = "u8", doc = "slot played when this move ends on its clip, its length, its stop or a wall; 0xFF none. On the same carrier it plays in that AI frame, the carrier not entered again" }
 LUNGE_AT = { offset = "next", type = "u8", doc = "its lunge in EM_MOVES.LUNGES; 0xFF none" }
 VALID = { offset = "next", type = "u32", doc = "1 once written; 0 while it is rewritten" }
+
+[struct.EM_COMBO]
+doc = "a combo in em_vhook's registry (em_vhook.h mhfu_em_combo_t): an AI script's `enter OWN_MOVE_MAIN id` with id from OWN_MOVES up plays FIRST on em75's hub, then THEN in place"
+size = 0x2
+[struct.EM_COMBO.fields]
+FIRST = { offset = 0x0, type = "u8", doc = "the slot played first, on the hub; 0xFF: no combo here" }
+THEN = { offset = 0x1, type = "u8", doc = "the slot that follows it in place when FIRST ends" }
 
 [struct.EM_MOVES]
 doc = "em_vhook's own-move registry in partition memory (em_vhook.cpp): a port's own moves by slot, played by the move player on the AI step that asks"
@@ -980,11 +998,15 @@ CHAINED = { offset = 0x18, type = "u32", doc = "of them by AFTER" }
 KEY_TOP = { offset = 0x1C, type = "u32", doc = "KEYS in use" }
 SAMPLE_TOP = { offset = "next", type = "u32", doc = "SAMPLES in use" }
 LUNGE_TOP = { offset = "next", type = "u32", doc = "LUNGES in use" }
+TURN_TOP = { offset = "next", type = "u32", doc = "TURNS in use" }
+TAG_THEN = { offset = "next", type = "u32", doc = "the slot that follows the move the move player runs when it is the first of a combo (its THEN, taken in place of its AFTER); 0xFF otherwise. Set by the play of a combo and cleared by any other play" }
 REQ_FORCE = { offset = "next", type = "u32", doc = "1: the play asked for starts while the monster's notice runs (MOVE.FORCE)" }
 MOVES = { offset = "next", type = "EM_OWN[OWN_MOVES]", doc = "the moves by slot" }
+COMBOS = { offset = "next", type = "EM_COMBO[256]", doc = "the combos by enter id: entry k is id k, so only OWN_MOVES..255 are read (a table of 256 whatever OWN_MOVES is, so the two cannot drift)" }
 KEYS = { offset = "next", type = "u16[EM_KEYS]", doc = "every move's turn keys, YAW every STEER_KEY_STEP clip frames" }
 SAMPLES = { offset = "next", type = "TRAVEL_SAMPLE[EM_SAMPLES]", doc = "every move's travel samples" }
 LUNGES = { offset = "next", type = "STEER_LUNGE[EM_LUNGES]", doc = "the moves' lunges" }
+TURNS = { offset = "next", type = "s16[EM_TURNS]", doc = "every move's code turn, a value every STEER_KEY_STEP clip frames from START, cumulative YAW units" }
 SCRATCH = { offset = "next", type = "STEER_SPEC", doc = "the steering handed to the move player for the move it plays next" }
 
 [struct.FLINCH_PART]
@@ -1052,11 +1074,11 @@ FROM_SUB = { offset = 0x01, type = "u8", doc = "with FROM_MASK: the exact sub, o
 TO_MAIN = { offset = 0x02, type = "u8", doc = "the pair entered when PLAY_MOVE is 0" }
 TO_SUB = { offset = 0x03, type = "u8", doc = "with TO_MAIN" }
 MODE = { offset = 0x04, type = "u8", doc = "ENTER_ACTION mode for TO_MAIN, TO_SUB" }
-FLAGS = { offset = 0x05, type = "u8", doc = "1 only while the hunter recedes, 2 only while they close, 4 plays nothing: applies its EFFECTS and the scan goes on" }
+FLAGS = { offset = 0x05, type = "u8", doc = "1 only while the target recedes, 2 only while it closes, 4 plays nothing: applies its EFFECTS and the scan goes on" }
 FROM_MOVE = { offset = 0x06, type = "u8", doc = "own move slot + 1 that must be playing (its AI frames the dwell); 0 none" }
 PLAY_MOVE = { offset = 0x07, type = "u8", doc = "own move slot + 1 played instead of entering TO_MAIN, TO_SUB; 0 none" }
 MIN_FRAMES = { offset = 0x08, type = "u32", doc = "AI frames the pair (or FROM_MOVE) must have stood" }
-D2_LO = { offset = 0x0C, type = "u32", doc = "the hunter's XZ distance squared, f32 bits: at least this" }
+D2_LO = { offset = 0x0C, type = "u32", doc = "the target's XZ distance squared (the player's without a target), f32 bits: at least this" }
 D2_HI = { offset = 0x10, type = "u32", doc = "...and under this" }
 LEFT = { offset = 0x14, type = "u32", doc = "fires left; 0 off, 0xFFFFFFFF standing" }
 FIRED = { offset = 0x18, type = "u32", doc = "fires so far" }
@@ -1209,14 +1231,16 @@ doc = "MOVE_STATE.END, why the move player's move ended: its clip ended (the car
 names = ["clip", "back", "pair", "stopped", "replaced", "refused", "lost", "wall", "stuck", "reaction"]
 
 [const]
-OWN_MOVE_MAIN = { value = 16, doc = "an AI script `enter` main no species has (they use 0..7; 16 is past the 8-bit main mask of em_vhook's substitutions): em_vhook's enter-action stub enters the carrier of own move <sub> (an EM_MOVES slot; em75's hub (0,2) when it is empty or out of range) instead and plays that move at the next AI step" }
+OWN_MOVE_MAIN = { value = 16, doc = "an AI script `enter` main no species has (they use 0..7; 16 is past the 8-bit main mask of em_vhook's substitutions): em_vhook's enter-action stub enters the carrier of own move <sub> (an EM_MOVES slot; em75's hub (0,2) when it is empty) instead and plays that move at the next AI step; a <sub> from OWN_MOVES up is a combo id: the hub, and the combo's first move played with its then in place" }
 CHARGE_QUERY_CHARGED = { value = 0, doc = "the AI script `switch_query` arg that asks whether a port with `[brain] charge` is charged (MHP3rd's own numbering of the query): the framework answers 1 or 0" }
 CHARGE_QUERY_COOLDOWN = { value = 6, doc = "the `switch_query` arg that asks whether the charge cooldown runs (MHP3rd's numbering): the framework answers 1 or 0" }
-OWN_MOVES = { value = 128, doc = "own moves the framework's registry holds, EM_MOVES slots 0..OWN_MOVES-1: every table keyed by slot, and the offsets after one, follow it" }
+OWN_MOVES = { value = 160, doc = "own moves the framework's registry holds, EM_MOVES slots 0..OWN_MOVES-1: every table keyed by slot, and the offsets after one, follow it; the enter ids from OWN_MOVES to 255 name combos (EM_MOVES.COMBOS)" }
 EM_KEYS = { value = 2944, doc = "turn keys all own moves share in EM_MOVES.KEYS, a run held twice once: the Zinogre's 125 moves hold 2432" }
 EM_SAMPLES = { value = 1280, doc = "travel samples all own moves share in EM_MOVES.SAMPLES, a run held twice once: the Zinogre's hold 1052" }
+EM_TURNS = { value = 1024, doc = "code-turn values all own moves share in EM_MOVES.TURNS, a run held twice once (provisional: the port derivation sizes it)" }
 EM_LUNGES = { value = 12, doc = "lunges the registry holds, an equal one of two moves once: the Zinogre's hold 10" }
 STEER_KEYS = { value = 256, doc = "turn keys one move holds (STEER_SPEC.KEYS)" }
 STEER_KEY_STEP = { value = 2, doc = "clip frames between a move's turn keys and between its travel samples: the cursor's step at speed 2, so it lands on them" }
+STEER_TURNS = { value = 132, doc = "code-turn values one move holds (STEER_SPEC.TURNS): one every STEER_KEY_STEP clip frames, as STEER_SAMPLES" }
 STEER_SAMPLES = { value = 132, doc = "travel samples one move holds (STEER_SPEC.SAMPLES): 2 clip frames each, so a clip of 262 frames; the Brute's longest walk has 130" }
 STEER_TRAVEL_SCALE = { value = 4, doc = "a travel sample's units to a world unit: its x and z are 16-bit multiples of 1/STEER_TRAVEL_SCALE" }

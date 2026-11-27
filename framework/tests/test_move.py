@@ -42,7 +42,7 @@ class Move(ctypes.Structure):
         ("host_attacks", ctypes.c_uint8),
         ("force", ctypes.c_uint8),
         ("hold_script", ctypes.c_uint8),
-        ("_pad", ctypes.c_uint8),
+        ("aim_out", ctypes.c_uint8),
         ("start", ctypes.c_uint16),
         ("stop", ctypes.c_uint16),
     ]
@@ -83,6 +83,7 @@ class Game:
         skip = int(self.lib.host_frame(ENT))
         for k in range(3):
             b = self.block(k)
+            self.poke(b + a.CLIP_BLOCK.SPEED, "f", self.speed)  # MONSTER_STEP writes it every frame
             (phase,) = self.peek(b + a.CLIP_BLOCK.PHASE, "f")
             (end,) = self.peek(b + a.CLIP_BLOCK.END, "f")
             if self.peek(b + a.CLIP_BLOCK.FLAGS, "H")[0] & 1:
@@ -151,6 +152,11 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     lib.mhfu_steer_init_spec.argtypes = [ctypes.c_void_p]
     lib.mhfu_move_react.argtypes = [ctypes.c_int, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p]
     lib.host_react_enter.argtypes = [ctypes.c_uint32] * 3
+    lib.host_chain.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
+    lib.mhfu_steer_bearing.restype = ctypes.c_uint16
+    lib.mhfu_steer_bearing.argtypes = [ctypes.c_float, ctypes.c_float]
+    lib.mhfu_move_target_pos.restype = ctypes.c_uint32
+    lib.mhfu_move_target_pos.argtypes = [ctypes.c_uint32]
     return lib
 
 
@@ -409,21 +415,24 @@ class Spec(ctypes.Structure):
         ("sample_count", ctypes.c_uint16),
         ("lunge", Lunge),
         ("samples", Sample * a.STEER_SAMPLES),
+        ("turn_count", ctypes.c_uint16),
+        ("turns", ctypes.c_int16 * a.STEER_TURNS),
     ]
 
 
 Point = steering.Point
 
 
-def steer(
+def spec_of(
     g: Game,
     keys: tuple[int, ...] = (),
     samples: tuple[Point, ...] = (),
     lunge: tuple[int, int, float, float, float, float] | None = None,
+    turns: tuple[int, ...] = (),
     **kw: int,
-) -> None:
-    """The spec the next move takes: turn `keys`, travel `samples` (world units), a `lunge` as
-    (lo, hi, near, span, base, range), and steer fields by name."""
+) -> Spec:
+    """A spec: turn `keys`, travel `samples` (world units), a `lunge` as (lo, hi, near, span, base,
+    range), a code turn `turns` (YAW units, cumulative) and steer fields by name."""
     spec = Spec()
     g.lib.mhfu_steer_init_spec(ctypes.byref(spec))
     for k, v in kw.items():
@@ -436,7 +445,22 @@ def steer(
         spec.samples[i].x, spec.samples[i].z = steering.sample(x), steering.sample(z)
     if lunge:
         spec.lunge = Lunge(*lunge)
-    g.lib.mhfu_move_steer(ctypes.byref(spec))
+    spec.turn_count = len(turns)
+    for i, v in enumerate(turns):
+        spec.turns[i] = v
+    return spec
+
+
+def steer(
+    g: Game,
+    keys: tuple[int, ...] = (),
+    samples: tuple[Point, ...] = (),
+    lunge: tuple[int, int, float, float, float, float] | None = None,
+    turns: tuple[int, ...] = (),
+    **kw: int,
+) -> None:
+    """The spec the next move takes (spec_of's arguments)."""
+    g.lib.mhfu_move_steer(ctypes.byref(spec_of(g, keys, samples, lunge, turns, **kw)))
 
 
 def yaw(g: Game) -> int:
@@ -450,22 +474,27 @@ def test_steer_spec_layout() -> None:
     assert Spec.stuck_main.offset == a.STEER_SPEC.STUCK_MAIN
     assert Spec.sample_count.offset == a.STEER_SPEC.SAMPLE_COUNT
     assert Spec.lunge.offset == a.STEER_SPEC.LUNGE and Spec.samples.offset == a.STEER_SPEC.SAMPLES
+    assert (
+        Spec.turn_count.offset == a.STEER_SPEC.TURN_COUNT
+        and Spec.turns.offset == a.STEER_SPEC.TURNS
+    )
     assert ctypes.sizeof(Lunge) == a.STEER_LUNGE.size and Lunge.range.offset == a.STEER_LUNGE.RANGE
     assert ctypes.sizeof(Sample) == a.TRAVEL_SAMPLE.size and Sample.z.offset == a.TRAVEL_SAMPLE.Z
 
 
 def test_yaw_follows_the_clip_turn(g: Game) -> None:
-    """YAW reads its first-frame value plus the curve at the cursor, a loop's turn kept."""
+    """A move that starts on a host clip sets base to YAW; YAW is base plus the curve at the
+    cursor (no blend: no ramp), a loop's turn kept."""
     g.poke(a.ENTITY.YAW, "H", 0x1000)
-    steer(g, tuple(100 * k for k in range(int(CLIP_END) // 2 + 1)))
+    steer(g, keys=tuple(100 * k for k in range(int(CLIP_END) // 2 + 1)))
     g.play(46)
     g.frame()
     g.frame()  # the dispatch
-    g.frame()  # first playing frame: the cursor reads 2, YAW stays
-    assert yaw(g) == 0x1000
+    g.frame()  # first playing frame: the cursor reads 2
+    assert yaw(g) == 0x1000 + 100 and g.steer_state("BASE", "H") == (0x1000,)
     for _ in range(10):
         g.frame()
-    assert yaw(g) == 0x1000 + 10 * 100
+    assert yaw(g) == 0x1000 + 11 * 100
     st = int(g.lib.mhfu_move_state()) + a.MOVE_STATE.STEER
     assert struct.unpack_from("<H", ctypes.string_at(st + a.STEER_STATE.YAW0, 2)) == (0x1000,)
 
@@ -749,18 +778,22 @@ LUNGE = (10, 40, 400.0, 1800.0, -700.0, 1800.0)
 """window (lo, hi], near, span, base, range: MHP3rd's stamp jump."""
 
 
-def lunge_total(d: float) -> float:
+def lunge_total(d: float, size: float = 1.0) -> float:
+    """The lunge's length at distance d: its four numbers are times the size."""
     lo, hi, near, span, base, rng = LUNGE
-    return 0.0 if d < near else base + rng * min((d - near) / span, 1)
+    near, span = near * size, span * size
+    return 0.0 if d < near else (base + rng * min((d - near) / span, 1)) * size
 
 
-@pytest.mark.parametrize("d", [300.0, 399.0, 400.0, 1300.0, 2200.0, 3500.0])
-@pytest.mark.parametrize(("bearing", "yaw0", "size"), [(0.4, 0, 1.0), (-2.5, 0x6000, 2.0)])
+@pytest.mark.parametrize("d", [150.0, 300.0, 399.0, 400.0, 1300.0, 2200.0, 3500.0])
+@pytest.mark.parametrize(
+    ("bearing", "yaw0", "size"), [(0.4, 0, 1.0), (-2.5, 0x6000, 2.0), (1.1, 0x2000, 0.5)]
+)
 def test_lunge_is_the_distances_length_along_the_bearing(
     g: Game, d: float, bearing: float, yaw0: int, size: float
 ) -> None:
     """Spread over its window by the cursor, along the bearing to the hunter at the first playing
-    frame in world axes: unscaled, whatever YAW and size are."""
+    frame in world axes, whatever YAW is; near, span, base and range times the size."""
     ex, ez = 10.0, -20.0
     ux, uz = math.sin(bearing), math.cos(bearing)
     g.poke(a.ENTITY.POSITION, "fff", ex, 0.0, ez)
@@ -770,7 +803,7 @@ def test_lunge_is_the_distances_length_along_the_bearing(
     steer(g, lunge=LUNGE)
     g.play(46)
     seen = settle(g, 2 + int(CLIP_END / SPEED))
-    total, (lo, hi, *_) = lunge_total(d), LUNGE
+    total, (lo, hi, *_) = lunge_total(d, size), LUNGE
     for cursor, (x, z) in seen:
         share = min(max((cursor - lo) / (hi - lo), 0.0), 1.0)
         assert (x, z) == pytest.approx((ex + ux * total * share, ez + uz * total * share), abs=0.02)
@@ -779,6 +812,7 @@ def test_lunge_is_the_distances_length_along_the_bearing(
 
 
 def test_lunge_takes_the_hunter_where_the_move_began(g: Game) -> None:
+    g.poke(a.ENTITY.SIZE_SCALE, "f", 1.0)
     g.poke(a.ENTITY.POSITION, "fff", 0.0, 0.0, 0.0)
     struct.pack_into("<fff", g.hunter, a.ENTITY.POSITION, 0.0, 0.0, 1000.0)
     steer(g, lunge=LUNGE)
@@ -799,7 +833,7 @@ def test_travel_and_lunge_add(g: Game, speed: float) -> None:
     g.play(46)
     settle(g, 2 + int(CLIP_END / speed))
     x, z = world(0, *CURVE[-1])
-    assert at(g) == pytest.approx((x * 2.0, z * 2.0 + lunge_total(1300.0)), abs=0.05)
+    assert at(g) == pytest.approx((x * 2.0, z * 2.0 + lunge_total(1300.0, 2.0)), abs=0.05)
 
 
 FIXED_WINDOW = (10, 40)
@@ -868,3 +902,526 @@ def test_a_move_without_travel_leaves_the_entity_as_it_was(g: Game) -> None:
         return bytes(g.mem[ENT - BASE : ENT - BASE + 0x800])
 
     assert run(False) == run(True)
+
+
+def test_the_lunge_halves_at_half_the_size(g: Game) -> None:
+    """Far past its span the length is base + range, in world units times the size."""
+
+    def lunged(size: float) -> float:
+        g.lib.host_set(1, ctypes.c_float(CLIP_END))
+        ctypes.memset(ctypes.addressof(g.mem), 0, 0x4000)
+        g.pair = (1, 3)
+        g.poke(a.ENTITY.SIZE_SCALE, "f", size)
+        struct.pack_into("<fff", g.hunter, a.ENTITY.POSITION, 0.0, 0.0, 9000.0)
+        steer(g, lunge=LUNGE)
+        g.play(46)
+        settle(g, 2 + int(CLIP_END / SPEED))
+        return at(g)[1]
+
+    full, half = lunged(1.0), lunged(0.5)
+    assert full == pytest.approx(1100.0, abs=0.05) and half == pytest.approx(full / 2, abs=0.05)
+
+
+# --- the target
+
+TARGET = BASE + 0x2000  # a second entity in move_host.cpp's memory: what the monster aims at
+HUNTER_POS = int(a.PLAYER_ENTITY) + int(a.ENTITY.POSITION)
+TARGET_POS = TARGET + int(a.ENTITY.POSITION)
+
+
+def aim_at(g: Game, x: float, z: float) -> None:
+    """ENTITY.TARGET points at an entity standing at (x, z)."""
+    struct.pack_into("<fff", g.mem, TARGET - BASE + a.ENTITY.POSITION, x, 0.0, z)
+    g.poke(a.ENTITY.TARGET, "I", TARGET)
+
+
+def hunter_at(g: Game, x: float, z: float) -> None:
+    struct.pack_into("<fff", g.hunter, a.ENTITY.POSITION, x, 0.0, z)
+
+
+def test_the_aim_is_the_target(g: Game) -> None:
+    aim_at(g, 5.0, 6.0)
+    assert g.lib.mhfu_move_target_pos(ENT) == TARGET_POS
+
+
+@pytest.mark.parametrize("pointer", [0, 0x1234, int(a.USER_RAM_END)])
+def test_the_aim_falls_back_to_the_hunter(g: Game, pointer: int) -> None:
+    """No target, or one that is not game memory."""
+    g.poke(a.ENTITY.TARGET, "I", pointer)
+    assert g.lib.mhfu_move_target_pos(ENT) == HUNTER_POS
+
+
+def test_the_turn_follows_the_target_every_frame(g: Game) -> None:
+    """The hunter is ahead; the target to the left, then to the right: it turns after whoever
+    ENTITY.TARGET holds that frame, the way the donor's turn refreshes its target."""
+    hunter_at(g, 0.0, 1000.0)
+    steer(g, turn=1, rate=0x400)
+    g.play(46)
+    aim_at(g, 1000.0, 0.0)
+    for _ in range(2 + 0x4000 // 0x400):
+        g.frame()
+    assert yaw(g) == 0x4000
+    aim_at(g, -1000.0, 0.0)
+    for _ in range(0x8000 // 0x400):
+        g.frame()
+    assert yaw(g) == 0xC000
+    g.poke(a.ENTITY.TARGET, "I", 0)  # the target is gone: the hunter, ahead
+    for _ in range(0x4000 // 0x400):
+        g.frame()
+    assert yaw(g) == 0
+
+
+def test_the_lunge_goes_to_the_target(g: Game) -> None:
+    g.poke(a.ENTITY.SIZE_SCALE, "f", 1.0)
+    hunter_at(g, 0.0, 3000.0)
+    aim_at(g, 3000.0, 0.0)
+    steer(g, lunge=LUNGE)
+    g.play(46)
+    settle(g, 3)
+    aim_at(g, 0.0, -3000.0)  # read at the first frame only
+    settle(g, 40)
+    assert at(g) == pytest.approx((lunge_total(3000.0), 0.0), abs=0.02)
+
+
+# --- the turn and its rate
+
+
+@pytest.mark.parametrize(("speed", "rate"), [(2.0, 1000), (2.8, 1400), (1.0, 500)])
+def test_the_turn_rate_is_the_donors_at_clip_speed_1(g: Game, speed: float, rate: int) -> None:
+    """A move's rate is its units a frame at speed 1; the move player times it by the clip's
+    speed / 2 (1.0 calm, 1.4 enraged)."""
+    g.speed = speed
+    hunter_at(g, 1000.0, 0.0)  # 0x4000 to the left
+    steer(g, turn=1, rate=1000)
+    g.play(46)
+    steps = []
+    last = 0
+    for _ in range(2 + 0x4000 // rate + 3):
+        g.frame()
+        steps.append(yaw(g) - last)
+        last = yaw(g)
+    turning = [d for d in steps if d]
+    assert turning[:-1] == [rate] * (len(turning) - 1) and 0 < turning[-1] <= rate
+    assert yaw(g) == 0x4000
+
+
+def test_the_hunter_turn_turns_base_and_the_curve_rides_on_top(g: Game) -> None:
+    """The entity's own YAW is what turns toward the target; the clip's facing is added to it, so
+    the body ends facing the target plus the clip's last key."""
+    keys = tuple(0x80 * k for k in range(int(CLIP_END) // 2 + 1))
+    hunter_at(g, 1000.0, 1000.0)  # 0x2000
+    steer(g, keys=keys, turn=1, rate=0x400)
+    g.play(46)
+    for _ in range(2 + int(CLIP_END / SPEED)):
+        g.frame()
+    assert g.steer_state("BASE", "H") == (0x2000,)
+    assert yaw(g) == 0x2000 + keys[-1]
+
+
+# --- a chain in place
+
+
+def chained(g: Game, entry: int = 53, times: int = 1, **kw: int) -> None:
+    """The next `times` ends are handed over in place to a move on `entry` (em_vhook's choke
+    point), the move player's other arguments steer's."""
+    mv = Move(entry=entry, carrier_main=0, carrier_sub=1, back_main=NO_PAIR)
+    fields = {f for f, _ in Move._fields_}
+    for k, v in kw.items():
+        if k in fields:
+            setattr(mv, k, v)
+    spec = spec_of(g, **{k: v for k, v in kw.items() if k not in fields})  # type: ignore[arg-type]
+    g.lib.host_chain(ctypes.byref(mv), ctypes.byref(spec), times)
+
+
+def run(g: Game, frames: int) -> list[list[tuple[str, int, int, int, int]]]:
+    """The calls of each of `frames` AI frames."""
+    out = []
+    for _ in range(frames):
+        g.frame()
+        out.append(g.calls())
+    return out
+
+
+ENDS = [{"length": 10}, {"stop": 30}, {}]
+"""How the first step ends: its AI frames, a clip frame, its clip."""
+
+
+@pytest.mark.parametrize("end", ENDS)
+def test_a_chain_dispatches_the_successor_in_the_frame_the_first_ends(
+    g: Game, end: dict[str, int]
+) -> None:
+    """No carrier is entered between the two: the executor goes to the second entry in the frame
+    the first step ends, and the second's frames count from there."""
+    g.play(46, **end)
+    chained(g, 53)
+    frames = run(g, 2 + int(CLIP_END / SPEED) + 1)
+    flat = [c for f in frames for c in f]
+    assert [c for c in flat if c[0] == "E"] == [("E", ENT, 0, 1, 0)]
+    assert [c[2] for c in flat if c[0] == "X"] == [46, 53]
+    when = next(k for k, f in enumerate(frames) if ("X", ENT, 53, 0, 0) in f)
+    assert [c[:2] for c in frames[when] if c[0] == "M"] == [("M", 0), ("M", ENT)]
+    assert g.state("STARTED") == (2,) and g.state("END", "B") == (0,)
+    assert g.state("STATE", "B") == (2,)
+
+
+def test_a_chain_restarts_the_frame_count_and_the_attacks(g: Game) -> None:
+    g.play(46, length=6, attacks=[(2, 6, 4)])  # type: ignore[arg-type]
+    chained(g, 53)
+    run(g, 2 + 6)
+    assert g.state("FRAMES") == (0,) and g.state("SPAWN_FRAME", "I") == (NEVER,)
+    run(g, 1)
+    assert g.state("FRAMES") == (1,)
+
+
+def test_a_chain_ends_the_windowed_attacks_of_the_step_before(g: Game) -> None:
+    g.play(46, length=8, attacks=[(4, 6, 200)])  # type: ignore[arg-type]
+    chained(g, 53)
+    flat = [c for f in run(g, 2 + 8) for c in f]
+    assert [c[0] for c in flat].count("S") == 1 and [c[0] for c in flat].count("K") == 1
+
+
+def test_a_class_2_wall_and_a_reaction_do_not_chain(g: Game) -> None:
+    steer(g, walls=1)
+    g.play(46)
+    chained(g, 53, times=2)
+    run(g, 6)
+    g.poke(a.ENTITY.WALL_SECTORS, "I", 0x00000001)
+    g.poke(a.ENTITY.STUCK_WALL, "B", 1)
+    flat = [c for f in run(g, 2) for c in f]
+    assert g.state("END", "B") == (STUCK,) and ("X", ENT, 53, 0, 0) not in flat
+    g.poke(a.ENTITY.WALL_SECTORS, "I", 0)
+    g.pair = (1, 3)
+    g.play(46)
+    run(g, 6)
+    g.pair = (4, 1)
+    flat = [c for f in run(g, 2) for c in f]
+    assert g.state("END", "B") == (PAIR,) and ("X", ENT, 53, 0, 0) not in flat
+
+
+def test_a_wall_ends_into_the_successor_in_place(g: Game) -> None:
+    steer(g, walls=1)
+    g.play(46)
+    chained(g, 53)
+    run(g, 6)
+    g.poke(a.ENTITY.WALL_SECTORS, "I", 0x40000000)
+    flat = [c for f in run(g, 2) for c in f]
+    assert ("X", ENT, 53, 0, 0) in flat and g.state("STARTED") == (2,)
+
+
+K1 = tuple(100 * k for k in range(int(CLIP_END) // 2 + 1))
+K2 = tuple(0x2000 + 30 * k for k in range(int(CLIP_END) // 2 + 1))
+"""The two steps' turn curves: the second starts 0x2000 off where the first left YAW."""
+
+
+def signed(v: int) -> int:
+    """A YAW difference as a signed 16-bit."""
+    v &= 0xFFFF
+    return v - 0x10000 if v >= 0x8000 else v
+
+
+def curve_at(keys: tuple[int, ...], cursor: float) -> int:
+    """The keys every STEER_KEY_STEP clip frames, joined by straight lines."""
+    i = min(int(cursor / 2), len(keys) - 1)
+    if i >= len(keys) - 1:
+        return keys[-1]
+    return keys[i] + round((keys[i + 1] - keys[i]) * (cursor / 2 - i))
+
+
+def two_steps(g: Game, blend: int) -> tuple[int, int, int, int]:
+    """Step one (turn curve K1, to clip frame 40) hands over to step two (curve K2) in place;
+    runs to the second's first playing frame: (YAW the first step left, base, the ramp's start,
+    YAW on that frame)."""
+    g.lib.host_blend(blend)
+    g.poke(a.ENTITY.YAW, "H", 0x1000)
+    steer(g, keys=K1)
+    g.play(46, stop=40)
+    chained(g, 53, keys=K2)
+    while g.state("STARTED")[0] != 2:
+        g.frame()
+    before = yaw(g)  # what the first step left
+    (base,) = g.steer_state("BASE", "H")
+    g.frame()  # the second step's first playing frame
+    (ramp,) = g.steer_state("RAMP", "h")
+    return before, int(base), int(ramp), yaw(g)
+
+
+def test_a_chained_step_keeps_the_base_and_ramps_the_jump_out(g: Game) -> None:
+    """YAW = base + curve + ramp; the ramp starts where YAW is continuous and falls linearly to 0
+    as part 0's BLEND counts down, the blend read after the dispatch."""
+    blend = 4
+    before, base, ramp, first = two_steps(g, blend)
+    assert base == 0x1000  # kept: the first step's base, not YAW
+    assert g.state("STARTED") == (2,) and g.steer_state("KEEP", "B") == (0,)  # taken
+    assert before == (0x1000 + curve_at(K1, 40.0)) & 0xFFFF
+    (n,) = g.steer_state("BLEND", "H")
+    assert n == blend + 1
+    assert (base + curve_at(K2, 0) + ramp) & 0xFFFF == before  # continuous at the switch
+    assert abs(signed(first - before)) <= abs(ramp) // n + 1  # a step of the ramp, no jump
+    jump = ramp
+    seen = []
+    for _ in range(blend + 4):
+        (held,) = g.peek(g.block(0) + a.CLIP_BLOCK.BLEND, "i")
+        g.frame()
+        (cursor,) = g.steer_state("CURSOR")
+        want = base + curve_at(K2, cursor) + round(jump * min(held, n) / n if held > 0 else 0)
+        assert yaw(g) == want & 0xFFFF
+        seen.append((int(held), yaw(g)))
+    assert any(h > 0 for h, _ in seen) and seen[-1][0] == 0  # the ramp ran out with the blend
+
+
+def test_a_chained_step_without_a_blend_has_no_ramp(g: Game) -> None:
+    before, base, ramp, first = two_steps(g, 0)
+    (cursor,) = g.steer_state("CURSOR")
+    assert g.steer_state("BLEND", "H") == (0,)
+    assert first == (base + curve_at(K2, cursor)) & 0xFFFF
+
+
+def test_a_step_that_starts_on_a_host_clip_takes_the_entitys_yaw_as_base(g: Game) -> None:
+    g.lib.host_blend(3)
+    g.poke(a.ENTITY.YAW, "H", 0x1234)
+    steer(g, keys=K2)
+    g.play(46)
+    run(g, 3)
+    assert g.steer_state("BASE", "H") == (0x1234,)
+    (ramp,) = g.steer_state("RAMP", "h")
+    assert ramp == signed(-K2[0])  # YAW continuous at the switch
+    assert yaw(g) != 0x1234 + K2[0]  # the jump is still being ramped out
+
+
+def test_the_hunter_turn_carries_over_a_chain_through_base(g: Game) -> None:
+    """The base the first step turned is the one the second starts from."""
+    hunter_at(g, 1000.0, 1000.0)
+    steer(g, turn=1, rate=0x200)
+    g.play(46, stop=24)
+    chained(g, 53, keys=K2)
+    while g.state("STARTED")[0] != 2:
+        g.frame()
+    (base,) = g.steer_state("BASE", "H")
+    g.frame()
+    assert 0 < base < 0x2000 and g.steer_state("BASE", "H") == (base,)
+
+
+def test_a_chained_steps_travel_goes_along_base_not_the_drawn_yaw(g: Game) -> None:
+    """The first clip ends with a facing key, so the drawn YAW is off base when the second step
+    starts; its travel is in the entity's own frame, the base."""
+    g.poke(a.ENTITY.SIZE_SCALE, "f", 1.0)
+    g.poke(a.ENTITY.YAW, "H", 0x1000)
+    steer(g, keys=K1)
+    g.play(46, stop=40)
+    chained(g, 53, keys=K2, samples=((0, 0), (0, 100)))
+    while g.state("STARTED")[0] != 2:
+        g.frame()
+    start = at(g)
+    g.frame()
+    assert abs(signed(yaw(g) - 0x1000)) > 0x400  # drawn well off base
+    for _ in range(int(CLIP_END / SPEED)):
+        g.frame()
+    dx, dz = world(0x1000, 0, 100)
+    assert at(g) == pytest.approx((start[0] + dx, start[1] + dz), abs=0.02)
+
+
+# --- the code turn, aim, and the residual a hand-over spreads
+
+TURN = 0x10000
+
+
+def turn_curve(turns: tuple[int, ...], cursor: float, start: int = 0) -> float:
+    """The code turn at clip frame `cursor`: straight lines every STEER_KEY_STEP frames, held past
+    the last value."""
+    u = (cursor - start) / steering.STEP
+    if u <= 0:
+        return float(turns[0])
+    if u >= len(turns) - 1:
+        return float(turns[-1])
+    i = int(u)
+    return turns[i] + (turns[i + 1] - turns[i]) * (u - i)
+
+
+def round_away(v: float) -> int:
+    return int(v + 0.5) if v >= 0 else -int(-v + 0.5)
+
+
+def base_of(g: Game) -> int:
+    return int(g.steer_state("BASE", "H")[0])
+
+
+def playing(g: Game, frames: int) -> list[tuple[float, int]]:
+    """(the cursor the step saw, base) after each of `frames` AI frames from the first playing
+    one."""
+    out = []
+    for _ in range(frames):
+        g.frame()
+        if int(g.state("FRAMES")[0]) == 0 or g.state("STATE", "B")[0] == 1:
+            continue
+        out.append((g.steer_state("CURSOR")[0], base_of(g)))
+    return out
+
+
+CODE_TURN = (0, 300, 900, 2400, 5000, 8000, 9000, 9100)
+
+
+@pytest.mark.parametrize(
+    ("speed", "blend", "start"), [(2.0, 0, 0), (2.8, 0, 0), (2.0, 3, 0), (2.0, 0, 6)]
+)
+def test_the_code_turn_moves_base_along_its_curve(
+    g: Game, speed: float, blend: int, start: int
+) -> None:
+    """Scale 1: base is where the curve puts it at the cursor, whatever the cursor's rate, the
+    blend's hold and the start; the keys ride on top and are not part of it."""
+    g.lib.host_blend(blend)
+    g.speed = speed
+    g.poke(a.ENTITY.YAW, "H", 0x1000)
+    steer(g, turns=CODE_TURN, keys=K1)
+    g.play(46, start=start)
+    seen = playing(g, 2 + blend + int((CLIP_END - start) / speed))
+    assert len(seen) > 8
+    for cursor, base in seen:
+        assert base == (0x1000 + round_away(turn_curve(CODE_TURN, cursor, start))) & 0xFFFF
+    assert seen[-1][1] == (0x1000 + CODE_TURN[-1]) & 0xFFFF
+    held = [b for c, b in seen if c == start]
+    assert (len(held) > 0) == (blend > 0) and all(b == 0x1000 for b in held)
+
+
+def test_a_loop_carries_the_code_turn_on(g: Game) -> None:
+    steer(g, turns=(0, 100, 200, 300))
+    g.play(46)
+    playing(g, 6)
+    b = g.block(0)
+    g.poke(b + a.CLIP_BLOCK.PHASE, "f", 0.0)  # the engine wrapped the cursor
+    g.poke(b + a.CLIP_BLOCK.LOOP_START, "f", 0.0)
+    g.frame()
+    assert base_of(g) == 300  # the rest of the curve, then the part from the loop start
+    g.frame()
+    assert base_of(g) == 300 + 100  # the cursor is at 2 again
+
+
+def bearing_of(g: Game, x: float, z: float) -> int:
+    return int(g.lib.mhfu_steer_bearing(x, z))
+
+
+SHAPE = (0, 3, 20, 55, 90, 100)
+"""How a code turn grows, in percent of its total."""
+
+
+@pytest.mark.parametrize("degrees", [30, -30, 150, -150])
+@pytest.mark.parametrize("total", [0x4000, -0x2000, 0x7FFF])
+def test_aim_turns_exactly_the_angle_to_the_target(g: Game, degrees: int, total: int) -> None:
+    """s is the angle to the target on the first frame over the curve's total: any curve (its shape,
+    size and sign) turns the move exactly that, and the target moving later changes nothing."""
+    turns = tuple(total * k // 100 for k in SHAPE)
+    g.poke(a.ENTITY.YAW, "H", 0x1000)
+    th = math.radians(degrees) + 0x1000 / TURN * math.tau
+    x, z = 1000 * math.sin(th), 1000 * math.cos(th)
+    aim_at(g, x, z)
+    steer(g, turns=turns, turn=4)
+    g.play(46)
+    playing(g, 3)
+    aim_at(g, -z, x)  # read on the first frame only
+    seen = playing(g, 2 + int(CLIP_END / SPEED))
+    want = bearing_of(g, x, z)
+    assert base_of(g) == want and seen[-1][1] == want
+    assert abs(signed(base_of(g) - 0x1000) - round(degrees * TURN / 360)) <= 1
+    assert g.steer_state("TURN_SCALE")[0] == pytest.approx(
+        signed(want - 0x1000) / (turns[-1] - turns[0]), rel=1e-6
+    )
+
+
+def test_aim_follows_the_curve_in_proportion(g: Game) -> None:
+    turns = tuple(100 * k for k in SHAPE)
+    aim_at(g, 1000.0, 0.0)  # 0x4000
+    steer(g, turns=turns, turn=4)
+    g.play(46)
+    for cursor, base in playing(g, 2 + int(CLIP_END / SPEED)):
+        assert base == round_away(0x4000 * turn_curve(turns, cursor) / turns[-1]) & 0xFFFF
+
+
+@pytest.mark.parametrize("turns", [(0, 0, 0), ()])
+def test_aim_with_no_total_turns_nothing(g: Game, turns: tuple[int, ...]) -> None:
+    g.poke(a.ENTITY.YAW, "H", 0x1000)
+    aim_at(g, 1000.0, 0.0)
+    steer(g, turns=turns, turn=4)
+    g.play(46)
+    playing(g, 20)
+    assert base_of(g) == 0x1000 and g.steer_state("TURN_SCALE")[0] == 0.0
+
+
+def test_aim_at_a_target_on_the_monster_turns_nothing(g: Game) -> None:
+    g.poke(a.ENTITY.POSITION, "fff", 5.0, 0.0, 6.0)
+    aim_at(g, 5.0, 6.0)
+    steer(g, turns=(0, 1000, 2000), turn=4)
+    g.play(46)
+    playing(g, 10)
+    assert base_of(g) == 0
+
+
+def test_the_aim_is_the_target_not_the_hunter(g: Game) -> None:
+    hunter_at(g, 0.0, 1000.0)
+    aim_at(g, 1000.0, 0.0)
+    steer(g, turns=(0, 4000, 8000), turn=4)
+    g.play(46)
+    playing(g, 12)
+    assert base_of(g) == 0x4000
+
+
+def two_with_aim_out(g: Game, out: int, **chain: object) -> tuple[int, int, int]:
+    """A step with aim_out `out`, ended at clip frame 20, hands over in place to one on entry 53;
+    runs to the switch: (base there, the angle to the target then, the successor's first frame)."""
+    g.poke(a.ENTITY.YAW, "H", 0x0800)
+    aim_at(g, 1000.0, 0.0)
+    steer(g)
+    g.play(46, stop=20, aim_out=out)
+    chained(g, 53, **chain)  # type: ignore[arg-type]
+    while g.state("STARTED")[0] != 2:
+        g.frame()
+    base = base_of(g)
+    return base, signed(bearing_of(g, 1000.0, 0.0) - base), int(g.state("FRAMES")[0])
+
+
+@pytest.mark.parametrize("out", [1, 6, 10])
+def test_aim_out_slides_the_residual_over_the_successors_first_frames(g: Game, out: int) -> None:
+    base, left, _ = two_with_aim_out(g, out)
+    assert left == 0x4000 - 0x0800 and g.steer_state("OUT_FRAMES", "H") == (out,)
+    got = [base_of(g)]
+    for _ in range(out + 4):
+        g.frame()
+        got.append(base_of(g))
+    want = [base]
+    for f in range(1, out + 5):
+        want.append((want[-1] + (steering_share(left, out, f - 1) if f <= out else 0)) & 0xFFFF)
+    assert got == want and got[-1] == (base + left) & 0xFFFF
+    assert signed(got[1] - got[0]) == steering_share(left, out, 0)
+
+
+def steering_share(total: int, frames: int, frame: int) -> int:
+    """Frame `frame`'s share of `total` over `frames`: the shares sum to it."""
+    return total * (frame + 1) // frames - total * frame // frames
+
+
+def test_aim_out_goes_on_top_of_the_successors_own_steering(g: Game) -> None:
+    base, left, _ = two_with_aim_out(g, 5, keys=(), turn=3, total=0x0600, frames=10)
+    for _ in range(20):
+        g.frame()
+    assert base_of(g) == (base + left + 0x0600) & 0xFFFF
+
+
+def test_aim_out_needs_a_hand_over_in_place(g: Game) -> None:
+    """Without a successor in place the residual stays where it was: a plain next move starts at
+    its own first frame and takes nothing."""
+    g.poke(a.ENTITY.YAW, "H", 0x0800)
+    aim_at(g, 1000.0, 0.0)
+    g.play(46, stop=20, aim_out=5)
+    for _ in range(2 + 12):
+        g.frame()
+    assert g.state("STATE", "B") == (DONE,)
+    g.play(53)
+    for _ in range(8):
+        g.frame()
+    assert g.steer_state("OUT_FRAMES", "H") == (0,) and base_of(g) == 0x0800
+
+
+def test_a_move_without_aim_out_hands_over_without_a_residual(g: Game) -> None:
+    base, _, _ = two_with_aim_out(g, 0)
+    assert g.steer_state("OUT_FRAMES", "H") == (0,)
+    for _ in range(6):
+        g.frame()
+    assert base_of(g) == base

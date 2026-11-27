@@ -26,7 +26,7 @@ CLIP_END = 20.0
 SPEED = 2.0
 NO = ANY = 0xFF
 UNLIMITED = 0xFFFF_FFFF
-CLIP, BACK, PAIR = 1, 2, 3
+CLIP, BACK, PAIR, STOPPED = 1, 2, 3, 4
 PLAYING, DONE = 2, 4
 KIND = a.MONSTER_EVENT_KIND.number
 NOTICED, FLINCH, BROKEN, TAIL = (
@@ -40,6 +40,7 @@ ENTERED = KIND("combat_entered")
 NO_PLAY = 4  # MHFU_EM_RULE_NO_PLAY
 RULES = a.EM_CFG.RULES.count or 0
 MOVES = a.EM_MOVES.MOVES.count or 0
+IDS = a.EM_MOVES.COMBOS.count or 0
 
 
 class Move(ctypes.Structure):
@@ -59,7 +60,7 @@ class Move(ctypes.Structure):
         ("host_attacks", ctypes.c_uint8),
         ("force", ctypes.c_uint8),
         ("hold_script", ctypes.c_uint8),
-        ("_pad", ctypes.c_uint8),
+        ("aim_out", ctypes.c_uint8),
         ("start", ctypes.c_uint16),
         ("stop", ctypes.c_uint16),
     ]
@@ -177,7 +178,7 @@ class Game:
         self.poke(a.ENTITY.MAIN_STATE, "BB", *ms)
 
     def hunter_at(self, x: float, z: float) -> None:
-        struct.pack_into("<fff", self.hunter, a.ENTITY.TRANSLATION, x, 0.0, z)
+        struct.pack_into("<fff", self.hunter, a.ENTITY.POSITION, x, 0.0, z)
 
     def frame(self) -> None:
         """One AI frame: the brain and the step, then each playing clip advances."""
@@ -185,6 +186,7 @@ class Game:
         assert a.CLIP_BLOCK.size
         for k in range(3):
             b = int(a.ENTITY.CLIP_BLOCKS) + k * a.CLIP_BLOCK.size
+            self.poke(b + a.CLIP_BLOCK.SPEED, "f", SPEED)  # MONSTER_STEP writes it every frame
             (phase,) = self.peek(b + a.CLIP_BLOCK.PHASE, "f")
             (end,) = self.peek(b + a.CLIP_BLOCK.END, "f")
             if self.peek(b + a.CLIP_BLOCK.FLAGS, "H")[0] & 1:
@@ -230,11 +232,12 @@ class Game:
         window: tuple[int, int] = (0, 0),
         samples: Sequence[tuple[int, int]] = (),
         lunge: tuple[int, int, float, float, float, float] | None = None,
+        turns: Sequence[int] = (),
         **kw: int,
     ) -> int:
         """Own move `slot`; `keys` are its turn keys, `turn` and `window` its steer's (a hunter
-        turn at rate 64), `samples` its travel in sample units and `lunge` (lo, hi, near, span,
-        base, range)."""
+        turn at rate 64), `samples` its travel in sample units, `lunge` (lo, hi, near, span,
+        base, range) and `turns` its code turn."""
         mv = Move(entry=entry, carrier_main=0, carrier_sub=2, back_main=NO)
         for k, v in kw.items():
             setattr(mv, k, v)
@@ -250,6 +253,8 @@ class Game:
             struct.pack_into("<hh", spec, int(a.STEER_SPEC.SAMPLES) + 4 * k, *xz)
         if lunge:
             struct.pack_into("<HHffff", spec, a.STEER_SPEC.LUNGE, *lunge)
+        struct.pack_into("<H", spec, a.STEER_SPEC.TURN_COUNT, len(turns))
+        struct.pack_into(f"<{len(turns)}h", spec, a.STEER_SPEC.TURNS, *turns)
         return int(self.lib.mhfu_em_move(slot, ctypes.byref(mv), spec, after))
 
     def slot(self, slot: int, field: str, fmt: str = "B") -> int:
@@ -407,6 +412,7 @@ def lib(host_lib: Callable[..., ctypes.CDLL]) -> ctypes.CDLL:
     lib.host_reset.argtypes = [ctypes.c_float]
     lib.mhfu_em_host_frame.argtypes = [ctypes.c_uint32]
     lib.mhfu_em_play.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_int]
+    lib.mhfu_em_combo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
     lib.mhfu_em_move.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint8]
     lib.mhfu_em_rule.argtypes = [ctypes.c_int, ctypes.c_void_p]
     lib.mhfu_steer_init_spec.argtypes = [ctypes.c_void_p]
@@ -474,16 +480,39 @@ def test_a_slots_start_and_stop_reach_the_move(g: Game) -> None:
     assert g.move("END", "B") == BACK and g.move("END_FRAME") == 4  # (14 - 6) / SPEED
 
 
-def test_after_follows_through_the_carrier(g: Game) -> None:
-    """A slot with an AFTER ends into its carrier, and the next plays on the following frame."""
+def played(g: Game, frames: int) -> list[list[tuple[str, int, int, int, int]]]:
+    """The calls of each of `frames` AI frames."""
+    out = []
+    for _ in range(frames):
+        g.frame()
+        out.append(g.calls())
+    return out
+
+
+def test_after_on_the_same_carrier_plays_in_the_frame_the_move_ends(g: Game) -> None:
+    """The carrier is not entered again: the next entry goes to the executor in the AI frame the
+    clip ends, before the host step."""
     g.own(0, 46, after=1)
     g.own(1, 53)
     g.lib.mhfu_em_play(ENT, 0, 0)
+    frames = played(g, 2 + int(CLIP_END / SPEED))
+    flat = [c for f in frames for c in f]
+    assert [(c[2], c[3]) for c in flat if c[0] == "E"] == [(0, 2)]
+    assert [c[2] for c in flat if c[0] == "X"] == [46, 53] and ("X", ENT, 53, 0, 0) in frames[-1]
+    assert (g.moves("CHAINED"), g.moves("PLAYS"), g.lib.mhfu_em_playing()) == (1, 2, 1)
+    assert g.move("STATE", "B") == PLAYING and g.move("FRAMES") == 0
+
+
+def test_after_on_another_carrier_goes_through_the_carrier(g: Game) -> None:
+    """A successor on another carrier takes the old way: the first ends into its carrier, and the
+    next is entered on its own, a frame on."""
+    g.own(0, 46, after=1)
+    g.own(1, 53, carrier_sub=3)
+    g.lib.mhfu_em_play(ENT, 0, 0)
     g.frames(2 + int(CLIP_END / SPEED))
     assert g.move("END", "B") == BACK and g.entered() == [(0, 2), (0, 2)]
-    g.frame()
-    g.frame()
-    assert ("X", ENT, 53, 0, 0) in g.calls()
+    flat = [c for f in played(g, 2) for c in f]
+    assert [(c[2], c[3]) for c in flat if c[0] == "E"] == [(0, 3)] and ("X", ENT, 53, 0, 0) in flat
     assert (g.moves("CHAINED"), g.lib.mhfu_em_playing()) == (1, 1)
 
 
@@ -503,6 +532,176 @@ def test_a_back_pair_given_is_kept(g: Game) -> None:
     g.lib.mhfu_em_play(ENT, 0, 0)
     g.frames(2 + int(CLIP_END / SPEED))
     assert g.entered()[-1] == (0, 3)
+
+
+def test_an_after_chain_runs_through_in_place(g: Game) -> None:
+    """Three moves, each handing over in place: the entries in order, the carrier entered once."""
+    g.own(0, 46, after=1)
+    g.own(1, 53, after=2)
+    g.own(2, 59)
+    g.lib.mhfu_em_play(ENT, 0, 0)
+    flat = [c for f in played(g, 3 * (int(CLIP_END / SPEED) + 1) + 2) for c in f]
+    assert [c[2] for c in flat if c[0] == "X"] == [46, 53, 59]
+    assert [(c[2], c[3]) for c in flat if c[0] == "E"] == [(0, 2)]
+    assert g.moves("CHAINED") == 2
+
+
+COMBO = MOVES + 5  # an enter id past the slots
+
+
+def test_a_combo_plays_first_then_then_in_place(g: Game) -> None:
+    """The enter of a combo's id files its play: the first move, and in the AI frame it ends the
+    second, the carrier not entered between them."""
+    g.own(0, 46)
+    g.own(1, 53)
+    assert g.lib.mhfu_em_combo(COMBO, 0, 1) and g.lib.mhfu_em_play(ENT, COMBO, 1)
+    frames = played(g, 2 + int(CLIP_END / SPEED) + 2)
+    flat = [c for f in frames for c in f]
+    assert [(c[2], c[3]) for c in flat if c[0] == "E"] == [(0, 2)]
+    assert [c[2] for c in flat if c[0] == "X"] == [46, 53]
+    assert ("X", ENT, 53, 0, 0) in frames[2 + int(CLIP_END / SPEED) - 1]  # the frame the first ends
+    assert (g.moves("PLAYS"), g.moves("CHAINED"), g.lib.mhfu_em_playing()) == (2, 1, 1)
+    assert g.moves("TAG_THEN") == NO  # the second's play is its own: nothing follows it
+    g.frames(int(CLIP_END / SPEED))
+    assert g.move("END", "B") == CLIP and g.moves("PLAYS") == 2
+
+
+def test_only_the_play_of_a_combo_is_followed(g: Game) -> None:
+    g.own(0, 46)
+    g.own(1, 53)
+    assert g.lib.mhfu_em_combo(COMBO, 0, 1)
+    assert g.lib.mhfu_em_play(ENT, 0, 1)  # the slot itself, no combo
+    flat = [c for f in played(g, 2 + 2 * int(CLIP_END / SPEED)) for c in f]
+    assert [c[2] for c in flat if c[0] == "X"] == [46] and g.moves("CHAINED") == 0
+
+
+def test_a_combos_then_follows_the_firsts_after_chain(g: Game) -> None:
+    g.own(0, 46, after=2)
+    g.own(1, 53)
+    g.own(2, 59)
+    assert g.lib.mhfu_em_combo(COMBO, 0, 1)
+    assert g.lib.mhfu_em_play(ENT, COMBO, 1)
+    flat = [c for f in played(g, 2 + 3 * (int(CLIP_END / SPEED) + 1)) for c in f]
+    assert [c[2] for c in flat if c[0] == "X"] == [46, 59, 53]
+    assert [(c[2], c[3]) for c in flat if c[0] == "E"] == [(0, 2)] and g.moves("CHAINED") == 2
+    assert g.lib.mhfu_em_play(ENT, 0, 1)  # played alone: its own after only
+    flat = [c for f in played(g, 2 + 3 * int(CLIP_END / SPEED)) for c in f]
+    assert [c[2] for c in flat if c[0] == "X"] == [46, 59]
+
+
+def test_a_combos_then_has_its_own_after_chain(g: Game) -> None:
+    g.own(0, 46)
+    g.own(1, 53, after=2)
+    g.own(2, 59)
+    assert g.lib.mhfu_em_combo(COMBO, 0, 1) and g.lib.mhfu_em_play(ENT, COMBO, 1)
+    flat = [c for f in played(g, 2 + 3 * (int(CLIP_END / SPEED) + 1)) for c in f]
+    assert [c[2] for c in flat if c[0] == "X"] == [46, 53, 59]
+    assert [(c[2], c[3]) for c in flat if c[0] == "E"] == [(0, 2)] and g.moves("CHAINED") == 2
+
+
+def test_a_combos_then_on_another_carrier_goes_through_it(g: Game) -> None:
+    g.own(0, 46)
+    g.own(1, 53, carrier_sub=3)
+    assert g.lib.mhfu_em_combo(COMBO, 0, 1) and g.lib.mhfu_em_play(ENT, COMBO, 1)
+    g.frames(2 + int(CLIP_END / SPEED))
+    assert g.move("END", "B") == BACK and g.entered() == [(0, 2), (0, 2)]
+    flat = [c for f in played(g, 2) for c in f]
+    assert [(c[2], c[3]) for c in flat if c[0] == "E"] == [(0, 3)] and ("X", ENT, 53, 0, 0) in flat
+    assert (g.moves("CHAINED"), g.lib.mhfu_em_playing()) == (1, 1)
+
+
+def test_a_reaction_drops_the_combos_then(g: Game) -> None:
+    g.own(0, 46)
+    g.own(1, 53)
+    assert g.lib.mhfu_em_combo(COMBO, 0, 1) and g.lib.mhfu_em_play(ENT, COMBO, 1)
+    g.frames(4)
+    g.pair = (4, 1)
+    flat = [c for f in played(g, 2 + 2 * int(CLIP_END / SPEED)) for c in f]
+    assert g.move("END", "B") == PAIR and ("X", ENT, 53, 0, 0) not in flat
+    assert g.moves("CHAINED") == 0
+    assert g.lib.mhfu_em_play(ENT, 0, 1)  # the first alone again: the dropped then does not come
+    flat = [c for f in played(g, 2 + 2 * int(CLIP_END / SPEED)) for c in f]
+    assert [c[2] for c in flat if c[0] == "X"] == [46] and g.moves("CHAINED") == 0
+
+
+def test_a_stop_or_a_replacement_drops_the_combos_then(g: Game) -> None:
+    g.own(0, 46)
+    g.own(1, 53)
+    g.own(2, 59)
+    assert g.lib.mhfu_em_combo(COMBO, 0, 1) and g.lib.mhfu_em_play(ENT, COMBO, 1)
+    g.frames(5)
+    g.lib.mhfu_move_stop()
+    flat = [c for f in played(g, 2 + 2 * int(CLIP_END / SPEED)) for c in f]
+    assert ("X", ENT, 53, 0, 0) not in flat and g.move("END", "B") == STOPPED
+    assert g.lib.mhfu_em_combo(COMBO, 0, 1) and g.lib.mhfu_em_play(ENT, COMBO, 1)
+    g.frames(5)
+    g.calls()
+    assert g.lib.mhfu_em_play(ENT, 2, 1)  # replaced by another slot's play
+    flat = [c for f in played(g, 2 + 2 * int(CLIP_END / SPEED)) for c in f]
+    assert [c[2] for c in flat if c[0] == "X"] == [59] and g.moves("CHAINED") == 0
+
+
+def test_a_script_enter_of_a_combo_plays_both(g: Game) -> None:
+    """`enter 16 id 0` as the slot-32 stub turns it: the hub entered, the id filed; the script's
+    next pair waits until the second move ends."""
+    g.own(0, 46)
+    g.own(1, 53)
+    assert g.lib.mhfu_em_combo(COMBO, 0, 1)
+    g.lib.mhfu_host_enter(ENT, *HUB, 1)
+    assert g.lib.mhfu_em_play(ENT, COMBO, 1)
+    g.poke(a.ENTITY.SCRIPT_WAKE, "B", 0)
+    g.calls()
+    seen = []
+    for _ in range(4 + 2 * int(CLIP_END / SPEED)):
+        seen += script_frame(g)
+    assert [x[2] for x in seen if x[0] == "X"] == [46, 53]
+    assert ("E", ENT, *SCRIPT_PAIR, 1) not in seen and g.moves("CHAINED") == 1
+
+
+def file_play(g: Game, ident: int) -> None:
+    """What the slot-32 stub stores for an enter of `ident`, whether anything is there or not."""
+    base = int(g.lib.mhfu_em_moves())
+    for off, v in (
+        (a.EM_MOVES.REQ_SLOT, ident),
+        (a.EM_MOVES.REQ_FORCE, 1),
+        (a.EM_MOVES.REQ_ENT, ENT),
+    ):
+        ctypes.memmove(base + int(off), struct.pack("<I", v), 4)
+
+
+@pytest.mark.parametrize("ident", [COMBO, 255, 3])
+def test_a_filed_id_with_no_combo_or_move_plays_nothing(g: Game, ident: int) -> None:
+    g.own(0, 46)
+    g.own(1, 53)
+    assert g.lib.mhfu_em_combo(MOVES + 1, 0, 1)
+    file_play(g, ident)
+    g.frames(6)
+    assert g.moves("PLAYS") == 0 and g.lib.mhfu_em_playing() == -1
+
+
+def test_a_combo_that_is_not_there_is_refused(g: Game) -> None:
+    g.own(0, 46)
+    g.own(1, 53)
+    g.own(2, 59, carrier_sub=3)
+    assert g.lib.mhfu_em_combo(COMBO, 0, 1) == 1
+    assert [g.lib.mhfu_em_combo(i, 0, 1) for i in (IDS, IDS + 1, -1, MOVES - 1, 0)] == [0] * 5
+    assert g.lib.mhfu_em_combo(COMBO, 5, 1) == 0 and g.lib.mhfu_em_combo(COMBO, 0, 5) == 0  # empty
+    assert g.lib.mhfu_em_combo(COMBO, 2, 1) == 0  # its first rides another carrier
+    assert g.lib.mhfu_em_combo(COMBO, 0, MOVES) == 0 and g.lib.mhfu_em_combo(COMBO, -1, 1) == 0
+    assert g.lib.mhfu_em_play(ENT, COMBO + 1, 1) == 0  # no combo there
+    assert g.lib.mhfu_em_play(ENT, IDS, 1) == 0 and g.lib.mhfu_em_play(ENT, -1, 1) == 0
+    assert g.lib.mhfu_em_combo(COMBO, 0, 2) == 1  # its second may ride another
+
+
+def test_clearing_the_moves_clears_the_combos(g: Game) -> None:
+    g.own(0, 46)
+    g.own(1, 53)
+    assert g.lib.mhfu_em_combo(COMBO, 0, 1)
+    g.lib.mhfu_em_moves_clear()
+    assert g.lib.mhfu_em_play(ENT, COMBO, 1) == 0
+    g.own(0, 46)
+    g.own(1, 53)
+    assert g.lib.mhfu_em_play(ENT, COMBO, 1) == 0  # the combo went with the moves
 
 
 def test_rule_from_a_pair_plays_an_own_move(g: Game) -> None:
@@ -601,6 +800,41 @@ def test_an_own_moves_hunter_turn_keeps_to_its_steer_window(
     assert any(d for _, d in seen)
 
 
+TARGET = BASE + 0x2000  # a second entity in em_host.cpp's memory: what the monster aims at
+
+
+def aim_at(g: Game, x: float, z: float) -> None:
+    """ENTITY.TARGET points at an entity standing at (x, z)."""
+    struct.pack_into("<fff", g.mem, TARGET - BASE + a.ENTITY.POSITION, x, 0.0, z)
+    g.poke(a.ENTITY.TARGET, "I", TARGET)
+
+
+def test_the_distance_is_measured_to_the_target(g: Game) -> None:
+    """The hunter is 500 away; the target, a comrade, 300: the rules' window reads the target's."""
+    aim_at(g, 0.0, 300.0)
+    g.frame()
+    assert g.status().dist == pytest.approx(300.0)
+    g.rule(0, from_mask=1 << 1, dist_lo=250.0, dist_hi=350.0, to_main=3, to_sub=6)
+    assert g.go() == [(3, 6)]
+    g.poke(a.ENTITY.TARGET, "I", 0)  # without one it is the hunter's
+    g.frame()
+    assert g.status().dist == pytest.approx(500.0)
+    g.rule(0, from_mask=1 << 1, dist_lo=250.0, dist_hi=350.0, to_main=3, to_sub=6)
+    assert g.go() == []
+
+
+def test_the_side_is_the_targets(g: Game) -> None:
+    """The hunter stands to the monster's left, the target ahead."""
+    face(g, 0)
+    g.hunter_at(500.0, 0.0)
+    aim_at(g, 0.0, 500.0)
+    g.rule(0, from_mask=1 << 1, to_main=3, to_sub=6, conds=[cond("side", 1)])
+    assert g.go() == [(3, 6)]
+    g.poke(a.ENTITY.TARGET, "I", 0)
+    g.rule(0, from_mask=1 << 1, to_main=3, to_sub=6, conds=[cond("side", 1)])
+    assert g.go() == []
+
+
 def test_keys_have_room(g: Game) -> None:
     cap = a.EM_MOVES.KEYS.count
     for slot, start in enumerate(range(0, cap, 256)):
@@ -610,6 +844,56 @@ def test_keys_have_room(g: Game) -> None:
     assert g.own(full, 46, keys=[0] * 7)  # held already: no room needed
     g.lib.mhfu_em_moves_clear()
     assert g.own(full, 46, keys=[full] * 256) and g.moves("KEY_TOP") == 256
+
+
+def test_turns_have_room(g: Game) -> None:
+    cap, most = a.EM_MOVES.TURNS.count, a.STEER_SPEC.TURNS.count
+    for slot, start in enumerate(range(0, cap, most)):
+        assert g.own(slot, 46, turns=[slot + 1] * min(most, cap - start))
+    full = slot + 1
+    assert g.moves("TURN_TOP") == cap and not g.own(full, 46, turns=[full + 100])
+    assert g.own(full, 46, turns=[1] * 7)  # held already: no room needed
+    g.lib.mhfu_em_moves_clear()
+    assert g.moves("TURN_TOP") == 0
+    assert g.own(full, 46, turns=[full] * most) and g.moves("TURN_TOP") == most
+
+
+def base_of(g: Game) -> int:
+    """The move player's own yaw, the base a code turn moves."""
+    at = int(g.lib.mhfu_move_state()) + a.MOVE_STATE.STEER + a.STEER_STATE.BASE
+    return int(struct.unpack("<H", ctypes.string_at(at, 2))[0])
+
+
+def test_the_registry_hands_a_slots_code_turn_to_the_move_player(g: Game) -> None:
+    """Each slot plays its own code turn out of the shared pool (a run held twice once); with
+    turn = aim it is scaled to the angle to the target, the hunter 0x4000 to the monster's left."""
+    assert g.own(0, 46, turns=(0, 1000, 2000)) and g.own(1, 46, turns=(0, 500, 4000), turn=4)
+    assert g.own(2, 46, turns=(0, 1000, 2000)) and g.own(3, 46)
+    assert [g.slot(k, "TURN_AT", "H") for k in range(4)] == [0, 3, 0, 0]
+    assert [g.slot(k, "TURN_COUNT", "H") for k in range(4)] == [3, 3, 3, 0]
+    for slot, want in ((0, 2000), (1, 0x4000), (2, 2000), (3, 0)):
+        g.poke(a.ENTITY.YAW, "H", 0)
+        assert g.lib.mhfu_em_play(ENT, slot, 1)
+        g.frames(2 + int(CLIP_END / SPEED) + 2)
+        assert base_of(g) == want
+
+
+def test_the_registry_carries_aim_out_through_a_chain(g: Game) -> None:
+    """A slot's aim_out reaches the move player with the move: the hand-over in place leaves the
+    angle to the target (the hunter, 0x4000 to the monster's left) to turn in over 5 AI frames."""
+    g.own(0, 46, after=1, aim_out=5)
+    g.own(1, 53)
+    assert g.lib.mhfu_em_play(ENT, 0, 1)
+    g.frames(2 + int(CLIP_END / SPEED) + 1)
+    st = int(g.lib.mhfu_move_state()) + a.MOVE_STATE.STEER
+    total, frames = struct.unpack(
+        "<hH",
+        ctypes.string_at(st + a.STEER_STATE.OUT_TOTAL, 2)
+        + ctypes.string_at(st + a.STEER_STATE.OUT_FRAMES, 2),
+    )
+    assert (total, frames) == (0x4000, 5) and base_of(g) < 0x4000
+    g.frames(6)
+    assert base_of(g) == 0x4000
 
 
 def played_to_the_end(g: Game, slot: int) -> tuple[float, float]:
@@ -672,29 +956,31 @@ def test_the_registry_places_runs_where_pools_does(g: Game) -> None:
     slot's offsets are `Pools`' for the same moves in the same order."""
     run = [(k, -k) for k in range(1, 9)]
     lunge = (0, 20, 100.0, 400.0, -300.0, 900.0)
+    spin = [10, -20, 30, -40, 50]
     spec = [
-        ([1, 2, 3, 4, 5, 6], run[:5], None),
-        ([1, 2, 3, 4, 5, 6], run[:5], lunge),
-        ([3, 4, 5], run[2:5], lunge),
-        ([7, 7], [], (0, 20, 100.0, 400.0, -300.0, 901.0)),
-        ([6, 7], run, lunge),
-        ([], [], None),
-        ([1, 2, 3, 4, 5, 6, 7], run[:5], (0, 20, 100.0, 400.0, -300.0, 901.0)),
+        ([1, 2, 3, 4, 5, 6], run[:5], None, spin),
+        ([1, 2, 3, 4, 5, 6], run[:5], lunge, spin),
+        ([3, 4, 5], run[2:5], lunge, spin[1:4]),
+        ([7, 7], [], (0, 20, 100.0, 400.0, -300.0, 901.0), []),
+        ([6, 7], run, lunge, [-20, 30, 99]),
+        ([], [], None, []),
+        ([1, 2, 3, 4, 5, 6, 7], run[:5], (0, 20, 100.0, 400.0, -300.0, 901.0), spin + [60]),
     ]
     pools = Pools()
-    for slot, (keys, samples, lunge_) in enumerate(spec):
+    for slot, (keys, samples, lunge_, turns) in enumerate(spec):
         record = None if lunge_ is None else Lunge((lunge_[0], lunge_[1]), *lunge_[2:]).pack()
-        want = pools.add(keys, samples, record)
-        assert g.own(slot, 46, keys=keys, samples=samples, lunge=lunge_)
+        want = pools.add(keys, samples, record, turns)
+        assert g.own(slot, 46, keys=keys, samples=samples, lunge=lunge_, turns=turns)
         got = (
             g.slot(slot, "KEY_AT", "H"),
             g.slot(slot, "SAMPLE_AT", "H"),
             g.slot(slot, "LUNGE_AT"),
+            g.slot(slot, "TURN_AT", "H"),
         )
-        assert got == (want[0], want[1], NO if want[2] is None else want[2])
-    tops = (g.moves("KEY_TOP"), g.moves("SAMPLE_TOP"), g.moves("LUNGE_TOP"))
-    assert tops == (len(pools.keys), len(pools.samples), len(pools.lunges))
-    assert tops == (8, 13, 2)  # a run holds what is inside it; a longer one is not extended
+        assert got == (want[0], want[1], NO if want[2] is None else want[2], want[3])
+    tops = (g.moves("KEY_TOP"), g.moves("SAMPLE_TOP"), g.moves("LUNGE_TOP"), g.moves("TURN_TOP"))
+    assert tops == (len(pools.keys), len(pools.samples), len(pools.lunges), len(pools.turns))
+    assert tops == (8, 13, 2, 14)  # a run holds what is inside it; a longer one is not extended
 
 
 PORT = '[port]\nname = "z"\nhost_species = 75\npac = "z.bin"\n[source]\nmodel = 5339\n'
@@ -742,6 +1028,38 @@ def test_the_registry_holds_what_a_ports_capacity_check_counts(g: Game) -> None:
     tops = (g.moves("KEY_TOP"), g.moves("SAMPLE_TOP"), g.moves("LUNGE_TOP"))
     assert tops == (len(held.keys), len(held.samples), len(held.lunges))
     assert tops == (12, 7, 2)  # of 24 keys, 12 samples and 4 lunges, each run held once
+
+
+def test_the_registry_holds_what_the_check_counts_for_shared_turns_and_combos(g: Game) -> None:
+    """A port whose own moves share code-turn runs (one inside another) and are paired into
+    combos, registered as `mhfu_port.lua` does: the tops are `moves.pools`', every combo is
+    accepted at the id `moves.combo_id` gives it, and playing one plays its two moves in order."""
+    lay = layout.Layout({}, frames={9: 100})
+    runs = {"a": [0, 100, 250], "b": [0, 100], "c": [0, 100, 250, 400], "d": [7, 8], "e": []}
+    text = PORT
+    for name, run in runs.items():
+        text += f"[moves.{name}]\nanim = 9\ncarrier = [0, 2]\n"
+        text += f"code_turn = {run}\n" if run else ""
+    text += "[brain]\ndonor = 23\nsplice = 'x'\nentry = 'y'\n[brain.pairs]\n"
+    text += "'7,1' = ['a', 'b']\n'7,2' = ['c', 'a']\n'7,3' = ['a', 'b']\n'7,4' = ['e', 'd']\n"
+    text += "'7,5' = [[1, 2], 'a']\n"
+    m = manifest.loads(text)
+    assert moves.problems(m, lay) == []
+    held = moves.pools(m, lay)
+    at = moves.slots(m)
+    for name, slot in at.items():
+        assert g.own(slot, 40 + slot, turns=m.moves[name].code_turn or ())
+    assert moves.combos(m) == [("a", "b"), ("c", "a"), ("e", "d")]
+    ids = [moves.combo_id(m, *c) for c in moves.combos(m)]
+    assert ids == [MOVES, MOVES + 1, MOVES + 2]
+    for (first, then), ident in zip(moves.combos(m), ids, strict=True):
+        assert ident is not None and g.lib.mhfu_em_combo(ident, at[first], at[then]) == 1
+    assert g.moves("TURN_TOP") == len(held.turns) == 9  # b inside a; c is not a's run extended
+    assert [g.slot(at[n], "TURN_AT", "H") for n in "abcde"] == [0, 0, 3, 7, 0]
+    ident = moves.combo_id(m, "c", "a")
+    assert ident is not None and g.lib.mhfu_em_play(ENT, ident, 1)
+    flat = [c for f in played(g, 2 + 2 * int(CLIP_END / SPEED)) for c in f]
+    assert [c[2] for c in flat if c[0] == "X"] == [40 + at["c"], 40 + at["a"]]
 
 
 def test_a_rule_on_an_event_fires_in_the_frame_it_is_seen(g: Game) -> None:
@@ -847,6 +1165,23 @@ def test_a_flinch_rule_ends_a_running_move(g: Game) -> None:
     g.frame()
     assert g.move("STARTED") == 2 and g.lib.mhfu_em_playing() == 1
     assert ("X", ENT, 59, 0, 0) in g.calls()
+
+
+def test_a_replaced_flinch_drops_the_combos_then(g: Game) -> None:
+    """A flinch rule's move replaces the combo's first mid-play: its own play, nothing follows
+    the first, and the flinch's move ends as any other."""
+    g.own(0, 46)
+    g.own(1, 53)
+    g.own(2, 59)
+    assert g.lib.mhfu_em_combo(COMBO, 0, 1)
+    g.rule(0, on=FLINCH, play_move=3)
+    g.lib.mhfu_em_play(ENT, COMBO, 0)
+    g.frames(4)
+    g.flinch(0b100)
+    g.frame()
+    assert g.lib.mhfu_em_playing() == 2 and g.moves("TAG_THEN") == NO
+    flat = [c for f in played(g, 2 + 2 * int(CLIP_END / SPEED)) for c in f]
+    assert ("X", ENT, 53, 0, 0) not in flat and g.moves("CHAINED") == 0
 
 
 def test_a_flinch_rule_needs_an_own_move(g: Game) -> None:

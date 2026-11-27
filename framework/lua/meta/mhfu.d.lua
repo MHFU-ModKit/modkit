@@ -11,7 +11,7 @@ mhfu = {}
 
 ---The API's version, raised whenever a declaration here changes; a mod that needs something added
 ---in version N checks `mhfu.api_version >= N`.
-mhfu.api_version = 10
+mhfu.api_version = 11
 
 -- log, memory and world state (bind_memory.cpp) ----------------------------------------------
 
@@ -655,6 +655,7 @@ function mhfu.move_block() end
 ---@field length? integer AI frames from the clip's dispatch (the blend's among them), default 0 = until the clip ends or `stop`
 ---@field start? integer clip frame the clip starts at, default 0 = its first; an attack before it never spawns
 ---@field stop? integer clip frame the move ends at, when `part`'s cursor reaches it, whatever the blend and the cursor's rate; default 0 = none
+---@field aim_out? integer AI frames, 0..255, default 0 = none: when this move hands over in place (`after` on its carrier), the angle still to turn to the target at the switch is spread linearly into the entity's own yaw over the successor's first `aim_out` AI frames, on top of its own steering
 ---@field carrier? integer[] { main, sub } the native pair the move rides, default { 0, 2 }
 ---@field back? integer[] { main, sub, mode } entered at the end, default none
 ---@field skip? boolean the host AI step skips while the clip plays, except on a hit
@@ -667,8 +668,8 @@ function mhfu.move_block() end
 ---How a move turns and stops (mhfu/steer.h); every field is optional.
 ---@class mhfu.MoveSteer
 ---@field curve? string YAW while the clip plays: the entry's string in `<port>_turns.lua`
----@field turn? "still"|"hunter"|"away"|"fixed" also: toward or away from the hunter at `rate`, or `total` over `frames`
----@field rate? integer YAW units an AI frame toward or away, default 64 (the Tigrex charge's)
+---@field turn? "still"|"hunter"|"away"|"fixed"|"aim" also: toward or away from the target (ENTITY.TARGET, the player without one) at `rate`, or `total` over `frames`; "aim" scales `code_turn` to turn exactly the angle to the target on the first playing frame (it needs one)
+---@field rate? integer YAW units an AI frame toward or away at clip speed 1, times the clip's speed / 2 in play; default 64 (the Tigrex charge's)
 ---@field window? integer[] { from, to }: clip frames, 0 <= from < to, in which "hunter" and "away" turn (the donor turns inside a window), or across which "fixed" spreads `total` by the clip cursor; default the whole move
 ---@field total? number degrees for "fixed", positive the way YAW grows
 ---@field frames? integer AI frames "fixed" spreads `total` over, without a `window`
@@ -676,14 +677,15 @@ function mhfu.move_block() end
 ---@field dir? number degrees of the travel against YAW, which sectors count as ahead; default 0
 ---@field stuck? integer[] { main, sub, mode } entered on a class-2 wall, default { 0, 6, 1 }
 ---@field travel? string the move's own travel by code, as the port's moves module writes it: 8 hex digits a sample, x then z as 16 bits each in 1/mhfu.addr.STEER_TRAVEL_SCALE world units, cumulative, every mhfu.addr.STEER_KEY_STEP clip frames from the move's `start`, at most mhfu.addr.STEER_SAMPLES; each AI frame moves the monster by the curve's change since the cursor's last frame, in its frame at the first playing frame (x its left, z forward), scaled by its size, held past the last sample
----@field lunge? mhfu.MoveLunge travel toward the hunter, by the hunter's distance when the move begins
+---@field code_turn? string the move's code turn, the donor's entity-yaw curve: 4 hex digits a value, a signed 16 bits of YAW units turned since the move's `start`, cumulative, every mhfu.addr.STEER_KEY_STEP clip frames, at most mhfu.addr.STEER_TURNS; each AI frame the entity's own yaw moves by the curve's change since the cursor's last frame (times the scale: 1, or for "aim" the angle to the target over the curve's total), held past the last value; the clip's facing (`curve`) rides on top
+---@field lunge? mhfu.MoveLunge travel toward the target, by the target's distance when the move begins
 
----A move's lunge (mhfu.MoveSteer.lunge): over the clip frames `window` (lo, hi] the monster moves 0 units while the hunter's XZ distance `d` is under `near`, else `base + range * min((d - near) / span, 1)` along the bearing to the hunter at the first playing frame, in world axes, spread by the clip cursor and not scaled by the size.
+---A move's lunge (mhfu.MoveSteer.lunge): over the clip frames `window` (lo, hi] the monster moves 0 units while the target's XZ distance `d` is under `near`, else `base + range * min((d - near) / span, 1)` along the bearing to the target at the first playing frame, in world axes, spread by the clip cursor; `near`, `span`, `base` and `range` are times the monster's size.
 ---@class mhfu.MoveLunge
 ---@field window integer[] { lo, hi }: clip frames, 0 <= lo < hi
 ---@field near? number default 0
 ---@field span? number default 0, which counts as the whole range
----@field base? number default 0, negative away from the hunter
+---@field base? number default 0, negative away from the target
 ---@field range? number default 0
 
 ---What `mhfu.move_status()` returns.
@@ -730,12 +732,25 @@ function mhfu.move_block() end
 ---@return boolean
 function mhfu.em_move(slot, spec) end
 
----Empties every own move slot.
+---Empties every own move slot and every combo.
 ---@return true
 function mhfu.em_moves_clear() end
 
----Plays own move `slot` on ent at its next AI step; false while nothing is wrapped or the slot is
----empty. `force` starts it while the monster's notice runs, as `mhfu.move_play`'s.
+---Combo `id` (mhfu.addr.OWN_MOVES..255): an AI script's `enter 16 id 0` plays own move slot `first`
+---on em75's hub, then slot `next_slot` in place when `first` ends (as an `after` on the same carrier
+---does), in place of `first`'s own `after`. Only that play follows: any other play of `first`, a
+---reaction, a stop or a replacement drops the second. False for an id outside OWN_MOVES..255, an
+---empty slot, or a `first` that does not ride the hub; register after the moves, which
+---`mhfu.em_moves_clear` empties along with the combos.
+---@param id integer
+---@param first integer
+---@param next_slot integer
+---@return boolean
+function mhfu.em_combo(id, first, next_slot) end
+
+---Plays own move `slot` (or combo `id`, OWN_MOVES..255) on ent at its next AI step; false while
+---nothing is wrapped or the slot is empty or the combo none. `force` starts it while the monster's
+---notice runs, as `mhfu.move_play`'s.
 ---@param ent integer
 ---@param slot integer
 ---@param force? boolean
@@ -763,6 +778,7 @@ function mhfu.em_moves_status() end
 ---@field chained integer of them by `after`
 ---@field keys integer turn keys in use
 ---@field samples integer travel samples in use
+---@field turns integer code-turn values in use
 ---@field lunges integer lunges in use
 
 -- fatigue (bind_em.cpp, include/mhfu/fatigue.h) ---------------------------------------------------

@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
-"""A move's travel curve as the game holds it, so that what a port's moves module writes and what
-`mhfu.live.moves` puts in the game agree: cumulative (x, z) every `STEP` clip frames in 16-bit
-samples of `1 / SCALE` world units (struct TRAVEL_SAMPLE), and as `steer.travel` in that module,
-8 hex digits a sample (x, then z).
+"""A move's travel curve and code turn as the game holds them, so that what a port's moves module
+writes and what `mhfu.live.moves` puts in the game agree. Travel is cumulative (x, z) every `STEP`
+clip frames in 16-bit samples of `1 / SCALE` world units (struct TRAVEL_SAMPLE), and as
+`steer.travel` in that module, 8 hex digits a sample (x, then z). The code turn is the donor's
+entity-yaw curve: cumulative YAW units every `STEP` clip frames from the move's start, a signed 16
+bits each (`steer.code_turn`, 4 hex digits a value).
 
     hex_of([(0, 0), (-2.5, 40)])   # "00000000fff60000..." for the module
     samples([(0, 0), (-2.5, 40)])  # [(0, 0), (-10, 160)] for the game
+    turns_hex([0, 3000, -2])       # "00000bb8fffe" for the module
 """
 
 from __future__ import annotations
@@ -23,6 +26,8 @@ MOST = int(addresses.STEER_SAMPLES)
 """Samples one move holds."""
 REACH = 0x8000 / SCALE
 """A sample's x and z are within -REACH and REACH (exclusive) world units."""
+MOST_TURNS = int(addresses.STEER_TURNS)
+"""Code-turn values one move holds."""
 
 Point = tuple[float, float]
 
@@ -46,6 +51,31 @@ def samples(path: Iterable[Point]) -> list[tuple[int, int]]:
 def path_of(held: Iterable[tuple[int, int]]) -> tuple[Point, ...]:
     """World units from the game's samples."""
     return tuple((x / SCALE, z / SCALE) for x, z in held)
+
+
+def turn_values(values: Iterable[int]) -> list[int]:
+    """`values`, a code turn's YAW units, as the game holds them; ValueError past `MOST_TURNS` or a
+    signed 16 bits."""
+    out = list(values)
+    if len(out) > MOST_TURNS:
+        raise ValueError(f"{len(out)} code-turn values, a move holds {MOST_TURNS}")
+    for v in out:
+        if not -0x8000 <= v < 0x8000:
+            raise ValueError(f"{v} is past the +-32768 YAW units a code-turn value holds")
+    return out
+
+
+def turns_hex(values: Iterable[int]) -> str:
+    """A code turn as a moves module's `steer.code_turn`."""
+    return "".join(f"{v & 0xFFFF:04x}" for v in turn_values(values))
+
+
+def parse_turns(text: str) -> tuple[int, ...]:
+    """A `steer.code_turn` string's values."""
+    if len(text) % 4 or not all(c in "0123456789abcdefABCDEF" for c in text):
+        raise ValueError("code_turn is 4 hex digits a value")
+    words = [int(text[i : i + 4], 16) for i in range(0, len(text), 4)]
+    return tuple(w - 0x10000 if w >= 0x8000 else w for w in words)
 
 
 def hex_of(path: Iterable[Point]) -> str:

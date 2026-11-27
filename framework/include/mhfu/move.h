@@ -27,6 +27,14 @@
  * clears the wake for a move on the hub or during the notice, and a move with HOLD_SCRIPT clears
  * it where it enters its back pair, so the script resumes only when the carrier hands back.
  *
+ * A move that ends with a successor on its carrier (em_vhook's AFTER, mhfu_em_chain) hands over in
+ * place: the end's attacks are ended and the successor's entry goes to the executor in the same AI
+ * frame, before the host step, so the carrier's handler (the hub's clip) never runs between the two.
+ * The steering carries over (steer.h): the successor keeps the entity's own YAW, and the turn the
+ * clips' facings make is blended out over the successor's blend. A move with AIM_OUT also leaves the
+ * angle still to turn to the target at the switch, which the successor turns into its own YAW
+ * linearly over its first AIM_OUT AI frames, on top of its own steering.
+ *
  * A move asked for while the monster's notice runs (the player's ENTITY.AWARE bit set,
  * COMBAT_MODE still 0: the roar, the hub, the AI script's combat entry) waits for it, up to
  * MHFU_MOVE_WAIT AI frames, unless the call FORCEs it. One asked for while the tail cut waits for
@@ -79,7 +87,9 @@ typedef struct {
     uint8_t  hold_script;                 /* 1: entering the back pair clears ENTITY.SCRIPT_WAKE, so the
                                            * AI script does not pick between this move and the one that
                                            * follows (em_vhook sets it for a move with an AFTER) */
-    uint8_t  _pad;
+    uint8_t  aim_out;                     /* AI frames; 0 none: a hand-over in place spreads the angle
+                                           * still to turn to the target over the successor's first
+                                           * aim_out AI frames (steer.h out_total) */
     uint16_t start;                       /* clip frame the clip starts at (the executor's a3); 0 = the
                                            * row's own, frame 0 on em75 */
     uint16_t stop;                        /* the move ends when part's cursor reaches this clip
@@ -146,6 +156,11 @@ void mhfu_move_steer(const mhfu_steer_spec_t *s);
 
 /* The block, or 0 before the framework's init. */
 const volatile mhfu_move_state_t *mhfu_move_state(void);
+
+/* Where the monster aims: the address of ENTITY.POSITION of the object ENTITY.TARGET points at
+ * (the player or a comrade), the player's when that is 0 or not in RAM. The one place the target
+ * is resolved: the move's turn and lunge, and the brain's distance and side gates, read it. */
+uint32_t mhfu_move_target_pos(uint32_t entity);
 
 /* Replaces reaction `kind` of entity with mv (and steer, NULL for none) from the next one on, until
  * called again or a brain rule on the flinch is installed; mv NULL stops it. 0 while nothing is

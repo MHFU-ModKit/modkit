@@ -32,6 +32,9 @@ static void spec_of(lua_State *L, int t, mhfu_move_t *mv)
                   "start and stop are clip frames, 0..65535");
     mv->start = (uint16_t)start;
     mv->stop = (uint16_t)stop;
+    int aim_out = opt_field(L, t, "aim_out", 0);
+    luaL_argcheck(L, aim_out >= 0 && aim_out <= 0xFF, t, "aim_out is AI frames, 0..255");
+    mv->aim_out = (uint8_t)aim_out;
     mv->part = (uint8_t)opt_field(L, t, "part", 0);
     mv->spawner = (uint32_t)opt_field(L, t, "spawner", 0);
     lua_getfield(L, t, "skip");
@@ -70,7 +73,7 @@ static void spec_of(lua_State *L, int t, mhfu_move_t *mv)
     lua_pop(L, 1);
 }
 
-static const char *const TURNS[] = {"still", "hunter", "away", "fixed", NULL};
+static const char *const TURNS[] = {"still", "hunter", "away", "fixed", "aim", NULL};
 
 static int hex(int c)
 {
@@ -83,7 +86,7 @@ static int hex16(lua_State *L, const char *c)
     int v = 0;
     for (int j = 0; j < 4; j++) {
         int d = hex(c[j]);
-        luaL_argcheck(L, d >= 0, 2, "steer.curve and steer.travel are hex digits");
+        luaL_argcheck(L, d >= 0, 2, "steer.curve, steer.travel and steer.code_turn are hex digits");
         v = v * 16 + d;
     }
     return v;
@@ -94,7 +97,9 @@ static int hex16(lua_State *L, const char *c)
  * spreads across), total (degrees) over frames, dir (degrees), walls, stuck = { main, sub, mode },
  * curve = the entry's string in the port's turns module, travel = the move's own travel as the
  * port's moves module writes it (8 hex digits a sample: x then z, 16 bits each, in
- * 1/STEER_TRAVEL_SCALE units), lunge = { window = { lo, hi }, near, span, base, range } */
+ * 1/STEER_TRAVEL_SCALE units), code_turn = the move's code turn (4 hex digits a value, a signed
+ * 16 bits of YAW units, cumulative; turn = "aim" scales it to the angle to the target),
+ * lunge = { window = { lo, hi }, near, span, base, range } */
 static void steer_of(lua_State *L, int t, mhfu_steer_spec_t *sp)
 {
     mhfu_steer_init_spec(sp);
@@ -148,6 +153,14 @@ static void steer_of(lua_State *L, int t, mhfu_steer_spec_t *sp)
         sp->samples[sp->sample_count].z = (int16_t)hex16(L, c + i + 4);
     }
     lua_pop(L, 1);
+    lua_getfield(L, s, "code_turn");
+    c = lua_isstring(L, -1) ? lua_tolstring(L, -1, &n) : NULL;
+    luaL_argcheck(L, !c || (n % 4 == 0 && n / 4 <= MHFU_STEER_TURNS), 2,
+                  "steer.code_turn is up to STEER_TURNS values of 4 hex digits");
+    for (size_t i = 0; c && i < n; i += 4) sp->turns[sp->turn_count++] = (int16_t)hex16(L, c + i);
+    lua_pop(L, 1);
+    luaL_argcheck(L, sp->steer.turn != MHFU_STEER_AIM || sp->turn_count, 2,
+                  "steer.turn = \"aim\" needs steer.code_turn");
     if (lua_getfield(L, s, "lunge") == LUA_TTABLE) {
         int l = lua_gettop(L);
         luaL_argcheck(L, lua_getfield(L, l, "window") == LUA_TTABLE, 2,

@@ -364,11 +364,32 @@ def test_own_enter_of_an_empty_slot_goes_to_the_hub(stubs: Stubs, mips: Any) -> 
     assert _req(stubs, m) == [0, 0, 0, 1, 0]  # counted, no play filed
 
 
-@pytest.mark.parametrize("sub", [SLOTS, SLOTS + 1, 200, 255])
-def test_own_enter_past_the_registry_goes_to_the_hub(stubs: Stubs, mips: Any, sub: int) -> None:
+@pytest.mark.parametrize("sub", [SLOTS, SLOTS + 1, 200, 254, 255])
+def test_a_combo_id_enters_the_hub_and_files_the_play(stubs: Stubs, mips: Any, sub: int) -> None:
+    """An id from the slots up is a combo's: em75's hub, no main 16, the id filed as the slot is
+    (the brain refuses an id with no combo), and nothing read past the registry."""
     m, got, strays = _run_own(stubs, mips, OWN, sub, valid=(0, 3))  # slot 0 holds a move
+    assert got == [ENTITY, *HUB, 1]
+    assert _req(stubs, m) == [ENTITY, sub, 1, 1, (sub + 1) & 0xFF]  # own_last is a byte
+    assert strays == []
+    ring = m.read(
+        RUN_CFG + stubs.lib.cfg_ring() + 4 * m.read(RUN_CFG + stubs.lib.cfg_ring_idx())[0]
+    )
+    assert ring == [(1 << 16) | (OWN << 8) | sub]
+
+
+def test_a_combo_id_with_no_registry_goes_to_the_hub(stubs: Stubs, mips: Any) -> None:
+    m, got, _ = _run_own(stubs, mips, OWN, SLOTS + 3, moves=0)
     assert got == [ENTITY, *HUB, 1] and _req(stubs, m) == [0, 0, 0, 1, 0]
-    assert strays == []  # an id past the slots reads slot 0, never past the registry
+
+
+def test_a_second_combo_enter_replaces_the_play(stubs: Stubs, mips: Any) -> None:
+    m, _, _ = _run_own(stubs, mips, OWN, SLOTS + 3, valid=(3,))
+    m.set_reg("a0", ENTITY)
+    for reg, v in (("a1", OWN), ("a2", 3), ("a3", 1), ("ra", CALLER), ("sp", 0x3F000)):
+        m.set_reg(reg, v)
+    m.run(STUB, CALLER, count=2000)
+    assert _req(stubs, m) == [ENTITY, 3, 1, 2, 4]  # a slot's enter after a combo's: the slot's
 
 
 def test_own_enter_without_a_registry_goes_to_the_hub(stubs: Stubs, mips: Any) -> None:
@@ -377,9 +398,10 @@ def test_own_enter_without_a_registry_goes_to_the_hub(stubs: Stubs, mips: Any) -
 
 
 @pytest.mark.parametrize("main", [0, 1, 4, 7, 15, 17, 255])
-def test_any_other_main_is_left_alone(stubs: Stubs, mips: Any, main: int) -> None:
-    m, got, _ = _run_own(stubs, mips, main, 3, valid=(3,))
-    assert got == [ENTITY, main, 3, 1] and _req(stubs, m) == [0, 0, 0, 0, 0]
+@pytest.mark.parametrize("sub", [3, SLOTS, 255])
+def test_any_other_main_is_left_alone(stubs: Stubs, mips: Any, main: int, sub: int) -> None:
+    m, got, _ = _run_own(stubs, mips, main, sub, valid=(3,))
+    assert got == [ENTITY, main, sub, 1] and _req(stubs, m) == [0, 0, 0, 0, 0]
 
 
 def test_a_second_own_enter_replaces_the_play(stubs: Stubs, mips: Any) -> None:

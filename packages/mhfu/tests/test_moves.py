@@ -3,9 +3,11 @@
 """The move player's host side: the MOVE bytes and the report."""
 
 import struct
+from dataclasses import replace
 
 import pytest
 from mhfu import addresses as a
+from mhfu import steering
 from mhfu.cli import main
 from mhfu.cli import moves as cli
 from mhfu.live import moves
@@ -34,6 +36,12 @@ def test_start_and_stop_round_trip() -> None:
     assert struct.unpack_from("<HH", raw, a.MOVE.START) == (24, 86)
     assert moves.Move.unpack(raw) == mv
     assert moves.Move(53).pack()[a.MOVE.START :] == bytes(4)
+
+
+def test_aim_out_round_trips() -> None:
+    raw = moves.Move(53, aim_out=10).pack()
+    assert raw[a.MOVE.AIM_OUT] == 10 and moves.Move.unpack(raw).aim_out == 10
+    assert moves.Move(53).pack()[a.MOVE.AIM_OUT] == 0
 
 
 def test_attack_word() -> None:
@@ -92,6 +100,27 @@ def test_travel_and_lunge_pack_as_the_spec():
     assert plain[a.STEER_SPEC.SAMPLE_COUNT :] == bytes(len(plain) - a.STEER_SPEC.SAMPLE_COUNT)
 
 
+def test_code_turn_packs_as_the_spec():
+    sp = moves.Steer(turn="aim", code_turn=(0, 3000, -2, 32767, -32768))
+    b = sp.pack()
+    assert (
+        len(b) == a.STEER_SPEC.size
+        and moves.TURNS[b[a.STEER_SPEC.STEER + a.STEER_PARAMS.TURN]] == "aim"
+    )
+    assert struct.unpack_from("<H", b, a.STEER_SPEC.TURN_COUNT) == (5,)
+    assert struct.unpack_from("<5h", b, a.STEER_SPEC.TURNS) == (0, 3000, -2, 32767, -32768)
+    rest = a.STEER_SPEC.TURNS + 10
+    assert b[rest:] == bytes(len(b) - rest)
+    assert struct.unpack_from("<H", moves.Steer().pack(), a.STEER_SPEC.TURN_COUNT) == (0,)
+
+
+def test_code_turn_the_game_cannot_hold_is_refused():
+    with pytest.raises(ValueError, match="a move holds"):
+        moves.Steer(code_turn=(0,) * (steering.MOST_TURNS + 1)).pack()
+    with pytest.raises(ValueError, match="a code-turn value holds"):
+        moves.Steer(code_turn=(40000,)).pack()
+
+
 def test_steer_unpacks_what_it_packs():
     sp = moves.Steer(
         (0, 0x2000, 0xFFFF),
@@ -105,8 +134,10 @@ def test_steer_unpacks_what_it_packs():
         (10, 40),
         ((0, 0), (-2.5, 40.25), (3, 100)),
         moves.Lunge((0, 32), 400.0, 1800.0, -700.0, 1800.0),
+        (0, 300, -900, 32767),
     )
     assert moves.Steer.unpack(sp.pack()) == sp
+    assert moves.Steer.unpack(replace(sp, turn="aim").pack()).turn == "aim"
     assert moves.Steer.unpack(moves.Steer().pack()) == moves.Steer()
 
 
