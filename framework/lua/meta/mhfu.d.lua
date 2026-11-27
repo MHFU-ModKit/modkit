@@ -17,10 +17,18 @@ mhfu.api_version = 11
 
 ---Appends a line to framework.log, cut at 255 bytes; lines logged outside an area are held until
 ---the game is in one.
+---
+---```lua
+---mhfu.log("[my_mod] ready, api " .. mhfu.api_version)
+---```
 ---@param msg string
 function mhfu.log(msg) end
 
 ---Reads the u8 at addr, unchecked: an unmapped address crashes the game.
+---
+---```lua
+---local state = mhfu.read_u8(mhfu.addr.SCREEN_STATE)
+---```
 ---@param addr integer
 ---@return integer
 function mhfu.read_u8(addr) end
@@ -32,12 +40,24 @@ function mhfu.read_u16(addr) end
 
 ---Reads the u32 at addr (4-aligned), unchecked. lua_Integer is 32 bits, so a value from
 ---0x80000000 up is negative: test bits with `&`.
+---
+---```lua
+---local ent = mhfu.entity_at(1)
+---local gate = mhfu.read_u32(ent + mhfu.addr.ENTITY.FREEZE_GATE)
+---local frozen = gate & 0x10000 ~= 0
+---```
 ---@param addr integer
 ---@return integer
 function mhfu.read_u32(addr) end
 
 ---True if addr is in user RAM; the extra-RAM window, where clones live, is not. Check a pointer
 ---read from the game before following it.
+---
+---```lua
+---local ent = mhfu.entity_at(1)
+---local model = mhfu.read_u32(ent + mhfu.addr.ENTITY.PMO)
+---if mhfu.mem_valid(model) then mhfu.log("model at " .. model) end
+---```
 ---@param addr integer
 ---@return boolean
 function mhfu.mem_valid(addr) end
@@ -54,11 +74,22 @@ function mhfu.write_u16(addr, v) end
 
 ---Writes v at addr (4-aligned), unchecked; a code word takes only while the JIT is cold (screen
 ---state 1 or 4).
+---
+---```lua
+----- let a forced action's AI tick run again; once, not per tick
+---local at = mhfu.entity_at(1) + mhfu.addr.ENTITY.FREEZE_GATE
+---mhfu.write_u32(at, mhfu.read_u32(at) & ~(0x100 | 0x10000))
+---```
 ---@param addr integer
 ---@param v integer
 function mhfu.write_u32(addr, v) end
 
 ---Reads the f32 at addr (4-aligned), unchecked.
+---
+---```lua
+---local ent = mhfu.entity_at(1)
+---local scale = mhfu.read_f32(ent + mhfu.addr.ENTITY.SIZE_SCALE)
+---```
 ---@param addr integer
 ---@return number
 function mhfu.read_f32(addr) end
@@ -69,6 +100,10 @@ function mhfu.read_f32(addr) end
 function mhfu.write_f32(addr, v) end
 
 ---The screen-state id; its values are listed on mhfu.addr.SCREEN_STATE (17 = in an area).
+---
+---```lua
+---local in_area = mhfu.get_screen_state() == 17
+---```
 ---@return integer
 function mhfu.get_screen_state() end
 
@@ -77,6 +112,10 @@ function mhfu.get_screen_state() end
 function mhfu.get_area_index() end
 
 ---Quest frames left, at 30 Hz.
+---
+---```lua
+---local seconds_left = mhfu.get_quest_timer() // 30
+---```
 ---@return integer
 function mhfu.get_quest_timer() end
 
@@ -97,6 +136,13 @@ function mhfu.paint_map() end
 -- An entity is its pointer. The getters return 0 for a pointer outside RAM; the setters do nothing.
 
 ---The entity in registry slot 0..20, or 0 if the slot is empty; monsters are in 1..20.
+---
+---```lua
+---local ent = mhfu.entity_at(1)
+---if ent ~= 0 and mhfu.entity_alive(ent) then
+---  mhfu.log("slot 1 is type " .. mhfu.entity_type(ent))
+---end
+---```
 ---@param slot integer
 ---@return integer ent
 function mhfu.entity_at(slot) end
@@ -134,6 +180,12 @@ function mhfu.entity_alive(ent) end
 function mhfu.entity_pos(ent) end
 
 ---Moves ent, its transform's translation row with it.
+---
+---```lua
+---local ent = mhfu.entity_at(1)
+---local x, y, z = mhfu.entity_pos(ent)
+---mhfu.entity_set_pos(ent, x + 300, y, z)
+---```
 ---@param ent integer
 ---@param x number
 ---@param y number
@@ -196,12 +248,27 @@ function mhfu.entity_make_visible(ent, section) end
 function mhfu.entity_force_aggro(ent, x, y, z) end
 
 ---Up to 16 live entities of one monster type, in registry order.
+---
+---```lua
+---for _, ent in ipairs(mhfu.entities_of_type(mhfu.MON_TIGREX)) do
+---  mhfu.entity_set_size(ent, 0.5)
+---end
+---```
 ---@param species integer
 ---@return integer[]
 function mhfu.entities_of_type(species) end
 
 ---Clones src into a free registry slot, calm and sharing its model and overlay; 0 on failure.
 ---Needs `memory = 64` when partition RAM is short. A clone deals no damage until it has a node.
+---
+---```lua
+---local native = mhfu.entity_at(1)
+---local clone = mhfu.entity_clone(native)
+---if clone ~= 0 then
+---  local x, y, z = mhfu.entity_pos(native)
+---  mhfu.entity_set_pos(clone, x + 300, y, z)
+---end
+---```
 ---@param src integer
 ---@return integer ent
 function mhfu.entity_clone(src) end
@@ -209,6 +276,13 @@ function mhfu.entity_clone(src) end
 ---Gives clone ent a collision node copied from a native's node template, so it can damage the
 ---hunter; 0 on failure. A nonzero uid becomes the node id (16 at most; a large one crashes).
 ---Once per clone.
+---
+---```lua
+---local native = mhfu.entity_at(1)
+---local clone = mhfu.entity_clone(native)
+---local node = mhfu.node_clone(mhfu.node_of(native), clone, 1)
+---if node == 0 then mhfu.log("the clone has no node and deals no damage") end
+---```
 ---@param template integer
 ---@param ent integer
 ---@param uid integer
@@ -259,6 +333,14 @@ function mhfu.quest_has(quest, species) end
 
 ---Retags monster from as to in place, so the engine loads to natively; false if from is missing
 ---or to's record layout is unknown (only Tigrex's is known).
+---
+---```lua
+---mhfu.on_quest_targets_building(function(quest)
+---  if mhfu.quest_has(quest, mhfu.MON_GIADROME) then
+---    mhfu.quest_replace_monster(quest, mhfu.MON_GIADROME, mhfu.MON_TIGREX)
+---  end
+---end)
+---```
 ---@param quest integer
 ---@param from integer
 ---@param to integer
@@ -267,6 +349,14 @@ function mhfu.quest_replace_monster(quest, from, to) end
 
 ---Adds species as another big monster in its own target group, which is what lets it deal
 ---damage; false once the groups are taken or for an unknown layout (only Tigrex's is known).
+---
+---```lua
+---mhfu.on_quest_targets_building(function(quest)
+---  if mhfu.quest_monster_count(quest) < 2 then
+---    mhfu.quest_add_monster(quest, mhfu.MON_TIGREX)
+---  end
+---end)
+---```
 ---@param quest integer
 ---@param species integer
 ---@param x? number spawn point; 0 or nil keeps the source record's
@@ -298,6 +388,11 @@ function mhfu.load_relocated_overlay(path, run_inits) end
 
 ---Replaces a big-monster PAC as the game loads it, with no disk edit: the PAC at path overwrites
 ---the raw buffer that byte-matches <path>.orig (same size), again whenever the file changes.
+---
+---```lua
+---local ok = mhfu.inject_register(6186, "ms0:/PSP/PLUGINS/mhfu_framework/inject/tigrex.bin")
+---if not ok then mhfu.log("inject_register failed") end
+---```
 ---@param file_id integer
 ---@param path string
 ---@return boolean ok
@@ -325,6 +420,11 @@ function mhfu.inject_locate(file_id) end
 -- input (bind_input.cpp) ---------------------------------------------------------------------
 
 ---The controller now.
+---
+---```lua
+---local pressed, lx, ly = mhfu.buttons()
+---if pressed & mhfu.CTRL_SELECT ~= 0 then mhfu.log("select held") end
+---```
 ---@return integer buttons the mhfu.CTRL_* bits held
 ---@return integer lx stick x, 0..255, centred near 128
 ---@return integer ly stick y, 0..255, centred near 128
@@ -359,6 +459,11 @@ mhfu.CTRL_SQUARE = 0x8000 -- PSP_CTRL_SQUARE
 
 ---What the vt[8] picker last returned for input on this monster type (a per-run pointer for
 ---Tigrex), or 0 before it picked it once: a valid answer for on_bigmonster_action_decided.
+---
+---```lua
+---local ptr = mhfu.action_ptr_for(mhfu.MON_TIGREX, 1)
+---if ptr == 0 then mhfu.log("the picker has not chosen for this input yet") end
+---```
 ---@param species integer
 ---@param input integer
 ---@return integer
@@ -375,6 +480,12 @@ function mhfu.em_installed() end
 
 ---Enters (main, sub) on the next AI frame through the engine's own dispatcher, so the pair is
 ---provisioned like a native one; false while nothing is wrapped.
+---
+---```lua
+---if mhfu.em_installed() then
+---  mhfu.em_request(3, 27) -- the roar, on the next AI frame
+---end
+---```
 ---@param main integer
 ---@param sub integer
 ---@param mode? integer the enter-action's mode argument, default 0
@@ -383,6 +494,11 @@ function mhfu.em_request(main, sub, mode) end
 
 ---Substitution slot 0..3: the engine's own choice with main in from_mask (bit k = main k) and sub
 ---from_sub (or mhfu.EM_ANY) is entered as (to_main, to_sub) instead, count times.
+---
+---```lua
+----- the first time the engine picks a pair of main 2, enter the roar instead
+---mhfu.em_substitute(0, 1 << 2, mhfu.EM_ANY, 3, 27, 1)
+---```
 ---@param slot integer
 ---@param from_mask integer
 ---@param from_sub integer
@@ -395,6 +511,12 @@ function mhfu.em_substitute(slot, from_mask, from_sub, to_main, to_sub, count) e
 ---Rule slot 0..mhfu.addr.EM_CFG.RULES_COUNT-1: a brain rule the AI step checks every frame (30 Hz),
 ---with no Lua in the loop. A rule that cannot hold (no trigger, an op or a board index it does not
 ---know) is cleared and logged.
+---
+---```lua
+----- far from the hunter for 2 s of AI frames: roar, at most once every 30 s
+---mhfu.em_rule(0, { from_mask = 1 << 0, min_frames = 60, dist_lo = 1500,
+---                  to_main = 3, to_sub = 27, cooldown = 900 })
+---```
 ---@param slot integer
 ---@param rule mhfu.EmRule? nil clears the slot
 ---@return true
@@ -406,6 +528,11 @@ function mhfu.em_rule(slot, rule) end
 function mhfu.em_clear() end
 
 ---The seam's counters and its last enter-actions.
+---
+---```lua
+---local st = mhfu.em_status()
+---mhfu.log("rule fires " .. st.brain_fires .. ", last pair " .. st.last_main .. "," .. st.last_sub)
+---```
 ---@return mhfu.EmStatus
 function mhfu.em_status() end
 
@@ -485,6 +612,10 @@ mhfu.EM_UNLIMITED = -1 -- MHFU_EM_UNLIMITED
 
 ---Starts or stops streaming the framebuffer on its own thread; the options apply only when
 ---starting with scale given. Returns whether it runs.
+---
+---```lua
+---local running = mhfu.capture(true, 2, 100)
+---```
 ---@param on boolean
 ---@param scale? integer 1 full size, 2 half (default), up to 4
 ---@param interval_ms? integer between frames, default 66 (about 15 fps)
@@ -507,6 +638,11 @@ function mhfu.capture_status() end
 function mhfu.resolve_attack(ent) end
 
 ---World position of bone in ent's loaded skeleton; nothing for a bad entity or bone.
+---
+---```lua
+---local x, y, z = mhfu.bone_pos(mhfu.entity_at(1), 5)
+---if not x then mhfu.log("no such bone") end
+---```
 ---@param ent integer
 ---@param bone integer 0..255, the loaded skeleton's numbering
 ---@return number? x
@@ -525,6 +661,13 @@ function mhfu.spawn_effect(ent, effect_id, bone) end
 ---Experimental: runs each clones_set clone's AI tick and attack resolver alongside the native's,
 ---so clones fight. Its code patch lands only at a title or menu screen, so enable it at load. It
 ---can crash the game.
+---
+---```lua
+----- register at load; experimental
+---local clone = mhfu.entity_clone(mhfu.entity_at(1))
+---mhfu.clones_set({ clone })
+---mhfu.clone_combat(true)
+---```
 ---@param enable boolean
 function mhfu.clone_combat(enable) end
 
@@ -558,6 +701,12 @@ function mhfu.combat_register_all() end
 function mhfu.on_quest_targets_building(fn, priority) end
 
 ---Calls fn when a big monster enters the entity registry (5 Hz poll).
+---
+---```lua
+---mhfu.on_bigmonster_spawn(function(ent, species, slot, hp)
+---  mhfu.log(string.format("type %d spawned in slot %d with %d HP", species, slot, hp))
+---end)
+---```
 ---@param fn fun(ent: integer, species: integer, slot: integer, hp: integer)
 ---@param priority? integer
 function mhfu.on_bigmonster_spawn(fn, priority) end
@@ -599,6 +748,15 @@ function mhfu.on_bigmonster_action_decided(fn, priority) end
 
 ---fn returns the action id the executor runs, which the engine fans out to every body slot. It
 ---moves the ANIMATION only, not the move and its damage (em_request). Register at load.
+---
+---```lua
+---local SPIN = 43 -- a Tigrex's spin clip; a1 ids are per species
+---
+---mhfu.on_bigmonster_action(function(ctx)
+---  if ctx.type == mhfu.MON_TIGREX and ctx.action_id == 5 then return SPIN end
+---  return nil
+---end)
+---```
 ---@param fn fun(ctx: mhfu.ActionCtx): integer?
 ---@param priority? integer
 function mhfu.on_bigmonster_action(fn, priority) end
@@ -631,6 +789,10 @@ function mhfu.on_bigmonster_action(fn, priority) end
 ---`spec` is a table, or the address of a MOVE struct in memory (the debug bridge's, FORCE in it).
 ---Asked while the monster's notice runs (`mhfu.monster_state(ent).noticing`), it waits up to 450
 ---AI frames for the roar and combat entry, unless `force`.
+---
+---```lua
+---mhfu.move_play(mhfu.entity_at(1), { entry = 43, length = 90 })
+---```
 ---@param ent integer
 ---@param spec mhfu.Move|integer
 ---@param force? boolean
@@ -727,6 +889,12 @@ function mhfu.move_block() end
 ---Own move slot 0..mhfu.addr.EM_MOVES.MOVES_COUNT-1 plays `spec`; `spec.after` is the slot played when it ends on its clip, its
 ---length, its stop or a wall. False for a bad slot or no room left for its turn keys, travel
 ---samples or lunge.
+---
+---```lua
+----- slot 0 plays the spin clip, then slot 1 in place
+---mhfu.em_move(0, { entry = 43, after = 1 })
+---mhfu.em_move(1, { entry = 44 })
+---```
 ---@param slot integer
 ---@param spec mhfu.OwnMove
 ---@return boolean
@@ -742,6 +910,10 @@ function mhfu.em_moves_clear() end
 ---reaction, a stop or a replacement drops the second. False for an id outside OWN_MOVES..255, an
 ---empty slot, or a `first` that does not ride the hub; register after the moves, which
 ---`mhfu.em_moves_clear` empties along with the combos.
+---
+---```lua
+---mhfu.em_combo(mhfu.addr.OWN_MOVES, 0, 1) -- `enter 16 OWN_MOVES` in the script
+---```
 ---@param id integer
 ---@param first integer
 ---@param next_slot integer
@@ -751,6 +923,10 @@ function mhfu.em_combo(id, first, next_slot) end
 ---Plays own move `slot` (or combo `id`, OWN_MOVES..255) on ent at its next AI step; false while
 ---nothing is wrapped or the slot is empty or the combo none. `force` starts it while the monster's
 ---notice runs, as `mhfu.move_play`'s.
+---
+---```lua
+---if mhfu.em_play(mhfu.entity_at(1), 0) then mhfu.log("own move 0 asked") end
+---```
 ---@param ent integer
 ---@param slot integer
 ---@param force? boolean
@@ -791,6 +967,11 @@ function mhfu.em_moves_status() end
 ---same settings again change nothing, a stamina included. False for settings it refuses (logged),
 ---or too many pairs. A cost halves at low HP, is not charged while the monster is enraged or
 ---tired, and a negative one gives stamina back; at 0 a tired spell begins.
+---
+---```lua
+----- the spin costs 300 of 1000 stamina; at 0 the monster is tired for 15 s
+---mhfu.em_fatigue({ max = 1000, tired = 450, pairs = { { 4, 0, 300 } } })
+---```
 ---@param t? mhfu.Fatigue
 ---@return boolean
 function mhfu.em_fatigue(t) end
@@ -834,6 +1015,10 @@ function mhfu.em_fatigue_status() end
 ---once the move player is idle, durability 0 or a discharge pair discharges. False for settings it
 ---refuses (logged), too many ups or pairs, or when the query slot could not be wrapped. The same
 ---settings again change nothing, the state included.
+---
+---```lua
+---mhfu.em_charge({ chip_gauge = 5, chip_durability = 10, cooldown_out = 900 })
+---```
 ---@param t? mhfu.Charge
 ---@return boolean
 function mhfu.em_charge(t) end
@@ -871,6 +1056,11 @@ function mhfu.em_charge_status() end
 ---no spec stops it. The engine's reaction runs up to its enter-action (flinch counters, pending
 ---damage into HP), which then enters the move's carrier; the move plays from the next AI step.
 ---"flinch" is em75's flinch pairs (4, 0|1|5|6|8). Needs the wrapped species (cold boot).
+---
+---```lua
+---local ent = mhfu.entity_at(1)
+---mhfu.move_react("flinch", ent, { entry = 43 }) -- no spec stops it
+---```
 ---@param kind "flinch"
 ---@param ent integer
 ---@param spec? mhfu.Move
@@ -908,6 +1098,12 @@ function mhfu.on_bigmonster_flinch(fn, priority) end
 function mhfu.on_bigmonster_part_broken(fn, priority) end
 
 ---Calls fn when a big monster's tail is cut; ev.data is its tail-cut count.
+---
+---```lua
+---mhfu.on_bigmonster_tail_cut(function(ev)
+---  mhfu.log("tail cut " .. ev.data .. " times")
+---end)
+---```
 ---@param fn fun(ev: mhfu.MonsterEvent)
 ---@param priority? integer
 function mhfu.on_bigmonster_tail_cut(fn, priority) end
@@ -943,6 +1139,11 @@ function mhfu.monster_events_block() end
 
 ---A big monster now, read from its cells (the monster events' own reads): whether it noticed the
 ---player, is in combat, runs its notice; nil for no entity. Any thread.
+---
+---```lua
+---local state = mhfu.monster_state(mhfu.entity_at(1))
+---if state and state.combat then mhfu.log("in combat") end
+---```
 ---@param ent integer
 ---@return mhfu.MonsterState?
 function mhfu.monster_state(ent) end
@@ -986,6 +1187,11 @@ function mhfu.monster_state(ent) end
 
 ---Counter k of the board the rules and Lua share for the wrapped species' monster (16 counters,
 ---s16, 0 for a bad k); with v, sets it first. A new monster resets the board, from its spawn on.
+---
+---```lua
+----- count hits on the board a rule reads
+---mhfu.em_var(0, mhfu.em_var(0) + 1)
+---```
 ---@param k integer 0-based
 ---@param v? integer
 ---@return integer
@@ -993,6 +1199,10 @@ function mhfu.em_var(k, v) end
 
 ---Raises board signal k (0-based): a rule with `signal = k` fires in the next AI frame, once. False
 ---for a bad k.
+---
+---```lua
+---mhfu.em_signal(0) -- a rule with `signal = 0` fires in the next AI frame
+---```
 ---@param k integer
 ---@return boolean
 function mhfu.em_signal(k) end
@@ -1003,6 +1213,10 @@ function mhfu.em_signal(k) end
 ---engine's own start and end: the same as a rule's `enrage` and `calm` effects. The request waits
 ---on the board for the brain, since Lua must not write the monster's flags from its thread. False
 ---while nothing is wrapped.
+---
+---```lua
+---mhfu.em_rage(true)
+---```
 ---@param on boolean
 ---@return boolean
 function mhfu.em_rage(on) end
@@ -1016,6 +1230,10 @@ function mhfu.em_natural_rage(on) end
 ---The wrapped species' tail cut only below pct percent of the monster's HP (1..100), 0 for any;
 ---the species' own gate still runs on the cuts it allows. False while nothing is wrapped or for a
 ---bad pct. The quest's end sets it to 0.
+---
+---```lua
+---mhfu.em_sever_gate(50) -- the tail cuts only below half HP
+---```
 ---@param pct integer
 ---@return boolean
 function mhfu.em_sever_gate(pct) end
@@ -1026,6 +1244,12 @@ function mhfu.em_sever_gate(pct) end
 ---`opts.ahead` from the hunter in their frame. Its model is the PAC at `pac` (a path as
 ---`inject_register` takes it), read now: call it while mods load, never in the village. It runs no
 ---AI, can't be talked to and is not solid.
+---
+---```lua
+---local slot, err = mhfu.npc_add("ms0:/PSP/PLUGINS/mhfu_framework/inject/guide.bin",
+---                               { right = 300, ahead = 100 })
+---if not slot then mhfu.log("npc_add: " .. err) end
+---```
 ---@param pac string
 ---@param opts? {size?: number, char?: integer, right?: number, ahead?: number} size 1, char 0x1E, right 300, ahead 0 unless given
 ---@return integer? slot
@@ -1040,6 +1264,10 @@ function mhfu.npc_object(slot) end
 ---Plays `entry` of the PAC's animation pack on clip slots 0-2 from the next frame, cross-fading
 ---over `blend` frames (default 6, 0 cuts). When a clip that doesn't loop ends, entry `after`
 ---follows with the same blend; without it the last frame holds.
+---
+---```lua
+---mhfu.npc_play(0, 1, 6, 2) -- entry 1, then entry 2 when it ends
+---```
 ---@param slot integer
 ---@param entry integer
 ---@param blend? integer
@@ -1102,6 +1330,11 @@ mhfu.NPC_MAX = 4 -- MHFU_NPC_MAX
 ---container is staged in PPSSPP's 64 MB raw window, else (a real PSP, PPSSPP's 32 MB mode) in a
 ---user-partition block; the installs keep at most 256 KB of blocks for the session. Reads the
 ---Memory Stick: call it while mods load.
+---
+---```lua
+---local row, err = mhfu.brain_install("ms0:/PSP/PLUGINS/mhfu_framework/inject/em75.mhai")
+---if not row then mhfu.log("brain_install: " .. err) end
+---```
 ---@param path string
 ---@return integer? row
 ---@return string? err
