@@ -12,7 +12,10 @@ here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../../.." && pwd)
 image=${STUDIO_IMAGE:-mhfu-studio-gl}
 
-docker build --quiet --platform linux/amd64 -t "$image" "$here" >/dev/null
+# STUDIO_SKIP_BUILD=1: use the image as it is (CI builds it with a layer cache first)
+if [ -z "${STUDIO_SKIP_BUILD:-}" ] || ! docker image inspect "$image" >/dev/null 2>&1; then
+    docker build --quiet --platform linux/amd64 -t "$image" "$here" >/dev/null
+fi
 
 # --init: xvfb-run in PID 1 never hears that Xvfb is up
 flags=(--rm --init --platform linux/amd64 --user "$(id -u):$(id -g)"
