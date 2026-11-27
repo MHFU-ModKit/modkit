@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
 # vendored code stays as released
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
 exclude: ^framework/third_party/
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -27,6 +29,11 @@ repos:
     rev: v0.11.0.1
     hooks:
       - id: shellcheck
+
+  - repo: https://github.com/Mateusz-Grzelinski/actionlint-py
+    rev: v1.7.12.25
+    hooks:
+      - id: actionlint
 
   - repo: https://github.com/fsfe/reuse-tool
     rev: v6.2.0
