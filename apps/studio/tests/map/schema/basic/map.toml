@@ -1,0 +1,17 @@
+[map]
+name = "basic"
+row = 11
+description = "synthetic corpus document"
+
+[[stage]]
+number = 98
+ops = "st098.json"
+
+[[stage]]
+number = 107
+ops = "st098.json"
+
+[[point]]
+name = "crate"
+stage = 98
+at = [10900.0, 325.0, 9200.0]

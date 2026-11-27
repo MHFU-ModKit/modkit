@@ -69,6 +69,20 @@ def default_file(number: int) -> str:
     return f"st{number:03d}.json"
 
 
+def check_file(path: Path) -> MapDocument:
+    """Load `path` and raise DocumentError on any error-level op finding (the schema check)."""
+    doc = MapDocument.load(path)
+    errors = [
+        str(f)
+        for s in doc.stages
+        for f in O.check(s.ops, base_dir=doc.directory, where=s.label)
+        if f.level == "error"
+    ]
+    if errors:
+        raise DocumentError(f"{doc.path}: " + "; ".join(errors))
+    return doc
+
+
 class MapDocument:
     """The shell's `Document`; `game` is the evidence the checks and the export need."""
 
