@@ -21,6 +21,8 @@ from pathlib import Path
 FUNC = re.compile(r"^function mhfu\.([a-z_][a-z0-9_]*)\(.*\) end$")
 CONST = re.compile(r"^mhfu\.(\w+) = (-?(?:0x[0-9A-Fa-f]+|\d+))(?: -- ([A-Z_][A-Z0-9_]*))?$")
 VERSION = "api_version"
+FENCE_OPEN = "---```lua"
+FENCE_CLOSE = "---```"
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,38 @@ def parse(text: str) -> Api:
     if not version:
         raise ValueError(f"mhfu.{VERSION} is not declared")
     return Api(version[0], tuple(funcs), tuple(consts))
+
+
+def examples(text: str) -> dict[str, list[str]]:
+    """The ```lua fences in the functions' doc blocks: function name -> its examples' code."""
+    found: dict[str, list[str]] = {}
+    code: list[str] | None = None
+    pending: list[str] = []
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.rstrip()
+        if code is not None:
+            if line == FENCE_CLOSE:
+                pending.append("\n".join(code))
+                code = None
+            elif line.startswith("---"):
+                code.append(line[3:])
+            else:
+                raise ValueError(f"line {n}: the example is not closed")
+        elif line == FENCE_OPEN:
+            code = []
+        elif line == FENCE_CLOSE:
+            raise ValueError(f"line {n}: a closing fence without an opening one")
+        elif m := FUNC.match(line):
+            if pending:
+                found.setdefault(m[1], []).extend(pending)
+            pending = []
+        elif pending and not line.startswith("---"):
+            raise ValueError(f"line {n}: an example above something that is not a function")
+    if code is not None:
+        raise ValueError("the last example is not closed")
+    if pending:
+        raise ValueError("an example at the end of the file has no function")
+    return found
 
 
 def render_header(api: Api) -> str:
