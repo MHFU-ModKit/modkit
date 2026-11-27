@@ -15,14 +15,23 @@ root and takes its turn out of the clip; `turns` is the curve YAW follows instea
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
 from mhfu import addresses
 from mhfu.entries import PART_STREAMS
 from mhp_formats import fu
-from mhp_formats.anim import CHANNEL_BITS, Channel, Clip, Keyframe, Kind, Track, dequantize
+from mhp_formats.anim import (
+    CHANNEL_BITS,
+    Channel,
+    Clip,
+    Keyframe,
+    Kind,
+    Track,
+    dequantize,
+    quantize,
+)
 from mhp_formats.skeleton import Skeleton
 from numpy.typing import ArrayLike
 
@@ -161,6 +170,44 @@ def carry(anim: fu.Anim, skeleton: Skeleton) -> fu.Anim:
             continue
         turned[id(own)] = _turned(own, whole, rig, skeleton, t0, tr)
     return _each(swapped, streams, lambda c: turned.get(id(c), c))
+
+
+def raised(anim: fu.Anim, skeleton: Skeleton, lifts: Mapping[int, Sequence[float]]) -> fu.Anim:
+    """`anim` with joint 0 of each entry in `lifts` raised by its height over rest, one value per
+    clip frame from 0: the engine puts the monster's Y back on the floor every frame, and draws
+    joint 0's height, so a jump lives only there. Keyed on every frame, added to the height
+    joint 0 already carries; the entry's clip is its own, so one that shared a stored clip stops
+    sharing it. Raises ValueError for an entry joint 0 has no clip in, or one a lift outruns."""
+    part = skeleton.bones[0].stream
+    t0 = fk.part_joints([b.stream for b in skeleton.bones])[part].index(0)
+    out = [list(s) for s in anim.streams]
+    for e, lift in lifts.items():
+        si, slot = fk.entry_slot(part, e)
+        clip = out[si][slot] if si < len(out) and slot < len(out[si]) else None
+        if clip is None or t0 >= len(clip.tracks):
+            raise ValueError(f"entry {e}: joint 0 has no clip to raise")
+        if len(lift) != motion.frames(clip) + 1:
+            raise ValueError(f"entry {e}: {len(lift)} lift values for {motion.frames(clip)} frames")
+        base = clip.tracks[t0]
+        y = _sum(_locs(base).get(Y), _lift_channel(lift))
+        tracks = list(clip.tracks)
+        tracks[t0] = _track(base, {**_locs(base), Y: y}, motion.frames(clip))
+        out[si][slot] = Clip(tracks, clip.loop, clip.loop_start)
+    return fu.Anim(out, anim.tail)
+
+
+def _lift_channel(lift: Sequence[float]) -> Channel:
+    """A location-Y channel through `lift` at every frame, each key's slope the change across it
+    per frame."""
+    raw = [quantize("loc", v) for v in lift]
+    n = len(raw)
+    keys = []
+    for f in range(n):
+        slope = (raw[min(f + 1, n - 1)] - raw[max(f - 1, 0)]) / max(
+            min(f + 1, n - 1) - max(f - 1, 0), 1
+        )
+        keys.append(Keyframe(s16(raw[f]), f, s16(slope), s16(slope)))
+    return Channel(_LOC[Y], keys)
 
 
 def _each(anim: fu.Anim, streams: Iterable[int], fn: Callable[[Clip], Clip]) -> fu.Anim:

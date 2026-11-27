@@ -143,6 +143,11 @@ def lwc1(ft: int, offset: int, base: Reg) -> int:
     return _i(0x31, base, ft, offset)
 
 
+def swc1(ft: int, offset: int, base: Reg) -> int:
+    """`swc1 $f<ft>, offset(base)`."""
+    return _i(0x39, base, ft, offset)
+
+
 def _single(funct: int, fd: int, fs: int, ft: int = 0) -> int:
     return (
         0x11 << 26 | 0x10 << 21 | (ft & 0x1F) << 16 | (fs & 0x1F) << 11 | (fd & 0x1F) << 6 | funct
@@ -151,6 +156,14 @@ def _single(funct: int, fd: int, fs: int, ft: int = 0) -> int:
 
 def add_s(fd: int, fs: int, ft: int) -> int:
     return _single(0x00, fd, fs, ft)
+
+
+def sub_s(fd: int, fs: int, ft: int) -> int:
+    return _single(0x01, fd, fs, ft)
+
+
+def mov_s(fd: int, fs: int) -> int:
+    return _single(0x06, fd, fs)
 
 
 def mul_s(fd: int, fs: int, ft: int) -> int:
@@ -173,6 +186,11 @@ def c_lt_s(fs: int, ft: int) -> int:
 def c_le_s(fs: int, ft: int) -> int:
     """`c.le.s $f<fs>, $f<ft>`."""
     return _single(0x3E, 0, fs, ft)
+
+
+def c_eq_s(fs: int, ft: int) -> int:
+    """`c.eq.s $f<fs>, $f<ft>`."""
+    return _single(0x32, 0, fs, ft)
 
 
 def bc1t(target: int, at: int) -> int:

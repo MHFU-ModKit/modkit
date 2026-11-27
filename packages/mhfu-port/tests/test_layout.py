@@ -173,6 +173,53 @@ def test_refuses(named, why):
         layout.plan({"x": named}, {1, 2, 4, 123}, host({1}, {4}), TIGREX)
 
 
+def lifted(slot: int, source: int = 2, frames: int = 10) -> Named:
+    return Named(
+        slot, source=source, start=0, frames=frames, lift=[float(v) for v in range(frames + 1)]
+    )
+
+
+def test_a_lifted_copy_takes_its_own_entry_and_leaves_its_source_where_it_is():
+    ids, h = {1, 2, 100, 205}, host({1, 2, 3})
+    base = layout.plan({}, ids, h, TIGREX)
+    copy = lifted(60)
+    got = layout.plan({"air": copy}, ids, h, TIGREX)
+    assert got.entries == {**base.entries, 60: 2} and got.ids[2] == base.ids[2]
+    assert (got.cuts[60], got.lifts[60], got.placed) == ((0, 10), tuple(copy.lift or ()), {60})
+    assert layout.moved(base, got) == {} and layout.pinned(manifest.loads(HEAD + COPY)).lifts == {
+        60: tuple(float(v) for v in range(11))
+    }
+
+
+COPY = (
+    "[clips.air]\nslot = 60\nsource = 2\nstart = 0\nframes = 10\nlift = "
+    + str([float(v) for v in range(11)])
+    + "\n"
+)
+
+
+def test_the_entries_a_copy_may_take_are_those_nothing_holds():
+    ids, h = {1, 2, 100, 205}, host({1, 2, 3, 50})
+    free = layout.spare({}, ids, h, TIGREX)
+    assert free[:3] == [0, 4, 5] and free[-1] == 50, "the entries the host fills come last"
+    assert 3 not in free and 1 not in free and 100 not in free  # held by the packer
+    assert layout.spare({"air": lifted(60)}, ids, h, TIGREX) == free
+
+
+@pytest.mark.parametrize(
+    ("copy", "why"),
+    [(lifted(1), "entry 1 holds clip 1"), (lifted(4), "entry 4 on some body parts only")],
+)
+def test_a_copy_refuses_an_entry_that_is_taken(copy, why):
+    with pytest.raises(layout.LayoutError, match=f"clips.air: .*{why}"):
+        layout.plan({"air": copy}, {1, 2, 4}, host({1, 2}, {4}), TIGREX)
+
+
+def test_the_holder_of_a_clip_is_never_its_lifted_copy():
+    m = manifest.loads(HEAD + COPY.replace("air", "a") + "[clips.whole]\nsource = 2\n")
+    assert layout.holder(m, 2) == "whole"
+
+
 HEAD = '[port]\nname = "t"\nhost_species = 75\npac = "t.bin"\n[source]\nmodel = 5248\n'
 
 

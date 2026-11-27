@@ -114,6 +114,40 @@ def test_carry_takes_a_facing_off_the_start_out_too():
     assert np.abs(facing).max() < math.radians(0.5)
 
 
+def test_raised_adds_the_lift_to_the_height_joint_0_has_frame_by_frame():
+    clip = dash([loc(1, (0, 165), (40, 165))], [HIP])
+    lift = [2.0 * f for f in range(41)]
+    after = travel.raised(pack(clip), rig(), {0: lift})
+    c = after.streams[0][0]
+    assert c is not None
+    frames = np.array([0.0, 10.0, 25.0, 40.0])
+    _, at = fk.Curves(c, fk.Rig.from_skeleton(rig())).at(frames)
+    assert at[:, 0, 1] == pytest.approx([165, 185, 215, 245], abs=0.1)
+
+
+def test_raised_gives_a_joint_without_height_one():
+    clip = dash([loc(2, (0, 0), (40, 100))], [HIP])
+    after = travel.raised(pack(clip), rig(), {0: [0.0, 5.0, 0.0] + [0.0] * 38})
+    c = after.streams[0][0]
+    assert c is not None
+    _, at = fk.Curves(c, fk.Rig.from_skeleton(rig())).at(np.array([0.0, 1.0, 40.0]))
+    assert at[:, 0, 1] == pytest.approx([0.0, 5.0, 0.0], abs=0.1) and at[-1, 0, 2] == 100.0
+
+
+def test_raised_leaves_the_other_entries_and_what_they_share_alone():
+    clip = dash([loc(1, (0, 165), (40, 165))], [HIP])
+    other = pack(clip, clip)
+    after = travel.raised(other, rig(), {1: [0.0] * 40 + [9.0]})
+    assert after.streams[0][0] is clip and after.streams[0][1] is not clip
+
+
+@pytest.mark.parametrize(("entry", "values", "why"), [(5, 41, "no clip"), (0, 3, "3 lift values")])
+def test_raised_refuses_what_it_cannot_place(entry, values, why):
+    clip = dash([loc(1, (0, 165), (40, 165))], [HIP])
+    with pytest.raises(ValueError, match=why):
+        travel.raised(pack(clip), rig(), {entry: [0.0] * values})
+
+
 def engine_pose(clip: Clip, frames: np.ndarray, s: Skeleton | None = None) -> np.ndarray:
     """World joint positions as the engine draws them: no root translation, the tail tip on."""
     s = s or rig()

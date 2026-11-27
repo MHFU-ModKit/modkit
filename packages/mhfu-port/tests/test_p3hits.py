@@ -10,7 +10,7 @@ from mhfu.files import Extracted
 from mhfu.memory import Image
 from mhfu.mips import Code
 from mhfu.overlay import Overlay
-from mhfu_port import p3hits, p3moveset
+from mhfu_port import p3hits, p3motion, p3moveset
 from mhfu_port import p3moveset as p3
 from mhfu_port.manifest import Source
 from mhfu_port.p3hits import Hit, Hits, Length, Record, Walk, window
@@ -378,6 +378,64 @@ def test_the_false_branch_of_a_float_test():
     assert w.settle(pair(), 0.6).cells == {(GAUGE, 2): 10}
 
 
+def jump(a: Asm) -> None:
+    """Rises 30 a frame while the cursor is under 4, then falls under a pull of 20 until its height
+    is 30 or less: the clip 62 plays and the pair ends."""
+    a(asm.addu("a0", "s0", "zero"))
+    a.call(p3motion.CURSOR)
+    a(asm.mov_s(20, 0))
+    a.load_float(1, "four")
+    a(asm.c_lt_s(20, 1), asm.NOP)
+    a.float_branch("f", "fall")
+    a.load_float(2, "up")
+    a(asm.swc1(2, 0xB4, "s0"), asm.addu("a0", "s0", "zero"))
+    a.call(p3motion.VEL_APPLY)
+    a.jump("done")
+    a.label("fall")
+    a.load_float(2, "pull")
+    a(asm.swc1(2, 0xC4, "s0"), asm.addu("a0", "s0", "zero"))
+    a.call(p3motion.VEL_ACC)
+    a(asm.lwc1(3, 0x84, "s0"))
+    a.load_float(4, "land")
+    a(asm.c_le_s(3, 4), asm.NOP)
+    a.float_branch("f", "done")
+    play(a, 62)
+    a.call(LEAVE)
+
+
+JUMP = {"four": 4.0, "up": 30.0, "pull": -20.0, "land": 30.0}
+
+
+def test_a_jump_lasts_until_the_height_the_motion_model_works_out():
+    lengths = {61: Length(100.0), 62: Length(40.0)}
+    first, second = (
+        walk(species(jump, lambda a: play(a, 61), JUMP), lengths, rest=0.0).plan(pair()).steps
+    )
+    heights = [30, 60, 90, 100, 90, 60, 10]  # after the AI frame at cursor 0, 2, ... 12
+    assert (first.clip, first.ticks, first.ended) == (61, 7, "cursor")
+    assert first.lift == tuple(pytest.approx(v) for v in jump_lift(heights, 15))
+    assert first.travel == () and first.lunge is None and not first.spreads
+    assert (second.clip, second.lift) == (62, ())  # the height it lands at is the floor's
+
+
+def jump_lift(heights: list[int], frames: int) -> list[float]:
+    """Straight lines through (0, h0), (2, h1), ... held past the last."""
+    out = []
+    for f in range(frames):
+        k = min(f / 2, len(heights) - 1)
+        lo = int(k)
+        hi = min(lo + 1, len(heights) - 1)
+        out.append(heights[lo] + (k - lo) * (heights[hi] - heights[lo]))
+    return out
+
+
+def test_a_jump_starts_from_the_rest_height_it_is_given():
+    lengths = {61: Length(100.0), 62: Length(40.0)}
+    w = walk(species(jump, lambda a: play(a, 61), JUMP), lengths, rest=500.0)
+    first, _ = w.plan(pair()).steps
+    assert first.ticks > 7  # the landing test reads the height over the floor: a longer fall
+
+
 BRUTE, BRUTE_MODEL = 23, 5248
 ZINOGRE, ZINOGRE_MODEL = 40, 5339
 
@@ -474,3 +532,73 @@ def test_zinogre_walks_its_attack_pairs(zinogre):
     assert all(p.complete for p in plans)
     spawned = sum(any(h for s in p.steps for h in s.hits) for p in plans)
     assert spawned >= len(plans) * 3 // 4
+
+
+@pytest.fixture(scope="module")
+def plans(zinogre):
+    """The Zinogre's plans by pair, each walked once."""
+    w, ms = zinogre
+    got: dict[tuple[int, int], p3hits.Plan] = {}
+
+    def of(main: int, sub: int) -> p3hits.Plan:
+        if (main, sub) not in got:
+            got[main, sub] = w.plan(ms.pairs[main, sub])
+        return got[main, sub]
+
+    return of
+
+
+def step_of(plan: p3hits.Plan, clip: int) -> p3hits.Step:
+    return next(s for s in plan.steps if s.clip == clip)
+
+
+def test_zinogre_air_roll_lasts_22_frames_and_flies_as_the_donor_does(plans):
+    for pair_ in [(7, 22), (7, 112), (7, 201)]:
+        roll = step_of(plans(*pair_), 225)
+        assert roll.ticks == 22 and roll.travel[0] == (0.0, 0.0)
+        assert roll.travel[-1] == pytest.approx((120, 852), rel=0.01)
+        assert max(roll.lift) == pytest.approx(644, rel=0.01) and len(roll.lift) == 45
+        assert roll.lunge == p3motion.Lunge((0.0, 32.0), 400.0, 1800.0, -700.0, 1800.0)
+        assert not roll.spreads
+    landing = step_of(plans(7, 22), 226)
+    assert landing.lift == () and landing.travel == ()  # the floor takes it from there
+
+
+def test_zinogre_stamp_jump_lasts_18_frames_after_a_wind_up_of_16_or_39(plans):
+    for pair_, wind_up in [((7, 21), 16), ((7, 86), 39), ((7, 100), 39)]:
+        steps = plans(*pair_).steps
+        assert steps[0].clip == 213 and steps[0].ticks == wind_up
+        hop = step_of(plans(*pair_), 209)
+        assert hop.ticks == 18 and hop.lift[-1] == 0.0  # it lands and snaps to rest
+        assert hop.travel[-1] == pytest.approx((83, 1401), rel=0.01, abs=1)
+        assert max(hop.lift) == pytest.approx(300, rel=0.01)
+
+
+def test_zinogre_runs_that_end_in_a_slide_travel_and_turn_half_way_round(plans):
+    first = step_of(plans(7, 35), 229)
+    assert first.travel[-1] == pytest.approx((-10, 1046), rel=0.01, abs=0.5)
+    assert first.spreads == (p3motion.Spread(-0x8000, (0.0, 60.0)),)
+    second = step_of(plans(7, 67), 230)
+    assert second.travel[-1] == pytest.approx((71, 1434), rel=0.01, abs=0.5)
+    assert len(first.travel) == 75 and len(second.travel) == 52  # every two clip frames
+
+
+def test_zinogre_sidesteps_travel_across_their_window_and_turn_with_it(plans):
+    for sub, x, total in [(16, -257, -0x8000), (17, 192, 0x8000)]:
+        (step,) = plans(2, sub).steps
+        assert step.ticks == 103 and step.travel[0] == (0.0, 0.0)
+        assert step.travel[40 // 2 - 1] == (0.0, 0.0) and step.travel[-1] == (x, -525.0)
+        assert step.spreads == (p3motion.Spread(total, (40.0, 160.0)),)
+
+
+def test_zinogre_tumbles_turn_by_the_donors_totals(plans):
+    assert step_of(plans(7, 66), 236).spreads == (p3motion.Spread(0x2666, (60.0, 98.0)),)
+    assert step_of(plans(7, 66), 236).travel[-1] == (0.0, -116.0)
+    roll = step_of(plans(7, 87), 248)
+    assert roll.spreads == (p3motion.Spread(-0x4CCD, (26.0, 64.0)),)
+    assert roll.travel[-1] == pytest.approx((52, 232), abs=0.5)
+
+
+def test_a_step_without_code_motion_carries_none(plans):
+    for s in plans(7, 22).steps[:1]:
+        assert (s.travel, s.lift, s.lunge, s.spreads) == ((), (), None, ())

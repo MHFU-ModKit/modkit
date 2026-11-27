@@ -11,8 +11,10 @@ would move one part. A manifest clip with a `slot` pins MHP3rd clip `source` (de
 in that entry; the clip the packer had there takes the entry the pin freed, so a pin moves only
 the clips it touches. A manifest clip without one only names its clip. One with a `start` pins
 only those frames of its source, so a source can fill several entries; its pins free its packer
-entry once, and the other clips they displace go to free entries. What fills the entries left
-over is `motion.build`'s.
+entry once, and the other clips they displace go to free entries. A clip with a `lift` is a copy
+of its source for a jump (`brain.own` makes them): it takes the entry its `slot` names and displaces
+nothing, its source keeping its own; `spare` lists the entries that can take one. What fills the
+entries left over is `motion.build`'s.
 """
 
 from __future__ import annotations
@@ -58,6 +60,8 @@ class Layout:
     """Entry -> its clip's frames; the build sets it."""
     cuts: dict[int, tuple[int, int]] = field(default_factory=dict)
     """Entry -> `(start, frames)` of the source it holds; an entry not here holds all of it."""
+    lifts: dict[int, tuple[float, ...]] = field(default_factory=dict)
+    """Entry -> the height over rest its cut's joint 0 gains at each of its clip frames."""
     ids: dict[int, int] = field(init=False, repr=False, compare=False)
     """MHP3rd clip id -> executor entry; a cut source's first cut."""
 
@@ -116,6 +120,7 @@ def plan(
     part = partial(host, cap)
     pins: dict[int, int] = {}
     cuts: dict[int, tuple[int, int]] = {}
+    copies: dict[int, tuple[str, manifest.Clip]] = {}
     for name, c in sorted(clips.items()):
         where = f"clips.{name}"
         if c.id not in ids:
@@ -126,6 +131,9 @@ def plan(
             raise LayoutError(f"{where}: entry {c.slot} is past the host's {cap}")
         if c.slot in part:
             raise LayoutError(f"{where}: the host plays entry {c.slot} on some body parts only")
+        if c.lift is not None:
+            copies[c.slot] = name, c
+            continue
         pins[c.slot] = c.id
         if c.cut is not None:
             cuts[c.slot] = c.cut
@@ -135,17 +143,20 @@ def plan(
     pinned = set(pins.values())
     entries = dict(pins)
     entries.update((e, cid) for e, cid in packed.items() if e not in pins and cid not in pinned)
+    for e, (name, _) in copies.items():
+        if e in entries:
+            raise LayoutError(f"clips.{name}: entry {e} holds clip {entries[e]}")
     displaced = []
     for e in sorted(pins):
         cid = packed.get(e)
         if cid is None or cid in pinned:
             continue
         freed = _freed(e, pins, home)
-        if freed is None or freed in entries:
+        if freed is None or freed in entries or freed in copies:
             displaced.append(cid)
         else:
             entries[freed] = cid
-    free = iter(_free(entries.keys() | part, cap, asked))
+    free = iter(_free(entries.keys() | part | copies.keys(), cap, asked))
     unplaced: list[int] = []
     for cid in [*displaced, *(c for c in left if c not in pinned)]:
         to = next(free, None)
@@ -153,8 +164,37 @@ def plan(
             unplaced.append(cid)
         else:
             entries[to] = cid
+    lifts = {}
+    for e, (_, c) in copies.items():
+        entries[e] = c.id
+        if c.cut is not None:
+            cuts[e] = c.cut
+        assert c.lift is not None
+        lifts[e] = tuple(c.lift)
     placed = dict(sorted(entries.items()))
-    return Layout(placed, frozenset(pins), cap, part, tuple(unplaced), cuts=cuts)
+    return Layout(
+        placed,
+        frozenset([*pins, *copies]),
+        cap,
+        part,
+        tuple(unplaced),
+        cuts=cuts,
+        lifts=lifts,
+    )
+
+
+def spare(
+    clips: Mapping[str, manifest.Clip], ids: Collection[int], host: AnimPack, species: int
+) -> list[int]:
+    """The entries `clips` leave free for a lifted copy to take, those the host does not fill
+    first (its own brain asks for those): the layout of `clips` without their copies, less every
+    entry it holds."""
+    kept = {n: c for n, c in clips.items() if c.lift is None}
+    held = plan(kept, ids, host, species)
+    asked = set(filled(host))
+    taken = held.entries.keys() | held.partial
+    free = [e for e in range(held.capacity) if e not in taken]
+    return sorted(free, key=lambda e: (e in asked, e))
 
 
 def _free(taken: Collection[int], cap: int, asked: Collection[int]) -> list[int]:
@@ -196,7 +236,8 @@ def pinned(m: manifest.Manifest) -> Layout:
     """The manifest's pins alone: all that is known of a layout without the donor and host."""
     pins = {c.slot: c for c in m.clips.values() if c.slot is not None}
     cuts = {e: c.cut for e, c in pins.items() if c.cut is not None}
-    return Layout({e: c.id for e, c in pins.items()}, cuts=cuts)
+    lifts = {e: tuple(c.lift) for e, c in pins.items() if c.lift is not None}
+    return Layout({e: c.id for e, c in pins.items()}, cuts=cuts, lifts=lifts)
 
 
 def where(c: manifest.Clip, ids: Mapping[int, int]) -> int | None:
@@ -223,8 +264,8 @@ def clips(placed: Layout, donor: Mapping[int, Clip]) -> dict[int, Clip]:
 
 
 def holder(m: manifest.Manifest, cid: int) -> str | None:
-    """The name of the manifest clip that names donor clip `cid`."""
-    return next((n for n, c in m.clips.items() if c.id == cid), None)
+    """The name of the manifest clip that names donor clip `cid`, a lifted copy of it apart."""
+    return next((n for n, c in m.clips.items() if c.id == cid and c.lift is None), None)
 
 
 def name_clip(m: manifest.Manifest, name: str, cid: int) -> None:

@@ -68,8 +68,8 @@ def run(args: argparse.Namespace) -> int:
 
 
 def describe(m: manifest.Manifest, name: str, slot: int | None, shared: str | None = None) -> str:
-    """One derived move: its slot, clip, frames, length and steer, the pair it comes from, then its
-    attacks. `shared` is the head of an earlier chain that already holds it."""
+    """One derived move: its slot, clip, frames, length, steer and motion by code, the pair it comes
+    from, then its attacks. `shared` is the head of an earlier chain that already holds it."""
     mv = m.moves[name]
     clip = m.clips[mv.clip] if mv.clip is not None else None
     head = f"  {name} (slot {slot})  clip {clip.id if clip else mv.anim} {mv.clip}"
@@ -81,6 +81,15 @@ def describe(m: manifest.Manifest, name: str, slot: int | None, shared: str | No
     if s.turn == "hunter":
         window = "" if s.window is None else f" in frames {s.window[0]}-{s.window[1]}"
         head += f"  turns to the hunter at {s.rate or 'the host charge'}{window}"
+    if s.turn == "fixed":
+        head += f"  turns {s.angle:g} degrees" + (f" in frames {s.window}" if s.window else "")
+    if mv.travel:
+        x, z = mv.travel[-1]
+        head += f"  travels {x:g}, {z:g} over {len(mv.travel)} samples"
+    if mv.lunge is not None:
+        head += f"  lunges {mv.lunge.base:g} to {mv.lunge.base + mv.lunge.range:g}"
+    if clip is not None and clip.lift is not None:
+        head += f"  rises {max(clip.lift, key=abs):+g}"
     if mv.label:
         head += f"  ({mv.label})"
     if shared is not None:
