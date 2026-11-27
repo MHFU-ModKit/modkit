@@ -618,6 +618,38 @@ def test_steer_window_reaches_the_registry(lua: Any) -> None:
     lua.execute(STEER_WINDOW)
 
 
+STEER_TRAVEL = """
+local SEAM = { moves = {} }
+function mhfu.em_installed() return true end
+function mhfu.em_move(slot, t) SEAM.moves[slot] = t; return true end
+function mhfu.em_moves_clear() SEAM.moves = {}; return true end
+local P = require("mhfu_port")
+
+-- a moves module's travel, lunge and fixed turn window reach the registry as they are
+package.loaded.z_moves = {
+  moves = {
+    jump = { entry = 20, slot = 0, steer = {
+      turn = "fixed", total = 90, window = { 10, 40 }, travel = "0000000000040010",
+      lunge = { window = { 0, 32 }, near = 400, span = 1800, base = -700, range = 1800 },
+    } },
+  },
+  rules = {},
+}
+local z = P.define{ name = "z", species = 75 }
+z.ent = ENT
+ticks(1)
+local s = SEAM.moves[0].steer
+assert(s.turn == "fixed" and s.total == 90 and s.window[1] == 10 and s.window[2] == 40)
+assert(s.travel == "0000000000040010")
+assert(s.lunge.window[2] == 32 and s.lunge.near == 400 and s.lunge.base == -700)
+"""
+
+
+def test_steer_travel_reaches_the_registry(lua: Any) -> None:
+    memory(lua)
+    lua.execute(STEER_TRAVEL)
+
+
 FATIGUE = """
 local SEAM = { moves = {}, fatigue = "unset", calls = 0 }
 function mhfu.em_installed() return true end

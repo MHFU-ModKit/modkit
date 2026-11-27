@@ -150,6 +150,156 @@ def test_steer_window():
     assert "window" not in moves.lua(_m(), LAYOUT, {6})
 
 
+JUMP = (
+    OWN
+    + """
+[moves.jump]
+anim = 9
+carrier = [0, 1]
+travel = [[0, 0], [-2.5, 40.25], [3, 100]]
+[moves.jump.lunge]
+window = [0, 32]
+near = 400
+span = 1800
+base = -700
+range = 1800
+[moves.jump.steer]
+turn = "fixed"
+angle = 90.0
+window = [10, 40]
+"""
+)
+
+
+def test_travel_lunge_and_fixed_window():
+    text = moves.lua(_m(JUMP), LAYOUT, {6})
+    assert (
+        'steer = { walls = true, turn = "fixed", total = 90.0, window = { 10, 40 }, '
+        'travel = "00000000fff600a1000c0190", lunge = { window = { 0, 32 }, near = 400.0, '
+        "span = 1800.0, base = -700.0, range = 1800.0 } } }," in text
+    )
+    plain = moves.lua(_m(), LAYOUT, {6})
+    assert " travel = " not in plain and "lunge = { window" not in plain
+    assert "total = 90.0, frames = 50 }" in plain  # a fixed turn without a window: its frames
+
+
+def test_travel_the_move_player_can_carry_is_not_refused():
+    m = _m(JUMP)
+    assert moves.problems(m, LAYOUT, {6}) == []
+    m.moves["jump"].travel = [(0.0, 0.0)] * 51  # frames 0, 2 .. 100: the clip's last
+    assert moves.problems(m, LAYOUT, {6}) == []
+
+
+def _refused(**fields: object) -> list[str]:
+    m = _m(JUMP)
+    for k, v in fields.items():
+        setattr(m.moves["jump"], k, v)
+    return moves.problems(m, LAYOUT, {6})
+
+
+def test_travel_past_the_clip_is_refused():
+    found = _refused(travel=[(0.0, 0.0)] * 52)
+    assert found == ["moves.jump.travel: its 52 samples reach frame 102, past the clip's 100"]
+    found = _refused(travel=[(0.0, 0.0)] * 40, start=24)
+    assert "moves.jump.travel: its 40 samples reach frame 102, past the clip's 100" in found
+
+
+def test_travel_the_move_player_cannot_hold_is_refused():
+    n = moves.SAMPLES + 1
+    big = _refused(travel=[(0.0, 0.0)] * n)
+    assert f"moves.jump.travel: {n} travel samples, a move holds {moves.SAMPLES}" in big
+    assert "a travel sample holds" in _refused(travel=[(0.0, 9000.0)])[0]
+
+
+def test_a_lunge_outside_its_moves_span_is_refused():
+    lunge = _m(JUMP).moves["jump"].lunge
+    assert lunge is not None
+    for window, why in [((0, 101), "(0, 101) is outside [0, 100]"), ((5, 5), "not 0 <= lo < hi")]:
+        lunge.window = window
+        assert why in _refused(lunge=lunge)[0]
+    lunge.window = (0, 32)
+    assert "(0, 32) is outside [0, 30]" in _refused(lunge=lunge, stop=30)[0]
+    assert "(0, 32) is outside [24, 100]" in _refused(lunge=lunge, start=24)[0]
+    for field, value in (("span", 0.0), ("near", -1.0), ("base", float("inf"))):
+        lunge = _m(JUMP).moves["jump"].lunge
+        assert lunge is not None
+        setattr(lunge, field, value)
+        assert "span above 0" in _refused(lunge=lunge)[0]
+
+
+def test_a_fixed_window_outside_its_moves_span_is_refused():
+    m = _m(JUMP)
+    mv = m.moves["jump"]
+    mv.stop = 30
+    assert moves.problems(m, LAYOUT, {6}) == [
+        "moves.jump.lunge: window (0, 32) is outside [0, 30]",
+        "moves.jump.steer: fixed window (10, 40) is outside [0, 30]",
+    ]
+    mv.stop, mv.start = 0, 12
+    assert "fixed window (10, 40) is outside [12, 100]" in moves.problems(m, LAYOUT, {6})[1]
+    mv.start = 0
+    mv.steer.window = (10, 101)
+    assert "(10, 101) is outside [0, 100]" in moves.problems(m, LAYOUT, {6})[0]
+
+
+def test_hunter_windows_are_not_held_to_the_span():
+    """Only a fixed turn's window must lie inside [start, stop]: the hunter turn's is as before."""
+    m = _m(JUMP)
+    mv = m.moves["jump"]
+    mv.steer.turn, mv.steer.window, mv.steer.angle, mv.stop = "hunter", (10, 400), None, 30
+    assert moves.problems(m, LAYOUT, {6}) == ["moves.jump.lunge: window (0, 32) is outside [0, 30]"]
+
+
+def test_pools_of_samples_and_lunges():
+    lay = layout.Layout({}, frames={9: 400})
+    k = moves.SAMPLE_POOL // moves.SAMPLES + 1
+    many = "".join(
+        f"[moves.t{i}]\nanim = 9\ncarrier = [0, 1]\ntravel = {[[i + 1, 0]] * moves.SAMPLES}\n"
+        for i in range(k)
+    )
+    assert moves.problems(_m(many), lay, {6}) == [
+        f"moves: the own moves' travel needs {moves.SAMPLES * k} samples, the framework holds "
+        f"{moves.SAMPLE_POOL}"
+    ]
+    n = moves.LUNGES + 1
+    lunging = "".join(
+        f"[moves.l{i}]\nanim = 9\ncarrier = [0, 1]\n[moves.l{i}.lunge]\nwindow = [0, 9]\n"
+        f"near = {i + 1}\nspan = 1\nbase = 0\nrange = 1\n"
+        for i in range(n)
+    )
+    assert moves.problems(_m(lunging), lay, {6}) == [
+        f"moves: {n} lunges, the framework holds {moves.LUNGES}"
+    ]
+
+
+def test_runs_the_registry_holds_twice_count_once():
+    lay = layout.Layout({}, frames={9: 400})
+    k = max(moves.SAMPLE_POOL // moves.SAMPLES, moves.LUNGES) + 1
+    same = "".join(
+        f"[moves.t{i}]\nanim = 9\ncarrier = [0, 1]\ntravel = {[[1, 2]] * moves.SAMPLES}\n"
+        f"[moves.t{i}.lunge]\nwindow = [0, 9]\nnear = 1\nspan = 1\nbase = 0\nrange = 1\n"
+        for i in range(k)
+    )
+    assert moves.problems(_m(same), lay, {6}) == []
+    held = moves.pools(_m(same), lay)
+    assert (len(held.samples), len(held.lunges)) == (moves.SAMPLES, 1)
+
+
+def test_pools_place_a_run_where_the_pool_holds_it():
+    p = moves.Pools()
+    assert p.add([1, 2, 3], [(0, 0), (1, 1)], b"a") == (0, 0, 0)
+    assert p.add([1, 2, 3], [(0, 0), (1, 1)], b"a") == (0, 0, 0)
+    assert p.add([2, 3], [(1, 1)], b"b") == (1, 1, 1)
+    assert p.add([3, 4], [(0, 0), (2, 2)]) == (3, 2, None)
+    assert p.add([3], [(2, 2)], b"a") == (2, 3, 0)
+    assert p.add([], []) == (0, 0, None)
+    assert (p.keys, p.samples, p.lunges) == (
+        [1, 2, 3, 3, 4],
+        [(0, 0), (1, 1), (0, 0), (2, 2)],
+        [b"a", b"b"],
+    )
+
+
 def test_tip():
     tip = Tip(((46, 42), (47, 42), (48, 43)), (0.0, 0.0, -705.0))
     body = _body(moves.lua(_m(), LAYOUT, {6}, tip))
@@ -301,13 +451,17 @@ def test_check(extra, lay, known, why):
 
 
 def test_pool():
-    lay = layout.Layout(LAYOUT.entries, turns={46: travel.Turn(500, (0,) * 251, 0, None)})
     n = moves.POOL // 251 + 1
-    many = "".join(f"[moves.s{i}]\nclip = 'stamp'\n" for i in range(n))
+    lay = layout.Layout(
+        {}, turns={100 + i: travel.Turn(500, (i,) * 251, 0, None) for i in range(n)}
+    )
+    many = "".join(f"[moves.s{i}]\nanim = {100 + i}\ncarrier = [0, 1]\n" for i in range(n))
     with pytest.raises(
         ManifestError, match=f"need {251 * n} keys, the framework holds {moves.POOL}"
     ):
         moves.check(_m(many), lay)
+    twice = "".join(f"[moves.s{i}]\nanim = 100\ncarrier = [0, 1]\n" for i in range(n))
+    moves.check(_m(twice), lay)  # one turn run, held once
 
 
 def test_manifest_limits():

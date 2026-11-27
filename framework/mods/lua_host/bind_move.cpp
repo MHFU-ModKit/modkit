@@ -77,10 +77,24 @@ static int hex(int c)
     return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
 }
 
+/* the 16 bits in the 4 hex digits at c */
+static int hex16(lua_State *L, const char *c)
+{
+    int v = 0;
+    for (int j = 0; j < 4; j++) {
+        int d = hex(c[j]);
+        luaL_argcheck(L, d >= 0, 2, "steer.curve and steer.travel are hex digits");
+        v = v * 16 + d;
+    }
+    return v;
+}
+
 /* t.steer (mhfu/steer.h): turn = "still" | "hunter" | "away" | "fixed", rate (YAW units a
- * frame), window = { from, to } (clip frames the hunter and away turns apply in), total
- * (degrees) over frames, dir (degrees), walls, stuck = { main, sub, mode }, curve = the entry's
- * string in the port's turns module */
+ * frame), window = { from, to } (clip frames the hunter and away turns apply in, a fixed turn
+ * spreads across), total (degrees) over frames, dir (degrees), walls, stuck = { main, sub, mode },
+ * curve = the entry's string in the port's turns module, travel = the move's own travel as the
+ * port's moves module writes it (8 hex digits a sample: x then z, 16 bits each, in
+ * 1/STEER_TRAVEL_SCALE units), lunge = { window = { lo, hi }, near, span, base, range } */
 static void steer_of(lua_State *L, int t, mhfu_steer_spec_t *sp)
 {
     mhfu_steer_init_spec(sp);
@@ -122,14 +136,38 @@ static void steer_of(lua_State *L, int t, mhfu_steer_spec_t *sp)
     size_t n = 0;
     lua_getfield(L, s, "curve");
     const char *c = lua_isstring(L, -1) ? lua_tolstring(L, -1, &n) : NULL;
-    for (size_t i = 0; c && i + 4 <= n && sp->key_count < MHFU_STEER_KEYS; i += 4) {
-        int v = 0;
-        for (size_t j = 0; j < 4; j++) {
-            int d = hex(c[i + j]);
-            luaL_argcheck(L, d >= 0, 2, "steer.curve is hex digits, 4 a key");
-            v = v * 16 + d;
-        }
-        sp->keys[sp->key_count++] = (uint16_t)v;
+    for (size_t i = 0; c && i + 4 <= n && sp->key_count < MHFU_STEER_KEYS; i += 4)
+        sp->keys[sp->key_count++] = (uint16_t)hex16(L, c + i);
+    lua_pop(L, 1);
+    lua_getfield(L, s, "travel");
+    c = lua_isstring(L, -1) ? lua_tolstring(L, -1, &n) : NULL;
+    luaL_argcheck(L, !c || (n % 8 == 0 && n / 8 <= MHFU_STEER_SAMPLES), 2,
+                  "steer.travel is up to STEER_SAMPLES samples of 8 hex digits");
+    for (size_t i = 0; c && i < n; i += 8, sp->sample_count++) {
+        sp->samples[sp->sample_count].x = (int16_t)hex16(L, c + i);
+        sp->samples[sp->sample_count].z = (int16_t)hex16(L, c + i + 4);
+    }
+    lua_pop(L, 1);
+    if (lua_getfield(L, s, "lunge") == LUA_TTABLE) {
+        int l = lua_gettop(L);
+        luaL_argcheck(L, lua_getfield(L, l, "window") == LUA_TTABLE, 2,
+                      "steer.lunge needs a window = { lo, hi }");
+        int w = lua_gettop(L);
+        int lo = list_at(L, w, 1, 0), hi = list_at(L, w, 2, 0);
+        luaL_argcheck(L, lo >= 0 && lo < hi && hi <= 0xFFFF, 2,
+                      "steer.lunge.window is { lo, hi } with 0 <= lo < hi");
+        sp->lunge.lo = (uint16_t)lo;
+        sp->lunge.hi = (uint16_t)hi;
+        lua_pop(L, 1);
+        lua_getfield(L, l, "near");
+        sp->lunge.near = (float)luaL_optnumber(L, -1, 0);
+        lua_getfield(L, l, "span");
+        sp->lunge.span = (float)luaL_optnumber(L, -1, 0);
+        lua_getfield(L, l, "base");
+        sp->lunge.base = (float)luaL_optnumber(L, -1, 0);
+        lua_getfield(L, l, "range");
+        sp->lunge.range = (float)luaL_optnumber(L, -1, 0);
+        lua_pop(L, 4);
     }
     lua_pop(L, 2);
 }

@@ -160,6 +160,10 @@ class Clip:
     monster's +x, its left. None: the turn its own body makes (`mhfu_port.travel`)."""
     label: str = ""
     labelled_build: str | None = None
+    lift: list[float] | None = None
+    """Height over rest, one value per clip frame of the entry, added to joint 0's translation y
+    in the built entry (the engine puts the monster's Y back on the floor every frame): a derived
+    one-shot copy of its source, in an entry of its own."""
 
     @property
     def cut(self) -> tuple[int, int] | None:
@@ -210,7 +214,7 @@ class Steer:
 
     turn: Turn = "clip"
     """`clip` follows the clip's turn, `hunter` and `away` turn at `rate`, `fixed` turns
-    `angle` degrees over `frames` AI frames, `still` not at all."""
+    `angle` degrees over `frames` AI frames or across `window` by cursor, `still` not at all."""
     rate: int | None = None
     """YAW units an AI frame for `hunter` and `away`; None: the host charge's."""
     angle: float | None = None
@@ -219,7 +223,22 @@ class Steer:
     dir: float = 0.0
     """Degrees of the travel against the facing, which walls count as ahead (180: backwards)."""
     window: tuple[int, int] | None = None
-    """Clip frames `[from, to)` `hunter` and `away` turn in; None: the whole move."""
+    """Clip frames `[from, to)` `hunter` and `away` turn in, `fixed` turns across; None: the
+    whole move."""
+
+
+@dataclass
+class Lunge:
+    """Travel toward the hunter across clip frames `window` (lo, hi]: none while the hunter is
+    nearer than `near` at the move's first playing frame, else `base + range * min((d - near) /
+    span, 1)` units along the bearing to it then, spread over the window by cursor. In world
+    units, not scaled by the monster's size."""
+
+    window: tuple[int, int]
+    near: float
+    span: float
+    base: float
+    range: float
 
 
 @dataclass
@@ -259,6 +278,12 @@ class Move:
     stop: int = 0
     """Clip frame the move ends at, when the cursor reaches it; 0: where `length` or the clip's
     end says."""
+    travel: list[tuple[float, float]] | None = None
+    """An own move's travel by code: cumulative `(x, z)` every 2 clip frames from `start`, in the
+    monster's frame at its first playing frame (x its +x, its left; z forward). Each AI frame it
+    moves by the curve's change since the last cursor, turned by YAW then and scaled by its size;
+    walls and the floor apply as to root motion."""
+    lunge: Lunge | None = None
     carrier: tuple[int, int] | None = None
     host_attacks: bool = False
     label: str = ""
@@ -676,12 +701,21 @@ def _own_move(mv: Move, w: str) -> None:
     s = mv.steer
     fixed = s.turn == "fixed"
     _need(fixed == (s.angle is not None), f"{w}.steer", "angle goes with turn = fixed")
-    _need(fixed == (s.frames is not None), f"{w}.steer", "frames goes with turn = fixed")
+    _need(fixed or s.frames is None, f"{w}.steer", "frames goes with turn = fixed")
+    _need(
+        not fixed or (s.frames is None) != (s.window is None),
+        f"{w}.steer",
+        "turn = fixed takes frames or window",
+    )
     _need(s.frames is None or 1 <= s.frames <= 0x7FFF, f"{w}.steer", "frames is 1..32767")
     _need(s.angle is None or abs(s.angle) < 360, f"{w}.steer", "angle is under one turn")
     _need(s.rate is None or 1 <= s.rate <= 0xFFFF, f"{w}.steer", "rate is 1..65535")
     if s.window is not None:
-        _need(s.turn in ("hunter", "away"), f"{w}.steer", "window goes with turn = hunter or away")
+        _need(
+            s.turn in ("hunter", "away", "fixed"),
+            f"{w}.steer",
+            "window goes with turn = hunter, away or fixed",
+        )
         _need(0 <= s.window[0] < s.window[1], f"{w}.steer", "window is 0 <= from < to")
 
 

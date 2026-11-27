@@ -61,7 +61,7 @@ def test_the_cli_lists_the_chains_across_hand_overs(data, capsys):
     path = PORTS / "zinogre.toml"
     code = main(["own", str(path), "--data", str(data.fu.root), "--p3rd-data", str(data.p3rd.root)])
     out = capsys.readouterr().out
-    assert code == 0 and "39 pairs, 93 own moves of 96" in out
+    assert code == 0 and f"39 pairs, 93 own moves of {manifest.OWN_MOVES}" in out
     lines = out.splitlines()
     head = lines.index("7,12  p3_7_12 + 3 more")
     chain = [line.split()[0] for line in lines[head + 1 :] if line.startswith("  p3_")][:4]

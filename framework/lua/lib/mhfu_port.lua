@@ -242,7 +242,8 @@ P.is_own = is_own
 --           an own move (port:move) and takes the registry slot of its `slot` (the manifest's
 --           module numbers its own moves, which the brain splice's `enter` names), else the
 --           first free one by name. Its `steer` goes to the move player as it is (mhfu.MoveSteer:
---           turn, rate, `window = { from, to }` the clip frames a hunter or away turn keeps to).
+--           turn, rate, `window = { from, to }` the clip frames a turn keeps to or a fixed turn
+--           spreads across, `travel` the move's own travel by code, `lunge` toward the hunter).
 --           Default: the manifest's (P.behaviour)
 --   rules   port:rule{} specs installed with the port; default: the manifest's
 --   vars, signals  name -> index of the board's counters and signals (port:var, port:fire); default:
@@ -747,7 +748,8 @@ function Port:_arm_native()
       if n ~= nil then
         made = made + 1
         if not mhfu.em_move(k, self:_seam_move(n)) then
-          log("[port:%s] own move '%s' not registered: no room for its turn keys", self.name, n)
+          log("[port:%s] own move '%s' not registered: no room for its turn keys, travel or lunge",
+              self.name, n)
         end
       end
     end

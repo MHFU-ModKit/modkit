@@ -10,6 +10,10 @@
     addresses.FREE_ROAM_SCENES    # a set of addresses, a frozenset
     addresses.OWN_MOVE_MAIN       # a constant: a number C, Lua and Python agree on, no address
 
+A struct's `size` may be "auto" and a field's `offset` "next": the file then says the layout the
+way C lays it out (each field aligned to its type, the size rounded to the largest alignment), and
+an array's `[n]` may name a `[const]`, so a table's capacity is one number.
+
 The C header, the Lua table and the C data lua_host builds mhfu.addr from are generated from
 the same file:
 
@@ -36,8 +40,12 @@ RAM = range(0x0800_0000, 0x0C00_0000)  # noaddr: user RAM and the extra-RAM wind
 _NAME = re.compile(r"[A-Z][A-Z0-9_]*\Z")
 _LOWER = re.compile(r"[a-z][a-z0-9_]*\Z")
 _BASE_TYPES = frozenset("u8 u16 u32 s8 s16 s32 f32 vec3 ptr vtable fn code bytes".split())
-# a base type or a struct name, optionally [n] of them
-_TYPE = re.compile(r"(\w+)(?:\[([1-9][0-9]*)\])?\Z")
+# a base type or a struct name, optionally [n] of them, n a number or a [const]'s name
+_TYPE = re.compile(r"(\w+)(?:\[([1-9][0-9]*|[A-Z][A-Z0-9_]*)\])?\Z")
+# the bytes of a base type that a field can have; its alignment is its size, a vec3's 4
+_SIZES = {"u8": 1, "s8": 1, "u16": 2, "s16": 2, "u32": 4, "s32": 4, "f32": 4, "vec3": 12}
+_SIZES |= {"ptr": 4, "vtable": 4, "fn": 4, "code": 4}
+AUTO, NEXT = "auto", "next"
 
 
 class _Named(int):
@@ -56,7 +64,7 @@ class _Named(int):
     def count(self) -> int | None:
         """The n of a `type[n]` entry; None for a single value."""
         m = _TYPE.match(self.type)
-        return int(m[2]) if m and m[2] else None
+        return int(m[2]) if m and m[2] and m[2].isdigit() else None
 
 
 class Address(_Named):
@@ -161,6 +169,20 @@ def parse(data: dict[str, Any]) -> Table:
     if unknown:
         problems.append(f"unknown top-level tables: {sorted(unknown)}")
 
+    consts: dict[str, Const] = {}
+    for name, entry in data.get("const", {}).items():
+        where = f"const.{name}"
+        if not _NAME.match(name):
+            problems.append(f"{where}: names are UPPER_SNAKE_CASE")
+        if not isinstance(entry, dict) or set(entry) != {"value", "doc"}:
+            problems.append(f"{where}: expects exactly value and doc")
+            continue
+        value = entry["value"]
+        if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 0xFFFF_FFFF:
+            problems.append(f"{where}: value is an integer from 0 to 0xFFFFFFFF")
+        elif _doc_ok(where, entry["doc"], problems):
+            consts[name] = Const(value, name, "u32", entry["doc"])
+
     addresses: dict[str, Address] = {}
     by_value: dict[int, str] = {}
     for name, entry in data.get("address", {}).items():
@@ -172,9 +194,11 @@ def parse(data: dict[str, Any]) -> Table:
             elif value in by_value:
                 problems.append(f"{where}: 0x{value:08X} is already {by_value[value]}")
             by_value.setdefault(value, name)
-            addresses[name] = Address(value, name, entry["type"], entry["doc"])
+            type_ = _counted(where, entry["type"], consts, problems)
+            addresses[name] = Address(value, name, type_, entry["doc"])
 
-    structs: dict[str, Struct] = {}
+    raw: dict[str, dict[str, Any]] = {}
+    raw_fields: dict[str, dict[str, dict[str, Any]]] = {}
     for name, entry in data.get("struct", {}).items():
         where = f"struct.{name}"
         if not _NAME.match(name):
@@ -183,20 +207,33 @@ def parse(data: dict[str, Any]) -> Table:
             problems.append(f"{where}: expects doc, fields and an optional size or stride")
             continue
         size, stride = entry.get("size"), entry.get("stride")
-        if size is not None and (not isinstance(size, int) or size <= 0):
-            problems.append(f"{where}: size must be a positive integer")
-            size = None
+        if size is not None and size != AUTO and (not isinstance(size, int) or size <= 0):
+            problems.append(f'{where}: size must be a positive integer or "{AUTO}"')
+            entry = {**entry, "size": None}
         if stride is not None and (not isinstance(stride, int) or stride <= 0):
             problems.append(f"{where}: stride must be a positive integer")
-            stride = None
+            entry = {**entry, "stride": None}
         _doc_ok(where, entry.get("doc"), problems)
-        fields: dict[str, Field] = {}
-        by_offset: dict[int, str] = {}
+        raw[name] = entry
+        raw_fields[name] = {}
         for fname, fentry in entry.get("fields", {}).items():
             fwhere = f"{where}.{fname}"
-            if not _entry_ok(fwhere, fname, fentry, "offset", problems):
+            if _entry_ok(fwhere, fname, fentry, "offset", problems, NEXT):
+                type_ = _counted(fwhere, fentry["type"], consts, problems)
+                raw_fields[name][fname] = {**fentry, "type": type_}
+
+    layout = _Layout(raw, raw_fields, problems)
+    structs: dict[str, Struct] = {}
+    for name, entry in raw.items():
+        where = f"struct.{name}"
+        size, _, offsets = layout.of(name)
+        fields: dict[str, Field] = {}
+        by_offset: dict[int, str] = {}
+        for fname, fentry in raw_fields[name].items():
+            fwhere = f"{where}.{fname}"
+            offset = offsets.get(fname)
+            if offset is None:
                 continue
-            offset = fentry["offset"]
             if offset < 0 or (size is not None and offset >= size):
                 problems.append(f"{fwhere}: offset 0x{offset:X} is outside the struct")
             elif offset in by_offset:
@@ -205,7 +242,7 @@ def parse(data: dict[str, Any]) -> Table:
             fields[fname] = Field(offset, fname, fentry["type"], fentry["doc"])
         if not fields:
             problems.append(f"{where}: has no fields")
-        structs[name] = Struct(name, entry.get("doc", ""), fields, size, stride)
+        structs[name] = Struct(name, entry.get("doc", ""), fields, size, entry.get("stride"))
 
     typed: list[tuple[str, _Named]] = [(f"address.{n}", a) for n, a in addresses.items()]
     typed += [(f"struct.{s.name}.{n}", f) for s in structs.values() for n, f in s.fields.items()]
@@ -257,20 +294,6 @@ def parse(data: dict[str, Any]) -> Table:
         elif _doc_ok(where, entry["doc"], problems):
             sets[name] = AddressSet(tuple(addresses[n] for n in of), name, entry["doc"])
 
-    consts: dict[str, Const] = {}
-    for name, entry in data.get("const", {}).items():
-        where = f"const.{name}"
-        if not _NAME.match(name):
-            problems.append(f"{where}: names are UPPER_SNAKE_CASE")
-        if not isinstance(entry, dict) or set(entry) != {"value", "doc"}:
-            problems.append(f"{where}: expects exactly value and doc")
-            continue
-        value = entry["value"]
-        if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 0xFFFF_FFFF:
-            problems.append(f"{where}: value is an integer from 0 to 0xFFFFFFFF")
-        elif _doc_ok(where, entry["doc"], problems):
-            consts[name] = Const(value, name, "u32", entry["doc"])
-
     # every generated name (Python and Lua namespace, C macro) must be unique
     for name in addresses.keys() & structs.keys():
         problems.append(f"{name}: is both an address and a struct")
@@ -302,14 +325,16 @@ def parse(data: dict[str, Any]) -> Table:
     return Table(addresses, structs, enums, sets, consts)
 
 
-def _entry_ok(where: str, name: str, entry: Any, key: str, problems: list[str]) -> bool:
+def _entry_ok(
+    where: str, name: str, entry: Any, key: str, problems: list[str], word: str | None = None
+) -> bool:
     if not _NAME.match(name):
         problems.append(f"{where}: names are UPPER_SNAKE_CASE")
     if not isinstance(entry, dict) or set(entry) != {key, "type", "doc"}:
         problems.append(f"{where}: expects exactly {key}, type and doc")
         return False
-    if not isinstance(entry[key], int):
-        problems.append(f"{where}: {key} must be an integer")
+    if not isinstance(entry[key], int) and entry[key] != word:
+        problems.append(f"{where}: {key} must be an integer" + (f' or "{word}"' if word else ""))
         return False
     t = entry["type"]
     if (
@@ -320,6 +345,84 @@ def _entry_ok(where: str, name: str, entry: Any, key: str, problems: list[str]) 
         problems.append(f"{where}: unknown type {t!r}")
         return False
     return _doc_ok(where, entry["doc"], problems)
+
+
+def _counted(where: str, type_: str, consts: dict[str, Const], problems: list[str]) -> str:
+    """`type_` with a const's name in its `[n]` replaced by the number."""
+    m = _TYPE.match(type_)
+    if not m or not m[2] or m[2].isdigit():
+        return type_
+    if not consts.get(m[2]):
+        problems.append(f"{where}: [{m[2]}] is not a const above zero")
+        return type_
+    return f"{m[1]}[{int(consts[m[2]])}]"
+
+
+class _Layout:
+    """The size, alignment and field offsets of the file's structs, worked out on demand: a
+    field at "next" follows the one before it as C places it, a struct of size "auto" ends where
+    its last field does, rounded to its largest alignment."""
+
+    def __init__(
+        self,
+        entries: dict[str, dict[str, Any]],
+        fields: dict[str, dict[str, dict[str, Any]]],
+        problems: list[str],
+    ) -> None:
+        self.entries, self.fields, self.problems = entries, fields, problems
+        self.done: dict[str, tuple[int | None, int, dict[str, int]]] = {}
+        self.busy: set[str] = set()
+
+    def of(self, name: str) -> tuple[int | None, int, dict[str, int]]:
+        """(size or None, alignment, offset by field) of struct `name`."""
+        if name in self.done:
+            return self.done[name]
+        if name in self.busy:
+            self.problems.append(f"struct.{name}: contains itself")
+            return None, 1, {}
+        self.busy.add(name)
+        end, align = 0, 1
+        offsets: dict[str, int] = {}
+        unsized: list[str] = []
+        for fname, fentry in self.fields[name].items():
+            where = f"struct.{name}.{fname}"
+            have = self.sized(fentry["type"])
+            offset = fentry["offset"]
+            if offset == NEXT:
+                if have is None or unsized:
+                    why = "a type with a size" if have is None else f"{unsized[-1]} to have one"
+                    self.problems.append(f'{where}: offset "{NEXT}" needs {why}')
+                    continue
+                offset = -(-end // have[1]) * have[1]
+            offsets[fname] = offset
+            if have is None:
+                unsized.append(fname)
+            else:
+                end, align = max(end, offset + have[0]), max(align, have[1])
+        size = self.entries[name].get("size")
+        if size == AUTO:
+            if unsized:
+                self.problems.append(f'struct.{name}: size "{AUTO}" needs a size for {unsized}')
+            size = -(-end // align) * align
+        self.busy.discard(name)
+        self.done[name] = size, align, offsets
+        return self.done[name]
+
+    def sized(self, type_: str) -> tuple[int, int] | None:
+        """(bytes, alignment) of a field's type, None where it has no size."""
+        m = _TYPE.match(type_)
+        if not m:
+            return None
+        if m[1] in _SIZES:
+            size, align = _SIZES[m[1]], 4 if m[1] == "vec3" else _SIZES[m[1]]
+        elif m[1] in self.entries:
+            size_, align = self.of(m[1])[:2]
+            if size_ is None:
+                return None
+            size = size_
+        else:
+            return None
+        return size * (int(m[2]) if m[2] and m[2].isdigit() else 1), align
 
 
 def _doc_ok(where: str, doc: Any, problems: list[str]) -> bool:

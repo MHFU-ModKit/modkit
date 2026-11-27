@@ -37,6 +37,11 @@ mhfu addresses c -o addresses.gen.h      # MHFU_SCREEN_STATE, MHFU_ENTITY_HP, ..
 mhfu addresses lua -o addresses.gen.lua  # mhfu.addr.SCREEN_STATE, mhfu.addr.ENTITY.HP, ...
 ```
 
+A struct's `size` may be `"auto"` and a field's `offset` `"next"`: C's layout (each field aligned to
+its type, the size rounded to the largest alignment) is then worked out, and an array's `[n]` may
+name a `[const]`, so a capacity (`OWN_MOVES`, a pool) is one number and the offsets after it
+follow. The C structs that mirror such a layout `static_assert` against it.
+
 Product code in this repository never writes an address as a number: a pre-commit check rejects
 one. For a value that only looks like an address, such as a MIPS jump opcode, end the line with
 a `noaddr` comment.

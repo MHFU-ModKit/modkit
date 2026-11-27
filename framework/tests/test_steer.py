@@ -63,6 +63,17 @@ def test_bearing(lib: ctypes.CDLL) -> None:
     assert lib.mhfu_steer_bearing(0, 0) == 0
 
 
+def test_sincos(lib: ctypes.CDLL) -> None:
+    sn, cs = ctypes.c_float(), ctypes.c_float()
+    lib.mhfu_steer_sincos.argtypes = [ctypes.c_uint16, ctypes.c_void_p, ctypes.c_void_p]
+    worst = 0.0
+    for yaw in range(TURN):
+        lib.mhfu_steer_sincos(yaw, ctypes.byref(sn), ctypes.byref(cs))
+        th = yaw / TURN * math.tau
+        worst = max(worst, abs(sn.value - math.sin(th)), abs(cs.value - math.cos(th)))
+    assert worst < 1e-6
+
+
 def test_toward(lib: ctypes.CDLL) -> None:
     assert lib.mhfu_steer_toward(0x8000, 0x9000, 64) == 0x8040
     assert lib.mhfu_steer_toward(0x8000, 0x7000, 64) == 0x7FC0

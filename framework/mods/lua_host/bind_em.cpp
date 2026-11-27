@@ -275,6 +275,8 @@ int lb_em_moves_status(lua_State *L)
     SF_INT("plays", r->plays);
     SF_INT("chained", r->chained);
     SF_INT("keys", r->key_top);
+    SF_INT("samples", r->sample_top);
+    SF_INT("lunges", r->lunge_top);
 #undef SF_INT
     return 1;
 }

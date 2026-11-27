@@ -10,7 +10,7 @@ from mhfu.live import monster_events
 from mhfu.memory import Image, Space
 
 MOVES = 0x09DE5900  # where the move player's block sits; noaddr
-EVENTS = 0x09DE6100  # noaddr
+EVENTS = MOVES + 0x2000
 ENT = 0x090C1B00  # noaddr
 
 

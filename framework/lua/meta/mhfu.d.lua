@@ -669,12 +669,22 @@ function mhfu.move_block() end
 ---@field curve? string YAW while the clip plays: the entry's string in `<port>_turns.lua`
 ---@field turn? "still"|"hunter"|"away"|"fixed" also: toward or away from the hunter at `rate`, or `total` over `frames`
 ---@field rate? integer YAW units an AI frame toward or away, default 64 (the Tigrex charge's)
----@field window? integer[] { from, to }: clip frames, 0 <= from < to, in which "hunter" and "away" turn (the donor turns inside a window); default the whole move
+---@field window? integer[] { from, to }: clip frames, 0 <= from < to, in which "hunter" and "away" turn (the donor turns inside a window), or across which "fixed" spreads `total` by the clip cursor; default the whole move
 ---@field total? number degrees for "fixed", positive the way YAW grows
----@field frames? integer AI frames "fixed" spreads `total` over
+---@field frames? integer AI frames "fixed" spreads `total` over, without a `window`
 ---@field walls? boolean a wall ahead ends the move; a class-2 one enters `stuck`
 ---@field dir? number degrees of the travel against YAW, which sectors count as ahead; default 0
 ---@field stuck? integer[] { main, sub, mode } entered on a class-2 wall, default { 0, 6, 1 }
+---@field travel? string the move's own travel by code, as the port's moves module writes it: 8 hex digits a sample, x then z as 16 bits each in 1/mhfu.addr.STEER_TRAVEL_SCALE world units, cumulative, every mhfu.addr.STEER_KEY_STEP clip frames from the move's `start`, at most mhfu.addr.STEER_SAMPLES; each AI frame moves the monster by the curve's change since the cursor's last frame, in its frame at the first playing frame (x its left, z forward), scaled by its size, held past the last sample
+---@field lunge? mhfu.MoveLunge travel toward the hunter, by the hunter's distance when the move begins
+
+---A move's lunge (mhfu.MoveSteer.lunge): over the clip frames `window` (lo, hi] the monster moves 0 units while the hunter's XZ distance `d` is under `near`, else `base + range * min((d - near) / span, 1)` along the bearing to the hunter at the first playing frame, in world axes, spread by the clip cursor and not scaled by the size.
+---@class mhfu.MoveLunge
+---@field window integer[] { lo, hi }: clip frames, 0 <= lo < hi
+---@field near? number default 0
+---@field span? number default 0, which counts as the whole range
+---@field base? number default 0, negative away from the hunter
+---@field range? number default 0
 
 ---What `mhfu.move_status()` returns.
 ---@class mhfu.MoveStatus
@@ -713,7 +723,8 @@ function mhfu.move_block() end
 -- it ends and names it (`after`), or when a rule says (EmRule.play_move).
 
 ---Own move slot 0..mhfu.addr.EM_MOVES.MOVES_COUNT-1 plays `spec`; `spec.after` is the slot played when it ends on its clip, its
----length, its stop or a wall. False for a bad slot or no room left for its turn keys.
+---length, its stop or a wall. False for a bad slot or no room left for its turn keys, travel
+---samples or lunge.
 ---@param slot integer
 ---@param spec mhfu.OwnMove
 ---@return boolean
@@ -751,6 +762,8 @@ function mhfu.em_moves_status() end
 ---@field plays integer own moves started
 ---@field chained integer of them by `after`
 ---@field keys integer turn keys in use
+---@field samples integer travel samples in use
+---@field lunges integer lunges in use
 
 -- fatigue (bind_em.cpp, include/mhfu/fatigue.h) ---------------------------------------------------
 -- MHFU has no fatigue and its AI script cannot count. A stamina for the wrapped species' monster is
