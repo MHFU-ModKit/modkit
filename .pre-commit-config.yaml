@@ -50,6 +50,12 @@ repos:
         types_or: [python, pyi]
         pass_filenames: false
       # the pattern is matched against UTF-8 bytes: the first three branches are emoji ranges
+      - id: conventional-commit
+        name: commit message is type(scope), summary, with a registry scope
+        language: system
+        entry: uv run --frozen modkit-ci commit-msg
+        stages: [commit-msg]
+        always_run: true
       - id: comment-style
         name: comments say what and why (no emoji, dates, retractions, Phase N, #NN)
         language: pygrep
