@@ -7,11 +7,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_HEADER = re.compile(
-    r"^(?P<type>[A-Za-z]+)(?:\((?P<scopes>[^()]*)\))?(?P<bang>!)?: (?P<subject>.+)$"
-)
-_BREAKING = re.compile(r"^BREAKING[ -]CHANGE: ", re.MULTILINE)
-_AUTOSQUASH = ("fixup!", "squash!", "amend!")
+from conventional_pre_commit.format import ConventionalCommit
+
+# release-please's breaking rules, read wide: a note keyword at a line start (its parser's notes
+# pattern, any case), or the hyphen form anywhere in the body (commit.ts)
+_NOTE = re.compile(r"^[\s|*]*BREAKING[ -]CHANGE[:\s]", re.MULTILINE | re.IGNORECASE)
+_HYPHEN = re.compile(r"BREAKING-CHANGE:")
 
 
 @dataclass(frozen=True)
@@ -24,22 +25,18 @@ class Header:
 
 def header(message: str) -> Header | None:
     """The parsed first line, or None when it is not `type(scope)!: subject`."""
-    match = _HEADER.match(message.split("\n", 1)[0])
-    if match is None:
+    match = ConventionalCommit(message.split("\n", 1)[0], scope_optional=True).match()
+    if match is None or not match["delim"] or not (match["subject"] or "").strip():
         return None
-    raw = match["scopes"]
-    scopes = tuple(s.strip() for s in raw.split(",") if s.strip()) if raw else ()
-    return Header(match["type"], scopes, bool(match["bang"]), match["subject"])
+    raw = match["scope"].strip("()")
+    scopes = tuple(s.strip() for s in raw.split(",") if s.strip())
+    return Header(match["type"], scopes, "!" in match["delim"], match["subject"].strip())
 
 
 def is_breaking(message: str) -> bool:
-    """Header bang, or a line starting `BREAKING CHANGE: ` or `BREAKING-CHANGE: `."""
+    """Header bang, or a body that release-please reads as a breaking change."""
     parsed = header(message)
     if parsed is not None and parsed.bang:
         return True
-    return _BREAKING.search(message.split("\n", 1)[1] if "\n" in message else "") is not None
-
-
-def is_autosquash(message: str) -> bool:
-    """A `fixup!`, `squash!` or `amend!` commit."""
-    return message.startswith(_AUTOSQUASH)
+    body = message.split("\n", 1)[1] if "\n" in message else ""
+    return _NOTE.search(body) is not None or _HYPHEN.search(body) is not None
