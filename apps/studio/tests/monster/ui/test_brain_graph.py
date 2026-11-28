@@ -586,12 +586,12 @@ def test_a_menu_without_a_file_that_takes_edits_only_goes_places(
     assert rig.ws.species_doc is not None and not rig.ws.species_doc.dirty
 
 
-def test_keys_delete_and_move(rig: Rig) -> None:
+def test_keys_delete_and_move(rig: Rig, press: Any) -> None:
     p = rig.program
     rig.show()
     pick, hub = pick_id(p), hub_id(p)
     rig.click(pick)
-    QTest.keyClick(rig.view.viewer, Qt.Key.Key_Up, Qt.KeyboardModifier.AltModifier)
+    press(rig.view.viewer, Qt.Key.Key_Up, Qt.KeyboardModifier.AltModifier)
     rig.qtbot.wait(30)
     settle(rig.ws, rig.clock)
     rig.pane.sync()
