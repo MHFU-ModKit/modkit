@@ -57,3 +57,8 @@ def test_summary_table(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 def test_summary_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
     summary("API", [F])
+
+
+def test_annotate_plain_off_runner(capsys: pytest.CaptureFixture[str]) -> None:
+    annotate([F], "error")
+    assert capsys.readouterr().err.startswith("error: mhfu break: src/a.py:12: ")
