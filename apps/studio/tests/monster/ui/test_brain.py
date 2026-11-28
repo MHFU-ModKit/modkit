@@ -344,16 +344,16 @@ def test_no_link(qtbot: Any, panel: BrainPanel) -> None:
     assert cursor(panel) == row and panel.history.rows == [row]
 
 
-def test_alt_arrows(qtbot: Any, panel: BrainPanel) -> None:
+def test_alt_arrows(press: Any, panel: BrainPanel) -> None:
     rows = [row_of(panel, t) for t in ("routine r_b", "routine r_c", "routine r_a")]
     for r in rows:
         panel.goto(r)
-    panel.tree.setFocus()
-    qtbot.keyClick(panel.tree, Qt.Key.Key_Left, Qt.KeyboardModifier.AltModifier)
+    alt = Qt.KeyboardModifier.AltModifier
+    press(panel.tree, Qt.Key.Key_Left, alt)
     assert cursor(panel) == rows[1]
-    qtbot.keyClick(panel.tree, Qt.Key.Key_Left, Qt.KeyboardModifier.AltModifier)
+    press(panel.tree, Qt.Key.Key_Left, alt)
     assert cursor(panel) == rows[0] and not panel.back.isEnabled()
-    qtbot.keyClick(panel.tree, Qt.Key.Key_Right, Qt.KeyboardModifier.AltModifier)
+    press(panel.tree, Qt.Key.Key_Right, alt)
     assert cursor(panel) == rows[1]
 
 
