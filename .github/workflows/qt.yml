@@ -50,4 +50,5 @@ jobs:
         if: steps.run.outputs.go
         env:
           MHFU_UI_DISPLAY: "1"
-        run: apps/studio/docker/run.sh uv run modkit-ci test studio --cov
+        run: |
+          STUDIO_UV_CACHE=$(uv cache dir) apps/studio/docker/run.sh uv run modkit-ci test studio --cov
