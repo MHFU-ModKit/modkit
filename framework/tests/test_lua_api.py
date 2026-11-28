@@ -84,3 +84,40 @@ def test_the_name_lists_follow_the_addresses() -> None:
     assert names("mhfu.EmCond") == addresses.EM_COND.names
     assert names("mhfu.EmEffect") == addresses.EM_EFFECT.names
     assert names("mhfu.MonsterEventKind") == addresses.MONSTER_EVENT_KIND.names
+
+
+EXAMPLE = """---Reads a byte.
+---
+---```lua
+---local x = mhfu.read_u8(0)
+---
+---if x then mhfu.log("x") end
+---```
+---@param addr integer
+function mhfu.read_u8(addr) end
+"""
+
+
+def test_examples_by_function() -> None:
+    twice = EXAMPLE.replace("---@param", "---```lua\n---mhfu.read_u8(1)\n---```\n---@param")
+    assert tool.examples(EXAMPLE) == {
+        "read_u8": ['local x = mhfu.read_u8(0)\n\nif x then mhfu.log("x") end']
+    }
+    assert [e.strip() for e in tool.examples(twice)["read_u8"]][1] == "mhfu.read_u8(1)"
+    assert tool.examples(DECL) == {}
+
+
+@pytest.mark.parametrize(
+    ("text", "error"),
+    [
+        (EXAMPLE.replace("---```\n", "\n", 1), "not closed"),
+        (EXAMPLE.rsplit("---@param", 1)[0].replace("---```\n", ""), "not closed"),
+        (EXAMPLE.replace("function mhfu.read_u8(addr) end", "mhfu.X = 1"), "not a function"),
+        (EXAMPLE.replace("---@param addr integer\n", "\n"), "not a function"),
+        (EXAMPLE + "---```\n", "without an opening"),
+        (EXAMPLE + "---```lua\n---x\n---```\n", "no function"),
+    ],
+)
+def test_examples_reject(text: str, error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        tool.examples(text)
