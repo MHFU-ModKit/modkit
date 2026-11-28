@@ -80,9 +80,42 @@ def _under(file: str, dirs: Sequence[str]) -> bool:
     return any(file == d or file.startswith(d.rstrip("/") + "/") for d in dirs)
 
 
-def _view(view: str) -> tuple[str, bool]:
-    """A LuaLS view split into (type, optional)."""
-    return (view[:-1], True) if view.endswith("?") else (view, False)
+def _members(view: str) -> list[str]:
+    """The members of a union view: its `|`s outside brackets and quotes."""
+    out: list[str] = []
+    depth, quote, start = 0, "", 0
+    for i, ch in enumerate(view):
+        if quote:
+            quote = "" if ch == quote else quote
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "<([{":
+            depth += 1
+        elif ch in ">)]}":
+            depth -= 1
+        elif ch == "|" and depth == 0:
+            out.append(view[start:i].strip())
+            start = i + 1
+    out.append(view[start:].strip())
+    return out
+
+
+def _expand(view: str, aliases: Mapping[str, str], seen: frozenset[str] = frozenset()) -> str:
+    """`view` with each alias member replaced by its expansion; LuaLS prints either, run to run."""
+    out: list[str] = []
+    for m in _members(view):
+        if m in aliases and m not in seen:
+            parts = _members(_expand(aliases[m], aliases, seen | {m}))
+        else:
+            parts = [m]
+        out += [p for p in parts if p not in out]
+    return "|".join(out)
+
+
+def _view(view: str, aliases: Mapping[str, str]) -> tuple[str, bool]:
+    """A LuaLS view split into (type, optional), aliases expanded."""
+    optional = view.endswith("?")
+    return _expand(view[:-1] if optional else view, aliases), optional
 
 
 def _prose(raw: str) -> str:
@@ -102,8 +135,14 @@ def _examples(root: Path, file: str, line: int, cache: dict[str, list[str]]) -> 
     return tuple(lua_tool.load().block_fences(lines[top : line - 1]))
 
 
-def _param(arg: Mapping[str, Any]) -> Param:
-    type_, optional = _view(str(arg.get("view", "any")))
+def _typed(view: str, aliases: Mapping[str, str]) -> str:
+    """One view, aliases expanded, optional kept as its `?`."""
+    type_, optional = _view(view, aliases)
+    return type_ + "?" if optional else type_
+
+
+def _param(arg: Mapping[str, Any], aliases: Mapping[str, str]) -> Param:
+    type_, optional = _view(str(arg.get("view", "any")), aliases)
     return Param(str(arg.get("name", "")), type_, optional, str(arg.get("rawdesc", "")))
 
 
@@ -124,13 +163,19 @@ def _slice(root: Path, member: Mapping[str, Any], cache: dict[str, list[str]]) -
     return _SPACE.sub(" ", " ".join(parts)).strip()
 
 
-def _func(name: str, member: Mapping[str, Any], root: Path, cache: dict[str, list[str]]) -> Func:
+def _func(
+    name: str,
+    member: Mapping[str, Any],
+    root: Path,
+    cache: dict[str, list[str]],
+    aliases: Mapping[str, str],
+) -> Func:
     ext = member["extends"]
     line = int(member["start"][0]) + 1
     return Func(
         name=name,
-        params=tuple(_param(a) for a in ext.get("args", [])),
-        returns=tuple(str(r.get("view", "any")) for r in ext.get("returns", [])),
+        params=tuple(_param(a, aliases) for a in ext.get("args", [])),
+        returns=tuple(_typed(str(r.get("view", "any")), aliases) for r in ext.get("returns", [])),
         desc=_prose(str(member.get("rawdesc", ""))),
         examples=_examples(root, str(member["file"]), line, cache),
         file=str(member["file"]),
@@ -145,6 +190,12 @@ def model(doc: list[dict[str, Any]], root: Path, dirs: Sequence[str]) -> LuaApi:
     classes: list[Class] = []
     cache: dict[str, list[str]] = {}
     class_names = {str(e["name"]) for e in doc if e.get("type") == "type"}
+    aliases = {
+        str(e["name"]): str(d["view"])
+        for e in doc
+        for d in e.get("defines", [])
+        if d.get("type") == "doc.alias"
+    }
 
     def member(owner: str, m: Mapping[str, Any]) -> None:
         if not _under(str(m["file"]), dirs):
@@ -156,7 +207,7 @@ def model(doc: list[dict[str, Any]], root: Path, dirs: Sequence[str]) -> LuaApi:
             sep = ":" if kind == "setmethod" else "."
             name = f"{owner}{sep}{m['name']}" if owner else str(m["name"])
             if m["extends"]["type"] == "function":
-                funcs.append(_func(name, m, root, cache))
+                funcs.append(_func(name, m, root, cache, aliases))
             else:
                 desc = _prose(str(m.get("rawdesc", "")))
                 value = _slice(root, m, cache)
@@ -169,7 +220,9 @@ def model(doc: list[dict[str, Any]], root: Path, dirs: Sequence[str]) -> LuaApi:
             own = [d for d in defines if d["type"] == "doc.class" and _under(d["file"], dirs)]
             if own:
                 fields = tuple(
-                    Field(str(f["name"]), *_view(str(f["view"])), str(f.get("rawdesc", "")))
+                    Field(
+                        str(f["name"]), *_view(str(f["view"]), aliases), str(f.get("rawdesc", ""))
+                    )
                     for f in entry.get("fields", [])
                     if f["type"] == "doc.field" and _under(str(f["file"]), dirs)
                 )

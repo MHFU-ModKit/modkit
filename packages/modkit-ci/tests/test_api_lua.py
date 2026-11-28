@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from modkit_ci import api_lua, lua_tool, luals, registry
@@ -115,6 +116,41 @@ def test_literal_values() -> None:
 
 
 # rules -------------------------------------------------------------------------------------
+
+
+def _alias_doc(view: str) -> list[dict[str, Any]]:
+    """Alias `t.P` = `table|t.E`, and `t.f(p)` whose param and return LuaLS printed as `view`."""
+    alias = {"type": "doc.alias", "file": "lib/t.lua", "view": "table|t.E"}
+    fn = {
+        "type": "setfield",
+        "file": "lib/t.lua",
+        "start": [0, 0],
+        "extends": {
+            "type": "function",
+            "args": [{"name": "p", "view": view}],
+            "returns": [{"view": view}],
+        },
+    }
+    return [
+        {"type": "type", "name": "t.P", "defines": [alias], "fields": []},
+        {"type": "variable", "name": "t.f", "defines": [fn]},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("view", "want"),
+    [
+        ("number|t.P", ("number|table|t.E", False)),
+        ("number|table|t.E", ("number|table|t.E", False)),
+        ("t.P?", ("table|t.E", True)),
+        ("table<string, t.P>|t.P", ("table<string, t.P>|table|t.E", False)),
+    ],
+)
+def test_alias_expanded(view: str, want: tuple[str, bool]) -> None:
+    (f,) = api_lua.model(_alias_doc(view), FIXTURE, ["lib"]).funcs
+    assert (f.params[0].type, f.params[0].optional) == want
+    assert f.returns == (want[0] + "?" * want[1],)
+
 
 P = Param
 
