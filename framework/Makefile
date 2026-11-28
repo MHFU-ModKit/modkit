@@ -8,6 +8,11 @@ GEN   = build/gen
 ADDR  = ../packages/mhfu/src/mhfu/addresses
 PRXS  = build/mhfu_framework.prx build/mhfu_boot.prx
 
+# ceilings on PT_LOAD p_memsz in bytes; the image shares the user partition with the game, so
+# growth is a reviewed edit of the number
+FRAMEWORK_BUDGET = 589824
+BOOT_BUDGET      = 4096
+
 .PHONY: all clean
 
 # psp-prxgen copies EF_MIPS_ABI_EABI32 into the PRX, which old firmware rejects (0x800200D9)
@@ -15,6 +20,8 @@ all: $(GEN)/addresses.gen.h $(GEN)/addresses_table.gen.inc $(GEN)/lua_api.gen.h 
 	docker run --rm --platform linux/amd64 --user "$$(id -u):$$(id -g)" -v "$(CURDIR)":/work -w /work \
 	    $(IMAGE) make -f Makefile.psp $(if $(findstring k,$(firstword -$(MAKEFLAGS))),-k)
 	uv run python tools/patch_prx_eflags.py $(PRXS)
+	uv run python tools/check_prx.py build/mhfu_framework.prx $(FRAMEWORK_BUDGET)
+	uv run python tools/check_prx.py --kernel build/mhfu_boot.prx $(BOOT_BUDGET)
 
 $(GEN)/addresses.gen.h: $(ADDR).toml $(ADDR).py
 	@mkdir -p $(@D)

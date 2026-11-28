@@ -106,6 +106,25 @@ def asked(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
 
 
 @pytest.fixture
+def press(qtbot: Any) -> Callable[..., None]:
+    """`press(widget, key, modifiers)`: a key click once the widget's window is active and the
+    widget has focus, which a shortcut needs. Offscreen activates a shown window at once, a display
+    (`MHFU_UI_DISPLAY`) only later."""
+    from PySide6.QtCore import Qt  # this conftest also loads where Qt does not
+    from PySide6.QtTest import QTest
+
+    def go(widget: Any, key: Any, modifiers: Any = Qt.KeyboardModifier.NoModifier) -> None:
+        window = widget.window()
+        with qtbot.waitActive(window):
+            window.show()
+            window.activateWindow()
+        widget.setFocus()
+        QTest.keyClick(widget, key, modifiers)
+
+    return go
+
+
+@pytest.fixture
 def make_window(qtbot: Any, tmp_path: Path) -> Callable[..., Any]:
     """`make_window(*workspaces)`: a shown `Window` over them (two fakes by default), with
     its settings in `tmp_path`."""
