@@ -31,7 +31,7 @@ def check(
     path of `registry` (needs `registry` and the commit's `files`).
     """
     commit = ConventionalCommit(message, scope_optional=False, scopes=list(scopes))
-    if commit.is_merge():
+    if not ci and commit.is_merge():  # CI skips merges by parent count
         return []
     if commit.has_autosquash_prefix():
         return ["fixup!/squash! commits must be squashed before merging"] if ci else []
@@ -39,12 +39,24 @@ def check(
     if not commit.is_valid():
         missing = ", ".join(commit.errors()) or "format"
         problems.append(f"not a valid commit message ({missing}): {_FORMAT}")
+    elif not _exact(message, scopes):
+        problems.append(f"type must be lowercase and scopes comma-separated: {_FORMAT}")
     elif ci and registry is not None and conventional.is_breaking(message):
         if not any(registry.release_owner(f) for f in files):
             problems.append(
                 "a breaking change must touch the module it breaks; an empty one marks every module"
             )
     return problems
+
+
+def _exact(message: str, scopes: Sequence[str]) -> bool:
+    """Type and scopes as release-please compares them: case-sensitive, comma-separated."""
+    parsed = conventional.header(message)
+    return (
+        parsed is not None
+        and parsed.type in ConventionalCommit.DEFAULT_TYPES
+        and all(s in scopes for s in parsed.scopes)
+    )
 
 
 def _subject(message: str) -> str:

@@ -42,6 +42,12 @@ INVALID = [
     "fix(alpha):x",
     "fix(alpha): x\nno blank line",
     "feat(alpha): x\n\nBreaking change: gone",
+    "Feat(alpha): x",
+    "FIX(alpha): x",
+    "feat(alpha-framework): x",
+    "feat(alpha/repo): x",
+    "feat(alpha#repo): x",
+    "feat(mhfu-port.repo): x",
     "",
     "# only a comment",
 ]
@@ -62,8 +68,15 @@ def test_ci_rejects_autosquash() -> None:
     assert commits.check("squash! feat(alpha): x", SCOPES, ci=True)
 
 
-def test_ci_keeps_merges() -> None:
-    assert commits.check("Merge branch 'a'", SCOPES, ci=True) == []
+@pytest.mark.parametrize("message", ["Merge the two loaders into one", "merge: x"])
+def test_ci_rejects_merge_titled(message: str) -> None:
+    assert commits.check(message, SCOPES, ci=True)
+
+
+def test_ci_one_parent_merge_title(repo: GitRepo, capsys: pytest.CaptureFixture[str]) -> None:
+    base = repo.git("rev-parse", "HEAD")
+    repo.commit({"packages/alpha/a.py": "1"}, "Merge the two loaders into one")
+    assert run(repo, base, capsys)[0] == 1
 
 
 def test_hook_file(tmp_path: Path, registry_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
