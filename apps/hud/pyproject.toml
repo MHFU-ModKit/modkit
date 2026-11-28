@@ -7,6 +7,7 @@ description = "A live HUD next to PPSSPP: vitals, the quest map, the monsters an
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+license-files = ["LICENSE"]
 dependencies = ["ppsspp-debug", "mhfu", "pygame-ce>=2.5"]
 classifiers = ["Typing :: Typed"]
 

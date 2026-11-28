@@ -7,6 +7,7 @@ description = "Blender extension: import MHFU monster PACs, edit them, export th
 readme = "README.md"
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 dependencies = ["mhp-formats", "mhfu-port", "mhfu"]
 
 [tool.coverage.report]
