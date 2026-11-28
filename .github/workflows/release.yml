@@ -195,10 +195,10 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
       - name: Build the PRXs
-        if: matrix.module == 'framework'
+        if: ${{ matrix.make }}
         run: make -C framework
       - name: Libraries Blender needs headless
-        if: contains(matrix.module, 'blender')
+        if: ${{ matrix.gl }}
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1 libsm6 libxfixes3 libxi6 libxkbcommon0 libxrender1 libxxf86vm1
       - env:
           MODULE: ${{ matrix.module }}

@@ -258,6 +258,11 @@ def complete(module: Module, names: Collection[str]) -> bool:
     return docs_name(module) in names and (own is None or any(own(n) for n in names))
 
 
+def needs(module: Module) -> dict[str, bool]:
+    """Build steps `assets` expects first: `make` (the PRXs), `gl` (Blender libraries)."""
+    return {"make": module.name == FRAMEWORK, "gl": module.name == BLENDER}
+
+
 def assets(
     root: Path,
     module: Module,
