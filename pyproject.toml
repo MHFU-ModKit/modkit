@@ -9,6 +9,7 @@ members = ["packages/*", "apps/*"]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=1",
+    "pytest-cov>=7.1",
     "pre-commit>=4",
     "mypy>=1.18",
     "types-psutil",
@@ -18,6 +19,8 @@ dev = [
 ]
 # the studio's Qt tests; CI leaves it out (no display, no Qt system libraries there)
 qt = ["pytest-qt>=4.5"]
+# the documentation build; not a default group, only the docs job syncs it
+docs = ["zensical>=0.1.4,<0.2", "mkdocstrings-python>=2.0.11"]
 # bpy stubs for mypy, at the extension's minimum Blender API
 blender = ["fake-bpy-module-4-2"]
 
@@ -49,17 +52,8 @@ strict = true
 python_version = "3.11"
 # the bpy stubs use 3.12 generics, which only the native parser reads at python_version 3.11
 native_parser = true
-files = [
-    "packages/ppsspp-debug/src",
-    "packages/mhp-formats/src",
-    "packages/mhfu/src",
-    "packages/mhfu-port/src",
-    "apps/studio/src",
-    "apps/hud/src",
-    "apps/blender/src",
-    "apps/blender/build.py",
-]
+files = ["packages/*/src", "apps/*/src", "apps/blender/build.py"]
 
 [[tool.mypy.overrides]]
-module = ["mhef.*", "pycdlib.*", "elftools.*", "qtawesome.*", "NodeGraphQt.*"]
+module = ["mhef.*", "pycdlib.*", "elftools.*", "qtawesome.*", "NodeGraphQt.*", "conventional_pre_commit.*"]
 ignore_missing_imports = true

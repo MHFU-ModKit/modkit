@@ -1,0 +1,124 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/v17.6.0/schemas/config.json",
+  "bootstrap-sha": "c4b924a7410d19372fe00590538c82bdc22e45b4",
+  "separate-pull-requests": true,
+  "include-component-in-tag": true,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true,
+  "pull-request-title-pattern": "chore(repo): release${component} ${version}",
+  "packages": {
+    "framework": {
+      "component": "framework",
+      "release-type": "simple",
+      "x-modkit": {
+        "api": [
+          "lua"
+        ],
+        "lua": [
+          "framework/lua/meta",
+          "framework/lua/lib"
+        ],
+        "depends": [
+          "mhfu",
+          "mhfu-port"
+        ]
+      }
+    },
+    "packages/mhfu": {
+      "component": "mhfu",
+      "release-type": "python",
+      "x-modkit": {
+        "api": [
+          "python"
+        ],
+        "paths": [
+          "brains"
+        ],
+        "schemas": [
+          {
+            "name": "brain-file",
+            "load": "mhfu.em.script.brainfile:load",
+            "dump": "mhfu.em.script.brainfile:dumps",
+            "corpus": [
+              "brains/*.toml"
+            ]
+          }
+        ],
+        "depends": [
+          "framework"
+        ]
+      }
+    },
+    "packages/mhfu-port": {
+      "component": "mhfu-port",
+      "release-type": "python",
+      "x-modkit": {
+        "api": [
+          "python"
+        ],
+        "paths": [
+          "ports"
+        ],
+        "schemas": [
+          {
+            "name": "port-manifest",
+            "load": "mhfu_port.manifest:load",
+            "dump": "mhfu_port.manifest:dumps",
+            "corpus": [
+              "ports/*.toml"
+            ]
+          }
+        ]
+      }
+    },
+    "packages/mhp-formats": {
+      "component": "mhp-formats",
+      "release-type": "python",
+      "x-modkit": {
+        "api": [
+          "python"
+        ]
+      }
+    },
+    "packages/ppsspp-debug": {
+      "component": "ppsspp-debug",
+      "release-type": "python",
+      "x-modkit": {
+        "api": [
+          "python"
+        ]
+      }
+    },
+    "apps/studio": {
+      "component": "studio",
+      "release-type": "python",
+      "x-modkit": {
+        "qt": true,
+        "schemas": [
+          {
+            "name": "map-document",
+            "load": "mhfu_studio.map.document:check_file",
+            "corpus": [
+              "apps/studio/tests/map/schema/*/map.toml"
+            ]
+          }
+        ],
+        "depends": [
+          "framework"
+        ]
+      }
+    },
+    "apps/hud": {
+      "component": "hud",
+      "release-type": "python"
+    },
+    "apps/blender": {
+      "component": "blender",
+      "release-type": "python"
+    },
+    "ppsspp": {
+      "component": "ppsspp",
+      "release-type": "simple"
+    }
+  }
+}

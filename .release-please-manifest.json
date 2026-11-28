@@ -1,0 +1,11 @@
+{
+  "framework": "0.1.0",
+  "packages/mhfu": "0.1.0",
+  "packages/mhfu-port": "0.1.0",
+  "packages/mhp-formats": "0.1.0",
+  "packages/ppsspp-debug": "0.1.0",
+  "apps/studio": "0.1.0",
+  "apps/hud": "0.1.0",
+  "apps/blender": "0.1.0",
+  "ppsspp": "0.1.0"
+}
