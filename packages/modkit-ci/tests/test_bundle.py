@@ -61,15 +61,15 @@ def _fake_framework(root: Path) -> Path:
     notices.parent.mkdir(parents=True)
     notices.write_text(NOTICES, encoding="utf-8")
     build = root / "framework" / "build"
-    build.mkdir(parents=True)
+    (build / "gen").mkdir(parents=True)
+    (root / ".luarc.json").write_text(
+        json.dumps({"workspace.library": ["framework/build/gen/addresses.gen.lua"]}),
+        encoding="utf-8",
+    )
+    (build / "gen" / "addresses.gen.lua").write_text("-- generated\n", encoding="utf-8")
     for prx in bundle.PRXS:
         (build / prx).write_bytes(b"\x7fPRX " + prx.encode())
     return build
-
-
-def _addresses(cmd: Sequence[str], cwd: Path) -> None:
-    assert cmd[1:5] == ["-m", "mhfu.addresses", "lua", "-o"]
-    Path(cmd[5]).write_text("-- generated\n", encoding="utf-8")
 
 
 def test_tag_from_manifest(registry_root: Path) -> None:
@@ -93,7 +93,7 @@ def test_resolve_name_or_path(registry_root: Path) -> None:
 def test_framework_layout(registry_root: Path, tmp_path: Path) -> None:
     build = _fake_framework(registry_root)
     module = _load(registry_root).get("framework")
-    archive = bundle.framework_zip(registry_root, build, module, tmp_path / "out", _addresses)
+    archive = bundle.framework_zip(registry_root, build, module, tmp_path / "out")
     assert archive.name == "mhfu_framework-0.1.0.zip"
     with zipfile.ZipFile(archive) as zf:
         assert sorted(zf.namelist()) == sorted(LAYOUT)
@@ -106,8 +106,8 @@ def test_framework_layout(registry_root: Path, tmp_path: Path) -> None:
 def test_framework_zip_is_reproducible(registry_root: Path, tmp_path: Path) -> None:
     build = _fake_framework(registry_root)
     module = _load(registry_root).get("framework")
-    first = bundle.framework_zip(registry_root, build, module, tmp_path / "x", _addresses)
-    second = bundle.framework_zip(registry_root, build, module, tmp_path / "y", _addresses)
+    first = bundle.framework_zip(registry_root, build, module, tmp_path / "x")
+    second = bundle.framework_zip(registry_root, build, module, tmp_path / "y")
     assert first.read_bytes() == second.read_bytes()
 
 
@@ -116,7 +116,15 @@ def test_framework_missing_prx(registry_root: Path, tmp_path: Path) -> None:
     (build / "mhfu_boot.prx").unlink()
     module = _load(registry_root).get("framework")
     with pytest.raises(bundle.BundleError, match="make -C framework"):
-        bundle.framework_zip(registry_root, build, module, tmp_path, _addresses)
+        bundle.framework_zip(registry_root, build, module, tmp_path)
+
+
+def test_framework_missing_addresses(registry_root: Path, tmp_path: Path) -> None:
+    build = _fake_framework(registry_root)
+    (build / "gen" / "addresses.gen.lua").unlink()
+    module = _load(registry_root).get("framework")
+    with pytest.raises(bundle.BundleError, match="addresses.gen.lua"):
+        bundle.framework_zip(registry_root, build, module, tmp_path)
 
 
 def test_framework_missing_licence_text(registry_root: Path, tmp_path: Path) -> None:
@@ -124,7 +132,7 @@ def test_framework_missing_licence_text(registry_root: Path, tmp_path: Path) -> 
     (registry_root / "LICENSES" / "BSD-3-Clause.txt").unlink()
     module = _load(registry_root).get("framework")
     with pytest.raises(bundle.BundleError, match="BSD-3-Clause"):
-        bundle.framework_zip(registry_root, build, module, tmp_path, _addresses)
+        bundle.framework_zip(registry_root, build, module, tmp_path)
 
 
 def test_wheel_command(registry_root: Path, tmp_path: Path) -> None:

@@ -21,10 +21,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from modkit_ci import docs, licences, registry
+from modkit_ci import docs, licences, luals, registry
 from modkit_ci.registry import Module, Registry
 
-FRAMEWORK: Final = "framework"
+FRAMEWORK: Final = luals.FRAMEWORK
 BLENDER: Final = "blender"
 PRXS: Final = ("mhfu_framework.prx", "mhfu_boot.prx")
 PLUGIN_DIR: Final = "PSP/PLUGINS/mhfu_framework"
@@ -152,15 +152,17 @@ def _write_zip(archive: Path, files: Mapping[str, Path]) -> None:
             zf.writestr(info, files[name].read_bytes())
 
 
-def framework_zip(root: Path, build: Path, module: Module, out: Path, run: Runner = _run) -> Path:
+def framework_zip(root: Path, build: Path, module: Module, out: Path) -> Path:
     """Write `mhfu_framework-<version>.zip` from the PRX build and the Lua sources."""
     files = framework_files(root, build)
+    try:
+        addresses = luals.addresses_path(root)
+    except (luals.LualsMissing, OSError) as err:
+        raise BundleError(str(err)) from err
+    if not addresses.is_file():
+        raise BundleError(f"{addresses} is missing: run `make -C framework`")
+    files["sdk/meta/addresses.gen.lua"] = addresses
     with tempfile.TemporaryDirectory() as tmp:
-        addresses = Path(tmp) / "addresses.gen.lua"
-        run([sys.executable, "-m", "mhfu.addresses", "lua", "-o", str(addresses)], root)
-        if not addresses.is_file():
-            raise BundleError("mhfu.addresses wrote no Lua table")
-        files["sdk/meta/addresses.gen.lua"] = addresses
         notice = Path(tmp) / NOTICE_FILE
         notice.write_text(licences.render(licences.components(root)), encoding="utf-8")
         files[NOTICE_FILE] = notice
@@ -278,7 +280,7 @@ def assets(
 ) -> list[Path]:
     """The module's own release assets, written under `out`."""
     if module.name == FRAMEWORK:
-        return [framework_zip(root, build or root / FRAMEWORK / "build", module, out, run)]
+        return [framework_zip(root, build or root / FRAMEWORK / "build", module, out)]
     if module.name == BLENDER:
         return [blender_zip(root, module, out, run, binary)]
     if module.release_type == "python":

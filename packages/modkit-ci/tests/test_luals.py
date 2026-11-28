@@ -149,6 +149,20 @@ def test_pins_cover_both_hosts() -> None:
     assert all(len(h) == 64 for h in luals.SHA256.values())
 
 
+def test_addresses_rule_builds_the_luarc_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.undo()  # the real PATH, for make and uv
+    repo = Path(__file__).resolve().parents[3]
+    target = luals.render_addresses(repo)
+    assert target == repo / "framework" / "build" / "gen" / "addresses.gen.lua"
+    assert target.read_text(encoding="utf-8").strip()
+
+
+def test_addresses_path_needs_the_library_entry(tmp_path: Path) -> None:
+    (tmp_path / ".luarc.json").write_text('{"workspace.library": []}', encoding="utf-8")
+    with pytest.raises(luals.LualsMissing):
+        luals.addresses_path(tmp_path)
+
+
 def test_cache_dir_command(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["luals", "cache-dir"]) == 0
     assert capsys.readouterr().out.strip() == str(luals.cache_dir())
