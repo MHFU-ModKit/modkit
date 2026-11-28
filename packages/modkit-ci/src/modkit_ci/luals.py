@@ -87,8 +87,17 @@ def _download(key: str, dest: Path, opener: Opener) -> Path:
     return dest / "bin" / EXE
 
 
+def _version_of(exe: Path) -> str | None:
+    """The version `exe --version` prints, or None."""
+    try:
+        run = subprocess.run([str(exe), "--version"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return run.stdout.strip() or None
+
+
 def binary(opener: Opener = _fetch, cache: Path | None = None) -> Path:
-    """$LUALS_BIN, else the verified cached download, else PATH."""
+    """$LUALS_BIN, else the verified cached download, else a PATH binary of exactly VERSION."""
     env = os.environ.get(ENV_BIN)
     if env:
         path = Path(env)
@@ -100,17 +109,19 @@ def binary(opener: Opener = _fetch, cache: Path | None = None) -> Path:
     if cached.is_file():
         return cached
     key = platform_key()
+    failure = f"no pinned LuaLS {VERSION} for this platform"
     if key:
         try:
             return _download(key, cache, opener)
-        except (urllib.error.URLError, OSError):
-            pass  # offline: fall through to PATH
+        except (urllib.error.URLError, OSError) as err:
+            failure = f"download of LuaLS {VERSION} failed: {err}"
     found = shutil.which(EXE)
     if found:
-        return Path(found)
-    raise LualsMissing(
-        f"no LuaLS {VERSION}: set ${ENV_BIN}, or allow the download, or put it on PATH"
-    )
+        have = _version_of(Path(found))
+        if have == VERSION:
+            return Path(found)
+        failure += f"; {found} is version {have or 'unknown'}, not {VERSION}"
+    raise LualsMissing(f"no LuaLS {VERSION}: {failure}. Set ${ENV_BIN} or allow the download")
 
 
 def _run(args: list[str], root: Path, quiet: bool = False) -> int:
