@@ -9,10 +9,10 @@ import json
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
-from typing import Final
+from typing import Any, Final
 
 from modkit_ci import bundle, registry
-from modkit_ci.registry import Registry
+from modkit_ci.registry import Module, Registry
 
 PATHS_KEY: Final = "paths_released"
 TAG_SUFFIX: Final = "--tag_name"
@@ -25,12 +25,12 @@ class ReleaseError(RuntimeError):
     """The release-please outputs or the release listing are unusable."""
 
 
-def leg(module: str, tag: str) -> dict[str, str]:
-    """One matrix leg of the asset jobs."""
-    return {"module": module, "tag": tag}
+def leg(module: Module, tag: str) -> dict[str, Any]:
+    """One matrix leg of the asset jobs: the module, its tag and the build steps it needs."""
+    return {"module": module.name, "tag": tag, **bundle.needs(module)}
 
 
-def from_outputs(reg: Registry, outputs: Mapping[str, str]) -> list[dict[str, str]]:
+def from_outputs(reg: Registry, outputs: Mapping[str, str]) -> list[dict[str, Any]]:
     """The legs for the modules release-please released, at its own tags."""
     try:
         paths = json.loads(outputs.get(PATHS_KEY) or "[]")
@@ -42,32 +42,32 @@ def from_outputs(reg: Registry, outputs: Mapping[str, str]) -> list[dict[str, st
         name = outputs.get(f"{path}{TAG_SUFFIX}")
         if not name:
             raise ReleaseError(f"release-please gave no {path}{TAG_SUFFIX}")
-        legs.append(leg(module.name, name))
+        legs.append(leg(module, name))
     return legs
 
 
-def unfinished(reg: Registry, assets_of: ListAssets) -> list[dict[str, str]]:
+def unfinished(reg: Registry, assets_of: ListAssets) -> list[dict[str, Any]]:
     """The legs of modules whose release at the manifest version lacks assets."""
     legs = []
     for module in reg.modules:
         names = assets_of(bundle.tag(module))
         if names is not None and not bundle.complete(module, names):
-            legs.append(leg(module.name, bundle.tag(module)))
+            legs.append(leg(module, bundle.tag(module)))
     return legs
 
 
-def dispatched(reg: Registry, name: str, tag: str | None) -> list[dict[str, str]]:
+def dispatched(reg: Registry, name: str, tag: str | None) -> list[dict[str, Any]]:
     """The one leg of a manual re-run: the manifest's tag unless `tag` is given."""
     module = bundle.resolve(reg, name)
     chosen = tag or bundle.tag(module)
     if not chosen.startswith(f"{module.name}-v"):
         raise ReleaseError(f"tag {chosen!r} is not a {module.name} release")
-    return [leg(module.name, chosen)]
+    return [leg(module, chosen)]
 
 
-def plan(reg: Registry, outputs: Mapping[str, str], assets_of: ListAssets) -> list[dict[str, str]]:
+def plan(reg: Registry, outputs: Mapping[str, str], assets_of: ListAssets) -> list[dict[str, Any]]:
     """Released modules plus the unfinished ones, one leg per module, released tags first."""
-    legs: dict[str, dict[str, str]] = {}
+    legs: dict[str, dict[str, Any]] = {}
     for entry in [*from_outputs(reg, outputs), *unfinished(reg, assets_of)]:
         legs.setdefault(entry["module"], entry)
     return list(legs.values())

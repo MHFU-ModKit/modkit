@@ -15,6 +15,7 @@ writes lua_api.gen.h (the lb_<name> prototypes and MHFU_LUA_API_VERSION) and lua
 
 import argparse
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -70,34 +71,47 @@ def parse(text: str) -> Api:
     return Api(version[0], tuple(funcs), tuple(consts))
 
 
-def examples(text: str) -> dict[str, list[str]]:
-    """The ```lua fences in the functions' doc blocks: function name -> its examples' code."""
-    found: dict[str, list[str]] = {}
+def block_fences(block: Sequence[str]) -> list[str]:
+    """The ```lua fences of one `---` doc block (its lines, `---` kept): each fence's code."""
+    found: list[str] = []
     code: list[str] | None = None
-    pending: list[str] = []
-    for n, raw in enumerate(text.splitlines(), 1):
+    for raw in block:
         line = raw.rstrip()
         if code is not None:
             if line == FENCE_CLOSE:
-                pending.append("\n".join(code))
+                found.append("\n".join(code))
                 code = None
-            elif line.startswith("---"):
-                code.append(line[3:])
             else:
-                raise ValueError(f"line {n}: the example is not closed")
+                code.append(line[3:])
         elif line == FENCE_OPEN:
             code = []
         elif line == FENCE_CLOSE:
-            raise ValueError(f"line {n}: a closing fence without an opening one")
-        elif m := FUNC.match(line):
-            if pending:
-                found.setdefault(m[1], []).extend(pending)
-            pending = []
-        elif pending and not line.startswith("---"):
-            raise ValueError(f"line {n}: an example above something that is not a function")
+            raise ValueError("a closing fence without an opening one")
     if code is not None:
-        raise ValueError("the last example is not closed")
-    if pending:
+        raise ValueError("an example is not closed")
+    return found
+
+
+def examples(text: str) -> dict[str, list[str]]:
+    """The ```lua fences in the functions' doc blocks: function name -> its examples' code."""
+    found: dict[str, list[str]] = {}
+    block: list[str] = []
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.rstrip()
+        if line.startswith("---"):
+            block.append(line)
+            continue
+        try:
+            fences = block_fences(block)
+        except ValueError as e:
+            raise ValueError(f"line {n}: {e}") from None
+        if m := FUNC.match(line):
+            if fences:
+                found.setdefault(m[1], []).extend(fences)
+        elif fences:
+            raise ValueError(f"line {n}: an example above something that is not a function")
+        block = []
+    if block_fences(block):
         raise ValueError("an example at the end of the file has no function")
     return found
 

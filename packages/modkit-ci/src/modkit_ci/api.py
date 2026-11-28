@@ -8,7 +8,16 @@ import argparse
 import tempfile
 from pathlib import Path
 
-from modkit_ci import api_lua, api_python, api_schema, conventional, findings, git, registry
+from modkit_ci import (
+    affected,
+    api_lua,
+    api_python,
+    api_schema,
+    conventional,
+    findings,
+    git,
+    registry,
+)
 from modkit_ci.findings import Finding
 
 
@@ -26,11 +35,8 @@ def marked_modules(reg: registry.Registry, base: str) -> set[str]:
 
 
 def affected_modules(reg: registry.Registry, files: list[str]) -> set[str]:
-    """Modules whose own path or a dependency changed; the schema checks run for these.
-
-    Integration: return `affected.compute(reg, files, reg.root / "uv.lock").modules` here.
-    """
-    return {m.name for f in files if (m := reg.owner(f))}
+    """Modules whose own path or a dependency changed; the schema checks run for these."""
+    return set(affected.compute(reg, files, reg.root / "uv.lock").modules)
 
 
 def _module_checks(
@@ -52,7 +58,7 @@ def run(base: str) -> int:
     merge_base = git.merge_base(base)
     files = git.changed_files(merge_base)
     changed = {m for f in files if (m := reg.owner(f))}
-    affected = affected_modules(reg, files)
+    dependents = affected_modules(reg, files)
     marked = marked_modules(reg, merge_base)
     results: list[Finding] = []
     with tempfile.TemporaryDirectory(prefix="modkit-ci-base-") as tmp:
@@ -63,7 +69,7 @@ def run(base: str) -> int:
                 base_root,
                 reg.root,
                 own=module in changed,
-                dependent=module in changed or module.name in affected,
+                dependent=module in changed or module.name in dependents,
             )
     errors = [f for f in results if f.kind == "doc"]
     errors += [f for f in results if f.kind == "break" and f.module not in marked]

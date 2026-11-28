@@ -37,17 +37,24 @@ The hooks run ruff (lint and format), `mypy --strict` over every package, shellc
 | The framework's host builds | a `c++` on `PATH` |
 | The studio's Qt tests | the `qt` group and a Qt that loads; `MHFU_UI_DISPLAY=1` for the GL window ones |
 
-CI runs pre-commit, pytest on Python 3.11 and 3.14 without the `qt` group, and
-lua-language-server over the Lua against `framework/lua/meta/mhfu.d.lua`. Run these locally, since
-CI cannot: the Qt tests (`apps/studio/docker/run.sh` gives them a Linux GL), the Blender tests
-(`uv run apps/blender/build.py test`), the tests against a real PPSSPP, and the PRX build
-(`make -C framework`).
+The workflows in `.github/workflows/` are the CI: `lint`, `commits`, `api`, `docs`, `test`, `lua`,
+`prx` and `qt`; the test jobs run the modules a change affects (`uv run modkit-ci affected`).
+Locally, `uv run modkit-ci test <module> --cov` runs one unit, and `uv run
+modkit-ci api --base main` is the API check. Docs: `uv sync --group docs && uv run modkit-ci docs
+build --out build/docs`.
 
 ## Commits
 
-[Conventional Commits](https://www.conventionalcommits.org/): `type(scope): lowercase summary`,
-where the scope is the package or app (`mhp-formats`, `mhfu`, `mhfu-port`, `ppsspp-debug`,
-`studio`, `hud`, `blender`, `framework`, `ppsspp`) or `repo`.
+[Conventional Commits](https://www.conventionalcommits.org/): `type(scope): lowercase summary`.
+The scope is a module name from `uv run modkit-ci registry`, or `repo` for everything else (a
+breaking change is `!` or a `BREAKING CHANGE:` footer). CI checks every commit with
+`uv run modkit-ci commits --base main`; `uv run modkit-ci commit-msg <file>` checks one message.
+
+## Releases
+
+release-please opens one release PR per module from its commits; merging it tags
+`<module>-v<version>` and `release.yml` attaches the assets (`modkit-ci bundle`). Nothing else
+bumps a version.
 
 ## No game data
 

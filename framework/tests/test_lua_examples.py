@@ -2,18 +2,15 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 """The examples in mhfu.d.lua run against the fake `mhfu` and call the function they document."""
 
-import importlib.util
 import re
 from pathlib import Path
 from typing import Any
 
 import pytest
+from modkit_ci import lua_tool
 
 FRAMEWORK = Path(__file__).parents[1]
-_spec = importlib.util.spec_from_file_location("lua_api", FRAMEWORK / "tools" / "lua_api.py")
-assert _spec and _spec.loader
-tool = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(tool)
+tool = lua_tool.load()
 
 DECL = (FRAMEWORK / "lua" / "meta" / "mhfu.d.lua").read_text(encoding="utf-8")
 SECTION = re.compile(r"^-- .+ \(.+\) -+$")

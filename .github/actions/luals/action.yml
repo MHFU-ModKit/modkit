@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
+name: luals
+description: The pinned LuaLS, cached; needs the setup action first
+
+runs:
+  using: composite
+  steps:
+    - id: dir
+      shell: bash
+      run: |
+        dir=$(uv run modkit-ci luals cache-dir)
+        echo "path=$dir" >> "$GITHUB_OUTPUT"
+        echo "version=$(basename "$dir")" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v6
+      with:
+        path: ${{ steps.dir.outputs.path }}
+        key: luals-${{ runner.os }}-${{ runner.arch }}-${{ steps.dir.outputs.version }}
+    - run: uv run modkit-ci luals path
+      shell: bash

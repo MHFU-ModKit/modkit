@@ -23,6 +23,10 @@ def _outputs(**tags: str) -> dict[str, str]:
     }
 
 
+def _leg(module: str, tag: str, **needs: bool) -> dict[str, object]:
+    return {"module": module, "tag": tag, "make": False, "gl": False} | needs
+
+
 def _complete(reg: Registry) -> release.ListAssets:
     def assets_of(tag: str) -> list[str]:
         module = next(m for m in reg.modules if bundle.tag(m) == tag)
@@ -35,8 +39,8 @@ def test_released_modules_at_release_please_tags(registry_root: Path) -> None:
     reg = _reg(registry_root)
     outputs = _outputs(framework="framework-v0.2.0", packages_alpha="alpha-v0.3.1")
     assert release.from_outputs(reg, outputs) == [
-        {"module": "framework", "tag": "framework-v0.2.0"},
-        {"module": "alpha", "tag": "alpha-v0.3.1"},
+        _leg("framework", "framework-v0.2.0", make=True),
+        _leg("alpha", "alpha-v0.3.1"),
     ]
 
 
@@ -58,7 +62,7 @@ def test_unfinished_release_is_planned(registry_root: Path) -> None:
             tag, _complete(reg)(tag)
         )
 
-    assert release.unfinished(reg, assets_of) == [{"module": "alpha", "tag": "alpha-v0.1.0"}]
+    assert release.unfinished(reg, assets_of) == [_leg("alpha", "alpha-v0.1.0")]
 
 
 def test_plan_unions_without_duplicates(registry_root: Path) -> None:
@@ -66,7 +70,7 @@ def test_plan_unions_without_duplicates(registry_root: Path) -> None:
     outputs = _outputs(packages_alpha="alpha-v0.1.0")
     legs = release.plan(reg, outputs, lambda tag: ["modkit-docs-" + tag + ".zip"])
     assert [leg["module"] for leg in legs].count("alpha") == 1
-    assert legs[0] == {"module": "alpha", "tag": "alpha-v0.1.0"}
+    assert legs[0] == _leg("alpha", "alpha-v0.1.0")
     assert {leg["module"] for leg in legs} >= {"framework", "alpha", "beta"}
 
 
@@ -77,7 +81,7 @@ def test_plan_of_finished_releases_is_empty(registry_root: Path) -> None:
 
 def test_dispatch_uses_manifest_tag_or_given(registry_root: Path) -> None:
     reg = _reg(registry_root)
-    assert release.dispatched(reg, "alpha", None) == [{"module": "alpha", "tag": "alpha-v0.1.0"}]
+    assert release.dispatched(reg, "alpha", None) == [_leg("alpha", "alpha-v0.1.0")]
     assert release.dispatched(reg, "packages/alpha", "alpha-v0.0.9")[0]["tag"] == "alpha-v0.0.9"
     with pytest.raises(release.ReleaseError):
         release.dispatched(reg, "alpha", "beta-v0.1.0")
@@ -90,7 +94,9 @@ def test_cli_dispatch_writes_modules(
     monkeypatch.setenv(bundle.ENV_OUTPUT, str(out))
     monkeypatch.chdir(registry_root)
     assert cli.main(["release-plan", "--module", "alpha"]) == 0
-    assert out.read_text() == 'modules=[{"module":"alpha","tag":"alpha-v0.1.0"}]\n'
+    assert out.read_text() == (
+        'modules=[{"module":"alpha","tag":"alpha-v0.1.0","make":false,"gl":false}]\n'
+    )
 
 
 def test_cli_unknown_module(registry_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,3 +113,9 @@ def test_cli_push_without_outputs(
     monkeypatch.setattr(release, "gh_assets", lambda tag: None)
     assert cli.main(["release-plan", "--outputs", "null"]) == 0
     assert out.read_text() == "modules=[]\n"
+
+
+def test_blender_needs_libraries(registry_root: Path) -> None:
+    reg = _reg(registry_root)
+    assert bundle.needs(reg.get("framework")) == {"make": True, "gl": False}
+    assert bundle.needs(reg.get("alpha")) == {"make": False, "gl": False}

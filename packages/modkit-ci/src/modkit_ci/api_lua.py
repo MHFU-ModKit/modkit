@@ -11,14 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, TypeVar
 
-from modkit_ci import luals
+from modkit_ci import lua_tool, luals
 from modkit_ci.findings import Finding
 from modkit_ci.registry import Module
 
 VERSION_NAME: Final = "api_version"
 _FENCE: Final = re.compile(r"^```lua[ \t]*\n(.*?)^```[ \t]*$", re.DOTALL | re.MULTILINE)
-FENCE_OPEN: Final = "---```lua"
-FENCE_CLOSE: Final = "---```"
 _SPACE: Final = re.compile(r"\s+")
 _STRING: Final = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'")
 _NUMBER: Final = re.compile(r"\b(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d+)?)\b")
@@ -125,27 +123,6 @@ def _prose(raw: str) -> str:
     return _FENCE.sub("", raw).strip()
 
 
-def block_examples(block: Sequence[str]) -> tuple[str, ...]:
-    """The ```lua fences of one `---` doc block, by the rule of `lua_api.examples`."""
-    found: list[str] = []
-    code: list[str] | None = None
-    for raw in block:
-        line = raw.rstrip()
-        if code is not None:
-            if line == FENCE_CLOSE:
-                found.append("\n".join(code))
-                code = None
-            else:
-                code.append(line[3:])
-        elif line == FENCE_OPEN:
-            code = []
-        elif line == FENCE_CLOSE:
-            raise ValueError("a closing fence without an opening one")
-    if code is not None:
-        raise ValueError("an example is not closed")
-    return tuple(found)
-
-
 def _examples(root: Path, file: str, line: int, cache: dict[str, list[str]]) -> tuple[str, ...]:
     """The examples in the doc block directly above 1-based `line` of `file`."""
     if file not in cache:
@@ -155,7 +132,7 @@ def _examples(root: Path, file: str, line: int, cache: dict[str, list[str]]) -> 
     top = line - 1
     while top > 0 and lines[top - 1].lstrip().startswith("---"):
         top -= 1
-    return block_examples(lines[top : line - 1])
+    return tuple(lua_tool.load().block_fences(lines[top : line - 1]))
 
 
 def _typed(view: str, aliases: Mapping[str, str]) -> str:

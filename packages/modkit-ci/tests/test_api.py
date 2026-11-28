@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from modkit_ci import api, api_lua, api_schema, cli
+from modkit_ci import api, api_lua, api_schema, cli, registry
 from modkit_ci.findings import Finding
 
 if TYPE_CHECKING:
@@ -168,3 +168,10 @@ def test_schema_skips_unaffected(schema_repo: GitRepo, schema_runs: list[str]) -
     schema_repo.commit({"framework/x.txt": "x"}, "chore(framework): file")
     assert api.run("base") == 0
     assert schema_runs == []
+
+
+def test_real_repo_schema_dependent() -> None:
+    reg = registry.load(Path(__file__).resolve().parents[3])
+    dependents = api.affected_modules(reg, ["packages/mhfu/src/mhfu/__init__.py"])
+    assert "mhfu-port" in dependents
+    assert "port-manifest" in {s.name for s in reg.get("mhfu-port").schemas}

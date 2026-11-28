@@ -31,7 +31,9 @@ SHA256: Final = {
 
 ENV_BIN: Final = "LUALS_BIN"
 EXE: Final = "lua-language-server"
-ADDRESSES: Final = "framework/build/gen/addresses.gen.lua"
+FRAMEWORK: Final = "framework"
+LUARC: Final = ".luarc.json"
+ADDRESSES_FILE: Final = "addresses.gen.lua"
 _URL: Final = (
     "https://github.com/LuaLS/lua-language-server/releases/download/"
     "{v}/lua-language-server-{v}-{plat}.tar.gz"
@@ -143,12 +145,21 @@ def doc(root: Path, out: Path) -> list[dict[str, Any]]:
     return data
 
 
-def render_addresses(root: Path) -> None:
-    """Write the generated address table LuaLS reads as a library."""
-    target = root / ADDRESSES
-    target.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [sys.executable, "-m", "mhfu.addresses", "lua", "-o", str(target)]
-    subprocess.run(cmd, cwd=root, check=True)
+def addresses_path(root: Path) -> Path:
+    """The generated address table, as the library entry of .luarc.json names it."""
+    config = json.loads((root / LUARC).read_text(encoding="utf-8"))
+    for entry in config.get("workspace.library", []):
+        if Path(entry).name == ADDRESSES_FILE:
+            return root / str(entry)
+    raise LualsMissing(f"{LUARC} has no workspace.library entry for {ADDRESSES_FILE}")
+
+
+def render_addresses(root: Path) -> Path:
+    """Build the address table through the framework Makefile's rule; its path."""
+    target = addresses_path(root)
+    rule = target.relative_to(root / FRAMEWORK)
+    subprocess.run(["make", "-C", str(root / FRAMEWORK), str(rule)], check=True)
+    return target
 
 
 def check(root: Path) -> int:
@@ -161,6 +172,9 @@ def _cmd(args: argparse.Namespace) -> int:
     try:
         if args.action == "path":
             print(binary())
+            return 0
+        if args.action == "cache-dir":
+            print(cache_dir())
             return 0
         root = Path(args.root).resolve() if args.root else registry.find_root()
         if args.action == "check":
@@ -177,8 +191,10 @@ def _cmd(args: argparse.Namespace) -> int:
 
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Add the `luals` command."""
-    p = sub.add_parser("luals", help="LuaLS helper: path, check, doc")
-    p.add_argument("action", nargs="?", choices=["path", "check", "doc"], default="path")
+    p = sub.add_parser("luals", help="LuaLS helper: path, cache-dir, check, doc")
+    p.add_argument(
+        "action", nargs="?", choices=["path", "cache-dir", "check", "doc"], default="path"
+    )
     p.add_argument("root", nargs="?")
     p.add_argument("-o", "--output")
     p.set_defaults(func=_cmd)

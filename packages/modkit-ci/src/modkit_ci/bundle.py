@@ -15,16 +15,16 @@ import tempfile
 import tomllib
 import urllib.error
 import urllib.request
-import zipfile
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from modkit_ci import docs, licences, registry
+from modkit_ci import docs, licences, luals, registry
+from modkit_ci.archive import write_zip
 from modkit_ci.registry import Module, Registry
 
-FRAMEWORK: Final = "framework"
+FRAMEWORK: Final = luals.FRAMEWORK
 BLENDER: Final = "blender"
 PRXS: Final = ("mhfu_framework.prx", "mhfu_boot.prx")
 PLUGIN_DIR: Final = "PSP/PLUGINS/mhfu_framework"
@@ -32,7 +32,6 @@ NOTICE_FILE: Final = "THIRD_PARTY_NOTICES.txt"
 LICENSES: Final = "LICENSES"
 ENV_BLENDER: Final = "BLENDER"
 ENV_OUTPUT: Final = "GITHUB_OUTPUT"
-_ZIP_TIME: Final = (1980, 1, 1, 0, 0, 0)
 _TIMEOUT: Final = 120
 
 Runner = Callable[[Sequence[str], Path], None]
@@ -142,30 +141,22 @@ def framework_files(root: Path, build: Path) -> dict[str, Path]:
     return files
 
 
-def _write_zip(archive: Path, files: Mapping[str, Path]) -> None:
-    archive.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
-        for name in sorted(files):
-            info = zipfile.ZipInfo(name, _ZIP_TIME)
-            info.external_attr = 0o644 << 16
-            info.compress_type = zipfile.ZIP_DEFLATED
-            zf.writestr(info, files[name].read_bytes())
-
-
-def framework_zip(root: Path, build: Path, module: Module, out: Path, run: Runner = _run) -> Path:
+def framework_zip(root: Path, build: Path, module: Module, out: Path) -> Path:
     """Write `mhfu_framework-<version>.zip` from the PRX build and the Lua sources."""
     files = framework_files(root, build)
+    try:
+        addresses = luals.addresses_path(root)
+    except (luals.LualsMissing, OSError) as err:
+        raise BundleError(str(err)) from err
+    if not addresses.is_file():
+        raise BundleError(f"{addresses} is missing: run `make -C framework`")
+    files["sdk/meta/addresses.gen.lua"] = addresses
     with tempfile.TemporaryDirectory() as tmp:
-        addresses = Path(tmp) / "addresses.gen.lua"
-        run([sys.executable, "-m", "mhfu.addresses", "lua", "-o", str(addresses)], root)
-        if not addresses.is_file():
-            raise BundleError("mhfu.addresses wrote no Lua table")
-        files["sdk/meta/addresses.gen.lua"] = addresses
         notice = Path(tmp) / NOTICE_FILE
         notice.write_text(licences.render(licences.components(root)), encoding="utf-8")
         files[NOTICE_FILE] = notice
         archive = out / f"mhfu_framework-{module.version}.zip"
-        _write_zip(archive, files)
+        write_zip(archive, files)
     return archive
 
 
@@ -267,6 +258,11 @@ def complete(module: Module, names: Collection[str]) -> bool:
     return docs_name(module) in names and (own is None or any(own(n) for n in names))
 
 
+def needs(module: Module) -> dict[str, bool]:
+    """Build steps `assets` expects first: `make` (the PRXs), `gl` (Blender libraries)."""
+    return {"make": module.name == FRAMEWORK, "gl": module.name == BLENDER}
+
+
 def assets(
     root: Path,
     module: Module,
@@ -278,7 +274,7 @@ def assets(
 ) -> list[Path]:
     """The module's own release assets, written under `out`."""
     if module.name == FRAMEWORK:
-        return [framework_zip(root, build or root / FRAMEWORK / "build", module, out, run)]
+        return [framework_zip(root, build or root / FRAMEWORK / "build", module, out)]
     if module.name == BLENDER:
         return [blender_zip(root, module, out, run, binary)]
     if module.release_type == "python":
@@ -303,7 +299,6 @@ def _cmd(args: argparse.Namespace) -> int:
     try:
         module = resolve(registry.load(root), args.module)
         out = Path(args.out).resolve()
-        write_output("tag", tag(module))
         made = [docs_zip(root, module, out)] if args.docs else assets(root, module, out)
     except (BundleError, registry.RegistryError, subprocess.CalledProcessError) as err:
         print(f"bundle: {err}", file=sys.stderr)

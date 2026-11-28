@@ -25,9 +25,5 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           sync-args: --group docs
-      - uses: actions/cache@v6
-        with:
-          path: ~/.cache/modkit-ci/luals
-          key: luals-${{ hashFiles('packages/modkit-ci/src/modkit_ci/luals.py') }}
-      - run: uv run modkit-ci luals path
+      - uses: ./.github/actions/luals
       - run: uv run modkit-ci docs build --out build/docs --zip build/docs.zip

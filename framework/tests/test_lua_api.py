@@ -1,16 +1,13 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sp00ktober
-import importlib.util
 import re
 from pathlib import Path
 
 import pytest
+from modkit_ci import lua_tool
 
 FRAMEWORK = Path(__file__).parents[1]
-_spec = importlib.util.spec_from_file_location("lua_api", FRAMEWORK / "tools" / "lua_api.py")
-assert _spec and _spec.loader
-tool = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(tool)
+tool = lua_tool.load()
 
 DECL = """---@meta
 ---@class mhfu

@@ -100,3 +100,16 @@ def test_dispatch_has_its_own_group() -> None:
 def test_upload_token_only_in_the_upload_step(name: str) -> None:
     holders = [s for s in JOBS[name]["steps"] if "GH_TOKEN" in s.get("env", {})]
     assert len(holders) == 1
+
+
+def test_uploads_use_the_leg_tag() -> None:
+    for name in ("docs", "assets"):
+        uploads = [s for s in JOBS[name]["steps"] if "gh release upload" in s.get("run", "")]
+        assert [u["env"]["TAG"] for u in uploads] == ["${{ matrix.tag }}"]
+
+
+def test_build_steps_come_from_the_plan() -> None:
+    conds = {s.get("if") for s in JOBS["assets"]["steps"]}
+    assert {"${{ matrix.make }}", "${{ matrix.gl }}"} <= conds
+    text = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "matrix.module ==" not in text and "contains(matrix.module" not in text
