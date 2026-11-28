@@ -25,6 +25,17 @@ _ENV = {
 }
 
 
+# what modkit-ci reads from a GitHub runner; a test sets the ones it needs
+RUNNER_ENV = ("GITHUB_ACTIONS", "GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY")
+
+
+@pytest.fixture(autouse=True)
+def _off_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests see no runner, so CI and a laptop run the same tests."""
+    for key in RUNNER_ENV:
+        monkeypatch.delenv(key, raising=False)
+
+
 class GitRepo:
     """A temporary repo; the cwd while the fixture lives."""
 
