@@ -25,6 +25,9 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup
+        # no Qt libraries on the runner: pytest-qt would fail to load
+        with:
+          sync-args: --no-group qt
       - id: affected
         uses: ./.github/actions/affected
       - uses: ./.github/actions/luals
