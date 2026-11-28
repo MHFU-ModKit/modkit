@@ -21,6 +21,8 @@ make -C framework clean
 | `build/gen/addresses.gen.h`, `addresses_table.gen.inc` | the address map, rendered from `packages/mhfu`; Lua reads it as `mhfu.addr`, an entry built when first read |
 | `build/gen/lua_api.gen.h`, `.inc` | the `mhfu` table's C side, rendered from `lua/meta/mhfu.d.lua` |
 
+The image budget is `FRAMEWORK_BUDGET` in `Makefile`, raised in a reviewed change.
+
 `mods.manifest` lists the mods linked into the plugin, one directory under `mods/` per line; `#`
 disables one. Every mod directory is compiled either way.
 
