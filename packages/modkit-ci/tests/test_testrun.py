@@ -25,26 +25,43 @@ QT = Unit("beta", "apps/beta", "apps/beta/tests", ("beta",), "apps/beta/pyprojec
 BARE = Unit("framework", "framework", "framework/tests", (), None, False)
 
 
+@pytest.fixture
+def root(tmp_path: Path) -> Path:
+    (tmp_path / "packages/alpha").mkdir(parents=True)
+    (tmp_path / "apps/beta").mkdir(parents=True)
+    for rel, bar in (("packages/alpha", 63), ("apps/beta", 0)):
+        text = f"[tool.coverage.report]\nfail_under = {bar}\n"
+        (tmp_path / rel / "pyproject.toml").write_text(text, encoding="utf-8")
+    return tmp_path
+
+
 def test_plain() -> None:
     assert testrun.pytest_argv(UNIT) == [sys.executable, "-m", "pytest", "packages/alpha/tests"]
 
 
-def test_cov() -> None:
-    argv = testrun.pytest_argv(UNIT, cov=True, extra=["-x"])
+def test_cov(root: Path) -> None:
+    argv = testrun.pytest_argv(UNIT, cov=True, extra=["-x"], root=root)
     assert argv[3:] == [
         "packages/alpha/tests",
         "--cov=alpha",
         "--cov=alpha_x",
         "--cov-config=packages/alpha/pyproject.toml",
         "--cov-report=term-missing",
+        "--cov-fail-under=63",
         "-x",
     ]
 
 
-def test_no_qt_drops_cov_for_qt_only() -> None:
-    assert "--cov=beta" in testrun.pytest_argv(QT, cov=True)
-    assert testrun.pytest_argv(QT, cov=True, no_qt=True)[3:] == ["apps/beta/tests"]
-    assert "--cov=alpha" in testrun.pytest_argv(UNIT, cov=True, no_qt=True)
+def test_cov_without_floor(root: Path) -> None:
+    (root / "packages/alpha/pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    argv = testrun.pytest_argv(UNIT, cov=True, root=root)
+    assert not any(a.startswith("--cov-fail-under") for a in argv)
+
+
+def test_no_qt_drops_cov_for_qt_only(root: Path) -> None:
+    assert "--cov=beta" in testrun.pytest_argv(QT, cov=True, root=root)
+    assert testrun.pytest_argv(QT, cov=True, no_qt=True, root=root)[3:] == ["apps/beta/tests"]
+    assert "--cov=alpha" in testrun.pytest_argv(UNIT, cov=True, no_qt=True, root=root)
 
 
 def test_no_packages_no_cov() -> None:
@@ -101,4 +118,15 @@ def test_cli_options_after_units(
     assert main(["test", "alpha", "--cov", "--no-qt", "--", "-x"]) == 0
     assert "--cov=alpha" not in calls[0]  # no packages in the fixture
     assert calls[0][-1] == "-x"
-    assert main(["test", "alpha", "-x"]) == 2
+    with pytest.raises(SystemExit):
+        main(["test", "alpha", "-x"])
+
+
+def test_cli_double_dash_directly(
+    reg: registry.Registry, calls: list[list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(reg.root)
+    assert main(["test", "alpha", "--", "-x"]) == 0
+    assert calls[0][-1] == "-x"
+    assert main(["test", "--cov", "alpha", "beta", "--", "-k", "x"]) == 1
+    assert [c[-2:] for c in calls[1:]] == [["-k", "x"]] * 2

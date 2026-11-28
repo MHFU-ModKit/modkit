@@ -8,21 +8,31 @@ import argparse
 import subprocess
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from modkit_ci.affected import Unit, all_units
+from modkit_ci.coverage import floor
 from modkit_ci.registry import Registry, load
 
 
 def pytest_argv(
-    unit: Unit, *, cov: bool = False, no_qt: bool = False, extra: Sequence[str] = ()
+    unit: Unit,
+    *,
+    cov: bool = False,
+    no_qt: bool = False,
+    extra: Sequence[str] = (),
+    root: Path = Path(),
 ) -> list[str]:
-    """The pytest command line for one unit."""
+    """The pytest command line for one unit; the floor is passed so no addopts can lower it."""
     argv = [sys.executable, "-m", "pytest", unit.tests]
     if cov and unit.packages and not (no_qt and unit.qt):
         argv += [f"--cov={pkg}" for pkg in unit.packages]
         if unit.pyproject:
             argv.append(f"--cov-config={unit.pyproject}")
         argv.append("--cov-report=term-missing")
+        bar = floor((root / unit.pyproject).read_text(encoding="utf-8")) if unit.pyproject else None
+        if bar is not None:
+            argv.append(f"--cov-fail-under={bar:g}")
     return [*argv, *extra]
 
 
@@ -46,7 +56,7 @@ def run(
             print(f"test: {name}: no tests directory, skipped")
         else:
             print(f"test: {name}", flush=True)
-            argv = pytest_argv(unit, cov=cov, no_qt=no_qt, extra=extra)
+            argv = pytest_argv(unit, cov=cov, no_qt=no_qt, extra=extra, root=registry.root)
             if subprocess.run(argv, cwd=registry.root, check=False).returncode != 0:
                 failed.append(name)
     if failed:
@@ -54,23 +64,8 @@ def run(
     return 1 if failed else 0
 
 
-def _partition(rest: list[str]) -> tuple[list[str], str, list[str]]:
-    if "--" not in rest:
-        return rest, "", []
-    i = rest.index("--")
-    return rest[:i], "--", rest[i + 1 :]
-
-
 def _cmd(args: argparse.Namespace) -> int:
-    # REMAINDER swallows the options written after the units: take ours back out
-    rest: list[str] = args.pytest_args
-    head, _, tail = _partition(rest)
-    cov, no_qt = args.cov or "--cov" in head, args.no_qt or "--no-qt" in head
-    unknown = [a for a in head if a not in ("--cov", "--no-qt")]
-    if unknown:
-        print(f"test: unexpected {' '.join(unknown)} (pytest options go after --)", file=sys.stderr)
-        return 2
-    return run(load(), args.units, cov=cov, no_qt=no_qt, extra=tail)
+    return run(load(), args.units, cov=args.cov, no_qt=args.no_qt, extra=args.extra)
 
 
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -79,5 +74,4 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     p.add_argument("units", nargs="+")
     p.add_argument("--cov", action="store_true")
     p.add_argument("--no-qt", action="store_true")
-    p.add_argument("pytest_args", nargs=argparse.REMAINDER)
     p.set_defaults(func=_cmd)
