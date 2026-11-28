@@ -4,22 +4,18 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 from pathlib import Path
 
 import pytest
-from modkit_ci import api_lua, luals, registry
+from modkit_ci import api_lua, lua_tool, luals, registry
 from modkit_ci.api_lua import Class, Const, Field, Func, LuaApi, Param
 
 FIXTURE = Path(__file__).parent / "fixtures" / "lua"
 REPO = Path(__file__).resolve().parents[3]
 DIRS = ["meta", "lib"]
 
-_spec = importlib.util.spec_from_file_location("lua_api", REPO / "framework/tools/lua_api.py")
-assert _spec and _spec.loader
-lua_api = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(lua_api)
+lua_api = lua_tool.load()
 
 
 def _fixture_api(dirs: list[str] = DIRS) -> LuaApi:
@@ -63,7 +59,7 @@ def test_example_split_from_desc() -> None:
 def test_example_blank_lines_and_two_fences() -> None:
     block = ["---Does it.", "---```lua", "---local a = 1", "---", "---use(a)", "---```"]
     block += ["---```lua", "---b()", "---```", "---@return true"]
-    assert api_lua.block_examples(block) == ("local a = 1\n\nuse(a)", "b()")
+    assert tuple(lua_api.block_fences(block)) == ("local a = 1\n\nuse(a)", "b()")
 
 
 def test_type_block_is_prose_not_example() -> None:
@@ -74,7 +70,7 @@ def test_type_block_is_prose_not_example() -> None:
 @pytest.mark.parametrize("block", [["---```lua", "---x"], ["---```"]])
 def test_unbalanced_fence_raises(block: list[str]) -> None:
     with pytest.raises(ValueError, match="fence|closed"):
-        api_lua.block_examples(block)
+        lua_api.block_fences(block)
 
 
 def test_examples_come_from_source(tmp_path: Path) -> None:
@@ -331,8 +327,6 @@ def test_real_check_against_itself() -> None:
 
 def test_real_examples_match_lua_api() -> None:
     _need_luals()
-    if not hasattr(lua_api, "examples"):
-        pytest.skip("lua_api.examples is not on this branch yet")
     text = (REPO / "framework/lua/meta/mhfu.d.lua").read_text(encoding="utf-8")
     want = {f"mhfu.{k}": len(v) for k, v in lua_api.examples(text).items()}
     api = api_lua.load(REPO, ["framework/lua/meta", "framework/lua/lib"])

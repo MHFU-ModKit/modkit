@@ -17,14 +17,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
-from modkit_ci import api_lua, api_python, registry
+from modkit_ci import api_lua, api_python, lua_tool, registry
 from modkit_ci.lua_md import anchor, render
 from modkit_ci.registry import Module, Registry
 
 DECLARATION: Final = "mhfu.d.lua"
 SHIM_SOURCE: Final = "docs/vendor/iframe-worker-1.0.4.js"
 SHIM_PAGE: Final = "assets/iframe-worker.js"
-LUA_API_SCRIPT: Final = "framework/tools/lua_api.py"
 _LINK: Final = re.compile(r"\]\(([^)\s]+)")
 _TITLE: Final = re.compile(r"^# +(.+?) *$", re.MULTILINE)
 _SCHEME: Final = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//|#|/)")
@@ -192,14 +191,7 @@ def _declared(root: Path, module: Module) -> list[str]:
         decl = root / folder / DECLARATION
         if not decl.is_file():
             continue
-        script = root / LUA_API_SCRIPT
-        # a script, not a package: loaded by path
-        spec = importlib.util.spec_from_file_location("lua_api", script)
-        if spec is None or spec.loader is None:
-            raise DocsError(f"cannot load {LUA_API_SCRIPT}")
-        lua_api = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(lua_api)
-        names: list[str] = list(lua_api.parse(decl.read_text(encoding="utf-8")).funcs)
+        names: list[str] = list(lua_tool.load().parse(decl.read_text(encoding="utf-8")).funcs)
         return names
     raise DocsError(f"{module.name}: no {DECLARATION} in {', '.join(module.lua)}")
 

@@ -3,7 +3,6 @@
 """Host builds of framework sources, for tests that call them through ctypes."""
 
 import ctypes
-import importlib.util
 import shutil
 import struct
 import subprocess
@@ -13,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from modkit_ci import lua_tool
 from unicorn import (
     UC_ARCH_MIPS,
     UC_HOOK_CODE,
@@ -200,11 +200,9 @@ def lua() -> Any:
     from lupa.lua54 import LuaRuntime
     from mhfu import addresses
 
-    spec = importlib.util.spec_from_file_location("lua_api", FRAMEWORK / "tools" / "lua_api.py")
-    assert spec and spec.loader
-    lua_api = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(lua_api)
-    api = lua_api.parse((FRAMEWORK / "lua" / "meta" / "mhfu.d.lua").read_text(encoding="utf-8"))
+    api = lua_tool.load().parse(
+        (FRAMEWORK / "lua" / "meta" / "mhfu.d.lua").read_text(encoding="utf-8")
+    )
 
     rt = LuaRuntime()
     rt.execute(f"package.path = {str(FRAMEWORK / 'lua' / 'lib' / '?.lua')!r}")

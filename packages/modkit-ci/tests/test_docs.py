@@ -45,8 +45,6 @@ def tree(registry_root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     write("packages/alpha/src/alpha/__init__.py", '"""Alpha."""\n')
     write("packages/alpha/src/alpha/core.py", '"""Core."""\n\n\ndef f() -> None:\n    pass\n')
     write("framework/lua/meta/mhfu.d.lua", DECL)
-    script = (REPO / docs.LUA_API_SCRIPT).read_text(encoding="utf-8")
-    write(docs.LUA_API_SCRIPT, script)
     write(docs.SHIM_SOURCE, "//shim\n")
     monkeypatch.setattr(api_lua, "load", lambda *_: LuaApi((_func("mhfu.foo"),), (), ()))
     return root

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 sp00ktober
 import copy
-import importlib.util
 import struct
 from pathlib import Path
 from typing import Any
@@ -15,6 +14,7 @@ from mhfu.writes import Refused, Write, apply
 from mhfu_port import manifest
 from mhfu_port.manifest import Attack, Hitbox, HitzoneState, Hurtbox, ManifestError
 from mhfu_studio.monster import runtime as RT
+from modkit_ci import lua_tool
 
 FRAMEWORK = Path(__file__).parents[4] / "framework"
 ROW = [100, 75, 65, 40, 0, 15, 5, 30, 20, 110]
@@ -223,11 +223,9 @@ def lua() -> Any:
     """A Lua runtime like lua_host's, `mhfu` stubbed from its declaration, its memory a byte
     map `mem` that tests seed with real bytes."""
     lua54 = pytest.importorskip("lupa.lua54")
-    spec = importlib.util.spec_from_file_location("lua_api", FRAMEWORK / "tools" / "lua_api.py")
-    assert spec and spec.loader
-    lua_api = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(lua_api)
-    api = lua_api.parse((FRAMEWORK / "lua" / "meta" / "mhfu.d.lua").read_text(encoding="utf-8"))
+    api = lua_tool.load().parse(
+        (FRAMEWORK / "lua" / "meta" / "mhfu.d.lua").read_text(encoding="utf-8")
+    )
     rt = lua54.LuaRuntime()
     rt.execute(f"package.path = {str(FRAMEWORK / 'lua' / 'lib' / '?.lua')!r}")
     rt.eval(
