@@ -40,7 +40,7 @@ jobs:
         if: github.event_name == 'pull_request' && matrix.python == '3.11'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
-        run: uv run --no-group qt modkit-ci coverage --base "$BASE"
+        run: uv run modkit-ci coverage --base "$BASE"
       # Mesa for the studio's GL tests; X11 headers because glcontext has no wheel for 3.14
       - name: system libraries
         if: steps.affected.outputs.units != '[]'
@@ -53,4 +53,4 @@ jobs:
           COV: ${{ matrix.python == '3.11' && '--cov' || '' }}
         run: |
           # shellcheck disable=SC2046,SC2086
-          uv run --no-group qt modkit-ci test $(jq -r 'join(" ")' <<<"$UNITS") $COV --no-qt
+          uv run modkit-ci test $(jq -r 'join(" ")' <<<"$UNITS") $COV --no-qt
