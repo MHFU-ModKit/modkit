@@ -22,6 +22,8 @@ from modkit_ci.lua_md import anchor, render
 from modkit_ci.registry import Module, Registry
 
 DECLARATION: Final = "mhfu.d.lua"
+SHIM_SOURCE: Final = "docs/vendor/iframe-worker-1.0.4.js"
+SHIM_PAGE: Final = "assets/iframe-worker.js"
 LUA_API_SCRIPT: Final = "framework/tools/lua_api.py"
 _LINK: Final = re.compile(r"\]\(([^)\s]+)")
 _TITLE: Final = re.compile(r"^# +(.+?) *$", re.MULTILINE)
@@ -129,6 +131,7 @@ def stage(root: Path, reg: Registry, docs: Path) -> Site:
     site = Site()
     home = _copy(root, docs, "README.md", "index.md")
     _copy(root, docs, "misc/banner.svg")
+    _copy(root, docs, SHIM_SOURCE, SHIM_PAGE)
     contributing = _copy(root, docs, "CONTRIBUTING.md")
     pages: list[Any] = [{"Overview": home or "index.md"}]
     if contributing:
@@ -160,6 +163,8 @@ def config(site: Site, docs_dir: str, site_dir: str) -> dict[str, Any]:
         "use_directory_urls": False,
         "theme": {"name": "material", "font": False},
         "nav": site.nav,
+        # the offline plugin skips its own (unpinned, unpkg) shim when one is named
+        "extra": {"polyfills": [SHIM_PAGE]},
         "markdown_extensions": ["attr_list", "tables", "toc", "pymdownx.highlight"],
         "plugins": [
             "search",
@@ -196,7 +201,7 @@ def _declared(root: Path, module: Module) -> list[str]:
         spec.loader.exec_module(lua_api)
         names: list[str] = list(lua_api.parse(decl.read_text(encoding="utf-8")).funcs)
         return names
-    return []
+    raise DocsError(f"{module.name}: no {DECLARATION} in {', '.join(module.lua)}")
 
 
 def missing_lua(root: Path, reg: Registry, site: Site) -> list[str]:
@@ -263,7 +268,11 @@ def build(root: Path, out: Path, zip_path: Path | None = None) -> int:
     site = stage(root, reg, docs)
     for name, (public, bare) in site.totals.items():
         print(f"undocumented public objects: {name}: {bare} of {public}")
-    missing = missing_lua(root, reg, site)
+    try:
+        missing = missing_lua(root, reg, site)
+    except DocsError as err:
+        print(f"error: {err}")
+        return 1
     if missing:
         print(f"error: Lua functions missing from the reference: {', '.join(missing)}")
         return 1

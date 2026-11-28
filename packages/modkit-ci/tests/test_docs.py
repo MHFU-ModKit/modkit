@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import zipfile
 from pathlib import Path
 
@@ -13,6 +14,8 @@ import pytest
 from modkit_ci import api_lua, docs, luals, registry
 from modkit_ci.api_lua import Func, LuaApi
 
+EXTERNAL = re.compile(r"""<(?:script|link)\b[^>]*\b(?:src|href)=["'](?:https?:)?//[^"']+""")
+ALLOWED_EXTERNAL: frozenset[str] = frozenset()  # an entry needs a reason on its line
 REPO = Path(__file__).resolve().parents[3]
 DECL = "---Doc.\n---@return integer\nfunction mhfu.foo() end\n---Doc.\nmhfu.api_version = 1\n"
 
@@ -44,6 +47,7 @@ def tree(registry_root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     write("framework/lua/meta/mhfu.d.lua", DECL)
     script = (REPO / docs.LUA_API_SCRIPT).read_text(encoding="utf-8")
     write(docs.LUA_API_SCRIPT, script)
+    write(docs.SHIM_SOURCE, "//shim\n")
     monkeypatch.setattr(api_lua, "load", lambda *_: LuaApi((_func("mhfu.foo"),), (), ()))
     return root
 
@@ -68,6 +72,7 @@ def test_staging_mirror(tree: Path, tmp_path: Path) -> None:
         "data/README.md",
         "docs/formats/zeta.md",
         "reference/lua/framework.md",
+        docs.SHIM_PAGE,
     ):
         assert (out / rel).is_file(), rel
     assert not (out / "framework" / "README.md").exists()
@@ -104,6 +109,7 @@ def test_config(tree: Path, tmp_path: Path) -> None:
     cfg = docs.config(site, "stage/docs", "site")
     assert cfg["nav"] == site.nav
     assert cfg["use_directory_urls"] is False
+    assert cfg["extra"]["polyfills"] == [docs.SHIM_PAGE]
     names = [p if isinstance(p, str) else next(iter(p)) for p in cfg["plugins"]]
     assert names == ["search", "offline", "mkdocstrings"]
     handler = cfg["plugins"][2]["mkdocstrings"]["handlers"]["python"]
@@ -116,7 +122,17 @@ def test_config(tree: Path, tmp_path: Path) -> None:
 def test_declared_functions(tree: Path) -> None:
     reg = registry.load(tree)
     assert docs._declared(tree, reg.get("framework")) == ["foo"]
-    assert docs._declared(tree, reg.get("alpha")) == []
+
+
+def test_missing_declaration_fails(
+    tree: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tree / "framework/lua/meta/mhfu.d.lua").unlink()
+    with pytest.raises(docs.DocsError, match="no mhfu.d.lua"):
+        docs._declared(tree, registry.load(tree).get("framework"))
+    monkeypatch.setattr(docs, "_zensical", lambda *_: pytest.fail("built anyway"))
+    assert docs.build(tree, tmp_path / "out") == 1
+    assert "no mhfu.d.lua" in capsys.readouterr().out
 
 
 def test_missing_lua_function(tree: Path, tmp_path: Path) -> None:
@@ -196,6 +212,11 @@ def test_real_build(tmp_path: Path) -> None:
     with zipfile.ZipFile(target) as z:
         assert "index.html" in z.namelist()
         page = z.read("reference/lua/framework.html").decode("utf-8")
+        for name in z.namelist():
+            if name.endswith(".html"):
+                found = set(EXTERNAL.findall(z.read(name).decode("utf-8")))
+                assert found <= ALLOWED_EXTERNAL, (name, found)
+        assert any("iframe-worker" in n for n in z.namelist())
     reg = registry.load(REPO)
     for name in docs._declared(REPO, reg.get("framework")):
         assert f'id="mhfu.{name}"' in page
