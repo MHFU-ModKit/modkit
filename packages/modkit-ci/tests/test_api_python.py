@@ -98,10 +98,29 @@ def test_all_exposes(tmp_path: Path) -> None:
     assert kinds(run(tmp_path, pkg(""), new)) == [("doc", "p._g")]
 
 
-def test_method_and_attribute(tmp_path: Path) -> None:
-    new = pkg('class C:\n    """D."""\n\n    def m(self):\n        pass\n\n    x = 1\n')
+def test_method_needs_doc(tmp_path: Path) -> None:
+    new = pkg('class C:\n    """D."""\n\n    def m(self):\n        pass\n')
     old = pkg('class C:\n    """D."""\n')
-    assert kinds(run(tmp_path, old, new)) == [("doc", "p.C.m"), ("doc", "p.C.x")]
+    assert kinds(run(tmp_path, old, new)) == [("doc", "p.C.m")]
+
+
+def test_attributes_need_no_doc(tmp_path: Path) -> None:
+    new = pkg(
+        "from dataclasses import dataclass\n\nLIMIT = 3\n\n@dataclass\nclass P:\n"
+        '    """D."""\n\n    x: int\n    y: int = 0\n\n    z = 1\n'
+    )
+    assert run(tmp_path, pkg(""), new) == []
+
+
+def test_attribute_removal_breaks(tmp_path: Path) -> None:
+    found = run(tmp_path, pkg("LIMIT = 3\n"), pkg(""))
+    assert kinds(found) == [("break", "p.LIMIT")]
+
+
+def test_class_attribute_removal_breaks(tmp_path: Path) -> None:
+    old = pkg('class C:\n    """D."""\n\n    x: int = 1\n')
+    new = pkg('class C:\n    """D."""\n')
+    assert kinds(run(tmp_path, old, new)) == [("break", "p.C.x")]
 
 
 def test_new_package(tmp_path: Path) -> None:
@@ -121,9 +140,9 @@ def test_alias_not_public(tmp_path: Path) -> None:
 
 
 def test_public_objects(tmp_path: Path) -> None:
-    root = tree(
-        tmp_path / "r",
-        pkg('"""P."""\n\ndef f():\n    """D."""\n\ndef g():\n    pass\n\ndef _h():\n    pass\n'),
+    body = (
+        '"""P."""\n\nK = 1\n\ndef f():\n    """D."""\n\ndef g():\n    pass\n\ndef _h():\n    pass\n'
     )
+    root = tree(tmp_path / "r", pkg(body))
     got = {p: d for p, _, d in api_python.public_objects(root, MODULE)}
     assert got == {"p": True, "p.f": True, "p.g": False}

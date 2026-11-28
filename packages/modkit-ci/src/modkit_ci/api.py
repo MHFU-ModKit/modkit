@@ -25,13 +25,23 @@ def marked_modules(reg: registry.Registry, base: str) -> set[str]:
     return marked
 
 
-def _module_checks(module: registry.Module, base_root: Path, head_root: Path) -> list[Finding]:
+def affected_modules(reg: registry.Registry, files: list[str]) -> set[str]:
+    """Modules whose own path or a dependency changed; the schema checks run for these.
+
+    Integration: return `affected.compute(reg, files, reg.root / "uv.lock").modules` here.
+    """
+    return {m.name for f in files if (m := reg.owner(f))}
+
+
+def _module_checks(
+    module: registry.Module, base_root: Path, head_root: Path, *, own: bool, dependent: bool
+) -> list[Finding]:
     out: list[Finding] = []
-    if "python" in module.api:
+    if own and "python" in module.api:
         out += api_python.check(module, base_root, head_root)
-    if "lua" in module.api:
+    if own and "lua" in module.api:
         out += api_lua.check(module, base_root, head_root)
-    if module.schemas:
+    if dependent and module.schemas:
         out += api_schema.check(module, base_root, head_root)
     return out
 
@@ -40,14 +50,21 @@ def run(base: str) -> int:
     """Check the modules changed since `base`; 1 on an unmarked break or any doc finding."""
     reg = registry.load()
     merge_base = git.merge_base(base)
-    changed = {m for f in git.changed_files(merge_base) if (m := reg.owner(f))}
+    files = git.changed_files(merge_base)
+    changed = {m for f in files if (m := reg.owner(f))}
+    affected = affected_modules(reg, files)
     marked = marked_modules(reg, merge_base)
     results: list[Finding] = []
     with tempfile.TemporaryDirectory(prefix="modkit-ci-base-") as tmp:
         base_root = git.materialize(merge_base, Path(tmp))
         for module in reg.modules:
-            if module in changed:
-                results += _module_checks(module, base_root, reg.root)
+            results += _module_checks(
+                module,
+                base_root,
+                reg.root,
+                own=module in changed,
+                dependent=module in changed or module.name in affected,
+            )
     errors = [f for f in results if f.kind == "doc"]
     errors += [f for f in results if f.kind == "break" and f.module not in marked]
     accepted = [f for f in results if f.kind == "break" and f.module in marked]

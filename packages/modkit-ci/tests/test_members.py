@@ -45,14 +45,22 @@ def test_mhp_formats_dependents() -> None:
         reg, ["packages/mhp-formats/src/mhp_formats/pac.py"], ROOT / "uv.lock"
     )
     assert not result.all
-    assert result.modules == {"mhp-formats", "mhfu-port", "studio", "blender", "framework"}
+    assert result.modules == {
+        "mhp-formats",
+        "mhfu-port",
+        "studio",
+        "blender",
+        "framework",
+        "mhfu",
+        "hud",
+    }
 
 
 def test_ports_dir_belongs_to_mhfu_port() -> None:
     reg = registry.load(ROOT)
     result = affected.compute(reg, ["ports/x.toml"], ROOT / "uv.lock")
     assert "mhfu-port" in result.modules
-    assert "mhfu" not in result.modules
+    assert result.changed == {"ports/x.toml"}
 
 
 def test_ci_package_means_all() -> None:
@@ -60,3 +68,10 @@ def test_ci_package_means_all() -> None:
     result = affected.compute(reg, ["packages/modkit-ci/src/modkit_ci/cli.py"], ROOT / "uv.lock")
     assert result.all
     assert {"modkit-ci", "modkit-testing"} <= {u.name for u in result.units}
+
+
+def test_port_lua_affects_its_users() -> None:
+    reg = registry.load(ROOT)
+    result = affected.compute(reg, ["framework/lua/lib/mhfu_port.lua"], ROOT / "uv.lock")
+    assert not result.all
+    assert {"framework", "mhfu", "studio", "mhfu-port", "blender", "hud"} <= result.modules

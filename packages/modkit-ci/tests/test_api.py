@@ -2,12 +2,13 @@
 # SPDX-FileCopyrightText: 2026 sp00ktober
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from modkit_ci import api, api_lua, cli
+from modkit_ci import api, api_lua, api_schema, cli
 from modkit_ci.findings import Finding
 
 if TYPE_CHECKING:
@@ -119,3 +120,51 @@ def test_lua_warning_passes(
 
 def test_cli(repo: GitRepo) -> None:
     assert cli.main(["api", "--base", "base"]) == 0
+
+
+@pytest.fixture
+def schema_repo(git_repo: GitRepo, registry_root: Path) -> GitRepo:
+    """beta carries a schema and, as the registry sees it, depends on alpha."""
+    shutil.copytree(registry_root, git_repo.path, dirs_exist_ok=True)
+    cfg = git_repo.path / "release-please-config.json"
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    x = data["packages"]["apps/beta"]["x-modkit"]
+    x["schemas"] = [{"name": "s", "load": "m:load", "corpus": ["apps/beta/*.toml"]}]
+    x["depends"] = ["alpha"]
+    cfg.write_text(json.dumps(data), encoding="utf-8")
+    base = git_repo.commit({INIT: GOOD}, "chore(repo): base")
+    git_repo.branch("base", base)
+    return git_repo
+
+
+@pytest.fixture
+def schema_runs(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    runs: list[str] = []
+    monkeypatch.setattr(api_schema, "check", lambda m, base, head: runs.append(m.name) or [])
+    deps = {"packages/alpha/": {"alpha", "beta"}, "framework/": {"framework"}}
+    monkeypatch.setattr(
+        api,
+        "affected_modules",
+        lambda reg, files: {
+            m for f in files for p, ms in deps.items() if f.startswith(p) for m in ms
+        },
+    )
+    return runs
+
+
+def test_schema_runs_for_dependent(schema_repo: GitRepo, schema_runs: list[str]) -> None:
+    schema_repo.commit({INIT: GOOD + 'def g():\n    """Doc."""\n'}, "feat(alpha): g")
+    assert api.run("base") == 0
+    assert schema_runs == ["beta"]
+
+
+def test_schema_own_change(schema_repo: GitRepo, schema_runs: list[str]) -> None:
+    schema_repo.commit({"apps/beta/x.txt": "x"}, "chore(beta): file")
+    assert api.run("base") == 0
+    assert schema_runs == ["beta"]
+
+
+def test_schema_skips_unaffected(schema_repo: GitRepo, schema_runs: list[str]) -> None:
+    schema_repo.commit({"framework/x.txt": "x"}, "chore(framework): file")
+    assert api.run("base") == 0
+    assert schema_runs == []

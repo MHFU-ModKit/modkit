@@ -89,14 +89,48 @@ def test_sha_mismatch(tmp_path: Path) -> None:
     assert not (tmp_path / "cache").exists()
 
 
-def test_offline_falls_to_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def _path_binary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, version: str) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     exe = bin_dir / luals.EXE
-    exe.write_text("#!/bin/sh\n")
+    exe.write_text(f"#!/bin/sh\necho {version}\n")
     exe.chmod(0o755)
     monkeypatch.setenv("PATH", str(bin_dir))
+    return exe
+
+
+def test_offline_uses_path_of_same_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    exe = _path_binary(monkeypatch, tmp_path, luals.VERSION)
     assert luals.binary(_offline, tmp_path / "cache") == exe
+
+
+def test_offline_refuses_path_of_other_version(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _path_binary(monkeypatch, tmp_path, "3.0.0")
+    with pytest.raises(luals.LualsMissing, match=r"version 3\.0\.0, not " + luals.VERSION):
+        luals.binary(_offline, tmp_path / "cache")
+
+
+def test_http_error_does_not_fall_to_other_path_version(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _path_binary(monkeypatch, tmp_path, "9.9.9")
+
+    def gone(url: str) -> bytes:
+        raise urllib.error.HTTPError(url, 404, "Not Found", None, None)  # type: ignore[arg-type]
+
+    with pytest.raises(luals.LualsMissing, match="download"):
+        luals.binary(gone, tmp_path / "cache")
+
+
+def test_unknown_platform_refuses_path_of_other_version(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(luals, "platform_key", lambda: None)
+    _path_binary(monkeypatch, tmp_path, "1.0.0")
+    with pytest.raises(luals.LualsMissing):
+        luals.binary(_no_net, tmp_path / "cache")
 
 
 def test_nothing_found(tmp_path: Path) -> None:

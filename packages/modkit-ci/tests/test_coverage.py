@@ -21,6 +21,16 @@ def toml(floor: int | None) -> str:
     return f"[project]\n\n[tool.coverage.report]\nfail_under = {floor}\n"
 
 
+def snapshot(root: Path) -> dict[str, str | None]:
+    files: dict[str, str | None] = {
+        p.relative_to(root).as_posix(): p.read_text(encoding="utf-8")
+        for p in root.rglob("*")
+        if p.is_file()
+    }
+    files |= {f"{p.relative_to(root).as_posix()}/.keep": "" for p in root.rglob("*") if p.is_dir()}
+    return files
+
+
 def test_floor_read() -> None:
     assert coverage.floor(toml(63)) == 63
     assert coverage.floor(toml(None)) is None
@@ -44,17 +54,40 @@ def test_rose_same_new_pass() -> None:
     assert coverage.check(base, head) == []
 
 
+def test_excludes_read() -> None:
+    text = "[tool.coverage.run]\nomit = ['a.py']\n[tool.coverage.report]\nexclude_also = ['x']\n"
+    assert coverage.excludes(text) == {"run.omit: a.py", "report.exclude_also: x"}
+    assert coverage.excludes(None) == frozenset()
+
+
+def test_excludes_grew() -> None:
+    base = {"a": frozenset({"run.omit: a.py"}), "b": frozenset[str]()}
+    head = {
+        "a": frozenset({"run.omit: a.py", "run.omit: b.py"}),
+        "b": frozenset(),
+        "n": frozenset("x"),
+    }
+    found = coverage.check_excludes(base, head)
+    assert [(f.module, f.message) for f in found] == [
+        ("a", "coverage excludes grew: run.omit: b.py")
+    ]
+    assert coverage.check_excludes(head, base) == []
+
+
+def test_cli_excludes(
+    git_repo: GitRepo, registry_root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    files = snapshot(registry_root)
+    files["packages/alpha/pyproject.toml"] = toml(50)
+    base = git_repo.commit(files, "init")
+    omit = toml(50) + "omit = ['x.py']\n"
+    git_repo.commit({"packages/alpha/pyproject.toml": omit}, "omit")
+    assert main(["coverage", "--base", base]) == 1
+    assert "excludes grew" in capsys.readouterr().err
+
+
 def test_cli(git_repo: GitRepo, registry_root: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    files = {
-        p.relative_to(registry_root).as_posix(): p.read_text(encoding="utf-8")
-        for p in registry_root.rglob("*")
-        if p.is_file()
-    }
-    files |= {
-        f"{p.relative_to(registry_root).as_posix()}/.keep": ""
-        for p in registry_root.rglob("*")
-        if p.is_dir()
-    }
+    files = snapshot(registry_root)
     files["packages/alpha/pyproject.toml"] = toml(50)
     base = git_repo.commit(files, "init")
     git_repo.commit({"packages/alpha/pyproject.toml": toml(40)}, "lower")
