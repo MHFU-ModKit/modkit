@@ -14,10 +14,12 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
-from modkit_ci import bundle, cli, commits, registry
+from modkit_ci import bundle, cli, commits, docs, licences, registry
 from modkit_ci.registry import MANIFEST, Module, Registry
 
 LAYOUT = [
+    "LICENSES/BSD-3-Clause.txt",
+    "LICENSES/MIT.txt",
     "PSP/PLUGINS/mhfu_framework/mhfu_boot.prx",
     "PSP/PLUGINS/mhfu_framework/mhfu_framework.prx",
     "PSP/PLUGINS/mhfu_framework/mods/lib/mhfu_port.lua",
@@ -25,7 +27,19 @@ LAYOUT = [
     "sdk/examples/b.lua",
     "sdk/meta/addresses.gen.lua",
     "sdk/meta/mhfu.d.lua",
+    "THIRD_PARTY_NOTICES.txt",
 ]
+
+
+NOTICES = """
+[[component]]
+name = "Lib"
+source = "https://example.org"
+spdx = "BSD-3-Clause"
+text = true
+libs = ["lib"]
+copyright = ["Copyright (c) 2000 Someone"]
+"""
 
 
 def _load(root: Path) -> Registry:
@@ -40,6 +54,12 @@ def _fake_framework(root: Path) -> Path:
     for name in ("a", "b"):
         (lua / "examples").mkdir(exist_ok=True)
         (lua / "examples" / f"{name}.lua").write_text(name, encoding="utf-8")
+    (root / "LICENSES").mkdir()
+    for spdx in ("MIT", "BSD-3-Clause", "GPL-3.0-or-later"):
+        (root / "LICENSES" / f"{spdx}.txt").write_text(spdx, encoding="utf-8")
+    notices = root / licences.NOTICES
+    notices.parent.mkdir(parents=True)
+    notices.write_text(NOTICES, encoding="utf-8")
     build = root / "framework" / "build"
     build.mkdir(parents=True)
     for prx in bundle.PRXS:
@@ -76,7 +96,9 @@ def test_framework_layout(registry_root: Path, tmp_path: Path) -> None:
     archive = bundle.framework_zip(registry_root, build, module, tmp_path / "out", _addresses)
     assert archive.name == "mhfu_framework-0.1.0.zip"
     with zipfile.ZipFile(archive) as zf:
-        assert sorted(zf.namelist()) == LAYOUT
+        assert sorted(zf.namelist()) == sorted(LAYOUT)
+        assert b"Copyright (c) 2000 Someone" in zf.read("THIRD_PARTY_NOTICES.txt")
+        assert zf.read("LICENSES/MIT.txt") == b"MIT"
         assert zf.read("sdk/meta/addresses.gen.lua") == b"-- generated\n"
         assert zf.read("sdk/examples/a.lua") == b"a"
 
@@ -94,6 +116,14 @@ def test_framework_missing_prx(registry_root: Path, tmp_path: Path) -> None:
     (build / "mhfu_boot.prx").unlink()
     module = _load(registry_root).get("framework")
     with pytest.raises(bundle.BundleError, match="make -C framework"):
+        bundle.framework_zip(registry_root, build, module, tmp_path, _addresses)
+
+
+def test_framework_missing_licence_text(registry_root: Path, tmp_path: Path) -> None:
+    build = _fake_framework(registry_root)
+    (registry_root / "LICENSES" / "BSD-3-Clause.txt").unlink()
+    module = _load(registry_root).get("framework")
+    with pytest.raises(bundle.BundleError, match="BSD-3-Clause"):
         bundle.framework_zip(registry_root, build, module, tmp_path, _addresses)
 
 
@@ -181,6 +211,14 @@ def test_blender_hash_mismatch(tmp_path: Path) -> None:
     assert not (tmp_path / "4.2.0").exists()
 
 
+@pytest.mark.usefixtures("_linux")
+def test_blender_pin_rejects_other_bytes(tmp_path: Path) -> None:
+    fake = _tarball(bundle.BLENDER_PIN.stem)
+    with pytest.raises(bundle.BundleError, match=bundle.BLENDER_PIN.sha256):
+        bundle.blender_binary(cache=tmp_path, fetch=lambda url, dest: dest.write_bytes(fake))
+    assert not (tmp_path / bundle.BLENDER_PIN.version).exists()
+
+
 def test_blender_env_wins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv(bundle.ENV_BLENDER, "/opt/blender")
     assert bundle.blender_binary(cache=tmp_path) == Path("/opt/blender")
@@ -208,18 +246,44 @@ def test_blender_zip(registry_root: Path, tmp_path: Path) -> None:
     ]
 
 
-def test_docs_zip_calls_the_cli(registry_root: Path, tmp_path: Path) -> None:
+def test_docs_zip_builds_in_process(
+    registry_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     module = _load(registry_root).get("alpha")
-    seen: list[list[str]] = []
+    seen: list[tuple[Path, Path]] = []
 
-    def run(cmd: Sequence[str], cwd: Path) -> None:
-        seen.append(list(cmd))
-        Path(cmd[-1]).write_bytes(b"z")
+    def build(root: Path, out: Path, zip_path: Path | None = None) -> int:
+        assert zip_path is not None
+        seen.append((root, zip_path))
+        zip_path.write_bytes(b"z")
+        return 0
 
-    made = bundle.docs_zip(registry_root, module, tmp_path, run)
+    monkeypatch.setattr(docs, "build", build)
+    made = bundle.docs_zip(registry_root, module, tmp_path)
     assert made.name == "modkit-docs-alpha-v0.1.0.zip"
-    assert seen[0][-6:-2] == ["docs", "build", "--out", seen[0][-3]]
-    assert seen[0][-2] == "--zip"
+    assert seen == [(registry_root, made)]
+
+
+def test_docs_zip_failure(
+    registry_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load(registry_root).get("alpha")
+    monkeypatch.setattr(docs, "build", lambda root, out, zip_path=None: 1)
+    with pytest.raises(bundle.BundleError, match="docs build failed"):
+        bundle.docs_zip(registry_root, module, tmp_path)
+
+
+def test_complete_by_kind(registry_root: Path) -> None:
+    reg = _load(registry_root)
+    alpha, framework, beta = reg.get("alpha"), reg.get("framework"), reg.get("beta")
+    docs_alpha = bundle.docs_name(alpha)
+    assert not bundle.complete(alpha, [docs_alpha])
+    assert bundle.complete(alpha, [docs_alpha, "alpha-0.1.0-py3-none-any.whl"])
+    assert not bundle.complete(alpha, ["alpha-0.1.0-py3-none-any.whl"])
+    assert not bundle.complete(framework, [bundle.docs_name(framework)])
+    assert bundle.complete(framework, [bundle.docs_name(framework), "mhfu_framework-0.1.0.zip"])
+    assert not bundle.complete(framework, [bundle.docs_name(framework), "mhfu_framework-0.0.9.zip"])
+    assert bundle.complete(beta, [bundle.docs_name(beta), "x.whl"])
 
 
 def test_cli_writes_github_output(

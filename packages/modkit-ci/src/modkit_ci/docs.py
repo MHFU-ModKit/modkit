@@ -5,6 +5,12 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+
+
+def build(root: Path, out: Path, zip_path: Path | None = None) -> int:
+    """Build the site under `out`; 1 on a build error or an undocumented Lua function."""
+    raise NotImplementedError
 
 
 def _cmd(args: argparse.Namespace) -> int:

@@ -11,33 +11,56 @@ on:
         description: Module (name or path) whose assets are rebuilt and re-uploaded
         required: true
         type: string
+      tag:
+        description: Release tag to rebuild (default the manifest's)
+        required: false
+        type: string
 
 permissions:
   contents: read
 
+# a dispatch only uploads one tag's assets, so it waits in its own group and no push drops it
 concurrency:
-  group: release
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.module || 'main' }}
   cancel-in-progress: false
 
 jobs:
+  # without the App, release-please and the lock refresh are skipped, not red
+  config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      app: ${{ steps.check.outputs.app }}
+    steps:
+      - id: check
+        env:
+          CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          KEY: ${{ secrets.RELEASE_APP_KEY }}
+        run: |
+          if [ -n "$CLIENT_ID" ] && [ -n "$KEY" ]; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "app=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::RELEASE_APP_CLIENT_ID or RELEASE_APP_KEY is not set: release-please and the lock refresh are skipped"
+          fi
+
   please:
-    if: github.event_name == 'push'
+    needs: config
+    if: github.event_name == 'push' && needs.config.outputs.app == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
+    permissions: {}
     outputs:
-      releases_created: ${{ steps.release.outputs.releases_created }}
-      paths_released: ${{ steps.release.outputs.paths_released }}
-      prs: ${{ steps.release.outputs.prs }}
+      outputs: ${{ toJSON(steps.release.outputs) }}
     steps:
       - id: app
         uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
       - id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
@@ -60,8 +83,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           names=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "autorelease: pending" \
-            --json headRefName \
-            --jq '[.[].headRefName | select(startswith("release-please--"))]')
+            --json headRefName,isCrossRepository \
+            --jq '[.[] | select(.isCrossRepository | not) | .headRefName | select(startswith("release-please--"))] | unique')
           echo "names=$names" >> "$GITHUB_OUTPUT"
 
   lock:
@@ -74,20 +97,22 @@ jobs:
       matrix:
         branch: ${{ fromJSON(needs.branches.outputs.names) }}
     steps:
-      - id: app
-        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
-        with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_KEY }}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ matrix.branch }}
-          token: ${{ steps.app.outputs.token }}
+          persist-credentials: false
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - run: uv lock
+      - id: app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_KEY }}
+          permission-contents: write
       - name: Commit the refreshed lock
         env:
           BRANCH: ${{ matrix.branch }}
+          TOKEN: ${{ steps.app.outputs.token }}
         run: |
           if git diff --quiet -- uv.lock; then
             echo "uv.lock is current"
@@ -96,30 +121,37 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore(repo): refresh uv.lock" -- uv.lock
-          git push origin "HEAD:refs/heads/$BRANCH"
+          git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$BRANCH"
 
+  # the legs come from the repo state too: a release whose assets never landed is retried
   plan:
     needs: please
-    if: ${{ always() && (github.event_name == 'workflow_dispatch' || needs.please.outputs.releases_created == 'true') }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       modules: ${{ steps.modules.outputs.modules }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
       - id: modules
         env:
+          GH_TOKEN: ${{ github.token }}
           DISPATCHED: ${{ inputs.module }}
-          RELEASED: ${{ needs.please.outputs.paths_released }}
+          TAG: ${{ inputs.tag }}
+          OUTPUTS: ${{ needs.please.outputs.outputs }}
         run: |
           if [ -n "$DISPATCHED" ]; then
-            modules=$(jq -cn --arg m "$DISPATCHED" '[$m]')
+            uv run modkit-ci release-plan --module "$DISPATCHED" ${TAG:+--tag "$TAG"}
           else
-            modules="$RELEASED"
+            uv run modkit-ci release-plan --outputs "$OUTPUTS"
           fi
-          echo "modules=$modules" >> "$GITHUB_OUTPUT"
 
   docs:
     needs: plan
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.modules != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -127,13 +159,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: ${{ fromJSON(needs.plan.outputs.modules) }}
+        include: ${{ fromJSON(needs.plan.outputs.modules) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          enable-cache: true
-      - run: uv sync --locked
+          ref: refs/tags/${{ matrix.tag }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          sync-args: --group docs
       - id: bundle
         env:
           MODULE: ${{ matrix.module }}
@@ -145,6 +179,7 @@ jobs:
 
   assets:
     needs: plan
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.modules != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -152,13 +187,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: ${{ fromJSON(needs.plan.outputs.modules) }}
+        include: ${{ fromJSON(needs.plan.outputs.modules) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          enable-cache: true
-      - run: uv sync --locked
+          ref: refs/tags/${{ matrix.tag }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
       - name: Build the PRXs
         if: matrix.module == 'framework'
         run: make -C framework

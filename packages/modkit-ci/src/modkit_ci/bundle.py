@@ -16,18 +16,20 @@ import tomllib
 import urllib.error
 import urllib.request
 import zipfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from modkit_ci import registry
+from modkit_ci import docs, licences, registry
 from modkit_ci.registry import Module, Registry
 
 FRAMEWORK: Final = "framework"
 BLENDER: Final = "blender"
 PRXS: Final = ("mhfu_framework.prx", "mhfu_boot.prx")
 PLUGIN_DIR: Final = "PSP/PLUGINS/mhfu_framework"
+NOTICE_FILE: Final = "THIRD_PARTY_NOTICES.txt"
+LICENSES: Final = "LICENSES"
 ENV_BLENDER: Final = "BLENDER"
 ENV_OUTPUT: Final = "GITHUB_OUTPUT"
 _ZIP_TIME: Final = (1980, 1, 1, 0, 0, 0)
@@ -115,7 +117,7 @@ def _globbed(directory: Path, pattern: str, prefix: str) -> dict[str, Path]:
 
 
 def framework_files(root: Path, build: Path) -> dict[str, Path]:
-    """Archive path -> source file of the framework bundle, minus the generated addresses."""
+    """Archive path -> source file of the framework bundle, minus the generated files."""
     files: dict[str, Path] = {}
     for prx in PRXS:
         if not (build / prx).is_file():
@@ -132,6 +134,11 @@ def framework_files(root: Path, build: Path) -> dict[str, Path]:
     files.update(lib)
     files.update(_globbed(lua / "meta", "*.d.lua", "sdk/meta"))
     files.update(_globbed(lua / "examples", "*.lua", "sdk/examples"))
+    for spdx in licences.licence_ids(licences.components(root)):
+        text = root / LICENSES / f"{spdx}.txt"
+        if not text.is_file():
+            raise BundleError(f"{text} is missing: the notices name {spdx}")
+        files[f"{LICENSES}/{spdx}.txt"] = text
     return files
 
 
@@ -154,6 +161,9 @@ def framework_zip(root: Path, build: Path, module: Module, out: Path, run: Runne
         if not addresses.is_file():
             raise BundleError("mhfu.addresses wrote no Lua table")
         files["sdk/meta/addresses.gen.lua"] = addresses
+        notice = Path(tmp) / NOTICE_FILE
+        notice.write_text(licences.render(licences.components(root)), encoding="utf-8")
+        files[NOTICE_FILE] = notice
         archive = out / f"mhfu_framework-{module.version}.zip"
         _write_zip(archive, files)
     return archive
@@ -223,23 +233,38 @@ def blender_zip(
     return Path(shutil.copy2(built[-1], out))
 
 
-# modkit_ci.cli imports this module, so the docs command is called as a child process
-_CLI = (
-    sys.executable,
-    "-c",
-    "import sys; from modkit_ci.cli import main; sys.exit(main(sys.argv[1:]))",
-)
+def docs_name(module: Module) -> str:
+    """The name of the module's documentation zip."""
+    return f"modkit-docs-{tag(module)}.zip"
 
 
-def docs_zip(root: Path, module: Module, out: Path, run: Runner = _run) -> Path:
+def docs_zip(root: Path, module: Module, out: Path) -> Path:
     """Build the documentation site and write `modkit-docs-<tag>.zip`."""
-    archive = out / f"modkit-docs-{tag(module)}.zip"
+    archive = out / docs_name(module)
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
-        run([*_CLI, "docs", "build", "--out", tmp, "--zip", str(archive)], root)
+        if docs.build(root, Path(tmp), archive) != 0:
+            raise BundleError("docs build failed")
     if not archive.is_file():
         raise BundleError("docs build wrote no zip")
     return archive
+
+
+def _own_asset(module: Module) -> Callable[[str], bool] | None:
+    """Tells whether a name is the module's own asset; None when it has no own asset."""
+    if module.name == FRAMEWORK:
+        return f"mhfu_framework-{module.version}.zip".__eq__
+    if module.name == BLENDER:
+        return lambda n: n.endswith(f"-{module.version}.zip") and n != docs_name(module)
+    if module.release_type == "python":
+        return lambda n: n.endswith(".whl")
+    return None
+
+
+def complete(module: Module, names: Collection[str]) -> bool:
+    """Whether a release holding the assets `names` has everything `bundle` makes for it."""
+    own = _own_asset(module)
+    return docs_name(module) in names and (own is None or any(own(n) for n in names))
 
 
 def assets(

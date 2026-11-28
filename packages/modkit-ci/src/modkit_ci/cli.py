@@ -16,10 +16,11 @@ from modkit_ci import (
     docs,
     luals,
     registry,
+    release,
     testrun,
 )
 
-_MODULES = (registry, affected, testrun, coverage, commits, api, luals, docs, bundle)
+_MODULES = (registry, affected, testrun, coverage, commits, api, luals, docs, bundle, release)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
