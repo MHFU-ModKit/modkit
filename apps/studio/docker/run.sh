@@ -6,7 +6,8 @@
 #   MHFU_UI_DISPLAY=1 apps/studio/docker/run.sh                 # with Qt on Xvfb: the GL ones too
 #   apps/studio/docker/run.sh uv run studio render selftest -o out/
 # Output paths must lie inside the repository: anything else is written inside the container
-# and is gone when it exits. MHFU_DATA and MHP3RD_DATA, when set, are mounted read-only.
+# and is gone when it exits. STUDIO_UV_CACHE=<dir> mounts that host directory as the uv cache
+# (CI passes the runner's, so the locked environment is not downloaded per run). MHFU_DATA and MHP3RD_DATA, when set, are mounted read-only.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../../.." && pwd)
@@ -17,9 +18,11 @@ if [ -z "${STUDIO_SKIP_BUILD:-}" ] || ! docker image inspect "$image" >/dev/null
     docker build --quiet --platform linux/amd64 -t "$image" "$here" >/dev/null
 fi
 
+if [ -n "${STUDIO_UV_CACHE:-}" ]; then mkdir -p "$STUDIO_UV_CACHE"; fi
+
 # --init: xvfb-run in PID 1 never hears that Xvfb is up
 flags=(--rm --init --platform linux/amd64 --user "$(id -u):$(id -g)"
-       -v "$repo:/repo" -v mhfu-studio-venv:/venv -v mhfu-studio-uv:/cache/uv)
+       -v "$repo:/repo" -v mhfu-studio-venv:/venv -v "${STUDIO_UV_CACHE:-mhfu-studio-uv}:/cache/uv")
 if [ -n "${MHFU_UI_DISPLAY:-}" ]; then flags+=(-e MHFU_UI_DISPLAY); fi
 for var in MHFU_DATA MHP3RD_DATA; do
     if [ -n "${!var:-}" ]; then

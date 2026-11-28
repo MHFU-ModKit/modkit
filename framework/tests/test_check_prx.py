@@ -27,6 +27,7 @@ def _prx(
     attr: int = 0x8000,
     nids: tuple[int, ...] = (START, INFO),
     memsz: int = MEMSZ,
+    stub_words: int = 5,
 ) -> Path:
     """A 32-bit MIPS ELF with PT_LOAD, `.lib.ent`, `.rodata.sceResident` and `.lib.stub`."""
     names = b"".join(n.encode() + b"\0" for n in imports)
@@ -36,7 +37,8 @@ def _prx(
     stubs = b""
     off = stub_at
     for n in imports:
-        stubs += struct.pack("<IHHBBHII", off, 0, 0x9, 5, 0, 1, 0, 0)
+        stubs += struct.pack("<IHHBBHII", off, 0, 0x9, stub_words, 0, 1, 0, 0)
+        stubs += bytes(4 * (stub_words - 5))
         off += len(n) + 1
     if ent is None:
         ent = struct.pack("<IHHBBHI", 0, 0, attr, 4, 1, 1, BASE)
@@ -123,6 +125,11 @@ def test_kernel_user_import(tmp_path: Path) -> None:
 def test_kernel_no_kernel_import(tmp_path: Path) -> None:
     path = _prx(tmp_path, imports=("IoFileMgrForKernel",))
     assert any("does not import" in p for p in _problems(path, kernel=True))
+
+
+def test_stub_entry_length(tmp_path: Path) -> None:
+    path = _prx(tmp_path, imports=("IoFileMgrForKernel", "ModuleMgrForUser"), stub_words=6)
+    assert any("ModuleMgrForUser" in p for p in _problems(path, kernel=True))
 
 
 def test_user_import_free_without_flag(tmp_path: Path) -> None:

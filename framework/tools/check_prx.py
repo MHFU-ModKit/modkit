@@ -83,8 +83,10 @@ def imports(elf: ELFFile) -> list[str]:
     """Names of the imported libraries."""
     data = _section_data(elf, ".lib.stub")
     names = []
-    for off in range(0, len(data) - _STUB.size + 1, _STUB.size):
+    off = 0
+    while off + _STUB.size <= len(data):
         names.append(_cstr(elf, _STUB.unpack_from(data, off)[0]))
+        off += max(data[off + 8] * 4, _STUB.size)  # the entry's own length in words
     return names
 
 
