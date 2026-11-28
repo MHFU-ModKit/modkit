@@ -43,6 +43,9 @@
               "brains/*.toml"
             ]
           }
+        ],
+        "depends": [
+          "framework"
         ]
       }
     },
@@ -99,6 +102,9 @@
               "apps/studio/tests/map/schema/*/map.toml"
             ]
           }
+        ],
+        "depends": [
+          "framework"
         ]
       }
     },
