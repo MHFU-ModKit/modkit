@@ -100,3 +100,9 @@ def test_dispatch_has_its_own_group() -> None:
 def test_upload_token_only_in_the_upload_step(name: str) -> None:
     holders = [s for s in JOBS[name]["steps"] if "GH_TOKEN" in s.get("env", {})]
     assert len(holders) == 1
+
+
+def test_uploads_use_the_leg_tag() -> None:
+    for name in ("docs", "assets"):
+        uploads = [s for s in JOBS[name]["steps"] if "gh release upload" in s.get("run", "")]
+        assert [u["env"]["TAG"] for u in uploads] == ["${{ matrix.tag }}"]

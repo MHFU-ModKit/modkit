@@ -169,13 +169,12 @@ jobs:
         with:
           sync-args: --group docs
       - uses: ./.github/actions/luals
-      - id: bundle
-        env:
+      - env:
           MODULE: ${{ matrix.module }}
         run: uv run modkit-ci bundle "$MODULE" --docs --out dist
       - env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.bundle.outputs.tag }}
+          TAG: ${{ matrix.tag }}
         run: gh release upload "$TAG" dist/* --clobber
 
   assets:
@@ -201,14 +200,13 @@ jobs:
       - name: Libraries Blender needs headless
         if: contains(matrix.module, 'blender')
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1 libsm6 libxfixes3 libxi6 libxkbcommon0 libxrender1 libxxf86vm1
-      - id: bundle
-        env:
+      - env:
           MODULE: ${{ matrix.module }}
         run: uv run modkit-ci bundle "$MODULE" --out dist
       - name: Upload to the release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.bundle.outputs.tag }}
+          TAG: ${{ matrix.tag }}
         run: |
           if compgen -G "dist/*" > /dev/null; then
             gh release upload "$TAG" dist/* --clobber

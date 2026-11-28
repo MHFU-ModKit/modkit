@@ -12,12 +12,12 @@ import re
 import shutil
 import subprocess
 import sys
-import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
 from modkit_ci import api_lua, api_python, lua_tool, registry
+from modkit_ci.archive import write_zip
 from modkit_ci.lua_md import anchor, render
 from modkit_ci.registry import Module, Registry
 
@@ -211,11 +211,8 @@ def missing_lua(root: Path, reg: Registry, site: Site) -> list[str]:
 
 def zip_site(site_dir: Path, target: Path) -> None:
     """Zip the built site, paths relative to its root."""
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z:
-        for path in sorted(site_dir.rglob("*")):
-            if path.is_file():
-                z.write(path, path.relative_to(site_dir).as_posix())
+    files = {p.relative_to(site_dir).as_posix(): p for p in site_dir.rglob("*") if p.is_file()}
+    write_zip(target, files)
 
 
 def warnings_of(output: str) -> list[str]:

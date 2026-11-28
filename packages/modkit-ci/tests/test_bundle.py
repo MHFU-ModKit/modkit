@@ -294,23 +294,6 @@ def test_complete_by_kind(registry_root: Path) -> None:
     assert bundle.complete(beta, [bundle.docs_name(beta), "x.whl"])
 
 
-def test_cli_writes_github_output(
-    registry_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    output = tmp_path / "gh_output"
-    monkeypatch.setenv(bundle.ENV_OUTPUT, str(output))
-    monkeypatch.chdir(registry_root)
-    ppsspp = {"component": "ppsspp", "release-type": "simple"}
-    config = json.loads((registry_root / registry.CONFIG).read_text())
-    config["packages"]["ppsspp"] = ppsspp
-    (registry_root / registry.CONFIG).write_text(json.dumps(config))
-    manifest = json.loads((registry_root / MANIFEST).read_text()) | {"ppsspp": "2.0.1"}
-    (registry_root / MANIFEST).write_text(json.dumps(manifest))
-    (registry_root / "ppsspp").mkdir()
-    assert cli.main(["bundle", "ppsspp", "--out", str(tmp_path / "out")]) == 0
-    assert output.read_text() == "tag=ppsspp-v2.0.1\n"
-
-
 def test_cli_unknown_module(
     registry_root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
