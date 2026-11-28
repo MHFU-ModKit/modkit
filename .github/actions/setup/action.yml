@@ -18,5 +18,8 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
         enable-cache: true
-    - run: uv sync --locked ${{ inputs.sync-args }}
+    # later `uv run`s would sync the default groups back in (qt among them)
+    - run: |
+        uv sync --locked ${{ inputs.sync-args }}
+        echo "UV_NO_SYNC=1" >> "$GITHUB_ENV"
       shell: bash
