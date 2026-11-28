@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          sync-args: --group docs
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/modkit-ci/luals
+          key: luals-${{ hashFiles('packages/modkit-ci/src/modkit_ci/luals.py') }}
+      - run: uv run modkit-ci luals path
+      - run: uv run modkit-ci docs build --out build/docs --zip build/docs.zip
