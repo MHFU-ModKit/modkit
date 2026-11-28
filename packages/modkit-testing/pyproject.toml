@@ -13,6 +13,9 @@ classifiers = ["Private :: Do Not Upload"]
 [project.entry-points.pytest11]
 modkit = "modkit_testing"
 
+[tool.coverage.report]
+fail_under = 82
+
 [build-system]
 requires = ["uv_build>=0.11,<0.12"]
 build-backend = "uv_build"
