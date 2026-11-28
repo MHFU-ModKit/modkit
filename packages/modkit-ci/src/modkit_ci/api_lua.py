@@ -17,6 +17,8 @@ from modkit_ci.registry import Module
 
 VERSION_NAME: Final = "api_version"
 _FENCE: Final = re.compile(r"^```lua[ \t]*\n(.*?)^```[ \t]*$", re.DOTALL | re.MULTILINE)
+FENCE_OPEN: Final = "---```lua"
+FENCE_CLOSE: Final = "---```"
 _SPACE: Final = re.compile(r"\s+")
 _STRING: Final = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'")
 _NUMBER: Final = re.compile(r"\b(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d+)?)\b")
@@ -85,10 +87,42 @@ def _view(view: str) -> tuple[str, bool]:
     return (view[:-1], True) if view.endswith("?") else (view, False)
 
 
-def _desc(raw: str) -> tuple[str, tuple[str, ...]]:
-    """A raw description split into its prose and the ```lua fence bodies."""
-    examples = tuple(m[1].rstrip("\n") for m in _FENCE.finditer(raw))
-    return _FENCE.sub("", raw).strip(), examples
+def _prose(raw: str) -> str:
+    """A raw description without its ```lua blocks (LuaLS adds some for literal types)."""
+    return _FENCE.sub("", raw).strip()
+
+
+def block_examples(block: Sequence[str]) -> tuple[str, ...]:
+    """The ```lua fences of one `---` doc block, by the rule of `lua_api.examples`."""
+    found: list[str] = []
+    code: list[str] | None = None
+    for raw in block:
+        line = raw.rstrip()
+        if code is not None:
+            if line == FENCE_CLOSE:
+                found.append("\n".join(code))
+                code = None
+            else:
+                code.append(line[3:])
+        elif line == FENCE_OPEN:
+            code = []
+        elif line == FENCE_CLOSE:
+            raise ValueError("a closing fence without an opening one")
+    if code is not None:
+        raise ValueError("an example is not closed")
+    return tuple(found)
+
+
+def _examples(root: Path, file: str, line: int, cache: dict[str, list[str]]) -> tuple[str, ...]:
+    """The examples in the doc block directly above 1-based `line` of `file`."""
+    if file not in cache:
+        path = root / file
+        cache[file] = path.read_text(encoding="utf-8").split("\n") if path.is_file() else []
+    lines = cache[file]
+    top = line - 1
+    while top > 0 and lines[top - 1].lstrip().startswith("---"):
+        top -= 1
+    return block_examples(lines[top : line - 1])
 
 
 def _param(arg: Mapping[str, Any]) -> Param:
@@ -113,17 +147,17 @@ def _slice(root: Path, member: Mapping[str, Any], cache: dict[str, list[str]]) -
     return _SPACE.sub(" ", " ".join(parts)).strip()
 
 
-def _func(name: str, member: Mapping[str, Any]) -> Func:
+def _func(name: str, member: Mapping[str, Any], root: Path, cache: dict[str, list[str]]) -> Func:
     ext = member["extends"]
-    desc, examples = _desc(str(member.get("rawdesc", "")))
+    line = int(member["start"][0]) + 1
     return Func(
         name=name,
         params=tuple(_param(a) for a in ext.get("args", [])),
         returns=tuple(str(r.get("view", "any")) for r in ext.get("returns", [])),
-        desc=desc,
-        examples=examples,
+        desc=_prose(str(member.get("rawdesc", ""))),
+        examples=_examples(root, str(member["file"]), line, cache),
         file=str(member["file"]),
-        line=int(member["start"][0]) + 1,
+        line=line,
     )
 
 
@@ -145,9 +179,9 @@ def model(doc: list[dict[str, Any]], root: Path, dirs: Sequence[str]) -> LuaApi:
             sep = ":" if kind == "setmethod" else "."
             name = f"{owner}{sep}{m['name']}" if owner else str(m["name"])
             if m["extends"]["type"] == "function":
-                funcs.append(_func(name, m))
+                funcs.append(_func(name, m, root, cache))
             else:
-                desc, _ = _desc(str(m.get("rawdesc", "")))
+                desc = _prose(str(m.get("rawdesc", "")))
                 value = _slice(root, m, cache)
                 consts.append(Const(name, value, desc, str(m["file"]), int(m["start"][0]) + 1))
 
@@ -163,7 +197,7 @@ def model(doc: list[dict[str, Any]], root: Path, dirs: Sequence[str]) -> LuaApi:
                     if f["type"] == "doc.field" and _under(str(f["file"]), dirs)
                 )
                 first = own[0]
-                desc, _ = _desc(str(first.get("rawdesc", "")))
+                desc = _prose(str(first.get("rawdesc", "")))
                 line = int(first["start"][0]) + 1
                 classes.append(Class(name, fields, desc, str(first["file"]), line))
             for f in entry.get("fields", []):
@@ -216,6 +250,11 @@ def _literal(value: str) -> bool:
 
 def _func_breaks(old: Func, new: Func) -> list[str]:
     out: list[str] = []
+    out += [
+        f"param {i + 1} ({p.name}) removed"
+        for i, p in enumerate(old.params)
+        if i >= len(new.params)
+    ]
     for i, (a, b) in enumerate(zip(old.params, new.params, strict=False)):
         if a.type != b.type:
             out.append(f"param {i + 1} ({a.name}) type {a.type} -> {b.type}")
