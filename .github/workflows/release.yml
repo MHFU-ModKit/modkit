@@ -168,6 +168,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           sync-args: --group docs
+      - uses: ./.github/actions/luals
       - id: bundle
         env:
           MODULE: ${{ matrix.module }}

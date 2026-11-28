@@ -21,10 +21,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup
-      - uses: actions/cache@v6
-        with:
-          path: ~/.cache/modkit-ci/luals
-          key: luals-${{ hashFiles('packages/modkit-ci/src/modkit_ci/luals.py') }}
+      - uses: ./.github/actions/luals
       - run: uv run modkit-ci api --base "$BASE"
         env:
           BASE: ${{ github.event.pull_request.base.sha }}

@@ -12,7 +12,7 @@ import urllib.error
 from pathlib import Path
 
 import pytest
-from modkit_ci import luals
+from modkit_ci import cli, luals
 
 FIXTURE = Path(__file__).parent / "fixtures" / "lua"
 
@@ -147,6 +147,12 @@ def test_unknown_platform_skips_download(monkeypatch: pytest.MonkeyPatch, tmp_pa
 def test_pins_cover_both_hosts() -> None:
     assert set(luals.SHA256) == {"linux-x64", "darwin-arm64"}
     assert all(len(h) == 64 for h in luals.SHA256.values())
+
+
+def test_cache_dir_command(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["luals", "cache-dir"]) == 0
+    assert capsys.readouterr().out.strip() == str(luals.cache_dir())
+    assert luals.cache_dir().name == luals.VERSION
 
 
 def test_fixture_doc_is_current(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

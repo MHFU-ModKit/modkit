@@ -162,6 +162,9 @@ def _cmd(args: argparse.Namespace) -> int:
         if args.action == "path":
             print(binary())
             return 0
+        if args.action == "cache-dir":
+            print(cache_dir())
+            return 0
         root = Path(args.root).resolve() if args.root else registry.find_root()
         if args.action == "check":
             return check(root)
@@ -177,8 +180,10 @@ def _cmd(args: argparse.Namespace) -> int:
 
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Add the `luals` command."""
-    p = sub.add_parser("luals", help="LuaLS helper: path, check, doc")
-    p.add_argument("action", nargs="?", choices=["path", "check", "doc"], default="path")
+    p = sub.add_parser("luals", help="LuaLS helper: path, cache-dir, check, doc")
+    p.add_argument(
+        "action", nargs="?", choices=["path", "cache-dir", "check", "doc"], default="path"
+    )
     p.add_argument("root", nargs="?")
     p.add_argument("-o", "--output")
     p.set_defaults(func=_cmd)

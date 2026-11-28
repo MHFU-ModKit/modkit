@@ -27,16 +27,11 @@ jobs:
       - uses: ./.github/actions/setup
       - id: affected
         uses: ./.github/actions/affected
-      - uses: actions/cache@v6
+      - uses: ./.github/actions/luals
         if: ${{ steps.affected.outputs.all == 'true' || contains(fromJSON(steps.affected.outputs.modules), 'framework') }}
-        with:
-          path: ~/.cache/modkit-ci/luals
-          key: luals-${{ hashFiles('packages/modkit-ci/src/modkit_ci/luals.py') }}
       - name: LuaLS check
         if: ${{ steps.affected.outputs.all == 'true' || contains(fromJSON(steps.affected.outputs.modules), 'framework') }}
-        run: |
-          uv run modkit-ci luals path
-          uv run modkit-ci luals check
+        run: uv run modkit-ci luals check
       - name: Lua API model against the registration parser
         if: ${{ steps.affected.outputs.all == 'true' || contains(fromJSON(steps.affected.outputs.modules), 'framework') }}
         run: uv run pytest packages/modkit-ci/tests/test_api_lua.py packages/modkit-ci/tests/test_luals.py -q
