@@ -456,7 +456,7 @@ def test_the_undo_stack_stays_empty(qtbot: Any) -> None:
     assert viewer.qaction_for_undo() not in viewer.context_menus()["graph"].actions()
 
 
-def test_a_shortcut_of_the_window_gets_ctrl_z(qtbot: Any) -> None:
+def test_a_shortcut_of_the_window_gets_ctrl_z(qtbot: Any, press: Any) -> None:
     view = make(qtbot)
     hit: list[int] = []
     QShortcut(
@@ -465,9 +465,7 @@ def test_a_shortcut_of_the_window_gets_ctrl_z(qtbot: Any) -> None:
         lambda: hit.append(1),
         context=Qt.ShortcutContext.WindowShortcut,
     )
-    view.window().activateWindow()
-    view.viewer.setFocus()
-    QTest.keyClick(view.viewer, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    press(view.viewer, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
     assert hit == [1]
 
 
