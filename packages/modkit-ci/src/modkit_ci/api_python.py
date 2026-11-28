@@ -42,12 +42,15 @@ def _has_docstring(obj: griffe.Object) -> bool:
 
 
 def _objects(top: griffe.Module) -> Iterator[tuple[str, griffe.Object, bool]]:
+    """The doc rule's objects: public ones without attributes (the break check keeps those)."""
     for obj in (top, *_walk(top)):
+        if obj.is_attribute:
+            continue
         yield obj.path, obj, _has_docstring(obj)
 
 
 def public_objects(root: Path, module: Module) -> Iterator[tuple[str, griffe.Object, bool]]:
-    """Public objects as (path, object, has_docstring), packages included."""
+    """Documentable public objects (no attributes) as (path, object, has_docstring)."""
     for package in module.packages(root):
         yield from _objects(_load(root, module, package))
 
