@@ -37,3 +37,9 @@ SPDX-License-Identifier = "BSD-3-Clause"
 path = "framework/third_party/tlsf/**"
 SPDX-FileCopyrightText = "2006-2016 Matthew Conte"
 SPDX-License-Identifier = "BSD-3-Clause"
+
+# iframe-worker 1.0.4 shim (npm), vendored so the offline docs load no third-party script
+[[annotations]]
+path = "docs/vendor/iframe-worker-1.0.4.js"
+SPDX-FileCopyrightText = "2020-2022 Martin Donath"
+SPDX-License-Identifier = "MIT"
