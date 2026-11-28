@@ -1,0 +1,131 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
+# Third-party code the PRXs carry. `modkit-ci bundle framework` renders it into the zip's
+# THIRD_PARTY_NOTICES.txt and ships LICENSES/<spdx>.txt for every component with `text = true`.
+# `libs` names what framework/Makefile.psp links with -l (or $(PSPSDK)/lib/<name>.o), `dirs` a
+# directory of framework/third_party. Copyright lines are read from the sources named in `source`.
+
+[[component]]
+name = "Lua 5.4.6"
+source = "https://www.lua.org/ (pspdev package lua54 builds it)"
+spdx = "MIT"
+text = true
+libs = ["lua"]
+copyright = ["Copyright (C) 1994-2023 Lua.org, PUC-Rio."]
+
+[[component]]
+name = "TLSF 3.1"
+source = "https://github.com/mattconte/tlsf, framework/third_party/tlsf"
+spdx = "BSD-3-Clause"
+text = true
+dirs = ["tlsf"]
+copyright = ["Copyright (c) 2006-2016, Matthew Conte"]
+
+[[component]]
+name = "PSPSDK (libpspsdk, libpspuser, libpspusb, libpspnet, libcglue, prxexports)"
+source = "https://github.com/pspdev/pspsdk, LICENSE and the source headers"
+spdx = "BSD-3-Clause"
+text = true
+libs = ["pspsdk", "pspuser", "pspusb", "pspnet", "pspnet_apctl", "pspkernel", "cglue", "prxexports"]
+copyright = [
+    "Copyright (c) 2005 adresd",
+    "Copyright (c) 2005 Marcus R. Brown",
+    "Copyright (c) 2005 James Forshaw",
+    "Copyright (c) 2005 John Kelley",
+    "Copyright (c) 2005 Jesper Svennevid",
+    "Copyright (c) 2005 Jim Paris",
+    "Copyright (c) 2005 Florin Sasu",
+    "Copyright (c) 2006 Rafael Cabezas",
+    "Copyright (c) 2007 dot_blank",
+    "Copyright (c) 2007 Alexander Berl",
+    "Copyright (c) 2007 Iaroslav Gaponenko",
+    "Copyright (c) 2008 David Perry",
+    "Copyright (c) 2008 moonlight",
+    "Copyright (c) 2021-2023 Francisco Javier Trujillo Mata",
+    "Copyright (c) 2023 Ivy Bowling",
+]
+
+[[component]]
+name = "Newlib (libc, libm)"
+source = "https://github.com/pspdev/newlib, COPYING.NEWLIB and the source headers"
+spdx = "BSD-3-Clause"
+text = true
+libs = ["c", "m"]
+copyright = [
+    "Copyright (c) 1987-2007 The Regents of the University of California",
+    "Copyright (C) 1993 by Sun Microsystems, Inc.",
+    "Copyright (c) 1991 by AT&T (David M. Gay)",
+    "Copyright (C) 1998, 2000 by Lucent Technologies (David M. Gay)",
+    "Copyright (c) 1995-2002 Red Hat, Inc.",
+    "Copyright (c) 2017-2018 Arm Ltd.",
+    "Copyright (C) 1991 DJ Delorie",
+]
+notice = """
+Besides the BSD-3-Clause files, newlib's libc and libm carry these permission notices:
+
+Sun Microsystems (fdlibm, most of libm):
+  Permission to use, copy, modify, and distribute this software is freely granted, provided that
+  this notice is preserved.
+
+The Regents of the University of California (older stdio and string files):
+  Redistribution and use in source and binary forms are permitted provided that the above
+  copyright notice and this paragraph are duplicated in all such forms and that any documentation,
+  and/or other materials related to such distribution and use acknowledge that the software was
+  developed by the University of California, Berkeley. The name of the University may not be
+  used to endorse or promote products derived from this software without specific prior written
+  permission. THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED WARRANTIES,
+  INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+  PARTICULAR PURPOSE.
+
+David M. Gay, AT&T (dtoa, strtod):
+  Permission to use, copy, modify, and distribute this software for any purpose without fee is
+  hereby granted, provided that this entire notice is included in all copies of any software
+  which is or includes a copy or modification of this software and in all copies of the
+  supporting documentation for such software. THIS SOFTWARE IS BEING PROVIDED "AS IS", WITHOUT
+  ANY EXPRESS OR IMPLIED WARRANTY. IN PARTICULAR, NEITHER THE AUTHOR NOR AT&T MAKES ANY
+  REPRESENTATION OR WARRANTY OF ANY KIND CONCERNING THE MERCHANTABILITY OF THIS SOFTWARE OR ITS
+  FITNESS FOR ANY PARTICULAR PURPOSE.
+
+David M. Gay, Lucent Technologies (gdtoa):
+  Permission to use, copy, modify, and distribute this software and its documentation for any
+  purpose and without fee is hereby granted, provided that the above copyright notice appear in
+  all copies and that both that the copyright notice and this permission notice and warranty
+  disclaimer appear in supporting documentation, and that the name of Lucent or any of its
+  entities not be used in advertising or publicity pertaining to distribution of the software
+  without specific, written prior permission. LUCENT DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS
+  SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL
+  LUCENT OR ANY OF ITS ENTITIES BE LIABLE FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR
+  ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
+  CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+  PERFORMANCE OF THIS SOFTWARE.
+
+Red Hat (MIPS string routines):
+  The authors hereby grant permission to use, copy, modify, distribute, and license this software
+  and its documentation for any purpose, provided that existing copyright notices are retained
+  in all copies and that this notice is included verbatim in any distributions. No written
+  agreement, license, or royalty fee is required for any of the authorized uses.
+"""
+
+[[component]]
+name = "libgcc"
+source = "https://gcc.gnu.org/, soft-float helpers (fp-bit.c, libgcc2.c)"
+spdx = "GPL-3.0-or-later WITH GCC-exception-3.1"
+text = false
+libs = ["gcc"]
+copyright = ["Copyright (C) Free Software Foundation, Inc."]
+notice = """
+Covered by the GCC Runtime Library Exception 3.1: the combined work may be propagated under
+terms of your choice.
+"""
+
+[[component]]
+name = "pthread-embedded (libpthread, libpthreadglue)"
+source = "https://github.com/pspdev/pthread-embedded, COPYING"
+spdx = "LGPL-2.1-only"
+text = false
+libs = ["pthread", "pthreadglue"]
+copyright = ["Copyright (C) 2001, 2006 Ross P. Johnson", "Copyright (C) 2008 Jason Schmidlapp"]
+notice = """
+On the link line, but the linker pulls no member of it: the PRX's symbol table holds no pte_ or
+pthread_ symbol. A build that pulls one carries LGPL-2.1 code and needs its text and a relink offer.
+"""

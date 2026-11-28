@@ -7,6 +7,7 @@ description = "A typed client for PPSSPP's WebSocket debugger, blocking and asyn
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+license-files = ["LICENSE"]
 dependencies = ["websockets>=15", "psutil>=6"]
 classifiers = ["Typing :: Typed"]
 

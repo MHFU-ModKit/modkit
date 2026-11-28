@@ -7,6 +7,7 @@ description = "Author MHFU mods offline: ported monsters and map edits, in one a
 readme = "README.md"
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 dependencies = [
     "mhp-formats",
     "mhfu",

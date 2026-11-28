@@ -7,6 +7,7 @@ description = "Pytest fixtures shared by the modkit packages: paths to extracted
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+license-files = ["LICENSE"]
 dependencies = ["pytest>=8"]
 classifiers = ["Private :: Do Not Upload"]
 

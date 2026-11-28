@@ -7,6 +7,7 @@ description = "The repo's CI tooling: module registry, affected units, commit an
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+license-files = ["LICENSE"]
 dependencies = ["griffelib>=2.4.1", "conventional-pre-commit>=4.5.0"]
 classifiers = ["Private :: Do Not Upload", "Typing :: Typed"]
 

@@ -1,0 +1,216 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sp00ktober
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      module:
+        description: Module (name or path) whose assets are rebuilt and re-uploaded
+        required: true
+        type: string
+      tag:
+        description: Release tag to rebuild (default the manifest's)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# a dispatch only uploads one tag's assets, so it waits in its own group and no push drops it
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.module || 'main' }}
+  cancel-in-progress: false
+
+jobs:
+  # without the App, release-please and the lock refresh are skipped, not red
+  config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      app: ${{ steps.check.outputs.app }}
+    steps:
+      - id: check
+        env:
+          CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          KEY: ${{ secrets.RELEASE_APP_KEY }}
+        run: |
+          if [ -n "$CLIENT_ID" ] && [ -n "$KEY" ]; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "app=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::RELEASE_APP_CLIENT_ID or RELEASE_APP_KEY is not set: release-please and the lock refresh are skipped"
+          fi
+
+  please:
+    needs: config
+    if: github.event_name == 'push' && needs.config.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    outputs:
+      outputs: ${{ toJSON(steps.release.outputs) }}
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # release-please rewrites a release branch whenever its PR changes, which drops the lock commit
+  branches:
+    needs: please
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      names: ${{ steps.list.outputs.names }}
+    steps:
+      - id: list
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          names=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "autorelease: pending" \
+            --json headRefName,isCrossRepository \
+            --jq '[.[] | select(.isCrossRepository | not) | .headRefName | select(startswith("release-please--"))] | unique')
+          echo "names=$names" >> "$GITHUB_OUTPUT"
+
+  lock:
+    needs: branches
+    if: needs.branches.outputs.names != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJSON(needs.branches.outputs.names) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.branch }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: uv lock
+      - id: app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_KEY }}
+          permission-contents: write
+      - name: Commit the refreshed lock
+        env:
+          BRANCH: ${{ matrix.branch }}
+          TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          if git diff --quiet -- uv.lock; then
+            echo "uv.lock is current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(repo): refresh uv.lock" -- uv.lock
+          git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$BRANCH"
+
+  # the legs come from the repo state too: a release whose assets never landed is retried
+  plan:
+    needs: please
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      modules: ${{ steps.modules.outputs.modules }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - id: modules
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCHED: ${{ inputs.module }}
+          TAG: ${{ inputs.tag }}
+          OUTPUTS: ${{ needs.please.outputs.outputs }}
+        run: |
+          if [ -n "$DISPATCHED" ]; then
+            uv run modkit-ci release-plan --module "$DISPATCHED" ${TAG:+--tag "$TAG"}
+          else
+            uv run modkit-ci release-plan --outputs "$OUTPUTS"
+          fi
+
+  docs:
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.modules != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ matrix.tag }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          sync-args: --group docs
+      - id: bundle
+        env:
+          MODULE: ${{ matrix.module }}
+        run: uv run modkit-ci bundle "$MODULE" --docs --out dist
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.bundle.outputs.tag }}
+        run: gh release upload "$TAG" dist/* --clobber
+
+  assets:
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.modules != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ matrix.tag }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Build the PRXs
+        if: matrix.module == 'framework'
+        run: make -C framework
+      - name: Libraries Blender needs headless
+        if: contains(matrix.module, 'blender')
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1 libsm6 libxfixes3 libxi6 libxkbcommon0 libxrender1 libxxf86vm1
+      - id: bundle
+        env:
+          MODULE: ${{ matrix.module }}
+        run: uv run modkit-ci bundle "$MODULE" --out dist
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.bundle.outputs.tag }}
+        run: |
+          if compgen -G "dist/*" > /dev/null; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            echo "$TAG has no module assets"
+          fi

@@ -7,6 +7,7 @@ description = "Monster Hunter Portable (PSP) file formats: archives, models, tex
 readme = "README.md"
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 dependencies = ["construct>=2.10.70", "construct-typing>=0.8"]
 classifiers = ["Typing :: Typed"]
 
